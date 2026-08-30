@@ -5,6 +5,7 @@ import test from "node:test";
 const claimRouteUrl = new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url);
 const completeRouteUrl = new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url);
 const heartbeatRouteUrl = new URL("../app/api/channel-gateway/worker/heartbeat/route.ts", import.meta.url);
+const beginMutationRouteUrl = new URL("../app/api/channel-gateway/worker/begin-mutation/route.ts", import.meta.url);
 const credentialStageRouteUrl = new URL("../app/api/channel-gateway/worker/credential-refresh/route.ts", import.meta.url);
 const ebayAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/ebay/authorize/route.ts", import.meta.url);
 const shopeeAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url);
@@ -86,6 +87,64 @@ test("gateway heartbeat separates auth and configuration failures and rejects lo
   assert.match(source, /claimToken: z\.string\(\)\.uuid\(\)/);
   assert.match(source, /p_claim_token: parsed\.data\.claimToken/);
   assert.match(source, /p_worker_version: parsed\.data\.version \?\? "sellerpilot-cli-worker\/unknown"/);
+});
+
+test("gateway mutation fence separates a live gate denial from lost ownership", async () => {
+  const source = await readFile(beginMutationRouteUrl, "utf8");
+  const deniedFence = source.indexOf("if (data !== true)");
+  const ownershipRecheck = source.indexOf('"sellerpilot_touch_channel_gateway_job"', deniedFence);
+  const ownershipLoss = source.indexOf('if (ownership !== "running")', ownershipRecheck);
+  const mutationContext = source.indexOf('"sellerpilot_service_gateway_completion_context"', ownershipLoss);
+  const contextContract = source.indexOf("const context =", mutationContext);
+  const markerCheck = source.indexOf("context.publication_verification_boundary != null", contextContract);
+  const preconditionFailure = source.indexOf("status: 412", markerCheck);
+
+  assert.equal(deniedFence >= 0, true);
+  assert.equal(ownershipRecheck > deniedFence, true);
+  assert.equal(ownershipLoss > ownershipRecheck, true);
+  assert.equal(mutationContext > ownershipLoss, true);
+  assert.equal(contextContract > mutationContext, true);
+  assert.equal(markerCheck > contextContract, true);
+  assert.equal(preconditionFailure > markerCheck, true);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /p_token_hash: tokenHash/);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /p_job_id: parsed\.data\.jobId/);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /p_claim_token: parsed\.data\.claimToken/);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /sellerpilot-cli-worker\/provider-fence-recheck/);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /workerRpcErrorStatus\(ownershipError\)/);
+  assert.match(source.slice(ownershipRecheck, ownershipLoss), /workerRpcErrorMessage\(status\)/);
+  assert.match(source.slice(ownershipLoss, mutationContext), /status: 409/);
+  assert.match(source.slice(mutationContext, contextContract), /p_claim_token: parsed\.data\.claimToken/);
+  assert.match(source.slice(mutationContext, contextContract), /workerRpcErrorStatus\(contextError\)/);
+  assert.match(source.slice(contextContract, markerCheck), /context\.status !== "running"[\s\S]*status: 409/);
+  assert.match(source.slice(preconditionFailure - 220), /GATEWAY_PROVIDER_MUTATION_NOT_STARTED/);
+});
+
+test("gateway mutation context errors preserve uncertain state instead of failing pre-provider", async () => {
+  const source = await readFile(beginMutationRouteUrl, "utf8");
+  const helper = source.indexOf("function providerMutationStateUncertainResponse");
+  const contextError = source.indexOf("if (contextError)");
+  const contextContract = source.indexOf("const context =", contextError);
+
+  assert.equal(helper >= 0 && helper < contextError, true);
+  assert.match(source.slice(helper, source.indexOf("export async function POST", helper)), /GATEWAY_PROVIDER_MUTATION_STATE_UNCERTAIN/);
+  assert.match(source.slice(helper, source.indexOf("export async function POST", helper)), /status: 409/);
+  assert.match(source.slice(contextError, contextContract), /status === 401/);
+  assert.match(source.slice(contextError, contextContract), /workerRpcErrorMessage\(status\)/);
+  assert.match(source.slice(contextError, contextContract), /providerMutationStateUncertainResponse\(\)/);
+  assert.doesNotMatch(source.slice(contextError, contextContract), /status: 412/);
+});
+
+test("gateway mutation marker replay is reconciliation-safe and never reaches the 412 failure", async () => {
+  const source = await readFile(beginMutationRouteUrl, "utf8");
+  const markerCheck = source.indexOf("context.publication_verification_boundary != null");
+  const uncertainReturn = source.indexOf("providerMutationStateUncertainResponse()", markerCheck);
+  const deniedCode = source.indexOf("GATEWAY_PROVIDER_MUTATION_NOT_STARTED", markerCheck);
+  const preconditionFailure = source.indexOf("status: 412", markerCheck);
+
+  assert.equal(markerCheck >= 0, true);
+  assert.equal(uncertainReturn > markerCheck, true);
+  assert.equal(deniedCode > uncertainReturn, true);
+  assert.equal(preconditionFailure > deniedCode, true);
 });
 
 test("gateway completion accepts a terminal reconciliation state without disguising it as failure", async () => {

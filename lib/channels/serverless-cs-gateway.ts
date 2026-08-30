@@ -149,6 +149,20 @@ class GatewayOwnershipLostError extends Error {
   }
 }
 
+class GatewayProviderMutationDeniedError extends Error {
+  constructor() {
+    super("GATEWAY_PROVIDER_MUTATION_NOT_STARTED");
+    this.name = "GatewayProviderMutationDeniedError";
+  }
+}
+
+class GatewayProviderMutationStateUncertainError extends Error {
+  constructor() {
+    super("GATEWAY_PROVIDER_MUTATION_STATE_UNCERTAIN");
+    this.name = "GatewayProviderMutationStateUncertainError";
+  }
+}
+
 function jsonResponse(body: Record<string, unknown>, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: NO_STORE_HEADERS });
 }
@@ -217,6 +231,10 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
     }
   }
   if (error instanceof Error) {
+    if (error instanceof GatewayProviderMutationDeniedError
+        || error instanceof GatewayProviderMutationStateUncertainError) {
+      return error.message;
+    }
     if (error.message === "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED") {
       return error.message;
     }
@@ -499,7 +517,26 @@ async function beginProviderMutation(
     begun = await callRpc(dependencies, LEGACY_BEGIN_PROVIDER_MUTATION_RPC, arguments_);
   }
   if (begun.error) throw new Error("gateway_provider_fence_unavailable");
-  if (begun.data !== true) throw new GatewayOwnershipLostError();
+  if (begun.data !== true) {
+    await touchClaim(dependencies, gatewayTokenHash, job);
+    const contextResult = await callRpc(dependencies, COMPLETION_CONTEXT_RPC, {
+      p_token_hash: gatewayTokenHash,
+      p_job_id: job.id,
+      p_claim_token: job.claim_token,
+    });
+    if (contextResult.error) throw new GatewayProviderMutationStateUncertainError();
+    const context = recordValue(contextResult.data);
+    if (!context
+        || context.status !== "running"
+        || context.channel !== job.channel
+        || context.operation !== job.operation) {
+      throw new GatewayOwnershipLostError();
+    }
+    if (context.publication_verification_boundary != null) {
+      throw new GatewayProviderMutationStateUncertainError();
+    }
+    throw new GatewayProviderMutationDeniedError();
+  }
 }
 
 async function beginLazadaOAuthProviderCall(
@@ -1070,10 +1107,13 @@ export async function runOneServerlessCsGatewayJob(
       return jsonResponse({ message: "채널 작업 소유권이 변경되었습니다." }, 409);
     }
     const errorReason = safeExecutionError(effectiveError, runtimeSignal);
+    const providerMutationStateUncertain =
+      effectiveError instanceof GatewayProviderMutationStateUncertainError;
     const retryableLineageReadback = job.operation === "listing.lineage.verify"
       && effectiveError instanceof Error
       && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(effectiveError.message);
-    const completion: GatewayWorkerCompletion = externalMutationStarted || retryableLineageReadback
+    const completion: GatewayWorkerCompletion =
+      externalMutationStarted || providerMutationStateUncertain || retryableLineageReadback
       ? {
         jobId: job.id,
         claimToken: job.claim_token,

@@ -802,6 +802,231 @@ test("Qoo10 can open alone while every other channel and Temu stay fail-closed a
       );
     }
 
+    const genericQooJobId = uuid(9680);
+    const genericQooClaimToken = uuid(9681);
+    await asReplica(db, () => db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id,credential_id,attempt_id,listing_id,channel,operation,environment,
+         request_payload,status,created_by,created_at,started_at,worker_token_id,
+         claim_token,lease_expires_at,attempt_count,write_resource_kind,
+         write_resource_key,request_fingerprint,seller_account_key
+       ) values (
+         $1,$2,null,null,'qoo10','listing.update','production','{}'::jsonb,
+         'running',$3,clock_timestamp(),clock_timestamp(),$4,$5,
+         clock_timestamp() + interval '5 minutes',1,'listing_mutation',$6,$6,$7
+       )`,
+      [
+        genericQooJobId,
+        CREDENTIAL_ID,
+        OWNER_ID,
+        WORKER_TOKEN_ID,
+        genericQooClaimToken,
+        "1".repeat(64),
+        SELLER_ACCOUNT_KEY,
+      ],
+    ));
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [WORKER_TOKEN_HASH, genericQooJobId, uuid(9682)],
+      ),
+      /invalid worker token/,
+      "the CS ownership wrapper must keep rejecting a wrong generic claim",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [WORKER_TOKEN_HASH, genericQooJobId, genericQooClaimToken],
+      ),
+      true,
+      "the generic provider boundary must reach the original marker under the Qoo10 scope",
+    );
+    assert.ok(
+      await scalar(
+        db,
+        "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+        [genericQooJobId],
+      ),
+      "the generic Qoo10 mutation must persist its provider-call marker",
+    );
+    await asReplica(db, () => db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',worker_token_id=null,claim_token=null,
+              lease_expires_at=null,completed_at=clock_timestamp()
+        where id=$1`,
+      [genericQooJobId],
+    ));
+
+    const serverlessTokenId = uuid(9683);
+    const serverlessTokenHash = "f".repeat(64);
+    const serverlessQooJobId = uuid(9684);
+    const serverlessQooClaimToken = uuid(9685);
+    await asReplica(db, async () => {
+      await db.query(
+        `insert into sellerpilot_private.ai_cli_worker_tokens (
+           id,label,token_hash,fingerprint,status,expires_at,created_by,scope
+         ) values (
+           $1,'Qoo10 scoped serverless regression',$2,'QOOSCOPED001',
+           'active',clock_timestamp() + interval '1 day',$3,'serverless_cs'
+         )`,
+        [serverlessTokenId, serverlessTokenHash, OWNER_ID],
+      );
+      await db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           id,credential_id,attempt_id,listing_id,channel,operation,environment,
+           request_payload,status,created_by,created_at,started_at,worker_token_id,
+           claim_token,lease_expires_at,attempt_count,write_resource_kind,
+           write_resource_key,request_fingerprint,seller_account_key
+         ) values (
+           $1,$2,null,null,'qoo10','listing.update','production','{}'::jsonb,
+           'running',$3,clock_timestamp(),clock_timestamp(),$4,$5,
+           clock_timestamp() + interval '5 minutes',1,'listing_mutation',$6,$6,$7
+         )`,
+        [
+          serverlessQooJobId,
+          CREDENTIAL_ID,
+          OWNER_ID,
+          serverlessTokenId,
+          serverlessQooClaimToken,
+          "2".repeat(64),
+          SELLER_ACCOUNT_KEY,
+        ],
+      );
+    });
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_begin_serverless_gateway_provider_mutation($1,$2,$3)",
+        [serverlessTokenHash, serverlessQooJobId, uuid(9686)],
+      ),
+      /invalid worker token/,
+      "the CS ownership wrapper must keep rejecting a wrong serverless claim",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_serverless_gateway_provider_mutation($1,$2,$3)",
+        [serverlessTokenHash, serverlessQooJobId, serverlessQooClaimToken],
+      ),
+      true,
+      "the serverless provider boundary must reach the original marker under the Qoo10 scope",
+    );
+    assert.ok(
+      await scalar(
+        db,
+        "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+        [serverlessQooJobId],
+      ),
+      "the serverless Qoo10 mutation must persist its provider-call marker",
+    );
+    await asReplica(db, () => db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',worker_token_id=null,claim_token=null,
+              lease_expires_at=null,completed_at=clock_timestamp()
+        where id=$1`,
+      [serverlessQooJobId],
+    ));
+
+    for (const [index, channel] of ["shopee", "temu"].entries()) {
+      const blockedJobId = uuid(9687 + index * 2);
+      const blockedClaimToken = uuid(9688 + index * 2);
+      await asReplica(db, () => db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           id,credential_id,attempt_id,listing_id,channel,operation,environment,
+           request_payload,status,created_by,created_at,started_at,worker_token_id,
+           claim_token,lease_expires_at,attempt_count,write_resource_kind,
+           write_resource_key,request_fingerprint,seller_account_key
+         ) values (
+           $1,$2,null,null,$3,'listing.update','production','{}'::jsonb,
+           'running',$4,clock_timestamp(),clock_timestamp(),$5,$6,
+           clock_timestamp() + interval '5 minutes',1,'listing_mutation',$7,$7,$8
+         )`,
+        [
+          blockedJobId,
+          CREDENTIAL_ID,
+          channel,
+          OWNER_ID,
+          WORKER_TOKEN_ID,
+          blockedClaimToken,
+          String(index + 3).repeat(64),
+          SELLER_ACCOUNT_KEY,
+        ],
+      ));
+      assert.equal(
+        await scalar(
+          db,
+          "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+          [WORKER_TOKEN_HASH, blockedJobId, blockedClaimToken],
+        ),
+        false,
+        `${channel} must not cross the Qoo10-scoped provider boundary`,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+          [blockedJobId],
+        ),
+        null,
+      );
+      await asReplica(db, () => db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status='cancelled',worker_token_id=null,claim_token=null,
+                lease_expires_at=null,completed_at=clock_timestamp()
+          where id=$1`,
+        [blockedJobId],
+      ));
+      if (channel === "shopee") {
+        const blockedServerlessJobId = uuid(9750);
+        const blockedServerlessClaimToken = uuid(9751);
+        await asReplica(db, () => db.query(
+          `insert into sellerpilot_private.channel_gateway_jobs (
+             id,credential_id,attempt_id,listing_id,channel,operation,environment,
+             request_payload,status,created_by,created_at,started_at,worker_token_id,
+             claim_token,lease_expires_at,attempt_count,write_resource_kind,
+             write_resource_key,request_fingerprint,seller_account_key
+           ) values (
+             $1,$2,null,null,'shopee','listing.update','production','{}'::jsonb,
+             'running',$3,clock_timestamp(),clock_timestamp(),$4,$5,
+             clock_timestamp() + interval '5 minutes',1,'listing_mutation',$6,$6,$7
+           )`,
+          [
+            blockedServerlessJobId,
+            CREDENTIAL_ID,
+            OWNER_ID,
+            serverlessTokenId,
+            blockedServerlessClaimToken,
+            "5".repeat(64),
+            SELLER_ACCOUNT_KEY,
+          ],
+        ));
+        assert.equal(
+          await scalar(
+            db,
+            "select public.sellerpilot_service_begin_serverless_gateway_provider_mutation($1,$2,$3)",
+            [serverlessTokenHash, blockedServerlessJobId, blockedServerlessClaimToken],
+          ),
+          false,
+          "Shopee serverless work must not cross the Qoo10-scoped provider boundary",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+            [blockedServerlessJobId],
+          ),
+          null,
+        );
+        await asReplica(db, () => db.query(
+          `update sellerpilot_private.channel_gateway_jobs
+              set status='cancelled',worker_token_id=null,claim_token=null,
+                  lease_expires_at=null,completed_at=clock_timestamp()
+            where id=$1`,
+          [blockedServerlessJobId],
+        ));
+      }
+    }
+
     await db.query(
       "select public.sellerpilot_service_set_listing_publication_adapter_ready('shopee',false,null)",
     );

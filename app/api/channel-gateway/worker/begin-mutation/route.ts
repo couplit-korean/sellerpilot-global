@@ -16,6 +16,13 @@ const mutationSchema = z.object({
   claimToken: z.string().uuid(),
 });
 
+function providerMutationStateUncertainResponse() {
+  return NextResponse.json({
+    code: "GATEWAY_PROVIDER_MUTATION_STATE_UNCERTAIN",
+    message: "채널 외부 호출 시작 여부를 수동으로 확인해야 합니다.",
+  }, { status: 409 });
+}
+
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -58,7 +65,58 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
   }
   if (data !== true) {
-    return NextResponse.json({ message: "채널 작업 실행 권한 또는 lease가 만료됐습니다." }, { status: 409 });
+    const { data: ownership, error: ownershipError } = await serviceClient.rpc(
+      "sellerpilot_touch_channel_gateway_job",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: parsed.data.jobId,
+        p_claim_token: parsed.data.claimToken,
+        p_worker_version: "sellerpilot-cli-worker/provider-fence-recheck",
+      },
+    );
+    if (ownershipError) {
+      const status = workerRpcErrorStatus(ownershipError);
+      console.error("channel gateway mutation fence ownership recheck failed", {
+        code: ownershipError.code ?? "unknown",
+        status,
+      });
+      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    }
+    if (ownership !== "running") {
+      return NextResponse.json({ message: "채널 작업 실행 권한 또는 lease가 만료됐습니다." }, { status: 409 });
+    }
+    const { data: contextData, error: contextError } = await serviceClient.rpc(
+      "sellerpilot_service_gateway_completion_context",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: parsed.data.jobId,
+        p_claim_token: parsed.data.claimToken,
+      },
+    );
+    if (contextError) {
+      const status = workerRpcErrorStatus(contextError);
+      console.error("channel gateway mutation fence context recheck failed", {
+        code: contextError.code ?? "unknown",
+        status,
+      });
+      return status === 401
+        ? NextResponse.json({ message: workerRpcErrorMessage(status) }, { status })
+        : providerMutationStateUncertainResponse();
+    }
+    const context = contextData && typeof contextData === "object" && !Array.isArray(contextData)
+      ? contextData as Record<string, unknown>
+      : null;
+    if (!context || context.status !== "running") {
+      return NextResponse.json({ message: "채널 작업 실행 권한 또는 lease가 만료됐습니다." }, { status: 409 });
+    }
+    if (["listing.create", "listing.update", "listing.stop"].includes(String(context.operation))
+        && context.publication_verification_boundary != null) {
+      return providerMutationStateUncertainResponse();
+    }
+    return NextResponse.json({
+      code: "GATEWAY_PROVIDER_MUTATION_NOT_STARTED",
+      message: "채널 외부 호출 게이트가 닫혀 작업을 시작하지 않았습니다.",
+    }, { status: 412 });
   }
   return NextResponse.json({ status: "recorded" }, {
     headers: { "cache-control": "no-store, max-age=0" },

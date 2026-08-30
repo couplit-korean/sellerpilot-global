@@ -6,6 +6,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260831050000_channel_scoped_qoo10_publication_gate.sql",
   import.meta.url,
 );
+const providerChainMigrationUrl = new URL(
+  "../supabase/migrations/20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql",
+  import.meta.url,
+);
 
 test("Qoo10 gate is a forward-only post-CS migration and never repairs predecessor history", async () => {
   const migration = await readFile(migrationUrl, "utf8");
@@ -122,5 +126,70 @@ test("the channel predicate admits only the canonical seven and Qoo10 is the onl
     migration,
     /gate\.opened_channel is null or gate\.opened_channel = p_channel/,
     "unrelated adapter drift must not close a Qoo10-scoped gate",
+  );
+});
+
+test("the Qoo10 provider-chain repair changes only the two internal 301100 delegates", async () => {
+  const migration = await readFile(providerChainMigrationUrl, "utf8");
+
+  assert.match(
+    migration,
+    /pg_advisory_xact_lock\(193674993, 821065042\)/,
+    "installation must serialize with the provider-mutation boundary",
+  );
+  assert.match(migration, /requires a closed gate/);
+  assert.match(migration, /listing mutation jobs must be terminal before chain repair/);
+  assert.match(
+    migration,
+    /job\.status in \('queued', 'running', 'reconciliation_required'\)/,
+    "the repair may not install over an unresolved provider outcome",
+  );
+  assert.equal(
+    (migration.match(/create or replace function/g) ?? []).length,
+    2,
+    "only the generic and optional serverless internal delegates may be replaced",
+  );
+  assert.match(
+    migration,
+    /create or replace function\s+public\.sellerpilot_31033000_begin_gateway_provider_mutation_unsafe/,
+  );
+  assert.match(
+    migration,
+    /create or replace function\s+public\.sellerpilot_31033000_begin_serverless_gateway_mutation_unsafe/,
+  );
+  assert.doesNotMatch(
+    migration,
+    /create or replace function\s+public\.sellerpilot_service_begin_(?:serverless_)?gateway_provider_mutation/,
+    "the public 310500 gate and 310330 CS fence must remain untouched",
+  );
+  assert.doesNotMatch(
+    migration,
+    /listing_mutation_release_gate_is_effective\(\s*\)/,
+    "the repaired internal delegates must never reinterpret the scoped gate globally",
+  );
+  assert.equal(
+    (migration.match(/listing_mutation_release_gate_is_effective\(\s*v_channel\s*\)/g) ?? []).length,
+    2,
+  );
+  assert.match(
+    migration,
+    /return public\.sellerpilot_300950_begin_gateway_mutation_before_release_gate\(/,
+  );
+  assert.match(
+    migration,
+    /return public\.sellerpilot_300950_begin_serverless_gateway_mutation_before_release_gate\(/,
+  );
+  assert.match(
+    migration,
+    /v_outer_exists is distinct from v_inner_exists[\s\S]*v_outer_exists is distinct from v_delegate_exists/,
+    "partial serverless-chain drift must fail the migration",
+  );
+  assert.equal(
+    (migration.match(/from public, anon, authenticated, service_role/g) ?? []).length,
+    1,
+  );
+  assert.match(
+    migration,
+    /from public,anon,authenticated,service_role/,
   );
 });

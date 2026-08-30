@@ -124,6 +124,14 @@ function claim(
   };
 }
 
+function qoo10ListingUpdateClaim() {
+  return {
+    ...claim("qoo10", "inquiries.list"),
+    operation: "listing.update" as const,
+    request: { arguments: { ItemCode: "sellerpilot-qoo10-existing-item" } },
+  };
+}
+
 function inquiryListResult(
   channel: "ebay" | "coupang" | "smartstore" | "qoo10" = "ebay",
 ): ChannelOperationResult {
@@ -207,7 +215,7 @@ function smartstoreCustomerInquiryResult(): ChannelOperationResult {
 }
 
 function baseRpc(
-  claimedJob: ReturnType<typeof claim>,
+  claimedJob: ReturnType<typeof claim> | ReturnType<typeof qoo10ListingUpdateClaim>,
   calls: Array<{ name: string; arguments_: Record<string, unknown> }>,
   overrides: Partial<Record<string, (arguments_: Record<string, unknown>) => { data: unknown; error: { code?: string } | null }>> = {},
 ) {
@@ -1168,6 +1176,113 @@ for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
     assert.deepEqual(complete?.arguments_.p_response_payload, inquiryReplyResult(channel));
   });
 }
+
+test("a denied provider fence with live ownership completes as a safe pre-provider failure", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let providerMutationDispatched = false;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(qoo10ListingUpdateClaim(), calls, {
+      sellerpilot_service_begin_serverless_gateway_provider_mutation: () => ({
+        data: false,
+        error: null,
+      }),
+    }),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginProviderMutation();
+      providerMutationDispatched = true;
+      return inquiryReplyResult("qoo10");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, "failed");
+  assert.equal(providerMutationDispatched, false);
+  assert.equal(
+    calls.filter(({ name }) => name === "sellerpilot_touch_serverless_cs_job").length,
+    2,
+  );
+  const completions = calls.filter(
+    ({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction",
+  );
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].arguments_.p_status, "failed");
+  assert.equal(
+    completions[0].arguments_.p_error_message,
+    "GATEWAY_PROVIDER_MUTATION_NOT_STARTED",
+  );
+});
+
+test("a denied provider fence with lost ownership remains 409 without completion", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let touchCount = 0;
+  let providerMutationDispatched = false;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(qoo10ListingUpdateClaim(), calls, {
+      sellerpilot_touch_serverless_cs_job: () => ({
+        data: ++touchCount === 1 ? "running" : "ownership_lost",
+        error: null,
+      }),
+      sellerpilot_service_begin_serverless_gateway_provider_mutation: () => ({
+        data: false,
+        error: null,
+      }),
+    }),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginProviderMutation();
+      providerMutationDispatched = true;
+      return inquiryReplyResult("qoo10");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+
+  assert.equal(response.status, 409);
+  assert.equal(providerMutationDispatched, false);
+  assert.equal(touchCount, 2);
+  assert.equal(
+    calls.some(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction"),
+    false,
+  );
+});
+
+test("a denied provider fence with an existing mutation marker reconciles without redispatch", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let providerMutationDispatched = false;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(qoo10ListingUpdateClaim(), calls, {
+      sellerpilot_service_begin_serverless_gateway_provider_mutation: () => ({
+        data: false,
+        error: null,
+      }),
+      sellerpilot_service_serverless_cs_completion_context: () => ({
+        data: {
+          status: "running",
+          channel: "qoo10",
+          operation: "listing.update",
+          normalization_timestamp: "2026-08-31T05:25:07.000Z",
+          publication_verification_boundary: "2026-08-31T05:26:00.000Z",
+        },
+        error: null,
+      }),
+    }),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginProviderMutation();
+      providerMutationDispatched = true;
+      return inquiryReplyResult("qoo10");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, "reconciliation_required");
+  assert.equal(providerMutationDispatched, false);
+  const completions = calls.filter(
+    ({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction",
+  );
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].arguments_.p_status, "reconciliation_required");
+  assert.equal(
+    completions[0].arguments_.p_error_message,
+    "GATEWAY_PROVIDER_MUTATION_STATE_UNCERTAIN",
+  );
+});
 
 test("eBay credential mutation is fenced and staged before atomic completion", async () => {
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];

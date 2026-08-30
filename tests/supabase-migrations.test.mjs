@@ -45,6 +45,8 @@ const SHOPEE_STATIC_EGRESS_MIGRATION = "20260830200000_require_static_egress_for
 const CS_REPLY_LEDGER_MIGRATION = "20260831033000_add_cs_message_delivery_ledger.sql";
 const QOO10_SCOPED_GATE_MIGRATION =
   "20260831050000_channel_scoped_qoo10_publication_gate.sql";
+const QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION =
+  "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
   "20260830222257_confirm_qoo10_listing_create_rollback.sql",
   "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
@@ -568,6 +570,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
       QOO10_SCOPED_GATE_MIGRATION,
       "20260831052500_reconcile_exact_qoo10_preprovider_gate_denial.sql",
+      QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -585,6 +588,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "20260831045000_gate_temu_periodic_inquiry_static_egress.sql",
       ) < migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION),
       "Qoo10 scoped gate must replay after the Temu periodic inquiry gate",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_SCOPED_GATE_MIGRATION)
+        < migrationNames.indexOf(QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION),
+      "Qoo10 provider chain repair must replay after the scoped gate",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -668,7 +676,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
         );
       }
-      if (name === QOO10_SCOPED_GATE_MIGRATION) {
+      if (name === QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION) {
         assert.equal(
           await scalar(
             db,
@@ -682,10 +690,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           await scalar(
             db,
             `select count(*) from supabase_migrations.schema_migrations
-              where version in ('20260831033000', '20260831050000')`,
+              where version in (
+                '20260831033000', '20260831050000', '20260831052500',
+                '20260831053500'
+              )`,
           ),
-          2,
-          "CS then Qoo10 forward migrations must be the only newly recorded tail",
+          4,
+          "CS, Qoo10 gate, exact reconciliation, then provider-chain repair must be the recorded tail",
         );
       }
     }
@@ -1088,6 +1099,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "public.sellerpilot_service_begin_ai_job_completion(text,uuid,uuid)",
       "public.sellerpilot_service_release_ai_job_claim(text,uuid,uuid,text,integer)",
       "public.sellerpilot_service_begin_channel_gateway_completion(text,uuid,uuid)",
+      "public.sellerpilot_service_begin_gateway_provider_mutation(text,uuid,uuid)",
       "public.sellerpilot_service_gateway_completion_context(text,uuid,uuid)",
       "public.sellerpilot_service_begin_gateway_credential_refresh(text,uuid,uuid)",
       "public.sellerpilot_service_prepare_gateway_credential_refresh(text,uuid,uuid,jsonb,timestamp with time zone,boolean,boolean)",
@@ -1158,6 +1170,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "sellerpilot_private.worker_token_may_complete_gateway_job(text,uuid,uuid)",
       "sellerpilot_private.guard_channel_gateway_running_parallelism()",
       "sellerpilot_private.retain_current_marketplace_normalized_asset_refs()",
+      "public.sellerpilot_31033000_begin_gateway_provider_mutation_unsafe(text,uuid,uuid)",
+      "public.sellerpilot_31033000_begin_serverless_gateway_mutation_unsafe(text,uuid,uuid)",
     ]) {
       for (const role of ["anon", "authenticated", "service_role"]) {
         assert.equal(
@@ -9482,6 +9496,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
     "20260831045000_gate_temu_periodic_inquiry_static_egress.sql";
   const qoo10ScopedReleaseGateMigrationName =
     "20260831050000_channel_scoped_qoo10_publication_gate.sql";
+  const qoo10ScopedProviderChainMigrationName =
+    "20260831053500_rebind_qoo10_scoped_provider_mutation_chain.sql";
   const serverlessHash = "6".repeat(64);
   try {
     await db.exec(supabaseCompatibilityLayer);
@@ -9498,7 +9514,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== lazadaProviderMarkerMigrationName
         && name !== lazadaOauthReauthorizationMigrationName
         && name !== temuStaticEgressMigrationName
-        && name !== qoo10ScopedReleaseGateMigrationName)
+        && name !== qoo10ScopedReleaseGateMigrationName
+        && name !== qoo10ScopedProviderChainMigrationName)
       .sort();
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;

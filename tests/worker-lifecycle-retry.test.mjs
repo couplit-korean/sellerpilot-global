@@ -77,6 +77,28 @@ for (const status of [401, 409]) {
   });
 }
 
+test("provider fence HTTP 412 is a pre-provider failure, not terminal ownership loss", async () => {
+  const clock = fakeClock();
+  let requests = 0;
+  await assert.rejects(
+    requestWithTransientRetry({
+      request: async () => {
+        requests += 1;
+        return new Response(null, { status: 412 });
+      },
+      delay: clock.delay,
+      graceMs: 30_000,
+      terminalStatuses: [401, 409],
+      label: "provider mutation fence",
+      now: clock.now,
+    }),
+    (error) => error instanceof Error
+      && !(error instanceof WorkerRequestTerminalError)
+      && /HTTP 412/.test(error.message),
+  );
+  assert.equal(requests, 1);
+});
+
 test("missing heartbeat job HTTP 404 is terminal and is not retried", async () => {
   const clock = fakeClock();
   let requests = 0;
@@ -201,6 +223,7 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(oauthRuntime, /async function exchangeEbayOAuth\([\s\S]*await beginCredentialMutation\(hooks\);[\s\S]*exchangeEbayOAuthToken[\s\S]*recoveryOnly: true[\s\S]*fetchEbayTradingUserIdentity[\s\S]*oauthComplete: true/);
   assert.match(oauthRuntime, /if \(job\.channel === "ebay"\)[\s\S]*exchangeEbayOAuth/);
   assert.match(gatewayProcess, /terminalOwnershipLoss[\s\S]*\[401, 404, 409\]/);
+  assert.match(gatewayProcess, /else if \(effectiveError instanceof WorkerRequestTerminalError\)[\s\S]*else \{[\s\S]*status: "failed"/);
   assert.ok((gatewayProcess.match(/GATEWAY_COMPLETION_TRANSIENT_GRACE_MS/g) ?? []).length >= 2);
 });
 
