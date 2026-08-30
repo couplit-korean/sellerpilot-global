@@ -1744,6 +1744,16 @@ a:focus-visible,
 .cli-runtime-actions aside { display: flex; align-items: center; gap: 8px; color: #315c51; }.cli-runtime-actions aside svg { flex: 0 0 auto; }.cli-runtime-actions aside b, .cli-runtime-actions aside small { display: block; }.cli-runtime-actions aside b { font-size: 8px; }.cli-runtime-actions aside small { margin-top: 3px; color: #7a8985; font-size: 7px; }
 .cli-server-runtime-notice { justify-content: space-between; }.cli-server-runtime-notice aside { min-width: 0; align-items: flex-start; }.cli-server-runtime-notice code { color: #315c51; font: inherit; font-weight: 800; overflow-wrap: anywhere; }
 .cli-gateway-smoke-button { display: inline-flex; min-height: 38px; flex: 0 0 auto; align-items: center; justify-content: center; gap: 6px; }
+.cli-release-confirmation { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid #dfb777; border-bottom: 1px solid #dfb777; color: #654314; background: #fff8e9; }
+.cli-release-confirmation > svg { align-self: flex-start; margin-top: 3px; }.cli-release-confirmation > span { min-width: 0; }.cli-release-confirmation b, .cli-release-confirmation small { display: block; }.cli-release-confirmation b { font-size: 10px; }.cli-release-confirmation small { margin-top: 4px; font-size: 8px; line-height: 1.55; }.cli-release-confirmation > div { display: flex; gap: 7px; }.cli-release-confirmation .credential-primary.danger { border-color: #974b32; background: #a75235; }.cli-release-confirmation .credential-primary.danger:hover { background: #894029; }
+.cli-listing-release { border-top: 1px solid #a8bdb7; background: #fff; }
+.cli-listing-release > header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 15px 16px; color: #1e4037; background: #e9f2ef; }
+.cli-listing-release > header > div { display: flex; min-width: 0; align-items: center; gap: 10px; }.cli-listing-release > header > div > svg { flex: 0 0 auto; color: #1a755e; }.cli-listing-release > header span { min-width: 0; }.cli-listing-release > header small, .cli-listing-release > header h4, .cli-listing-release > header p { display: block; margin: 0; }.cli-listing-release > header small { color: #3e8573; font-size: 8px; font-weight: 850; letter-spacing: .07em; }.cli-listing-release > header h4 { margin-top: 3px; font-size: 13px; }.cli-listing-release > header p { margin-top: 4px; color: #647f78; font-size: 8px; line-height: 1.5; }
+.cli-listing-release-state { display: inline-flex; min-height: 29px; flex: 0 0 auto; align-items: center; gap: 6px; padding: 0 10px; font-size: 8px; font-weight: 850; }.cli-listing-release-state i { width: 7px; height: 7px; border-radius: 50%; }.cli-listing-release-state.open { color: #12634f; background: #ccebe2; }.cli-listing-release-state.open i { background: #15956f; }.cli-listing-release-state.closed { color: #765229; background: #f0e2cd; }.cli-listing-release-state.closed i { background: #b47d36; }
+.cli-listing-release-summary { display: grid; grid-template-columns: 1.45fr repeat(3, minmax(0, 1fr)); border-top: 1px solid #dce6e2; border-bottom: 1px solid #dce6e2; }.cli-listing-release-summary article { min-width: 0; padding: 12px 14px; border-right: 1px solid #e0e7e4; }.cli-listing-release-summary article:last-child { border-right: 0; }.cli-listing-release-summary small, .cli-listing-release-summary code, .cli-listing-release-summary b, .cli-listing-release-summary em { display: block; min-width: 0; }.cli-listing-release-summary small { color: #71807b; font-size: 8px; }.cli-listing-release-summary code, .cli-listing-release-summary b { margin: 5px 0 4px; color: #24473e; font-size: 10px; }.cli-listing-release-summary code { overflow-wrap: anywhere; font-family: var(--font-geist-mono), ui-monospace, monospace; }.cli-listing-release-summary em { overflow-wrap: anywhere; color: #8a6a3e; font-size: 8px; font-style: normal; }.cli-listing-release-summary em.ok { color: #16765d; }
+.cli-listing-release-blockers { display: flex; flex-wrap: wrap; gap: 7px; padding: 10px 14px; border-bottom: 1px solid #e0e7e4; background: #fafcfb; }.cli-listing-release-blockers span { padding: 5px 8px; font-size: 8px; font-weight: 800; }.cli-listing-release-blockers span.ok { color: #17664f; background: #e5f4ef; }.cli-listing-release-blockers span.blocked { color: #7d4f27; background: #f8ead8; }
+.cli-listing-release-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 15px; padding: 13px 14px; }.cli-listing-adapter-controls { min-width: 0; }.cli-listing-adapter-controls > b, .cli-listing-adapter-controls > small { display: block; }.cli-listing-adapter-controls > b { color: #274b42; font-size: 9px; }.cli-listing-adapter-controls > small { margin-top: 3px; color: #788984; font-size: 8px; }.cli-listing-adapter-controls > div { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }.cli-listing-adapter-controls button, .cli-listing-gate-controls button { min-height: 32px; padding: 0 9px; font-size: 8px; }.cli-listing-gate-controls { display: flex; align-items: flex-end; gap: 7px; }
+.cli-listing-release-message { display: flex; min-height: 36px; align-items: center; gap: 7px; margin: 0; padding: 8px 14px; border-top: 1px solid #dce6e2; color: #536b64; background: #f7faf9; font-size: 8px; }.cli-listing-release-message.failed { color: #8b3f38; background: #fff2f1; }.cli-listing-release-message.ready { color: #216a58; }
 .cli-runtime-error { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px 16px; border-top: 1px solid #efcfca; color: #913f39; background: #fff3f2; font-size: 8px; }
 .cli-runtime-loading { display: flex; min-height: 52px; align-items: center; justify-content: center; gap: 7px; color: #73817d; font-size: 8px; }
 
@@ -1995,6 +2005,8 @@ a:focus-visible,
   .rotation-settings > div { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .cli-runtime-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cli-runtime-grid article:nth-child(2) { border-right: 0; }.cli-runtime-grid article:nth-child(-n+2) { border-bottom: 1px solid #e3e9e7; }
+  .cli-listing-release-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }.cli-listing-release-summary article:nth-child(2) { border-right: 0; }.cli-listing-release-summary article:nth-child(-n+2) { border-bottom: 1px solid #e0e7e4; }
+  .cli-listing-release-controls { grid-template-columns: 1fr; }.cli-listing-gate-controls { align-items: stretch; flex-wrap: wrap; }
 }
 
 @media (max-width: 720px) {
@@ -2019,6 +2031,9 @@ a:focus-visible,
   .cli-server-runtime-flow article:last-child { border-bottom: 0; }
   .cli-runtime-actions > div { width: 100%; }.cli-runtime-actions .credential-primary { flex: 1; }
   .cli-gateway-smoke-button { width: 100%; }
+  .cli-release-confirmation { grid-template-columns: auto minmax(0, 1fr); }.cli-release-confirmation > div { width: 100%; grid-column: 1 / -1; }.cli-release-confirmation > div button { flex: 1; }
+  .cli-listing-release > header { align-items: flex-start; flex-direction: column; }.cli-listing-release-state { align-self: flex-start; }
+  .cli-listing-gate-controls button { flex: 1 1 150px; }
 }
 
 @media (max-width: 480px) {
@@ -2032,6 +2047,9 @@ a:focus-visible,
   .password-card { padding: 24px 20px; }
   .cli-runtime-grid { grid-template-columns: 1fr; }.cli-runtime-grid article, .cli-runtime-grid article:nth-child(2) { border-right: 0; border-bottom: 1px solid #e3e9e7; }.cli-runtime-grid article:last-child { border-bottom: 0; }
   .cli-runtime-actions > div { align-items: stretch; flex-direction: column; }.cli-runtime-actions select { width: 100%; }.cli-runtime-actions .credential-primary { width: 100%; }
+  .cli-listing-release-summary { grid-template-columns: 1fr; }.cli-listing-release-summary article, .cli-listing-release-summary article:nth-child(2) { border-right: 0; border-bottom: 1px solid #e0e7e4; }.cli-listing-release-summary article:last-child { border-bottom: 0; }
+  .cli-listing-adapter-controls > div { display: grid; grid-template-columns: 1fr; }.cli-listing-gate-controls { flex-direction: column; }.cli-listing-gate-controls button { width: 100%; }
+  .cli-release-confirmation > div { flex-direction: column; }.cli-release-confirmation > div button { width: 100%; }
 }
 
 /* Unified channel connection status and credential settings */

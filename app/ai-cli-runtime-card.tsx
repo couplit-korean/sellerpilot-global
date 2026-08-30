@@ -43,6 +43,77 @@ type RuntimeReleaseState = {
   message: string;
 };
 
+const listingPublicationChannels = [
+  "qoo10",
+  "shopee",
+  "lazada",
+  "coupang",
+  "elevenst",
+  "smartstore",
+  "ebay",
+] as const;
+
+type ListingPublicationChannel = (typeof listingPublicationChannels)[number];
+
+const listingPublicationChannelLabels: Record<ListingPublicationChannel, string> = {
+  qoo10: "Qoo10",
+  shopee: "Shopee",
+  lazada: "Lazada",
+  coupang: "쿠팡",
+  elevenst: "11번가",
+  smartstore: "스마트스토어",
+  ebay: "eBay",
+};
+
+type ListingReleaseGate = {
+  open: boolean;
+  state: "open" | "closed";
+  effectiveOpen: boolean;
+  openedAt: string | null;
+  updatedAt: string;
+  openedRelease: string | null;
+  attestedRelease: string | null;
+  activeRuntimeRelease: string | null;
+  publicationAdaptersReady: number;
+  publicationRecheckerReady: boolean;
+  publicationReleaseConsistent: boolean;
+  runtimeReleaseMatches: boolean;
+  orphanPendingReviews: number;
+  queuedOrRunning: number;
+  reconciliationRequired: number;
+};
+
+type ListingReleasePayload = {
+  ok?: boolean;
+  code?: string;
+  message?: string;
+  readyForOpen?: boolean;
+  runtimeRelease?: {
+    status: "valid" | "unavailable";
+    currentRelease: string | null;
+  };
+  gate?: ListingReleaseGate;
+};
+
+type ListingReleaseState = {
+  status: "checking" | "ready" | "working" | "failed";
+  message: string;
+  currentRelease: string | null;
+  gate: ListingReleaseGate | null;
+  readyForOpen: boolean;
+};
+
+type ListingReleaseAction =
+  | { action: "attest_adapter"; channel: ListingPublicationChannel }
+  | { action: "attest_rechecker" }
+  | { action: "open_gate" }
+  | { action: "close_gate" };
+
+type PendingConfirmation =
+  | { kind: "runtime_activate" }
+  | { kind: "listing_release"; request: ListingReleaseAction }
+  | null;
+
 type ServerAiRuntimeState =
   | "checking"
   | "ready"
@@ -189,6 +260,69 @@ function resolveServerAiRuntimeState(
   return "status_unavailable";
 }
 
+function confirmationCopy(pending: Exclude<PendingConfirmation, null>) {
+  if (pending.kind === "runtime_activate") {
+    return {
+      title: "운영 일정 재검증·재시작 준비",
+      detail: "현재 운영 배포의 무작업 점검 6개를 실행한 뒤 Supabase 운영 일정을 다시 시작합니다. 상품 게시를 자동 실행하지 않습니다.",
+      executeLabel: "재검증·재시작 실행",
+      danger: false,
+    };
+  }
+  if (pending.request.action === "attest_adapter") {
+    return {
+      title: `${listingPublicationChannelLabels[pending.request.channel]} 어댑터 확인 준비`,
+      detail: "서버가 확인한 현재 배포 SHA로 이 어댑터의 원격 상태 계약을 기록합니다. 상품 게시를 자동 실행하지 않습니다.",
+      executeLabel: "어댑터 확인 기록",
+      danger: false,
+    };
+  }
+  if (pending.request.action === "attest_rechecker") {
+    return {
+      title: "게시 결과 재조회기 확인 준비",
+      detail: "서버가 확인한 현재 배포 SHA로 공개 결과 재조회기 계약을 기록합니다. 상품 게시를 자동 실행하지 않습니다.",
+      executeLabel: "재조회기 확인 기록",
+      danger: false,
+    };
+  }
+  if (pending.request.action === "open_gate") {
+    return {
+      title: "7개 채널 게시 게이트 열기 준비",
+      detail: "게이트를 열면 이후 승인된 상품 등록·수정·중지 요청이 외부 채널로 전달될 수 있습니다. 준비 조건을 다시 확인한 뒤 실행하세요.",
+      executeLabel: "게시 게이트 열기 실행",
+      danger: true,
+    };
+  }
+  return {
+    title: "7개 채널 게시 게이트 닫기 준비",
+    detail: "새 상품 등록·수정·중지 요청이 외부 채널로 전달되지 않도록 게시 게이트를 닫습니다.",
+    executeLabel: "게시 게이트 닫기 실행",
+    danger: false,
+  };
+}
+
+function InlineReleaseConfirmation({
+  pending,
+  working,
+  onCancel,
+  onExecute,
+}: {
+  pending: Exclude<PendingConfirmation, null>;
+  working: boolean;
+  onCancel: () => void;
+  onExecute: () => Promise<void>;
+}) {
+  const copy = confirmationCopy(pending);
+  return <div className="cli-release-confirmation" role="alertdialog" aria-label={copy.title}>
+    <AlertTriangle size={16} />
+    <span><b>{copy.title}</b><small>{copy.detail}</small></span>
+    <div>
+      <button type="button" className="credential-secondary" onClick={onCancel} disabled={working}>취소</button>
+      <button type="button" className={`credential-primary${copy.danger ? " danger" : ""}`} onClick={() => void onExecute()} disabled={working}>{working ? <LoaderCircle className="spin" size={13} /> : <CheckCircle2 size={13} />}{working ? "처리 중" : copy.executeLabel}</button>
+    </div>
+  </div>;
+}
+
 export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void }) {
   const [status, setStatus] = useState<WorkerStatus | null>(null);
   const [readiness, setReadiness] = useState<ServerReadiness | null>(null);
@@ -206,6 +340,14 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     status: "idle",
     message: "배포 후 무작업 점검 6개와 Supabase 일정 상태를 함께 확인합니다.",
   });
+  const [listingRelease, setListingRelease] = useState<ListingReleaseState>({
+    status: "checking",
+    message: "현재 배포와 7개 채널 게시 게이트 상태를 확인하고 있습니다.",
+    currentRelease: null,
+    gate: null,
+    readyForOpen: false,
+  });
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation>(null);
 
   const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
     const { data } = await createClient().auth.getSession();
@@ -221,14 +363,16 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   const load = useCallback(async (preserveGatewaySmoke = false) => {
     setLoading(true);
     try {
-      const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
+      const [statusResponse, jobsResponse, readinessResponse, listingReleaseResponse] = await Promise.all([
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
         authenticatedFetch("/api/ai/product-studio"),
+        authenticatedFetch("/api/admin/listing-publication-release"),
       ]);
       const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
       const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
+      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
       if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
       const nextReadiness: ServerReadiness = validReadiness(readinessPayload) ? readinessPayload : {
@@ -246,6 +390,15 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       } else {
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
+      setListingRelease({
+        status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : "failed",
+        message: listingReleasePayload.message ?? (listingReleaseResponse.ok
+          ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
+          : "게시 릴리스 상태를 불러오지 못했습니다."),
+        currentRelease: listingReleasePayload.runtimeRelease?.currentRelease ?? null,
+        gate: listingReleasePayload.gate ?? null,
+        readyForOpen: listingReleasePayload.readyForOpen === true,
+      });
     } catch (loadError) {
       setReadiness({
         available: false,
@@ -253,6 +406,12 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         message: "Vercel 서버 AI 준비 상태를 확인할 수 없습니다.",
         checkedAt: new Date().toISOString(),
       });
+      setListingRelease((current) => ({
+        ...current,
+        status: "failed",
+        message: "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
+        readyForOpen: false,
+      }));
       setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
@@ -317,8 +476,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     }
   };
 
-  const activateRuntimeRelease = async () => {
-    if (!window.confirm("현재 운영 배포를 무작업 점검하고 Supabase 운영 일정 6개를 재시작할까요?")) return;
+  const executeRuntimeReleaseActivation = async () => {
     setRuntimeRelease({ status: "checking", message: "현재 운영 배포를 무작업 점검한 뒤 Supabase 일정을 재시작하고 있습니다." });
     try {
       const response = await authenticatedFetch("/api/admin/serverless-runtime-release", {
@@ -330,12 +488,54 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         ? "운영 일정 재검증과 재시작을 완료했습니다."
         : "운영 일정 재검증을 완료하지 못했습니다.");
       setRuntimeRelease({ status: response.ok ? "passed" : "failed", message });
+      if (response.ok) await load(true);
       notify(message);
     } catch {
       const message = "운영 일정 재검증 요청을 완료하지 못했습니다. 일정 상태를 다시 확인해 주세요.";
       setRuntimeRelease({ status: "failed", message });
       notify(message);
     }
+  };
+
+  const executeListingReleaseAction = async (request: ListingReleaseAction) => {
+    setListingRelease((current) => ({
+      ...current,
+      status: "working",
+      message: "게시 릴리스 상태를 변경하고 결과를 다시 확인하고 있습니다.",
+    }));
+    try {
+      const response = await authenticatedFetch("/api/admin/listing-publication-release", {
+        method: "POST",
+        body: JSON.stringify(request),
+      });
+      const payload = await response.json().catch(() => ({ message: "게시 릴리스 변경 응답을 읽지 못했습니다." })) as ListingReleasePayload;
+      const message = payload.message ?? (response.ok
+        ? "게시 릴리스 상태를 변경했습니다."
+        : "게시 릴리스 상태를 변경하지 못했습니다.");
+      setListingRelease((current) => ({
+        status: response.ok && payload.gate ? "ready" : "failed",
+        message,
+        currentRelease: payload.runtimeRelease?.currentRelease ?? current.currentRelease,
+        gate: payload.gate ?? current.gate,
+        readyForOpen: payload.readyForOpen === true,
+      }));
+      notify(message);
+    } catch {
+      const message = "게시 릴리스 관리 요청을 완료하지 못했습니다. 현재 상태를 다시 확인해 주세요.";
+      setListingRelease((current) => ({ ...current, status: "failed", message, readyForOpen: false }));
+      notify(message);
+    }
+  };
+
+  const executePendingConfirmation = async () => {
+    const pending = pendingConfirmation;
+    if (!pending) return;
+    setPendingConfirmation(null);
+    if (pending.kind === "runtime_activate") {
+      await executeRuntimeReleaseActivation();
+      return;
+    }
+    await executeListingReleaseAction(pending.request);
   };
 
   const recoverProduct = async (job: AiJob) => {
@@ -374,6 +574,18 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     : gatewaySmoke.status === "failed"
       ? "AI Gateway 확인 필요"
       : runtimeGuidance.statusLabel;
+  const listingGate = listingRelease.gate;
+  const listingReleaseBusy = listingRelease.status === "working";
+  const exactPublicationReleaseReady = Boolean(
+    listingRelease.currentRelease
+      && listingGate?.publicationReleaseConsistent
+      && listingGate.attestedRelease === listingRelease.currentRelease,
+  );
+  const exactRuntimeReleaseReady = Boolean(
+    listingRelease.currentRelease
+      && listingGate?.runtimeReleaseMatches
+      && listingGate.activeRuntimeRelease === listingRelease.currentRelease,
+  );
 
   return <section className="cli-runtime-card">
     <header>
@@ -397,8 +609,47 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     <div className="cli-runtime-actions cli-server-runtime-notice" role="status" aria-live="polite">
       <aside>{gatewayVerified ? <ShieldCheck size={15} /> : <AlertTriangle size={15} />}<span><b>{gatewaySmoke.status === "idle" ? runtimeGuidance.recoveryTitle : gatewaySmoke.message}</b><small>{gatewaySmoke.checkedAt ? `실제 호출 점검 ${formatDate(gatewaySmoke.checkedAt)}` : runtimeGuidance.recoveryDetail}</small></span></aside>
       <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void verifyGateway()} disabled={!serverConfigured || gatewaySmoke.status === "checking"}>{gatewaySmoke.status === "checking" ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{gatewaySmoke.status === "checking" ? "실제 호출 확인 중" : "AI Gateway 실제 호출 점검"}</button>
-      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => void activateRuntimeRelease()} disabled={runtimeRelease.status === "checking"} title={runtimeRelease.message}>{runtimeRelease.status === "checking" ? <LoaderCircle className="spin" size={13} /> : runtimeRelease.status === "passed" ? <CheckCircle2 size={13} /> : <RefreshCw size={13} />}{runtimeRelease.status === "checking" ? "운영 일정 재검증 중" : "운영 일정 재검증·재시작"}</button>
+      <button type="button" className="credential-secondary cli-gateway-smoke-button" onClick={() => setPendingConfirmation({ kind: "runtime_activate" })} disabled={runtimeRelease.status === "checking" || listingReleaseBusy} title={runtimeRelease.message}>{runtimeRelease.status === "checking" ? <LoaderCircle className="spin" size={13} /> : runtimeRelease.status === "passed" ? <CheckCircle2 size={13} /> : <RefreshCw size={13} />}{runtimeRelease.status === "checking" ? "운영 일정 재검증 중" : "운영 일정 재검증·재시작"}</button>
     </div>
+
+    {pendingConfirmation?.kind === "runtime_activate" && <InlineReleaseConfirmation pending={pendingConfirmation} working={runtimeRelease.status === "checking"} onCancel={() => setPendingConfirmation(null)} onExecute={executePendingConfirmation} />}
+
+    <section className="cli-listing-release" aria-labelledby="listing-release-heading">
+      <header>
+        <div><ShieldCheck size={17} /><span><small>EXACT-SHA PUBLICATION CONTROL</small><h4 id="listing-release-heading">7개 채널 게시 릴리스 게이트</h4><p>서버가 확인한 현재 배포 SHA로만 어댑터와 재조회기를 기록합니다. 이 화면에서 SHA를 입력하거나 자동 게시하지 않습니다.</p></span></div>
+        <span className={`cli-listing-release-state ${listingGate?.effectiveOpen ? "open" : "closed"}`}><i />{listingGate?.effectiveOpen ? "외부 게시 허용" : listingGate?.open ? "조건 불일치 · 차단" : "외부 게시 차단"}</span>
+      </header>
+
+      <div className="cli-listing-release-summary">
+        <article><small>현재 서버 배포 SHA</small><code title={listingRelease.currentRelease ?? undefined}>{listingRelease.currentRelease ?? "확인 불가"}</code><em>{listingRelease.currentRelease ? "브라우저 입력 없이 서버에서 확인" : "attestation·게이트 열기 차단"}</em></article>
+        <article><small>7개 게시 어댑터</small><b>{listingGate?.publicationAdaptersReady ?? 0} / {listingPublicationChannels.length}</b><em className={exactPublicationReleaseReady ? "ok" : "waiting"}>{exactPublicationReleaseReady ? "현재 SHA 일치" : "현재 SHA 확인 필요"}</em></article>
+        <article><small>게시 결과 재조회기</small><b>{listingGate?.publicationRecheckerReady ? "확인됨" : "확인 필요"}</b><em className={listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "ok" : "waiting"}>{listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "현재 SHA 일치" : "재조회 계약 확인 필요"}</em></article>
+        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "재검증 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
+      </div>
+
+      <div className="cli-listing-release-blockers">
+        <span className={(listingGate?.queuedOrRunning ?? 0) === 0 ? "ok" : "blocked"}>게시 작업 {listingGate?.queuedOrRunning ?? 0}건</span>
+        <span className={(listingGate?.reconciliationRequired ?? 0) === 0 ? "ok" : "blocked"}>조정 필요 {listingGate?.reconciliationRequired ?? 0}건</span>
+        <span className={(listingGate?.orphanPendingReviews ?? 0) === 0 ? "ok" : "blocked"}>고아 심사대기 {listingGate?.orphanPendingReviews ?? 0}건</span>
+        <span className={listingRelease.readyForOpen ? "ok" : "blocked"}>{listingRelease.readyForOpen ? "게이트 개방 조건 충족" : "게이트 개방 조건 미충족"}</span>
+      </div>
+
+      <div className="cli-listing-release-controls">
+        <div className="cli-listing-adapter-controls">
+          <b>어댑터별 현재 SHA 확인</b>
+          <small>각 채널의 원격 상태 계약을 검증한 뒤 해당 버튼을 두 단계로 실행하세요.</small>
+          <div>{listingPublicationChannels.map((channel) => <button key={channel} type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "attest_adapter", channel } })} disabled={!listingRelease.currentRelease || listingReleaseBusy}>{listingPublicationChannelLabels[channel]} 확인 기록</button>)}</div>
+        </div>
+        <div className="cli-listing-gate-controls">
+          <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "attest_rechecker" } })} disabled={!listingRelease.currentRelease || listingReleaseBusy}>재조회기 확인 기록</button>
+          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_gate" } })} disabled={!listingRelease.readyForOpen || listingReleaseBusy || listingGate?.effectiveOpen === true}>게시 게이트 열기</button>
+          <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "close_gate" } })} disabled={listingReleaseBusy}>게시 게이트 닫기</button>
+        </div>
+      </div>
+
+      {pendingConfirmation?.kind === "listing_release" && <InlineReleaseConfirmation pending={pendingConfirmation} working={listingReleaseBusy} onCancel={() => setPendingConfirmation(null)} onExecute={executePendingConfirmation} />}
+      <p className={`cli-listing-release-message ${listingRelease.status}`} role="status" aria-live="polite">{listingRelease.status === "checking" || listingRelease.status === "working" ? <LoaderCircle className="spin" size={13} /> : listingRelease.status === "failed" ? <AlertTriangle size={13} /> : <CheckCircle2 size={13} />}{listingRelease.message}</p>
+    </section>
 
     <div className="cli-job-history">
       <div className="cli-job-history-heading"><span><History size={15} /><b>최근 AI 작업</b></span><small>요청 이미지·시도 횟수·결과 상태를 운영 화면에서 관리합니다.</small></div>

@@ -1,0 +1,68 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const routeUrl = new URL("../app/api/admin/listing-publication-release/route.ts", import.meta.url);
+const runtimeCardUrl = new URL("../app/ai-cli-runtime-card.tsx", import.meta.url);
+const operationsCssUrl = new URL("../app/operations-system.css", import.meta.url);
+
+test("listing publication release admin route derives the exact SHA server-side", async () => {
+  const route = await readFile(routeUrl, "utf8");
+
+  assert.match(route, /export async function GET\(request: Request\)/);
+  assert.match(route, /export async function POST\(request: Request\)/);
+  assert.equal((route.match(/authenticateAdminRequest\(request/g) ?? []).length, 2);
+  assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
+  assert.match(route, /z\.discriminatedUnion\("action"/);
+  assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 4);
+  assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay"/s);
+  assert.match(route, /p_release_sha: identity\.status === "valid" \? identity\.release : null/);
+  assert.doesNotMatch(route, /parsed\.data\.(?:release|releaseSha|sha)/);
+  assert.doesNotMatch(route, /process\.env/);
+  assert.match(route, /status: "unavailable" as const, currentRelease: null/);
+  assert.match(route, /code: "runtime_release_unavailable"/);
+  assert.match(route, /headers: noStoreHeaders/);
+});
+
+test("listing publication release actions call only the fenced service RPCs", async () => {
+  const route = await readFile(routeUrl, "utf8");
+
+  assert.match(route, /sellerpilot_service_listing_mutation_release_gate_status/);
+  assert.match(route, /sellerpilot_service_set_listing_publication_adapter_ready/);
+  assert.match(route, /p_channel: parsed\.data\.channel,\s*p_ready: true,/s);
+  assert.match(route, /sellerpilot_service_set_listing_publication_rechecker_ready/);
+  assert.match(route, /sellerpilot_service_set_listing_mutation_release_gate/);
+  assert.match(route, /parsed\.data\.action !== "close_gate" && identity\.status !== "valid"/);
+  assert.match(route, /p_open: parsed\.data\.action === "open_gate"/);
+  assert.match(route, /p_release_sha: parsed\.data\.action === "open_gate" && identity\.status === "valid"[\s\S]*?: null/);
+  assert.match(route, /listing_release_gate_preconditions_unmet/);
+  assert.match(route, /같은 작업을 반복하지 말고 현재 상태를 먼저 확인해 주세요/);
+  assert.doesNotMatch(route, /error\.message|error\.details|error\.hint/);
+});
+
+test("channel connection UI uses inline two-step confirmations for release writes", async () => {
+  const runtimeCard = await readFile(runtimeCardUrl, "utf8");
+
+  assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release"\)/);
+  assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release", \{\s*method: "POST"/s);
+  assert.match(runtimeCard, /role="alertdialog" aria-label=\{copy\.title\}/);
+  assert.match(runtimeCard, />취소<\/button>/);
+  assert.match(runtimeCard, /executePendingConfirmation/);
+  assert.match(runtimeCard, /setPendingConfirmation\(\{ kind: "runtime_activate" \}\)/);
+  assert.doesNotMatch(runtimeCard, /window\.confirm\("현재 운영 배포/);
+  assert.match(runtimeCard, /상품 게시를 자동 실행하지 않습니다/);
+  assert.match(runtimeCard, /disabled=\{!listingRelease\.readyForOpen \|\| listingReleaseBusy/);
+  assert.match(runtimeCard, /게시 게이트 닫기/);
+  for (const label of ["Qoo10", "Shopee", "Lazada", "쿠팡", "11번가", "스마트스토어", "eBay"]) {
+    assert.match(runtimeCard, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*확인 기록`, "s"));
+  }
+});
+
+test("listing release controls remain usable without horizontal overflow on narrow screens", async () => {
+  const css = await readFile(operationsCssUrl, "utf8");
+
+  assert.match(css, /\.cli-listing-release-summary code \{[^}]*overflow-wrap: anywhere/);
+  assert.match(css, /@media \(max-width: 720px\)[\s\S]*?\.cli-release-confirmation \{ grid-template-columns: auto minmax\(0, 1fr\)/);
+  assert.match(css, /@media \(max-width: 480px\)[\s\S]*?\.cli-listing-release-summary \{ grid-template-columns: 1fr/);
+  assert.match(css, /\.cli-listing-adapter-controls > div \{ display: grid; grid-template-columns: 1fr/);
+});
