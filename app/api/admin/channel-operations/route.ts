@@ -30,6 +30,7 @@ import {
 import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 import {
   elevenstListingUpdateProjectionDigestInput,
+  bindQoo10RollbackUpdateRecoveryArguments,
   listingUpdateRemoteIdentity,
   listingUpdateServerCandidate,
   qoo10RollbackListingUpdateCandidate,
@@ -608,10 +609,13 @@ export async function POST(request: NextRequest) {
   let effectiveArguments = structuredClone(parsed.data.arguments);
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
-    effectiveArguments[qoo10RollbackUpdateRecoveryArgument] = {
-      ...boundQoo10RollbackUpdateRecovery,
-      contract: qoo10RollbackUpdateRecoveryContract,
-    };
+    effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
+      effectiveArguments,
+      {
+        ...boundQoo10RollbackUpdateRecovery,
+        contract: qoo10RollbackUpdateRecoveryContract,
+      },
+    );
   }
   if (channel === "ebay" && operation === "listing.update") {
     if (!boundEbayListingIdentity) {

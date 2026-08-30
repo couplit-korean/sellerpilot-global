@@ -416,6 +416,37 @@ export function qoo10RollbackUpdateRecoveryBinding(
   return value as Qoo10RollbackUpdateRecoveryBinding;
 }
 
+/**
+ * Replaces every request-provided Qoo10 rollback capability and ShippingNo with
+ * the exact identity returned by the server-only recovery RPC. Qoo10 returns
+ * the effective delivery-group number from GetItemDetailInfo, which can differ
+ * from the create request's `0` free-shipping selector. The authoritative
+ * readback value must therefore drive UpdateGoods, the request fingerprint,
+ * gateway enqueue, and the strict S1/S2 readback expectation as one unit.
+ */
+export function bindQoo10RollbackUpdateRecoveryArguments(
+  argumentsValue: Record<string, unknown>,
+  binding: Qoo10RollbackUpdateRecoveryBinding,
+) {
+  const validated = qoo10RollbackUpdateRecoveryBinding({
+    [qoo10RollbackUpdateRecoveryArgument]: binding,
+  });
+  if (!validated) throw new Error("QOO10_ROLLBACK_RECOVERY_BINDING_INVALID");
+
+  const next = structuredClone(argumentsValue);
+  const paramsValue = next.params;
+  if (!paramsValue || typeof paramsValue !== "object" || Array.isArray(paramsValue)) {
+    throw new Error("QOO10_ROLLBACK_RECOVERY_PARAMS_REQUIRED");
+  }
+  const params = paramsValue as Record<string, unknown>;
+  next[qoo10RollbackUpdateRecoveryArgument] = structuredClone(validated);
+  next.params = {
+    ...params,
+    ShippingNo: validated.expectedState.shippingNo,
+  };
+  return next;
+}
+
 function definedEntries(source: Record<string, unknown>, keys: readonly string[]) {
   return Object.fromEntries(keys.flatMap((key) => Object.hasOwn(source, key) && source[key] !== undefined
     ? [[key, structuredClone(source[key])]]

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
 import { activeChannelKeys, type ActiveChannelKey } from "../../../../../../lib/channels/catalog";
 import {
+  bindQoo10RollbackUpdateRecoveryArguments,
   centralProductEditFieldSupport,
   channelProductEditFieldSupport,
   listingUpdateServerCandidate,
@@ -14,6 +15,7 @@ import {
   qoo10RollbackListingUpdateCandidate,
   remoteProductEditIdempotencyKey,
   type ListingUpdateReference,
+  type Qoo10RollbackUpdateRecoveryBinding,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
@@ -224,6 +226,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const reference = listingReference(listing);
+  let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   if (qoo10RollbackListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
       "sellerpilot_service_get_qoo10_rollback_update_identity",
@@ -247,6 +250,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
         message: "Qoo10 판매중지 롤백과 원격 상품 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    boundQoo10RollbackUpdateRecovery = identity.data;
   }
   let verifiedLegacyEbayUpdate = false;
   if (legacyEbayListingUpdateCandidate(listing.channel, reference)) {
@@ -287,6 +291,12 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     argumentsValue = prepareListingUpdateArguments(listing.channel, body.data.arguments, listingReference(listing));
     if (listingUpdateRemoteIdentity(listing.channel, argumentsValue) !== listingReference(listing).remoteId) {
       throw new Error("LISTING_UPDATE_IDENTITY_MISMATCH");
+    }
+    if (boundQoo10RollbackUpdateRecovery) {
+      argumentsValue = bindQoo10RollbackUpdateRecoveryArguments(
+        argumentsValue,
+        boundQoo10RollbackUpdateRecovery,
+      );
     }
   } catch {
     return NextResponse.json({

@@ -186,7 +186,11 @@ create or replace function extensions.digest(value text, algorithm text)
 returns bytea
 language sql
 immutable
-as $$ select convert_to(md5(value || algorithm), 'UTF8') $$;
+as $$
+  select case when lower(algorithm) = 'sha256'
+    then sha256(convert_to(value, 'UTF8'))
+    else convert_to(md5(value || algorithm), 'UTF8') end
+$$;
 `;
 
 function withoutUnavailableExtensions(sql) {

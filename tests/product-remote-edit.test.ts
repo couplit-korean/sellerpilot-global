@@ -356,12 +356,19 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   const qooCandidateCheck = source.indexOf("qoo10RollbackListingUpdateCandidate(listing.channel, reference)");
   const qooIdentityRpc = source.indexOf('"sellerpilot_service_get_qoo10_rollback_update_identity"');
   const prepareUpdate = source.indexOf("prepareListingUpdateArguments(listing.channel");
+  const authoritativeShippingNoBinding = source.indexOf(
+    "argumentsValue = bindQoo10RollbackUpdateRecoveryArguments(",
+  );
+  const operationRequest = source.indexOf("const operationRequest = {");
   assert.ok(qooCandidateCheck >= 0);
   assert.ok(qooIdentityRpc > qooCandidateCheck);
   assert.ok(prepareUpdate > qooIdentityRpc, "Qoo10 rollback identity must be confirmed before update preparation");
+  assert.ok(authoritativeShippingNoBinding > prepareUpdate, "the remote-edit proxy must replace client ShippingNo after normalization");
+  assert.ok(operationRequest > authoritativeShippingNoBinding, "only the server-bound remote ShippingNo may reach the channel operation route");
   assert.match(source, /qoo10_create_rollback_confirmation_v1/);
   assert.match(source, /identity\.data\.listingId !== listing\.id/);
   assert.match(source, /identity\.data\.remoteId !== reference\.remoteId/);
+  assert.match(source, /boundQoo10RollbackUpdateRecovery = identity\.data/);
   assert.match(source, /mode: "qoo10_rollback_identity_required"/);
   const legacyCandidateCheck = source.indexOf("legacyEbayListingUpdateCandidate(listing.channel, reference)");
   const immutableIdentityRpc = source.indexOf('"sellerpilot_service_get_ebay_listing_update_identity"');

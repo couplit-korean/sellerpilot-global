@@ -547,6 +547,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830205000_restore_verified_listing_intent_after_effective_gate.sql",
       "20260830212500_retry_failed_pre_gateway_listing_attempts.sql",
       "20260830222257_confirm_qoo10_listing_create_rollback.sql",
+      "20260831010000_resolve_exact_qoo10_origin_type_rejection.sql",
     ]);
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -15503,17 +15504,22 @@ test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and relea
         biContentsNo,
       },
     };
-    const recoveryPayload = (fingerprint) => ({
-      arguments: {
-        ...requestPayload.arguments,
-        params: {
-          ...requestPayload.arguments.params,
-          ItemCode: remoteId,
+    const recoveryPayload = (fingerprint, shippingNo = "0") => {
+      const binding = structuredClone(recoveryBinding);
+      binding.expectedState.shippingNo = shippingNo;
+      return {
+        arguments: {
+          ...requestPayload.arguments,
+          params: {
+            ...requestPayload.arguments.params,
+            ItemCode: remoteId,
+            ShippingNo: shippingNo,
+          },
+          publicationExpectedFingerprint: fingerprint,
+          sellerpilotQoo10RollbackUpdateRecovery: binding,
         },
-        publicationExpectedFingerprint: fingerprint,
-        sellerpilotQoo10RollbackUpdateRecovery: recoveryBinding,
-      },
-    });
+      };
+    };
 
     // The route preflight may succeed and then lose a race to a stop/update
     // before enqueue. The DB transaction must recheck the source-attempt
@@ -15747,7 +15753,10 @@ test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and relea
           name: "UpdateGoods",
           ok: false,
           status: 200,
-          data: { ResultCode: -99, ResultMsg: "EXPLICIT_REJECTION" },
+          data: {
+            ResultCode: -99,
+            ResultMsg: "ProductionPlaceTypeは必須です。",
+          },
         },
         {
           name: "qoo10-rollback-update-rejection-s1-readback",
@@ -15923,6 +15932,45 @@ test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and relea
       1,
     );
 
+    await db.query(
+      `insert into
+         sellerpilot_private.qoo10_listing_update_rejection_observations (
+           update_job_id,update_attempt_id,source_job_id,source_attempt_id,
+           listing_id,credential_id,remote_id,response_sha256,
+           provider_rejection_code,provider_rejection_reason,provider_status,
+           observed_origin_type,observed_origin,observed_retail_price_jpy,
+           observed_sell_price_jpy,observed_quantity,source_shipping_no,
+           observed_shipping_no,observed_detail_image_count,
+           provider_mutation_accepted,observed_at
+         )
+       select job.id,job.attempt_id,$2,$3,$4,$5,$6,
+              encode(extensions.digest(job.response_payload::text,'sha256'),'hex'),
+              '-99','ProductionPlaceType_required','S1','2','CN',1871,1871,1,
+              '0','806971',8,false,job.completed_at
+         from sellerpilot_private.channel_gateway_jobs job
+        where job.id=$1`,
+      [
+        updateClaim.id,
+        sourceJobId,
+        attemptId,
+        listingId,
+        credentialId,
+        remoteId,
+      ],
+    );
+    const observedRecoveryBinding = structuredClone(recoveryBinding);
+    observedRecoveryBinding.expectedState.shippingNo = "806971";
+    await db.exec("set role service_role");
+    try {
+      assert.deepEqual(
+        await lookupIdentity(),
+        observedRecoveryBinding,
+        "the service-role identity RPC must consume the private observed delivery group",
+      );
+    } finally {
+      await db.exec("reset role");
+    }
+
     await setClaims(db);
     const retryAttempt = await scalar(
       db,
@@ -15942,7 +15990,7 @@ test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and relea
         listingId,
         credentialId,
         retryAttempt.attempt_id,
-        JSON.stringify(recoveryPayload("3".repeat(64))),
+        JSON.stringify(recoveryPayload("3".repeat(64), "806971")),
       ],
     );
     assert.equal(retryEnqueue.status, "queued");
@@ -15960,6 +16008,79 @@ test("Qoo10 create rollback confirmation is exact, atomic, idempotent, and relea
         { operation: "listing.update", count: 2 },
       ],
       "a proven explicit rejection may enqueue another update but never a second create",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select request_payload#>>
+                  '{arguments,sellerpilotQoo10RollbackUpdateRecovery,expectedState,shippingNo}'
+           from sellerpilot_private.channel_gateway_jobs where id=$1`,
+        [retryEnqueue.job_id],
+      ),
+      "806971",
+    );
+
+    const secondUpdateClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'test/qoo10-observed-shipping-proof')",
+      [retryWorkerTokenHash],
+    );
+    assert.equal(secondUpdateClaim.id, retryEnqueue.job_id);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [
+          retryWorkerTokenHash,
+          secondUpdateClaim.id,
+          secondUpdateClaim.claim_token,
+        ],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_complete_channel_gateway_job(
+          $1,$2,$3,'succeeded',$4::jsonb,null
+        )`,
+        [
+          retryWorkerTokenHash,
+          secondUpdateClaim.id,
+          secondUpdateClaim.claim_token,
+          JSON.stringify(explicitRejectionResponse),
+        ],
+      ),
+      true,
+      "completion must validate the observed 806971 recovery state through the real retry helper",
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select status,failure_class,remote_visibility,provider_status,
+                operation_attempt_id::text,last_error
+           from sellerpilot_private.product_listings where id=$1`,
+        [listingId],
+      )).rows,
+      [{
+        status: "paused",
+        failure_class: "retryable",
+        remote_visibility: "non_public",
+        provider_status: "S1",
+        operation_attempt_id: attemptId,
+        last_error:
+          "Qoo10 원격 상품 비공개(S1) 롤백 확인 완료 · listing.update 재시도 필요",
+      }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.operation_audit
+          where action='qoo10_rollback_update_rejected_retry_preserved'
+            and entity_id=$1`,
+        [listingId],
+      ),
+      2,
     );
   } finally {
     await db.close();

@@ -115,17 +115,17 @@ test("Qoo10 rollback UPDATE independently confirms the S1 create rollback before
 test("Qoo10 recovery capability is server-bound, survives normalization, and preserves the S1 ledger on pre-gateway retry", async () => {
   const route = await readFile(routeUrl, "utf8");
   const clientMarkerDelete = route.indexOf("delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument]");
-  const boundMarkerInsert = route.indexOf(
-    "effectiveArguments[qoo10RollbackUpdateRecoveryArgument] = {",
+  const authoritativeRecoveryBinding = route.indexOf(
+    "effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(",
   );
   const fingerprintIndex = route.indexOf('const requestFingerprint = createHash("sha256")');
   const imagePreparationIndex = route.indexOf("await prepareMarketplaceImages(serviceClient, channel, effectiveArguments");
 
   assert.ok(clientMarkerDelete >= 0, "the route must strip every browser-supplied recovery marker");
-  assert.ok(boundMarkerInsert > clientMarkerDelete, "only the independently bound RPC result may recreate the marker");
-  assert.ok(fingerprintIndex > boundMarkerInsert, "the server capability must be included in the claimed request fingerprint");
+  assert.ok(authoritativeRecoveryBinding > clientMarkerDelete, "only the independently bound RPC result may recreate the marker and ShippingNo");
+  assert.ok(fingerprintIndex > authoritativeRecoveryBinding, "the server capability and remote ShippingNo must be included in the claimed request fingerprint");
   assert.ok(imagePreparationIndex > fingerprintIndex, "the exact server capability must reach image preparation and gateway enqueue");
-  assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) \{[\s\S]*contract: qoo10RollbackUpdateRecoveryContract/);
+  assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) \{[\s\S]*bindQoo10RollbackUpdateRecoveryArguments\([\s\S]*contract: qoo10RollbackUpdateRecoveryContract/);
   assert.match(route, /effectiveArguments = \{[\s\S]*\.\.\.effectiveArguments,[\s\S]*\.\.\.boundEbayListingIdentity/);
   assert.doesNotMatch(route, /\.\.\.structuredClone\(parsed\.data\.arguments\),[\s\S]{0,120}\.\.\.boundEbayListingIdentity/);
   assert.match(route, /if \(!\(boundQoo10RollbackUpdateRecovery && preGatewayRetryable\)\) \{[\s\S]*await completeListing\(\{ success: false/);

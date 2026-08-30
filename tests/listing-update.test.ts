@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  bindQoo10RollbackUpdateRecoveryArguments,
   channelProductEditFieldSupport,
   listingCoreContentForOperation,
   listingUpdateMutablePaths,
@@ -10,6 +11,8 @@ import {
   mergeCoupangListingUpdateBody,
   prepareListingUpdateArguments,
   qoo10RollbackListingUpdateCandidate,
+  qoo10RollbackUpdateRecoveryArgument,
+  qoo10RollbackUpdateRecoveryContract,
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
@@ -173,6 +176,63 @@ test("Qoo10 rollback updates preserve required carrier fields but keep the exist
   assert.equal((publishedArguments.params as Record<string, unknown>).ShippingNo, params.ShippingNo);
   assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateType, params.AvailableDateType);
   assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateValue, params.AvailableDateValue);
+});
+
+test("Qoo10 rollback recovery replaces client shipping with the authoritative remote ShippingNo", () => {
+  const authoritativeBinding = {
+    status: "allowed" as const,
+    contract: qoo10RollbackUpdateRecoveryContract,
+    listingId: "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc",
+    remoteId: "1217336970",
+    providerStatus: "S1" as const,
+    sourceJobId: "0bc5ff1f-c884-4615-8a79-4688da46af6a",
+    expectedState: {
+      categoryCode: "320000542",
+      retailPriceJpy: 1871,
+      sellPriceJpy: 1871,
+      quantity: 1,
+      shippingNo: "806971",
+      biContentsNo: 123456,
+    },
+  };
+  const untrustedClientArguments = {
+    [qoo10RollbackUpdateRecoveryArgument]: {
+      ...authoritativeBinding,
+      expectedState: { ...authoritativeBinding.expectedState, shippingNo: "0" },
+    },
+    params: {
+      ItemCode: "1217336970",
+      ItemTitle: "更新商品",
+      ShippingNo: "0",
+    },
+  };
+
+  const bound = bindQoo10RollbackUpdateRecoveryArguments(
+    untrustedClientArguments,
+    authoritativeBinding,
+  );
+  assert.equal((bound.params as Record<string, unknown>).ShippingNo, "806971");
+  assert.deepEqual(bound[qoo10RollbackUpdateRecoveryArgument], authoritativeBinding);
+  assert.equal(untrustedClientArguments.params.ShippingNo, "0", "server binding must not mutate the parsed request");
+  assert.equal(
+    untrustedClientArguments[qoo10RollbackUpdateRecoveryArgument].expectedState.shippingNo,
+    "0",
+    "the request-provided marker must remain untrusted and unused",
+  );
+  assert.throws(
+    () => bindQoo10RollbackUpdateRecoveryArguments({}, authoritativeBinding),
+    /QOO10_ROLLBACK_RECOVERY_PARAMS_REQUIRED/,
+  );
+  assert.throws(
+    () => bindQoo10RollbackUpdateRecoveryArguments(
+      { params: { ShippingNo: "0" } },
+      {
+        ...authoritativeBinding,
+        expectedState: { ...authoritativeBinding.expectedState, shippingNo: "not-a-number" },
+      },
+    ),
+    /QOO10_ROLLBACK_RECOVERY_BINDING_INVALID/,
+  );
 });
 
 test("published updates preserve the reviewed channel-language title and description", () => {
