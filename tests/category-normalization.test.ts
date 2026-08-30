@@ -172,6 +172,32 @@ test("Shopee GlobalProduct normalization maps soap instead of an unrelated beaut
   assert.equal(normalizeSuggestions("shopee", shopeeGlobalResponse, "Natural cleansing soap bar")[0]?.id, "100629");
 });
 
+test("Shopee provider hierarchy preserves the exact 100479 leaf path instead of a flat guessed label", () => {
+  const response = {
+    ok: true,
+    steps: [{
+      name: "global-categories",
+      ok: true,
+      status: 200,
+      data: { response: { category_list: [
+        { category_id: 100013, parent_category_id: 0, display_category_name: "Mobile & Gadgets", has_children: true },
+        { category_id: 100075, parent_category_id: 100013, display_category_name: "Accessories", has_children: true },
+        { category_id: 100284, parent_category_id: 100075, display_category_name: "Cables, Chargers & Converters", has_children: true },
+        { category_id: 100479, parent_category_id: 100284, display_category_name: "Cable Cases, Protectors, & Winders", has_children: false },
+      ] } },
+    }],
+  };
+  const suggestion = normalizeSuggestions("shopee", response, "adhesive cable clips cord organizers")[0];
+  assert.equal(suggestion?.id, "100479");
+  assert.deepEqual(suggestion?.path, [
+    "Mobile & Gadgets",
+    "Accessories",
+    "Cables, Chargers & Converters",
+    "Cable Cases, Protectors, & Winders",
+  ]);
+  assert.equal(suggestion?.leaf, true);
+});
+
 test("Shopee beauty-tool normalization keeps sponges separate from brushes", () => {
   const response = {
     ok: true,

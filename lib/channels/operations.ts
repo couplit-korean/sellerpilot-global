@@ -63,6 +63,7 @@ import {
   readShopeeListingPublicationState,
   type ShopeePublicationReadbackVerification,
 } from "./provider-shopee-publication-readback";
+import { shopeeExactGlobalCategoryPath } from "./shopee-category-tree";
 import {
   lazadaListingArgumentsForPublicationIntent,
   lazadaListingArgumentsForRemoteItem,
@@ -2172,7 +2173,7 @@ async function executeShopee(input: ExecuteInput) {
     });
     return result(input, [step("global-categories", remote)]);
   }
-  if (globalProduct && (input.operation === "categories.attributes" || input.operation === "categories.validate")) {
+  if (globalProduct && input.operation === "categories.attributes") {
     const categoryId = stringArgument(input.arguments, "categoryId");
     const query = queryParams(input.arguments);
     query.delete("category_id");
@@ -2185,6 +2186,48 @@ async function executeShopee(input: ExecuteInput) {
       query,
     });
     return result(input, [step("global-category-attribute-tree", remote)], categoryId);
+  }
+  if (globalProduct && input.operation === "categories.validate") {
+    const categoryId = stringArgument(input.arguments, "categoryId");
+    const categoryQuery = queryParams(input.arguments);
+    categoryQuery.delete("category_id");
+    categoryQuery.delete("category_id_list");
+    if (!categoryQuery.has("language")) categoryQuery.set("language", "en");
+    const attributeQuery = new URLSearchParams(categoryQuery);
+    attributeQuery.set("category_id_list", categoryId);
+    const [categoryRemote, attributeRemote] = await Promise.all([
+      shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/global_product/get_category",
+        query: categoryQuery,
+      }),
+      shopeeMerchantRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/global_product/get_attribute_tree",
+        query: attributeQuery,
+      }),
+    ]);
+    const exactPath = shopeeExactGlobalCategoryPath(categoryRemote.data, categoryId);
+    const categoryStep = step("global-category-exact-leaf", categoryRemote);
+    categoryStep.ok = categoryStep.ok && Boolean(exactPath);
+    categoryStep.data = {
+      ...categoryStep.data,
+      sellerpilotVerification: categoryStep.ok
+        ? "SHOPEE_EXACT_GLOBAL_LEAF_CATEGORY_VERIFIED"
+        : "SHOPEE_EXACT_GLOBAL_LEAF_CATEGORY_UNVERIFIED",
+      categoryId,
+      categoryPathIds: exactPath?.ids ?? [],
+      categoryPath: exactPath?.names ?? [],
+      exactLeafMatchCount: exactPath ? 1 : 0,
+    };
+    return result(input, [
+      categoryStep,
+      step("global-category-attribute-tree", attributeRemote),
+    ], categoryId);
   }
   if (globalProduct && input.operation === "listing.create") {
     let globalItemId = stringArgument(input.arguments, "globalItemId", false);

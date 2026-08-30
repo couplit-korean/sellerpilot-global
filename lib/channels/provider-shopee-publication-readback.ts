@@ -11,6 +11,10 @@ import {
   type RemoteResponse,
   type SecretPayload,
 } from "./protocols";
+import {
+  shopeeSgListingCreateRequested,
+  verifyShopeeSgListingCreateReadback,
+} from "./shopee-sg-listing-create";
 
 type ListingMutationOperation = "listing.create" | "listing.update" | "listing.stop";
 type UnknownRecord = Record<string, unknown>;
@@ -39,6 +43,14 @@ function exactText(value: unknown) {
   if (typeof value === "string" && value.trim()) return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
   return "";
+}
+
+function shopeeProviderReadSucceeded(remote: RemoteResponse) {
+  const providerError = remote.data.error;
+  const providerErrorAbsent = providerError === undefined
+    || providerError === null
+    || (typeof providerError === "string" && !providerError.trim());
+  return remote.response.ok && providerErrorAbsent;
 }
 
 function uniqueTexts(value: unknown) {
@@ -255,7 +267,10 @@ export async function readShopeeListingPublicationState(input: {
   expectedLocale: string;
   expectedFingerprint: string;
   expectedImageCount: number;
-}): Promise<ShopeePublicationReadbackVerification & { remote: RemoteResponse }> {
+}): Promise<ShopeePublicationReadbackVerification & {
+  remote: RemoteResponse;
+  localTransportVerified: boolean;
+}> {
   const remote = await shopeeRequest({
     payload: input.payload,
     environment: input.environment,
@@ -263,12 +278,14 @@ export async function readShopeeListingPublicationState(input: {
     path: "/api/v2/product/get_item_base_info",
     query: new URLSearchParams({ item_id_list: input.remoteId }),
   });
+  const localTransportVerified = shopeeProviderReadSucceeded(remote);
   return {
     remote,
+    localTransportVerified,
     ...normalizeShopeeListingPublicationReadback({
       operation: input.operation,
       remoteId: input.remoteId,
-      remoteData: remote.data,
+      remoteData: localTransportVerified ? remote.data : {},
       mutationArguments: input.mutationArguments,
       credentialShopId: textValue(input.payload, "shop_id"),
       expectedLocale: input.expectedLocale,
@@ -284,6 +301,13 @@ export type ShopeeGlobalPublicationReadback = ShopeePublicationReadbackVerificat
   localItemRemote: RemoteResponse;
   globalIdentityVerified: boolean;
   publishedLinkageVerified: boolean;
+  localTransportVerified: boolean;
+  strictCreateVerified: boolean;
+};
+
+export type ShopeeGlobalPublicationReadbackDependencies = {
+  shopRequest?: typeof shopeeRequest;
+  merchantRequest?: typeof shopeeMerchantRequest;
 };
 
 function numericShopeeIdentity(value: string) {
@@ -307,7 +331,7 @@ export async function readShopeeGlobalListingPublicationState(input: {
   expectedLocale: string;
   expectedFingerprint: string;
   expectedImageCount: number;
-}): Promise<ShopeeGlobalPublicationReadback> {
+}, dependencies: ShopeeGlobalPublicationReadbackDependencies = {}): Promise<ShopeeGlobalPublicationReadback> {
   const globalItemId = input.globalItemId.trim();
   const localItemId = input.localItemId.trim();
   const shopId = input.shopId.trim();
@@ -319,7 +343,9 @@ export async function readShopeeGlobalListingPublicationState(input: {
     throw new Error("SHOPEE_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
   }
 
-  const globalItemRemote = await shopeeMerchantRequest({
+  const merchantRequest = dependencies.merchantRequest ?? shopeeMerchantRequest;
+  const shopRequest = dependencies.shopRequest ?? shopeeRequest;
+  const globalItemRemote = await merchantRequest({
     payload: input.merchantPayload,
     environment: input.environment,
     method: "GET",
@@ -330,12 +356,11 @@ export async function readShopeeGlobalListingPublicationState(input: {
   const globalItems = Array.isArray(globalResponse.global_item_list)
     ? globalResponse.global_item_list.map(recordValue)
     : [];
-  const globalIdentityVerified = globalItemRemote.response.ok
-    && !exactText(globalItemRemote.data.error)
+  const globalIdentityVerified = shopeeProviderReadSucceeded(globalItemRemote)
     && globalItems.length === 1
     && exactText(globalItems[0].global_item_id) === globalItemId;
 
-  const publishedLinkRemote = await shopeeMerchantRequest({
+  const publishedLinkRemote = await merchantRequest({
     payload: input.merchantPayload,
     environment: input.environment,
     method: "GET",
@@ -347,22 +372,22 @@ export async function readShopeeGlobalListingPublicationState(input: {
     ? publishedResponse.published_item.map(recordValue)
     : [];
   const targetShopLinks = publishedItems.filter((item) => exactText(item.shop_id) === shopId);
-  const publishedLinkageVerified = publishedLinkRemote.response.ok
-    && !exactText(publishedLinkRemote.data.error)
+  const publishedLinkageVerified = shopeeProviderReadSucceeded(publishedLinkRemote)
     && targetShopLinks.length === 1
     && exactText(targetShopLinks[0].item_id) === localItemId;
 
-  const localItemRemote = await shopeeRequest({
+  const localItemRemote = await shopRequest({
     payload: input.shopPayload,
     environment: input.environment,
     method: "GET",
     path: "/api/v2/product/get_item_base_info",
     query: new URLSearchParams({ item_id_list: localItemId }),
   });
+  const localTransportVerified = shopeeProviderReadSucceeded(localItemRemote);
   const normalized = normalizeShopeeListingPublicationReadback({
     operation: input.operation,
     remoteId: localItemId,
-    remoteData: localItemRemote.data,
+    remoteData: localTransportVerified ? localItemRemote.data : {},
     mutationArguments: {
       ...input.mutationArguments,
       globalProduct: true,
@@ -373,8 +398,25 @@ export async function readShopeeGlobalListingPublicationState(input: {
     expectedFingerprint: input.expectedFingerprint,
     expectedImageCount: input.expectedImageCount,
   });
+  const strictSgCreateRequired = input.operation === "listing.create"
+    && shopeeSgListingCreateRequested(input.mutationArguments);
+  const strictCreate = strictSgCreateRequired
+    ? verifyShopeeSgListingCreateReadback({
+        argumentsValue: input.mutationArguments,
+        globalItemId,
+        localItemId,
+        shopId,
+        localTransportVerified,
+        globalRemoteData: globalItemRemote.data,
+        publishedRemoteData: publishedLinkRemote.data,
+        localRemoteData: localTransportVerified ? localItemRemote.data : {},
+      })
+    : { ok: true, checks: { strictSgCreateRequired: false } };
+  const strictCreateVerified = strictCreate.ok;
   const remoteState = globalIdentityVerified
     && publishedLinkageVerified
+    && localTransportVerified
+    && strictCreateVerified
     && normalized.remoteState
     ? {
         ...normalized.remoteState,
@@ -382,9 +424,12 @@ export async function readShopeeGlobalListingPublicationState(input: {
           ...normalized.remoteState.evidence,
           globalIdentityVerified: true,
           publishedLinkageVerified: true,
+          localTransportVerified: true,
           globalReadbackMethod: "v2.global_product.get_global_item_info",
           linkageReadbackMethod: "v2.global_product.get_published_list",
           localReadbackMethod: "v2.product.get_item_base_info",
+          strictCreateVerified: true,
+          strictCreateChecks: strictCreate.checks,
         },
       }
     : undefined;
@@ -396,5 +441,7 @@ export async function readShopeeGlobalListingPublicationState(input: {
     localItemRemote,
     globalIdentityVerified,
     publishedLinkageVerified,
+    localTransportVerified,
+    strictCreateVerified,
   };
 }

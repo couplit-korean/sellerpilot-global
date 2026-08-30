@@ -954,6 +954,54 @@ test("Shopee merchant token and GlobalProduct category request use the merchant 
   }
 });
 
+test("Shopee global category validation requires one exact provider leaf and returns its full ancestry", async () => {
+  const originalFetch = globalThis.fetch;
+  const paths: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    paths.push(url.pathname);
+    if (url.pathname.endsWith("/global_product/get_category")) {
+      assert.equal(url.searchParams.get("language"), "en");
+      return Response.json({ error: "", response: { category_list: [
+        { category_id: 100013, parent_category_id: 0, display_category_name: "Mobile & Gadgets", has_children: true },
+        { category_id: 100075, parent_category_id: 100013, display_category_name: "Accessories", has_children: true },
+        { category_id: 100284, parent_category_id: 100075, display_category_name: "Cables, Chargers & Converters", has_children: true },
+        { category_id: 100479, parent_category_id: 100284, display_category_name: "Cable Cases, Protectors, & Winders", has_children: false },
+      ] } });
+    }
+    assert.equal(url.searchParams.get("category_id_list"), "100479");
+    return Response.json({ error: "", response: { list: [{ category_id: 100479, attribute_tree: [] }] } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "shopee",
+      operation: "categories.validate",
+      payload: {
+        partner_id: "2031489",
+        partner_key: "partner-secret",
+        merchant_id: "5511564",
+        access_token: "merchant-access",
+      },
+      arguments: { globalProduct: true, categoryId: "100479", language: "en" },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(paths.sort(), [
+      "/api/v2/global_product/get_attribute_tree",
+      "/api/v2/global_product/get_category",
+    ]);
+    assert.equal(result.steps[0]?.name, "global-category-exact-leaf");
+    assert.equal(result.steps[0]?.data.sellerpilotVerification, "SHOPEE_EXACT_GLOBAL_LEAF_CATEGORY_VERIFIED");
+    assert.deepEqual(result.steps[0]?.data.categoryPathIds, ["100013", "100075", "100284", "100479"]);
+    assert.deepEqual(result.steps[0]?.data.categoryPath, [
+      "Mobile & Gadgets", "Accessories", "Cables, Chargers & Converters",
+      "Cable Cases, Protectors, & Winders",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Lazada product create serializes the structured request as official XML and reads the item back", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: string }> = [];

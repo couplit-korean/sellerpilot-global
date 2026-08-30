@@ -3,7 +3,7 @@ import {
   listingRemoteStateFulfillsOperation,
   listingRemoteStateMatchesOperation,
 } from "./listing-publication-state";
-import { normalizeShopeeListingPublicationReadback } from "./provider-shopee-publication-readback";
+import { readShopeeGlobalListingPublicationState } from "./provider-shopee-publication-readback";
 import {
   runWithChannelRequestSignal,
   shopeeMerchantRequest,
@@ -206,31 +206,59 @@ export async function verifyShopeeGlobalListingPostPublish(
         ...input.arguments,
         ...(globalItemId ? { globalItemId } : {}),
       };
-      const publicationVerification = normalizeShopeeListingPublicationReadback({
+      const publicationVerification = await readShopeeGlobalListingPublicationState({
+        merchantPayload: input.merchantCredential,
+        shopPayload: input.shopCredential,
+        environment: input.environment,
         operation: "listing.create",
-        remoteId: result.remoteId ?? "",
-        remoteData: localReadback.data,
+        globalItemId,
+        localItemId: result.remoteId ?? "",
+        shopId: String(input.shopCredential.shop_id ?? ""),
         mutationArguments: publicationArguments,
-        credentialShopId: String(input.shopCredential.shop_id ?? ""),
         expectedLocale,
         expectedFingerprint,
         expectedImageCount,
+      }, {
+        shopRequest: async (request) => {
+          await input.hooks.assertLeaseHealthy();
+          const remote = await dependencies.shopeeRequest(request);
+          await input.hooks.assertLeaseHealthy();
+          return remote;
+        },
+        merchantRequest: async (request) => {
+          await input.hooks.assertLeaseHealthy();
+          const remote = await dependencies.shopeeMerchantRequest(request);
+          await input.hooks.assertLeaseHealthy();
+          return remote;
+        },
       });
-      const publicationStepOk = localReadback.response.ok
-        && !localReadback.data.error
-        && Boolean(publicationVerification.remoteState);
+      result.steps.push({
+        name: "global-item-publication-readback",
+        ok: publicationVerification.globalIdentityVerified,
+        status: publicationVerification.globalItemRemote.response.status,
+        data: publicationVerification.globalItemRemote.data,
+      }, {
+        name: "published-linkage-publication-readback",
+        ok: publicationVerification.publishedLinkageVerified,
+        status: publicationVerification.publishedLinkRemote.response.status,
+        data: publicationVerification.publishedLinkRemote.data,
+      });
+      const publicationStepOk = Boolean(publicationVerification.remoteState);
       result.steps.push({
         name: "local-item-publication-readback",
         ok: publicationStepOk,
-        status: localReadback.response.status,
+        status: publicationVerification.localItemRemote.response.status,
         data: {
-          ...localReadback.data,
+          ...publicationVerification.localItemRemote.data,
           sellerpilotPublicationVerification: publicationStepOk
             ? "SHOPEE_PUBLICATION_STATE_VERIFIED"
             : "SHOPEE_PUBLICATION_STATE_UNVERIFIED",
           providerStatus: publicationVerification.providerStatus,
           actualImageCount: publicationVerification.imageCount,
           sellerpilotPublicationChecks: publicationVerification.checks,
+          sellerpilotGlobalIdentityVerified: publicationVerification.globalIdentityVerified,
+          sellerpilotPublishedLinkageVerified: publicationVerification.publishedLinkageVerified,
+          sellerpilotStrictCreateVerified: publicationVerification.strictCreateVerified,
         },
       });
       if (publicationVerification.remoteState) {

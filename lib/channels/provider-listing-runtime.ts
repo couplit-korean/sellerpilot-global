@@ -37,6 +37,14 @@ import {
   finalizeSmartstoreListingBody,
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
+import {
+  assertShopeeSgCurrentPrice,
+  buildShopeeSgPreparedCreateEvidence,
+  loadAuthoritativeKrwSgdUsdRate,
+  shopeeSgExpectedCategoryPathVerified,
+  shopeeSgListingCreateExpectation,
+  shopeeSgListingCreateRequested,
+} from "./shopee-sg-listing-create";
 
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
@@ -189,6 +197,7 @@ export type ShopeeGlobalListingRuntimeDependencies = {
   shopRequest?: typeof shopeeRequest;
   merchantRequest?: typeof shopeeMerchantRequest;
   uploadImage?: typeof uploadShopeeImage;
+  loadKrwSgdUsdRate?: typeof loadAuthoritativeKrwSgdUsdRate;
 };
 
 export type ShopeeGlobalImagePlan = {
@@ -474,6 +483,14 @@ export async function prepareShopeeGlobalListing(
   const body = structuredClone(recordValue(input.arguments.body) ?? {});
   const publish = structuredClone(recordValue(input.arguments.publish) ?? {});
   const publishItem = recordValue(publish.item) ?? {};
+  const strictSgCreate = input.operation === "listing.create"
+    && shopeeSgListingCreateRequested(input.arguments);
+  const strictExpectation = strictSgCreate
+    ? shopeeSgListingCreateExpectation(input.arguments)
+    : null;
+  if (strictSgCreate && (!strictExpectation || !strictExpectation.ok)) {
+    throw new Error("SHOPEE_SG_CREATE_PREWRITE_MISMATCH");
+  }
   const globalCategoryId = Number(body.category_id);
   if (!Number.isSafeInteger(globalCategoryId) || globalCategoryId <= 0) {
     throw new Error("SHOPEE_GLOBAL_CATEGORY_MISSING");
@@ -481,6 +498,7 @@ export async function prepareShopeeGlobalListing(
   const shopRequest = dependencies.shopRequest ?? shopeeRequest;
   const merchantRequest = dependencies.merchantRequest ?? shopeeMerchantRequest;
   const uploadImage = dependencies.uploadImage ?? uploadShopeeImage;
+  const loadKrwSgdUsdRate = dependencies.loadKrwSgdUsdRate ?? loadAuthoritativeKrwSgdUsdRate;
   const merchantRead = async (path: string, query: URLSearchParams) => {
     await input.hooks.assertLeaseHealthy();
     return merchantRequest({
@@ -514,7 +532,18 @@ export async function prepareShopeeGlobalListing(
     "/api/v2/global_product/get_category",
     new URLSearchParams({ language: "en" }),
   );
-  assertShopeeLeafCategory(globalCategoryRemote, globalCategoryId, "SHOPEE_GLOBAL_CATEGORY_INVALID");
+  const providerGlobalCategoryPath = strictExpectation?.ok
+    ? shopeeSgExpectedCategoryPathVerified(
+        globalCategoryRemote.data,
+        strictExpectation.expectation.context,
+      )
+    : null;
+  if (strictExpectation?.ok && !providerGlobalCategoryPath) {
+    throw new Error("SHOPEE_SG_EXACT_CATEGORY_PATH_INVALID");
+  }
+  if (!strictExpectation) {
+    assertShopeeLeafCategory(globalCategoryRemote, globalCategoryId, "SHOPEE_GLOBAL_CATEGORY_INVALID");
+  }
   const globalAttributeRemote = await merchantRead(
     "/api/v2/global_product/get_attribute_tree",
     new URLSearchParams({ category_id_list: String(globalCategoryId), language: "en" }),
@@ -550,6 +579,11 @@ export async function prepareShopeeGlobalListing(
   );
   successfulShopeeRead(localLimitRemote, "SHOPEE_LOCAL_ITEM_LIMIT_QUERY_FAILED");
   const imagePlan = planShopeeGlobalImages(limitRemote.data, localLimitRemote.data);
+  if (strictExpectation?.ok) {
+    await input.hooks.assertLeaseHealthy();
+    const authoritativeRate = await loadKrwSgdUsdRate({ signal: input.signal });
+    assertShopeeSgCurrentPrice({ expectation: strictExpectation.expectation, authoritativeRate });
+  }
   const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
   const globalAttributes = requiredShopeeAttributes({
     supplied: body.attribute_list,
@@ -600,6 +634,18 @@ export async function prepareShopeeGlobalListing(
   };
   return {
     ...input.arguments,
+    ...(providerGlobalCategoryPath
+      ? { sellerpilotProviderGlobalCategoryPath: providerGlobalCategoryPath }
+      : {}),
+    ...(strictExpectation?.ok && providerGlobalCategoryPath
+      ? {
+          sellerpilotShopeeSgPreparedCreateEvidence: buildShopeeSgPreparedCreateEvidence({
+            expectation: strictExpectation.expectation,
+            providerGlobalCategoryPath,
+            providerLocalCategoryId: String(localCategoryId),
+          }),
+        }
+      : {}),
     sellerpilotProviderLocalCategoryId: localCategoryId,
     sellerpilotProviderDetailImageIds: detailImageIds,
     sellerpilotProviderImageSurface: imagePlan.providerImageSurface,

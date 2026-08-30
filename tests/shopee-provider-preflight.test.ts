@@ -7,10 +7,66 @@ import {
   type ShopeeGlobalListingRuntimeDependencies,
 } from "../lib/channels/provider-listing-runtime";
 import type { RemoteResponse, SecretPayload } from "../lib/channels/protocols";
+import {
+  bindShopeeSgListingCreateArguments,
+  buildShopeeSgListingCreateContext,
+  shopeeSgCableClipCategory,
+  type ShopeeKrwSgdUsdRateEvidence,
+} from "../lib/channels/shopee-sg-listing-create";
 
-const GLOBAL_CATEGORY_ID = 100123;
+const PRODUCT_ID = "10000000-0000-4000-8000-000000000001";
+const ATTEMPT_ID = "20000000-0000-4000-8000-000000000001";
+const CLAIM_ID = "30000000-0000-4000-8000-000000000001";
+const SKU = "QA-20260823-CC-001";
+const GLOBAL_CATEGORY_ID = 100479;
 const LOCAL_CATEGORY_ID = 200456;
-const imageUrls = Array.from({ length: 9 }, (_, index) => `https://assets.example/image-${index + 1}.jpg`);
+const FINGERPRINT = "a".repeat(64);
+const detailRoles = [
+  "detail-hero", "detail-overview", "detail-feature-one", "detail-feature-two",
+  "detail-specification", "detail-use", "detail-care", "detail-closing",
+];
+
+function normalizedImage(index: number) {
+  const contentSha256 = index.toString(16).padStart(64, "0");
+  const objectPath = `normalized/${contentSha256.slice(0, 2)}/${contentSha256}.jpg`;
+  return {
+    publicUrl: `https://qa-project.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
+    objectPath,
+    contentSha256,
+  };
+}
+
+const imageUrls = [normalizedImage(9).publicUrl, ...detailRoles.map((_role, index) => normalizedImage(index + 1).publicUrl)];
+
+function publicationBinding() {
+  const approvedDetailImages = detailRoles.map((role, index) => ({
+    role,
+    approvedObjectPath: `results/${ATTEMPT_ID}/claims/${CLAIM_ID}/${index + 1}.png`,
+    approvedSourceSha256: (index + 20).toString(16).padStart(64, "0"),
+    ...normalizedImage(index + 1),
+  }));
+  return {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: "b".repeat(64),
+    approvedDetailImages,
+    providerImageSurface: "buyer_visible",
+    providerTransportImages: detailRoles.map((role, index) => ({ role, ...normalizedImage(index + 1) })),
+  };
+}
+
+function rate(): ShopeeKrwSgdUsdRateEvidence {
+  const now = new Date().toISOString();
+  return {
+    krwPerSgd: 1_000,
+    krwPerUsd: 1_250,
+    fetchedAt: now,
+    asOf: now,
+    source: "Coinbase Data API",
+    sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+    frequency: "minute-market",
+  };
+}
 
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   const text = JSON.stringify(data);
@@ -22,6 +78,19 @@ function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
 }
 
 function categoryResponse(categoryId: number, hasChildren = false) {
+  if (categoryId === GLOBAL_CATEGORY_ID) {
+    return remote({
+      error: "",
+      response: {
+        category_list: [
+          { category_id: 100013, parent_category_id: 0, display_category_name: "Mobile & Gadgets", has_children: true },
+          { category_id: 100075, parent_category_id: 100013, display_category_name: "Accessories", has_children: true },
+          { category_id: 100284, parent_category_id: 100075, display_category_name: "Cables, Chargers & Converters", has_children: true },
+          { category_id: GLOBAL_CATEGORY_ID, parent_category_id: 100284, display_category_name: "Cable Cases, Protectors, & Winders", has_children: hasChildren },
+        ],
+      },
+    });
+  }
   return remote({
     error: "",
     response: {
@@ -79,6 +148,52 @@ function localLimitResponse(galleryMax: number, descriptionMax = 8, galleryMin =
 }
 
 function input(): PrepareProviderListingInput {
+  const createContext = buildShopeeSgListingCreateContext({
+    productId: PRODUCT_ID,
+    product: { id: PRODUCT_ID, sku: SKU, onHand: 1 },
+    manualFields: { sellingPrice: 5_000, currency: "KRW" },
+    assignments: [{
+      channel: "shopee",
+      market: "SG",
+      status: "confirmed",
+      categoryId: String(GLOBAL_CATEGORY_ID),
+      categoryPath: [...shopeeSgCableClipCategory.path],
+      confirmedAt: "2026-08-30T04:55:00.000Z",
+    }],
+    market: "SG",
+    targetId: "3001",
+    currency: "SGD",
+    rate: rate(),
+  });
+  assert.ok(createContext);
+  const arguments_ = bindShopeeSgListingCreateArguments({
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      publicationExpectedLocale: "en-SG",
+      publicationExpectedFingerprint: FINGERPRINT,
+      publicationExpectedImageCount: 8,
+      sellerpilotPublicationAssetBinding: publicationBinding(),
+      globalProduct: true,
+      country: "sg",
+      imageUrls,
+      body: {
+        category_id: GLOBAL_CATEGORY_ID,
+        global_item_name: "Reusable cable organizer clips",
+        description: "Keep charging cables tidy on a desk.",
+        attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
+      },
+      publish: {
+        shop_id: 3001,
+        shop_region: "SG",
+        item: {
+          category_id: GLOBAL_CATEGORY_ID,
+          item_name: "Reusable Cable Organizer Clips",
+          item_sku: SKU,
+          description: "Keep charging cables tidy with durable adhesive clips designed for desks, walls, and everyday home use.",
+          attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
+        },
+      },
+    }, createContext);
   return {
     channel: "shopee",
     operation: "listing.create",
@@ -94,30 +209,7 @@ function input(): PrepareProviderListingInput {
       shop_id: "3001",
       access_token: "shop-access",
     },
-    arguments: {
-      globalProduct: true,
-      country: "sg",
-      imageUrls,
-      body: {
-        category_id: GLOBAL_CATEGORY_ID,
-        global_item_name: "Reusable cable organizer clips",
-        description: "Keep charging cables tidy on a desk.",
-        attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
-      },
-      publish: {
-        shop_id: 3001,
-        shop_region: "SG",
-        item: {
-          category_id: GLOBAL_CATEGORY_ID,
-          item_name: "Reusable cable organizer clips",
-          item_sku: "QA-CABLE-CLIP-SG",
-          description: "Keep charging cables tidy on a desk.",
-          // The current workbench copies global selections into the local item.
-          // create_publish_task no longer accepts these global attribute IDs.
-          attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
-        },
-      },
-    },
+    arguments: arguments_,
     environment: "production",
     signal: new AbortController().signal,
     hooks: {
@@ -195,6 +287,7 @@ function dependencies(inputValue: {
       uploadIndex += 1;
       return `image-${uploadIndex}`;
     },
+    loadKrwSgdUsdRate: async () => rate(),
   };
 }
 
@@ -226,7 +319,7 @@ test("Shopee SG validates logistics, the global category/attributes, and the rec
   assert.equal(firstUpload, 7);
   assert.equal(events.slice(0, firstUpload).every((event) => !event.startsWith("upload:")), true);
   assert.equal(events.some((event) => event.includes(`global_product/get_attribute_tree?category_id_list=${GLOBAL_CATEGORY_ID}`)), true);
-  assert.equal(events.some((event) => event.includes("product/category_recommend?item_name=Reusable+cable+organizer+clips")), true);
+  assert.equal(events.some((event) => event.includes("product/category_recommend?item_name=Reusable+Cable+Organizer+Clips")), true);
   assert.equal(events.some((event) => event.includes(`global_product/get_global_item_limit?category_id=${GLOBAL_CATEGORY_ID}`)), true);
   assert.equal(events.some((event) => event.includes(`product/get_item_limit?category_id=${LOCAL_CATEGORY_ID}`)), true);
   assert.equal(events.filter((event) => event === "upload:normal").length, 9);
@@ -242,7 +335,19 @@ test("Shopee SG validates logistics, the global category/attributes, and the rec
   assert.equal(item.attribute_list, undefined, "global attribute IDs must not leak into the local publish item");
   assert.equal(item.item_sku, undefined, "undocumented local fields must not be sent");
   assert.equal(body.category_id, GLOBAL_CATEGORY_ID);
+  assert.equal(body.global_item_sku, SKU);
+  assert.equal(body.original_price, 4);
+  assert.equal(body.normal_stock, 1);
   assert.equal(prepared.sellerpilotProviderLocalCategoryId, LOCAL_CATEGORY_ID);
+  assert.deepEqual(prepared.sellerpilotProviderGlobalCategoryPath, {
+    ids: [...shopeeSgCableClipCategory.ids],
+    names: [...shopeeSgCableClipCategory.path],
+    leafId: String(GLOBAL_CATEGORY_ID),
+  });
+  assert.equal(
+    (prepared.sellerpilotShopeeSgPreparedCreateEvidence as Record<string, unknown>).providerLocalCategoryId,
+    String(LOCAL_CATEGORY_ID),
+  );
   assert.equal(prepared.sellerpilotProviderImageSurface, "gallery");
   assert.deepEqual(
     prepared.sellerpilotProviderDetailImageIds,
@@ -274,7 +379,7 @@ test("Shopee SG falls back to buyer-visible extended description without droppin
 test("Shopee SG provider-preflight failure occurs before any image mutation", async () => {
   for (const { options, error } of [
     { options: { activeLogistics: false }, error: /SHOPEE_LOGISTICS_MISSING/ },
-    { options: { globalHasChildren: true }, error: /SHOPEE_GLOBAL_CATEGORY_INVALID/ },
+    { options: { globalHasChildren: true }, error: /SHOPEE_SG_EXACT_CATEGORY_PATH_INVALID/ },
     { options: { localCategoryAvailable: false }, error: /SHOPEE_LOCAL_CATEGORY_RECOMMENDATION_INVALID/ },
     { options: { localGalleryMax: 8, localDescriptionMax: 7 }, error: /SHOPEE_EXTENDED_DESCRIPTION_IMAGES_UNAVAILABLE/ },
   ]) {
@@ -298,4 +403,20 @@ test("Shopee SG provider-preflight failure occurs before any image mutation", as
     /SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING/,
   );
   assert.equal(attributeEvents.some((event) => event.startsWith("upload:")), false);
+});
+
+test("Shopee SG publish.shop_region alone cannot bypass strict CREATE preflight", async () => {
+  const publishOnlyInput = input();
+  delete publishOnlyInput.arguments.country;
+  delete publishOnlyInput.arguments.publicationExpectedLocale;
+  delete publishOnlyInput.arguments.sellerpilotShopeeSgCreateContext;
+  const publish = publishOnlyInput.arguments.publish as Record<string, unknown>;
+  assert.equal(publish.shop_region, "SG");
+
+  const events: string[] = [];
+  await assert.rejects(
+    prepareShopeeGlobalListing(publishOnlyInput, dependencies({ events })),
+    /SHOPEE_SG_CREATE_PREWRITE_MISMATCH/,
+  );
+  assert.deepEqual(events, [], "strict request validation must precede every provider read or upload");
 });

@@ -21,6 +21,12 @@ import {
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
+import {
+  bindShopeeSgListingCreateArguments,
+  buildShopeeSgListingCreateContext,
+  loadAuthoritativeKrwSgdUsdRate,
+  shopeeSgArgumentsForFingerprint,
+} from "../../../../lib/channels/shopee-sg-listing-create";
 import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 import {
   elevenstListingUpdateProjectionDigestInput,
@@ -649,8 +655,41 @@ export async function POST(request: NextRequest) {
     delete effectiveArguments.publicationIntent;
     delete effectiveArguments.publicationStateContract;
   }
-  const effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
-  const effectivePrice = boundListingPrice ?? parsed.data.price;
+  let effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
+  let effectivePrice = boundListingPrice ?? parsed.data.price;
+  const strictShopeeSgCreate = channel === "shopee"
+    && operation === "listing.create"
+    && parsed.data.market.trim().toUpperCase() === "SG";
+  if (strictShopeeSgCreate) {
+    let rate;
+    try {
+      rate = await loadAuthoritativeKrwSgdUsdRate({ signal: request.signal });
+    } catch {
+      return NextResponse.json({
+        message: "Shopee Singapore 등록 시점의 KRW→SGD 환율을 독립 확인하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "shopee_sg_exchange_rate_unavailable",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const createContext = buildShopeeSgListingCreateContext({
+      productId: parsed.data.productId,
+      product: verifiedPublishContext?.product,
+      manualFields: verifiedPublishContext?.manualFields,
+      assignments: verifiedPublishContext?.assignments,
+      market: parsed.data.market,
+      targetId: parsed.data.targetId,
+      currency: "SGD",
+      rate,
+    });
+    if (!createContext) {
+      return NextResponse.json({
+        message: "Shopee Singapore 상품의 확정 카테고리·SKU·5,000 KRW 원가·재고·SGD 환율 결속을 서버에서 확정하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "shopee_sg_listing_create_context_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveCurrency = createContext.targetCurrency;
+    effectivePrice = createContext.targetPriceSgd;
+    effectiveArguments = bindShopeeSgListingCreateArguments(effectiveArguments, createContext);
+  }
   if (channel === "qoo10" && operation === "listing.create") {
     const qoo10CreateContext = buildQoo10ListingCreateContext({
       productId: parsed.data.productId,
@@ -671,9 +710,12 @@ export async function POST(request: NextRequest) {
       sellerpilotQoo10CreateContext: qoo10CreateContext,
     };
   }
-  const fingerprintArguments = approvedDetailBinding
+  const manifestFingerprintArguments = approvedDetailBinding
     ? marketplaceArgumentsForApprovedDetailFingerprint(effectiveArguments, approvedDetailBinding)
     : effectiveArguments;
+  const fingerprintArguments = strictShopeeSgCreate
+    ? shopeeSgArgumentsForFingerprint(manifestFingerprintArguments)
+    : manifestFingerprintArguments;
   const requestFingerprint = createHash("sha256")
     .update(canonicalJson({
       channel,

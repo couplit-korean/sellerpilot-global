@@ -4,6 +4,7 @@ import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
+import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
@@ -389,7 +390,10 @@ function shopeeCategoryCompatibility(query: string, candidate: string) {
     return /(fashion|clothes|clothing|apparel|top|shirt|hoodie|sweatshirt|jacket|outerwear)/u.test(normalizedCandidate);
   }
   if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) {
-    return /(cable|cord|wire).*(clip|tie|organizer|management)|(?:clip|tie|organizer).*(cable|cord|wire)/u.test(normalizedCandidate) && !/(table|desk|furniture)/u.test(normalizedCandidate);
+    return (
+      /(cable|cord|wire).*(clip|tie|organizer|management)|(?:clip|tie|organizer).*(cable|cord|wire)/u.test(normalizedCandidate)
+      || /cables, chargers & converters.*cable cases, protectors, & winders/u.test(normalizedCandidate)
+    ) && !/(table|desk|furniture)/u.test(normalizedCandidate);
   }
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) {
     return /(home|living|organizer|organization|storage box|storage bin)/u.test(normalizedCandidate);
@@ -427,7 +431,7 @@ function shopeePriorityScore(query: string, candidate: CategorySuggestion) {
   if (/(cream|moistur|크림|보습)/u.test(normalizedQuery)) return score(["face moisturizers", "facial moisturizers", "face cream", "skin care"]);
   if (/(hoodie|hood|후드)/u.test(normalizedQuery)) return score(["hoodies", "hooded sweatshirts", "sweatshirts"]);
   if (/(jacket|재킷)/u.test(normalizedQuery)) return score(["jackets", "outerwear"]);
-  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable ties & organizers", "cable organizers", "cable clips", "wire management"]);
+  if (/(cable|cord|wire|케이블|전선)/u.test(normalizedQuery)) return score(["cable cases, protectors, & winders", "cable ties & organizers", "cable organizers", "cable clips", "wire management"]);
   if (/(storage\s?(?:box|bin)|organizer|수납.*박스|보관.*박스)/u.test(normalizedQuery)) return score(["storage boxes", "home organizers", "home & living"]);
   if (/(hanger|옷걸이|행거)/u.test(normalizedQuery)) return score(["clothes hangers", "clothing hangers", "coat hangers", "hangers"]);
   if (/(notebook|notepad|journal|노트|수첩)/u.test(normalizedQuery)) return score(["notebooks & notepads", "notebooks", "notepads", "journals", "stationery"]);
@@ -664,11 +668,28 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
       confidence: Math.min(0.99, 0.45 + lazadaQueryScore(lazadaSearchTerms(query), `${item.path.join(" ")} ${item.name}`) * 0.54),
     }))
     : [];
+  const officialShopeeTree = channel === "shopee"
+    ? (payload.steps ?? []).flatMap((item) => shopeeGlobalLeafCategoryPaths(item.data))
+      .map((item) => ({
+        id: item.leafId,
+        name: item.names.at(-1) ?? item.leafId,
+        path: item.names,
+        confidence: Math.min(0.99, Math.max(
+          0.45,
+          queryScore(shopeeSearchTerms(query), item.names.join(" ")),
+        )),
+        leaf: true,
+      }))
+    : [];
   // Category suggestion is often more precise for regulated or localized
   // categories, while the tree supplies parent paths and true leaf nodes. Keep
   // both sources: selection still runs the official attributes endpoint before
   // it can be saved, so a stale suggestion cannot bypass leaf validation.
-  const candidatePool = channel === "lazada" ? [...officialLazadaTree, ...candidates] : candidates;
+  const candidatePool = channel === "lazada"
+    ? [...officialLazadaTree, ...candidates]
+    : channel === "shopee" && officialShopeeTree.length
+      ? officialShopeeTree
+      : candidates;
 
   const deduplicated = new Map<string, CategorySuggestion>();
   for (const item of candidatePool) {

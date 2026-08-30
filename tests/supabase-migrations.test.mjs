@@ -536,6 +536,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260830122000_attest_product_revision_fallback.sql",
       "20260830123000_bind_immutable_ebay_offer_identity.sql",
       "20260830132944_allow_failed_ebay_lineage_discovery.sql",
+      "20260830141500_unblock_shopee_identity_reauthorization.sql",
     ]);
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -10411,6 +10412,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     "20260830052516_allow_legacy_ebay_diagnostic_attestation.sql";
   const providerIdentityCertificationMigrationName =
     "20260830054851_certify_provider_identity_on_service_refresh.sql";
+  const shopeeIdentityMigrationName =
+    "20260830141500_unblock_shopee_identity_reauthorization.sql";
   try {
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
@@ -10419,18 +10422,22 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       .sort();
     let legacyEbayDiagnosticMigration;
     let providerIdentityCertificationMigration;
+    let shopeeIdentityMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
         legacyEbayDiagnosticMigration = source;
       } else if (name === providerIdentityCertificationMigrationName) {
         providerIdentityCertificationMigration = source;
+      } else if (name === shopeeIdentityMigrationName) {
+        shopeeIdentityMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
     }
     assert.equal(typeof legacyEbayDiagnosticMigration, "string");
     assert.equal(typeof providerIdentityCertificationMigration, "string");
+    assert.equal(typeof shopeeIdentityMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -10468,8 +10475,59 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         now() + interval '365 days', 180, 30, 0
       )`,
     );
+    const legacyShopeeCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production',
+        '{"partner_id":"2031489","partner_key":"serverless-partner-secret","main_account_id":"4940266","shop_id":"1719148844","merchant_id":"5511564","access_token":"legacy-shop-access","refresh_token":"legacy-shop-refresh"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
 
     await setClaims(db, "service_role");
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+       id, credential_id, channel, operation, environment, status,
+         request_payload, created_by, attempt_count,
+         oauth_request_fingerprint, oauth_source_credential_id,
+         credential_refresh_in_flight, credential_refresh_started_at,
+         completed_at, error_message, created_at, updated_at
+       ) values (
+         'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid,
+         $1, 'shopee', 'oauth.exchange', 'production',
+         'reconciliation_required', '{}'::jsonb, $2, 1,
+         repeat('e', 64), $1, true,
+         clock_timestamp() - interval '4 days',
+         clock_timestamp() - interval '4 days',
+         '채널 인증 갱신 즉시 보존 실패 · HTTP 400',
+         clock_timestamp() - interval '4 days',
+         clock_timestamp() - interval '4 days'
+       )`,
+      [legacyShopeeCredentialId, ADMIN_ID],
+    );
+    const legacyShopeeDiagnosticId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by, created_at
+       ) values (
+         $1, 'shopee', 'diagnostic.test', 'production', '{}'::jsonb, $2,
+         clock_timestamp() + interval '1 minute'
+       ) returning id`,
+      [legacyShopeeCredentialId, ADMIN_ID],
+    );
+    const blockedLegacyShopeeCategoryId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by, created_at
+       ) values (
+         $1, 'shopee', 'categories.suggest', 'production',
+         '{"arguments":{"globalProduct":true,"language":"en","query":{"item_name":"Cable clips"}}}'::jsonb,
+         $2, clock_timestamp() + interval '2 minutes'
+       ) returning id`,
+      [legacyShopeeCredentialId, ADMIN_ID],
+    );
     const blockedLegacyOrdersId = await scalar(
       db,
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -10529,6 +10587,137 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         },
         { id: newestLegacyDiagnosticId, status: "queued", error_message: null },
       ],
+    );
+    await db.exec(withoutUnavailableExtensions(shopeeIdentityMigration));
+    assert.deepEqual(
+      (await db.query(
+        `select status, credential_refresh_in_flight,
+                credential_refresh_started_at is null as refresh_start_cleared,
+                prepared_credential_id is null as prepared_clear,
+                credential_refresh_recovery_vault_id is null as recovery_clear,
+                oauth_exchange_completed,
+                provider_mutation_started_at is null as provider_mutation_clear,
+                error_message
+           from sellerpilot_private.channel_gateway_jobs
+          where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+      )).rows,
+      [{
+        status: "cancelled",
+        credential_refresh_in_flight: false,
+        refresh_start_cleared: true,
+        prepared_clear: true,
+        recovery_clear: true,
+        oauth_exchange_completed: false,
+        provider_mutation_clear: true,
+        error_message: "Cancelled after exact evidence confirmed no provider or credential mutation.",
+      }],
+    );
+
+    await db.exec(withoutUnavailableExtensions(shopeeIdentityMigration));
+    assert.deepEqual(
+      (await db.query(
+        `select status, credential_refresh_in_flight,
+                credential_refresh_started_at is null as refresh_start_cleared,
+                completed_at is not null as completed,
+                error_message
+           from sellerpilot_private.channel_gateway_jobs
+          where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+      )).rows,
+      [{
+        status: "cancelled",
+        credential_refresh_in_flight: false,
+        refresh_start_cleared: true,
+        completed: true,
+        error_message: "Cancelled after exact evidence confirmed no provider or credential mutation.",
+      }],
+      "the exact cancelled shape must make a second migration execution a no-op",
+    );
+    await db.exec(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message = null
+        where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+    );
+    await assert.rejects(
+      db.exec(withoutUnavailableExtensions(shopeeIdentityMigration)),
+      /no longer matches exact cancelled evidence/,
+      "a replay must reject an inexact cancelled shape",
+    );
+    await db.exec("rollback");
+    await db.exec(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message =
+            'Cancelled after exact evidence confirmed no provider or credential mutation.'
+        where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+    );
+
+    const resetObservedShopeeOauthBlocker = async () => {
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status = 'reconciliation_required',
+                credential_refresh_in_flight = true,
+                credential_refresh_started_at = clock_timestamp() - interval '4 days',
+                credential_refresh_fingerprint = null,
+                prepared_credential_id = null,
+                credential_refresh_prepared_at = null,
+                credential_refresh_recovery_vault_id = null,
+                credential_refresh_recovery_fingerprint = null,
+                credential_refresh_recovery_staged_at = null,
+                oauth_request_vault_id = null,
+                oauth_request_fingerprint = repeat('e', 64),
+                oauth_source_credential_id = credential_id,
+                oauth_exchange_completed = false,
+                provider_mutation_started_at = null,
+                worker_token_id = null,
+                claim_token = null,
+                lease_expires_at = null,
+                error_message = '채널 인증 갱신 즉시 보존 실패 · HTTP 400'
+          where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+      );
+    };
+    await db.exec(
+      `alter table sellerpilot_private.channel_gateway_jobs
+         drop constraint channel_gateway_jobs_oauth_request_state_check`,
+    );
+    for (const nullableGuardColumn of [
+      "oauth_request_fingerprint",
+      "oauth_source_credential_id",
+      "error_message",
+    ]) {
+      await resetObservedShopeeOauthBlocker();
+      await db.exec(
+        `update sellerpilot_private.channel_gateway_jobs
+            set ${nullableGuardColumn} = null
+          where id = 'f4a260cd-bf97-4750-9d19-22f71892d095'::uuid`,
+      );
+      await assert.rejects(
+        db.exec(withoutUnavailableExtensions(shopeeIdentityMigration)),
+        /no longer matches exact no-mutation evidence/,
+        `${nullableGuardColumn}=NULL must never bypass the bounded cleanup guard`,
+      );
+      await db.exec("rollback");
+    }
+    await resetObservedShopeeOauthBlocker();
+    await db.exec(withoutUnavailableExtensions(shopeeIdentityMigration));
+    await db.exec(
+      `alter table sellerpilot_private.channel_gateway_jobs
+         add constraint channel_gateway_jobs_oauth_request_state_check check (
+           (
+             operation <> 'oauth.exchange'
+             and oauth_request_vault_id is null
+             and oauth_request_fingerprint is null
+             and oauth_source_credential_id is null
+           ) or (
+             operation = 'oauth.exchange'
+             and oauth_request_fingerprint ~ '^[a-f0-9]{64}$'
+             and oauth_source_credential_id is not null
+             and (
+               status not in ('queued', 'running')
+               or oauth_request_vault_id is not null
+             )
+           )
+         ) not valid;
+       alter table sellerpilot_private.channel_gateway_jobs
+         validate constraint channel_gateway_jobs_oauth_request_state_check;`,
     );
 
     await db.query(
@@ -10702,6 +10891,33 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       [blockedLegacyOrdersId],
     );
     ebayCredentialId = diagnosticCompletion.credentialId;
+
+    const shopeeDiagnosticClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1, 'test/legacy-shopee-diagnostic')",
+      [serverlessHash],
+    );
+    assert.equal(shopeeDiagnosticClaim.id, legacyShopeeDiagnosticId);
+    assert.equal(shopeeDiagnosticClaim.channel, "shopee");
+    assert.equal(shopeeDiagnosticClaim.operation, "diagnostic.test");
+    assert.equal(
+      await scalar(
+        db,
+        "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+        [blockedLegacyShopeeCategoryId],
+      ),
+      "queued",
+      "legacy Shopee category work must remain fenced before provider identity attestation",
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', worker_token_id = null, claim_token = null,
+              lease_expires_at = null, completed_at = clock_timestamp(),
+              error_message = 'Synthetic Shopee identity diagnostic claim probe completed.',
+              updated_at = clock_timestamp()
+        where id = $1 and status = 'running'`,
+      [legacyShopeeDiagnosticId],
+    );
 
     const oauthJobId = await scalar(
       db,

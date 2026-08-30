@@ -3,6 +3,7 @@ import test from "node:test";
 import { executeChannelOperation, type ChannelOperationResult } from "../lib/channels/operations";
 import {
   normalizeShopeeListingPublicationReadback,
+  readShopeeGlobalListingPublicationState,
   shopeeGlobalPublishArgumentsForIntent,
 } from "../lib/channels/provider-shopee-publication-readback";
 import { verifyShopeeGlobalListingPostPublish } from "../lib/channels/provider-shopee-post-publish-runtime";
@@ -49,11 +50,11 @@ function localItemData(status = "UNLIST") {
   };
 }
 
-function remote(data: Record<string, unknown>): RemoteResponse {
+function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   const text = JSON.stringify(data);
   return {
     response: new Response(text, {
-      status: 200,
+      status,
       headers: { "content-type": "application/json" },
     }),
     data,
@@ -288,6 +289,77 @@ test("Shopee publication evidence fails shut when base-info returns duplicate im
   assert.equal(attacked.checks.identityVerified, false);
 });
 
+test("Shopee SG global CREATE fails shut when publish.shop_region is SG but strict context and evidence are missing", async () => {
+  const arguments_ = mutationArguments("NORMAL");
+  delete (arguments_ as Record<string, unknown>).country;
+  assert.equal(arguments_.publish.shop_region, "SG");
+  assert.equal((arguments_ as Record<string, unknown>).sellerpilotShopeeSgCreateContext, undefined);
+  assert.equal((arguments_ as Record<string, unknown>).sellerpilotShopeeSgPreparedCreateEvidence, undefined);
+
+  const readback = await readShopeeGlobalListingPublicationState({
+    merchantPayload: { merchant_id: "2001" },
+    shopPayload: { shop_id: "1001" },
+    environment: "production",
+    operation: "listing.create",
+    globalItemId: "7001",
+    localItemId: "9001",
+    shopId: "1001",
+    mutationArguments: arguments_,
+    expectedLocale: "en-SG",
+    expectedFingerprint: FINGERPRINT,
+    expectedImageCount: 8,
+  }, {
+    merchantRequest: async ({ path }) => path.endsWith("get_global_item_info")
+      ? remote({ error: "", response: { global_item_list: [{ global_item_id: 7001 }] } })
+      : remote({ error: "", response: { published_item: [{ shop_id: 1001, item_id: 9001 }] } }),
+    shopRequest: async () => remote(localItemData("NORMAL")),
+  });
+
+  assert.equal(readback.globalIdentityVerified, true);
+  assert.equal(readback.publishedLinkageVerified, true);
+  assert.equal(readback.localTransportVerified, true);
+  assert.equal(Object.values(readback.checks).every(Boolean), true);
+  assert.equal(readback.strictCreateVerified, false);
+  assert.equal(readback.remoteState, undefined);
+});
+
+test("Shopee final local GET rejects item-shaped non-2xx and provider-error responses before normalization", async () => {
+  const arguments_ = mutationArguments("NORMAL");
+  arguments_.country = "my";
+  arguments_.publicationExpectedLocale = "ms-MY";
+  arguments_.publish.shop_region = "MY";
+  for (const [label, localRemote] of [
+    ["non-2xx", remote(localItemData("NORMAL"), 502)],
+    ["provider error", remote({ ...localItemData("NORMAL"), error: "provider_error" })],
+  ] as const) {
+    const readback = await readShopeeGlobalListingPublicationState({
+      merchantPayload: { merchant_id: "2001" },
+      shopPayload: { shop_id: "1001" },
+      environment: "production",
+      operation: "listing.create",
+      globalItemId: "7001",
+      localItemId: "9001",
+      shopId: "1001",
+      mutationArguments: arguments_,
+      expectedLocale: "ms-MY",
+      expectedFingerprint: FINGERPRINT,
+      expectedImageCount: 8,
+    }, {
+      merchantRequest: async ({ path }) => path.endsWith("get_global_item_info")
+        ? remote({ error: "", response: { global_item_list: [{ global_item_id: 7001 }] } })
+        : remote({ error: "", response: { published_item: [{ shop_id: 1001, item_id: 9001 }] } }),
+      shopRequest: async () => localRemote,
+    });
+
+    assert.equal(readback.globalIdentityVerified, true, label);
+    assert.equal(readback.publishedLinkageVerified, true, label);
+    assert.equal(readback.localTransportVerified, false, label);
+    assert.equal(readback.imageCount, 0, label);
+    assert.equal(readback.checks.identityVerified, false, label);
+    assert.equal(readback.remoteState, undefined, label);
+  }
+});
+
 test("Shopee verified global safe publication forces UNLIST and is finalized only by local base-info readback", async () => {
   const originalFetch = globalThis.fetch;
   let publishBody: Record<string, unknown> = {};
@@ -312,8 +384,15 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
     throw new Error(`Unexpected Shopee request: ${url}`);
   };
   try {
+    const genericArguments = mutationArguments();
     const arguments_ = {
-      ...mutationArguments(),
+      ...genericArguments,
+      country: "my",
+      publicationExpectedLocale: "ms-MY",
+      publish: {
+        ...genericArguments.publish,
+        shop_region: "MY",
+      },
       body: { global_item_name: "Verified cup" },
     };
     const providerResult = await executeChannelOperation({
@@ -338,7 +417,7 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
       remoteData: localItemData(),
       mutationArguments: { ...arguments_, globalItemId: "7001" },
       credentialShopId: "1001",
-      expectedLocale: "en-SG",
+      expectedLocale: "ms-MY",
       expectedFingerprint: FINGERPRINT,
       expectedImageCount: 8,
     }).remoteState!;
@@ -359,7 +438,9 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
       hooks: { assertLeaseHealthy: async () => undefined, beginProviderMutation: async () => undefined },
     }, {
       shopeeRequest: async () => remote(localItemData()),
-      shopeeMerchantRequest: async () => remote({ error: "", response: {} }),
+      shopeeMerchantRequest: async ({ path }) => path.endsWith("get_global_item_info")
+        ? remote({ error: "", response: { global_item_list: [{ global_item_id: 7001 }] } })
+        : remote({ error: "", response: { published_item: [{ shop_id: 1001, item_id: 9001 }] } }),
     });
     assert.equal(finalized.ok, true);
     assert.equal(finalized.remoteState?.visibility, "non_public");
@@ -377,7 +458,17 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
 });
 
 test("Shopee live REVIEWING readback remains pending and never counts as published", async () => {
-  const args = { ...mutationArguments("NORMAL"), globalItemId: "7001" };
+  const genericArguments = mutationArguments("NORMAL");
+  const args = {
+    ...genericArguments,
+    country: "my",
+    publicationExpectedLocale: "ms-MY",
+    globalItemId: "7001",
+    publish: {
+      ...genericArguments.publish,
+      shop_region: "MY",
+    },
+  };
   const initial: ChannelOperationResult = {
     ok: false,
     channel: "shopee",
@@ -398,7 +489,9 @@ test("Shopee live REVIEWING readback remains pending and never counts as publish
     hooks: { assertLeaseHealthy: async () => undefined, beginProviderMutation: async () => undefined },
   }, {
     shopeeRequest: async () => remote(localItemData("REVIEWING")),
-    shopeeMerchantRequest: async () => remote({ error: "", response: {} }),
+    shopeeMerchantRequest: async ({ path }) => path.endsWith("get_global_item_info")
+      ? remote({ error: "", response: { global_item_list: [{ global_item_id: 7001 }] } })
+      : remote({ error: "", response: { published_item: [{ shop_id: 1001, item_id: 9001 }] } }),
   });
   assert.equal(finalized.ok, true);
   assert.equal(finalized.remoteState?.visibility, "pending_review");
