@@ -1478,6 +1478,9 @@ test("due enqueue and completion replay are idempotent and do not duplicate tran
       checkCount: 0,
       nextCheckInterval: "-1 second",
     });
+    await db.query(
+      "select set_config('request.jwt.claim.role', 'service_role', false)",
+    );
     const first = await scalar(
       db,
       "select public.sellerpilot_service_enqueue_due_listing_publication_verifications(14)",

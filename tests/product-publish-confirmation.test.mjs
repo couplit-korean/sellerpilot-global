@@ -77,7 +77,14 @@ test("Coupang listing preflight never creates an unconfirmed shipping place", as
   assert.doesNotMatch(`${worker}\n${listingRuntime}`, /shippingPlaceName: "SellerPilot API 출고지"/);
   assert.doesNotMatch(`${worker}\n${listingRuntime}`, /COUPANG_OUTBOUND_CREATE_FAILED/);
   assert.match(worker, /prepareMarketplaceListingArguments\(\{/);
-  assert.match(listingRuntime, /input\.channel === "coupang" && input\.operation === "listing\.create"/);
+  assert.match(
+    listingRuntime,
+    /input\.channel === "coupang" && \(input\.operation === "listing\.create"/,
+  );
+  assert.match(
+    listingRuntime,
+    /\|\| coupangExactQaRecoveryBinding\(input\.arguments, "listing\.update"\)\)/,
+  );
 });
 
 test("eBay market listings use one market-specific SKU for inventory and offer", async () => {
