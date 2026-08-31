@@ -97,6 +97,8 @@ const SMARTSTORE_NONSTATIC_EGRESS_MIGRATION =
   "20260831145000_release_smartstore_from_static_egress.sql";
 const TEMU_EXACT_CABLE_MIGRATION =
   "20260831146000_temu_exact_cable_clips.sql";
+const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
+  "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -772,6 +774,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_LOCALIZATION_V2_MIGRATION,
       SMARTSTORE_NONSTATIC_EGRESS_MIGRATION,
       TEMU_EXACT_CABLE_MIGRATION,
+      EBAY_EXACT_CONTENT_FENCE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -868,9 +871,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "competitor v3, review ledger, queue retirement, identity fence, Smartstore recovery, Temu publication, and Coupang recovery fence must replay after Qoo10 573 in order",
     );
     assert.ok(
-      migrationNames.indexOf(EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION)
-        < migrationNames.indexOf(SMARTSTORE_NONSTATIC_EGRESS_MIGRATION),
-      "Smartstore non-static egress must be a forward migration after the final existing QA recovery fence",
+      migrationNames.indexOf(TEMU_EXACT_CABLE_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION),
+      "eBay exact content hardening must be a 20260901 forward migration after the previously deployed migration chain",
     );
     let shopeeStaticEgressMigration;
     let smartstoreNonstaticEgressMigration;

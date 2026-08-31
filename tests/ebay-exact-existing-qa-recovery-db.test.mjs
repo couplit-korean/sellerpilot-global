@@ -3,8 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-const migrationUrl = new URL(
+const recoveryMigrationUrl = new URL(
   "../supabase/migrations/20260831143000_ebay_exact_existing_qa_recovery_fence.sql",
+  import.meta.url,
+);
+const contentFenceMigrationUrl = new URL(
+  "../supabase/migrations/20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql",
   import.meta.url,
 );
 
@@ -119,7 +123,8 @@ async function createDatabase() {
       select '{"status":"predecessor_enqueue"}'::jsonb
     $$;
   `);
-  await db.exec(await readFile(migrationUrl, "utf8"));
+  await db.exec(await readFile(recoveryMigrationUrl, "utf8"));
+  await db.exec(await readFile(contentFenceMigrationUrl, "utf8"));
   await db.query(
     `insert into sellerpilot_private.products
        (id,owner_id,sku,on_hand,demo,status)
