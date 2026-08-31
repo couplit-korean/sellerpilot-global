@@ -101,6 +101,8 @@ const QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION =
   "20260831195108_reach_exact_qoo10_localization_through_closed_gate.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
+const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
+  "20260901044230_recover_exact_elevenst_snapshot_forward.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -778,6 +780,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       TEMU_EXACT_CABLE_MIGRATION,
       QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION,
       EBAY_EXACT_CONTENT_FENCE_MIGRATION,
+      ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -879,6 +882,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION),
       "eBay exact content hardening must be a 20260901 forward migration after the previously deployed migration chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
+        < migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION),
+      "11st exact snapshot repair must replay forward of the complete deployed chain without reapplying its historical recovery migration",
     );
     let shopeeStaticEgressMigration;
     let smartstoreNonstaticEgressMigration;
