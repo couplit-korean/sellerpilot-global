@@ -7,23 +7,195 @@
 begin;
 
 do $temu_publication_installation_fence$
+declare
+  v_unresolved_listing_mutations integer;
+  v_exact_qoo10_v2_handoff boolean := false;
+  v_exact_qoo10_source_before jsonb;
 begin
   perform pg_catalog.pg_advisory_xact_lock(193674993, 821065042);
   lock table sellerpilot_private.channel_gateway_jobs
     in share row exclusive mode;
+  lock table sellerpilot_private.channel_operation_attempts,
+             sellerpilot_private.product_listings,
+             sellerpilot_private.products,
+             sellerpilot_private.channel_credentials,
+             sellerpilot_private.gateway_completion_receipts,
+             sellerpilot_private.listing_mutation_release_gate
+    in share row exclusive mode;
 
-  if exists (
+  select count(*)::integer
+    into v_unresolved_listing_mutations
+    from sellerpilot_private.channel_gateway_jobs job
+   where job.operation in (
+     'listing.create', 'listing.update', 'listing.stop', 'listing.activate'
+   )
+     and job.status in ('queued', 'running', 'reconciliation_required')
+     and not (
+       job.status='reconciliation_required'
+       and sellerpilot_private.qoo10_exact_s1_source_reconciliation_resolved(job.id)
+     );
+
+  -- The production preimage contains one immutable Qoo10 S1 source whose
+  -- provider result is deliberately ambiguous. Migration 144000 installs the
+  -- reviewed-Japanese v2 replacement and is solely responsible for resolving
+  -- both that source and its replacement after an S2 readback. This is only an
+  -- installation handoff: it neither updates fac9 nor treats it as reconciled.
+  select exists (
     select 1
       from sellerpilot_private.channel_gateway_jobs job
-     where job.operation in (
-       'listing.create', 'listing.update', 'listing.stop', 'listing.activate'
-     )
-       and job.status in ('queued', 'running', 'reconciliation_required')
-       and not (
-         job.status='reconciliation_required'
-         and sellerpilot_private.qoo10_exact_s1_source_reconciliation_resolved(job.id)
+      join sellerpilot_private.channel_operation_attempts attempt
+        on attempt.id = job.attempt_id
+      join sellerpilot_private.product_listings listing
+        on listing.id = job.listing_id
+      join sellerpilot_private.products product
+        on product.id = listing.product_id
+      join sellerpilot_private.channel_credentials credential
+        on credential.id = job.credential_id
+     where job.id is not distinct from
+             'fac9c5c4-940d-4600-88f3-8f97a069dfbf'::uuid
+       and job.attempt_id is not distinct from
+             '4402cc76-295b-4e17-8c07-d5d0e9967ce9'::uuid
+       and job.listing_id is not distinct from
+             '4e5b97be-3fe5-4537-9e26-d36fb36ec1fc'::uuid
+       and job.credential_id is not distinct from
+             '2b49d081-5188-4a75-9555-e0a6438e8a2b'::uuid
+       and job.created_by is not distinct from
+             '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+       and job.channel is not distinct from 'qoo10'
+       and job.operation is not distinct from 'listing.update'
+       and job.environment is not distinct from 'production'
+       and job.status is not distinct from 'reconciliation_required'
+       and job.attempt_count is not distinct from 1
+       and job.started_at is not distinct from
+             '2026-08-30 23:40:03.366985+00'::timestamptz
+       and job.provider_mutation_started_at is not distinct from
+             '2026-08-30 23:40:04.536552+00'::timestamptz
+       and job.completed_at is not distinct from
+             '2026-08-30 23:40:12.844179+00'::timestamptz
+       and job.error_message is not null
+       and job.worker_token_id is null
+       and job.claim_token is null
+       and job.lease_expires_at is null
+       and job.write_resource_kind is null
+       and job.write_resource_key is null
+       and job.seller_account_key is not distinct from
+             '2d5f4c65827e9f360ee013422ae6730ed1a7c67679a2e4beaa144d6a2c73ac46'
+       and job.request_fingerprint is not distinct from
+             '76be7b79b89497d6841fb3fd921b5ffb57036ea3a93029fa8fa84f6440e85799'
+       and pg_catalog.octet_length(job.request_payload::text)
+             is not distinct from 23555
+       and encode(extensions.digest(job.request_payload::text, 'sha256'), 'hex')
+             is not distinct from
+             'c6baf120f58bdfd3cd10adcb85a1f6a5820b9a003ca5c3160959ecdb1fb7d26d'
+       and pg_catalog.octet_length(job.response_payload::text)
+             is not distinct from 16669
+       and encode(extensions.digest(job.response_payload::text, 'sha256'), 'hex')
+             is not distinct from
+             'b2c09c6388fa048f789a8a272bf21cd3d68cf8a8caa4fc02a4e1ca1be6a6b768'
+       and not exists (
+         select 1
+           from jsonb_array_elements(
+             coalesce(job.response_payload->'steps','[]'::jsonb)
+           ) step
+          where lower(coalesce(step->>'name','')) in (
+            'qoo10-rollback-recovery-activate', 'qoo10-s1-activation',
+            'editgoodsstatus'
+          )
        )
-  ) then
+       and (
+         select count(*)
+           from sellerpilot_private.gateway_completion_receipts receipt
+          where receipt.job_id = job.id
+       ) = 1
+       and attempt.id is not distinct from
+             '4402cc76-295b-4e17-8c07-d5d0e9967ce9'::uuid
+       and attempt.owner_id is not distinct from
+             '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c'::uuid
+       and attempt.credential_id is not distinct from job.credential_id
+       and attempt.channel is not distinct from 'qoo10'
+       and attempt.operation is not distinct from 'listing.update'
+       and attempt.status is not distinct from 'manual_required'
+       and attempt.http_status is not distinct from 409
+       and attempt.remote_id is not distinct from '1217336970'
+       and attempt.started_at is not distinct from
+             '2026-08-30 22:38:33.731944+00'::timestamptz
+       and attempt.completed_at is not distinct from job.completed_at
+       and attempt.gateway_write_required is not distinct from true
+       and attempt.pre_gateway_retryable is not distinct from false
+       and attempt.seller_account_key is not distinct from
+             job.seller_account_key
+       and listing.id is not distinct from
+             '4e5b97be-3fe5-4537-9e26-d36fb36ec1fc'::uuid
+       and listing.owner_id is not distinct from attempt.owner_id
+       and listing.product_id is not distinct from
+             'ddccde35-9c58-4856-b673-d7aa27ce4220'::uuid
+       and listing.channel_key is not distinct from 'qoo10'
+       and listing.market is not distinct from 'JP'
+       and listing.target_id is not distinct from ''
+       and listing.status is not distinct from 'failed'
+       and listing.failure_class is not distinct from 'external_action'
+       and listing.remote_visibility is not distinct from 'unknown'
+       and listing.requested_publication_intent is not distinct from 'live'
+       and listing.remote_id is not distinct from '1217336970'
+       and listing.provider_status is null
+       and listing.seller_account_key is not distinct from job.seller_account_key
+       and listing.marketplace_sku is null
+       and listing.operation_attempt_id is not distinct from attempt.id
+       and listing.updated_at is not distinct from
+             '2026-08-30 23:40:12.971653+00'::timestamptz
+       and product.id is not distinct from
+             'ddccde35-9c58-4856-b673-d7aa27ce4220'::uuid
+       and product.owner_id is not distinct from listing.owner_id
+       and product.demo is not distinct from false
+       and product.status is distinct from 'archived'
+       and credential.channel is not distinct from 'qoo10'
+       and credential.environment is not distinct from 'production'
+       and credential.status is not distinct from 'active'
+       and credential.seller_account_key is not distinct from job.seller_account_key
+       and credential.created_by is not distinct from job.created_by
+       and sellerpilot_private.qoo10_exact_s1_source_is_current()
+       and exists (
+         select 1
+           from sellerpilot_private.listing_mutation_release_gate gate
+          where gate.singleton
+            and gate.is_open is not distinct from false
+            and gate.opened_at is null
+            and gate.opened_release_sha is null
+            and gate.opened_channel is null
+       )
+       and not exists (
+         select 1
+           from sellerpilot_private.channel_gateway_jobs other_job
+          where other_job.id is distinct from job.id
+            and other_job.operation in (
+              'listing.create', 'listing.update', 'listing.stop',
+              'listing.activate'
+            )
+            and other_job.status in (
+              'queued', 'running', 'reconciliation_required'
+            )
+            and not (
+              other_job.status='reconciliation_required'
+              and sellerpilot_private.qoo10_exact_s1_source_reconciliation_resolved(
+                    other_job.id
+                  )
+            )
+       )
+  ) into v_exact_qoo10_v2_handoff;
+
+  if v_exact_qoo10_v2_handoff then
+    select to_jsonb(job)
+      into v_exact_qoo10_source_before
+      from sellerpilot_private.channel_gateway_jobs job
+     where job.id = 'fac9c5c4-940d-4600-88f3-8f97a069dfbf'::uuid;
+  end if;
+
+  if v_unresolved_listing_mutations <> 0
+     and not (
+       v_unresolved_listing_mutations = 1
+       and v_exact_qoo10_v2_handoff
+     )
+  then
     raise exception
       'listing mutation jobs must be terminal before Temu publication release installation'
       using errcode = '55000';
@@ -38,6 +210,20 @@ begin
    where gate.singleton;
   if not found then
     raise exception 'listing mutation release-gate state missing'
+      using errcode = '55000';
+  end if;
+
+  if v_exact_qoo10_v2_handoff
+     and (
+       not sellerpilot_private.qoo10_exact_s1_source_is_current()
+       or (
+         select to_jsonb(job)
+           from sellerpilot_private.channel_gateway_jobs job
+          where job.id = 'fac9c5c4-940d-4600-88f3-8f97a069dfbf'::uuid
+       ) is distinct from v_exact_qoo10_source_before
+     )
+  then
+    raise exception 'exact Qoo10 v2 installation handoff drifted'
       using errcode = '55000';
   end if;
 end;

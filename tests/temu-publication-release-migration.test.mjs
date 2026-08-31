@@ -13,6 +13,20 @@ test("Temu publication release is a forward-only migration after the deployed 13
 
   const migration = await readFile(migrationUrl, "utf8");
   assert.match(migration, /listing mutation jobs must be terminal before Temu publication release installation/);
+  assert.match(migration, /v_unresolved_listing_mutations = 1[\s\S]*v_exact_qoo10_v2_handoff/);
+  assert.match(migration, /fac9c5c4-940d-4600-88f3-8f97a069dfbf/);
+  assert.match(migration, /4402cc76-295b-4e17-8c07-d5d0e9967ce9/);
+  assert.match(migration, /qoo10_exact_s1_source_is_current\(\)/);
+  assert.match(migration, /request_payload::text[\s\S]*c6baf120f58bdfd3cd10adcb85a1f6a5820b9a003ca5c3160959ecdb1fb7d26d/);
+  assert.match(migration, /response_payload::text[\s\S]*b2c09c6388fa048f789a8a272bf21cd3d68cf8a8caa4fc02a4e1ca1be6a6b768/);
+  assert.match(migration, /other_job\.id is distinct from job\.id[\s\S]*'listing\.activate'/);
+  assert.match(migration, /gate\.is_open is not distinct from false/);
+  assert.match(migration, /to_jsonb\(job\)[\s\S]*is distinct from v_exact_qoo10_source_before/);
+  const installationFence = migration.match(
+    /do \$temu_publication_installation_fence\$[\s\S]*?\$temu_publication_installation_fence\$;/,
+  )?.[0];
+  assert.ok(installationFence);
+  assert.doesNotMatch(installationFence, /update\s+sellerpilot_private\.channel_gateway_jobs/i);
   assert.match(migration, /listing_publication_reviews_channel_check[\s\S]*'ebay', 'temu'/);
   assert.match(migration, /listing_publication_adapter_release_channel_check[\s\S]*'ebay', 'temu'/);
   assert.match(migration, /values \(\s*'temu', false, null, null, null, clock_timestamp\(\)\s*\)/);
