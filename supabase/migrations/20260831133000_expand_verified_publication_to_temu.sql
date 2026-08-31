@@ -2148,48 +2148,48 @@ begin
   select * into v_job from sellerpilot_private.channel_gateway_jobs job
    where job.id=p_job_id and job.channel='temu'
      and job.status='succeeded' and job.completed_at is not null;
-  if not found or v_job.response_payload->>'ok'<>'true'
-     or v_job.response_payload->>'publicationStateContract'<>
+  if not found or v_job.response_payload->>'ok' is distinct from 'true'
+     or v_job.response_payload->>'publicationStateContract' is distinct from
           'verified_remote_state_v1'
-     or v_job.response_payload->>'remoteId'<>p_goods_id then return false; end if;
+     or v_job.response_payload->>'remoteId' is distinct from p_goods_id then return false; end if;
   v_state:=v_job.response_payload->'remoteState';
   begin v_verified_at:=(v_state->>'verifiedAt')::timestamptz;
   exception when others then return false; end;
-  if v_state#>>'{evidence,imageOrderVerified}'<>'true'
-     or v_state#>>'{evidence,contentVerified}'<>'true'
-     or v_state#>>'{evidence,skuIdentityVerified}'<>'true'
-     or v_state#>>'{evidence,priceVerified}'<>'true'
-     or v_state#>>'{evidence,stockVerified}'<>'true'
-     or v_state#>>'{evidence,goodsIdVerified}'<>'true'
-     or v_state#>>'{evidence,externalGoodsIdVerified}'<>'true' then
+  if v_state#>>'{evidence,imageOrderVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,contentVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,skuIdentityVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,priceVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,stockVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,goodsIdVerified}' is distinct from 'true'
+     or v_state#>>'{evidence,externalGoodsIdVerified}' is distinct from 'true' then
     return false;
   end if;
   if p_expected_image_count=8 then
     v_asset:=v_state#>'{evidence,publicationAssetBinding}';
-    if v_state#>>'{evidence,version}'<>'temu_list_status_detail_stock_v2'
+    if v_state#>>'{evidence,version}' is distinct from 'temu_list_status_detail_stock_v2'
        or not (
          coalesce(v_state#>'{evidence,readbackMethods}','[]'::jsonb)
            @> '["temu.local.goods.sku.stock.query"]'::jsonb
        )
-       or jsonb_typeof(v_job.request_payload#>'{arguments,body,skuList}')<>'array'
+       or jsonb_typeof(v_job.request_payload#>'{arguments,body,skuList}') is distinct from 'array'
        or jsonb_array_length(v_job.request_payload#>'{arguments,body,skuList}')<1
-       or v_state#>>'{evidence,observedSkuCount}'<>
+       or v_state#>>'{evidence,observedSkuCount}' is distinct from
             jsonb_array_length(v_job.request_payload#>'{arguments,body,skuList}')::text
-       or jsonb_typeof(v_asset)<>'object'
-       or v_asset->>'contract'<>'sellerpilot_provider_asset_binding_v1'
-       or v_asset->>'providerImageSurface'<>'detail_content'
+       or jsonb_typeof(v_asset) is distinct from 'object'
+       or v_asset->>'contract' is distinct from 'sellerpilot_provider_asset_binding_v1'
+       or v_asset->>'providerImageSurface' is distinct from 'detail_content'
        or coalesce(v_asset->>'sourceAssetBindingDigest','') !~ '^[a-f0-9]{64}$'
        or coalesce(v_asset->>'providerImageDigest','') !~ '^[a-f0-9]{64}$'
-       or jsonb_typeof(v_asset->'approvedDetailRoles')<>'array'
-       or jsonb_array_length(v_asset->'approvedDetailRoles')<>8
-       or jsonb_typeof(v_asset->'providerTransportRoles')<>'array'
-       or v_asset->'providerTransportRoles'<>v_asset->'approvedDetailRoles'
-       or jsonb_typeof(v_asset->'providerDetailImageIdentities')<>'array'
-       or jsonb_array_length(v_asset->'providerDetailImageIdentities')<>8
+       or jsonb_typeof(v_asset->'approvedDetailRoles') is distinct from 'array'
+       or jsonb_array_length(v_asset->'approvedDetailRoles') is distinct from 8
+       or jsonb_typeof(v_asset->'providerTransportRoles') is distinct from 'array'
+       or v_asset->'providerTransportRoles' is distinct from v_asset->'approvedDetailRoles'
+       or jsonb_typeof(v_asset->'providerDetailImageIdentities') is distinct from 'array'
+       or jsonb_array_length(v_asset->'providerDetailImageIdentities') is distinct from 8
        or (select count(distinct image.value)::integer
              from jsonb_array_elements_text(
                v_asset->'providerDetailImageIdentities'
-             ) image(value))<>8
+             ) image(value)) is distinct from 8
        or not exists(
          select 1
            from sellerpilot_private.product_listings listing
@@ -2221,9 +2221,9 @@ begin
                   with ordinality current_image(image,position)
                   using(position)
                where bound.image is null or current_image.image is null
-                  or bound.image->>'role'<>current_image.image->>'role'
-                  or bound.image->>'approvedObjectPath'<>current_image.image->>'path'
-                  or bound.image->>'approvedSourceSha256'<>current_image.image->>'sourceSha256'
+                  or bound.image->>'role' is distinct from current_image.image->>'role'
+                  or bound.image->>'approvedObjectPath' is distinct from current_image.image->>'path'
+                  or bound.image->>'approvedSourceSha256' is distinct from current_image.image->>'sourceSha256'
             )
             and v_asset->'approvedDetailRoles'=(
               select jsonb_agg(image.value->>'role' order by image.ordinality)
@@ -2234,24 +2234,24 @@ begin
        ) then
       return false;
     end if;
-  elsif p_expected_image_count<>0 then
+  elsif p_expected_image_count is distinct from 0 then
     return false;
   end if;
-  return v_state->>'verified'='true'
-    and v_state->>'visibility'=any(p_allowed_visibility)
+  return v_state->>'verified' is not distinct from 'true'
+    and coalesce(v_state->>'visibility'=any(p_allowed_visibility),false)
     and coalesce(v_state->>'providerStatus','')<>''
-    and v_state->>'locale'='ko-KR'
-    and v_state->>'fingerprint'=v_job.request_fingerprint
-    and v_state->>'imageCount'=p_expected_image_count::text
-    and v_state#>>'{resources,goodsId}'=p_goods_id
-    and v_state#>>'{resources,externalGoodsId}'=p_external_goods_id
-    and v_state#>>'{evidence,identityVerified}'='true'
-    and v_state#>>'{evidence,statusVerified}'='true'
-    and v_state#>>'{evidence,localeVerified}'='true'
-    and v_state#>>'{evidence,fingerprintVerified}'='true'
-    and v_state#>>'{evidence,imageCountVerified}'='true'
-    and v_verified_at>=v_job.provider_mutation_started_at
-    and v_verified_at<=clock_timestamp()+interval '5 minutes';
+    and v_state->>'locale' is not distinct from 'ko-KR'
+    and v_state->>'fingerprint' is not distinct from v_job.request_fingerprint
+    and v_state->>'imageCount' is not distinct from p_expected_image_count::text
+    and v_state#>>'{resources,goodsId}' is not distinct from p_goods_id
+    and v_state#>>'{resources,externalGoodsId}' is not distinct from p_external_goods_id
+    and v_state#>>'{evidence,identityVerified}' is not distinct from 'true'
+    and v_state#>>'{evidence,statusVerified}' is not distinct from 'true'
+    and v_state#>>'{evidence,localeVerified}' is not distinct from 'true'
+    and v_state#>>'{evidence,fingerprintVerified}' is not distinct from 'true'
+    and v_state#>>'{evidence,imageCountVerified}' is not distinct from 'true'
+    and coalesce(v_verified_at>=v_job.provider_mutation_started_at,false)
+    and coalesce(v_verified_at<=clock_timestamp()+interval '5 minutes',false);
 exception when others then return false;
 end;
 $$;

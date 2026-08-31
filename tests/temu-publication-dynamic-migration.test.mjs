@@ -133,12 +133,19 @@ function activationFixtureData(suffix) {
     publicationExpectedFingerprint: sourceFingerprint,
     sellerpilotPublicationAssetBinding: assetBinding,
     body: {
+      language: "ko",
       goodsBasic: {
         externalGoodsId,
         goodsName: `Temu 동적 검증 상품 ${suffix}`,
         goodsDesc: "승인된 한국어 상세 설명",
+        bulletPoints: ["승인된 한국어 상세 구성"],
         detailImage: images.map((image) => `https://assets.example.test/${image.path}`),
       },
+      skuList: [{
+        externalSkuId: `${externalGoodsId}-01`,
+        quantity: 1,
+        price: { basePrice: { amount: "10000", currency: "KRW" } },
+      }],
     },
   };
   return {
@@ -148,6 +155,60 @@ function activationFixtureData(suffix) {
     externalGoodsId,
     images,
     argumentsPayload,
+  };
+}
+
+function temuProviderAssetBinding(fixture) {
+  const roles = fixture.images.map((image) => image.role);
+  return {
+    contract: "sellerpilot_provider_asset_binding_v1",
+    providerImageSurface: "detail_content",
+    sourceAssetBindingDigest: "e".repeat(64),
+    providerImageDigest: "f".repeat(64),
+    approvedManifestDigest: fixture.manifestDigest,
+    approvedDetailPageVersion: 1,
+    approvedDetailRoles: roles,
+    providerTransportRoles: roles,
+    providerDetailImageIdentities: fixture.images.map((image) => image.sourceSha256),
+  };
+}
+
+function validTemuActivationRemoteState(fixture, fingerprint) {
+  return {
+    verified: true,
+    visibility: "live",
+    providerStatus: "LIVE",
+    locale: "ko-KR",
+    fingerprint,
+    imageCount: 8,
+    verifiedAt: new Date(Date.now() + 1_000).toISOString(),
+    resources: {
+      goodsId: fixture.goodsId,
+      externalGoodsId: fixture.externalGoodsId,
+    },
+    evidence: {
+      version: "temu_list_status_detail_stock_v2",
+      readbackMethods: [
+        "temu.local.goods.list.retrieve",
+        "bg.local.goods.publish.status.get",
+        "bg.local.goods.detail.query",
+        "temu.local.goods.sku.stock.query",
+      ],
+      identityVerified: true,
+      statusVerified: true,
+      localeVerified: true,
+      fingerprintVerified: true,
+      imageCountVerified: true,
+      imageOrderVerified: true,
+      contentVerified: true,
+      skuIdentityVerified: true,
+      priceVerified: true,
+      stockVerified: true,
+      goodsIdVerified: true,
+      externalGoodsIdVerified: true,
+      observedSkuCount: 1,
+      publicationAssetBinding: temuProviderAssetBinding(fixture),
+    },
   };
 }
 
@@ -665,6 +726,103 @@ test("Temu publication migration dynamically fences durable activation and conta
         );
       } finally {
         await db.exec("rollback");
+      }
+    });
+
+    await t.test("missing Temu terminal evidence is NULL-safe and cannot complete an activation", async () => {
+      const cases = [
+        { label: "valid-control", missing: null, expectedValid: true },
+        { label: "image-order", missing: "imageOrderVerified", expectedValid: false },
+        { label: "content", missing: "contentVerified", expectedValid: false },
+        { label: "sku-identity", missing: "skuIdentityVerified", expectedValid: false },
+        { label: "price", missing: "priceVerified", expectedValid: false },
+        { label: "stock", missing: "stockVerified", expectedValid: false },
+        { label: "version", missing: "version", expectedValid: false },
+        { label: "sku-count", missing: "observedSkuCount", expectedValid: false },
+        { label: "readback-methods", missing: "readbackMethods", expectedValid: false },
+        { label: "asset-binding", missing: "publicationAssetBinding", expectedValid: false },
+      ];
+      for (const testCase of cases) {
+        await db.exec("begin");
+        try {
+          const fixture = await seedVerifiedSafeTestListing(db, "5");
+          const fingerprint = "d".repeat(64);
+          const activation = await enqueueActivation(db, fixture, fingerprint);
+          const workerClaim = await claimActivationWorker(
+            db,
+            activation.enqueue.job_id,
+            `test/temu-null-safe-${testCase.label}`,
+          );
+          assert.equal(
+            await scalar(
+              db,
+              `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+                $1,$2,$3
+              )`,
+              [SERVERLESS_TOKEN_HASH, workerClaim.id, workerClaim.claim_token],
+            ),
+            true,
+          );
+          const remoteState = validTemuActivationRemoteState(fixture, fingerprint);
+          if (testCase.missing) delete remoteState.evidence[testCase.missing];
+          const completion = await scalar(
+            db,
+            `select public.sellerpilot_service_complete_serverless_cs_transaction(
+              $1,$2,$3,'succeeded',$4::jsonb,null,null,null,null,null
+            )`,
+            [
+              SERVERLESS_TOKEN_HASH,
+              workerClaim.id,
+              workerClaim.claim_token,
+              JSON.stringify({
+                ok: true,
+                channel: "temu",
+                operation: "listing.activate",
+                publicationFulfilled: true,
+                publicationIntent: "live",
+                publicationStateContract: "verified_remote_state_v1",
+                remoteId: fixture.goodsId,
+                remoteState,
+              }),
+            ],
+          );
+          assert.equal(completion.status, "completed", testCase.label);
+          assert.equal(
+            await scalar(
+              db,
+              `select sellerpilot_private.temu_terminal_remote_state_valid(
+                $1,$2,$3,8,array['live','pending_review']::text[]
+              )`,
+              [workerClaim.id, fixture.goodsId, fixture.externalGoodsId],
+            ),
+            testCase.expectedValid,
+            testCase.label,
+          );
+          const outcome = (await db.query(
+            `select permit.terminal_status,listing.status listing_status,
+                    listing.remote_visibility
+               from sellerpilot_private.temu_listing_activation_permits permit
+               join sellerpilot_private.product_listings listing
+                 on listing.id=permit.listing_id
+              where permit.activation_job_id=$1`,
+            [workerClaim.id],
+          )).rows[0];
+          if (testCase.expectedValid) {
+            assert.deepEqual(outcome, {
+              terminal_status: "succeeded",
+              listing_status: "published",
+              remote_visibility: "live",
+            }, testCase.label);
+          } else {
+            assert.deepEqual(outcome, {
+              terminal_status: "reconciliation_required",
+              listing_status: "failed",
+              remote_visibility: "unknown",
+            }, testCase.label);
+          }
+        } finally {
+          await db.exec("rollback");
+        }
       }
     });
 
