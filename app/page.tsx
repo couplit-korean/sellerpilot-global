@@ -2617,6 +2617,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
 }
 
 function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
+  const existingProductEdit = Boolean(initialProduct?.id);
   const [running, setRunning] = useState(false);
   const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
@@ -3998,14 +3999,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   return (
     <div className="page-stack publishing-page">
       <section className="publishing-workflow-header">
-        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>사진과 설명으로 1차 정보·이미지 6개를 함께 만드세요.</h2><p>1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다. 사람이 사실정보와 이미지를 확인·수정한 뒤 상세페이지를 제작하고, 상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다.</p></div>
-        <ol className="publishing-steps" aria-label="상품 등록 단계">
-          <li className="active"><span>1</span><b>1차 정보 · 이미지 6개</b><small>{firstDraftContentReady ? "생성 완료" : `${intakeProgress}% 입력`}</small></li>
-          <li><span>2</span><b>사람 확인 · 상세페이지</b><small>{firstDraftReviewed ? "검토 완료" : "검토 필요"}</small></li>
-          <li><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? `${selectedChannels.length}개 채널 준비` : "상세 완료 후 열림"}</small></li>
+        <div className="publishing-workflow-copy">{existingProductEdit ? <><span className="eyebrow dark"><RefreshCw size={14} /> 채널 상품 수정</span><h2>저장된 상품 원장으로 채널별 콘텐츠를 확인하세요.</h2><p>신규상품 입력을 다시 시작하지 않습니다. 저장된 상품정보·승인 이미지·채널별 초안을 아래 편집기에서 불러오고, 채널마다 지원 범위를 확인한 뒤 별도로 반영합니다.</p></> : <><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>사진과 설명으로 1차 정보·이미지 6개를 함께 만드세요.</h2><p>1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다. 사람이 사실정보와 이미지를 확인·수정한 뒤 상세페이지를 제작하고, 상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다.</p></>}</div>
+        <ol className="publishing-steps" aria-label={existingProductEdit ? "채널 상품 수정 단계" : "상품 등록 단계"}>
+          {existingProductEdit ? <>
+            <li className="active"><span>1</span><b>상품 원장 연결</b><small>연결 완료</small></li>
+            <li><span>2</span><b>채널별 초안 확인</b><small>아래에서 확인</small></li>
+            <li><span>3</span><b>채널별 원격 반영</b><small>{selectedChannels.length}개 채널 준비</small></li>
+          </> : <>
+            <li className="active"><span>1</span><b>1차 정보 · 이미지 6개</b><small>{firstDraftContentReady ? "생성 완료" : `${intakeProgress}% 입력`}</small></li>
+            <li><span>2</span><b>사람 확인 · 상세페이지</b><small>{firstDraftReviewed ? "검토 완료" : "검토 필요"}</small></li>
+            <li><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? `${selectedChannels.length}개 채널 준비` : "상세 완료 후 열림"}</small></li>
+          </>}
         </ol>
       </section>
       {queuedJobId && <section className="panel publishing-parallel-banner"><span><CheckCircle2 size={20} /><span><b>이 상품을 등록 큐에 넣었습니다.</b><small>작업 ID {queuedJobId.slice(0, 8)} · AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다.</small></span></span><div><button type="button" className="credential-secondary" onClick={onShowHistory}>진행상황 보기</button><button type="button" className="primary-button" onClick={onStartAnother}><Plus size={15} />다른 상품 등록</button></div></section>}
+      {existingProductEdit && initialProduct ? <section className="panel publishing-parallel-banner" aria-label="기존 상품 채널 수정 안내"><span><ShieldCheck size={20} /><span><b>{initialProduct.name}</b><small>상품 ID {initialProduct.id} · 저장된 원장과 승인 이미지가 일치하는지 읽은 뒤에만 채널별 실행 버튼이 열립니다.</small></span></span></section> : null}
+      {!existingProductEdit && <>
       <section className="publishing-layout">
         <article className="panel upload-panel">
           <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
@@ -4187,6 +4196,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           onManualProductCreated();
         }}
       />
+      </>}
       <CategoryClassificationWorkbench
         productId={resolvedProductId}
         productName={analyzedProductName || `${intake.productName} ${intake.categoryHint}`.trim()}
@@ -4196,12 +4206,14 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify={notify}
         onConfirmed={() => setPublishRefreshVersion((current) => current + 1)}
       />
-      <ProductPublishWorkbench
-        productId={resolvedProductId}
-        selectedChannels={selectedChannels}
-        refreshVersion={publishRefreshVersion}
-        notify={notify}
-      />
+      <div id="channel-product-edit-workbench">
+        <ProductPublishWorkbench
+          productId={resolvedProductId}
+          selectedChannels={selectedChannels}
+          refreshVersion={publishRefreshVersion}
+          notify={notify}
+        />
+      </div>
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={onShowHistory}>작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
         {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
