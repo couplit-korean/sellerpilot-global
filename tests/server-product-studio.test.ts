@@ -45,6 +45,7 @@ import {
   type StudioLocalizedTarget,
 } from "../lib/studio-segment-generation";
 import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
+import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
 
 const MASTER_SECTION_TYPES = [
   "benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice",
@@ -1104,6 +1105,10 @@ test("reviewed transient gateway failure completes an exact 16-asset determinist
   assert.match(koreanCopy, new RegExp(run.manual.packageContents, "u"));
   parsed.data.localizedListings.forEach((listing) => {
     const copy = JSON.stringify(listing);
+    assert.ok(
+      listing.title.startsWith(unapprovedLocalizationReviewMarker),
+      `${listing.channel}:${listing.market} deterministic localization must stay review-only`,
+    );
     assert.match(copy, /5000 KRW/u, `${listing.channel}:${listing.market} must preserve the reviewed price`);
     assert.match(copy, /20 x 15 x 5 cm \/ 0\.1 kg/u, `${listing.channel}:${listing.market} must preserve reviewed dimensions`);
     assert.match(copy, /QA-LOTTE-SAND/u, `${listing.channel}:${listing.market} must preserve the reviewed product identity`);
@@ -1401,7 +1406,11 @@ test("one transient localization chunk atomically replaces all countries from re
   const qoo10Japan = payload.localizedListings.find((listing) => listing.channel === "qoo10" && listing.market === "JP");
   assert.ok(qoo10Japan);
   assert.equal(qoo10Japan.locale, "ja-JP");
-  assert.equal(listingPublicationLanguageVerified("ja-JP", qoo10Japan.title, "title"), true);
+  assert.equal(
+    listingPublicationLanguageVerified("ja-JP", qoo10Japan.title, "title"),
+    false,
+    "review-only deterministic copy must not satisfy the publication language gate",
+  );
   assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
 });
 

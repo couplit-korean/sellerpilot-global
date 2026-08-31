@@ -331,6 +331,70 @@ export type ListingCoreContent = {
   description: string;
 };
 
+/**
+ * Deterministic Studio localization is useful as an internal review draft, but
+ * it is not a translation.  Keep a visible marker on that draft so every
+ * publication path using this module fails closed instead of exposing it to a
+ * buyer or replacing better provider copy.
+ */
+export const unapprovedLocalizationReviewMarker =
+  "[SELLERPILOT_LOCALIZATION_REVIEW_REQUIRED]" as const;
+
+function romanizeHangulForLegacyFallbackDetection(value: string) {
+  const initials = ["g", "kk", "n", "d", "tt", "r", "m", "b", "pp", "s", "ss", "", "j", "jj", "ch", "k", "t", "p", "h"];
+  const vowels = ["a", "ae", "ya", "yae", "eo", "e", "yeo", "ye", "o", "wa", "wae", "oe", "yo", "u", "wo", "we", "wi", "yu", "eu", "ui", "i"];
+  const finals = ["", "k", "k", "ks", "n", "nj", "nh", "t", "l", "lk", "lm", "lb", "ls", "lt", "lp", "lh", "m", "p", "ps", "t", "t", "ng", "t", "t", "k", "t", "p", "t", "h"];
+  return [...value.normalize("NFC")].map((character) => {
+    const code = character.codePointAt(0) ?? 0;
+    if (code < 0xac00 || code > 0xd7a3) return character;
+    const offset = code - 0xac00;
+    return `${initials[Math.floor(offset / 588)]}${vowels[Math.floor((offset % 588) / 28)]}${finals[offset % 28]}`;
+  }).join("");
+}
+
+function localizationComparable(value: string) {
+  return value.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "");
+}
+
+function isLegacyRomanizedLocalizationFallback(
+  central: { title: string; description: string },
+  localized: ListingCoreContent,
+) {
+  const centralSignals = [central.title, central.description]
+    .filter((value) => /\p{Script=Hangul}/u.test(value))
+    .map((value) => localizationComparable(romanizeHangulForLegacyFallbackDetection(value)))
+    .filter((value) => value.length >= 12);
+  if (!centralSignals.length) return false;
+  const localizedCopy = localizationComparable([
+    localized.title,
+    localized.shortDescription,
+    localized.description,
+  ].join(" "));
+  return centralSignals.some((signal) => localizedCopy.includes(signal));
+}
+
+function listingLocalizedContentOrThrow(input: {
+  operation: "listing.create" | "listing.update";
+  central: { title: string; description: string };
+  localized?: Partial<ListingCoreContent>;
+}) {
+  const title = input.localized?.title?.trim() ?? "";
+  const shortDescription = input.localized?.shortDescription?.trim() ?? "";
+  const description = input.localized?.description?.trim() ?? "";
+  if (input.operation === "listing.update"
+      && (!title || !shortDescription || !description)) {
+    throw new Error("LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED");
+  }
+  if (!title || !shortDescription || !description) return null;
+  const localized = { title, shortDescription, description };
+  if (Object.values(localized).some((value) => (
+    value.includes(unapprovedLocalizationReviewMarker)
+  )) || isLegacyRomanizedLocalizationFallback(input.central, localized)) {
+    throw new Error("LISTING_LOCALIZATION_REVIEW_REQUIRED");
+  }
+  return localized;
+}
+
 export function listingCoreContentForOperation(input: {
   operation: "listing.create" | "listing.update";
   central: { title: string; description: string };
@@ -338,10 +402,11 @@ export function listingCoreContentForOperation(input: {
 }): ListingCoreContent {
   const centralTitle = input.central.title.trim();
   const centralDescription = input.central.description.trim();
-  const description = input.localized?.description?.trim() || centralDescription;
+  const localized = listingLocalizedContentOrThrow(input);
+  const description = localized?.description || centralDescription;
   return {
-    title: input.localized?.title?.trim() || centralTitle,
-    shortDescription: input.localized?.shortDescription?.trim() || description.slice(0, 500),
+    title: localized?.title || centralTitle,
+    shortDescription: localized?.shortDescription || description.slice(0, 500),
     description,
   };
 }

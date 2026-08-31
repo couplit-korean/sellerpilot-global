@@ -26,6 +26,7 @@ import {
   buildReviewedJapaneseFallbackTitle,
   reviewedJapaneseCommerceProductName,
 } from "./channels/qoo10-japanese-title";
+import { unapprovedLocalizationReviewMarker } from "./channels/listing-update";
 import { evaluateImageLabelFidelityReport } from "./image-label-fidelity";
 import {
   buildDuplicateRetryGuidance,
@@ -1418,12 +1419,17 @@ function buildReviewedStudioLocalizedSegment(
         configuration,
         `${sku}; ${name}`,
       ];
+      const draftTitle = target.locale === "ja-JP"
+        ? reviewedJapaneseCommerceProductName(fields.productName)
+          ?? buildReviewedJapaneseFallbackTitle(name)
+        : boundedReviewedText(`${name} - ${copy.review}`, copy.identity, 120);
       return {
         ...target,
-        title: target.locale === "ja-JP"
-          ? reviewedJapaneseCommerceProductName(fields.productName)
-            ?? buildReviewedJapaneseFallbackTitle(name)
-          : boundedReviewedText(`${name} - ${copy.review}`, copy.identity, 120),
+        title: boundedReviewedText(
+          `${unapprovedLocalizationReviewMarker} ${draftTitle}`,
+          unapprovedLocalizationReviewMarker,
+          120,
+        ),
         shortDescription: boundedReviewedText(`${copy.short} ${name}; ${brand}.`, copy.short, 500),
         description: boundedReviewedText(`${copy.description} ${copy.review}: ${factSummary}.`, copy.description, 2_000),
         keywords: [

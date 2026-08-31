@@ -13,6 +13,7 @@ import {
   qoo10RollbackListingUpdateCandidate,
   qoo10RollbackUpdateRecoveryArgument,
   qoo10RollbackUpdateRecoveryContract,
+  unapprovedLocalizationReviewMarker,
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
@@ -254,14 +255,35 @@ test("published updates preserve the reviewed channel-language title and descrip
     shortDescription: "Localized summary",
     description: "Localized description",
   });
-  assert.deepEqual(listingCoreContentForOperation({
+  assert.throws(() => listingCoreContentForOperation({
     operation: "listing.update",
     central: { title: "한국 채널 제목", description: "한국 채널 설명" },
-  }), {
-    title: "한국 채널 제목",
-    shortDescription: "한국 채널 설명",
-    description: "한국 채널 설명",
-  });
+  }), /LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED/);
+});
+
+test("updates preserve remote copy when localization is a current marked or legacy romanized fallback", () => {
+  const central = {
+    title: "부착형 케이블 정리 클립 6개 세트",
+    description: "책상과 벽면의 케이블을 정리하는 부착형 클립입니다.",
+  };
+  assert.throws(() => listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: {
+      title: `${unapprovedLocalizationReviewMarker} Seller reviewed product`,
+      shortDescription: "Seller reviewed product draft",
+      description: "This draft requires localization review.",
+    },
+  }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
+  assert.throws(() => listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: {
+      title: "buchakhyeong keibeul jeongri keulrip 6gae seteu - Pre-purchase review",
+      shortDescription: "Product information based on reviewed input.",
+      description: "buchakhyeong keibeul jeongri keulrip 6gae seteu is shown for review.",
+    },
+  }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
 });
 
 test("Shopee SG and Lazada MY update payloads keep their channel-localized copy", () => {
