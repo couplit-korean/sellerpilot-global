@@ -99,6 +99,8 @@ const TEMU_EXACT_CABLE_MIGRATION =
   "20260831146000_temu_exact_cable_clips.sql";
 const QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION =
   "20260831195108_reach_exact_qoo10_localization_through_closed_gate.sql";
+const SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION =
+  "20260901053500_allow_exact_smartstore_update_through_closed_gate.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -784,6 +786,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_CONTENT_FENCE_MIGRATION,
       ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION,
       EBAY_EXACT_PROVIDER_COPY_MIGRATION,
+      SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -885,8 +888,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
         && migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
-          < migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION),
-      "eBay exact content hardening must be a 20260901 forward migration after the previously deployed migration chain",
+          < migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION)
+        && migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION),
+      "eBay content, 11st snapshot, eBay provider copy, and Smartstore permit hardening must replay in deployed order",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -11898,6 +11905,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== TEMU_PUBLICATION_RELEASE_MIGRATION
         && name !== QOO10_EXACT_LOCALIZATION_V2_MIGRATION
         && name !== QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
+        && name !== SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
@@ -13612,6 +13620,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === TEMU_PUBLICATION_RELEASE_MIGRATION
         || name === QOO10_EXACT_LOCALIZATION_V2_MIGRATION
         || name === QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
+        || name === SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after

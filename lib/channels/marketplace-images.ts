@@ -72,6 +72,11 @@ export function buildListingPublicationAssetBinding(input: {
 }) {
   const detailIdentities = input.approvedDetailImageUrls.map(normalizedMarketplaceAssetIdentity);
   const transportIdentities = input.providerTransportUrls.map(normalizedMarketplaceAssetIdentity);
+  const providerTransportCount = input.providerTransportRoles.length;
+  const providerTransportCountValid = input.providerImageSurface === "gallery"
+    ? providerTransportCount === marketplaceChannelDetailImageCount
+      || providerTransportCount === marketplaceChannelDetailImageCount + 1
+    : providerTransportCount === marketplaceChannelDetailImageCount;
   const valid = /^[a-f0-9]{64}$/u.test(input.approvedManifestDigest)
     && Number.isSafeInteger(input.approvedDetailPageVersion)
     && input.approvedDetailPageVersion > 0
@@ -85,11 +90,11 @@ export function buildListingPublicationAssetBinding(input: {
     && detailIdentities.length === marketplaceChannelDetailImageCount
     && detailIdentities.every(Boolean)
     && new Set(detailIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
-    && input.providerTransportRoles.length === marketplaceChannelDetailImageCount
-    && new Set(input.providerTransportRoles).size === marketplaceChannelDetailImageCount
-    && transportIdentities.length === marketplaceChannelDetailImageCount
+    && providerTransportCountValid
+    && new Set(input.providerTransportRoles).size === providerTransportCount
+    && transportIdentities.length === providerTransportCount
     && transportIdentities.every(Boolean)
-    && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
+    && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === providerTransportCount
     && (input.providerImageSurface === "detail_content" || input.providerImageSurface === "buyer_visible"
       ? input.providerTransportRoles.every((role, index) => role === input.approvedDetailRoles[index])
         && input.providerTransportUrls.every((url, index) => url === input.approvedDetailImageUrls[index])
@@ -840,11 +845,19 @@ export async function prepareMarketplaceImages(
   }
   const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);
   const approvedDetailImageSha256s = strings(assets?.approvedDetailImageSha256s);
+  const approvedGalleryImagePaths = strings(assets?.approvedGalleryImagePaths);
+  const approvedGalleryImageSha256s = strings(assets?.approvedGalleryImageSha256s);
   const preserveQoo10RepresentativeImage = qoo10RollbackRecoveryPreservesRepresentativeImage(channel, next);
   const gallery = assets
     ? preserveQoo10RepresentativeImage
       ? []
-      : await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square")
+      : await normalizeList(
+          assets.galleryImageUrls,
+          channel === "qoo10" ? 1 : 12,
+          "gallery-square",
+          approvedGalleryImagePaths,
+          approvedGalleryImageSha256s,
+        )
     : [];
   const details = assets
     ? await normalizeList(
@@ -882,6 +895,15 @@ export async function prepareMarketplaceImages(
       }
       return;
     }
+    if (surface === "gallery"
+        && approvedGalleryImagePaths.length === 1
+        && approvedGalleryImageSha256s.length === 1
+        && binding.providerTransportImages[0]?.role === "gallery-representative") {
+      Object.assign(binding.providerTransportImages[0], {
+        approvedObjectPath: approvedGalleryImagePaths[0],
+        approvedSourceSha256: approvedGalleryImageSha256s[0],
+      });
+    }
     next.sellerpilotPublicationAssetBinding = binding;
   };
   bindPublicationAssets("detail_content", details, detailImageRoles);
@@ -895,9 +917,18 @@ export async function prepareMarketplaceImages(
     const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
     const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit, "gallery-square");
     const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
-    const listingImages = channel === "shopee"
+    const listingImages = channel === "shopee" || channel === "smartstore"
       ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
       : normalizedAssets.slice(0, limit);
+    if (channel === "smartstore"
+        && approvedGalleryImagePaths.length === 1
+        && approvedGalleryImageSha256s.length === 1) {
+      bindPublicationAssets(
+        "gallery",
+        listingImages,
+        ["gallery-representative", ...detailImageRoles],
+      );
+    }
     if (channel === "shopee" && !manualSourceMode) {
       bindPublicationAssets(
         "buyer_visible",

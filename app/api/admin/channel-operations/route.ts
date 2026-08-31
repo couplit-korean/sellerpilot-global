@@ -70,6 +70,8 @@ import {
   type CoupangExactQaRecoveryPhase,
 } from "../../../../lib/channels/coupang-exact-qa-recovery";
 import {
+  assertSmartstoreExactQaUpdateArguments,
+  bindSmartstoreExactQaApprovedRepresentative,
   bindSmartstoreExactQaRecoveryArguments,
   smartstoreExactQaApprovedContentRequired,
   smartstoreExactQaCentralSkuVerified,
@@ -79,6 +81,7 @@ import {
   smartstoreExactQaRecoveryCandidate,
   smartstoreExactQaRecoveryIdentity,
 } from "../../../../lib/channels/smartstore-exact-qa-recovery";
+import { validateStoredProductGeneratedAssetPaths } from "../../../../lib/studio-result-assets";
 import {
   elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
@@ -216,6 +219,10 @@ function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+function sha256Hex(value: Uint8Array) {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 type ProductContentMode = "ai_generated" | "manual_mvp";
@@ -586,6 +593,7 @@ export async function POST(request: NextRequest) {
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundQoo10ExactLocalizationUpdate = false;
   let qoo10ExactLocalizationUpdatePermitArmed = false;
+  let smartstoreExactQaUpdatePermitArmed = false;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
@@ -1312,6 +1320,41 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
+  if (boundSmartstoreExactQaRecovery) {
+    try {
+      const generatedAssets = validateStoredProductGeneratedAssetPaths(
+        verifiedPublishContext?.generatedImagePaths,
+      );
+      const representativePath = generatedAssets?.find(([id]) => id === "square")?.[1] ?? "";
+      if (!representativePath) {
+        throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
+      }
+      const bucket = serviceClient.storage.from("sellerpilot-ai");
+      const [downloaded, signed] = await Promise.all([
+        bucket.download(representativePath),
+        bucket.createSignedUrl(representativePath, 2 * 60 * 60),
+      ]);
+      if (downloaded.error || !downloaded.data
+          || downloaded.data.size < 1 || downloaded.data.size > 10 * 1024 * 1024
+          || signed.error || !signed.data?.signedUrl) {
+        throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
+      }
+      const representativeBytes = Buffer.from(await downloaded.data.arrayBuffer());
+      effectiveArguments = bindSmartstoreExactQaApprovedRepresentative(
+        effectiveArguments,
+        {
+          signedUrl: signed.data.signedUrl,
+          sourceObjectPath: representativePath,
+          sourceSha256: sha256Hex(representativeBytes),
+        },
+      );
+    } catch {
+      return NextResponse.json({
+        message: "스마트스토어 대표 이미지 1장을 현재 상품 원장의 승인된 square 원본과 결속하지 못해 전송을 시작하지 않았습니다.",
+        mode: "smartstore_exact_qa_representative_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   if (channel === "temu" && operation === "listing.create") {
     const product = isRecord(verifiedPublishContext?.product)
       ? verifiedPublishContext.product
@@ -1552,6 +1595,36 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
     }
+    if (boundSmartstoreExactQaRecovery && closedReleaseGateIsExact) {
+      if (runtimeRelease.status !== "valid") {
+        return NextResponse.json({
+          message: "스마트스토어 exact QA 갱신을 현재 서버 릴리스에 결속하지 못했습니다.",
+          mode: "smartstore_exact_qa_update_release_required",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: permitData, error: permitError } = await serviceClient.rpc(
+        "sellerpilot_service_arm_exact_smartstore_qa_update",
+        {
+          p_listing_id: parsed.data.resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_release_sha: runtimeRelease.release,
+          p_request_fingerprint: requestFingerprint,
+        },
+      );
+      smartstoreExactQaUpdatePermitArmed = !permitError
+        && isRecord(permitData)
+        && permitData.contract === "smartstore_exact_qa_update_permit_v1"
+        && permitData.listingId === parsed.data.resourceListingId
+        && permitData.releaseSha === runtimeRelease.release
+        && permitData.requestFingerprint === requestFingerprint
+        && permitData.bound === false;
+      if (!smartstoreExactQaUpdatePermitArmed) {
+        return NextResponse.json({
+          message: "스마트스토어 exact QA 갱신의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
+          mode: "smartstore_exact_qa_update_permit_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
     const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
       && (globalReleaseGateIsExact
         ? releaseGateStatus.effectiveOpen === true
@@ -1559,7 +1632,8 @@ export async function POST(request: NextRequest) {
           && qoo10ScopedReleaseGateIsExact
           && releaseGateStatus.qoo10EffectiveOpen === true);
     if (!channelReleaseGateIsEffective
-        && !qoo10ExactLocalizationUpdatePermitArmed) {
+        && !qoo10ExactLocalizationUpdatePermitArmed
+        && !smartstoreExactQaUpdatePermitArmed) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",
@@ -1759,6 +1833,9 @@ export async function POST(request: NextRequest) {
         : effectiveArguments;
       if (boundEbayExactExistingQaRecovery) {
         assertEbayExactExistingQaProviderCopyRequest(gatewayArguments);
+      }
+      if (boundSmartstoreExactQaRecovery) {
+        assertSmartstoreExactQaUpdateArguments(gatewayArguments);
       }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {

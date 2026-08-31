@@ -31,6 +31,157 @@ function recordValue(value: unknown) {
     : null;
 }
 
+function exactStrings(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => typeof item === "string" ? item.trim() : "").filter(Boolean)
+    : [];
+}
+
+function smartstoreExactQaDetailImageUrls(value: unknown) {
+  const html = typeof value === "string" ? value : "";
+  return [...html.matchAll(
+    /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/giu,
+  )].map((match) => String(match[1] ?? match[2] ?? match[3] ?? "")
+    .replaceAll("&amp;", "&")
+    .trim())
+    .filter(Boolean);
+}
+
+function normalizedMarketplaceAsset(value: unknown) {
+  const row = recordValue(value);
+  if (!row) return null;
+  const role = typeof row.role === "string" ? row.role.trim() : "";
+  const publicUrl = typeof row.publicUrl === "string" ? row.publicUrl.trim() : "";
+  const objectPath = typeof row.objectPath === "string" ? row.objectPath.trim() : "";
+  const contentSha256 = typeof row.contentSha256 === "string"
+    ? row.contentSha256.trim()
+    : "";
+  if (!/^(?:detail-[a-z0-9-]+|gallery-representative)$/u.test(role)
+      || !/^[a-f0-9]{64}$/u.test(contentSha256)
+      || objectPath !== `normalized/${contentSha256.slice(0, 2)}/${contentSha256}.jpg`) {
+    return null;
+  }
+  try {
+    const url = new URL(publicUrl);
+    if (url.protocol !== "https:"
+        || !/^[a-z0-9-]+\.supabase\.(?:co|in)$/u.test(url.hostname)
+        || url.port || url.username || url.password || url.search || url.hash
+        || decodeURIComponent(url.pathname)
+          !== `/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+  return { role, publicUrl, objectPath, contentSha256, row };
+}
+
+/**
+ * Rechecks the final, normalized gateway payload for the one exact Smartstore
+ * recovery. This runs after the server has replaced client assets with the
+ * approved manifest, and remains browser-safe because the workbench imports
+ * the identity helpers from this module.
+ */
+export function smartstoreExactQaUpdateArgumentsValid(
+  argumentsValue: Record<string, unknown>,
+) {
+  const recovery = smartstoreExactQaRecoveryBinding(argumentsValue);
+  const body = recordValue(argumentsValue.body);
+  const originProduct = recordValue(body?.originProduct);
+  const channelProduct = recordValue(body?.smartstoreChannelProduct);
+  const detailAttribute = recordValue(originProduct?.detailAttribute);
+  const sellerCodeInfo = recordValue(detailAttribute?.sellerCodeInfo);
+  const binding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+  const approvedRows = Array.isArray(binding?.approvedDetailImages)
+    ? binding.approvedDetailImages.map(normalizedMarketplaceAsset)
+    : [];
+  const transportRows = Array.isArray(binding?.providerTransportImages)
+    ? binding.providerTransportImages.map(normalizedMarketplaceAsset)
+    : [];
+  const detailUrls = smartstoreExactQaDetailImageUrls(originProduct?.detailContent);
+  const imageUrls = exactStrings(argumentsValue.imageUrls);
+  const title = String(originProduct?.name ?? "").trim();
+  const channelTitle = String(channelProduct?.channelProductName ?? "").trim();
+  const description = String(originProduct?.detailContent ?? "").trim();
+  if (!recovery
+      || String(argumentsValue.originProductNo ?? "")
+        !== smartstoreExactQaRecoveryIdentity.originProductNo
+      || sellerCodeInfo?.sellerManagementCode !== smartstoreExactQaRecoveryIdentity.centralSku
+      || Number(originProduct?.salePrice) !== smartstoreExactQaRecoveryIdentity.priceKrw
+      || !Number.isSafeInteger(Number(originProduct?.stockQuantity))
+      || Number(originProduct?.stockQuantity) < 1
+      || Number(originProduct?.stockQuantity) > 99_999_999
+      || title.length < 2 || title.length > 100 || !/[가-힣]/u.test(title)
+      || channelTitle.length < 2 || channelTitle.length > 100
+      || !/[가-힣]/u.test(channelTitle)
+      || description.length < 20 || !/[가-힣]/u.test(description)
+      || argumentsValue.publicationIntent !== "live"
+      || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
+      || argumentsValue.publicationExpectedLocale !== "ko-KR"
+      || argumentsValue.publicationExpectedImageCount !== 8
+      || !/^[a-f0-9]{64}$/u.test(
+        String(argumentsValue.publicationExpectedFingerprint ?? ""),
+      )
+      || binding?.contract !== "sellerpilot_publication_asset_binding_v1"
+      || binding.providerImageSurface !== "gallery"
+      || !Number.isSafeInteger(Number(binding.approvedDetailPageVersion))
+      || Number(binding.approvedDetailPageVersion) < 1
+      || !/^[a-f0-9]{64}$/u.test(String(binding.approvedManifestDigest ?? ""))
+      || approvedRows.length !== 8 || approvedRows.some((row) => !row)
+      || transportRows.length !== 9 || transportRows.some((row) => !row)
+      || imageUrls.length !== 9 || new Set(imageUrls).size !== 9
+      || detailUrls.length !== 8 || new Set(detailUrls).size !== 8) {
+    return false;
+  }
+  const approved = approvedRows as NonNullable<ReturnType<typeof normalizedMarketplaceAsset>>[];
+  const transport = transportRows as NonNullable<ReturnType<typeof normalizedMarketplaceAsset>>[];
+  const representative = transport[0];
+  const detailTransport = transport.slice(1);
+  const representativeSourcePath = String(
+    representative?.row.approvedObjectPath ?? "",
+  );
+  const representativeSourceSha256 = String(
+    representative?.row.approvedSourceSha256 ?? "",
+  );
+  if (representative?.role !== "gallery-representative"
+      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/square\.png$/iu.test(
+        representativeSourcePath,
+      )
+      || !/^[a-f0-9]{64}$/u.test(representativeSourceSha256)
+      || new Set(transport.map((row) => row.role)).size !== 9
+      || new Set(transport.map((row) => row.publicUrl)).size !== 9
+      || new Set(approved.map((row) => row.publicUrl)).size !== 8
+      || detailUrls.some((url, index) => url !== detailTransport[index]?.publicUrl)
+      || detailTransport.some((row, index) => {
+        const approvedRow = approved[index];
+        const approvedSourceSha256 = String(
+          approvedRow?.row.approvedSourceSha256 ?? "",
+        );
+        const approvedObjectPath = String(approvedRow?.row.approvedObjectPath ?? "");
+        return !approvedRow
+          || row.role !== approvedRow.role
+          || row.publicUrl !== approvedRow.publicUrl
+          || row.objectPath !== approvedRow.objectPath
+          || row.contentSha256 !== approvedRow.contentSha256
+          || !/^[a-f0-9]{64}$/u.test(approvedSourceSha256)
+          || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(
+            approvedObjectPath,
+          );
+      })) {
+    return false;
+  }
+  return transport.every((row, index) => imageUrls[index] === row.publicUrl);
+}
+
+export function assertSmartstoreExactQaUpdateArguments(
+  argumentsValue: Record<string, unknown>,
+) {
+  if (!smartstoreExactQaUpdateArgumentsValid(argumentsValue)) {
+    throw new Error("SMARTSTORE_EXACT_QA_UPDATE_ARGUMENTS_INVALID");
+  }
+  return argumentsValue;
+}
+
 export function smartstoreExactQaRecoveryBindingValue(
   value: unknown,
 ): SmartstoreExactQaRecoveryBinding | null {
@@ -77,6 +228,48 @@ export function bindSmartstoreExactQaRecoveryArguments(
   return {
     ...argumentsValue,
     [smartstoreExactQaRecoveryArgument]: binding,
+  };
+}
+
+/**
+ * Replaces browser-supplied gallery candidates with the current server-owned
+ * square asset. The source path and byte digest are carried only until image
+ * normalization, where they are rechecked and recorded in the immutable
+ * publication binding.
+ */
+export function bindSmartstoreExactQaApprovedRepresentative(
+  argumentsValue: Record<string, unknown>,
+  input: { signedUrl: string; sourceObjectPath: string; sourceSha256: string },
+) {
+  const assets = recordValue(argumentsValue.sellerpilotAssets);
+  if (!assets
+      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/square\.png$/iu.test(
+        input.sourceObjectPath,
+      )
+      || !/^[a-f0-9]{64}$/u.test(input.sourceSha256)) {
+    throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
+  }
+  try {
+    const url = new URL(input.signedUrl);
+    const expectedPath = `/storage/v1/object/sign/sellerpilot-ai/${input.sourceObjectPath}`;
+    if (url.protocol !== "https:"
+        || !/^[a-z0-9-]+\.supabase\.(?:co|in)$/u.test(url.hostname)
+        || url.port || url.username || url.password || url.hash
+        || decodeURIComponent(url.pathname) !== expectedPath
+        || !url.searchParams.get("token")) {
+      throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
+    }
+  } catch {
+    throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
+  }
+  return {
+    ...argumentsValue,
+    sellerpilotAssets: {
+      ...assets,
+      galleryImageUrls: [input.signedUrl],
+      approvedGalleryImagePaths: [input.sourceObjectPath],
+      approvedGalleryImageSha256s: [input.sourceSha256],
+    },
   };
 }
 

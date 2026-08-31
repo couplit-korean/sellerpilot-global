@@ -69,6 +69,24 @@ test("server-derived publication binding preserves approved detail lineage and S
   assert.equal(shopeeBinding?.approvedDetailImages.length, 8);
   assert.equal(shopeeBinding?.providerTransportImages.length, 8);
 
+  const smartstoreBinding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 3,
+    approvedManifestDigest: "a".repeat(64),
+    approvedDetailRoles: roles,
+    approvedDetailImagePaths: approvedPaths,
+    approvedDetailImageSha256s: approvedSourceSha256s,
+    approvedDetailImageUrls: detailUrls,
+    providerImageSurface: "gallery",
+    providerTransportRoles: ["gallery-representative", ...roles],
+    providerTransportUrls: [galleryUrl, ...detailUrls],
+  });
+  assert.equal(smartstoreBinding?.providerImageSurface, "gallery");
+  assert.equal(smartstoreBinding?.providerTransportImages.length, 9);
+  assert.deepEqual(
+    smartstoreBinding?.providerTransportImages.slice(1).map((image) => image.publicUrl),
+    detailUrls,
+  );
+
   const shopeeBuyerVisibleBinding = buildListingPublicationAssetBinding({
     approvedDetailPageVersion: 3,
     approvedManifestDigest: "a".repeat(64),

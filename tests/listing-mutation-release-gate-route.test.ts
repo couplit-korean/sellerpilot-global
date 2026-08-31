@@ -10,7 +10,7 @@ const routeUrl = new URL(
 
 test("admin listing mutations require an exact open release gate before idempotency claim", async () => {
   const route = await readFile(routeUrl, "utf8");
-  const fingerprintIndex = route.indexOf('createHash("sha256")');
+  const fingerprintIndex = route.indexOf('const requestFingerprint = createHash("sha256")');
   const releaseGateIndex = route.indexOf(
     '"sellerpilot_service_listing_mutation_release_gate_status"',
   );
@@ -67,7 +67,7 @@ test("admin listing mutations require an exact open release gate before idempote
   );
 });
 
-test("a Qoo10-scoped release gate cannot authorize any of the other seven channels", async () => {
+test("scoped and exact permits cannot authorize any unrelated channel mutation", async () => {
   const route = await readFile(routeUrl, "utf8");
 
   assert.match(
@@ -89,13 +89,16 @@ test("a Qoo10-scoped release gate cannot authorize any of the other seven channe
     /: channel === "qoo10"[\s\S]{0,180}&& qoo10ScopedReleaseGateIsExact[\s\S]{0,180}&& releaseGateStatus\.qoo10EffectiveOpen === true\)/,
   );
   const closedGateGuard = route.match(
-    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\)/,
+    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\s*&& !smartstoreExactQaUpdatePermitArmed\)/,
   );
-  assert.ok(closedGateGuard, "closed gate must admit only the separately armed exact Qoo10 permit");
+  assert.ok(
+    closedGateGuard,
+    "closed gate must admit only the separately armed exact Qoo10 or Smartstore permit",
+  );
   assert.ok(
     (closedGateGuard.index ?? Number.POSITIVE_INFINITY)
       < route.indexOf('"sellerpilot_claim_channel_operation"'),
-    "generic and non-Qoo requests must fail before idempotency claim under the scoped gate",
+    "generic requests must fail before idempotency claim under the scoped gate",
   );
 });
 
@@ -167,7 +170,7 @@ test("eBay UPDATE resolves the immutable provider tuple before fingerprinting or
   const effectiveBindingIndex = route.indexOf(
     "...boundEbayListingIdentity",
   );
-  const fingerprintIndex = route.indexOf('createHash("sha256")');
+  const fingerprintIndex = route.indexOf('const requestFingerprint = createHash("sha256")');
   const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
 
   assert.ok(identityReadIndex >= 0, "eBay UPDATE must resolve its server-owned tuple");
@@ -190,7 +193,7 @@ test("Qoo10 rollback UPDATE independently confirms the S1 create rollback before
   const rollbackIdentityIndex = route.indexOf(
     '"sellerpilot_service_get_qoo10_rollback_update_identity"',
   );
-  const fingerprintIndex = route.indexOf('createHash("sha256")');
+  const fingerprintIndex = route.indexOf('const requestFingerprint = createHash("sha256")');
   const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
 
   assert.match(route, /listingUpdateServerCandidate\(channel, listingUpdateReferenceFromLedger\(listing\)\)/);
