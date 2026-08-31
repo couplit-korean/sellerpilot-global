@@ -88,11 +88,14 @@ test("a Qoo10-scoped release gate cannot authorize any of the other seven channe
     route,
     /: channel === "qoo10"[\s\S]{0,180}&& qoo10ScopedReleaseGateIsExact[\s\S]{0,180}&& releaseGateStatus\.qoo10EffectiveOpen === true\)/,
   );
-  assert.match(route, /if \(!channelReleaseGateIsEffective\)/);
+  const closedGateGuard = route.match(
+    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\)/,
+  );
+  assert.ok(closedGateGuard, "closed gate must admit only the separately armed exact Qoo10 permit");
   assert.ok(
-    route.indexOf("if (!channelReleaseGateIsEffective)")
+    (closedGateGuard.index ?? Number.POSITIVE_INFINITY)
       < route.indexOf('"sellerpilot_claim_channel_operation"'),
-    "non-Qoo requests must fail before idempotency claim under the scoped gate",
+    "generic and non-Qoo requests must fail before idempotency claim under the scoped gate",
   );
 });
 

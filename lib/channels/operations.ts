@@ -45,7 +45,9 @@ import {
   type Qoo10ListingCreateExpectation,
 } from "./qoo10-listing-create-preflight";
 import {
+  qoo10ExactLocalizationUpdateBinding,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizedUpdate as qoo10ExactLocalizedUpdateOrThrow,
   qoo10ExactTargetCreateForbidden,
   verifyQoo10ExactCurrentS1Readback,
@@ -2198,9 +2200,48 @@ async function executeQoo10(input: ExecuteInput) {
     qoo10RollbackUpdateRecoveryArgument,
   );
   const rollbackRecovery = qoo10RollbackUpdateRecoveryBinding(input.arguments);
-  const rollbackRecoveryReadbackExpectation = rollbackRecovery
+  const exactLocalizationMarkerSupplied = Object.hasOwn(
+    input.arguments,
+    qoo10ExactLocalizationUpdateArgument,
+  );
+  const exactLocalizationBinding = qoo10ExactLocalizationUpdateBinding(
+    input.arguments,
+  );
+  if (exactLocalizationMarkerSupplied && (
+    input.operation !== "listing.update"
+    || !exactLocalizationBinding
+  )) {
+    return result(input, [{
+      name: "qoo10-exact-localization-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_EXACT_LOCALIZED_UPDATE_INVALID",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }], suppliedParams.ItemCode);
+  }
+  const updateRecovery = rollbackRecovery ?? (exactLocalizationBinding ? {
+    status: "allowed" as const,
+    contract: "qoo10_create_rollback_confirmation_v1" as const,
+    listingId: qoo10ExactLocalizationRecoveryIdentity.listingId,
+    remoteId: qoo10ExactLocalizationRecoveryIdentity.remoteId,
+    providerStatus: "S1" as const,
+    sourceJobId: "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+    expectedState: {
+      categoryCode: qoo10ExactLocalizationRecoveryIdentity.categoryCode,
+      retailPriceJpy: qoo10ExactLocalizationRecoveryIdentity.priceJpy,
+      sellPriceJpy: qoo10ExactLocalizationRecoveryIdentity.priceJpy,
+      quantity: qoo10ExactLocalizationRecoveryIdentity.quantity,
+      shippingNo: qoo10ExactLocalizationRecoveryIdentity.shippingNo,
+      biContentsNo: qoo10ExactLocalizationRecoveryIdentity.representativeImageContentId,
+    },
+  } : null);
+  const rollbackRecoveryReadbackExpectation = updateRecovery
     ? qoo10RollbackRecoveryExpectation(
-        rollbackRecovery.expectedState,
+        updateRecovery.expectedState,
         suppliedParams.ItemDescription ?? "",
       )
     : null;
@@ -2233,11 +2274,12 @@ async function executeQoo10(input: ExecuteInput) {
   }
   let exactLocalizedUpdate: Qoo10ExactLocalizedUpdate | null = null;
   const exactPrewriteSteps: ChannelOperationStep[] = [];
-  if (rollbackRecovery?.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
+  if (exactLocalizationBinding
+      && updateRecovery?.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
     try {
       exactLocalizedUpdate = qoo10ExactLocalizedUpdateOrThrow(
         input.arguments,
-        rollbackRecovery.remoteId,
+        updateRecovery.remoteId,
         true,
       );
       if (!exactLocalizedUpdate) throw new Error("QOO10_EXACT_LOCALIZED_UPDATE_INVALID");
@@ -2252,7 +2294,7 @@ async function executeQoo10(input: ExecuteInput) {
           sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
           sellerpilotNoWriteConfirmed: true,
         },
-      }], rollbackRecovery.remoteId);
+      }], updateRecovery.remoteId);
     }
     const currentRemote = await qoo10Request({
       payload: input.payload,
@@ -2260,7 +2302,7 @@ async function executeQoo10(input: ExecuteInput) {
       method: "GetItemDetailInfo",
       version: "1.2",
       params: {
-        ItemCode: rollbackRecovery.remoteId,
+        ItemCode: updateRecovery.remoteId,
         SellerCode: suppliedParams.SellerCode ?? "",
       },
     });
@@ -2283,7 +2325,7 @@ async function executeQoo10(input: ExecuteInput) {
       ...(!currentStep.ok ? { sellerpilotNoWriteConfirmed: true } : {}),
     };
     exactPrewriteSteps.push(currentStep);
-    if (!currentStep.ok) return result(input, exactPrewriteSteps, rollbackRecovery.remoteId);
+    if (!currentStep.ok) return result(input, exactPrewriteSteps, updateRecovery.remoteId);
   }
   let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
   let sellerAccountIdentityDigest = "";
@@ -2445,13 +2487,13 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
-  const responseIdentityMismatch = Boolean(rollbackRecovery
+  const responseIdentityMismatch = Boolean(updateRecovery
     && responseIdentities.length > 0
     && (new Set(responseIdentities.map((identity) => identity.value)).size !== 1
       || responseIdentities.some((identity) => !identity.value
-        || identity.value !== rollbackRecovery.remoteId
+        || identity.value !== updateRecovery.remoteId
         || identity.value !== params.ItemCode)));
-  if (rollbackRecovery && responseIdentityMismatch) {
+  if (updateRecovery && responseIdentityMismatch) {
     return result(input, [
       ...createPreflightSteps,
       createStep,
@@ -2465,7 +2507,7 @@ async function executeQoo10(input: ExecuteInput) {
           ResultMsg: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
           sellerpilotProviderResultMessage: qoo10ResultMessage(remote.data) || null,
           sellerpilotVerification: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
-          sellerpilotExpectedRemoteId: rollbackRecovery.remoteId,
+          sellerpilotExpectedRemoteId: updateRecovery.remoteId,
           sellerpilotExpectedItemCode: params.ItemCode,
           sellerpilotResponseIdentities: Object.fromEntries(
             responseIdentities.map((identity) => [identity.alias, identity.value || null]),
@@ -2473,9 +2515,9 @@ async function executeQoo10(input: ExecuteInput) {
           sellerpilotReconciliationRequired: true,
         },
       },
-    ], rollbackRecovery.remoteId);
+    ], updateRecovery.remoteId);
   }
-  const remoteId = rollbackRecovery?.remoteId ?? responseRemoteId
+  const remoteId = updateRecovery?.remoteId ?? responseRemoteId
     ?? (input.operation === "listing.update" || input.operation === "listing.stop" ? params.ItemCode : undefined);
   const expectedRepresentativeImageContentId = input.operation === "listing.create" && remoteId
     ? qoo10SetNewGoodsMainImageContentId(resultObject, remoteId)
@@ -2541,7 +2583,7 @@ async function executeQoo10(input: ExecuteInput) {
     return result(input, [createStep, lastReadbackStep!], remoteId);
   }
   const publicationExpectation = qoo10PublicationExpectation(input);
-  if (rollbackRecovery
+  if (updateRecovery
       && rollbackRecoveryReadbackExpectation
       && publicationExpectation
       && qoo10ExplicitProviderRejection(remote)) {
@@ -2554,11 +2596,11 @@ async function executeQoo10(input: ExecuteInput) {
         service: "ItemsLookup",
         method: "GetItemDetailInfo",
         version: "1.2",
-        params: { ItemCode: rollbackRecovery.remoteId, SellerCode: params.SellerCode ?? "" },
+        params: { ItemCode: updateRecovery.remoteId, SellerCode: params.SellerCode ?? "" },
       });
       const publication = normalizeQoo10ListingPublicationReadback({
         operation: "listing.update",
-        remoteId: rollbackRecovery.remoteId,
+        remoteId: updateRecovery.remoteId,
         resultObject: readback.data.ResultObject,
         expectedSellerCode: params.SellerCode || undefined,
         expectedRecovery: rollbackRecoveryReadbackExpectation,
@@ -2586,7 +2628,7 @@ async function executeQoo10(input: ExecuteInput) {
       ...createPreflightSteps,
       createStep,
       rejectionReadbackStep!,
-    ], rollbackRecovery.remoteId, undefined, rejectionRemoteState);
+    ], updateRecovery.remoteId, undefined, rejectionRemoteState);
   }
   if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
     return result(input, [...createPreflightSteps, createStep], remoteId);
@@ -2612,7 +2654,7 @@ async function executeQoo10(input: ExecuteInput) {
   let readbackImageCount = 0;
   let readbackAccepted = false;
   let updateReadbackStep: ChannelOperationStep | null = null;
-  if (rollbackRecovery) {
+  if (updateRecovery) {
     if (!detailUpdateStep.ok || !publicationExpectation) {
       return result(input, [
         ...createPreflightSteps,

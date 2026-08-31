@@ -4,7 +4,9 @@ import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
   qoo10ExactForeignPriceCopyPresent,
   qoo10ExactLegacyRomanizedCopyPresent,
+  qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationRequestCandidate,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
   qoo10ExactLocalizedUpdate,
@@ -83,6 +85,12 @@ function exactArguments(detail = detailHtml) {
   };
 }
 
+function exactV2Arguments(detail = detailHtml) {
+  const argumentsValue = exactArguments(detail);
+  delete (argumentsValue as Record<string, unknown>)[qoo10RollbackUpdateRecoveryArgument];
+  return argumentsValue;
+}
+
 function qoo10BiImage(contentId = biContentsNo) {
   const value = String(contentId);
   return `https://gd.image-qoo10.jp/li/${value.slice(-3)}/${value.slice(-6, -3)}/${value}.g.jpg`;
@@ -123,6 +131,47 @@ function operation(argumentsValue = exactArguments()) {
     environment: "production",
   });
 }
+
+test("only the immutable external-action Qoo10 tuple reaches the v2 localization request", () => {
+  const candidate = {
+    channel: "qoo10",
+    productId: identity.productId,
+    listingId: identity.listingId,
+    remoteId: identity.remoteId,
+    market: identity.market,
+    targetId: identity.targetId,
+    status: "failed",
+    failureClass: "external_action",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "unknown",
+  } as const;
+  assert.equal(qoo10ExactLocalizationLedgerCandidate(candidate), true);
+  assert.equal(qoo10ExactLocalizationRequestCandidate({
+    ...candidate,
+    credentialId: identity.credentialId,
+  }), true);
+  for (const [field, value] of [
+    ["channel", "ebay"],
+    ["productId", "11111111-1111-4111-8111-111111111111"],
+    ["listingId", "22222222-2222-4222-8222-222222222222"],
+    ["remoteId", "1217336971"],
+    ["market", "KR"],
+    ["targetId", "OTHER"],
+    ["status", "paused"],
+    ["failureClass", "retryable"],
+    ["requestedPublicationIntent", "safe_test"],
+    ["remoteVisibility", "non_public"],
+  ] as const) {
+    assert.equal(qoo10ExactLocalizationLedgerCandidate({
+      ...candidate,
+      [field]: value,
+    }), false, field);
+  }
+  assert.equal(qoo10ExactLocalizationRequestCandidate({
+    ...candidate,
+    credentialId: "33333333-3333-4333-8333-333333333333",
+  }), false, "credentialId");
+});
 
 test("exact Qoo10 localization contract accepts only the reviewed Japanese copy and eight distinct HTTPS images", () => {
   assert.equal(qoo10ExactLocalizedUpdate(exactArguments(), identity.remoteId)?.detailImageUrls.length, 8);
@@ -258,6 +307,74 @@ test("exact Qoo10 update performs GET-before-PUT, preserves eight images, and st
       gatewayJobCompletionStatus(result.operation, result.ok, result.steps),
       "reconciliation_required",
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("v2 exact marker reaches the same four-step S1 flow without a rollback marker", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  let readbackCount = 0;
+  globalThis.fetch = async (input) => {
+    const method = qooMethod(input);
+    calls.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo") {
+      readbackCount += 1;
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: readback("S1", readbackCount === 1
+          ? { ItemTitle: identity.legacyRomanizedName }
+          : {}),
+      });
+    }
+    if (method === "ItemsBasic.UpdateGoods") {
+      return Response.json({ ResultCode: 0, ResultObject: { GdNo: identity.remoteId } });
+    }
+    return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await operation(exactV2Arguments());
+    assert.equal(result.ok, false);
+    assert.equal(result.publicationFulfilled, false);
+    assert.equal(result.remoteState?.providerStatus, "S1");
+    assert.deepEqual(calls, [
+      "ItemsLookup.GetItemDetailInfo",
+      "ItemsBasic.UpdateGoods",
+      "ItemsContents.EditGoodsContents",
+      "ItemsLookup.GetItemDetailInfo",
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("invalid v2 exact bindings stop before every provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const markerPatch of [
+      { credentialId: "33333333-3333-4333-8333-333333333333" },
+      { listingId: "22222222-2222-4222-8222-222222222222" },
+      { remoteId: "1217336971" },
+      { sellerSku: "OTHER-SKU" },
+      { releaseSha: "invalid" },
+    ]) {
+      let providerCalls = 0;
+      globalThis.fetch = async () => {
+        providerCalls += 1;
+        throw new Error("provider must not be called");
+      };
+      const argumentsValue = exactV2Arguments();
+      argumentsValue[qoo10ExactLocalizationUpdateArgument] = {
+        ...argumentsValue[qoo10ExactLocalizationUpdateArgument],
+        ...markerPatch,
+      };
+      const result = await operation(argumentsValue);
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0]?.name, "qoo10-exact-localization-prewrite-fence");
+      assert.equal(result.steps[0]?.data.sellerpilotNoWriteConfirmed, true);
+      assert.equal(providerCalls, 0);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

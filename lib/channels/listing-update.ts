@@ -15,7 +15,9 @@ import {
 } from "./elevenst-exact-existing-identity";
 import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
 import {
+  qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateBinding,
   qoo10ExactLocalizationUpdateArgument,
 } from "./qoo10-exact-localization-identity";
 import {
@@ -38,6 +40,8 @@ export type ListingUpdateReference = {
   publishedAt?: string | null;
   requestedPublicationIntent?: string | null;
   remoteVisibility?: string | null;
+  market?: string | null;
+  targetId?: string | null;
 };
 
 export const qoo10RollbackUpdateRecoveryContract =
@@ -796,6 +800,7 @@ export function prepareListingUpdateArguments(
   channel: ActiveChannelKey,
   createArguments: Record<string, unknown>,
   listing: ListingUpdateReference,
+  options: { qoo10ExactLocalizationProductId?: string | null } = {},
 ) {
   const remoteId = listing.remoteId?.trim() ?? "";
   // Public callers must pass the verified ledger classifier above. The
@@ -805,7 +810,20 @@ export function prepareListingUpdateArguments(
   const authorizedProviderReference = listing.status === "published" && Boolean(remoteId);
   const verifiedServerCandidate = listingUpdateServerCandidate(channel, listing);
   const qoo10RollbackCandidate = qoo10RollbackListingUpdateCandidate(channel, listing);
+  const qoo10ExactLocalizationCandidate = qoo10ExactLocalizationLedgerCandidate({
+    channel,
+    productId: options.qoo10ExactLocalizationProductId,
+    listingId: listing.listingId,
+    remoteId: listing.remoteId,
+    market: listing.market,
+    targetId: listing.targetId,
+    status: listing.status,
+    failureClass: listing.failureClass,
+    requestedPublicationIntent: listing.requestedPublicationIntent,
+    remoteVisibility: listing.remoteVisibility,
+  });
   if ((!verifiedServerCandidate
+      && !qoo10ExactLocalizationCandidate
       && !authorizedProviderReference)
       || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
@@ -823,7 +841,8 @@ export function prepareListingUpdateArguments(
     if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
         && sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku) {
       params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
-      if (Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
+      if (qoo10ExactLocalizationCandidate
+          || Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
         params.ItemPrice = sourceParams.ItemPrice;
         params.ItemQty = sourceParams.ItemQty;
       }
@@ -831,7 +850,9 @@ export function prepareListingUpdateArguments(
     // Qoo10 rehosts representative images. A rollback recovery must preserve
     // the already confirmed remote CDN image instead of triggering another
     // upload/content-id and a false literal-URL readback mismatch.
-    if (qoo10RollbackCandidate) delete params.StandardImage;
+    if (qoo10RollbackCandidate || qoo10ExactLocalizationCandidate) {
+      delete params.StandardImage;
+    }
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, qoo10RollbackUpdateRecoveryArgument),
@@ -1173,7 +1194,8 @@ function qoo10ReadbackProjection(argumentsValue: Record<string, unknown>, remote
     Keyword: ["Keyword", "keywords"],
   };
   const expectedFields = Object.keys(definedEntries(params, qoo10MutableFields));
-  if (!qoo10RollbackUpdateRecoveryBinding(argumentsValue)) {
+  if (!qoo10RollbackUpdateRecoveryBinding(argumentsValue)
+      && !qoo10ExactLocalizationUpdateBinding(argumentsValue)) {
     return Object.fromEntries(expectedFields.map((key) => [
       key,
       firstRecursiveValue(remoteData.ResultObject ?? remoteData, aliases[key] ?? [key]),
@@ -1356,7 +1378,9 @@ export function verifyListingUpdateReadback(
   const expected = expectedListingUpdateProjection(channel, argumentsValue);
   const actual = actualListingUpdateProjection(channel, argumentsValue, remoteData);
   let comparableActual: unknown = actual;
-  if (channel === "qoo10" && qoo10RollbackUpdateRecoveryBinding(argumentsValue)) {
+  if (channel === "qoo10"
+      && (qoo10RollbackUpdateRecoveryBinding(argumentsValue)
+        || qoo10ExactLocalizationUpdateBinding(argumentsValue))) {
     const qooExpected = expected as Record<string, unknown>;
     const qooActual = { ...(actual as Record<string, unknown>) };
     if (Object.hasOwn(qooExpected, "Keyword")

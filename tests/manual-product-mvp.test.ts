@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActiveChannelKey } from "../lib/channels/catalog";
 import {
   buildChannelArguments,
+  buildDraftMap,
   missingNativeValues,
 } from "../app/product-publish-workbench";
 import {
@@ -12,7 +13,10 @@ import {
   normalizePendingManualProductRequest,
 } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
-import { prepareListingUpdateArguments } from "../lib/channels/listing-update";
+import {
+  prepareListingUpdateArguments,
+  unapprovedLocalizationReviewMarker,
+} from "../lib/channels/listing-update";
 import { qoo10DetailImageUrls } from "../lib/channels/qoo10-listing-create-preflight";
 import { executeChannelOperation } from "../lib/channels/operations";
 import {
@@ -103,6 +107,57 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(JSON.stringify(draft).includes("detail-overview"), false);
   assert.equal(missingNativeValues("qoo10", draft).some((item) => item.includes("dedicated marketplace")), false);
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
+});
+
+test("one rejected channel localization keeps every unrelated draft available", () => {
+  const context = manualContext();
+  context.listings.push({
+    id: "22222222-2222-4222-8222-222222222222",
+    channel: "shopee",
+    market: "SG",
+    targetId: "1719148844",
+    remoteId: "987654321",
+    status: "published",
+    lastError: null,
+    failureClass: null,
+    publishedAt: "2026-08-31T00:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+    providerStatus: "NORMAL",
+  });
+  context.localizedListings.push({
+    channel: "shopee",
+    market: "SG",
+    locale: "en-SG",
+    title: `${unapprovedLocalizationReviewMarker} Cable organizer clips`,
+    shortDescription: "Localization review required.",
+    description: "Localization review required before publication.",
+    keywords: [],
+  });
+  const drafts = buildDraftMap(
+    context,
+    10_000,
+    3,
+    {
+      shopee: {
+        targetId: "1719148844",
+        displayName: "Singapore",
+        marketCode: "SG",
+        locale: "en-SG",
+        language: "English",
+        currency: "SGD",
+      },
+    },
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  );
+  assert.equal(drafts.shopee, "{}", "the rejected channel stays fail-closed");
+  assert.notEqual(drafts.qoo10, "{}", "Qoo10 remains independently reachable");
+  assert.equal(
+    (JSON.parse(drafts.qoo10 ?? "{}") as { params?: { ItemTitle?: string } })
+      .params?.ItemTitle,
+    "판매자 확인 원본 상품",
+  );
 });
 
 const legacyQoo10RomanizedName = "buchakhyeong keibeul jeongri keulrip 6gae seteu";
@@ -291,6 +346,59 @@ test("exact Qoo10 workbench draft discards source KRW and romanized copy before 
   assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
   assert.equal(prepared.params.ItemQty, String(identity.quantity));
   assert.equal(prepared.params.ShippingNo, identity.shippingNo);
+});
+
+test("exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option", () => {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  const context = productionLikeQoo10LegacyContext("update");
+  context.product.id = identity.productId;
+  context.product.sku = identity.sellerSku;
+  context.manualFields.sellerSku = identity.sellerSku;
+  context.manualFields.sellingPrice = 5_000;
+  context.manualFields.stock = 1;
+  context.assignments[0].categoryId = identity.categoryCode;
+  context.listings[0] = {
+    ...context.listings[0]!,
+    status: "failed",
+    failureClass: "external_action",
+    remoteVisibility: "unknown",
+    providerStatus: null,
+  };
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  ) as { params: Record<string, string> };
+  assert.equal(draft.params.ItemTitle, identity.title);
+  assert.throws(
+    () => prepareListingUpdateArguments("qoo10", draft, context.listings[0]!),
+    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
+    "the generic external_action path remains fenced",
+  );
+  const prepared = prepareListingUpdateArguments(
+    "qoo10",
+    draft,
+    { ...context.listings[0]!, listingId: context.listings[0]!.id },
+    { qoo10ExactLocalizationProductId: identity.productId },
+  ) as { params: Record<string, string> };
+  assert.equal(prepared.params.ItemCode, identity.remoteId);
+  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
+  assert.equal(prepared.params.ItemQty, String(identity.quantity));
+  assert.equal(Object.hasOwn(prepared.params, "StandardImage"), false);
+  assert.throws(
+    () => prepareListingUpdateArguments(
+      "qoo10",
+      draft,
+      { ...context.listings[0]!, listingId: context.listings[0]!.id, targetId: "OTHER" },
+      { qoo10ExactLocalizationProductId: identity.productId },
+    ),
+    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
+    "near-miss tuples remain fenced before a provider request can be built",
+  );
 });
 
 test("Qoo10 preserves seller-authored Japanese and Hangul titles and description text", () => {

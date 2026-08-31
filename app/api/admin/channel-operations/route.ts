@@ -34,7 +34,9 @@ import {
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
   bindQoo10ExactLocalizationUpdateArguments,
+  qoo10ExactLocalizationCentralSkuVerified,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationRequestCandidate,
   qoo10ExactLocalizationUpdateArgument,
 } from "../../../../lib/channels/qoo10-exact-localization-recovery";
 import {
@@ -236,7 +238,31 @@ function listingUpdateReferenceFromLedger(listing: Record<string, unknown>): Lis
       ? listing.requestedPublicationIntent
       : null,
     remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    market: typeof listing.market === "string" ? listing.market : null,
+    targetId: typeof listing.targetId === "string" ? listing.targetId : null,
   };
+}
+
+function qoo10ExactLocalizationRequestCandidateFromLedger(input: {
+  channel: string;
+  productId: string;
+  credentialId: string;
+  listing: Record<string, unknown>;
+}) {
+  const reference = listingUpdateReferenceFromLedger(input.listing);
+  return qoo10ExactLocalizationRequestCandidate({
+    channel: input.channel,
+    productId: input.productId,
+    credentialId: input.credentialId,
+    listingId: reference.listingId,
+    remoteId: reference.remoteId,
+    market: reference.market,
+    targetId: reference.targetId,
+    status: reference.status,
+    failureClass: reference.failureClass,
+    requestedPublicationIntent: reference.requestedPublicationIntent,
+    remoteVisibility: reference.remoteVisibility,
+  });
 }
 
 function marketplaceContentModeMatchesProduct(
@@ -597,6 +623,12 @@ export async function POST(request: NextRequest) {
         && listing.channel === channel
         && (operation === "listing.update"
           ? listingUpdateServerCandidate(channel, listingUpdateReferenceFromLedger(listing))
+            || qoo10ExactLocalizationRequestCandidateFromLedger({
+              channel,
+              productId,
+              credentialId: parsed.data.credentialId,
+              listing,
+            })
           : operation === "listing.activate"
             ? listing.status === "paused"
               && listing.requestedPublicationIntent === "safe_test"
@@ -860,6 +892,25 @@ export async function POST(request: NextRequest) {
       }
       boundSmartstoreExactQaRecovery = true;
     }
+    const exactQoo10LocalizationTarget = operation === "listing.update"
+      && qoo10ExactLocalizationRequestCandidateFromLedger({
+        channel,
+        productId,
+        credentialId: parsed.data.credentialId,
+        listing: exactListing,
+      });
+    if (exactQoo10LocalizationTarget) {
+      const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
+      if (!qoo10ExactLocalizationCentralSkuVerified(contextRecord)
+          || boundListingCurrency !== exactIdentity.currency
+          || boundListingPrice !== exactIdentity.priceJpy) {
+        return NextResponse.json({
+          message: "Qoo10 exact 상품의 중앙 SKU·JPY 1,871 결속이 일치하지 않아 일본어 현지화 수정을 시작하지 않았습니다.",
+          mode: "qoo10_exact_localization_central_contract_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundQoo10ExactLocalizationUpdate = true;
+    }
     if (operation === "listing.update"
         && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
@@ -884,11 +935,11 @@ export async function POST(request: NextRequest) {
       }
       boundQoo10RollbackUpdateRecovery = identity.data;
       const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
-      const exactQoo10LocalizationTarget = productId === exactIdentity.productId
+      const exactQoo10RollbackLocalizationTarget = productId === exactIdentity.productId
         && resourceListingId === exactIdentity.listingId
         && parsed.data.credentialId === exactIdentity.credentialId
         && requestedRemoteId === exactIdentity.remoteId;
-      if (exactQoo10LocalizationTarget) {
+      if (exactQoo10RollbackLocalizationTarget) {
         if (boundListingCurrency !== exactIdentity.currency
             || boundListingPrice !== exactIdentity.priceJpy
             || identity.data.expectedState.sellPriceJpy !== exactIdentity.priceJpy

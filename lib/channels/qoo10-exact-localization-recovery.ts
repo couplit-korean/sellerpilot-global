@@ -4,28 +4,24 @@ import {
 } from "./listing-publication-content";
 import {
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateBinding,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
+  type Qoo10ExactLocalizationUpdateBinding,
 } from "./qoo10-exact-localization-identity";
 import { qoo10DetailImageUrls } from "./qoo10-listing-create-preflight";
 
 export {
+  qoo10ExactLocalizationCentralSkuVerified,
+  qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationRequestCandidate,
   qoo10ExactReviewedJapaneseDetail,
+  qoo10ExactLocalizationUpdateBinding,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
+  type Qoo10ExactLocalizationUpdateBinding,
 } from "./qoo10-exact-localization-identity";
-
-export type Qoo10ExactLocalizationUpdateBinding = {
-  status: "allowed";
-  contract: typeof qoo10ExactLocalizationUpdateContract;
-  productId: string;
-  listingId: string;
-  credentialId: string;
-  remoteId: string;
-  sellerSku: string;
-  releaseSha: string;
-};
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -91,39 +87,6 @@ function safeHttpsUrl(value: string) {
 
 function localizationComparable(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "");
-}
-
-function exactBindingKeys(value: UnknownRecord) {
-  const expected = new Set([
-    "status",
-    "contract",
-    "productId",
-    "listingId",
-    "credentialId",
-    "remoteId",
-    "sellerSku",
-    "releaseSha",
-  ]);
-  return Object.keys(value).length === expected.size
-    && Object.keys(value).every((key) => expected.has(key));
-}
-
-export function qoo10ExactLocalizationUpdateBinding(
-  argumentsValue: UnknownRecord,
-): Qoo10ExactLocalizationUpdateBinding | null {
-  const marker = recordValue(argumentsValue[qoo10ExactLocalizationUpdateArgument]);
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  if (!exactBindingKeys(marker)
-      || marker.status !== "allowed"
-      || marker.contract !== qoo10ExactLocalizationUpdateContract
-      || marker.productId !== identity.productId
-      || marker.listingId !== identity.listingId
-      || marker.credentialId !== identity.credentialId
-      || marker.remoteId !== identity.remoteId
-      || marker.sellerSku !== identity.sellerSku
-      || typeof marker.releaseSha !== "string"
-      || !/^[a-f0-9]{40}$/u.test(marker.releaseSha)) return null;
-  return structuredClone(marker) as Qoo10ExactLocalizationUpdateBinding;
 }
 
 export function bindQoo10ExactLocalizationUpdateArguments(

@@ -6,7 +6,9 @@ import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
+  qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationRequestCandidate,
   qoo10ExactReviewedJapaneseDetail,
 } from "../lib/channels/qoo10-exact-localization-identity";
 import {
@@ -125,6 +127,46 @@ function smartstoreExactQaWorkbenchRecoveryCandidate(
       publishedAt: listing?.publishedAt,
       failureClass: listing?.failureClass,
     });
+}
+
+function qoo10ExactLocalizationListingCandidate(
+  productId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  return qoo10ExactLocalizationLedgerCandidate({
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+  });
+}
+
+function qoo10ExactLocalizationWriteCandidate(
+  productId: string | null | undefined,
+  credentialId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  return qoo10ExactLocalizationRequestCandidate({
+    credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+  });
 }
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
@@ -471,10 +513,16 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     const productionPlace = qoo10ProductionPlaceFields(manual.countryOfOrigin);
-    const exactLocalizationUpdate = product.id === qoo10ExactLocalizationRecoveryIdentity.productId
+    const exactLocalizationUpdate = qoo10ExactLocalizationListingCandidate(
+      product.id,
+      channel,
+      existingListing,
+    ) || (
+      product.id === qoo10ExactLocalizationRecoveryIdentity.productId
       && existingListing?.id === qoo10ExactLocalizationRecoveryIdentity.listingId
       && existingListing.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
-      && qoo10RollbackListingUpdateCandidate(channel, existingListing);
+      && qoo10RollbackListingUpdateCandidate(channel, existingListing)
+    );
     const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
     return {
       sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
@@ -880,11 +928,20 @@ function lazadaMyrRateFromSnapshot(value: unknown): LazadaKrwMyrRateEvidence | n
   };
 }
 
-function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number, lazadaMyrRate?: LazadaKrwMyrRateEvidence | null) {
-  return Object.fromEntries(activeChannelKeys.map((channel) => [
-    channel,
-    JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2),
-  ]));
+export function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number, lazadaMyrRate?: LazadaKrwMyrRateEvidence | null) {
+  return Object.fromEntries(activeChannelKeys.map((channel) => {
+    try {
+      return [
+        channel,
+        JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2),
+      ];
+    } catch {
+      // A localization or provider-contract failure belongs to that channel.
+      // Preserve every unrelated draft while keeping the failed one blocked by
+      // the existing required-field checks.
+      return [channel, "{}"];
+    }
+  }));
 }
 
 type ProductPublishWorkbenchProps = {
@@ -1238,9 +1295,16 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       channel,
       listing,
     );
+    const exactQoo10LocalizationUpdate = qoo10ExactLocalizationWriteCandidate(
+      productId,
+      credential?.id,
+      channel,
+      listing,
+    );
     if (listing?.failureClass === "external_action"
         && !recoverableEbayUpdate
-        && !recoverableSmartstoreUpdate) {
+        && !recoverableSmartstoreUpdate
+        && !exactQoo10LocalizationUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
       return false;
     }
@@ -1274,7 +1338,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     if (operation === "listing.update") {
       if (!listing) return false;
       try {
-        channelArguments = prepareListingUpdateArguments(channel, channelArguments, listing);
+        channelArguments = prepareListingUpdateArguments(
+          channel,
+          channelArguments,
+          { ...listing, listingId: listing.id },
+          exactQoo10LocalizationUpdate
+            ? { qoo10ExactLocalizationProductId: productId }
+            : undefined,
+        );
       } catch {
         notify(recoverableQoo10RollbackUpdate
           ? "Qoo10 롤백 원격 ID와 판매중지 상태를 확인하지 못해 복구 수정을 차단했습니다."
@@ -1330,7 +1401,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         price: operationPrice,
         retryGeneration,
       };
-      const response = operation === "listing.update" && listing
+      const response = operation === "listing.update"
+          && listing
+          && !exactQoo10LocalizationUpdate
         ? await waitForAbortablePromise(fetch(`/api/admin/products/${requestedProductId}/remote-edit`, {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
@@ -1356,6 +1429,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
               idempotencyKey: `listing:${requestedProductId}:${channel}:${await fingerprint(mutationContract)}`,
               confirmWrite: true,
               productId: requestedProductId,
+              ...(operation === "listing.update" && listing
+                ? { resourceListingId: listing.id }
+                : {}),
               currency: listingCurrency,
               price: operationPrice,
               market: operationMarket,
@@ -1861,12 +1937,21 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         channel,
         listing,
       );
+      const exactQoo10LocalizationUpdate = qoo10ExactLocalizationWriteCandidate(
+        productId,
+        credential?.id,
+        channel,
+        listing,
+      );
       const recoverableExternalActionUpdate = recoverableEbayUpdate
-        || recoverableSmartstoreUpdate;
+        || recoverableSmartstoreUpdate
+        || exactQoo10LocalizationUpdate;
       const recoveryReadyMessage = recoverableEbayUpdate
         ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다."
         : recoverableSmartstoreUpdate
           ? `불변 스마트스토어 원상품 ${smartstoreExactQaRecoveryIdentity.originProductNo}·채널상품 ${smartstoreExactQaRecoveryIdentity.channelProductNo} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+          : exactQoo10LocalizationUpdate
+            ? "고정된 Qoo10 상품·원격 ID·운영 키를 서버의 일회성 허가와 다시 결속한 뒤 같은 상품만 수정합니다."
           : "";
       const result = listing?.failureClass === "external_action" && !recoverableExternalActionUpdate
         ? { phase: "blocked" as const, message: listing.lastError ?? "원격 판매자센터 상태를 수동 확인해야 합니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id }
@@ -1945,7 +2030,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             </label>)}</div>}
           </div>}
           {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}
-          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableExternalActionUpdate ? "blocked" : "failed"}`}><b>{recoverableExternalActionUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableExternalActionUpdate ? recoveryReadyMessage : listing.lastError}</p>}
+          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableExternalActionUpdate ? "blocked" : "failed"}`}><b>{exactQoo10LocalizationUpdate ? "Qoo10 일본어 현지화 1회 복구 준비" : recoverableExternalActionUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableExternalActionUpdate ? recoveryReadyMessage : listing.lastError}</p>}
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
