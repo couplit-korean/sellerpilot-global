@@ -137,6 +137,37 @@ test("exact eBay recovery rejects duplicate create identities and forged price, 
   }), null);
 });
 
+test("exact eBay recovery requires one representative image and genuinely English copy", () => {
+  const extraGalleryImage = exactArguments();
+  ((extraGalleryImage.inventoryItem as Record<string, unknown>).product as Record<string, unknown>).imageUrls = [
+    "https://cdn.example.com/main.jpg",
+    "https://cdn.example.com/second.jpg",
+  ];
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(extraGalleryImage),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/,
+  );
+
+  const koreanTitle = exactArguments();
+  ((koreanTitle.inventoryItem as Record<string, unknown>).product as Record<string, unknown>).title =
+    "부착형 케이블 정리 클립 6개 세트";
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(koreanTitle),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/,
+  );
+
+  const koreanBody = exactArguments();
+  (koreanBody.offer as Record<string, unknown>).listingDescription =
+    `<p>책상과 벽의 충전 케이블을 깔끔하게 정리하는 부착형 클립입니다.</p>${Array.from(
+      { length: 8 },
+      (_, index) => `<img src="https://cdn.example.com/detail-${index + 1}.jpg">`,
+    ).join("")}`;
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(koreanBody),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/,
+  );
+});
+
 test("exact failed eBay candidate preserves price and central-stock fields before the server marker exists", () => {
   const prepared = prepareListingUpdateArguments("ebay", {
     inventoryItem: {

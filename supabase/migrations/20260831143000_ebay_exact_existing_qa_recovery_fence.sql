@@ -401,12 +401,30 @@ begin
        or coalesce(length(trim(
          p_request_payload#>>'{arguments,inventoryItem,product,title}'
        )), 0) not between 2 and 80
+       or regexp_replace(
+         coalesce(p_request_payload#>>'{arguments,inventoryItem,product,title}', ''),
+         '<[^>]*>', ' ', 'g'
+       ) !~* '[a-z]'
+       or coalesce(p_request_payload#>>'{arguments,inventoryItem,product,title}', '')
+            ~ '[가-힣一-龯ぁ-ゟァ-ヿ]'
        or coalesce(length(trim(
          p_request_payload#>>'{arguments,inventoryItem,product,description}'
        )), 0) < 20
+       or regexp_replace(
+         coalesce(p_request_payload#>>'{arguments,inventoryItem,product,description}', ''),
+         '<[^>]*>', ' ', 'g'
+       ) !~* '[a-z]'
+       or coalesce(p_request_payload#>>'{arguments,inventoryItem,product,description}', '')
+            ~ '[가-힣一-龯ぁ-ゟァ-ヿ]'
        or coalesce(length(trim(
          p_request_payload#>>'{arguments,offer,listingDescription}'
        )), 0) < 20
+       or regexp_replace(
+         coalesce(p_request_payload#>>'{arguments,offer,listingDescription}', ''),
+         '<[^>]*>', ' ', 'g'
+       ) !~* '[a-z]'
+       or coalesce(p_request_payload#>>'{arguments,offer,listingDescription}', '')
+            ~ '[가-힣一-龯ぁ-ゟァ-ヿ]'
        or coalesce(regexp_count(
          p_request_payload#>>'{arguments,inventoryItem,product,description}',
          '<img[[:space:]>]', 1, 'i'
@@ -436,7 +454,7 @@ begin
       from jsonb_array_elements_text(
         p_request_payload#>'{arguments,inventoryItem,product,imageUrls}'
       ) as images(image_url);
-    if v_image_count not between 1 and 12
+    if v_image_count <> 1
        or v_unique_image_count <> v_image_count
        or not v_all_https then
       raise exception 'EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH'

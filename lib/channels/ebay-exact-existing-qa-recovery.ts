@@ -199,6 +199,16 @@ function imageCount(value: unknown) {
   return (exactText(value).match(/<img\b/giu) ?? []).length;
 }
 
+function exactEnglishText(value: unknown) {
+  const text = exactText(value)
+    .replace(/<[^>]*>/gu, " ")
+    .replace(/&(?:#\d+|#x[0-9a-f]+|[a-z]+);/giu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return /[a-z]/iu.test(text)
+    && !/[\p{Script=Hangul}\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u.test(text);
+}
+
 export function assertEbayExactExistingQaUpdateArguments(
   argumentsValue: Record<string, unknown>,
   options: { requirePreparedImages?: boolean } = {},
@@ -236,10 +246,12 @@ export function assertEbayExactExistingQaUpdateArguments(
       || Math.abs(requestedPrice - binding.priceUsd) > 0.000_001
       || title.length < 2
       || title.length > 80
+      || !exactEnglishText(title)
       || description.length < 20
+      || !exactEnglishText(description)
       || listingDescription.length < 20
-      || urls.length < 1
-      || urls.length > 12
+      || !exactEnglishText(listingDescription)
+      || urls.length !== 1
       || (options.requirePreparedImages !== false && imageCount(description) < 8)
       || (options.requirePreparedImages !== false && imageCount(listingDescription) < 8)
       || argumentsValue.publish === true) {

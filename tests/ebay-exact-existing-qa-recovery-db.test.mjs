@@ -346,6 +346,33 @@ test("eBay exact existing QA identity and content update enqueue are transaction
       /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
     );
 
+    const extraGalleryImage = structuredClone(updatePayload(marker));
+    extraGalleryImage.arguments.inventoryItem.product.imageUrls.push(
+      "https://cdn.example.com/second.jpg",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(extraGalleryImage)],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
+    const koreanTitle = structuredClone(updatePayload(marker));
+    koreanTitle.arguments.inventoryItem.product.title =
+      "부착형 케이블 정리 클립 6개 세트";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(koreanTitle)],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
     await db.query(
       `update sellerpilot_private.product_listings
           set provider_resource_id=null

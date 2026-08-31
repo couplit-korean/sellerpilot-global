@@ -10,6 +10,7 @@ import {
   buildCoupangExactQaGalleryImages,
   coupangExactQaRecoveryBinding,
 } from "./coupang-exact-qa-recovery";
+import { ebayExactExistingQaRecoveryBinding } from "./ebay-exact-existing-qa-recovery";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
@@ -1052,9 +1053,15 @@ export async function prepareMarketplaceImages(
   const inventoryItem = record(next.inventoryItem);
   const product = record(inventoryItem?.product);
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-  const normalized = gallery.length
-    ? uniqueStrings([...gallery, ...details]).slice(0, 12)
-    : await normalizeList(product.imageUrls, 12, "gallery-square");
+  const exactEbayRecovery = ebayExactExistingQaRecoveryBinding(next);
+  const normalized = exactEbayRecovery
+    ? gallery.slice(0, 1)
+    : gallery.length
+      ? uniqueStrings([...gallery, ...details]).slice(0, 12)
+      : await normalizeList(product.imageUrls, 12, "gallery-square");
+  if (exactEbayRecovery && normalized.length !== 1) {
+    throw new Error("EBAY_EXACT_EXISTING_QA_REPRESENTATIVE_IMAGE_REQUIRED");
+  }
   product.imageUrls = normalized;
   product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);
