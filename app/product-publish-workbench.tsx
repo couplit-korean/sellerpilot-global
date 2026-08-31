@@ -54,12 +54,14 @@ import { fetchChannelTargets } from "./channel-target-client";
 import { channels } from "./channel-config";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import {
+  bulkChannelPublicationIntent,
   channelTargetOptionValue,
   executeChannelWritesSequentially,
   isPublicationPendingReviewResponse,
   listingMutationGeneration,
   productEditSupportLabel,
   reconcileQueuedChannelResults,
+  summarizeBulkPublicationOutcomes,
   workbenchProductContextMatches,
   type WorkbenchChannelResult,
 } from "./_publishing/workbench-release-safety";
@@ -193,7 +195,7 @@ function replaceLegacyQoo10ListingReferences(
   };
 }
 const publishContextRequestTimeoutMs = 30_000;
-const publicationSelectableChannelKeys = activeChannelKeys.filter((channel) => channel !== "temu");
+const publicationSelectableChannelKeys = activeChannelKeys;
 type ManualFields = {
   productName: string;
   description: string;
@@ -267,7 +269,8 @@ type ChannelOperationResponse = {
 type ConfirmationRequest =
   | { kind: "bulk" }
   | { kind: "channel"; channel: ActiveChannelKey }
-  | { kind: "qoo10-stop"; listing: Listing };
+  | { kind: "qoo10-stop"; listing: Listing }
+  | { kind: "temu-activate"; listing: Listing };
 
 const productEditFieldLabels = {
   productName: "상품명",
@@ -860,6 +863,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [bulkConfirming, setBulkConfirming] = useState(false);
   const [confirmingChannel, setConfirmingChannel] = useState<ActiveChannelKey | null>(null);
   const [qoo10StopConfirming, setQoo10StopConfirming] = useState<Listing | null>(null);
+  const [temuActivateConfirming, setTemuActivateConfirming] = useState<Listing | null>(null);
   const priceRef = useRef(price);
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const lazadaMyrRateRef = useRef<LazadaKrwMyrRateEvidence | null>(lazadaMyrRate);
@@ -873,7 +877,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const writeRequestControllersRef = useRef(new Set<AbortController>());
   const mutationGenerationRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
-  const confirmationOpen = bulkConfirming || confirmingChannel !== null || qoo10StopConfirming !== null;
+  const confirmationOpen = bulkConfirming
+    || confirmingChannel !== null
+    || qoo10StopConfirming !== null
+    || temuActivateConfirming !== null;
   const centralEditFieldSupport = useMemo(() => centralProductEditFieldSupport(), []);
   const marketplaceThumbnailCount = context?.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length ?? 0;
   const dedicatedDetailImageCount = context?.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length ?? 0;
@@ -913,6 +920,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     setBulkConfirming(false);
     setConfirmingChannel(null);
     setQoo10StopConfirming(null);
+    setTemuActivateConfirming(null);
     const opener = confirmationOpenerRef.current;
     confirmationOpenerRef.current = null;
     window.requestAnimationFrame(() => {
@@ -925,6 +933,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     setBulkConfirming(request.kind === "bulk");
     setConfirmingChannel(request.kind === "channel" ? request.channel : null);
     setQoo10StopConfirming(request.kind === "qoo10-stop" ? request.listing : null);
+    setTemuActivateConfirming(request.kind === "temu-activate" ? request.listing : null);
   }, []);
 
   useEffect(() => {
@@ -1145,11 +1154,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }));
   };
 
-  const executeChannel = async (channel: ActiveChannelKey, options: { skipConfirm?: boolean; accessToken?: string; deferRefresh?: boolean } = {}) => {
-    if (channel === "temu") {
-      notify("Temu 상품 게시 상태를 독립적으로 재조회할 수 있을 때까지 자동 등록을 차단합니다.");
-      return false;
-    }
+  const executeChannel = async (channel: ActiveChannelKey, options: {
+    skipConfirm?: boolean;
+    accessToken?: string;
+    deferRefresh?: boolean;
+    publicationIntent?: "safe_test" | "live";
+  } = {}) => {
     if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
       notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
       return false;
@@ -1235,7 +1245,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     const retryGeneration = listingMutationGeneration(listing, mutationGenerationRef.current.get(mutationScope));
     mutationGenerationRef.current.set(mutationScope, retryGeneration);
     const publicationIntent = operation === "listing.create"
-      ? "live" as const
+      ? (options.publicationIntent ?? "live")
       : listing?.requestedPublicationIntent;
     const runningResult: ChannelResult = {
       phase: "running",
@@ -1281,7 +1291,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
               credentialId: credential.id,
               channel,
               operation,
-              publicationIntent: "live",
+              publicationIntent,
               idempotencyKey: `listing:${requestedProductId}:${channel}:${await fingerprint(mutationContract)}`,
               confirmWrite: true,
               productId: requestedProductId,
@@ -1363,13 +1373,27 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         return false;
       }
       if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? `상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"}이 실패했습니다.`), { attemptId: payload.attemptId });
-      setResults((current) => ({ ...current, [channel]: { ...runningResult, phase: "succeeded", message: payload.safeMessage, remoteId: payload.remoteId, attemptId: payload.attemptId, listingId: payload.listingId ?? listing?.id } }));
-      notify(`${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
+      const temuSafeTestRequested = operation === "listing.create"
+        && channel === "temu"
+        && publicationIntent === "safe_test";
+      const safeTestContained = temuSafeTestRequested
+        && payload.publicationFulfilled === true
+        && ["non_public", "withdrawn"].includes(payload.remoteState?.visibility ?? "");
+      if (temuSafeTestRequested && !safeTestContained) {
+        throw Object.assign(new Error("Temu QA 상품의 판매중지 readback을 확정하지 못했습니다. 공개 성공으로 처리하지 않으며 정확한 원격 상태 조정이 필요합니다."), { attemptId: payload.attemptId });
+      }
+      const successMessage = safeTestContained
+        ? "Temu QA 상품 생성 후 판매중지와 non_public readback을 확인했습니다. 생성과 중지 사이 일시 노출 가능성이 있는 일회성 QA 결과이며 공개 게시 성공은 아닙니다."
+        : payload.safeMessage;
+      setResults((current) => ({ ...current, [channel]: { ...runningResult, phase: "succeeded", message: successMessage, remoteId: payload.remoteId, attemptId: payload.attemptId, listingId: payload.listingId ?? listing?.id } }));
+      notify(safeTestContained
+        ? `${channelCatalog[channel].name} QA 생성·판매중지 확인 · 공개 게시 성공 0건 · 원격 ID ${payload.remoteId ?? "응답 확인 필요"}`
+        : `${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
       if (!options.deferRefresh && isCurrentProduct()) {
         await load();
         onChanged?.();
       }
-      return true;
+      return safeTestContained ? "safe_test_contained" as const : "live" as const;
     } catch (error) {
       if (!isCurrentProduct()) {
         onChanged?.();
@@ -1435,13 +1459,18 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
       const completed = await executeChannelWritesSequentially(
         readyChannels,
-        (channel) => executeChannel(channel, { skipConfirm: true, accessToken, deferRefresh: true }),
+        (channel) => executeChannel(channel, {
+          skipConfirm: true,
+          accessToken,
+          deferRefresh: true,
+          publicationIntent: bulkChannelPublicationIntent(channel),
+        }),
       );
-      const succeeded = completed.filter(Boolean).length;
+      const summary = summarizeBulkPublicationOutcomes(completed);
       if (sessionProductIdRef.current === requestedProductId) await load();
       onChanged?.();
       if (sessionProductIdRef.current === requestedProductId) {
-        notify(`채널 등록·수정 순차 처리 완료 · 공개 게시 성공 ${succeeded}개 / 심사·확인 필요 ${readyChannels.length - succeeded}개`);
+        notify(`채널 등록·수정 순차 처리 완료 · 공개·수정 성공 ${summary.live}개 / Temu QA 생성·판매중지 확인 ${summary.safeTestContained}개 / 심사·확인 필요 ${summary.attentionRequired}개`);
       }
     } catch (error) {
       notify(error instanceof Error ? error.message : "순차 채널 등록을 완료하지 못했습니다.");
@@ -1563,6 +1592,152 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
   };
 
+  const activateTemuListing = async (listing: Listing) => {
+    const credential = activeCredentials.get("temu");
+    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
+      return notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
+    }
+    if (!imagePackageReady) return notify(imagePackageBlockedMessage);
+    if (!credential
+        || !listing.remoteId
+        || listing.channel !== "temu"
+        || listing.status !== "paused"
+        || listing.requestedPublicationIntent !== "safe_test"
+        || !["non_public", "withdrawn"].includes(listing.remoteVisibility ?? "")) {
+      return notify("Temu QA 상품의 검증된 비공개 원장과 원격 ID를 확인해 주세요.");
+    }
+    const requestedProductId = productId;
+    const writeController = new AbortController();
+    writeRequestControllersRef.current.add(writeController);
+    const boundedWrite = createBoundedRequestSignal(
+      writeController.signal,
+      65_000,
+      "Temu 공개 승격 응답 확인이 65초를 초과했습니다. 같은 상품을 다시 승격하지 말고 진행 상태를 확인해 주세요.",
+    );
+    const isCurrentProduct = () => mountedRef.current
+      && !writeController.signal.aborted
+      && sessionProductIdRef.current === requestedProductId;
+    const runningResult: ChannelResult = {
+      phase: "running",
+      operation: "listing.activate",
+      message: "Temu 비공개 QA 상품의 최종 공개 승격 요청 중",
+      listingId: listing.id,
+      market: listing.market,
+      targetId: listing.targetId,
+    };
+    closeConfirmation();
+    setResults((current) => ({ ...current, temu: runningResult }));
+    try {
+      const accessToken = (await waitForAbortablePromise(
+        createClient().auth.getSession(), boundedWrite.signal,
+      )).data.session?.access_token;
+      if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
+      const response = await waitForAbortablePromise(fetch("/api/admin/channel-operations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        signal: boundedWrite.signal,
+        body: JSON.stringify({
+          credentialId: credential.id,
+          channel: "temu",
+          operation: "listing.activate",
+          idempotencyKey: `listing-activate:${requestedProductId}:temu:${listing.id}:${listing.remoteId}:${listing.operationAttemptId ?? "safe-test"}`,
+          confirmWrite: true,
+          productId: requestedProductId,
+          resourceListingId: listing.id,
+          market: listing.market,
+          targetId: listing.targetId,
+          arguments: {},
+        }),
+      }), boundedWrite.signal);
+      const payload = await waitForAbortablePromise(
+        response.json().catch(() => ({ message: "Temu 공개 승격 응답을 읽지 못했습니다." })),
+        boundedWrite.signal,
+      ) as ChannelOperationResponse;
+      if (!isCurrentProduct()) return;
+      if (isPublicationPendingReviewResponse(response.status, payload)) {
+        const message = payload.message ?? payload.safeMessage
+          ?? "Temu 공개 승격은 접수됐지만 판매채널 심사 중입니다. live readback 전에는 공개 성공으로 처리하지 않습니다.";
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase: "pending_review",
+          message,
+          remoteId: payload.remoteId ?? listing.remoteId ?? undefined,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        await load();
+        onChanged?.();
+        notify(`Temu 심사 대기 · 공개 성공 0건 · ${message}`);
+        return;
+      }
+      if (response.status === 202 && payload.inProgress === true) {
+        const message = payload.message ?? "Temu 공개 승격 작업이 백그라운드에서 진행 중입니다.";
+        const phase = payload.attemptId ? "queued" as const : "blocked" as const;
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase,
+          message: payload.attemptId
+            ? message
+            : `${message} 작업 추적 ID가 없어 같은 상품의 재승격을 차단합니다.`,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        await load();
+        onChanged?.();
+        notify(message);
+        return;
+      }
+      if (payload.manualRequired === true || payload.reconciliationRequired === true) {
+        const message = payload.message ?? "Temu 공개 승격 결과가 불명확합니다. 판매자센터에서 정확한 상태를 확인해 주세요.";
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase: "blocked",
+          message,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        notify(message);
+        return;
+      }
+      if (!response.ok
+          || payload.ok !== true
+          || payload.publicationFulfilled !== true
+          || payload.remoteState?.visibility !== "live") {
+        throw Object.assign(new Error(payload.message ?? payload.safeMessage
+          ?? "Temu 공개 승격의 live readback을 확인하지 못했습니다. 같은 상품을 다시 승격하지 마세요."), {
+          attemptId: payload.attemptId,
+        });
+      }
+      setResults((current) => ({ ...current, temu: {
+        ...runningResult,
+        phase: "succeeded",
+        message: "Temu 동일 원격 상품의 live readback을 확인했습니다.",
+        remoteId: payload.remoteId ?? listing.remoteId ?? undefined,
+        attemptId: payload.attemptId,
+        listingId: payload.listingId ?? listing.id,
+      } }));
+      await load();
+      onChanged?.();
+      notify(`Temu 최종 공개 승격 완료 · 원격 ID ${payload.remoteId ?? listing.remoteId}`);
+    } catch (error) {
+      if (!isCurrentProduct()) return;
+      const attemptId = error && typeof error === "object" && "attemptId" in error
+        && typeof error.attemptId === "string" ? error.attemptId : undefined;
+      const message = error instanceof Error ? error.message : "Temu 공개 승격 결과를 확인하지 못했습니다.";
+      setResults((current) => ({ ...current, temu: {
+        ...runningResult,
+        phase: "blocked",
+        message,
+        attemptId,
+        listingId: listing.id,
+      } }));
+      notify(message);
+    } finally {
+      boundedWrite.dispose();
+      writeRequestControllersRef.current.delete(writeController);
+    }
+  };
+
   if (!productId) return <section className="panel product-publish-workbench disabled"><PackageCheck size={28} /><b>실제 채널 등록은 상품 원장 생성 후 열립니다.</b><small>대표사진 분석을 완료하면 상품 UUID와 채널 등록 초안이 자동으로 연결됩니다.</small></section>;
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
   if (!context || !workbenchProductContextMatches(productId, context.product.id)) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
@@ -1575,8 +1750,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   }).length;
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 순차 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
-    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><small>신규 등록은 실제 판매 공개로 요청합니다. 앞 채널의 응답을 확인한 뒤 다음 채널을 실행하며, 심사 대기는 공개 게시 성공으로 집계하지 않습니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>확인 후 순차 실행</button></div>}
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하되, 다중 채널 QA의 Temu 신규 상품은 생성 직후 판매 중지와 readback까지 검증합니다. 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 순차 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 순차 실행</button></div>}
     {remoteUpdateChannelCount > 0 && <section className="product-edit-handoff" aria-label="중앙 저장과 채널별 원격 반영 순서">
       <header><span><ShieldCheck size={17} /><b>중앙 저장 후 채널별로 따로 반영합니다.</b></span><em>수정 대상 {remoteUpdateChannelCount}개 채널</em></header>
       <ol>
@@ -1655,17 +1830,24 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const nativeMissing = draftObject ? missingNativeValues(channel, draftObject, operation) : [];
       const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
+      const temuActivationLedgerEligible = channel === "temu"
+        && Boolean(listing?.remoteId)
+        && listing?.status === "paused"
+        && listing.requestedPublicationIntent === "safe_test"
+        && ["non_public", "withdrawn"].includes(listing.remoteVisibility ?? "");
+      const temuActivationLocked = result.operation === "listing.activate"
+        && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {!operationAvailable && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
+        {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
         {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
           <header className="product-edit-support-header"><div><b>이 채널의 원격 수정 범위</b><small>중앙 저장과 원격 반영은 분리되며, 일부 지원 필드는 원격 반영 후 수동 확인도 필요합니다.</small></div><span>콘텐츠 완전 {remoteListingSupportedFieldLabels.length} · 일부 {remoteListingPartialFieldLabels.length} · 수동 {remoteManualFieldLabels.length}</span></header>
           <div className="product-edit-support-grid"><div className="remote-edit-support">{productEditFieldKeys.map((field) => { const support = editFieldSupport[field]; const operationLabel = support.operation === "inventory.update" ? "별도 재고 동기화" : support.operation === "price.update" ? "별도 가격 작업" : support.operation === "listing.update" ? "상품 콘텐츠 반영" : "중앙 저장"; return <span className={support.state} title={support.reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(support.state, centralEditFieldSupport[field].state)} · {operationLabel}</small><small className="remote-edit-support-reason product-edit-support-reason">{support.reason}</small></span>; })}</div></div>
           {remoteInventorySupport && <p className={`product-edit-inventory-scope ${remoteInventorySupport.state}`}><PackageCheck size={14} /><span><b>{remoteCommerceUpdate ? `가격·재고는 이 버튼에 포함: ${lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW → ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR` : "최신 환율 확인 필요"}` : `재고는 이 버튼과 별도: ${remoteInventorySupport.state === "supported" ? "재고 동기화 지원" : "판매자센터 수동 확인"}`}</b><small>{remoteInventorySupport.reason} {remoteCommerceUpdate ? "원격 단일 SKU·카테고리·할인 미적용·단일 창고와 현재 환율을 확인하지 못하면 쓰기 전에 차단합니다." : "아래 상품 콘텐츠 반영 버튼은 재고를 변경하지 않습니다."}</small></span></p>}
           {remoteManualFieldLabels.length > 0 && <p className="product-edit-manual-scope"><AlertTriangle size={14} /><span><b>별도 수동 확인·반영: {remoteManualFieldLabels.join(" · ")}</b><small>일부 지원 필드도 채널 정책 보존 범위를 확인해야 합니다. 이 화면은 수동 확인이 필요한 값을 완전 반영 성공으로 표시하지 않습니다.</small></span></p>}
         </section>}
-        {remoteUpdate && !operationAvailable && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />원격 반영 차단 · 판매자센터 수동 수정</button>}
+        {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />원격 반영 차단 · 판매자센터 수동 수정</button>}
         {operationAvailable && <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
@@ -1692,6 +1874,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
           <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || !credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
+        </>}
+        {temuActivationLedgerEligible && listing && <>
+          <p className="product-edit-action-scope" id="temu-final-activation-scope"><AlertTriangle size={14} /><span><b>Temu 비공개 QA 원격 상품 최종 공개 승격</b><small>새 상품을 만들지 않고 이 원격 ID에만 판매 시작을 한 번 요청합니다. 실행 후 live 또는 심사 대기 readback을 확인하며, 결과가 불명확하면 재실행을 잠그고 판매자센터 확인이 필요합니다.</small></span></p>
+          {temuActivateConfirming?.id === listing.id && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Temu 최종 공개 승격 확인"><AlertTriangle size={18} /><div><b>Temu 원격 상품 {listing.remoteId}를 실제 판매 공개 상태로 승격합니다.</b><small>QA 생성·판매중지 확인이 끝난 동일 상품만 대상으로 하며, 이 작업은 실제 고객에게 노출될 수 있습니다. 현재 승인 상세 이미지 8장과 최초 등록 계보가 바뀌면 서버가 실행 전에 차단합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!credential || !imagePackageReady} onClick={() => void activateTemuListing(listing)}>Temu 실제 판매 공개 승격 실행</button></div>}
+          <button type="button" className="publish-execute" aria-describedby="temu-final-activation-scope" disabled={!credential || !imagePackageReady || temuActivationLocked || temuActivateConfirming?.id === listing.id} onClick={() => openConfirmation({ kind: "temu-activate", listing })}>{result.operation === "listing.activate" && result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{result.operation === "listing.activate" && result.phase === "queued" ? "Temu 공개 승격 진행 중" : result.operation === "listing.activate" && result.phase === "pending_review" ? "Temu 공개 심사 대기" : result.operation === "listing.activate" && result.phase === "blocked" ? "Temu 상태 수동 확인 필요" : temuActivateConfirming?.id === listing.id ? "최종 공개 확인 열림" : "Temu 동일 QA 상품 최종 공개 승격"}</button>
         </>}
       </article>;
     })}</div>

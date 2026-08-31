@@ -14,7 +14,7 @@ const CREDENTIAL_ID = "00000000-0000-4000-8000-000000000002";
 const VAULT_SECRET_ID = "00000000-0000-4000-8000-000000000003";
 const WORKER_TOKEN_ID = "00000000-0000-4000-8000-000000000004";
 const PUBLICATION_CHANNELS = [
-  "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+  "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
 ];
 const DETAIL_ROLES = [
   "detail-overview", "detail-context", "detail-package", "detail-feature",
@@ -712,7 +712,7 @@ async function finishVerifier(db, identity, options = {}) {
   );
 }
 
-test("Qoo10 can open alone while every other channel and Temu stay fail-closed at all DB boundaries", async () => {
+test("Qoo10 can open alone while the other seven stay closed, then the global gate admits all eight", async () => {
   const db = await createDatabase();
   try {
     await seedPrincipal(db);
@@ -795,7 +795,7 @@ test("Qoo10 can open alone while every other channel and Temu stay fail-closed a
       ),
       true,
     );
-    for (const channel of [...PUBLICATION_CHANNELS.filter((item) => item !== "qoo10"), "temu"]) {
+    for (const channel of PUBLICATION_CHANNELS.filter((item) => item !== "qoo10")) {
       assert.equal(
         await scalar(
           db,
@@ -1060,72 +1060,25 @@ test("Qoo10 can open alone while every other channel and Temu stay fail-closed a
         db,
         "select sellerpilot_private.listing_mutation_release_gate_is_effective('temu')",
       ),
-      false,
-      "Temu must stay closed even when the canonical seven-channel gate is open",
-    );
-
-    const temuJobId = uuid(9701);
-    const temuClaimToken = uuid(9702);
-    await asReplica(db, () => db.query(
-      `insert into sellerpilot_private.channel_gateway_jobs (
-         id,credential_id,attempt_id,listing_id,channel,operation,environment,
-         request_payload,status,created_by,created_at,write_resource_kind,
-         write_resource_key,request_fingerprint,seller_account_key
-       ) values (
-         $1,$2,null,null,'temu','listing.update','production','{}'::jsonb,
-         'queued',$3,clock_timestamp(),'listing_mutation',$4,$4,$5
-       )`,
-      [temuJobId, CREDENTIAL_ID, OWNER_ID, "9".repeat(64), SELLER_ACCOUNT_KEY],
-    ));
-
-    await assert.rejects(
-      db.query(
-        "update sellerpilot_private.channel_gateway_jobs set status='running',claim_token=$2 where id=$1",
-        [temuJobId, temuClaimToken],
-      ),
-      /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
-      "the queue claim trigger must reject Temu",
+      true,
+      "Temu must open only with the canonical eight-channel global gate",
     );
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
-        [WORKER_TOKEN_HASH, temuJobId, temuClaimToken],
+        "select sellerpilot_private.serverless_gateway_job_allowed('temu','listing.publication.verify')",
       ),
-      false,
-      "the local provider boundary must reject Temu",
+      true,
+      "the independent Temu publication verifier must be dispatchable",
     );
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_service_begin_serverless_gateway_provider_mutation($1,$2,$3)",
-        [WORKER_TOKEN_HASH, temuJobId, temuClaimToken],
+        "select sellerpilot_private.serverless_gateway_job_allowed('temu','listing.update')",
       ),
       false,
-      "the serverless provider boundary must reject Temu",
+      "Temu listing.update stays outside the released adapter contract",
     );
-    await assert.rejects(
-      db.query(
-        `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
-           $1,$2,$3,'temu','KR','','KRW',1,$4,'{}'::jsonb
-         )`,
-        [uuid(9711), CREDENTIAL_ID, uuid(9712), "8".repeat(64)],
-      ),
-      /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
-      "the atomic listing.create boundary must reject Temu",
-    );
-    for (const operation of ["listing.update", "listing.stop"]) {
-      await assert.rejects(
-        db.query(
-          `select public.sellerpilot_service_enqueue_listing_gateway_job(
-             $1,$2,$3,'temu',$4,'{}'::jsonb
-           )`,
-          [uuid(9721), CREDENTIAL_ID, uuid(9722), operation],
-        ),
-        /LISTING_MUTATION_RELEASE_GATE_CLOSED/,
-        `${operation} enqueue must reject Temu`,
-      );
-    }
   } finally {
     await db.close();
   }

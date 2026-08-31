@@ -69,6 +69,8 @@ const QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION =
   "20260831057200_allow_exact_qoo10_s1_activation_provider_boundary.sql";
 const QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION =
   "20260831057300_retire_failed_exact_qoo10_s1_activation_permit.sql";
+const TEMU_PUBLICATION_RELEASE_MIGRATION =
+  "20260831133000_expand_verified_publication_to_temu.sql";
 const COMPETITOR_PRICE_V3_MIGRATION =
   "20260831130000_competitor_price_v3.sql";
 const COMPETITOR_MATCH_REVIEW_MIGRATION =
@@ -298,6 +300,16 @@ as $$
     else convert_to(md5(value || algorithm), 'UTF8')
   end
 $$;
+create or replace function extensions.digest(value bytea, algorithm text)
+returns bytea
+language sql
+immutable
+as $$
+  select case
+    when lower(algorithm) = 'sha256' then sha256(value)
+    else sha256(value || convert_to(algorithm, 'UTF8'))
+  end
+$$;
 `;
 
 function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
@@ -454,10 +466,14 @@ async function competitorQueueRetirementDigests(db) {
   `)).rows[0];
 }
 
-async function attestPublicationRelease(db, releaseSha = PUBLICATION_RELEASE_SHA) {
-  for (const channel of [
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
-  ]) {
+async function attestPublicationRelease(
+  db,
+  releaseSha = PUBLICATION_RELEASE_SHA,
+  channels = [
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
+  ],
+) {
+  for (const channel of channels) {
     await db.query(
       "select public.sellerpilot_service_set_listing_publication_adapter_ready($1,true,$2)",
       [channel, releaseSha],
@@ -739,6 +755,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
+      TEMU_PUBLICATION_RELEASE_MIGRATION,
       COUPANG_EXACT_QA_RECOVERY_MIGRATION,
     ]);
     assert.ok(
@@ -828,8 +845,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+          < migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
+        && migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
           < migrationNames.indexOf(COUPANG_EXACT_QA_RECOVERY_MIGRATION),
-      "competitor v3, review ledger, queue retirement, identity fence, and Coupang recovery fence must replay after Qoo10 573 in order",
+      "competitor v3, review ledger, queue retirement, identity fence, Temu publication, and Coupang recovery fence must replay after Qoo10 573 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;
@@ -2740,6 +2759,360 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await setClaims(db);
     assert.equal(await scalar(db, "select public.sellerpilot_is_admin()"), true);
+
+    await db.exec("begin");
+    try {
+      const temuActivationCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'temu', 'production', '{"app_key":"claim-test-only"}'::jsonb,
+          now() + interval '30 days', 90, 30, 7
+        )`,
+      );
+      const activationClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1, 'temu', 'listing.activate', 'temu-activation:${"1".repeat(64)}', $2
+        )`,
+        [temuActivationCredentialId, "2".repeat(64)],
+      );
+      assert.equal(activationClaim.status, "running");
+      assert.equal(activationClaim.duplicate, false);
+      assert.equal(
+        await scalar(
+          db,
+          `select gateway_write_required
+             from sellerpilot_private.channel_operation_attempts
+            where id=$1`,
+          [activationClaim.attempt_id],
+        ),
+        true,
+        "Temu activation claim must be provider-write classified",
+      );
+      const duplicateActivationClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1, 'temu', 'listing.activate', 'temu-activation:${"1".repeat(64)}', $2
+        )`,
+        [temuActivationCredentialId, "2".repeat(64)],
+      );
+      assert.equal(duplicateActivationClaim.status, "running");
+      assert.equal(duplicateActivationClaim.duplicate, false);
+      assert.equal(duplicateActivationClaim.attempt_id, activationClaim.attempt_id);
+      assert.equal(
+        await scalar(
+          db,
+          `select count(*)::integer
+             from sellerpilot_private.channel_operation_attempts
+            where channel='temu' and operation='listing.activate'
+              and idempotency_key='temu-activation:${"1".repeat(64)}'`,
+        ),
+        1,
+        "a repeated pre-gateway Temu activation claim must resume one attempt",
+      );
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_claim_channel_operation(
+            $1, 'qoo10', 'listing.activate', 'qoo10-activation-${"3".repeat(32)}', $2
+          )`,
+          [temuActivationCredentialId, "4".repeat(64)],
+        ),
+        /invalid channel operation/,
+        "listing.activate must remain rejected for every non-Temu claim",
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+
+    await db.exec("begin");
+    try {
+      // The core-flow fixture intentionally replays the older v1 approval
+      // migration above to test its compatibility wrapper after the full
+      // chronological chain. Isolate this Temu-v2 activation behavior from
+      // that synthetic post-replay constraint; the chronological dynamic
+      // Temu suite exercises the real v2 constraint unchanged.
+      await db.exec(
+        "alter table sellerpilot_private.products drop constraint products_detail_page_approval_check",
+      );
+      const sellerAccountKey = "5".repeat(64);
+      const createFingerprint = "6".repeat(64);
+      const activationFingerprint = "7".repeat(64);
+      const manifestDigest = "8".repeat(64);
+      const goodsId = "9007199254740993";
+      const externalGoodsId = "SP-TEMU-ACTIVATION-GENERATION-TEST";
+      const assetImages = Array.from({ length: 8 }, (_, index) => ({
+        role: `detail-${index + 1}`,
+        path: `products/temu-activation/detail-${index + 1}.jpg`,
+        sourceSha256: String(index + 1).repeat(64),
+      }));
+      const assetBinding = {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "detail_content",
+        approvedDetailPageVersion: 1,
+        approvedManifestDigest: manifestDigest,
+        approvedDetailImages: assetImages.map((image) => ({
+          role: image.role,
+          approvedObjectPath: image.path,
+          approvedSourceSha256: image.sourceSha256,
+        })),
+      };
+      const detailImage = assetImages.map((image) => `https://assets.example.test/${image.path}`);
+      const sourceArguments = {
+        publicationIntent: "safe_test",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ko-KR",
+        publicationExpectedImageCount: 8,
+        publicationExpectedFingerprint: createFingerprint,
+        sellerpilotPublicationAssetBinding: assetBinding,
+        body: {
+          goodsBasic: {
+            externalGoodsId,
+            goodsName: "Temu 승격 세대 테스트 상품",
+            goodsDesc: "승인된 한국어 상세 설명",
+            detailImage,
+          },
+        },
+      };
+      const temuCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'temu', 'production', '{"app_key":"activation-generation-test"}'::jsonb,
+          now() + interval '30 days', 90, 30, 7
+        )`,
+      );
+      await db.exec("set local session_replication_role = replica");
+      await db.query(
+        `update sellerpilot_private.channel_credentials
+            set seller_account_key=$2,
+                seller_account_key_source='provider_certified_v1',
+                seller_account_verified_at=clock_timestamp()
+          where id=$1`,
+        [temuCredentialId, sellerAccountKey],
+      );
+      await db.exec("set local session_replication_role = origin");
+      await attestPublicationRelease(db);
+      await activatePublicationRuntimeRelease(db);
+      await db.query(
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      );
+      await db.query(
+        `update sellerpilot_private.serverless_static_egress_policy
+            set enabled=true,updated_at=clock_timestamp()
+          where channel='temu'`,
+      );
+      await scalar(
+        db,
+        `select set_config(
+          'request.headers','{"x-sellerpilot-static-egress-channels":"temu"}',true
+        )`,
+      );
+      const sourceAttempt = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.create','temu-source-create-${"9".repeat(48)}',$2
+        )`,
+        [temuCredentialId, createFingerprint],
+      );
+      await db.exec("set local session_replication_role = replica");
+      const productId = await scalar(
+        db,
+        `insert into sellerpilot_private.products (
+           owner_id,external_code,sku,name,description,status,on_hand,reserved,
+           reorder_point,cost_krw,demo,detail_page_version,
+           detail_page_data,detail_page_updated_at,
+           detail_page_approved_version,detail_page_image_manifest
+         ) values (
+           $1,'TEMU-ACTIVATION-GENERATION','TEMU-ACTIVATION-GENERATION',
+           'Temu 승격 세대 테스트 상품','승인된 한국어 상세 설명','active',10,0,
+           1,1000,false,1,'{}'::jsonb,clock_timestamp(),1,$2::jsonb
+         ) returning id`,
+        [ADMIN_ID, JSON.stringify({
+          contract: "sellerpilot_detail_image_manifest_v2",
+          algorithm: "sha256",
+          digest: manifestDigest,
+          images: assetImages,
+        })],
+      );
+      const listingId = await scalar(
+        db,
+        `insert into sellerpilot_private.product_listings (
+           owner_id,product_id,channel_key,market,target_id,remote_id,status,
+           currency,price,operation_attempt_id,last_verified_at,
+           requested_publication_intent,remote_visibility,provider_status,
+           remote_resources,seller_account_key
+         ) values (
+           $1,$2,'temu','KR','',$3::text,'paused','KRW',10000,$4,
+           clock_timestamp(),'safe_test','non_public','OFF_SHELF',
+           jsonb_build_object('resources',jsonb_build_object(
+             'goodsId',$3::text,'externalGoodsId',$5::text
+           )),$6
+         ) returning id`,
+        [ADMIN_ID, productId, goodsId, sourceAttempt.attempt_id, externalGoodsId, sellerAccountKey],
+      );
+      const sourceJobId = await scalar(
+        db,
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           credential_id,attempt_id,listing_id,channel,operation,environment,
+           request_payload,response_payload,status,seller_account_key,
+           request_fingerprint,created_by,provider_mutation_started_at,
+           started_at,completed_at,updated_at
+         ) values (
+           $1,$2,$3,'temu','listing.create','production',
+           jsonb_build_object('arguments',$4::jsonb),$5::jsonb,'succeeded',$6,$7,$8,
+           clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp()
+         ) returning id`,
+        [
+          temuCredentialId,
+          sourceAttempt.attempt_id,
+          listingId,
+          JSON.stringify(sourceArguments),
+          JSON.stringify({
+            ok: true,
+            publicationFulfilled: true,
+            publicationIntent: "safe_test",
+            remoteId: goodsId,
+            remoteState: {
+              verified: true,
+              visibility: "non_public",
+              locale: "ko-KR",
+              fingerprint: createFingerprint,
+              imageCount: 8,
+              resources: { goodsId, externalGoodsId },
+            },
+          }),
+          sellerAccountKey,
+          createFingerprint,
+          ADMIN_ID,
+        ],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_operation_attempts
+            set status='succeeded',remote_id=$2,completed_at=clock_timestamp()
+          where id=$1`,
+        [sourceAttempt.attempt_id, goodsId],
+      );
+      await db.exec("set local session_replication_role = origin");
+
+      const firstContext = await scalar(
+        db,
+        `select sellerpilot_private.temu_activation_context(
+          $1,$2,$3,$4,'KR',''
+        )`,
+        [ADMIN_ID, productId, listingId, temuCredentialId],
+      );
+      assert.equal(firstContext.status, "allowed");
+      assert.equal(firstContext.activationGeneration, 1);
+      assert.match(firstContext.claimIdempotencyKey, /^temu-activation:[a-f0-9]{64}$/);
+      const firstClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.activate',$2,$3
+        )`,
+        [temuCredentialId, firstContext.claimIdempotencyKey, activationFingerprint],
+      );
+      const firstArguments = {
+        ...firstContext.arguments,
+        publicationExpectedFingerprint: activationFingerprint,
+      };
+      await scalar(
+        db,
+        `select set_config('request.jwt.claim.role','service_role',true)`,
+      );
+      const firstEnqueue = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_activation(
+          $1,$2,$3,jsonb_build_object('arguments',$4::jsonb)
+        )`,
+        [listingId, temuCredentialId, firstClaim.attempt_id, JSON.stringify(firstArguments)],
+      );
+      assert.equal(firstEnqueue.status, "queued");
+      assert.equal(
+        await scalar(
+          db,
+          `select sellerpilot_private.temu_activation_context(
+            $1,$2,$3,$4,'KR',''
+          ) is null`,
+          [ADMIN_ID, productId, listingId, temuCredentialId],
+        ),
+        true,
+        "an active activation permit must not mint a second claim generation",
+      );
+
+      await db.exec("set local session_replication_role = replica");
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status='failed',error_message='synthetic pre-provider failure',
+                completed_at=clock_timestamp(),updated_at=clock_timestamp()
+          where id=$1`,
+        [firstEnqueue.job_id],
+      );
+      await db.query(
+        `update sellerpilot_private.temu_listing_activation_permits
+            set terminal_status='failed',completed_at=clock_timestamp()
+          where activation_job_id=$1 and consumed_at is null`,
+        [firstEnqueue.job_id],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_operation_attempts
+            set status='failed',safe_message='synthetic pre-provider failure',
+                completed_at=clock_timestamp()
+          where id=$1`,
+        [firstClaim.attempt_id],
+      );
+      await db.query(
+        `update sellerpilot_private.product_listings
+            set status='paused',operation_attempt_id=$2,
+                requested_publication_intent='safe_test',remote_visibility='non_public'
+          where id=$1`,
+        [listingId, sourceAttempt.attempt_id],
+      );
+      await db.exec("set local session_replication_role = origin");
+      await scalar(db, "select set_config('request.jwt.claim.role','authenticated',true)");
+      const secondContext = await scalar(
+        db,
+        `select sellerpilot_private.temu_activation_context(
+          $1,$2,$3,$4,'KR',''
+        )`,
+        [ADMIN_ID, productId, listingId, temuCredentialId],
+      );
+      assert.equal(secondContext.activationGeneration, 2);
+      assert.notEqual(secondContext.claimIdempotencyKey, firstContext.claimIdempotencyKey);
+      const secondClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.activate',$2,$3
+        )`,
+        [temuCredentialId, secondContext.claimIdempotencyKey, "a".repeat(64)],
+      );
+      assert.notEqual(secondClaim.attempt_id, firstClaim.attempt_id);
+      await scalar(db, "select set_config('request.jwt.claim.role','service_role',true)");
+      const secondEnqueue = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_activation(
+          $1,$2,$3,jsonb_build_object(
+            'arguments',jsonb_set($4::jsonb,'{publicationExpectedFingerprint}',to_jsonb($5::text))
+          )
+        )`,
+        [listingId, temuCredentialId, secondClaim.attempt_id, JSON.stringify(secondContext.arguments), "a".repeat(64)],
+      );
+      assert.equal(secondEnqueue.status, "queued");
+      assert.notEqual(secondEnqueue.job_id, sourceJobId);
+      assert.equal(
+        await scalar(
+          db,
+          `select count(*)::integer
+             from sellerpilot_private.temu_listing_activation_permits
+            where listing_id=$1`,
+          [listingId],
+        ),
+        2,
+        "only a new DB-owned generation may enqueue after a proven pre-provider failure",
+      );
+    } finally {
+      await db.exec("rollback");
+      await setClaims(db);
+    }
 
     const credentialId = await scalar(
       db,
@@ -11244,6 +11617,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         && name !== QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
         && name !== QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+        && name !== TEMU_PUBLICATION_RELEASE_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
@@ -12949,11 +13323,13 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         || name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
         || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+        || name === TEMU_PUBLICATION_RELEASE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
-        // The 571/572 exact-chain migrations are covered by the chronological
-        // full replay and must not bless this synthetic wrapper postimage.
+        // The 571/572 exact-chain and later Temu release migrations are covered
+        // by the chronological full replay and must not bless this synthetic
+        // wrapper or stale-verifier postimage before 57000 is applied below.
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -12966,7 +13342,9 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof lazadaProviderMarkerMigration, "string");
     assert.equal(typeof lazadaOauthReauthorizationMigration, "string");
     assert.equal(typeof qoo10StaleVerifierRetirementMigration, "string");
-    await attestPublicationRelease(db);
+    await attestPublicationRelease(db, PUBLICATION_RELEASE_SHA, [
+      "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    ]);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
       (await scalar(
@@ -13766,6 +14144,24 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         where channel = 'shopee'`,
     );
 
+    // This intentionally non-chronological fixture skips the later Temu
+    // publication release migration. Re-attest the seven-channel release at
+    // the exact point where its legacy Temu fixed-egress probe crosses the
+    // listing mutation claim fence; credential/identity setup above may have
+    // conservatively closed the global gate.
+    await attestPublicationRelease(db, PUBLICATION_RELEASE_SHA, [
+      "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    ]);
+    await activatePublicationRuntimeRelease(db);
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      )).effectiveOpen,
+      true,
+    );
+
     const temuJobId = await scalar(
       db,
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -14537,12 +14933,20 @@ test("Coupang bounded reads drain nine jobs per window and opportunistic reaping
       [capacityRaceId],
     );
 
-    const reaperDefinition = await scalar(
-      db,
-      "select pg_get_functiondef('public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer)'::regprocedure)",
-    );
-    assert.match(reaperDefinition, /pg_try_advisory_xact_lock\(193674993, 821065043\)/i);
-    assert.doesNotMatch(reaperDefinition, /pg_advisory_xact_lock\(193674993, 821065042\)/i);
+    const [reaperDefinition, reaperPreTemuDefinition] = await Promise.all([
+      scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer)'::regprocedure)",
+      ),
+      scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_133000_reap_gateway_before_temu_publication(integer)'::regprocedure)",
+      ),
+    ]);
+    assert.match(reaperPreTemuDefinition, /pg_try_advisory_xact_lock\(193674993, 821065043\)/i);
+    assert.doesNotMatch(reaperPreTemuDefinition, /pg_advisory_xact_lock\(193674993, 821065042\)/i);
+    assert.match(reaperDefinition, /sellerpilot_133000_reap_gateway_before_temu_publication/);
+    assert.match(reaperDefinition, /finalize_reaped_temu_publication_jobs/);
 
     // PGlite exposes one backend, so model the try-lock loser by returning the
     // reaper's exact zero-work payload. The claimant must ignore that outcome

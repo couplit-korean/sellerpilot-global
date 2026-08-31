@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { temuImmutableListingIdentityFromPublishContext } from "../lib/channels/provider-temu-publication-readback";
 
 const routeUrl = new URL(
   "../app/api/admin/channel-operations/route.ts",
@@ -66,14 +67,14 @@ test("admin listing mutations require an exact open release gate before idempote
   );
 });
 
-test("a Qoo10-scoped release gate cannot authorize Temu or the other six channels", async () => {
+test("a Qoo10-scoped release gate cannot authorize any of the other seven channels", async () => {
   const route = await readFile(routeUrl, "utf8");
 
   assert.match(
     route,
-    /const verifiedPublicationReleaseChannels = new Set\(\[\s*"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*\]\)/,
+    /const verifiedPublicationReleaseChannels = new Set\(\[\s*"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*"temu",\s*\]\)/,
   );
-  assert.doesNotMatch(
+  assert.match(
     route.match(/const verifiedPublicationReleaseChannels = new Set\(\[[\s\S]*?\]\);/)?.[0] ?? "",
     /temu/,
   );
@@ -91,8 +92,65 @@ test("a Qoo10-scoped release gate cannot authorize Temu or the other six channel
   assert.ok(
     route.indexOf("if (!channelReleaseGateIsEffective)")
       < route.indexOf('"sellerpilot_claim_channel_operation"'),
-    "Temu and non-Qoo requests must fail before idempotency claim",
+    "non-Qoo requests must fail before idempotency claim under the scoped gate",
   );
+});
+
+test("Temu stop and activation bind goodsId and externalGoodsId from the immutable listing ledger", async () => {
+  const [route, gateway] = await Promise.all([
+    readFile(routeUrl, "utf8"),
+    readFile(new URL("../lib/channels/gateway.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(
+    route,
+    /channel === "temu" && \(operation === "listing\.stop" \|\| operation === "listing\.activate"\)[\s\S]*?temuImmutableListingIdentityFromPublishContext\([\s\S]*?exactListing,[\s\S]*?requestedRemoteId[\s\S]*?temu_immutable_identity_required/,
+  );
+  assert.match(
+    route,
+    /effectiveArguments = \{[\s\S]*?\.\.\.effectiveArguments,[\s\S]*?\.\.\.boundTemuListingIdentity,[\s\S]*?\};/,
+  );
+  assert.match(route, /sellerpilot_service_get_temu_activation_context/);
+  assert.match(route, /activationRecord\.claimIdempotencyKey/);
+  assert.match(
+    route,
+    /p_idempotency_key: channel === "temu" && operation === "listing\.activate"[\s\S]*?temuActivationClaimIdempotencyKey![\s\S]*?: parsed\.data\.idempotencyKey/,
+  );
+  assert.match(gateway, /sellerpilot_service_enqueue_temu_activation/);
+  assert.match(
+    route,
+    /channel === "temu" && \[[\s\S]*?"listing\.activate"[\s\S]*?\]\.includes\(operation\)[\s\S]*?sellerpilot_service_serverless_static_egress_status/,
+  );
+});
+
+test("Temu stop reads the canonical nested publish-context identity and rejects flattened lookalikes", () => {
+  const canonicalListing = {
+    id: "30000000-0000-4000-8000-000000000001",
+    channel: "temu",
+    remoteId: "90000001",
+    remoteResources: {
+      resources: {
+        goodsId: "90000001",
+        externalGoodsId: "TEMU-KR-STRICT-001",
+      },
+      verification: {
+        locale: "ko-KR",
+        imageCount: 8,
+      },
+    },
+  };
+  assert.deepEqual(
+    temuImmutableListingIdentityFromPublishContext(canonicalListing, "90000001"),
+    { goodsId: "90000001", externalGoodsId: "TEMU-KR-STRICT-001" },
+  );
+  assert.equal(temuImmutableListingIdentityFromPublishContext({
+    ...canonicalListing,
+    remoteResources: {
+      goodsId: "90000001",
+      externalGoodsId: "TEMU-KR-STRICT-001",
+    },
+  }, "90000001"), null);
+  assert.equal(temuImmutableListingIdentityFromPublishContext(canonicalListing, "90000002"), null);
 });
 
 test("eBay UPDATE resolves the immutable provider tuple before fingerprinting or claiming", async () => {

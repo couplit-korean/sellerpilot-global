@@ -5,22 +5,22 @@ import test from "node:test";
 const pageUrl = new URL("../app/page.tsx", import.meta.url);
 const workbenchUrl = new URL("../app/product-publish-workbench.tsx", import.meta.url);
 
-test("Temu remains visible in channel readiness but cannot be selected for publication", async () => {
+test("Temu is selectable as the eighth publication channel", async () => {
   const source = await readFile(pageUrl, "utf8");
 
   assert.match(source, /connectedChannelEntries\.map\(\(\[key, channel\]\) =>/);
-  assert.match(source, /connectedChannelKeys\.filter\(\(key\) => key !== "temu" && channelSelection\[key\] !== false\)/);
-  assert.match(source, /const publicationSelectable = key !== "temu"/);
-  assert.match(source, /disabled=\{!publicationSelectable\}/);
-  assert.match(source, /연결됨 · 게시 상태 독립 readback 검증 전/);
-  assert.match(source, /상품 게시 검증 전 선택 불가/);
+  assert.match(source, /connectedChannelKeys\.filter\(\(key\) => channelSelection\[key\] !== false\)/);
+  assert.doesNotMatch(source, /const publicationSelectable = key !== "temu"/);
+  assert.doesNotMatch(source, /게시 상태 독립 readback 검증 전/);
+  assert.match(source, /8개 판매채널 등록/);
+  assert.match(source, /eBay·Temu 규격으로 변환/);
 });
 
-test("single and bulk publication paths fail closed for Temu", async () => {
+test("single and bulk publication paths include Temu", async () => {
   const source = await readFile(workbenchUrl, "utf8");
 
-  assert.match(source, /publicationSelectableChannelKeys = activeChannelKeys\.filter\(\(channel\) => channel !== "temu"\)/);
+  assert.match(source, /publicationSelectableChannelKeys = activeChannelKeys;/);
   assert.match(source, /publicationSelectableChannelKeys\.filter\(\(channel\) => selectedChannels\.includes\(channel\)\)/);
-  assert.match(source, /const executeChannel = async[\s\S]*?if \(channel === "temu"\) \{[\s\S]*?자동 등록을 차단합니다[\s\S]*?return false;/);
+  assert.doesNotMatch(source, /Temu 상품 게시 상태를 독립적으로 재조회할 수 있을 때까지 자동 등록을 차단합니다/);
   assert.match(source, /const readyChannels = visibleChannels\.filter[\s\S]*?\.slice\(0, publicationSelectableChannelKeys\.length\)/);
 });

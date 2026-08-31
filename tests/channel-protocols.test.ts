@@ -2145,6 +2145,7 @@ test("Temu shipment confirmation resolves warehouse and carrier then verifies tr
 test("Temu V3 product creation requires an external-id readback match", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
+  let listReads = 0;
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
@@ -2152,6 +2153,10 @@ test("Temu V3 product creation requires an external-id readback match", async ()
       return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, externalGoodsId: "TEST-TEMU-001" } }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (body.type === "temu.local.goods.list.retrieve") {
+      listReads += 1;
+      if (listReads === 1) {
+        return new Response(JSON.stringify({ success: true, result: { goodsList: [] } }), { status: 200, headers: { "content-type": "application/json" } });
+      }
       return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (body.type === "bg.local.goods.publish.status.get") {
@@ -2170,20 +2175,22 @@ test("Temu V3 product creation requires an external-id readback match", async ()
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "900001");
     assert.deepEqual(calls.map((call) => call.type), [
+      "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
       "temu.local.goods.list.retrieve",
       "bg.local.goods.publish.status.get",
       "bg.local.goods.detail.query",
     ]);
-    assert.deepEqual(calls[1].outGoodsSnList, ["TEST-TEMU-001"]);
-    assert.deepEqual(calls[2].goodsIdList, [900001]);
-    assert.equal(calls[3].versionQueryType, 1);
-    assert.equal(result.steps[2].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
-    assert.equal(result.steps[3].data.sellerpilotVerification, "IMAGES_VERIFIED");
-    assert.equal(result.steps[3].data.actualCarouselImageCount, 1);
-    assert.equal(result.steps[3].data.actualDetailImageCount, 1);
-    assert.equal("app_secret" in calls[0], false);
-    assert.match(String(calls[0].sign), /^[0-9A-F]{32}$/);
+    assert.deepEqual(calls[0].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[2].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[3].goodsIdList, [900001]);
+    assert.equal(calls[4].versionQueryType, 1);
+    assert.equal(result.steps[3].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
+    assert.equal(result.steps[4].data.sellerpilotVerification, "IMAGES_VERIFIED");
+    assert.equal(result.steps[4].data.actualCarouselImageCount, 1);
+    assert.equal(result.steps[4].data.actualDetailImageCount, 1);
+    assert.equal("app_secret" in calls[1], false);
+    assert.match(String(calls[1].sign), /^[0-9A-F]{32}$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2204,6 +2211,12 @@ test("Temu preserves an accepted create marker when goodsId and reconciliation a
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
       arguments: {
+        sellerpilotTemuCreateCorrelation: {
+          version: "temu_create_attempt_external_id_v1",
+          externalGoodsId: "TEST-TEMU-NO-ID",
+          scopeFingerprint: "a".repeat(64),
+          skuCount: 1,
+        },
         body: {
           goodsBasic: {
             externalGoodsId: "TEST-TEMU-NO-ID",
@@ -2225,7 +2238,7 @@ test("Temu preserves an accepted create marker when goodsId and reconciliation a
   }
 });
 
-test("Temu listing retry reconciles an existing external ID and still verifies images", async () => {
+test("Temu create preflight blocks an existing external ID without issuing a provider write", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
   globalThis.fetch = async (_input, init) => {
@@ -2261,16 +2274,15 @@ test("Temu listing retry reconciles an existing external ID and still verifies i
       environment: "production",
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "900002");
+    assert.equal(result.ok, false);
+    assert.equal(result.remoteId, undefined);
     assert.deepEqual(result.steps.map((item) => item.name), [
-      "goods-reconcile",
-      "goods-readback",
-      "goods-publish-status",
-      "goods-detail-image-readback",
+      "goods-create-external-id-preflight",
     ]);
-    assert.equal(result.steps[0].data.sellerpilotVerification, "EXISTING_GOODS_RECOVERED");
-    assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 1);
+    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_ID_ALREADY_EXISTS");
+    assert.equal(result.steps[0].data.sellerpilotReconciliationRequired, true);
+    assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 0);
+    assert.deepEqual(calls.map((call) => call.type), ["temu.local.goods.list.retrieve"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2278,10 +2290,17 @@ test("Temu listing retry reconciles an existing external ID and still verifies i
 
 test("Temu listing fails verification when processed detail images are missing", async () => {
   const originalFetch = globalThis.fetch;
+  let listReads = 0;
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     if (body.type === "temu.local.goods.v3.add") return Response.json({ success: true, result: { goodsId: 900003 } });
-    if (body.type === "temu.local.goods.list.retrieve") return Response.json({ success: true, result: { goodsList: [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] } });
+    if (body.type === "temu.local.goods.list.retrieve") {
+      listReads += 1;
+      return Response.json({
+        success: true,
+        result: { goodsList: listReads === 1 ? [] : [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] },
+      });
+    }
     if (body.type === "bg.local.goods.publish.status.get") return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900003, status: 1, subStatus: 1 }] } });
     return Response.json({ success: true, result: { goodsId: 900003, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: [] } } });
   };

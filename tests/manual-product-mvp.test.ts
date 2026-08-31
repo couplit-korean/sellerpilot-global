@@ -570,7 +570,7 @@ test("an ambiguous manual request preserves one canonical body and UUID for the 
 
 test("channel operations binds request image mode to the server product lineage before claiming an attempt", async () => {
   const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
-  const bindingIndex = route.indexOf("marketplaceContentModeMatchesProduct(parsed.data.arguments, contentMode)");
+  const bindingIndex = route.indexOf("marketplaceContentModeMatchesProduct(contentArguments, contentMode)");
   const claimIndex = route.indexOf("sellerpilot_claim_channel_operation");
   assert.ok(bindingIndex >= 0, "request content mode binding must exist");
   assert.ok(claimIndex > bindingIndex, "content mode mismatch must fail before an idempotency attempt is claimed");

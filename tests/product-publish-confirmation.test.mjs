@@ -19,8 +19,23 @@ test("inline channel write confirmations move focus without claiming modal isola
   assert.match(source, /querySelector<HTMLButtonElement>\("\.credential-secondary"\)/);
   assert.match(source, /event\.key !== "Escape"/);
   assert.match(source, /opener\?\.isConnected[\s\S]*?opener\.focus\(\)/);
-  assert.equal((source.match(/className="publish-write-confirmation(?: channel)?" role="alertdialog"/g) ?? []).length, 3);
+  assert.equal((source.match(/className="publish-write-confirmation(?: channel)?" role="alertdialog"/g) ?? []).length, 4);
   assert.equal((source.match(/className="publish-write-confirmation(?: channel)?"[^>]*aria-modal="true"/g) ?? []).length, 0);
+});
+
+test("Temu contained QA has one explicit immutable final activation confirmation", async () => {
+  const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /listing\.requestedPublicationIntent === "safe_test"/);
+  assert.match(source, /\["non_public", "withdrawn"\]\.includes\(listing\.remoteVisibility/);
+  assert.match(source, /aria-label="Temu 최종 공개 승격 확인"/);
+  assert.match(source, /operation: "listing\.activate"/);
+  assert.match(source, /resourceListingId: listing\.id/);
+  assert.match(source, /payload\.publicationFulfilled !== true[\s\S]*?payload\.remoteState\?\.visibility !== "live"/);
+  assert.match(source, /phase: "pending_review"/);
+  assert.match(source, /const temuActivationLocked = result\.operation === "listing\.activate"/);
+  assert.doesNotMatch(source, /temuActivationLedgerEligible[\s\S]{0,180}disabled=\{[^}]*\["queued", "running", "pending_review", "blocked", "succeeded"\]\.includes\(result\.phase\)/);
+  assert.match(source, /Temu 실제 판매 공개 승격 실행/);
 });
 
 test("FINAL registration binds live intent and serializes provider writes", async () => {
@@ -28,11 +43,11 @@ test("FINAL registration binds live intent and serializes provider writes", asyn
 
   assert.match(source, /const publicationIntent = operation === "listing\.create"[\s\S]*?"live" as const/);
   assert.match(source, /const mutationContract = \{[\s\S]*?publicationIntent,/);
-  assert.match(source, /operation,[\s\S]*?publicationIntent: "live",[\s\S]*?idempotencyKey:/);
+  assert.match(source, /body: JSON\.stringify\(\{[\s\S]*?channel,[\s\S]*?operation,[\s\S]*?publicationIntent,[\s\S]*?idempotencyKey: `listing:/);
   assert.match(source, /executeChannelWritesSequentially\([\s\S]*?readyChannels,[\s\S]*?executeChannel\(channel/);
   assert.doesNotMatch(source, /Promise\.all\(readyChannels\.map\([\s\S]*?executeChannel/);
   assert.match(source, /확인 후 순차 실행/);
-  assert.match(source, /심사 대기는 공개 게시 성공으로 집계하지 않습니다/);
+  assert.match(source, /판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다/);
 });
 
 test("HTTP 202 publication review is visible and cannot fall through as success", async () => {
@@ -47,10 +62,9 @@ test("HTTP 202 publication review is visible and cannot fall through as success"
 test("create and content update both require all eight localized detail images", async () => {
   const source = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
 
-  assert.match(
-    source,
-    /expectedPublicationImageCount = operation === "listing\.create" \|\| operation === "listing\.update"[\s\S]*?marketplaceChannelDetailImageCount/,
-  );
+  assert.match(source, /expectedPublicationImageCount = operation === "listing\.create"/);
+  assert.match(source, /\|\| operation === "listing\.update"/);
+  assert.match(source, /\|\| operation === "listing\.activate"[\s\S]*?marketplaceChannelDetailImageCount/);
 });
 
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {

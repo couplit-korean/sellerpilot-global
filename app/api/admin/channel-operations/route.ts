@@ -76,6 +76,11 @@ import {
 } from "../../../../lib/channels/serverless-static-egress";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
+import {
+  bindTemuCreateAttemptIdentity,
+  temuImmutableListingIdentityFromPublishContext,
+} from "../../../../lib/channels/provider-temu-publication-readback";
+import { parseListingPublicationAssetBinding } from "../../../../lib/channels/listing-publication-content";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -89,7 +94,30 @@ const verifiedPublicationReleaseChannels = new Set([
   "elevenst",
   "smartstore",
   "ebay",
+  "temu",
 ]);
+
+function temuActivationAssetBindingMatchesApproved(
+  sourceArguments: Record<string, unknown>,
+  approved: { version: number; manifest: ProductDetailImageManifest },
+) {
+  const binding = parseListingPublicationAssetBinding(
+    sourceArguments.sellerpilotPublicationAssetBinding,
+  );
+  return Boolean(
+    binding
+    && binding.providerImageSurface === "detail_content"
+    && binding.approvedDetailPageVersion === approved.version
+    && binding.approvedManifestDigest === approved.manifest.digest
+    && binding.approvedDetailImages.length === marketplaceChannelDetailImageCount
+    && binding.approvedDetailImages.every((image, index) => {
+      const expected = approved.manifest.images[index];
+      return image.role === expected?.role
+        && image.approvedObjectPath === expected.path
+        && image.approvedSourceSha256 === expected.sourceSha256;
+    }),
+  );
+}
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
@@ -230,7 +258,7 @@ export async function POST(request: NextRequest) {
       mode: "coupang_exact_existing_listing_update_required",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
-  if (operation === "listing.activate") {
+  if (operation === "listing.activate" && channel !== "temu") {
     return NextResponse.json({
       message: "Qoo10 활성화 복구는 직전 S1 검증 원장에 의해 서버에서만 생성됩니다.",
       mode: "server_owned_activation_required",
@@ -246,7 +274,7 @@ export async function POST(request: NextRequest) {
   if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
     return NextResponse.json({ message: "외부 판매채널을 변경하는 작업은 실행 확인이 필요합니다." }, { status: 428 });
   }
-  if (["listing.create", "listing.update", "listing.stop"].includes(operation) && !parsed.data.productId) {
+  if (["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(operation) && !parsed.data.productId) {
     return NextResponse.json({
       message: "상품 원장 ID가 없는 상품 등록·수정·판매 중지는 중복 방지를 위해 실행할 수 없습니다.",
     }, { status: 409 });
@@ -257,7 +285,7 @@ export async function POST(request: NextRequest) {
       mode: "listing_commerce_values_required",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
-  const listingBoundOperation = ["listing.update", "listing.stop", "price.update", "inventory.update"].includes(operation);
+  const listingBoundOperation = ["listing.update", "listing.stop", "listing.activate", "price.update", "inventory.update"].includes(operation);
   if (listingBoundOperation && (!parsed.data.productId || !parsed.data.resourceListingId)) {
     return NextResponse.json({
       message: "정확한 상품 게시 원장 ID가 없는 원격 상품 변경은 실행할 수 없습니다.",
@@ -287,11 +315,14 @@ export async function POST(request: NextRequest) {
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const contentBoundListingOperation = operation === "listing.create"
-    || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets));
+    || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
+    || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
   let approvedDetailBinding: { version: number; manifest: ProductDetailImageManifest } | null = null;
   let approvedDetailSignedUrls: string[] = [];
+  let temuActivationSourceArguments: Record<string, unknown> | null = null;
+  let temuActivationClaimIdempotencyKey: string | null = null;
   if (contentBoundListingOperation) {
     const { data: publishContext, error: contextError } = await userClient.rpc(
       "sellerpilot_get_product_publish_context",
@@ -310,7 +341,40 @@ export async function POST(request: NextRequest) {
         mode: "product_content_lineage_unverified",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (!marketplaceContentModeMatchesProduct(parsed.data.arguments, contentMode)) {
+    if (channel === "temu" && operation === "listing.activate") {
+      const { data: activationContext, error: activationContextError } = await serviceClient.rpc(
+        "sellerpilot_service_get_temu_activation_context",
+        {
+          p_owner_id: userData.user.id,
+          p_product_id: parsed.data.productId!,
+          p_listing_id: parsed.data.resourceListingId!,
+          p_credential_id: parsed.data.credentialId,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
+        },
+      );
+      const activationRecord = isRecord(activationContext) ? activationContext : null;
+      temuActivationSourceArguments = activationRecord && isRecord(activationRecord.arguments)
+        ? activationRecord.arguments
+        : null;
+      temuActivationClaimIdempotencyKey = activationRecord
+        && typeof activationRecord.claimIdempotencyKey === "string"
+        && /^temu-activation:[a-f0-9]{64}$/u.test(activationRecord.claimIdempotencyKey)
+        ? activationRecord.claimIdempotencyKey
+        : null;
+      if (activationContextError
+          || activationRecord?.status !== "allowed"
+          || activationRecord.contract !== "temu_verified_non_public_activation_context_v1"
+          || !temuActivationSourceArguments
+          || !temuActivationClaimIdempotencyKey) {
+        return NextResponse.json({
+          message: "Temu QA 상품의 검증된 비공개 원장과 최초 등록 계보를 확인하지 못해 공개 승격을 시작하지 않았습니다.",
+          mode: "temu_activation_context_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
+    const contentArguments = temuActivationSourceArguments ?? parsed.data.arguments;
+    if (!marketplaceContentModeMatchesProduct(contentArguments, contentMode)) {
       return NextResponse.json({
         message: "요청한 이미지 제작 방식이 상품 원장의 제작 계보와 일치하지 않습니다.",
         mode: "product_content_mode_mismatch",
@@ -322,6 +386,18 @@ export async function POST(request: NextRequest) {
         message: "승인된 상세페이지 8장과 현재 운영 이미지 원장이 일치하지 않아 판매채널 전송을 시작하지 않았습니다.",
         mode: "approved_detail_image_manifest_required",
         manifestCode: approvedDetail.code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (channel === "temu"
+        && operation === "listing.activate"
+        && (!temuActivationSourceArguments
+          || !temuActivationAssetBindingMatchesApproved(
+            temuActivationSourceArguments,
+            approvedDetail.value,
+          ))) {
+      return NextResponse.json({
+        message: "Temu QA 등록 당시 승인 이미지 계보와 현재 승인된 상세 이미지 8장이 달라 공개 승격을 시작하지 않았습니다.",
+        mode: "temu_activation_asset_manifest_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     const detailPaths = approvedDetail.value.manifest.images.map((image) => image.path);
@@ -379,6 +455,7 @@ export async function POST(request: NextRequest) {
   let boundListingPrice: number | undefined;
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   let boundEbayListingIdentity: Record<string, string> | null = null;
+  let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   if (listingBoundOperation) {
@@ -388,7 +465,13 @@ export async function POST(request: NextRequest) {
     try {
       requestedRemoteId = operation === "listing.update"
         ? listingUpdateRemoteIdentity(channel, parsed.data.arguments)
-        : channelListingRemoteIdentity(channel, operation, parsed.data.arguments);
+        : channelListingRemoteIdentity(
+            channel,
+            operation,
+            operation === "listing.activate" && temuActivationSourceArguments
+              ? temuActivationSourceArguments
+              : parsed.data.arguments,
+          );
     } catch {
       return NextResponse.json({ message: "원격 상품 식별값이 누락됐거나 서로 일치하지 않습니다." }, { status: 409 });
     }
@@ -410,7 +493,11 @@ export async function POST(request: NextRequest) {
         && listing.channel === channel
         && (operation === "listing.update"
           ? listingUpdateServerCandidate(channel, listingUpdateReferenceFromLedger(listing))
-          : ["published", "paused"].includes(String(listing.status ?? "")))
+          : operation === "listing.activate"
+            ? listing.status === "paused"
+              && listing.requestedPublicationIntent === "safe_test"
+              && ["non_public", "withdrawn"].includes(String(listing.remoteVisibility ?? ""))
+            : ["published", "paused"].includes(String(listing.status ?? "")))
         && ledgerRemoteIdentity === requestedRemoteId
         && String(listing.market ?? "") === parsed.data.market
         && String(listing.targetId ?? "") === parsed.data.targetId;
@@ -420,6 +507,19 @@ export async function POST(request: NextRequest) {
         message: "요청한 원격 상품 ID가 이 상품의 게시 원장과 일치하지 않아 수정을 차단했습니다.",
         mode: "listing_identity_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (channel === "temu" && (operation === "listing.stop" || operation === "listing.activate")) {
+      const immutableIdentity = temuImmutableListingIdentityFromPublishContext(
+        exactListing,
+        requestedRemoteId,
+      );
+      if (!immutableIdentity) {
+        return NextResponse.json({
+          message: "Temu goodsId와 외부 상품 ID의 불변 결속을 게시 원장에서 확인하지 못해 판매 중지를 시작하지 않았습니다.",
+          mode: "temu_immutable_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundTemuListingIdentity = immutableIdentity;
     }
     if (operation === "listing.update") {
       const ledgerIntent = listingPublicationIntentSchema.safeParse(exactListing.requestedPublicationIntent);
@@ -451,7 +551,7 @@ export async function POST(request: NextRequest) {
         mode: "listing_stop_publication_intent_forbidden",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (operation === "listing.update" || operation === "listing.stop") {
+    if (operation === "listing.update" || operation === "listing.stop" || operation === "listing.activate") {
       const ledgerCurrency = String(exactListing.currency ?? "").trim().toUpperCase();
       const ledgerPrice = Number(exactListing.price);
       if (!/^[A-Z]{3}$/.test(ledgerCurrency) || !Number.isFinite(ledgerPrice) || ledgerPrice < 0) {
@@ -489,18 +589,21 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { data: lineageStatus, error: lineageError } = await serviceClient.rpc(
-      "sellerpilot_service_validate_listing_write_lineage",
-      {
-        p_listing_id: resourceListingId,
-        p_credential_id: parsed.data.credentialId,
-        p_product_id: productId,
-        p_channel: channel,
-        p_operation: operation,
-        p_market: parsed.data.market,
-        p_target_id: parsed.data.targetId,
-      },
-    );
+    const { data: lineageStatus, error: lineageError } = channel === "temu"
+        && operation === "listing.activate"
+      ? { data: "allowed", error: null }
+      : await serviceClient.rpc(
+          "sellerpilot_service_validate_listing_write_lineage",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_channel: channel,
+            p_operation: operation,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+          },
+        );
     if (lineageError || typeof lineageStatus !== "string") {
       return NextResponse.json({
         message: "판매자 계정과 상품 게시 원장의 결속 상태를 확인하지 못했습니다.",
@@ -657,7 +760,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (channel === "temu" && operation === "listing.create") {
+  if (channel === "temu" && [
+    "listing.create",
+    "listing.stop",
+    "listing.activate",
+    "listing.publication.verify",
+  ].includes(operation)) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -684,7 +792,7 @@ export async function POST(request: NextRequest) {
         staticEgressReady: false,
         blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
         mode: "static_egress_required",
-        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 등록을 다시 시도해 주세요.",
+        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 게시 작업을 다시 시도해 주세요.",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
@@ -694,14 +802,16 @@ export async function POST(request: NextRequest) {
         workerReady: false,
         blockedReason: "SERVERLESS_WORKER_REQUIRED",
         mode: "serverless_worker_required",
-        message: "Temu 상품 등록 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
+        message: "Temu 상품 게시 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
 
   // This marker is a server-owned capability. Always remove the browser value
   // and recreate it only from the exact rollback identity RPC above.
-  let effectiveArguments = structuredClone(parsed.data.arguments);
+  let effectiveArguments = structuredClone(
+    temuActivationSourceArguments ?? parsed.data.arguments,
+  );
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
@@ -737,6 +847,18 @@ export async function POST(request: NextRequest) {
     effectiveArguments = {
       ...effectiveArguments,
       ...boundEbayListingIdentity,
+    };
+  }
+  if (channel === "temu" && (operation === "listing.stop" || operation === "listing.activate")) {
+    if (!boundTemuListingIdentity) {
+      return NextResponse.json({
+        message: "Temu 상품의 불변 원격 식별값을 확인하지 못해 판매 중지를 시작하지 않았습니다.",
+        mode: "temu_immutable_identity_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = {
+      ...effectiveArguments,
+      ...boundTemuListingIdentity,
     };
   }
   if (channel === "elevenst" && operation === "listing.update") {
@@ -799,10 +921,40 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
+  if (channel === "temu" && operation === "listing.create") {
+    const product = isRecord(verifiedPublishContext?.product)
+      ? verifiedPublishContext.product
+      : {};
+    const manualFields = isRecord(verifiedPublishContext?.manualFields)
+      ? verifiedPublishContext.manualFields
+      : {};
+    const canonicalSellerSku = typeof manualFields.sellerSku === "string" && manualFields.sellerSku.trim()
+      ? manualFields.sellerSku.trim()
+      : typeof product.sku === "string"
+        ? product.sku.trim()
+        : "";
+    try {
+      effectiveArguments = bindTemuCreateAttemptIdentity({
+        argumentsValue: effectiveArguments,
+        productId: parsed.data.productId!,
+        canonicalSellerSku,
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+        idempotencyKey: parsed.data.idempotencyKey,
+      });
+    } catch {
+      return NextResponse.json({
+        message: "Temu 외부 상품·SKU 식별자가 선택 상품의 확정 SKU 및 현재 작업 계보와 일치하지 않아 등록을 시작하지 않았습니다.",
+        mode: "temu_create_identity_mismatch",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const effectivePublicationIntent = operation === "listing.create"
     ? parsed.data.publicationIntent ?? "safe_test"
     : operation === "listing.update"
       ? boundListingPublicationIntent
+      : operation === "listing.activate"
+        ? "live" as const
       : undefined;
   const expectedPublicationLocale = listingOperationRequiresVerifiedRemoteState(operation)
     ? listingExpectedPublicationLocale(channel, parsed.data.market)
@@ -813,7 +965,9 @@ export async function POST(request: NextRequest) {
       mode: "listing_publication_locale_unverified",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
-  const expectedPublicationImageCount = operation === "listing.create" || operation === "listing.update"
+  const expectedPublicationImageCount = operation === "listing.create"
+    || operation === "listing.update"
+    || operation === "listing.activate"
     ? marketplaceChannelDetailImageCount
     : 0;
   if (listingOperationRequiresVerifiedRemoteState(operation)) {
@@ -982,7 +1136,9 @@ export async function POST(request: NextRequest) {
     p_credential_id: parsed.data.credentialId,
     p_channel: channel,
     p_operation: operation,
-    p_idempotency_key: parsed.data.idempotencyKey,
+    p_idempotency_key: channel === "temu" && operation === "listing.activate"
+      ? temuActivationClaimIdempotencyKey!
+      : parsed.data.idempotencyKey,
     p_request_fingerprint: requestFingerprint,
   });
   if (claimError || !claimData || typeof claimData !== "object" || Array.isArray(claimData)) {
@@ -1098,7 +1254,7 @@ export async function POST(request: NextRequest) {
   }
 
   let listingId = "";
-  if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop"].includes(operation)) {
+  if (parsed.data.productId && ["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(operation)) {
     if (operation !== "listing.create") {
       listingId = parsed.data.resourceListingId!;
     }
@@ -1135,7 +1291,7 @@ export async function POST(request: NextRequest) {
     });
   };
 
-  const listingGatewayOperation = ["listing.create", "listing.update", "listing.stop"].includes(operation);
+  const listingGatewayOperation = ["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(operation);
   const usesChannelGateway = channel === "ebay"
     || channel === "shopee"
     || channel === "lazada"
@@ -1146,7 +1302,9 @@ export async function POST(request: NextRequest) {
     || ((listingGatewayOperation || writeChannelOperations.has(operation)) && channel === "qoo10");
   if (usesChannelGateway) {
     try {
-      const gatewayArguments = operation === "listing.create" || operation === "listing.update"
+      const gatewayArguments = operation === "listing.create"
+        || operation === "listing.update"
+        || (channel === "temu" && operation === "listing.activate")
         ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments, {
             attemptId,
             productId: parsed.data.productId!,

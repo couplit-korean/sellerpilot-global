@@ -218,7 +218,7 @@ test("admin route readiness checks precede operation-attempt creation", async ()
     "utf8",
   );
   const ebayCheck = route.indexOf('channel === "ebay" && operation === "listing.create"');
-  const temuCheck = route.indexOf('channel === "temu" && operation === "listing.create"');
+  const temuCheck = route.indexOf('channel === "temu" && [');
   const claim = route.indexOf('sellerpilot_claim_channel_operation');
   assert.ok(ebayCheck >= 0 && temuCheck >= 0 && claim > ebayCheck && claim > temuCheck);
   assert.match(route, /sellerpilot_service_serverless_static_egress_status/);

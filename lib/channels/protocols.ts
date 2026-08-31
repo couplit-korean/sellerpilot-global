@@ -44,14 +44,15 @@ export function runWithProviderReadOnlyTransport<T>(execute: () => Promise<T>) {
 
 function assertProviderReadOnlyTransport(
   method: string,
-  exception?: "qoo10_read_rpc" | "ebay_trading_read",
+  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "temu_read_rpc",
 ) {
   if (!providerReadOnlyTransportStorage.getStore()) return;
   const normalized = method.trim().toUpperCase();
   if (normalized === "GET") return;
   if (normalized === "POST"
       && (exception === "qoo10_read_rpc"
-        || exception === "ebay_trading_read")) return;
+        || exception === "ebay_trading_read"
+        || exception === "temu_read_rpc")) return;
   throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
 
@@ -264,8 +265,43 @@ export async function naverRequest(input: {
   return readRemoteResponse(response);
 }
 
+const temuExactLongBrand: unique symbol = Symbol("sellerpilot.temu.exact-long");
+
+export type TemuExactLong = {
+  readonly decimal: string;
+  readonly [temuExactLongBrand]: true;
+};
+
+export function temuExactLong(value: string): TemuExactLong {
+  const decimal = value.trim();
+  if (!/^[1-9]\d{0,18}$/u.test(decimal)
+      || BigInt(decimal) > BigInt("9223372036854775807")) {
+    throw new Error("TEMU_GOODS_ID_NOT_EXACT_LONG");
+  }
+  return Object.freeze({ decimal, [temuExactLongBrand]: true as const });
+}
+
+function temuJson(value: unknown) {
+  const rawJson = (JSON as unknown as {
+    rawJSON?: (text: string) => unknown;
+  }).rawJSON;
+  const serialized = JSON.stringify(value, (_key, candidate) => {
+    if (!candidate
+        || typeof candidate !== "object"
+        || !(temuExactLongBrand in candidate)) return candidate;
+    const exact = candidate as TemuExactLong;
+    if (exact[temuExactLongBrand] !== true
+        || temuExactLong(exact.decimal).decimal !== exact.decimal
+        || typeof rawJson !== "function") {
+      throw new Error("TEMU_EXACT_LONG_JSON_UNSUPPORTED");
+    }
+    return rawJson(exact.decimal);
+  });
+  return serialized ?? "";
+}
+
 function temuSignedValue(value: unknown) {
-  const serialized = JSON.stringify(value);
+  const serialized = temuJson(value);
   if (serialized === undefined) return "";
   return typeof value === "string" ? serialized.slice(1, -1) : serialized;
 }
@@ -284,6 +320,12 @@ export async function temuRequest(input: {
   type: string;
   arguments?: Record<string, unknown>;
 }) {
+  const readOnlyRpc = new Set([
+    "temu.local.goods.list.retrieve",
+    "bg.local.goods.publish.status.get",
+    "bg.local.goods.detail.query",
+  ]).has(input.type);
+  assertProviderReadOnlyTransport("POST", readOnlyRpc ? "temu_read_rpc" : undefined);
   const appKey = textValue(input.payload, "app_key");
   const appSecret = textValue(input.payload, "app_secret");
   const accessToken = textValue(input.payload, "access_token");
@@ -306,9 +348,39 @@ export async function temuRequest(input: {
       "content-type": "application/json",
       "user-agent": "SellerPilot-Temu-Connector/1.0",
     },
-    body: JSON.stringify({ ...unsigned, sign: buildTemuSignature(appSecret, unsigned) }),
+    body: temuJson({ ...unsigned, sign: buildTemuSignature(appSecret, unsigned) }),
   });
-  return readRemoteResponse(response);
+  const text = await response.text();
+  let data: Record<string, unknown> = {};
+  try {
+    type JsonSourceContext = { source?: string };
+    const parseWithSource = JSON.parse as unknown as (
+      value: string,
+      reviver: (
+        this: unknown,
+        key: string,
+        value: unknown,
+        context?: JsonSourceContext,
+      ) => unknown,
+    ) => unknown;
+    const parsed = parseWithSource(text, function preserveTemuLong(
+      key,
+      value,
+      context,
+    ) {
+      if (["goodsId", "skuId"].includes(key)
+          && typeof value === "number"
+          && /^[1-9]\d{0,18}$/u.test(context?.source ?? "")) {
+        return context!.source!;
+      }
+      return value;
+    });
+    if (Array.isArray(parsed)) data = { items: parsed };
+    else if (parsed && typeof parsed === "object") data = parsed as Record<string, unknown>;
+  } catch {
+    data = {};
+  }
+  return { response, data, text };
 }
 
 export function shopeeEnvironment(environment: "sandbox" | "production") {

@@ -879,12 +879,15 @@ test("exact Qoo10 activation rejects the residual romanized Korean source before
   }
 });
 
-test("serverless matrix exposes activation only for Qoo10 and rejects invalid context before the mutation fence", async () => {
+test("serverless matrix exposes activation only for Qoo10 and Temu and rejects invalid context before the mutation fence", async () => {
   const channels: GatewayClaim["channel"][] = [
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
   ];
   for (const channel of channels) {
-    assert.equal(serverlessGatewayOperationAllowed(channel, "listing.activate"), channel === "qoo10");
+    assert.equal(
+      serverlessGatewayOperationAllowed(channel, "listing.activate"),
+      channel === "qoo10" || channel === "temu",
+    );
   }
   const events: string[] = [];
   const job: GatewayClaim = {
@@ -907,7 +910,7 @@ test("serverless matrix exposes activation only for Qoo10 and rejects invalid co
       beginCredentialMutation: async () => { events.push("credential"); },
       stageCredentialRefresh: async () => { events.push("refresh"); },
     },
-  }), /QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED/);
+  }), /LISTING_ACTIVATION_SERVER_CONTEXT_REQUIRED/);
   assert.deepEqual(events, []);
 });
 

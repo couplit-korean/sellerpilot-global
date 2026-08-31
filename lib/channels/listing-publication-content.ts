@@ -3,7 +3,7 @@ import type { ActiveChannelKey } from "./catalog";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import { listingPublicationAssetBindingContract } from "./marketplace-images";
 
-type PublicationChannel = Exclude<ActiveChannelKey, "temu">;
+type PublicationChannel = ActiveChannelKey;
 type UnknownRecord = Record<string, unknown>;
 
 type AssetIdentity = {
@@ -432,6 +432,53 @@ function shopeeRepresentativeImageIdentity(input: {
     : "";
 }
 
+function temuContentProjection(
+  side: "source" | "remote",
+  value: UnknownRecord,
+): ListingPublicationContentProjection {
+  const sourceRoot = recordValue(value.body);
+  const resultRoot = recordValue(value.result);
+  const dataRoot = recordValue(value.data);
+  const root = side === "source"
+    ? sourceRoot
+    : Object.keys(resultRoot).length
+      ? resultRoot
+      : Object.keys(dataRoot).length
+        ? dataRoot
+        : value;
+  const goodsBasic = Object.keys(recordValue(root.goodsBasic)).length
+    ? recordValue(root.goodsBasic)
+    : root;
+  const gallery = recordValue(root.goodsGallery);
+  const rawDescription = firstText(goodsBasic, ["goodsDesc", "description"]);
+  const bulletPoints = Array.isArray(goodsBasic.bulletPoints)
+    ? goodsBasic.bulletPoints.map(normalizedListingPublicationText).filter(Boolean)
+    : [];
+  const descriptionParts = [normalizedListingPublicationText(rawDescription), ...bulletPoints].filter(Boolean);
+  const description = [...new Set(descriptionParts)].join(" ");
+  const detailImageIdentities = exactImageIdentities(
+    gallery.detailImage
+      ?? gallery.detailImages
+      ?? goodsBasic.detailImage
+      ?? goodsBasic.detailImages,
+  );
+  const carouselImages = exactImageIdentities(
+    gallery.goodsCarouselImage
+      ?? gallery.carouselImages
+      ?? goodsBasic.goodsCarouselImage
+      ?? goodsBasic.carouselImages,
+  );
+  const title = normalizedListingPublicationText(firstText(goodsBasic, ["goodsName", "title"]));
+  return {
+    title,
+    titleParts: title ? [title] : [],
+    description,
+    detailImageCount: detailImageIdentities.length,
+    detailImageIdentities,
+    representativeImageIdentity: carouselImages[0] ?? "",
+  };
+}
+
 export function listingPublicationContentProjection(
   channel: PublicationChannel,
   side: "source" | "remote",
@@ -498,6 +545,7 @@ export function listingPublicationContentProjection(
     const title = normalizedListingPublicationText(firstText(channelProduct, ["channelProductName"]));
     return { title, titleParts: title ? [title] : [], description: normalizedListingPublicationText(description), detailImageCount: detailImageIdentities.length, detailImageIdentities };
   }
+  if (channel === "temu") return temuContentProjection(side, value);
   const inventoryItem = recordValue(value.inventoryItem);
   const product = recordValue(inventoryItem.product);
   const offer = recordValue(value.offer);
@@ -696,6 +744,7 @@ function canonicalRemoteResources(channel: PublicationChannel, value: unknown) {
     lazada: ["itemId", "country", "categoryId", "skuIds", "sellerSkus"],
     coupang: ["sellerProductId", "vendorItemIds"],
     smartstore: ["originProductNo", "smartstoreChannelProductNo"],
+    temu: ["goodsId", "externalGoodsId"],
     ebay: ["offerId", "listingId", "sku", "marketplaceId"],
   };
   const result: Record<string, string | string[]> = {};
@@ -755,6 +804,15 @@ function sourceDeclaredRemoteResources(
       ? { smartstoreChannelProductNo: firstText(sourceArguments, ["smartstoreChannelProductNo"]) }
       : {}),
   };
+  if (channel === "temu") {
+    const goodsBasic = recordValue(body.goodsBasic);
+    return {
+      goodsId: remoteId,
+      ...(firstText(goodsBasic, ["externalGoodsId", "outGoodsSn"])
+        ? { externalGoodsId: firstText(goodsBasic, ["externalGoodsId", "outGoodsSn"]) }
+        : {}),
+    };
+  }
   const inventorySku = firstText(sourceArguments, ["sku"])
     || firstText(recordValue(sourceArguments.inventoryItem), ["sku"]);
   return {

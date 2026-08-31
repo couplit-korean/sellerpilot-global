@@ -7,6 +7,8 @@ import {
   listingMutationGeneration,
   productEditSupportLabel,
   reconcileQueuedChannelResults,
+  bulkChannelPublicationIntent,
+  summarizeBulkPublicationOutcomes,
   workbenchProductContextMatches,
   type WorkbenchChannelResult,
   type WorkbenchListingSnapshot,
@@ -107,6 +109,15 @@ test("provider writes run one at a time in visible channel order", async () => {
   ]);
 });
 
+test("Temu bulk QA is contained separately and never counted as public success", () => {
+  assert.equal(bulkChannelPublicationIntent("temu"), "safe_test");
+  assert.equal(bulkChannelPublicationIntent("qoo10"), "live");
+  assert.deepEqual(
+    summarizeBulkPublicationOutcomes(["live", "safe_test_contained", false]),
+    { live: 1, safeTestContained: 1, attentionRequired: 1 },
+  );
+});
+
 test("queued reconciliation requires the exact listing and attempt", () => {
   const queued: Partial<Record<"qoo10", WorkbenchChannelResult>> = {
     qoo10: {
@@ -204,4 +215,47 @@ test("live publication review remains pending and never reconciles as succeeded"
   })]);
   assert.equal(pending.qoo10?.phase, "pending_review");
   assert.match(pending.qoo10?.message ?? "", /공개 게시 성공에는 포함되지 않습니다/);
+});
+
+test("Temu final activation resolves only from its exact attempt to live or pending review", () => {
+  const queued: Partial<Record<"temu", WorkbenchChannelResult>> = {
+    temu: {
+      phase: "queued",
+      operation: "listing.activate",
+      attemptId: "40000000-0000-4000-8000-000000000001",
+      listingId: "30000000-0000-4000-8000-000000000001",
+      market: "",
+      targetId: "",
+    },
+  };
+  const live = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "published",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  })]);
+  assert.equal(live.temu?.phase, "succeeded");
+
+  const pending = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "paused",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "pending_review",
+  })]);
+  assert.equal(pending.temu?.phase, "pending_review");
+
+  const wrongAttempt = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "published",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+    operationAttemptId: "40000000-0000-4000-8000-000000000099",
+  })]);
+  assert.equal(wrongAttempt, queued);
 });

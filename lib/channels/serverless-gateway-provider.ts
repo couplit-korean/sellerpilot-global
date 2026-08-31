@@ -57,6 +57,10 @@ import {
   qoo10S1ActivationArgumentsValid,
 } from "./qoo10-listing-activation";
 import { qoo10ExactTargetCreateForbidden } from "./qoo10-exact-localization-recovery";
+import {
+  temuActivationBinding,
+  temuContainmentDiscoveryBinding,
+} from "./provider-temu-publication-readback";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -68,7 +72,7 @@ const serverlessWriteMatrix = {
   "listing.stop": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore",
   ]),
-  "listing.activate": new Set(["qoo10"]),
+  "listing.activate": new Set(["qoo10", "temu"]),
   "inventory.update": new Set([
     "qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay",
   ]),
@@ -100,7 +104,7 @@ const serverlessReadMatrix = {
   "categories.validate": allServerlessChannels,
   "orders.get": new Set(["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"]),
   "listing.publication.verify": new Set([
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
   ]),
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
 
@@ -585,22 +589,43 @@ export async function executeServerlessGatewayProviderJob(
         && qoo10ExactTargetCreateForbidden(rawArguments)) {
       // This QA SKU already owns remote item 1217336970. Reject the stale
       // create before credential refresh, media preparation, or the worker's
-       // provider-mutation fence; only the exact bound update is recoverable.
+      // provider-mutation fence; only the exact bound update is recoverable.
       throw new Error("QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN");
     }
-    const activationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
-    if (activationMarkerSupplied !== (input.job.operation === "listing.activate")
-        || (input.job.operation === "listing.activate"
-          && (input.job.channel !== "qoo10" || !qoo10S1ActivationArgumentsValid(rawArguments)))) {
-      throw new Error("QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED");
+    const contentBoundPublicationWrite = (
+      input.job.operation === "listing.create"
+      || input.job.operation === "listing.update"
+      || (input.job.channel === "temu" && input.job.operation === "listing.activate")
+    )
+      && rawArguments.publicationStateContract === "verified_remote_state_v1"
+      && (rawArguments.publicationIntent === "live"
+        || (input.job.channel === "temu" && rawArguments.publicationIntent === "safe_test"));
+    const qoo10ActivationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
+    const temuActivationMarkerSupplied = Object.hasOwn(rawArguments, "sellerpilotTemuActivation");
+    const exactActivationContext = input.job.operation === "listing.activate"
+      ? input.job.channel === "qoo10"
+        ? qoo10ActivationMarkerSupplied
+          && !temuActivationMarkerSupplied
+          && qoo10S1ActivationArgumentsValid(rawArguments)
+        : input.job.channel === "temu"
+          ? !qoo10ActivationMarkerSupplied
+            && temuActivationMarkerSupplied
+            && Boolean(temuActivationBinding(rawArguments))
+          : false
+      : !qoo10ActivationMarkerSupplied && !temuActivationMarkerSupplied;
+    if (!exactActivationContext) {
+      throw new Error("LISTING_ACTIVATION_SERVER_CONTEXT_REQUIRED");
     }
     if (input.job.operation === "listing.publication.verify") {
       const source = listingPublicationVerificationSourceSchema.safeParse(
         rawArguments.sellerpilotPublicationSource,
       );
+      const containmentDiscovery = input.job.channel === "temu"
+        ? temuContainmentDiscoveryBinding(rawArguments)
+        : null;
       if (rawArguments.sellerpilotReadOnly !== true
-          || !source.success
-          || source.data.verificationJobId !== input.job.id) {
+          || (!containmentDiscovery
+            && (!source.success || source.data.verificationJobId !== input.job.id))) {
         throw new Error("LISTING_PUBLICATION_VERIFY_READ_ONLY_CONTEXT_REQUIRED");
       }
     }
@@ -610,15 +635,12 @@ export async function executeServerlessGatewayProviderJob(
       // operator decision and cannot be inferred safely by the worker.
       assertEbayListingCreateConfiguration(rawArguments);
     }
-    if (input.job.channel !== "temu"
-        && (input.job.operation === "listing.create" || input.job.operation === "listing.update")
-        && rawArguments.publicationStateContract === "verified_remote_state_v1"
-        && rawArguments.publicationIntent === "live") {
+    if (contentBoundPublicationWrite) {
       if (!parseListingPublicationAssetBinding(rawArguments.sellerpilotPublicationAssetBinding)) {
         throw new Error("LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED");
       }
       assertListingPublicationSourceLocalized({
-        channel: input.job.channel as Exclude<GatewayClaim["channel"], "temu">,
+        channel: input.job.channel,
         expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
         sourceArguments: rawArguments,
       });
@@ -645,7 +667,9 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     await input.hooks.assertLeaseHealthy();
-    if (writeChannelOperations.has(input.job.operation)) {
+    const delayedTemuActivationBoundary = input.job.channel === "temu"
+      && input.job.operation === "listing.activate";
+    if (writeChannelOperations.has(input.job.operation) && !delayedTemuActivationBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -656,6 +680,14 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
+      ...(delayedTemuActivationBoundary
+        ? {
+            providerMutationHooks: {
+              begin: input.hooks.beginProviderMutation,
+              assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+            },
+          }
+        : {}),
       ...(preparedCredential.shopeeShopCredential
         ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
         : {}),
@@ -663,13 +695,9 @@ export async function executeServerlessGatewayProviderJob(
     let result = input.job.operation === "listing.publication.verify"
       ? await runWithProviderReadOnlyTransport(executeOperation)
       : await executeOperation();
-    if (input.job.channel !== "temu"
-        && (input.job.operation === "listing.create" || input.job.operation === "listing.update")
-        && rawArguments.publicationStateContract === "verified_remote_state_v1"
-        && rawArguments.publicationIntent === "live"
-        && result.remoteState) {
+    if (contentBoundPublicationWrite && result.remoteState) {
       const publicationAssetBinding = listingPublicationProviderAssetEvidence({
-        channel: input.job.channel as Exclude<GatewayClaim["channel"], "temu">,
+        channel: input.job.channel,
         remoteId: result.remoteId ?? "",
         sourceArguments: rawArguments,
         providerArguments: operationArguments,
