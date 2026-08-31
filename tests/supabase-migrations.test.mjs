@@ -85,6 +85,8 @@ const COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS = {
 };
 const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
   "20260831132000_competitor_identity_lineage_fence.sql";
+const SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION =
+  "20260831132018_smartstore_exact_qa_recovery_fence.sql";
 const COUPANG_EXACT_QA_RECOVERY_MIGRATION =
   "20260831140000_coupang_exact_qa_recovery_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
@@ -755,6 +757,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
+      SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION,
       TEMU_PUBLICATION_RELEASE_MIGRATION,
       COUPANG_EXACT_QA_RECOVERY_MIGRATION,
     ]);
@@ -845,10 +848,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION)
+        && migrationNames.indexOf(SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION)
           < migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
         && migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
           < migrationNames.indexOf(COUPANG_EXACT_QA_RECOVERY_MIGRATION),
-      "competitor v3, review ledger, queue retirement, identity fence, Temu publication, and Coupang recovery fence must replay after Qoo10 573 in order",
+      "competitor v3, review ledger, queue retirement, identity fence, Smartstore recovery, Temu publication, and Coupang recovery fence must replay after Qoo10 573 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;

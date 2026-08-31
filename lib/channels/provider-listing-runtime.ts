@@ -38,6 +38,11 @@ import {
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
 import {
+  smartstoreExactQaRecoveryArgument,
+  smartstoreExactQaRecoveryBinding,
+  smartstoreExactQaRecoveryIdentity,
+} from "./smartstore-exact-qa-recovery";
+import {
   coupangExactQaNoticeContent,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryIdentity,
@@ -866,6 +871,11 @@ export async function prepareLazadaListing(
 }
 
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
+  const exactRecovery = smartstoreExactQaRecoveryBinding(input.arguments);
+  if (Object.hasOwn(input.arguments, smartstoreExactQaRecoveryArgument)
+      && !exactRecovery) {
+    throw new Error("SMARTSTORE_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
   const sourceBody = structuredClone(recordValue(input.arguments.body) ?? {});
   const imagePlan = smartstoreImageUploadPlan({
     imageUrls: input.arguments.imageUrls,
@@ -896,6 +906,139 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       ?? addressBooks[0];
     phone = String(address?.phoneNumber1 ?? address?.phoneNumber2 ?? "").trim();
     if (!addressRemote.response.ok || !phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
+  }
+
+  if (input.operation === "listing.create") {
+    const originProduct = recordValue(sourceBody.originProduct) ?? {};
+    const categoryId = String(originProduct.leafCategoryId ?? "").trim();
+    if (!/^\d+$/.test(categoryId)) throw new Error("NAVER_LEAF_CATEGORY_MISSING");
+    await input.hooks.assertLeaseHealthy();
+    const categoryRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v1/categories/${encodeURIComponent(categoryId)}`,
+    });
+    const category = recordValue(categoryRemote.data) ?? {};
+    if (!categoryRemote.response.ok
+        || String(category.id ?? "").trim() !== categoryId
+        || category.last !== true) {
+      throw new Error("NAVER_LEAF_CATEGORY_PREFLIGHT_FAILED");
+    }
+
+    const detailAttribute = recordValue(originProduct.detailAttribute) ?? {};
+    const sellerCodeInfo = recordValue(detailAttribute.sellerCodeInfo) ?? {};
+    const sellerManagementCode = String(sellerCodeInfo.sellerManagementCode ?? "").trim();
+    if (!sellerManagementCode) throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
+    await input.hooks.assertLeaseHealthy();
+    const duplicateRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "POST",
+      path: "/v1/products/search",
+      body: {
+        searchKeywordType: "SELLER_CODE",
+        sellerManagementCode,
+        page: 1,
+        size: 50,
+        orderType: "NO",
+      },
+    });
+    if (!duplicateRemote.response.ok || !Array.isArray(duplicateRemote.data.contents)) {
+      throw new Error("NAVER_DUPLICATE_PREFLIGHT_FAILED");
+    }
+  } else {
+    const remoteId = String(input.arguments.originProductNo ?? "").trim();
+    if (!/^\d+$/.test(remoteId)) throw new Error("NAVER_ORIGIN_PRODUCT_ID_MISSING");
+    const requestedOriginProduct = recordValue(sourceBody.originProduct) ?? {};
+    const requestedDetailAttribute = recordValue(requestedOriginProduct.detailAttribute) ?? {};
+    const requestedSellerCodeInfo = recordValue(requestedDetailAttribute.sellerCodeInfo) ?? {};
+    const expectedSellerManagementCode = String(
+      requestedSellerCodeInfo.sellerManagementCode ?? "",
+    ).trim();
+    if (!expectedSellerManagementCode) {
+      throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
+    }
+    if (exactRecovery) {
+      const requestedTitle = String(requestedOriginProduct.name ?? "").trim();
+      const requestedDescription = String(requestedOriginProduct.detailContent ?? "").trim();
+      const requestedPrice = Number(normalizeTenWonAmount(requestedOriginProduct.salePrice));
+      const requestedStock = Number(requestedOriginProduct.stockQuantity);
+      if (remoteId !== exactRecovery.originProductNo
+          || expectedSellerManagementCode !== exactRecovery.centralSku
+          || requestedPrice !== smartstoreExactQaRecoveryIdentity.priceKrw
+          || !Number.isSafeInteger(requestedStock)
+          || requestedStock < 1
+          || requestedStock > 99_999_999
+          || input.arguments.publicationIntent !== "live"
+          || input.arguments.publicationExpectedLocale !== "ko-KR"
+          || input.arguments.publicationExpectedImageCount !== 8
+          || !/[가-힣]/u.test(requestedTitle)
+          || !/[가-힣]/u.test(requestedDescription)) {
+        throw new Error("SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH");
+      }
+    }
+    await input.hooks.assertLeaseHealthy();
+    const originRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v2/products/origin-products/${encodeURIComponent(remoteId)}`,
+    });
+    const currentOriginProduct = recordValue(originRemote.data.originProduct) ?? {};
+    const embeddedChannelProduct = recordValue(originRemote.data.smartstoreChannelProduct) ?? {};
+    const responseOriginProductNo = String(
+      originRemote.data.originProductNo ?? currentOriginProduct.originProductNo ?? "",
+    ).trim();
+    const responseChannelProductNo = String(
+      originRemote.data.smartstoreChannelProductNo
+        ?? embeddedChannelProduct.channelProductNo
+        ?? "",
+    ).trim();
+    const currentDetailAttribute = recordValue(currentOriginProduct.detailAttribute) ?? {};
+    const currentSellerCodeInfo = recordValue(currentDetailAttribute.sellerCodeInfo) ?? {};
+    const originSellerManagementCode = String(
+      currentSellerCodeInfo.sellerManagementCode
+        ?? currentOriginProduct.sellerManagementCode
+        ?? "",
+    ).trim();
+    if (!originRemote.response.ok
+        || !Object.keys(currentOriginProduct).length
+        || (responseOriginProductNo && responseOriginProductNo !== remoteId)
+        || !/^\d+$/.test(responseChannelProductNo)
+        || (exactRecovery
+          && responseChannelProductNo !== exactRecovery.channelProductNo)
+        || originSellerManagementCode !== expectedSellerManagementCode) {
+      throw new Error("NAVER_UPDATE_ORIGIN_PREFLIGHT_FAILED");
+    }
+
+    await input.hooks.assertLeaseHealthy();
+    const channelRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v2/products/channel-products/${encodeURIComponent(responseChannelProductNo)}`,
+    });
+    const currentChannelProduct = recordValue(channelRemote.data.smartstoreChannelProduct) ?? {};
+    const authoritativeChannelProductNo = String(
+      currentChannelProduct.channelProductNo
+        ?? currentChannelProduct.smartstoreChannelProductNo
+        ?? channelRemote.data.smartstoreChannelProductNo
+        ?? "",
+    ).trim();
+    const authoritativeOriginProductNo = String(
+      currentChannelProduct.originProductNo
+        ?? channelRemote.data.originProductNo
+        ?? "",
+    ).trim();
+    const channelSellerManagementCode = String(
+      currentChannelProduct.sellerManagementCode ?? expectedSellerManagementCode,
+    ).trim();
+    if (!channelRemote.response.ok
+        || !Object.keys(currentChannelProduct).length
+        || authoritativeChannelProductNo !== responseChannelProductNo
+        || authoritativeOriginProductNo !== remoteId
+        || (exactRecovery
+          && authoritativeChannelProductNo !== exactRecovery.channelProductNo)
+        || channelSellerManagementCode !== expectedSellerManagementCode) {
+      throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
+    }
   }
 
   const form = new FormData();

@@ -51,6 +51,15 @@ import {
   type CoupangExactQaRecoveryPhase,
 } from "../../../../lib/channels/coupang-exact-qa-recovery";
 import {
+  bindSmartstoreExactQaRecoveryArguments,
+  smartstoreExactQaCentralSkuVerified,
+  smartstoreExactQaCreateForbidden,
+  smartstoreExactQaRecoveryArgument,
+  smartstoreExactQaRecoveryBindingValue,
+  smartstoreExactQaRecoveryCandidate,
+  smartstoreExactQaRecoveryIdentity,
+} from "../../../../lib/channels/smartstore-exact-qa-recovery";
+import {
   elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
   bindQoo10RollbackUpdateRecoveryArguments,
@@ -271,6 +280,17 @@ export async function POST(request: NextRequest) {
       mode: "coupang_exact_existing_listing_update_required",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
+  if (channel === "smartstore"
+      && operation === "listing.create"
+      && smartstoreExactQaCreateForbidden({
+        productId: parsed.data.productId,
+        argumentsValue: parsed.data.arguments,
+      })) {
+    return NextResponse.json({
+      message: "이미 존재하는 스마트스토어 QA 상품은 신규 등록하지 않고 정확한 기존 원상품만 복구 수정해야 합니다.",
+      mode: "smartstore_exact_existing_listing_update_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (operation === "listing.activate" && channel !== "temu") {
     return NextResponse.json({
       message: "Qoo10 활성화 복구는 직전 S1 검증 원장에 의해 서버에서만 생성됩니다.",
@@ -483,6 +503,7 @@ export async function POST(request: NextRequest) {
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
+  let boundSmartstoreExactQaRecovery = false;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -704,6 +725,57 @@ export async function POST(request: NextRequest) {
         }
       }
     }
+    const exactSmartstoreQaListing = channel === "smartstore"
+      && operation === "listing.update"
+      && productId === smartstoreExactQaRecoveryIdentity.productId
+      && resourceListingId === smartstoreExactQaRecoveryIdentity.listingId
+      && requestedRemoteId === smartstoreExactQaRecoveryIdentity.originProductNo;
+    if (exactSmartstoreQaListing) {
+      if (!smartstoreExactQaCentralSkuVerified(contextRecord)
+          || !smartstoreExactQaRecoveryCandidate({
+            channel,
+            listingId: String(exactListing.id ?? ""),
+            remoteId: String(exactListing.remoteId ?? ""),
+            status: String(exactListing.status ?? ""),
+            requestedPublicationIntent: String(
+              exactListing.requestedPublicationIntent ?? "",
+            ),
+            remoteVisibility: String(exactListing.remoteVisibility ?? ""),
+            providerStatus: typeof exactListing.providerStatus === "string"
+              ? exactListing.providerStatus
+              : null,
+            publishedAt: typeof exactListing.publishedAt === "string"
+              ? exactListing.publishedAt
+              : null,
+            failureClass: typeof exactListing.failureClass === "string"
+              ? exactListing.failureClass
+              : null,
+          })) {
+        return NextResponse.json({
+          message: "스마트스토어 exact QA 상품의 중앙 SKU·실패 원장 결속이 예상값과 달라 수정하지 않았습니다.",
+          mode: "smartstore_exact_qa_recovery_state_mismatch",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: exactIdentityData, error: exactIdentityError } =
+        await serviceClient.rpc(
+          "sellerpilot_service_get_smartstore_exact_qa_recovery_identity",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+          },
+        );
+      if (exactIdentityError
+          || !smartstoreExactQaRecoveryBindingValue(exactIdentityData)) {
+        return NextResponse.json({
+          message: "스마트스토어 exact QA 원상품과 현재 인증정보의 불변 결속을 트랜잭션 원장에서 확인하지 못했습니다.",
+          mode: "smartstore_exact_qa_atomic_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundSmartstoreExactQaRecovery = true;
+    }
     if (operation === "listing.update"
         && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
@@ -868,6 +940,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
+  delete effectiveArguments[smartstoreExactQaRecoveryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -890,6 +963,11 @@ export async function POST(request: NextRequest) {
         sellerSku: coupangExactQaRecoveryIdentity.sellerSku,
       };
     }
+  }
+  if (boundSmartstoreExactQaRecovery) {
+    effectiveArguments = bindSmartstoreExactQaRecoveryArguments(
+      effectiveArguments,
+    );
   }
   if (channel === "ebay" && operation === "listing.update") {
     if (!boundEbayListingIdentity) {

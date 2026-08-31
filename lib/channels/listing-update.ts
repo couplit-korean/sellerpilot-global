@@ -13,6 +13,10 @@ import {
   elevenstExactExistingPublicationIdentity,
 } from "./elevenst-exact-existing-identity";
 import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
+import {
+  smartstoreExactQaRecoveryArgument,
+  smartstoreExactQaRecoveryCandidate,
+} from "./smartstore-exact-qa-recovery";
 
 export type ListingUpdateReference = {
   listingId?: string | null;
@@ -167,6 +171,7 @@ const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<Pr
     description: fieldSupport("supported", "listing.update", ["body.originProduct.detailContent"], "상세 HTML만 기존 원상품에 병합하고 readback합니다."),
     requiredInformation: fieldSupport("partial", "listing.update", ["body.originProduct.leafCategoryId", "body.originProduct.detailAttribute.originAreaInfo"], "카테고리와 원산지만 수정하며 판매·노출·배송·A/S 정책은 기존 원격 값을 보존합니다."),
     images: fieldSupport("supported", "listing.update", ["body.originProduct.images"], "대표·추가 이미지를 원상품에 병합하고 originProductNo에서 다시 확인합니다."),
+    price: fieldSupport("supported", "listing.update", ["body.originProduct.salePrice"], "판매가를 10원 단위로 정규화해 기존 원상품에 병합하고 같은 originProductNo에서 다시 확인합니다."),
   },
   elevenst: {
     productName: fieldSupport("supported", "listing.update", ["productPatch.prdNm"], "검증된 최초 등록 원본에 상품명만 병합하고 같은 prdNo에서 다시 확인합니다."),
@@ -349,6 +354,17 @@ export function listingUpdateServerCandidate(
       listingId: listing.listingId,
       remoteId: listing.remoteId,
       marketplaceSku: listing.marketplaceSku,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    })
+    || smartstoreExactQaRecoveryCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
       status: listing.status,
       requestedPublicationIntent: listing.requestedPublicationIntent,
       remoteVisibility: listing.remoteVisibility,
@@ -712,11 +728,22 @@ function safeSmartstoreBody(value: unknown) {
   const originProduct = recordValue(body.originProduct);
   const detailAttribute = recordValue(originProduct.detailAttribute);
   const smartstoreChannelProduct = recordValue(body.smartstoreChannelProduct);
-  const safeDetailAttribute = definedEntries(detailAttribute, [
-    "originAreaInfo",
+  const sellerCodeInfo = definedEntries(recordValue(detailAttribute.sellerCodeInfo), [
+    "sellerManagementCode",
   ]);
+  const safeDetailAttribute = {
+    ...definedEntries(detailAttribute, ["originAreaInfo"]),
+    ...(Object.keys(sellerCodeInfo).length ? { sellerCodeInfo } : {}),
+  };
   const safeOriginProduct = {
-    ...definedEntries(originProduct, ["leafCategoryId", "name", "detailContent", "images"]),
+    ...definedEntries(originProduct, [
+      "leafCategoryId",
+      "name",
+      "detailContent",
+      "images",
+      "salePrice",
+      "stockQuantity",
+    ]),
     ...(Object.keys(safeDetailAttribute).length ? { detailAttribute: safeDetailAttribute } : {}),
   };
   const safeChannelProduct = definedEntries(smartstoreChannelProduct, ["channelProductName"]);
@@ -825,6 +852,7 @@ export function prepareListingUpdateArguments(
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
+      ...optionalArgument(createArguments, smartstoreExactQaRecoveryArgument),
       originProductNo: remoteId,
       body: safeSmartstoreBody(createArguments.body),
     };

@@ -49,7 +49,11 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
     assert.equal(remote.requiredInformation.state, "partial", channel);
     assert.equal(remote.options.state, "blocked", channel);
     assert.equal(remote.saleConfiguration.state, "blocked", channel);
-    assert.equal(remote.price.state, channel === "lazada" ? "supported" : "blocked", channel);
+    assert.equal(
+      remote.price.state,
+      channel === "lazada" || channel === "smartstore" ? "supported" : "blocked",
+      channel,
+    );
     assert.equal(remote.inventory.state, "supported", channel);
   }
 
@@ -304,8 +308,8 @@ test("상품 수정 payload는 원격 identity를 고정하고 Lazada 단일 SKU
   }, publishedListing);
   const smartstoreBody = smartstore.body as Record<string, unknown>;
   const originProduct = smartstoreBody.originProduct as Record<string, unknown>;
-  assert.equal(Object.hasOwn(originProduct, "salePrice"), false);
-  assert.equal(Object.hasOwn(originProduct, "stockQuantity"), false);
+  assert.equal(originProduct.salePrice, 999999);
+  assert.equal(originProduct.stockQuantity, 999);
   assert.equal(Object.hasOwn(originProduct.detailAttribute as object, "optionInfo"), false);
   assert.deepEqual(smartstoreBody.smartstoreChannelProduct, { channelProductName: "수정 상품" });
 });
