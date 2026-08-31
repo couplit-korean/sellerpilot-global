@@ -13,7 +13,11 @@ import {
   type RegistrationActivity,
 } from "../app/_registration/registration-status";
 
-type Provider = { status: "pending" | "searched" | "failed" | "unavailable"; count: number };
+type Provider = {
+  status: "pending" | "searched" | "failed" | "unavailable";
+  count: number;
+  blockedReason?: "STATIC_EGRESS_REQUIRED";
+};
 type Item = { id: string };
 const fetchedAt = "2026-08-31T03:00:00.000Z";
 
@@ -125,6 +129,31 @@ test("a later failed or invalid response preserves the last successful partial s
   assert.deepEqual(malformed, { ...partial, state: "unavailable", retryAvailable: true });
 });
 
+test("a structured static-egress failure remains visible in the unavailable UI state", async () => {
+  const blockedProvider = {
+    status: "unavailable" as const,
+    count: 0,
+    blockedReason: "STATIC_EGRESS_REQUIRED" as const,
+  };
+  const result = await pollCompetitorResearch<Item, Provider>({
+    input: "/api/admin/competitor-prices?query=test",
+    signal: new AbortController().signal,
+    maxAttempts: 1,
+    fetcher: async () => jsonResponse(503, {
+      items: [],
+      providers: [blockedProvider],
+      fetchedAt,
+    }),
+  });
+  assert.deepEqual(result, {
+    items: [],
+    providers: [blockedProvider],
+    fetchedAt,
+    state: "unavailable",
+    retryAvailable: true,
+  });
+});
+
 test("polling consumes 207 partial success and preserves a real timestamp when a legacy payload omits it", async () => {
   const partialSuccess = await pollCompetitorResearch<Item, Provider>({
     input: "/api/admin/competitor-prices?query=test",
@@ -180,11 +209,16 @@ test("registration sends confirmed structured identity while query-only admin se
   assert.equal(url.searchParams.get("condition"), "NEW");
   assert.equal(url.searchParams.get("gtin"), "8801234567890");
 
-  const route = await readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8");
+  const [route, ui] = await Promise.all([
+    readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url), "utf8"),
+  ]);
   assert.match(route, /identity \? \{ identity \} : undefined/);
   assert.match(route, /verifiedSameProduct: "matchTier" in item && item\.matchTier === "exact"/);
   assert.doesNotMatch(route, /verifiedSameProduct:\s*true/);
   assert.match(route, /status: partial \? 207 : 200/);
+  assert.match(route, /competitorProviderApiStatuses\(registry, result\.providers\)/);
+  assert.match(ui, /provider\.blockedReason === "STATIC_EGRESS_REQUIRED" \? "고정 egress 필요 · 조회 안 함"/);
 });
 
 test("the polling coordinator fences stale responses, supports same-input retry, and stops after disposal", async () => {

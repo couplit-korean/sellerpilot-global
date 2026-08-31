@@ -2,10 +2,19 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  databaseServerlessStaticEgressAllows,
   hasServerlessStaticEgressFor,
   parseServerlessStaticEgressChannels,
   serverlessStaticEgressHeaderValue,
 } from "../lib/channels/serverless-static-egress";
+
+test("database static egress requires an exact true policy value", () => {
+  assert.equal(databaseServerlessStaticEgressAllows({ elevenst: true }, "elevenst"), true);
+  assert.equal(databaseServerlessStaticEgressAllows({ elevenst: false }, "elevenst"), false);
+  assert.equal(databaseServerlessStaticEgressAllows({ elevenst: "true" }, "elevenst"), false);
+  assert.equal(databaseServerlessStaticEgressAllows([{ elevenst: true }], "elevenst"), false);
+  assert.equal(databaseServerlessStaticEgressAllows(null, "elevenst"), false);
+});
 
 test("serverless static egress is disabled by default and on unknown values", () => {
   assert.deepEqual(parseServerlessStaticEgressChannels(undefined), []);

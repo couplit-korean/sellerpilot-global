@@ -59,6 +59,9 @@ test("competitor scheduler migration owns due products and deduplicates exact 11
   assert.match(internalRoute, /COMPETITOR_PROVIDER_BUDGET_MS = 32_000/);
   assert.match(adminRoute, /enableMarketplaceWeb: true/);
   assert.match(internalRoute, /enableMarketplaceWeb: true/);
+  assert.match(internalRoute, /const providerBlockers = competitorProviderApiStatuses\(registry, registry\.unavailable\)/);
+  assert.match(internalRoute, /providers: competitorProviderApiStatuses\(registry, result\.providers\)/);
+  assert.match(internalRoute, /providerBlockers,[\s\S]*results: apiResults/);
   assert.match(internalRoute, /productId: claimed\.productId,[\s\S]{0,180}claimToken: claimed\.claimToken,[\s\S]{0,180}identity: claimed\.identity/);
   assert.match(internalRoute, /const providerConfigurationMissing = registry\.configured\.length === 0/);
   const missingProviderBranch = internalRoute.slice(

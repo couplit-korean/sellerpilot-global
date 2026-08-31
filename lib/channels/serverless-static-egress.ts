@@ -33,6 +33,18 @@ export function hasServerlessStaticEgressFor(
   return required.every((channel) => enabled.has(channel));
 }
 
+export function databaseServerlessStaticEgressAllows(
+  status: unknown,
+  channel: ServerlessStaticEgressChannel,
+) {
+  return Boolean(
+    status
+    && typeof status === "object"
+    && !Array.isArray(status)
+    && (status as Record<string, unknown>)[channel] === true,
+  );
+}
+
 export function serverlessStaticEgressHeaderValue(
   configured: readonly ServerlessStaticEgressChannel[],
 ) {

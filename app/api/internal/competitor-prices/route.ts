@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
 import {
   COMPETITOR_MATCHER_VERSION,
+  competitorProviderApiStatuses,
   competitorProviderRegistry,
   searchCompetitorProviders,
   type CompetitorProductIdentity,
@@ -213,13 +214,20 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     });
   }
   const pending = results.some((item) => item.pending);
+  const providerBlockers = competitorProviderApiStatuses(registry, registry.unavailable)
+    .filter((provider) => provider.blockedReason);
+  const apiResults = results.map((result) => ({
+    ...result,
+    providers: competitorProviderApiStatuses(registry, result.providers),
+  }));
   return NextResponse.json({
     ok: !providerConfigurationMissing && infrastructureFailures === 0 && !pending && results.every((item) => item.ok),
     pending,
     providerConfigurationMissing,
     checked: results.length,
     infrastructureFailures,
-    results,
+    providerBlockers,
+    results: apiResults,
   }, {
     status: providerConfigurationMissing || infrastructureFailures > 0 ? 503 : pending ? 202 : results.some((item) => !item.ok) ? 207 : 200,
     headers: { "cache-control": "no-store, max-age=0" },

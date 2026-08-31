@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
+  databaseServerlessStaticEgressAllows,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "./channels/serverless-static-egress";
+import {
   COMPETITOR_MATCHER_VERSION,
   deduplicateCompetitorObservations,
   deduplicateCompetitorSourceObservations,
@@ -60,6 +64,11 @@ export type CompetitorProviderStatus = {
   marketplaces: CompetitorMarketplace[];
 };
 
+export type CompetitorProviderBlockedReason = typeof SERVERLESS_STATIC_EGRESS_REQUIRED;
+export type CompetitorProviderApiStatus = CompetitorProviderStatus & {
+  blockedReason?: CompetitorProviderBlockedReason;
+};
+
 export type CompetitorProviderSearchResult = {
   /** Cross-provider deduplicated observations intended for UI/read consumers. */
   items: CompetitorPriceCandidate[];
@@ -96,6 +105,7 @@ type SearchProvider = {
 export type CompetitorProviderRegistry = {
   configured: SearchProvider[];
   unavailable: CompetitorProviderStatus[];
+  blockedReasons?: Partial<Record<CompetitorSearchProvider, CompetitorProviderBlockedReason>>;
 };
 
 export type CompetitorProviderRegistryOptions = {
@@ -1903,6 +1913,29 @@ export async function searchBraveMarketplaceWebVariants(
   return groupCompetitorPrices([...unique.values()], 3, allQueries);
 }
 
+async function elevenstStaticEgressReady(serviceClient: SupabaseClient) {
+  try {
+    const { data, error } = await serviceClient.rpc(
+      "sellerpilot_service_serverless_static_egress_status",
+    );
+    return !error && databaseServerlessStaticEgressAllows(data, "elevenst");
+  } catch {
+    return false;
+  }
+}
+
+export function competitorProviderApiStatuses(
+  registry: CompetitorProviderRegistry,
+  providers: readonly CompetitorProviderStatus[],
+): CompetitorProviderApiStatus[] {
+  return providers.map((provider) => {
+    const blockedReason = provider.status === "unavailable"
+      ? registry.blockedReasons?.[provider.provider]
+      : undefined;
+    return blockedReason ? { ...provider, blockedReason } : provider;
+  });
+}
+
 export async function competitorProviderRegistry(
   serviceClient: SupabaseClient,
   options: CompetitorProviderRegistryOptions,
@@ -1910,39 +1943,64 @@ export async function competitorProviderRegistry(
   // Credential discovery is intentionally isolated per provider. A transient
   // Vault/RPC failure for one marketplace must not suppress an independently
   // configured provider (for example Brave via environment variables).
-  const [naverResult, elevenstResult, ebayResult] = await Promise.allSettled([
+  const [naverResult, ebayResult, elevenstStaticEgressResult] = await Promise.allSettled([
     naverSearchCredentials(serviceClient),
-    elevenstSearchCredentials(serviceClient),
     ebayBrowseCredentials(serviceClient),
+    elevenstStaticEgressReady(serviceClient),
   ]);
+  const elevenstStaticEgressAllowed = elevenstStaticEgressResult.status === "fulfilled"
+    && elevenstStaticEgressResult.value === true;
+  let elevenstResult: PromiseSettledResult<ElevenstSearchCredentials | null>;
+  if (elevenstStaticEgressAllowed) {
+    [elevenstResult] = await Promise.allSettled([elevenstSearchCredentials(serviceClient)]);
+  } else {
+    elevenstResult = { status: "fulfilled", value: null };
+  }
   const naver = naverResult.status === "fulfilled" ? naverResult.value : null;
   const elevenst = elevenstResult.status === "fulfilled" ? elevenstResult.value : null;
   const ebay = ebayResult.status === "fulfilled" ? ebayResult.value : null;
   const marketplaceWeb = options.enableMarketplaceWeb ? braveMarketplaceWebCredentials() : null;
   const configured: SearchProvider[] = [];
   const unavailable: CompetitorProviderStatus[] = [];
+  const blockedReasons: CompetitorProviderRegistry["blockedReasons"] = {};
   if (naver) configured.push({
     id: "naver_shopping",
     marketplaces: providerMarketplaces.naver_shopping,
     search: (primary, aliases, display, context) => searchNaverShoppingVariants(primary, aliases, naver, display, context?.signal),
   });
   else unavailable.push({ provider: "naver_shopping", status: naverResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.naver_shopping });
-  if (elevenst) configured.push({
+  if (!elevenstStaticEgressAllowed) {
+    unavailable.push({ provider: "elevenst_product_search", status: "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
+    blockedReasons.elevenst_product_search = SERVERLESS_STATIC_EGRESS_REQUIRED;
+  } else if (elevenst) configured.push({
     id: "elevenst_product_search",
     marketplaces: providerMarketplaces.elevenst_product_search,
-    search: (primary, aliases, display, context) => elevenst.credentialId
-      ? options.searchElevenstViaGateway({
-          serviceClient,
-          credentialId: elevenst.credentialId,
-          primary,
-          aliases,
-          displayPerQuery: display,
-          productId: context?.productId,
-          claimToken: context?.claimToken,
-          timeoutMs: options.elevenstTimeoutMs,
-          signal: context?.signal,
-        })
-      : searchElevenstProductVariants(primary, aliases, elevenst, display, context?.signal),
+    search: async (primary, aliases, display, context) => {
+      try {
+        if (elevenst.credentialId) {
+          return await options.searchElevenstViaGateway({
+            serviceClient,
+            credentialId: elevenst.credentialId,
+            primary,
+            aliases,
+            displayPerQuery: display,
+            productId: context?.productId,
+            claimToken: context?.claimToken,
+            timeoutMs: options.elevenstTimeoutMs,
+            signal: context?.signal,
+          });
+        }
+        if (!await elevenstStaticEgressReady(serviceClient)) {
+          throw new Error(SERVERLESS_STATIC_EGRESS_REQUIRED);
+        }
+        return await searchElevenstProductVariants(primary, aliases, elevenst, display, context?.signal);
+      } catch (error) {
+        if (error instanceof Error && error.message === SERVERLESS_STATIC_EGRESS_REQUIRED) {
+          blockedReasons.elevenst_product_search = SERVERLESS_STATIC_EGRESS_REQUIRED;
+        }
+        throw error;
+      }
+    },
   });
   else unavailable.push({ provider: "elevenst_product_search", status: elevenstResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
   if (ebay) configured.push({
@@ -1959,7 +2017,7 @@ export async function competitorProviderRegistry(
     });
     else unavailable.push({ provider: "brave_marketplace_web", status: "unavailable", count: 0, marketplaces: providerMarketplaces.brave_marketplace_web });
   }
-  return { configured, unavailable };
+  return { configured, unavailable, blockedReasons };
 }
 
 function marketplaceIdentity(item: CompetitorPriceCandidate) {
@@ -2035,6 +2093,7 @@ export function competitorProviderFailureStatus(
   reason: unknown,
 ): CompetitorProviderStatus["status"] {
   if (!(reason instanceof Error)) return "failed";
+  if (reason.message === SERVERLESS_STATIC_EGRESS_REQUIRED) return "unavailable";
   // Once the bounded provider budget has elapsed, the claim must reach a
   // terminal state so the next scheduler cycle can reclaim it. In particular,
   // an 11st gateway timeout must not survive forever as "pending".

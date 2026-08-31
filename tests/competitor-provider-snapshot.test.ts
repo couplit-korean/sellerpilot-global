@@ -39,6 +39,25 @@ test("pending and malformed provider snapshots never masquerade as a completed s
   assert.deepEqual(parseCompetitorProviderSnapshot([{ ...searched, marketplaces: ["unknown"] }]), []);
 });
 
+test("11st static egress blocking is preserved only on an unavailable 11st provider", () => {
+  const blocked = parseCompetitorProviderSnapshot([{
+    provider: "elevenst_product_search",
+    status: "unavailable",
+    count: 0,
+    marketplaces: ["elevenst"],
+    blockedReason: "STATIC_EGRESS_REQUIRED",
+  }]);
+  assert.equal(blocked[0]?.blockedReason, "STATIC_EGRESS_REQUIRED");
+  assert.deepEqual(parseCompetitorProviderSnapshot([{
+    ...searched,
+    blockedReason: "STATIC_EGRESS_REQUIRED",
+  }]), []);
+  assert.deepEqual(parseCompetitorProviderSnapshot([{
+    ...failed,
+    blockedReason: "STATIC_EGRESS_REQUIRED",
+  }]), []);
+});
+
 test("provider snapshot timestamps are validated before driving saved UI state", () => {
   assert.equal(validCompetitorProviderFetchedAt("2026-08-28T12:00:00.000Z"), "2026-08-28T12:00:00.000Z");
   assert.equal(validCompetitorProviderFetchedAt("not-a-date"), null);

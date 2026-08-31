@@ -25,6 +25,7 @@ export type CompetitorProviderDisplayStatus = {
   status: CompetitorProviderTerminalStatus | "pending";
   count: number;
   marketplaces: CompetitorMarketplaceId[];
+  blockedReason?: "STATIC_EGRESS_REQUIRED";
 };
 export type CompetitorMarketplaceProviderState = "loading" | "ready" | "partial" | "unavailable";
 
@@ -53,7 +54,11 @@ export function parseCompetitorProviderSnapshot(value: unknown): CompetitorProvi
         || !Array.isArray(raw.marketplaces)
         || raw.marketplaces.length < 1
         || raw.marketplaces.length > 5
-        || raw.marketplaces.some((marketplace) => typeof marketplace !== "string" || !marketplaceIdSet.has(marketplace))) {
+        || raw.marketplaces.some((marketplace) => typeof marketplace !== "string" || !marketplaceIdSet.has(marketplace))
+        || (raw.blockedReason !== undefined
+          && (raw.blockedReason !== "STATIC_EGRESS_REQUIRED"
+            || raw.provider !== "elevenst_product_search"
+            || raw.status !== "unavailable"))) {
       return [];
     }
     const marketplaces = raw.marketplaces as CompetitorMarketplaceId[];
@@ -64,6 +69,7 @@ export function parseCompetitorProviderSnapshot(value: unknown): CompetitorProvi
       status: raw.status as CompetitorProviderDisplayStatus["status"],
       count: Number(raw.count),
       marketplaces,
+      ...(raw.blockedReason === "STATIC_EGRESS_REQUIRED" ? { blockedReason: raw.blockedReason } : {}),
     });
   }
   return providers;

@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
-import { competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
+import {
+  competitorProviderApiStatuses,
+  competitorProviderRegistry,
+  searchCompetitorProviders,
+} from "../../../../lib/competitor-prices";
 import type { CompetitorProductCondition, CompetitorProductIdentity } from "../../../../lib/competitor-price-model";
 
 export const runtime = "nodejs";
@@ -77,6 +81,7 @@ export async function GET(request: Request) {
       identity ? { identity } : undefined,
     );
     const fetchedAt = new Date().toISOString();
+    const providers = competitorProviderApiStatuses(registry, result.providers);
     const items = result.items.map((item) => ({
       ...item,
       id: item.externalId,
@@ -97,7 +102,7 @@ export async function GET(request: Request) {
         query: query.data,
         aliases: aliases.data,
         items,
-        providers: result.providers,
+        providers,
         fetchedAt,
         pending: result.pending,
         configured: result.configured,
@@ -109,7 +114,7 @@ export async function GET(request: Request) {
       query: query.data,
       aliases: aliases.data,
       items,
-      providers: result.providers,
+      providers,
       fetchedAt,
       pending: false,
       configured: result.configured,

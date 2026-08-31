@@ -6,6 +6,7 @@ import {
   canonicalMarketplaceWebProductUrl,
   competitorCandidateRelevance,
   competitorMarketplace,
+  competitorProviderApiStatuses,
   competitorProviderRegistry,
   groupCompetitorPrices,
   naverSearchCredentials,
@@ -615,6 +616,148 @@ test("marketplace web provider is opt-in and reports a missing Brave key as unav
   }
 });
 
+test("11st provider registration fails closed on disabled or unknown DB static egress while independent providers remain", async () => {
+  const originalBrave = process.env.BRAVE_SEARCH_API_KEY;
+  const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
+  process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
+  process.env.ELEVENST_OPEN_API_KEY = "E".repeat(32);
+  try {
+    for (const staticEgressResponse of [
+      { data: { elevenst: false }, error: null },
+      { data: null, error: { code: "57014" } },
+    ]) {
+      let gatewayCalls = 0;
+      const credentialLookups: string[] = [];
+      const serviceClient = {
+        rpc: async (functionName: string, parameters?: { p_channel?: string }) => {
+          if (functionName === "sellerpilot_service_serverless_static_egress_status") {
+            return staticEgressResponse;
+          }
+          if (parameters?.p_channel) credentialLookups.push(parameters.p_channel);
+          return { data: null, error: null };
+        },
+      };
+      const registry = await competitorProviderRegistry(serviceClient as never, {
+        enableMarketplaceWeb: true,
+        searchElevenstViaGateway: async () => {
+          gatewayCalls += 1;
+          return [];
+        },
+      });
+      assert.equal(registry.configured.some((provider) => provider.id === "elevenst_product_search"), false);
+      assert.equal(registry.configured.some((provider) => provider.id === "brave_marketplace_web"), true);
+      assert.equal(gatewayCalls, 0);
+      assert.equal(credentialLookups.includes("elevenst"), false);
+      assert.deepEqual(
+        competitorProviderApiStatuses(registry, registry.unavailable)
+          .find((provider) => provider.provider === "elevenst_product_search"),
+        {
+          provider: "elevenst_product_search",
+          status: "unavailable",
+          count: 0,
+          marketplaces: ["elevenst"],
+          blockedReason: "STATIC_EGRESS_REQUIRED",
+        },
+      );
+    }
+  } finally {
+    if (originalBrave === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
+    else process.env.BRAVE_SEARCH_API_KEY = originalBrave;
+    if (originalElevenst === undefined) delete process.env.ELEVENST_OPEN_API_KEY;
+    else process.env.ELEVENST_OPEN_API_KEY = originalElevenst;
+  }
+});
+
+test("11st provider is registered only after an exact enabled DB policy and then uses the injected gateway", async () => {
+  const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
+  delete process.env.ELEVENST_OPEN_API_KEY;
+  let gatewayCalls = 0;
+  const serviceClient = {
+    rpc: async (functionName: string, parameters?: { p_channel?: string }) => {
+      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
+        return { data: { elevenst: true }, error: null };
+      }
+      if (parameters?.p_channel === "elevenst") {
+        return {
+          data: {
+            credential_id: "10000000-0000-4000-8000-000000000001",
+            secret_payload: { api_key: "E".repeat(32) },
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: null };
+    },
+  };
+  try {
+    const registry = await competitorProviderRegistry(serviceClient as never, {
+      searchElevenstViaGateway: async () => {
+        gatewayCalls += 1;
+        return [];
+      },
+    });
+    const elevenstProvider = registry.configured.find((provider) => provider.id === "elevenst_product_search");
+    assert.ok(elevenstProvider);
+    await elevenstProvider.search("켈로그 첵스초코 570g", [], 30);
+    assert.equal(gatewayCalls, 1);
+    assert.deepEqual(registry.blockedReasons, {});
+  } finally {
+    if (originalElevenst === undefined) delete process.env.ELEVENST_OPEN_API_KEY;
+    else process.env.ELEVENST_OPEN_API_KEY = originalElevenst;
+  }
+});
+
+test("a direct 11st API-key provider rechecks DB static egress before network use", async () => {
+  const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
+  const originalFetch = globalThis.fetch;
+  process.env.ELEVENST_OPEN_API_KEY = "E".repeat(32);
+  let staticEgressReads = 0;
+  let fetchCalls = 0;
+  const serviceClient = {
+    rpc: async (functionName: string) => {
+      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
+        staticEgressReads += 1;
+        return { data: { elevenst: staticEgressReads === 1 }, error: null };
+      }
+      return { data: null, error: null };
+    },
+  };
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error("network must remain unused");
+  };
+  try {
+    const registry = await competitorProviderRegistry(serviceClient as never, {
+      searchElevenstViaGateway: async () => [],
+    });
+    const elevenstProvider = registry.configured.find((provider) => provider.id === "elevenst_product_search");
+    assert.ok(elevenstProvider);
+    const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", []);
+    assert.equal(
+      result.providers.find((provider) => provider.provider === "elevenst_product_search")?.status,
+      "unavailable",
+    );
+    assert.equal(staticEgressReads, 2);
+    assert.equal(fetchCalls, 0);
+    assert.equal(registry.blockedReasons?.elevenst_product_search, "STATIC_EGRESS_REQUIRED");
+    assert.equal(
+      competitorProviderApiStatuses(registry, result.providers)
+        .find((provider) => provider.provider === "elevenst_product_search")?.blockedReason,
+      "STATIC_EGRESS_REQUIRED",
+    );
+    assert.equal(competitorProviderApiStatuses(registry, [{
+      provider: "elevenst_product_search",
+      status: "searched",
+      count: 0,
+      marketplaces: ["elevenst"],
+    }])[0]?.blockedReason, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalElevenst === undefined) delete process.env.ELEVENST_OPEN_API_KEY;
+    else process.env.ELEVENST_OPEN_API_KEY = originalElevenst;
+  }
+});
+
 test("Naver Shopping search never reuses generic Smartstore commerce credentials", async () => {
   const originalClientId = process.env.NAVER_SEARCH_CLIENT_ID;
   const originalClientSecret = process.env.NAVER_SEARCH_CLIENT_SECRET;
@@ -660,7 +803,12 @@ test("provider credential discovery isolates a Vault exception from an independe
   const original = process.env.BRAVE_SEARCH_API_KEY;
   process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
   const serviceClient = {
-    rpc: async () => { throw new Error("synthetic Vault timeout"); },
+    rpc: async (functionName: string) => {
+      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
+        return { data: { elevenst: true }, error: null };
+      }
+      throw new Error("synthetic Vault timeout");
+    },
   };
   try {
     const registry = await competitorProviderRegistry(serviceClient as never, {
@@ -683,9 +831,14 @@ test("provider credential discovery reports an RPC error separately from a missi
   const original = process.env.BRAVE_SEARCH_API_KEY;
   process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
   const serviceClient = {
-    rpc: async (_functionName: string, parameters: { p_channel: string }) => parameters.p_channel === "elevenst"
-      ? { data: null, error: { code: "57014" } }
-      : { data: null, error: null },
+    rpc: async (functionName: string, parameters?: { p_channel: string }) => {
+      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
+        return { data: { elevenst: true }, error: null };
+      }
+      return parameters?.p_channel === "elevenst"
+        ? { data: null, error: { code: "57014" } }
+        : { data: null, error: null };
+    },
   };
   try {
     const registry = await competitorProviderRegistry(serviceClient as never, {

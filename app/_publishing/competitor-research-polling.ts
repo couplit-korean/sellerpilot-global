@@ -1,5 +1,12 @@
 export type CompetitorResearchProviderSnapshot = { status?: unknown };
 
+function hasStaticEgressBlock(providers: readonly object[]) {
+  return providers.some((provider) => (
+    "blockedReason" in provider
+    && provider.blockedReason === "STATIC_EGRESS_REQUIRED"
+  ));
+}
+
 export type CompetitorResearchUiState = "idle" | "loading" | "ready" | "pending" | "stale" | "unavailable";
 
 // The admin route allows provider work for 32 seconds. Leave enough room for
@@ -306,7 +313,7 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
       && (payload.fetchedAt === undefined || payload.fetchedAt === null
         || typeof payload.fetchedAt === "string" && Number.isFinite(Date.parse(payload.fetchedAt))),
     );
-    if (!validPayload || !response.ok) {
+    if (!validPayload) {
       latest = { ...latest, state: "unavailable", retryAvailable: true };
       onSnapshot?.(latest);
       return latest;
@@ -314,6 +321,21 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
     const items = payload!.items as Item[];
     const providers = payload!.providers as Provider[];
     const fetchedAt = typeof payload!.fetchedAt === "string" ? payload!.fetchedAt : latest.fetchedAt;
+    if (!response.ok) {
+      // Keep the last confirmed snapshot on an ordinary transport/provider
+      // failure. An explicit static-egress block is terminal configuration
+      // truth, so retain that provider result without accepting other error
+      // payloads as newer price evidence.
+      latest = {
+        ...latest,
+        providers: hasStaticEgressBlock(providers) ? providers : latest.providers,
+        fetchedAt,
+        state: "unavailable",
+        retryAvailable: true,
+      };
+      onSnapshot?.(latest);
+      return latest;
+    }
     const pending = response.status === 202 || providers.some((provider) => provider?.status === "pending");
     latest = {
       items,
