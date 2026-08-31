@@ -198,7 +198,7 @@ const quantityUnitDefinitions: ReadonlyArray<{
     factor: 1,
     aliases: [
       "count", "unit", "units", "item", "items", "piece", "pieces", "pc", "pcs", "ea", "pack", "packs",
-      "개", "개입", "입", "팩", "세트", "묶음", "個", "個入", "パック", "セット",
+      "개", "개입", "입", "팩", "세트", "묶음", "병", "個", "個入", "本", "瓶", "パック", "セット",
     ],
   },
 ];
@@ -301,6 +301,7 @@ function explicitItemCount(value: string) {
     /(?:^|[^\d])\d[\d.,]*\s*(?:kg|g|mg|l|ml)\s*[x×*]\s*(\d{1,4})(?!\d)/iu,
     /(?:^|[^\d])(\d{1,4})\s*[x×*]\s*\d[\d.,]*\s*(?:kg|g|mg|l|ml)(?![\p{L}\p{N}])/iu,
     /\b(?:set|pack|lot)\s+of\s+(\d{1,4})\b/iu,
+    /(?:^|[^\d])(\d{1,4})\s*(?:本|瓶|個|개|병)(?=\s*(?:セット|세트|묶음|組|入り|입|$))/iu,
   ];
   for (const pattern of patterns) {
     const count = Number(normalized.match(pattern)?.[1]);
@@ -323,7 +324,10 @@ function multipliedQuantity(quantity: CompetitorQuantity | null, count: number |
 
 function explicitPackageType(value: string, count: number | null): CompetitorPackageType | undefined {
   const normalized = normalizeLooseText(value);
-  if ((count ?? 0) > 1 || /(?:^|\s)(?:bundle|multipack|multi pack|set of|pack of|묶음|세트|번들|まとめ買い)(?:\s|$)/iu.test(normalized) || /\d+\s*\+\s*\d+/u.test(normalized)) return "bundle";
+  if ((count ?? 0) > 1
+      || /(?:^|\s)(?:bundle|multipack|multi pack|set of|pack of|묶음|세트|번들|セット|セット品|まとめ買い|组合装|組合裝)(?:\s|$)/iu.test(normalized)
+      || /\d+\s*\+\s*\d+/u.test(normalized)
+      || /\d{1,4}\s*(?:本|瓶|個|개|병)\s*(?:セット|세트|묶음|組|入り|입)/iu.test(normalized)) return "bundle";
   if (count === 1 || /(?:^|\s)(?:single|single item|단품|낱개|単品)(?:\s|$)/iu.test(normalized)) return "single";
   return undefined;
 }
@@ -571,6 +575,42 @@ function detectedOptions(attribute: "flavor" | "color" | "size", value: string) 
   ));
 }
 
+function canonicalNumericSize(value: string) {
+  const normalized = String(value ?? "").normalize("NFKC").toLocaleLowerCase().trim();
+  const match = normalized.match(/^(?:(?:size|사이즈|サイズ|us|uk|eu|jp|kr)\s*[:#-]?\s*)?(\d{1,3}(?:\.\d{1,2})?)(?:\s*mm)?$/iu);
+  if (!match) return "";
+  const parsed = Number(match[1]);
+  return Number.isFinite(parsed) && parsed > 0 ? String(parsed) : "";
+}
+
+function detectedNumericSizes(value: string) {
+  const normalized = String(value ?? "").normalize("NFKC").toLocaleLowerCase();
+  const sizes = new Set<string>();
+  const rangePatterns = [
+    /(?:^|[^\p{L}\p{N}])(?:sizes?|사이즈|サイズ|us|uk|eu|jp|kr)\s*[:#-]?\s*(\d{1,3}(?:\.\d{1,2})?)\s*[-~～/]\s*(\d{1,3}(?:\.\d{1,2})?)(?![\p{L}\p{N}])/giu,
+    /(?:^|[^\p{L}\p{N}-])(\d{1,3}(?:\.\d{1,2})?)\s*[-~～/]\s*(\d{1,3}(?:\.\d{1,2})?)\s*(?:mm\s*)?(?:sizes?|사이즈|サイズ)(?![\p{L}\p{N}])/giu,
+  ];
+  for (const pattern of rangePatterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      for (const value of [match[1], match[2]]) {
+        const parsed = Number(value);
+        if (Number.isFinite(parsed) && parsed > 0) sizes.add(String(parsed));
+      }
+    }
+  }
+  const patterns = [
+    /(?:^|[^\p{L}\p{N}])(?:sizes?|사이즈|サイズ|us|uk|eu|jp|kr)\s*[:#-]?\s*(\d{1,3}(?:\.\d{1,2})?)(?:\s*mm)?(?![\p{L}\p{N}])/giu,
+    /(?:^|[^\p{L}\p{N}-])(\d{1,3}(?:\.\d{1,2})?)\s*(?:mm\s*)?(?:sizes?|사이즈|サイズ)(?![\p{L}\p{N}])/giu,
+  ];
+  for (const pattern of patterns) {
+    for (const match of normalized.matchAll(pattern)) {
+      const parsed = Number(match[1]);
+      if (Number.isFinite(parsed) && parsed > 0) sizes.add(String(parsed));
+    }
+  }
+  return [...sizes];
+}
+
 export function assessCompetitorMatch(
   referenceInput: CompetitorProductIdentity,
   candidate: { title: string; identity?: CompetitorCandidateIdentity },
@@ -690,13 +730,20 @@ export function assessCompetitorMatch(
     const detectableAttribute = attribute === "flavor" || attribute === "color" || attribute === "size" ? attribute : null;
     const expectedCanonical = detectableAttribute ? canonicalDetectableOption(detectableAttribute, expected) : "";
     const titleOptions = detectableAttribute ? detectedOptions(detectableAttribute, candidate.title) : [];
+    const expectedNumericSize = attribute === "size" ? canonicalNumericSize(expected) : "";
+    const titleNumericSizes = attribute === "size" ? detectedNumericSizes(candidate.title) : [];
     const matchedInTitle = !actual && (
       containsIdentityPhrase(candidate.title, expected)
       || Boolean(expectedCanonical && titleOptions.includes(expectedCanonical))
+      || Boolean(expectedNumericSize && titleNumericSizes.includes(expectedNumericSize))
     );
-    const explicitTitleConflict = Boolean(expectedCanonical) && titleOptions.length > 0 && !titleOptions.includes(expectedCanonical);
+    const explicitTitleConflict = (Boolean(expectedCanonical) && titleOptions.length > 0
+        && (!titleOptions.includes(expectedCanonical) || new Set(titleOptions).size > 1))
+      || (Boolean(expectedNumericSize) && titleNumericSizes.length > 0
+        && (!titleNumericSizes.includes(expectedNumericSize) || titleNumericSizes.length > 1));
+    const titleOptionEvidence = [...new Set([...titleOptions, ...titleNumericSizes])].join(",");
     if (actual && normalizeLooseText(expected) !== normalizeLooseText(actual)) addMismatch(mismatchEvidence, attribute, expected, actual, "option_mismatch");
-    else if (explicitTitleConflict) addMismatch(mismatchEvidence, attribute, expected, titleOptions.join(","), "option_mismatch", "listing_title");
+    else if (explicitTitleConflict) addMismatch(mismatchEvidence, attribute, expected, titleOptionEvidence, "option_mismatch", "listing_title");
     else if (actual || matchedInTitle) {
       matchEvidence.push({ code: "option_exact", attribute, expected, actual: actual ?? expected, source: actual ? "provider_structured" : "listing_title" });
       score += 4;
@@ -707,6 +754,7 @@ export function assessCompetitorMatch(
   // claim in the listing title. Only facts that the title states directly are
   // checked here; an absent title fact remains unknown and is never inferred.
   const titleSpecification = explicitSpecification(candidate.title) ?? undefined;
+  const titleQuantities = explicitQuantities(candidate.title).filter((quantity) => quantity.dimension !== "count");
   const titleItemCount = explicitItemCount(candidate.title) ?? undefined;
   const titleTotalQuantity = multipliedQuantity(titleSpecification ?? null, titleItemCount ?? null) ?? undefined;
   const explicitTitleFacts = {
@@ -724,6 +772,24 @@ export function assessCompetitorMatch(
   ] as const) {
     if (expected && actual && !sameQuantity(expected, actual)) {
       addMismatch(mismatchEvidence, attribute, displayQuantity(expected), displayQuantity(actual), `${attribute}_title_mismatch`, "listing_title");
+    }
+  }
+  const expectedTitleQuantities = [reference.specification, reference.totalQuantity]
+    .filter((quantity): quantity is CompetitorQuantity => Boolean(quantity))
+    .filter((quantity, index, quantities) => quantities.findIndex((candidate) => sameQuantity(candidate, quantity)) === index);
+  for (const actual of titleQuantities) {
+    const sameDimensionExpected = expectedTitleQuantities.filter((expected) => (
+      normalizeCompetitorQuantity(expected)?.dimension === actual.dimension
+    ));
+    if (sameDimensionExpected.length > 0 && !sameDimensionExpected.some((expected) => sameQuantity(expected, actual))) {
+      addMismatch(
+        mismatchEvidence,
+        "specification",
+        sameDimensionExpected.map(displayQuantity).join(","),
+        displayQuantity(actual),
+        "title_quantity_conflict",
+        "listing_title",
+      );
     }
   }
   if (reference.itemCount && explicitTitleFacts.itemCount && reference.itemCount !== explicitTitleFacts.itemCount) {
