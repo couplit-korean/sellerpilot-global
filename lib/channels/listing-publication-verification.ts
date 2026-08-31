@@ -52,6 +52,7 @@ import {
 import {
   qoo10ExactRecoveryContentRemoteState,
   qoo10ExactSuccessResultCode,
+  qoo10ProviderDetailHtmlEquivalent,
   qoo10ProviderKeywordMatches,
   qoo10CriticalReadbackAliasesConsistent,
 } from "./qoo10-listing-activation";
@@ -661,7 +662,10 @@ export async function executeListingPublicationVerification(
         industrialCodeVerified: qoo10ExactRecoveryField(item, ["IndustrialCode", "barcode", "gtin"])
           === qoo10ExactRecoveryField(params, ["IndustrialCode"]),
         keywordVerified: qoo10ProviderKeywordMatches(sourceKeyword, remoteKeyword, sourceTitle),
-        detailHtmlVerified: Boolean(sourceDetailHtml) && remoteDetailHtml === sourceDetailHtml,
+        detailHtmlVerified: qoo10ProviderDetailHtmlEquivalent(
+          sourceDetailHtml,
+          remoteDetailHtml,
+        ),
         orderedDetailImagesVerified: sourceDetailImageUrls.length === 8
           && remoteDetailImageUrls.length === 8
           && remoteDetailImageUrls.every((url, index) => url === sourceDetailImageUrls[index]),

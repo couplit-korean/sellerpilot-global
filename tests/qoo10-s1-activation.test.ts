@@ -8,7 +8,10 @@ import {
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
 import {
+  qoo10CanonicalProviderDetailHtml,
+  qoo10ProviderDetailHtmlEquivalent,
   qoo10S1ActivationArgument,
+  qoo10S1ActivationArgumentsValid,
   qoo10S1ActivationBinding,
   qoo10S1ActivationContract,
 } from "../lib/channels/qoo10-listing-activation";
@@ -449,6 +452,81 @@ test("exact S1 recovery verifier hydrates the activation expectation from one fr
     assert.equal(state.evidence?.sourceOperation, "listing.update");
     assert.equal(state.evidence?.fingerprintBinding, "source_request_fingerprint_v1");
     assert.equal(state.evidence?.sourceImageDigest, state.evidence?.remoteImageDigest);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Qoo10 heading-to-paragraph storage normalization preserves an exact S1 verifier and activation", async () => {
+  const originalFetch = globalThis.fetch;
+  const providerDetailHtml = qoo10CanonicalProviderDetailHtml(detailHtml);
+  const methods: string[] = [];
+  assert.notEqual(providerDetailHtml, detailHtml);
+  assert.equal(qoo10ProviderDetailHtmlEquivalent(detailHtml, providerDetailHtml), true);
+  const wrongProviderHeading = providerDetailHtml
+    .replaceAll("<p", "<h2")
+    .replaceAll("</p>", "</h2>");
+  assert.equal(
+    qoo10ProviderDetailHtmlEquivalent(detailHtml, wrongProviderHeading),
+    false,
+  );
+  assert.equal(qoo10ProviderDetailHtmlEquivalent("<p>same</p>", "<h1>same</h1>"), false);
+  assert.equal(
+    qoo10ProviderDetailHtmlEquivalent(detailHtml, providerDetailHtml.replace(title, `${title}変更`)),
+    false,
+  );
+  assert.equal(
+    qoo10CanonicalProviderDetailHtml("<h10>unchanged</h10><h1x>unchanged</h1x>"),
+    "<h10>unchanged</h10><h1x>unchanged</h1x>",
+  );
+
+  globalThis.fetch = async (input) => {
+    const method = qooMethod(input);
+    methods.push(method);
+    if (method === "ItemsBasic.EditGoodsStatus") {
+      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+    }
+    return Response.json({
+      ResultCode: 0,
+      ResultMsg: "Success",
+      ResultObject: readback(methods.includes("ItemsBasic.EditGoodsStatus") ? "S2" : "S1", {
+        ItemDetail: providerDetailHtml,
+      }),
+    });
+  };
+
+  try {
+    const verification = await operation("listing.publication.verify", exactVerifierArguments());
+    assert.equal(verification.ok, true);
+    assert.equal(verification.steps[0]?.data.sellerpilotExactResultCodeVerified, true);
+    assert.equal(
+      (verification.steps[0]?.data.sellerpilotMutableChecks as Record<string, unknown>)
+        .detailHtmlVerified,
+      true,
+    );
+    const expectation = verification.steps[1]?.data
+      .sellerpilotQoo10ActivationExpectation as Record<string, unknown>;
+    assert.equal(expectation.expectedDetailHtmlSha256, digest(providerDetailHtml));
+
+    const providerNormalizedMarker = {
+      ...marker,
+      expectedDetailHtmlSha256: digest(providerDetailHtml),
+    };
+    const activationArguments = argumentsValue(providerNormalizedMarker);
+    assert.equal(qoo10S1ActivationArgumentsValid(activationArguments), true);
+    const activation = await operation("listing.activate", activationArguments);
+    assert.equal(activation.ok, true);
+    assert.equal(activation.remoteState?.visibility, "live");
+    assert.equal(
+      (activation.steps.at(-1)?.data.sellerpilotActivationContentChecks as Record<string, unknown>)
+        .detailHtmlDigestVerified,
+      true,
+    );
+    assert.deepEqual(methods, [
+      "ItemsLookup.GetItemDetailInfo",
+      "ItemsBasic.EditGoodsStatus",
+      "ItemsLookup.GetItemDetailInfo",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }

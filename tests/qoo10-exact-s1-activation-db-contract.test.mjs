@@ -8,6 +8,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260831056700_recover_exact_qoo10_s1_activation.sql",
   import.meta.url,
 );
+const headingNormalizationMigrationUrl = new URL(
+  "../supabase/migrations/20260831056900_accept_exact_qoo10_heading_normalization.sql",
+  import.meta.url,
+);
 
 function functionDefinition(sql, signature) {
   const start = sql.indexOf(`create function ${signature}`);
@@ -120,6 +124,7 @@ function exactResponse(item = exactItem(), stepData = {}) {
 
 test("Qoo10 exact S1 SQL verifier accepts only observed prefix removal and zero-fraction JPY", async () => {
   const sql = await readFile(migrationUrl, "utf8");
+  const headingSql = await readFile(headingNormalizationMigrationUrl, "utf8");
   const db = new PGlite();
   try {
     await db.exec("create schema sellerpilot_private;");
@@ -147,6 +152,24 @@ test("Qoo10 exact S1 SQL verifier accepts only observed prefix removal and zero-
     ]) {
       await db.exec(functionDefinition(sql, name));
     }
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_canonical_provider_detail_html",
+    ));
+    await db.exec(`alter function sellerpilot_private.qoo10_exact_item_matches_source(
+      jsonb,jsonb,text
+    ) rename to qoo10_exact_item_matches_source_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_exact_item_matches_source",
+    ));
+    await db.exec(`alter function sellerpilot_private.qoo10_exact_activation_expectation_valid(
+      jsonb,jsonb
+    ) rename to qoo10_exact_activation_expectation_valid_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_exact_activation_expectation_valid",
+    ));
 
     assert.equal(await scalar(
       db,
@@ -267,6 +290,74 @@ test("Qoo10 exact S1 SQL verifier accepts only observed prefix removal and zero-
       ) value`,
       [JSON.stringify(exactItem()), JSON.stringify(sourceArguments)],
     ), true, "the exact raw item fixture matches every source-bound field");
+
+    const headingSource = structuredClone(sourceArguments);
+    headingSource.params.ItemDescription = sourceArguments.params.ItemDescription.replace(
+      "exact detail",
+      '<h1 style="font-size:30px">exact detail</h1>',
+    );
+    const providerHeadingHtml = headingSource.params.ItemDescription
+      .replace('<h1 style="font-size:30px">', '<p style="font-size:30px">')
+      .replace("</h1>", "</p>");
+    assert.equal(await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_item_matches_source(
+        $1::jsonb,$2::jsonb,'S2'
+      ) value`,
+      [
+        JSON.stringify(exactItem({ ItemDetail: providerHeadingHtml })),
+        JSON.stringify(headingSource),
+      ],
+    ), true, "the observed source heading to provider paragraph rewrite is accepted");
+    assert.equal(await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_response_state_valid(
+        $1::jsonb,'listing.activate','qoo10-s1-activation-post-readback',
+        'S2','live',$2::jsonb
+      ) value`,
+      [
+        JSON.stringify(exactResponse(exactItem({ ItemDetail: providerHeadingHtml }))),
+        JSON.stringify(headingSource),
+      ],
+    ), true, "the response verifier resolves the forward canonical wrapper");
+    for (const [label, source, remoteHtml] of [
+      [
+        "heading level rewrite",
+        headingSource,
+        providerHeadingHtml.replaceAll("<p", "<h2").replaceAll("</p>", "</h2>"),
+      ],
+      [
+        "reverse paragraph to heading rewrite",
+        {
+          ...headingSource,
+          params: { ...headingSource.params, ItemDescription: providerHeadingHtml },
+        },
+        headingSource.params.ItemDescription,
+      ],
+      ["heading attribute drift", headingSource, providerHeadingHtml.replace("30px", "31px")],
+      ["heading text drift", headingSource, providerHeadingHtml.replace("exact detail", "exact drift")],
+      ["heading whitespace drift", headingSource, providerHeadingHtml.replace("exact detail", "exact  detail")],
+      ["detail URL drift", headingSource, providerHeadingHtml.replace("detail-1.jpg", "detail-x.jpg")],
+      [
+        "detail image order drift",
+        headingSource,
+        providerHeadingHtml
+          .replace(detailImageUrls[0].replaceAll("&", "&amp;"), "__FIRST__")
+          .replace(
+            detailImageUrls[1].replaceAll("&", "&amp;"),
+            detailImageUrls[0].replaceAll("&", "&amp;"),
+          )
+          .replace("__FIRST__", detailImageUrls[1].replaceAll("&", "&amp;")),
+      ],
+    ]) {
+      assert.equal(await scalar(
+        db,
+        `select sellerpilot_private.qoo10_exact_item_matches_source(
+          $1::jsonb,$2::jsonb,'S2'
+        ) value`,
+        [JSON.stringify(exactItem({ ItemDetail: remoteHtml })), JSON.stringify(source)],
+      ), false, `${label} remains fail-closed`);
+    }
 
     assert.equal(await scalar(
       db,
@@ -397,6 +488,34 @@ test("Qoo10 exact S1 SQL verifier accepts only observed prefix removal and zero-
       ) value`,
       [JSON.stringify(expectation), JSON.stringify(sourceArguments)],
     ), true);
+    const providerHeadingExpectation = {
+      ...expectation,
+      expectedDetailHtmlSha256: createHash("sha256")
+        .update(providerHeadingHtml)
+        .digest("hex"),
+    };
+    assert.equal(await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_activation_expectation_valid(
+        $1::jsonb,$2::jsonb
+      ) value`,
+      [JSON.stringify(providerHeadingExpectation), JSON.stringify(headingSource)],
+    ), true, "the activation expectation may bind the exact provider-normalized HTML digest");
+    assert.equal(await scalar(
+      db,
+      `select sellerpilot_private.qoo10_exact_activation_expectation_valid(
+        $1::jsonb,$2::jsonb
+      ) value`,
+      [
+        JSON.stringify({
+          ...providerHeadingExpectation,
+          expectedDetailHtmlSha256: createHash("sha256")
+            .update(providerHeadingHtml.replace("exact detail", "exact drift"))
+            .digest("hex"),
+        }),
+        JSON.stringify(headingSource),
+      ],
+    ), false, "an expectation digest outside raw or observed canonical source is rejected");
     assert.equal(await scalar(
       db,
       `select sellerpilot_private.qoo10_exact_activation_expectation_valid(
@@ -1422,8 +1541,436 @@ test("exact S2 outcome is the only path that projects the listing from failed/un
   }
 });
 
+test("S1 observation binds the activation expectation to the exact provider HTML digest", async () => {
+  const sql = await readFile(migrationUrl, "utf8");
+  const headingSql = await readFile(headingNormalizationMigrationUrl, "utf8");
+  const db = new PGlite();
+  const exactJobId = "39000000-0000-4000-8000-000000000001";
+  const mismatchJobId = "39000000-0000-4000-8000-000000000002";
+  const reverseJobId = "39000000-0000-4000-8000-000000000003";
+  const sourceHeading = `<section lang="ja"><h1 style="font-size:30px">exact</h1>${detailImageUrls
+    .map((url) => `<img src="${url.replaceAll("&", "&amp;")}">`)
+    .join("")}</section>`;
+  const providerHtml = sourceHeading.replace("<h1", "<p").replace("</h1>", "</p>");
+  const providerDigest = createHash("sha256").update(providerHtml).digest("hex");
+  const sourceHeadingArguments = structuredClone(sourceArguments);
+  sourceHeadingArguments.params.ItemDescription = sourceHeading;
+  const expectation = (expectedDigest) => ({
+    expectedState: {
+      categoryCode: "320000542",
+      retailPriceJpy: 1871,
+      sellPriceJpy: 1871,
+      quantity: 1,
+      shippingNo: "806971",
+      biContentsNo: 8461402963,
+      originType: "2",
+      originCode: "CN",
+      adultYn: "N",
+    },
+    expectedTitle: sourceHeadingArguments.params.ItemTitle,
+    expectedKeyword: "No Brand,購入前確認",
+    expectedPromotionName: "",
+    expectedIndustrialCode: "",
+    expectedDetailHtmlSha256: expectedDigest,
+    expectedDetailImageUrls: detailImageUrls,
+  });
+  const response = (html, expectedDigest) => ({
+    ok: true,
+    channel: "qoo10",
+    operation: "listing.publication.verify",
+    remoteId: "1217336970",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "live",
+    publicationFulfilled: false,
+    steps: [{
+      name: "qoo10-exact-s1-recovery-verification",
+      ok: true,
+      status: 200,
+      data: {
+        ResultCode: 0,
+        ResultObject: exactItem({ ItemStatus: "S1", ItemDetail: html }),
+        sellerpilotQoo10ActivationExpectation: expectation(expectedDigest),
+      },
+    }],
+    remoteState: {
+      verified: true,
+      visibility: "non_public",
+      providerStatus: "S1",
+      locale: "ja-JP",
+      fingerprint: "a".repeat(64),
+      imageCount: 8,
+      verifiedAt: "2026-08-31T00:00:05Z",
+      evidence: {
+        identityVerified: true,
+        statusVerified: true,
+        localeVerified: true,
+        fingerprintVerified: true,
+        imageCountVerified: true,
+        titleVerified: true,
+        descriptionVerified: true,
+        languageContentVerified: true,
+        detailImageCountVerified: true,
+        contentDigestVerified: true,
+        representativeImageVerified: true,
+        providerBodyDetailImagesVerified: true,
+        sourceImageDigest: "b".repeat(64),
+        remoteImageDigest: "b".repeat(64),
+        sourceJobId: "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+        sourceOperation: "listing.update",
+        sourceContentVerified: true,
+      },
+    },
+  });
+  try {
+    await db.exec(`
+      create schema sellerpilot_private;
+      create schema extensions;
+      create function extensions.digest(value text, algorithm text)
+      returns bytea language sql immutable as $$
+        select case when lower(algorithm) = 'sha256'
+          then sha256(convert_to(value, 'UTF8'))
+          else convert_to(md5(value || algorithm), 'UTF8') end
+      $$;
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,
+        status text,
+        started_at timestamptz,
+        completed_at timestamptz,
+        response_payload jsonb,
+        request_payload jsonb not null default '{}'::jsonb
+      );
+      create table sellerpilot_private.qoo10_exact_s1_verifier_runs (
+        verifier_job_id uuid primary key,
+        source_job_id uuid not null,
+        listing_id uuid not null,
+        remote_id text not null,
+        release_sha text not null
+      );
+      create table sellerpilot_private.qoo10_exact_s1_observations (
+        verifier_job_id uuid primary key,
+        source_job_id uuid not null,
+        listing_id uuid not null,
+        remote_id text not null,
+        release_sha text not null,
+        verifier_response_sha256 text not null,
+        verifier_response_bytes integer not null,
+        activation_expectation jsonb not null,
+        provider_status text not null,
+        remote_visibility text not null,
+        verified_at timestamptz not null,
+        verifier_completed_at timestamptz not null,
+        contract text not null
+      );
+    `);
+    for (const name of [
+      "sellerpilot_private.qoo10_exact_remote_items",
+      "sellerpilot_private.qoo10_exact_aliases_consistent",
+      "sellerpilot_private.qoo10_exact_representative_image_matches",
+      "sellerpilot_private.qoo10_exact_keyword_matches",
+      "sellerpilot_private.qoo10_exact_hex_codepoint",
+      "sellerpilot_private.qoo10_exact_decode_html",
+      "sellerpilot_private.qoo10_exact_detail_image_urls",
+      "sellerpilot_private.qoo10_exact_item_matches_source",
+      "sellerpilot_private.qoo10_exact_response_state_valid",
+      "sellerpilot_private.qoo10_exact_activation_expectation_valid",
+      "sellerpilot_private.record_exact_qoo10_s1_observation",
+    ]) await db.exec(functionDefinition(sql, name));
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_canonical_provider_detail_html",
+    ));
+    await db.exec(`alter function sellerpilot_private.qoo10_exact_item_matches_source(
+      jsonb,jsonb,text
+    ) rename to qoo10_exact_item_matches_source_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_exact_item_matches_source",
+    ));
+    await db.exec(`alter function sellerpilot_private.qoo10_exact_activation_expectation_valid(
+      jsonb,jsonb
+    ) rename to qoo10_exact_activation_expectation_valid_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_exact_activation_expectation_valid",
+    ));
+    await db.exec(`alter function sellerpilot_private.record_exact_qoo10_s1_observation(
+      uuid
+    ) rename to record_exact_qoo10_s1_observation_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.record_exact_qoo10_s1_observation",
+    ));
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs(
+         id,status,started_at,completed_at,response_payload,request_payload
+       ) values
+       ($1,'reconciliation_required',null,null,null,$2::jsonb),
+       ($3,'succeeded','2026-08-31 00:00:01+00','2026-08-31 00:00:06+00',$4::jsonb,'{}'),
+       ($5,'succeeded','2026-08-31 00:00:01+00','2026-08-31 00:00:06+00',$6::jsonb,'{}'),
+       ($7,'succeeded','2026-08-31 00:00:01+00','2026-08-31 00:00:06+00',$8::jsonb,'{}')`,
+      [
+        "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+        JSON.stringify({ arguments: sourceHeadingArguments }),
+        exactJobId,
+        JSON.stringify(response(providerHtml, providerDigest)),
+        mismatchJobId,
+        JSON.stringify(response(providerHtml, createHash("sha256").update("drift").digest("hex"))),
+        reverseJobId,
+        JSON.stringify(response(sourceHeading, providerDigest)),
+      ],
+    );
+    for (const jobId of [exactJobId, mismatchJobId, reverseJobId]) {
+      await db.query(
+        `insert into sellerpilot_private.qoo10_exact_s1_verifier_runs
+         values ($1,$2,$3,'1217336970',$4)`,
+        [
+          jobId,
+          "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+          "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc",
+          "a".repeat(40),
+        ],
+      );
+    }
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.record_exact_qoo10_s1_observation($1) value",
+      [exactJobId],
+    ), true);
+    assert.equal(await scalar(
+      db,
+      "select count(*)::integer value from sellerpilot_private.qoo10_exact_s1_observations where verifier_job_id=$1",
+      [exactJobId],
+    ), 1, "the real 056700 recorder must persist the normalized observation");
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.record_exact_qoo10_s1_observation($1) value",
+      [mismatchJobId],
+    ), false, "a mismatched expectation digest cannot create an observation");
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.record_exact_qoo10_s1_observation($1) value",
+      [reverseJobId],
+    ), false, "remote heading reversal cannot satisfy the provider paragraph digest");
+    assert.equal(await scalar(
+      db,
+      "select count(*)::integer value from sellerpilot_private.qoo10_exact_s1_observations",
+    ), 1, "only the exact normalized observation may enter the immutable ledger");
+  } finally {
+    await db.close();
+  }
+});
+
+test("normalized S2 readback persists only through the real 056700 outcome chain", async () => {
+  const sql = await readFile(migrationUrl, "utf8");
+  const headingSql = await readFile(headingNormalizationMigrationUrl, "utf8");
+  const db = new PGlite();
+  const sourceJobId = "fac9c5c4-940d-4600-88f3-8f97a069dfbf";
+  const listingId = "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc";
+  const successJobId = "39500000-0000-4000-8000-000000000001";
+  const mismatchJobId = "39500000-0000-4000-8000-000000000002";
+  const successVerifierId = "39500000-0000-4000-8000-000000000011";
+  const mismatchVerifierId = "39500000-0000-4000-8000-000000000012";
+  const workerId = "39500000-0000-4000-8000-000000000021";
+  const successClaimId = "39500000-0000-4000-8000-000000000031";
+  const mismatchClaimId = "39500000-0000-4000-8000-000000000032";
+  const sourceHeading = `<section lang="ja"><h2>exact S2</h2>${detailImageUrls
+    .map((url) => `<img src="${url.replaceAll("&", "&amp;")}">`)
+    .join("")}</section>`;
+  const providerHtml = sourceHeading.replace("<h2>", "<p>").replace("</h2>", "</p>");
+  const providerDigest = createHash("sha256").update(providerHtml).digest("hex");
+  const normalizedSourceArguments = structuredClone(sourceArguments);
+  normalizedSourceArguments.params.ItemDescription = sourceHeading;
+  const s2Response = exactResponse(exactItem({
+    ItemStatus: "S2",
+    ItemDetail: providerHtml,
+  }));
+  s2Response.steps.unshift({
+    name: "qoo10-s1-activation",
+    ok: true,
+    status: 200,
+    data: { ResultCode: 0 },
+  });
+  try {
+    await db.exec(`
+      create schema sellerpilot_private;
+      create schema extensions;
+      create function extensions.digest(value text, algorithm text)
+      returns bytea language sql immutable as $$
+        select case when lower(algorithm) = 'sha256'
+          then sha256(convert_to(value, 'UTF8'))
+          else convert_to(md5(value || algorithm), 'UTF8') end
+      $$;
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,
+        status text not null,
+        completed_at timestamptz,
+        provider_mutation_started_at timestamptz,
+        response_payload jsonb,
+        request_payload jsonb not null default '{"arguments":{}}'::jsonb
+      );
+      create table sellerpilot_private.qoo10_exact_s1_activation_permits (
+        activation_job_id uuid primary key,
+        source_job_id uuid not null,
+        verifier_job_id uuid not null,
+        listing_id uuid not null,
+        remote_id text not null,
+        consumed_at timestamptz,
+        bound_claim_token uuid not null,
+        bound_worker_token_id uuid not null,
+        invalidated_at timestamptz
+      );
+      create table sellerpilot_private.qoo10_exact_s1_observations (
+        verifier_job_id uuid primary key,
+        activation_expectation jsonb not null
+      );
+      create table sellerpilot_private.gateway_completion_receipts (
+        job_id uuid not null,
+        claim_token uuid not null,
+        worker_token_id uuid not null
+      );
+      create table sellerpilot_private.qoo10_exact_s1_activation_outcomes (
+        activation_job_id uuid primary key,
+        source_job_id uuid not null,
+        verifier_job_id uuid not null,
+        listing_id uuid not null,
+        remote_id text not null,
+        terminal_status text not null,
+        activation_response_sha256 text,
+        activation_response_bytes integer,
+        provider_status text,
+        remote_visibility text,
+        verified_at timestamptz,
+        completed_at timestamptz not null,
+        contract text not null
+      );
+      create table sellerpilot_private.projection_calls (job_id uuid primary key);
+      create function sellerpilot_private.qoo10_exact_s1_source_is_current()
+      returns boolean language sql stable as $$ select true $$;
+      create function sellerpilot_private.apply_exact_qoo10_s1_activation_listing(job_id uuid)
+      returns boolean language plpgsql as $$
+      begin
+        insert into sellerpilot_private.projection_calls values (job_id);
+        return true;
+      end;
+      $$;
+    `);
+    for (const name of [
+      "sellerpilot_private.qoo10_exact_remote_items",
+      "sellerpilot_private.qoo10_exact_aliases_consistent",
+      "sellerpilot_private.qoo10_exact_representative_image_matches",
+      "sellerpilot_private.qoo10_exact_keyword_matches",
+      "sellerpilot_private.qoo10_exact_hex_codepoint",
+      "sellerpilot_private.qoo10_exact_decode_html",
+      "sellerpilot_private.qoo10_exact_detail_image_urls",
+      "sellerpilot_private.qoo10_exact_item_matches_source",
+      "sellerpilot_private.qoo10_exact_response_state_valid",
+      "sellerpilot_private.qoo10_exact_activation_keyword_binding_valid",
+      "sellerpilot_private.record_exact_qoo10_s1_activation_outcome",
+    ]) await db.exec(functionDefinition(sql, name));
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_canonical_provider_detail_html",
+    ));
+    await db.exec(`alter function sellerpilot_private.qoo10_exact_item_matches_source(
+      jsonb,jsonb,text
+    ) rename to qoo10_exact_item_matches_source_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.qoo10_exact_item_matches_source",
+    ));
+    await db.exec(`alter function sellerpilot_private.record_exact_qoo10_s1_activation_outcome(
+      uuid
+    ) rename to record_exact_qoo10_s1_activation_outcome_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.record_exact_qoo10_s1_activation_outcome",
+    ));
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs(
+         id,status,completed_at,provider_mutation_started_at,response_payload,
+         request_payload
+       ) values
+       ($1,'reconciliation_required',null,null,null,$2::jsonb),
+       ($3,'succeeded','2026-08-31 00:00:06+00','2026-08-31 00:00:03+00',$4::jsonb,$5::jsonb),
+       ($6,'succeeded','2026-08-31 00:00:06+00','2026-08-31 00:00:03+00',$7::jsonb,$8::jsonb)`,
+      [
+        sourceJobId,
+        JSON.stringify({ arguments: normalizedSourceArguments }),
+        successJobId,
+        JSON.stringify(s2Response),
+        JSON.stringify({
+          arguments: {
+            sellerpilotQoo10S1Activation: {
+              expectedKeyword: "No Brand,購入前確認",
+              expectedDetailHtmlSha256: providerDigest,
+            },
+          },
+        }),
+        mismatchJobId,
+        JSON.stringify(s2Response),
+        JSON.stringify({
+          arguments: {
+            sellerpilotQoo10S1Activation: {
+              expectedKeyword: "No Brand,購入前確認",
+              expectedDetailHtmlSha256: createHash("sha256").update("drift").digest("hex"),
+            },
+          },
+        }),
+      ],
+    );
+    for (const [jobId, verifierId, claimId] of [
+      [successJobId, successVerifierId, successClaimId],
+      [mismatchJobId, mismatchVerifierId, mismatchClaimId],
+    ]) {
+      await db.query(
+        `insert into sellerpilot_private.qoo10_exact_s1_observations
+         values ($1,$2::jsonb)`,
+        [verifierId, JSON.stringify({ expectedKeyword: "No Brand,購入前確認" })],
+      );
+      await db.query(
+        `insert into sellerpilot_private.qoo10_exact_s1_activation_permits
+         values ($1,$2,$3,$4,'1217336970','2026-08-31 00:00:03+00',$5,$6,null)`,
+        [jobId, sourceJobId, verifierId, listingId, claimId, workerId],
+      );
+      await db.query(
+        "insert into sellerpilot_private.gateway_completion_receipts values ($1,$2,$3)",
+        [jobId, claimId, workerId],
+      );
+    }
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.record_exact_qoo10_s1_activation_outcome($1) value",
+      [mismatchJobId],
+    ), false, "a digest mismatch cannot enter the outcome ledger");
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.record_exact_qoo10_s1_activation_outcome($1) value",
+      [successJobId],
+    ), true);
+    assert.deepEqual(
+      (await db.query(
+        `select terminal_status,provider_status,remote_visibility
+           from sellerpilot_private.qoo10_exact_s1_activation_outcomes`,
+      )).rows,
+      [{
+        terminal_status: "succeeded",
+        provider_status: "S2",
+        remote_visibility: "live",
+      }],
+      "the exact provider paragraph readback must persist through the real inner recorder",
+    );
+    assert.equal(await scalar(
+      db,
+      "select count(*)::integer value from sellerpilot_private.projection_calls",
+    ), 1, "only the exact normalized S2 outcome may project the listing");
+  } finally {
+    await db.close();
+  }
+});
+
 test("activation completion derives explicit reject and safely terminalizes pre/post provider uncertainty", async () => {
   const sql = await readFile(migrationUrl, "utf8");
+  const headingSql = await readFile(headingNormalizationMigrationUrl, "utf8");
   const db = new PGlite();
   const sourceJobId = "fac9c5c4-940d-4600-88f3-8f97a069dfbf";
   const listingId = "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc";
@@ -1434,6 +1981,7 @@ test("activation completion derives explicit reject and safely terminalizes pre/
   const uncertainJobId = "40000000-0000-4000-8000-000000000013";
   const keywordDriftJobId = "40000000-0000-4000-8000-000000000014";
   const leadingZeroJobId = "40000000-0000-4000-8000-000000000015";
+  const detailDigestDriftJobId = "40000000-0000-4000-8000-000000000016";
   const explicitResponse = {
     ok: false,
     steps: [
@@ -1542,6 +2090,13 @@ test("activation completion derives explicit reject and safely terminalizes pre/
       sql,
       "sellerpilot_private.record_exact_qoo10_s1_activation_outcome",
     ));
+    await db.exec(`alter function sellerpilot_private.record_exact_qoo10_s1_activation_outcome(
+      uuid
+    ) rename to record_exact_qoo10_s1_activation_outcome_056700`);
+    await db.exec(functionDefinition(
+      headingSql,
+      "sellerpilot_private.record_exact_qoo10_s1_activation_outcome",
+    ));
     await db.query(
       `insert into sellerpilot_private.channel_gateway_jobs(id,status,request_payload)
        values ($1,'reconciliation_required',$2::jsonb)`,
@@ -1554,6 +2109,13 @@ test("activation completion derives explicit reject and safely terminalizes pre/
       consumed,
       response,
       markerKeyword = "No Brand,購入前確認",
+      markerDetailHtmlSha256 = response?.steps?.[1]?.data?.ResultObject?.ItemDetail
+        ? createHash("sha256")
+          .update(response.steps[1].data.ResultObject.ItemDetail)
+          .digest("hex")
+        : createHash("sha256")
+          .update(sourceArguments.params.ItemDescription)
+          .digest("hex"),
     }) => {
       const verifierId = crypto.randomUUID();
       await db.query(
@@ -1571,6 +2133,7 @@ test("activation completion derives explicit reject and safely terminalizes pre/
             arguments: {
               sellerpilotQoo10S1Activation: {
                 expectedKeyword: markerKeyword,
+                expectedDetailHtmlSha256: markerDetailHtmlSha256,
               },
             },
           }),
@@ -1621,30 +2184,39 @@ test("activation completion derives explicit reject and safely terminalizes pre/
     const keywordDriftResponse = structuredClone(explicitResponse);
     keywordDriftResponse.steps[1].data.ResultObject.Keyword =
       sourceArguments.params.Keyword;
-    await assert.rejects(
-      insertCase({
+    assert.equal(await insertCase({
         jobId: keywordDriftJobId,
         status: "succeeded",
         started: "2026-08-31 00:00:03+00",
         consumed: "2026-08-31 00:00:03+00",
         response: keywordDriftResponse,
-      }),
-      /exact Qoo10 activation terminal evidence invalid/,
+      }), false,
       "source-prefix keyword drift cannot terminalize as an explicit reject",
     );
     const leadingZeroResponse = structuredClone(explicitResponse);
     leadingZeroResponse.steps[0].data.ResultCode = "01";
-    await assert.rejects(
-      insertCase({
+    assert.equal(await insertCase({
         jobId: leadingZeroJobId,
         status: "succeeded",
         started: "2026-08-31 00:00:03+00",
         consumed: "2026-08-31 00:00:03+00",
         response: leadingZeroResponse,
-      }),
-      /exact Qoo10 activation terminal evidence invalid/,
+      }), false,
       "leading-zero ResultCode cannot prove a canonical explicit rejection",
     );
+    assert.equal(await insertCase({
+      jobId: detailDigestDriftJobId,
+      status: "succeeded",
+      started: "2026-08-31 00:00:03+00",
+      consumed: "2026-08-31 00:00:03+00",
+      response: explicitResponse,
+      markerDetailHtmlSha256: createHash("sha256")
+        .update(explicitResponse.steps[1].data.ResultObject.ItemDetail.replace(
+          "exact detail",
+          "exact drift",
+        ))
+        .digest("hex"),
+    }), false, "post-readback HTML must exactly match the armed provider digest");
     assert.equal(await insertCase({
       jobId: uncertainJobId,
       status: "reconciliation_required",

@@ -22,6 +22,25 @@ export function qoo10ExactSuccessResultCode(data: Record<string, unknown>) {
     && String(data.ResultCode) === "0";
 }
 
+/**
+ * Qoo10 rewrites HTML heading elements to paragraph elements when it stores an
+ * item detail page. Keep the comparison deliberately narrow: no whitespace,
+ * attribute, text, URL, or other tag normalization is allowed.
+ */
+export function qoo10CanonicalProviderDetailHtml(value: string) {
+  return value.replace(/<(\/?)h[1-6](?=[\t\n\f\r />])/giu, "<$1p");
+}
+
+export function qoo10ProviderDetailHtmlEquivalent(source: string, remote: string) {
+  return Boolean(source) && Boolean(remote)
+    && (source === remote || qoo10CanonicalProviderDetailHtml(source) === remote);
+}
+
+function qoo10SourceDetailHtmlMatchesProviderDigest(value: string, expectedSha256: string) {
+  return digest(value) === expectedSha256
+    || digest(qoo10CanonicalProviderDetailHtml(value)) === expectedSha256;
+}
+
 export type Qoo10S1ActivationBinding = {
   status: "allowed";
   contract: typeof qoo10S1ActivationContract;
@@ -433,7 +452,10 @@ export function qoo10S1ActivationArgumentsValid(argumentsValue: ActivationArgume
     && params.ProductionPlaceType === binding.expectedState.originType
     && params.ProductionPlace === binding.expectedState.originCode
     && params.AdultYN === binding.expectedState.adultYn
-    && digest(detailHtml) === binding.expectedDetailHtmlSha256
+    && qoo10SourceDetailHtmlMatchesProviderDigest(
+      detailHtml,
+      binding.expectedDetailHtmlSha256,
+    )
     && qoo10DetailImageUrls(detailHtml).length === 8
     && qoo10DetailImageUrls(detailHtml).every((url, index) => url === binding.expectedDetailImageUrls[index])
     && (!binding.expectedSellerCode || sellerCode === binding.expectedSellerCode)

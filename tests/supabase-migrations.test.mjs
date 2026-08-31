@@ -59,6 +59,8 @@ const QOO10_EXACT_S1_ACTIVATION_MIGRATION =
   "20260831056700_recover_exact_qoo10_s1_activation.sql";
 const QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION =
   "20260831056800_allow_exact_qoo10_s1_verifier_overlap.sql";
+const QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION =
+  "20260831056900_accept_exact_qoo10_heading_normalization.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -274,12 +276,29 @@ as $$
 $$;
 `;
 
-function withoutUnavailableExtensions(sql) {
-  return sql
+function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
+  const normalized = sql
     .replace(/^create extension if not exists pgcrypto;\s*$/gim, "")
     .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "")
     .replace(/^create extension if not exists pg_cron with schema pg_catalog;\s*$/gim, "")
     .replace(/^create extension if not exists pg_net with schema extensions;\s*$/gim, "");
+  if (!injectQoo10History || !normalized.includes(
+    "exact Qoo10 heading-normalization migration history drifted",
+  )) return normalized;
+  return `
+    create schema if not exists supabase_migrations;
+    create table if not exists supabase_migrations.schema_migrations (
+      version text primary key,
+      statements text[] not null default '{}'::text[],
+      name text
+    );
+    insert into supabase_migrations.schema_migrations(version,statements,name)
+    values
+      ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')
+    on conflict (version) do nothing;
+    ${normalized}
+  `;
 }
 
 // This one broad integration flow deliberately exercises the historical
@@ -592,6 +611,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION,
       QOO10_EXACT_S1_ACTIVATION_MIGRATION,
       QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION,
+      QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -645,6 +665,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         < migrationNames.indexOf(QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION),
       "the exact verifier overlap repair must replay after its recovery contract",
     );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION),
+      "Qoo10 heading normalization must replay after the verifier overlap repair",
+    );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -656,6 +681,33 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       const sql = name === "20260828210000_non_cs_release_integrity.sql"
         ? withoutFinalStrictWorkerScopeFence(source)
         : source;
+      if (name === QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION) {
+        await db.query(
+          "delete from supabase_migrations.schema_migrations where version = '20260831056800'",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /migration history drifted/,
+          "heading normalization must fail closed without exact predecessor history",
+        );
+        await db.exec("rollback");
+        await db.query(
+          `insert into supabase_migrations.schema_migrations(version,statements,name)
+           values ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')`,
+        );
+        await db.exec(
+          "grant execute on function sellerpilot_private.qoo10_exact_item_matches_source(jsonb,jsonb,text) to authenticated",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /function preimage drifted/,
+          "heading normalization must fail closed when a private preimage ACL drifts",
+        );
+        await db.exec("rollback");
+        await db.exec(
+          "revoke all on function sellerpilot_private.qoo10_exact_item_matches_source(jsonb,jsonb,text) from authenticated",
+        );
+      }
       if (name === QOO10_SCOPED_GATE_MIGRATION) {
         assert.equal(
           await scalar(
@@ -1060,6 +1112,83 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           0,
           "the overlap repair must not enqueue a verifier",
+        );
+      }
+      if (name === QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260831056700','20260831056800','20260831056900')`,
+          ),
+          3,
+          "heading normalization must be recorded after both exact S1 predecessors",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select sellerpilot_private.qoo10_canonical_provider_detail_html(
+              '<h1 class="x">A</h1><H6>B</H6><h10>C</h10><h1x>D</h1x>'
+            )`,
+          ),
+          '<p class="x">A</p><p>B</p><h10>C</h10><h1x>D</h1x>',
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.qoo10_exact_s1_verifier_runs`,
+          ),
+          0,
+          "heading normalization must not enqueue a verifier",
+        );
+        assert.deepEqual(
+          (await db.query(`
+            select p.oid::regprocedure::text signature,
+                   md5(pg_get_functiondef(p.oid)) definition_md5,
+                   owner.rolname owner, language.lanname language,
+                   p.prosecdef security_definer,
+                   p.provolatile::text volatility,
+                   p.proisstrict is_strict,
+                   p.proconfig,
+                   p.proacl::text acl
+              from pg_proc p
+              join pg_roles owner on owner.oid = p.proowner
+              join pg_language language on language.oid = p.prolang
+             where p.oid in (
+               'sellerpilot_private.qoo10_canonical_provider_detail_html(text)'::regprocedure,
+               'sellerpilot_private.qoo10_exact_item_matches_source_056700(jsonb,jsonb,text)'::regprocedure,
+               'sellerpilot_private.qoo10_exact_item_matches_source(jsonb,jsonb,text)'::regprocedure,
+               'sellerpilot_private.qoo10_exact_activation_expectation_valid_056700(jsonb,jsonb)'::regprocedure,
+               'sellerpilot_private.qoo10_exact_activation_expectation_valid(jsonb,jsonb)'::regprocedure,
+               'sellerpilot_private.record_exact_qoo10_s1_observation_056700(uuid)'::regprocedure,
+               'sellerpilot_private.record_exact_qoo10_s1_observation(uuid)'::regprocedure,
+               'sellerpilot_private.record_exact_qoo10_s1_activation_outcome_056700(uuid)'::regprocedure,
+               'sellerpilot_private.record_exact_qoo10_s1_activation_outcome(uuid)'::regprocedure
+             ) order by signature
+          `)).rows,
+          [
+            ["sellerpilot_private.qoo10_canonical_provider_detail_html(text)", "2358f7ae5587ddd59704765cbac80781", "sql", false, "i", true],
+            ["sellerpilot_private.qoo10_exact_activation_expectation_valid(jsonb,jsonb)", "1b0d96703b785506cf4b3259643ed229", "sql", false, "i", true],
+            ["sellerpilot_private.qoo10_exact_activation_expectation_valid_056700(jsonb,jsonb)", "e95a6199eeaf4c221f8e6becb002ddd7", "plpgsql", false, "i", true],
+            ["sellerpilot_private.qoo10_exact_item_matches_source(jsonb,jsonb,text)", "9690d249290d6f051f29e7e0d71b88ed", "sql", false, "i", true],
+            ["sellerpilot_private.qoo10_exact_item_matches_source_056700(jsonb,jsonb,text)", "a65d39b1f056f34332657260f15893df", "plpgsql", false, "i", true],
+            ["sellerpilot_private.record_exact_qoo10_s1_activation_outcome(uuid)", "11c0a9842f2526613a86b85b04f86e93", "plpgsql", true, "v", false],
+            ["sellerpilot_private.record_exact_qoo10_s1_activation_outcome_056700(uuid)", "ce1ac826ef39b81d72586851a688acc1", "plpgsql", true, "v", false],
+            ["sellerpilot_private.record_exact_qoo10_s1_observation(uuid)", "5fd11c7e55ce6f3044195ca66451f707", "plpgsql", true, "v", false],
+            ["sellerpilot_private.record_exact_qoo10_s1_observation_056700(uuid)", "599d15b0056323c4f1d240b2e9e9cb0e", "plpgsql", true, "v", false],
+          ].map(([signature, definition_md5, language, security_definer, volatility, is_strict]) => ({
+            signature,
+            definition_md5,
+            owner: "postgres",
+            language,
+            security_definer,
+            volatility,
+            is_strict,
+            proconfig: ['search_path=""'],
+            acl: "{postgres=X/postgres}",
+          })),
+          "heading normalization must leave the exact pinned private function postimage",
         );
       }
     }
@@ -9886,6 +10015,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION
         && name !== QOO10_EXACT_S1_ACTIVATION_MIGRATION
         && name !== QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION
+        && name !== QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
