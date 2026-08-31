@@ -614,6 +614,9 @@ export async function executeServerlessGatewayProviderJob(
       if (!ebayExactRecovery) {
         throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
       }
+      if (input.job.credential_id !== ebayExactRecovery.credentialId) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH");
+      }
       assertEbayExactExistingQaUpdateArguments(rawArguments);
     }
     if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)

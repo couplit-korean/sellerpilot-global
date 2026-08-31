@@ -1,5 +1,5 @@
 export const ebayExactExistingQaRecoveryContract =
-  "ebay_exact_existing_qa_recovery_v1" as const;
+  "ebay_exact_existing_qa_recovery_v2" as const;
 
 export const ebayExactExistingQaRecoveryArgument =
   "sellerpilotEbayExactExistingQaRecovery" as const;
@@ -12,9 +12,12 @@ export const ebayExactExistingQaRecoveryIdentity = Object.freeze({
   market: "US",
   marketplaceId: "EBAY_US",
   marketplaceSku: "QA-20260823-CC-001-US",
+  offerId: "244042196011",
   centralSku: "QA-20260823-CC-001",
   currency: "USD",
   priceUsd: 12.9,
+  credentialId: "a2593ca0-c2c2-4158-a35b-88aa27b5911a",
+  sellerAccountKey: "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f",
 });
 
 export type EbayExactExistingQaRecoveryBinding = {
@@ -27,10 +30,13 @@ export type EbayExactExistingQaRecoveryBinding = {
   market: "US";
   marketplaceId: "EBAY_US";
   marketplaceSku: string;
+  offerId: string;
   currency: "USD";
   priceUsd: number;
   stock: number;
-  offerIdSource: "provider_readback_required";
+  credentialId: string;
+  sellerAccountKey: string;
+  offerIdSource: "immutable_lineage_attestation_v1";
   sellerAccountLineage: "validated_by_service_rpc";
 };
 
@@ -57,7 +63,7 @@ export function ebayExactExistingQaRecoveryBindingValue(
   const stock = Number(binding?.stock);
   const priceUsd = Number(binding?.priceUsd);
   if (!binding
-      || Object.keys(binding).length !== 14
+      || Object.keys(binding).length !== 17
       || binding.contract !== ebayExactExistingQaRecoveryContract
       || binding.phase !== "listing.update"
       || binding.productId !== ebayExactExistingQaRecoveryIdentity.productId
@@ -67,13 +73,16 @@ export function ebayExactExistingQaRecoveryBindingValue(
       || binding.market !== ebayExactExistingQaRecoveryIdentity.market
       || binding.marketplaceId !== ebayExactExistingQaRecoveryIdentity.marketplaceId
       || binding.marketplaceSku !== ebayExactExistingQaRecoveryIdentity.marketplaceSku
+      || binding.offerId !== ebayExactExistingQaRecoveryIdentity.offerId
       || binding.currency !== ebayExactExistingQaRecoveryIdentity.currency
       || !Number.isFinite(priceUsd)
       || Math.abs(priceUsd - ebayExactExistingQaRecoveryIdentity.priceUsd) > 0.000_001
       || !Number.isSafeInteger(stock)
       || stock < 1
       || stock > 999_999
-      || binding.offerIdSource !== "provider_readback_required"
+      || binding.credentialId !== ebayExactExistingQaRecoveryIdentity.credentialId
+      || binding.sellerAccountKey !== ebayExactExistingQaRecoveryIdentity.sellerAccountKey
+      || binding.offerIdSource !== "immutable_lineage_attestation_v1"
       || binding.sellerAccountLineage !== "validated_by_service_rpc") {
     return null;
   }
@@ -98,6 +107,7 @@ export function bindEbayExactExistingQaRecoveryArguments(
   }
   const next = structuredClone(argumentsValue);
   delete next.offerId;
+  delete next.providerResourceId;
   return {
     ...next,
     listingId: ebayExactExistingQaRecoveryIdentity.publicListingId,
@@ -213,6 +223,7 @@ export function assertEbayExactExistingQaUpdateArguments(
       || exactText(argumentsValue.sku) !== binding.marketplaceSku
       || exactText(argumentsValue.marketplaceId).toUpperCase() !== binding.marketplaceId
       || exactText(argumentsValue.offerId)
+      || exactText(argumentsValue.providerResourceId)
       || argumentsValue.publicationIntent !== "live"
       || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
       || argumentsValue.publicationExpectedLocale !== "en-US"

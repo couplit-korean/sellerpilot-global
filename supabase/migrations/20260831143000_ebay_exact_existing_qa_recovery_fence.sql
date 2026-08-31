@@ -14,7 +14,7 @@ security definer
 set search_path = ''
 as $$
   select jsonb_build_object(
-    'contract', 'ebay_exact_existing_qa_recovery_v1',
+    'contract', 'ebay_exact_existing_qa_recovery_v2',
     'phase', 'listing.update',
     'productId', product.id,
     'listingId', listing.id,
@@ -23,10 +23,13 @@ as $$
     'market', listing.market,
     'marketplaceId', listing.target_id,
     'marketplaceSku', listing.marketplace_sku,
+    'offerId', listing.provider_resource_id,
     'currency', listing.currency,
     'priceUsd', listing.price,
     'stock', product.on_hand,
-    'offerIdSource', 'provider_readback_required',
+    'credentialId', credential.id,
+    'sellerAccountKey', listing.seller_account_key,
+    'offerIdSource', 'immutable_lineage_attestation_v1',
     'sellerAccountLineage', 'validated_by_service_rpc'
   )
     from sellerpilot_private.product_listings listing
@@ -36,6 +39,12 @@ as $$
     join sellerpilot_private.channel_credentials credential
       on credential.id = p_credential_id
      and credential.channel = listing.channel_key
+    join sellerpilot_private.provider_listing_lineage_attestations attestation
+      on attestation.listing_id = listing.id
+    join sellerpilot_private.channel_gateway_jobs lineage_job
+      on lineage_job.id = attestation.gateway_job_id
+    join sellerpilot_private.channel_credentials lineage_credential
+      on lineage_credential.id = attestation.credential_id
    where p_listing_id = '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid
      and p_product_id = 'ddccde35-9c58-4856-b673-d7aa27ce4220'::uuid
      and p_credential_id = 'a2593ca0-c2c2-4158-a35b-88aa27b5911a'::uuid
@@ -44,7 +53,7 @@ as $$
      and listing.channel_key = 'ebay'
      and listing.remote_id = '800551945442'
      and listing.marketplace_sku = 'QA-20260823-CC-001-US'
-     and listing.provider_resource_id is null
+     and listing.provider_resource_id = '244042196011'
      and listing.remote_resources = '{}'::jsonb
      and listing.status = 'failed'
      and listing.failure_class = 'external_action'
@@ -78,6 +87,43 @@ as $$
      and credential.seller_account_key = listing.seller_account_key
      and credential.seller_account_key_source = 'provider_certified_v1'
      and credential.seller_account_verified_at is not null
+     and attestation.id = 'fc54f95c-3533-4dbd-820f-cb2dfaf018e7'::uuid
+     and attestation.credential_id =
+       'a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1'::uuid
+     and attestation.gateway_job_id =
+       'fdff6983-1f08-4f51-a751-bc61b4bf7070'::uuid
+     and attestation.channel = 'ebay'
+     and attestation.environment = 'production'
+     and attestation.seller_account_key = listing.seller_account_key
+     and attestation.expected_remote_id = listing.remote_id
+     and attestation.verified_remote_id = listing.remote_id
+     and attestation.market = listing.market
+     and attestation.target_id = listing.target_id
+     and attestation.marketplace_sku = listing.marketplace_sku
+     and attestation.provider_resource_id = listing.provider_resource_id
+     and attestation.evidence_version = 'provider_listing_readback_v1'
+     and attestation.evidence_digest =
+       '3ba3464e14408e04967534e0227f01424378fc8b5b112ea05887769fecff781a'
+     and attestation.verified_at is not null
+     and lineage_job.id =
+       'fdff6983-1f08-4f51-a751-bc61b4bf7070'::uuid
+     and lineage_job.listing_id = listing.id
+     and lineage_job.credential_id = attestation.credential_id
+     and lineage_job.channel = 'ebay'
+     and lineage_job.environment = 'production'
+     and lineage_job.operation = 'listing.lineage.verify'
+     and lineage_job.status = 'succeeded'
+     and lineage_job.seller_account_key = listing.seller_account_key
+     and lineage_credential.id =
+       'a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1'::uuid
+     and lineage_credential.channel = 'ebay'
+     and lineage_credential.environment = 'production'
+     and lineage_credential.status = 'revoked'
+     and lineage_credential.version = 84
+     and lineage_credential.fingerprint = 'A48BC6BD3D4B'
+     and lineage_credential.seller_account_key = listing.seller_account_key
+     and lineage_credential.seller_account_key_source = 'provider_certified_v1'
+     and lineage_credential.seller_account_verified_at is not null
      and not exists (
        select 1
          from sellerpilot_private.channel_gateway_jobs active_job
@@ -208,7 +254,7 @@ begin
        or p_credential_id is distinct from
          'a2593ca0-c2c2-4158-a35b-88aa27b5911a'::uuid
        or jsonb_typeof(v_marker) is distinct from 'object'
-       or v_marker->>'contract' is distinct from 'ebay_exact_existing_qa_recovery_v1'
+       or v_marker->>'contract' is distinct from 'ebay_exact_existing_qa_recovery_v2'
        or v_marker->>'phase' is distinct from 'listing.update'
        or v_marker->>'productId' is distinct from 'ddccde35-9c58-4856-b673-d7aa27ce4220'
        or v_marker->>'listingId' is distinct from '8b2cbfaf-3854-437d-b381-abfd70291354'
@@ -217,18 +263,24 @@ begin
        or v_marker->>'market' is distinct from 'US'
        or v_marker->>'marketplaceId' is distinct from 'EBAY_US'
        or v_marker->>'marketplaceSku' is distinct from 'QA-20260823-CC-001-US'
+       or v_marker->>'offerId' is distinct from '244042196011'
        or v_marker->>'currency' is distinct from 'USD'
        or v_marker->'priceUsd' is distinct from '12.9'::jsonb
        or jsonb_typeof(v_marker->'stock') is distinct from 'number'
        or coalesce(v_marker->>'stock', '') !~ '^[1-9][0-9]{0,5}$'
-       or v_marker->>'offerIdSource' is distinct from 'provider_readback_required'
+       or v_marker->>'credentialId' is distinct from
+         'a2593ca0-c2c2-4158-a35b-88aa27b5911a'
+       or v_marker->>'sellerAccountKey' is distinct from
+         'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
+       or v_marker->>'offerIdSource' is distinct from
+         'immutable_lineage_attestation_v1'
        or v_marker->>'sellerAccountLineage' is distinct from
          'validated_by_service_rpc' then
       raise exception 'EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';
     end if;
     select count(*) into v_marker_key_count from jsonb_object_keys(v_marker);
-    if v_marker_key_count <> 14 then
+    if v_marker_key_count <> 17 then
       raise exception 'EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';
     end if;
@@ -252,17 +304,19 @@ begin
        and listing.product_id = (v_marker->>'productId')::uuid
        and listing.remote_id = v_marker->>'publicListingId'
        and listing.marketplace_sku = v_marker->>'marketplaceSku'
-       and listing.provider_resource_id is null
+       and listing.provider_resource_id = v_marker->>'offerId'
        and listing.remote_resources = '{}'::jsonb
        and listing.operation_attempt_id =
          (v_marker->>'sourceAttemptId')::uuid
        and listing.seller_account_key = credential.seller_account_key
+       and listing.seller_account_key = v_marker->>'sellerAccountKey'
        and listing.seller_account_key =
          'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
        and product.sku = 'QA-20260823-CC-001'
        and product.on_hand = v_stock
        and credential.id =
          'a2593ca0-c2c2-4158-a35b-88aa27b5911a'::uuid
+       and credential.id = (v_marker->>'credentialId')::uuid
        and credential.status = 'active'
        and credential.environment = 'production'
        and credential.version = 92
@@ -321,6 +375,7 @@ begin
        or p_request_payload#>>'{arguments,sku}' is distinct from 'QA-20260823-CC-001-US'
        or p_request_payload#>>'{arguments,marketplaceId}' is distinct from 'EBAY_US'
        or (p_request_payload#>'{arguments}') ? 'offerId'
+       or (p_request_payload#>'{arguments}') ? 'providerResourceId'
        or p_request_payload#>>'{arguments,publicationIntent}' is distinct from 'live'
        or p_request_payload#>>'{arguments,publicationStateContract}' is distinct from
          'verified_remote_state_v1'
@@ -411,10 +466,10 @@ comment on function
   public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity(
     uuid, uuid, uuid, text, text
   ) is
-  'Returns only the exact failed/live eBay US QA tuple for the fixed v92 provider-certified credential. The offer ID remains provider-readback-only.';
+  'Returns only the exact failed/live eBay US QA tuple whose immutable lineage attestation binds offer 244042196011 and whose current writer is the fixed v92 provider-certified credential.';
 comment on function public.sellerpilot_service_enqueue_listing_gateway_job(
   uuid, uuid, uuid, text, text, jsonb
 ) is
-  'Preserves all existing listing enqueue gates and atomically fences one exact eBay update to en-US content, approved images, USD 12.90, central stock, and no client offer ID.';
+  'Preserves all existing listing enqueue gates and atomically fences one exact eBay update to offer 244042196011, en-US content, approved images, USD 12.90, central stock, and no client offer ID.';
 
 commit;

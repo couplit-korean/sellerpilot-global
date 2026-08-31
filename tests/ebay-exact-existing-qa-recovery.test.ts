@@ -12,7 +12,7 @@ import { prepareListingUpdateArguments } from "../lib/channels/listing-update";
 
 function binding(stock = 7) {
   return {
-    contract: "ebay_exact_existing_qa_recovery_v1",
+    contract: "ebay_exact_existing_qa_recovery_v2",
     phase: "listing.update",
     productId: ebayExactExistingQaRecoveryIdentity.productId,
     listingId: ebayExactExistingQaRecoveryIdentity.listingId,
@@ -21,10 +21,13 @@ function binding(stock = 7) {
     market: "US",
     marketplaceId: "EBAY_US",
     marketplaceSku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
+    offerId: ebayExactExistingQaRecoveryIdentity.offerId,
     currency: "USD",
     priceUsd: 12.9,
     stock,
-    offerIdSource: "provider_readback_required",
+    credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+    sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
+    offerIdSource: "immutable_lineage_attestation_v1",
     sellerAccountLineage: "validated_by_service_rpc",
   } as const;
 }
@@ -39,6 +42,7 @@ function html() {
 function exactArguments() {
   return bindEbayExactExistingQaRecoveryArguments({
     offerId: "browser-forged-offer",
+    providerResourceId: "browser-forged-provider-resource",
     publicationIntent: "live",
     publicationStateContract: "verified_remote_state_v1",
     publicationExpectedLocale: "en-US",
@@ -87,6 +91,7 @@ test("exact eBay recovery accepts only the fixed failed/live tuple and strips a 
   }), false);
   const argumentsValue = exactArguments();
   assert.equal(Object.hasOwn(argumentsValue, "offerId"), false);
+  assert.equal(Object.hasOwn(argumentsValue, "providerResourceId"), false);
   assert.equal(argumentsValue.listingId, ebayExactExistingQaRecoveryIdentity.publicListingId);
   assert.equal(argumentsValue.sku, ebayExactExistingQaRecoveryIdentity.marketplaceSku);
   assert.doesNotThrow(() => assertEbayExactExistingQaUpdateArguments(argumentsValue));
@@ -121,6 +126,14 @@ test("exact eBay recovery rejects duplicate create identities and forged price, 
   assert.equal(ebayExactExistingQaRecoveryBindingValue({
     ...binding(),
     unexpectedCapability: true,
+  }), null);
+  assert.equal(ebayExactExistingQaRecoveryBindingValue({
+    ...binding(),
+    offerId: null,
+  }), null);
+  assert.equal(ebayExactExistingQaRecoveryBindingValue({
+    ...binding(),
+    offerId: "244042196012",
   }), null);
 });
 

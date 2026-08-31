@@ -5897,7 +5897,7 @@ async function executeEbay(input: ExecuteInput) {
         ? discoveryRead.data.offers.filter((value): value is Record<string, unknown> =>
           Boolean(value) && typeof value === "object" && !Array.isArray(value))
         : [];
-      const exactOffers = offers.filter((candidate) => {
+      const publicIdentityOffers = offers.filter((candidate) => {
         const candidateListing = candidate.listing
           && typeof candidate.listing === "object"
           && !Array.isArray(candidate.listing)
@@ -5910,18 +5910,23 @@ async function executeEbay(input: ExecuteInput) {
           && String(candidateListing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE"
           && Boolean(String(candidate.offerId ?? "").trim());
       });
+      const exactOffers = publicIdentityOffers.filter((candidate) =>
+        String(candidate.offerId ?? "").trim() === exactRecovery.offerId);
       const discoveryStep = step("offer-update-discovery-readback", discoveryRead);
-      discoveryStep.ok = discoveryStep.ok && exactOffers.length === 1;
+      discoveryStep.ok = discoveryStep.ok
+        && publicIdentityOffers.length === 1
+        && exactOffers.length === 1;
       discoveryStep.data = {
         ...discoveryStep.data,
         sellerpilotVerification: discoveryStep.ok
           ? "EBAY_EXACT_OFFER_DISCOVERED"
           : "EBAY_EXACT_OFFER_DISCOVERY_MISMATCH",
         exactOfferCount: exactOffers.length,
+        publicIdentityOfferCount: publicIdentityOffers.length,
       };
       steps.push(discoveryStep);
       if (!discoveryStep.ok) return result(input, steps, listingId);
-      decodedOfferId = String(exactOffers[0].offerId).trim();
+      decodedOfferId = exactRecovery.offerId;
     }
     const offerId = pathSegment(decodedOfferId);
 

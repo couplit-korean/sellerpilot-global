@@ -212,7 +212,7 @@ test("eBay UPDATE performs zero writes when preflight listing identity mismatche
 test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights, then crosses the mutation fence", async () => {
   const originalFetch = globalThis.fetch;
   const exactSku = ebayExactExistingQaRecoveryIdentity.marketplaceSku;
-  const exactOfferId = "offer-exact-qa-1";
+  const exactOfferId = ebayExactExistingQaRecoveryIdentity.offerId;
   const stock = 7;
   const events: string[] = [];
   let wroteInventory = false;
@@ -229,7 +229,7 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
     publicationExpectedFingerprint: fingerprint,
     publicationExpectedImageCount: 8,
     [ebayExactExistingQaRecoveryArgument]: {
-      contract: "ebay_exact_existing_qa_recovery_v1",
+      contract: "ebay_exact_existing_qa_recovery_v2",
       phase: "listing.update",
       productId: ebayExactExistingQaRecoveryIdentity.productId,
       listingId: ebayExactExistingQaRecoveryIdentity.listingId,
@@ -238,10 +238,13 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
       market: "US",
       marketplaceId,
       marketplaceSku: exactSku,
+      offerId: exactOfferId,
       currency: "USD",
       priceUsd: 12.9,
       stock,
-      offerIdSource: "provider_readback_required",
+      credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+      sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
+      offerIdSource: "immutable_lineage_attestation_v1",
       sellerAccountLineage: "validated_by_service_rpc",
     },
     inventoryItem: {
@@ -351,12 +354,11 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
   }
 });
 
-test("exact eBay UPDATE performs zero writes and never opens the mutation fence on ambiguous offer discovery", async () => {
+test("exact eBay UPDATE performs zero writes for missing, mismatched, or duplicate bound-offer discovery", async () => {
   const originalFetch = globalThis.fetch;
-  const events: string[] = [];
   const exactSku = ebayExactExistingQaRecoveryIdentity.marketplaceSku;
   const marker = {
-    contract: "ebay_exact_existing_qa_recovery_v1",
+    contract: "ebay_exact_existing_qa_recovery_v2",
     phase: "listing.update",
     productId: ebayExactExistingQaRecoveryIdentity.productId,
     listingId: ebayExactExistingQaRecoveryIdentity.listingId,
@@ -365,56 +367,94 @@ test("exact eBay UPDATE performs zero writes and never opens the mutation fence 
     market: "US",
     marketplaceId,
     marketplaceSku: exactSku,
+    offerId: ebayExactExistingQaRecoveryIdentity.offerId,
     currency: "USD",
     priceUsd: 12.9,
     stock: 7,
-    offerIdSource: "provider_readback_required",
+    credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+    sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
+    offerIdSource: "immutable_lineage_attestation_v1",
     sellerAccountLineage: "validated_by_service_rpc",
   };
   const html = detailHtml("This durable adhesive cable organizer keeps charging cords tidy and easy to reach");
-  globalThis.fetch = async (input, init) => {
-    events.push(`${init?.method ?? "GET"}:${String(input)}`);
-    return Response.json({ offers: [] });
+  const exactCandidate = (candidateOfferId: unknown, includeOfferId = true) => {
+    const candidate: Record<string, unknown> = currentOffer({
+      offerId: candidateOfferId,
+      sku: exactSku,
+    });
+    if (!includeOfferId) delete candidate.offerId;
+    return candidate;
   };
+  const discoveryCases = [
+    { name: "zero", offers: [] },
+    { name: "inventory-api-404", offers: [], status: 404 },
+    { name: "different", offers: [exactCandidate("244042196012")] },
+    { name: "null", offers: [exactCandidate(null)] },
+    { name: "missing", offers: [exactCandidate(undefined, false)] },
+    {
+      name: "duplicate",
+      offers: [
+        exactCandidate(ebayExactExistingQaRecoveryIdentity.offerId),
+        exactCandidate(ebayExactExistingQaRecoveryIdentity.offerId),
+      ],
+    },
+    {
+      name: "mixed-exact-and-different",
+      offers: [
+        exactCandidate(ebayExactExistingQaRecoveryIdentity.offerId),
+        exactCandidate("244042196012"),
+      ],
+    },
+  ];
   try {
-    const result = await executeChannelOperation({
-      channel: "ebay",
-      operation: "listing.update",
-      payload: { access_token: "secret", marketplace_id: marketplaceId },
-      arguments: {
-        listingId,
-        sku: exactSku,
-        marketplaceId,
-        publicationIntent: "live",
-        publicationStateContract: "verified_remote_state_v1",
-        publicationExpectedLocale: "en-US",
-        publicationExpectedImageCount: 8,
-        [ebayExactExistingQaRecoveryArgument]: marker,
-        inventoryItem: {
-          condition: "NEW",
-          availability: { shipToLocationAvailability: { quantity: 7 } },
-          product: {
-            title: "Adhesive Cable Organizer Clips",
-            description: html,
-            imageUrls: ["https://cdn.example.com/qa-main.jpg"],
+    for (const discoveryCase of discoveryCases) {
+      const events: string[] = [];
+      globalThis.fetch = async (input, init) => {
+        events.push(`${init?.method ?? "GET"}:${String(input)}`);
+        return Response.json(
+          { offers: discoveryCase.offers },
+          { status: discoveryCase.status ?? 200 },
+        );
+      };
+      const result = await executeChannelOperation({
+        channel: "ebay",
+        operation: "listing.update",
+        payload: { access_token: "secret", marketplace_id: marketplaceId },
+        arguments: {
+          listingId,
+          sku: exactSku,
+          marketplaceId,
+          publicationIntent: "live",
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "en-US",
+          publicationExpectedImageCount: 8,
+          [ebayExactExistingQaRecoveryArgument]: marker,
+          inventoryItem: {
+            condition: "NEW",
+            availability: { shipToLocationAvailability: { quantity: 7 } },
+            product: {
+              title: "Adhesive Cable Organizer Clips",
+              description: html,
+              imageUrls: ["https://cdn.example.com/qa-main.jpg"],
+            },
+          },
+          offer: {
+            availableQuantity: 7,
+            listingDescription: html,
+            pricingSummary: { price: { currency: "USD", value: 12.9 } },
           },
         },
-        offer: {
-          availableQuantity: 7,
-          listingDescription: html,
-          pricingSummary: { price: { currency: "USD", value: 12.9 } },
+        environment: "production",
+        providerMutationHooks: {
+          assertLeaseHealthy: async () => { events.push("lease"); },
+          begin: async () => { events.push("mutation-fence"); },
         },
-      },
-      environment: "production",
-      providerMutationHooks: {
-        assertLeaseHealthy: async () => { events.push("lease"); },
-        begin: async () => { events.push("mutation-fence"); },
-      },
-    });
-    assert.equal(result.ok, false);
-    assert.equal(events.length, 1);
-    assert.equal(events[0].startsWith("GET:"), true);
-    assert.equal(events.includes("mutation-fence"), false);
+      });
+      assert.equal(result.ok, false, discoveryCase.name);
+      assert.equal(events.length, 1, discoveryCase.name);
+      assert.equal(events[0].startsWith("GET:"), true, discoveryCase.name);
+      assert.equal(events.includes("mutation-fence"), false, discoveryCase.name);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

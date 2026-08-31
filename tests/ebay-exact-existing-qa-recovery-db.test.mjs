@@ -11,8 +11,13 @@ const migrationUrl = new URL(
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const listingId = "8b2cbfaf-3854-437d-b381-abfd70291354";
 const publicListingId = "800551945442";
+const offerId = "244042196011";
 const sourceAttemptId = "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77";
 const credentialId = "a2593ca0-c2c2-4158-a35b-88aa27b5911a";
+const lineageCredentialId = "a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1";
+const lineageJobId = "fdff6983-1f08-4f51-a751-bc61b4bf7070";
+const lineageAttestationId = "fc54f95c-3533-4dbd-820f-cb2dfaf018e7";
+const lineageEvidenceDigest = "3ba3464e14408e04967534e0227f01424378fc8b5b112ea05887769fecff781a";
 const updateAttemptId = "e0000000-0000-4000-8000-000000000001";
 const ownerId = "e0000000-0000-4000-8000-000000000002";
 const sellerAccountKey = "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f";
@@ -78,8 +83,30 @@ async function createDatabase() {
     create table sellerpilot_private.channel_gateway_jobs (
       id uuid primary key default gen_random_uuid(),
       listing_id uuid,
+      credential_id uuid,
+      channel text,
+      environment text,
       operation text not null,
-      status text not null
+      status text not null,
+      seller_account_key text
+    );
+    create table sellerpilot_private.provider_listing_lineage_attestations (
+      id uuid primary key,
+      listing_id uuid not null unique,
+      credential_id uuid not null,
+      gateway_job_id uuid not null unique,
+      seller_account_key text not null,
+      channel text not null,
+      environment text not null,
+      expected_remote_id text not null,
+      verified_remote_id text not null,
+      market text not null,
+      target_id text not null,
+      marketplace_sku text,
+      provider_resource_id text,
+      evidence_version text not null,
+      evidence_digest text not null,
+      verified_at timestamptz not null
     );
     create function public.sellerpilot_service_reserve_and_enqueue_listing_create(
       uuid, uuid, uuid, text, text, text, text, numeric, text, jsonb
@@ -107,11 +134,11 @@ async function createDatabase() {
        provider_status,published_at,currency,price,operation_attempt_id,
        remote_resources
      ) values (
-       $1,$2,$3,'ebay',$4,'QA-20260823-CC-001-US',null,'US','EBAY_US',
-       $5,'failed','external_action','live','unknown',null,null,'USD',12.90,
-       $6,'{}'::jsonb
+       $1,$2,$3,'ebay',$4,'QA-20260823-CC-001-US',$5,'US','EBAY_US',
+       $6,'failed','external_action','live','unknown',null,null,'USD',12.90,
+       $7,'{}'::jsonb
      )`,
-    [listingId, ownerId, productId, publicListingId, sellerAccountKey, sourceAttemptId],
+    [listingId, ownerId, productId, publicListingId, offerId, sellerAccountKey, sourceAttemptId],
   );
   await db.query(
     `insert into sellerpilot_private.channel_credentials (
@@ -124,6 +151,48 @@ async function createDatabase() {
        'provider_certified_v1',clock_timestamp()
      )`,
     [credentialId, sellerAccountKey],
+  );
+  await db.query(
+    `insert into sellerpilot_private.channel_credentials (
+       id,channel,status,environment,version,fingerprint,expires_at,
+       last_checked_at,last_check_status,seller_account_key,
+       seller_account_key_source,seller_account_verified_at
+     ) values (
+       $1,'ebay','revoked','production',84,'A48BC6BD3D4B',null,
+       clock_timestamp(),'passed',$2,'provider_certified_v1',clock_timestamp()
+     )`,
+    [lineageCredentialId, sellerAccountKey],
+  );
+  await db.query(
+    `insert into sellerpilot_private.channel_gateway_jobs (
+       id,listing_id,credential_id,channel,environment,operation,status,
+       seller_account_key
+     ) values (
+       $1,$2,$3,'ebay','production','listing.lineage.verify','succeeded',$4
+     )`,
+    [lineageJobId, listingId, lineageCredentialId, sellerAccountKey],
+  );
+  await db.query(
+    `insert into sellerpilot_private.provider_listing_lineage_attestations (
+       id,listing_id,credential_id,gateway_job_id,seller_account_key,channel,
+       environment,expected_remote_id,verified_remote_id,market,target_id,
+       marketplace_sku,provider_resource_id,evidence_version,evidence_digest,
+       verified_at
+     ) values (
+       $1,$2,$3,$4,$5,'ebay','production',$6,$6,'US','EBAY_US',
+       'QA-20260823-CC-001-US',$7,'provider_listing_readback_v1',$8,
+       clock_timestamp()
+     )`,
+    [
+      lineageAttestationId,
+      listingId,
+      lineageCredentialId,
+      lineageJobId,
+      sellerAccountKey,
+      publicListingId,
+      offerId,
+      lineageEvidenceDigest,
+    ],
   );
   await db.query(
     `insert into sellerpilot_private.channel_operation_attempts
@@ -190,7 +259,7 @@ test("eBay exact existing QA identity and content update enqueue are transaction
   try {
     const marker = await identity(db);
     assert.deepEqual(marker, {
-      contract: "ebay_exact_existing_qa_recovery_v1",
+      contract: "ebay_exact_existing_qa_recovery_v2",
       phase: "listing.update",
       productId,
       listingId,
@@ -199,10 +268,13 @@ test("eBay exact existing QA identity and content update enqueue are transaction
       market: "US",
       marketplaceId: "EBAY_US",
       marketplaceSku: "QA-20260823-CC-001-US",
+      offerId,
       currency: "USD",
       priceUsd: 12.9,
       stock: 7,
-      offerIdSource: "provider_readback_required",
+      credentialId,
+      sellerAccountKey,
+      offerIdSource: "immutable_lineage_attestation_v1",
       sellerAccountLineage: "validated_by_service_rpc",
     });
     const accepted = (await db.query(
@@ -221,6 +293,31 @@ test("eBay exact existing QA identity and content update enqueue are transaction
            $1,$2,$3,'ebay','listing.update',$4::jsonb
          )`,
         [listingId, credentialId, updateAttemptId, JSON.stringify(forgedPrice)],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
+    const forgedBoundOffer = structuredClone(updatePayload(marker));
+    forgedBoundOffer.arguments.sellerpilotEbayExactExistingQaRecovery.offerId =
+      "244042196012";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(forgedBoundOffer)],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
+    const missingBoundOffer = structuredClone(updatePayload(marker));
+    delete missingBoundOffer.arguments.sellerpilotEbayExactExistingQaRecovery.offerId;
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(missingBoundOffer)],
       ),
       /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
     );
@@ -247,6 +344,43 @@ test("eBay exact existing QA identity and content update enqueue are transaction
         [listingId, credentialId, updateAttemptId, JSON.stringify(missingMarketplace)],
       ),
       /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set provider_resource_id=null
+        where id=$1`,
+      [listingId],
+    );
+    assert.equal(await identity(db), null);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(updatePayload(marker))],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set provider_resource_id=$2
+        where id=$1`,
+      [listingId, offerId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.provider_listing_lineage_attestations
+          set provider_resource_id='244042196012'
+        where id=$1`,
+      [lineageAttestationId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.provider_listing_lineage_attestations
+          set provider_resource_id=$2
+        where id=$1`,
+      [lineageAttestationId, offerId],
     );
 
     await db.query(

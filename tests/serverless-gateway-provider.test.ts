@@ -24,6 +24,10 @@ const {
 const {
   verifyShopeeGlobalListingPostPublish,
 } = await import("../lib/channels/provider-shopee-post-publish-runtime");
+const {
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryIdentity,
+} = await import("../lib/channels/ebay-exact-existing-qa-recovery");
 
 const CRON_SECRET = "serverless-generic-gateway-cron-secret";
 const JOB_ID = "51000000-0000-4000-8000-000000000001";
@@ -172,6 +176,49 @@ test("generic eBay listing update remains closed without the exact server-owned 
       },
     }),
     /EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("exact eBay update rejects a job whose credential differs from the bound v92 lineage", async () => {
+  const events: string[] = [];
+  const job = genericClaim("ebay", "listing.update");
+  job.environment = "production";
+  job.request = {
+    arguments: {
+      [ebayExactExistingQaRecoveryArgument]: {
+        contract: "ebay_exact_existing_qa_recovery_v2",
+        phase: "listing.update",
+        productId: ebayExactExistingQaRecoveryIdentity.productId,
+        listingId: ebayExactExistingQaRecoveryIdentity.listingId,
+        sourceAttemptId: ebayExactExistingQaRecoveryIdentity.sourceAttemptId,
+        publicListingId: ebayExactExistingQaRecoveryIdentity.publicListingId,
+        market: ebayExactExistingQaRecoveryIdentity.market,
+        marketplaceId: ebayExactExistingQaRecoveryIdentity.marketplaceId,
+        marketplaceSku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
+        offerId: ebayExactExistingQaRecoveryIdentity.offerId,
+        currency: ebayExactExistingQaRecoveryIdentity.currency,
+        priceUsd: ebayExactExistingQaRecoveryIdentity.priceUsd,
+        stock: 1,
+        credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+        sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
+        offerIdSource: "immutable_lineage_attestation_v1",
+        sellerAccountLineage: "validated_by_service_rpc",
+      },
+    },
+  };
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH/,
   );
   assert.deepEqual(events, []);
 });
