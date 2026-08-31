@@ -67,6 +67,8 @@ const QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION =
   "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql";
 const QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION =
   "20260831057200_allow_exact_qoo10_s1_activation_provider_boundary.sql";
+const QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION =
+  "20260831057300_retire_failed_exact_qoo10_s1_activation_permit.sql";
 const COMPETITOR_PRICE_V3_MIGRATION =
   "20260831130000_competitor_price_v3.sql";
 const COMPETITOR_MATCH_REVIEW_MIGRATION =
@@ -307,11 +309,15 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
   const isExactActivationProviderBoundary = normalized.includes(
     "exact Qoo10 S1 provider-boundary preimage drifted",
   );
+  const isFailedPreproviderPermitRetirement = normalized.includes(
+    "exact Qoo10 failed-permit migration history drifted",
+  );
   if (
     !isHeadingNormalization
     && !isStaleVerifierRetirement
     && !isExactActivationClaimPriority
     && !isExactActivationProviderBoundary
+    && !isFailedPreproviderPermitRetirement
   ) return normalized;
   const retirementPredecessor = isStaleVerifierRetirement
     ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
@@ -325,6 +331,12 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
       + ",\n      ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')"
       + ",\n      ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')"
     : "";
+  const failedPermitPredecessors = isFailedPreproviderPermitRetirement
+    ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
+      + ",\n      ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')"
+      + ",\n      ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')"
+      + ",\n      ('20260831057200','{}'::text[],'allow_exact_qoo10_s1_activation_provider_boundary')"
+    : "";
   return `
     create schema if not exists supabase_migrations;
     create table if not exists supabase_migrations.schema_migrations (
@@ -335,7 +347,7 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     insert into supabase_migrations.schema_migrations(version,statements,name)
     values
       ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
-      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}${providerBoundaryPredecessors}
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}${providerBoundaryPredecessors}${failedPermitPredecessors}
     on conflict (version) do nothing;
     ${normalized}
   `;
@@ -655,6 +667,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION,
       QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION,
       QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION,
+      QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION,
       COMPETITOR_PRICE_V3_MIGRATION,
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
@@ -733,12 +746,17 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.ok(
       migrationNames.indexOf(QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION)
+        < migrationNames.indexOf(QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION),
+      "failed pre-provider permit retirement must replay after provider-boundary admission",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION)
         < migrationNames.indexOf(COMPETITOR_PRICE_V3_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_PRICE_V3_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION),
-      "competitor v3, review ledger, and identity fence must replay after Qoo10 572 in order",
+      "competitor v3, review ledger, and identity fence must replay after Qoo10 573 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;
@@ -845,6 +863,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         await db.query(
           `insert into supabase_migrations.schema_migrations(version,statements,name)
            values ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')`,
+        );
+      }
+      if (name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION) {
+        await db.query(
+          "delete from supabase_migrations.schema_migrations where version = '20260831057200'",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /failed-permit migration history drifted/,
+          "failed pre-provider permit retirement must fail closed without 572 history",
+        );
+        await db.exec("rollback");
+        await db.query(
+          `insert into supabase_migrations.schema_migrations(version,statements,name)
+           values ('20260831057200','{}'::text[],'allow_exact_qoo10_s1_activation_provider_boundary')`,
         );
       }
       if (name === QOO10_SCOPED_GATE_MIGRATION) {
@@ -1506,6 +1539,73 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           true,
           "the internal provider marker must remain uncallable by API roles",
+        );
+      }
+      if (name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831056700','20260831056800','20260831056900',
+                '20260831057000','20260831057100','20260831057200',
+                '20260831057300'
+              )`,
+          ),
+          7,
+          "failed-permit retirement must be recorded after all exact S1 predecessors",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select encode(extensions.digest(pg_get_functiondef(
+              'public.sellerpilot_300950_begin_serverless_gateway_mutation_before_release_gate(text,uuid,uuid)'::regprocedure
+            ),'sha256'),'hex')`,
+          ),
+          "968b6336c02432bd790445b90902548f6182e3b4128d2c533151d95c90347b06",
+          "573 must preserve the exact 572 provider-boundary postimage",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select count(*) from sellerpilot_private.qoo10_exact_s1_activation_permits",
+          ),
+          0,
+          "schema replay must not synthesize a production activation permit",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            "select count(*) from sellerpilot_private.qoo10_exact_s1_activation_outcomes",
+          ),
+          0,
+          "schema replay must not synthesize a production activation outcome",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from pg_constraint
+              where conrelid = 'sellerpilot_private.qoo10_exact_s1_activation_outcomes'::regclass
+                and conname in (
+                  'qoo10_exact_s1_activation_outcomes_source_job_id_key',
+                  'qoo10_exact_s1_activation_outcomes_listing_id_key'
+                )`,
+          ),
+          0,
+          "source/listing uniqueness must move to evidence-aware partial indexes",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from pg_indexes
+              where schemaname='sellerpilot_private'
+                and indexname in (
+                  'qoo10_exact_s1_one_decisive_source_outcome',
+                  'qoo10_exact_s1_one_decisive_listing_outcome'
+                )`,
+          ),
+          2,
+          "both decisive-terminal partial indexes must exist",
         );
       }
     }
@@ -10863,6 +10963,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION
         && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         && name !== QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+        && name !== QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
@@ -12339,7 +12440,10 @@ test("TracX binding rollout backfills only exact typed credential evidence and b
       .filter((name) => name.endsWith(".sql") && name < rolloutName)
       .sort();
     for (const name of migrationNames) {
-      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) continue;
+      if (
+        name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+        || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+      ) continue;
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(sql));
     }
@@ -12564,6 +12668,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       } else if (
         name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         || name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+        || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
@@ -15974,7 +16079,10 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       .sort();
     assert.equal(migrationNames.includes(migrationName), true);
     for (const name of migrationNames) {
-      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) continue;
+      if (
+        name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+        || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+      ) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(source));
     }
