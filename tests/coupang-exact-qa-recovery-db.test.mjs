@@ -174,6 +174,43 @@ test("Coupang exact QA recovery identity and enqueue are transactionally fenced"
       /COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH/,
     );
 
+    const requiredUpdateFields = [
+      ["body.sellerProductId", (payload) => {
+        delete payload.arguments.body.sellerProductId;
+      }],
+      ["body.sellerProductId=null", (payload) => {
+        payload.arguments.body.sellerProductId = null;
+      }],
+      ["publicationIntent", (payload) => { delete payload.arguments.publicationIntent; }],
+      ["publicationIntent=null", (payload) => { payload.arguments.publicationIntent = null; }],
+      ["publicationExpectedLocale", (payload) => {
+        delete payload.arguments.publicationExpectedLocale;
+      }],
+      ["publicationExpectedLocale=null", (payload) => {
+        payload.arguments.publicationExpectedLocale = null;
+      }],
+      ["publicationExpectedImageCount", (payload) => {
+        delete payload.arguments.publicationExpectedImageCount;
+      }],
+      ["publicationExpectedImageCount=null", (payload) => {
+        payload.arguments.publicationExpectedImageCount = null;
+      }],
+    ];
+    for (const [field, mutate] of requiredUpdateFields) {
+      const invalid = structuredClone(updatePayload(marker));
+      mutate(invalid);
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_enqueue_listing_gateway_job(
+             $1,$2,$3,'coupang','listing.update',$4::jsonb
+           )`,
+          [listingId, credentialId, updateAttemptId, JSON.stringify(invalid)],
+        ),
+        /COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH/,
+        field,
+      );
+    }
+
     await db.query(
       `update sellerpilot_private.channel_credentials
           set seller_account_key=$1 where id=$2`,
@@ -231,6 +268,35 @@ test("Coupang exact QA stop binds one published remote item and zero images", as
       [listingId, credentialId, stopAttemptId, JSON.stringify(payload)],
     )).rows[0].value;
     assert.equal(accepted.status, "predecessor_enqueue");
+
+    const requiredStopFields = [
+      ["sellerProductId", (value) => { delete value.arguments.sellerProductId; }],
+      ["sellerProductId=null", (value) => { value.arguments.sellerProductId = null; }],
+      ["vendorItemId", (value) => { delete value.arguments.vendorItemId; }],
+      ["vendorItemId=null", (value) => { value.arguments.vendorItemId = null; }],
+      ["sellerSku", (value) => { delete value.arguments.sellerSku; }],
+      ["sellerSku=null", (value) => { value.arguments.sellerSku = null; }],
+      ["publicationExpectedImageCount", (value) => {
+        delete value.arguments.publicationExpectedImageCount;
+      }],
+      ["publicationExpectedImageCount=null", (value) => {
+        value.arguments.publicationExpectedImageCount = null;
+      }],
+    ];
+    for (const [field, mutate] of requiredStopFields) {
+      const invalid = structuredClone(payload);
+      mutate(invalid);
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_enqueue_listing_gateway_job(
+             $1,$2,$3,'coupang','listing.stop',$4::jsonb
+           )`,
+          [listingId, credentialId, stopAttemptId, JSON.stringify(invalid)],
+        ),
+        /COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH/,
+        field,
+      );
+    }
   } finally {
     await db.close();
   }

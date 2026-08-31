@@ -76,6 +76,7 @@ import {
   coupangListingUpdateWrite,
 } from "./coupang-listing-update";
 import {
+  assertCoupangExactQaProviderContract,
   coupangExactQaRecoveryArgument,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryIdentity,
@@ -3761,6 +3762,9 @@ async function executeCoupang(input: ExecuteInput) {
     if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
       throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
     }
+    if (exactRecovery) {
+      assertCoupangExactQaProviderContract(input.arguments, "listing.update");
+    }
     const patchBody = objectValue(input.arguments, "body");
     const remoteId = String(patchBody.sellerProductId ?? "").trim();
     if (!remoteId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerProductId");
@@ -3941,6 +3945,9 @@ async function executeCoupang(input: ExecuteInput) {
     const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.stop");
     if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
       throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
+    if (exactRecovery) {
+      assertCoupangExactQaProviderContract(input.arguments, "listing.stop");
     }
     const sellerProductId = stringArgument(input.arguments, "sellerProductId");
     const suppliedVendorItemId = stringArgument(input.arguments, "vendorItemId", false);
@@ -6227,6 +6234,11 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       undefined,
       verification.remoteState,
     );
+  }
+  if (input.channel === "coupang"
+      && (input.operation === "listing.update" || input.operation === "listing.stop")
+      && Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument)) {
+    assertCoupangExactQaProviderContract(input.arguments, input.operation);
   }
   const requestedPublicationIntent = listingPublicationIntentFromArguments(input.arguments);
   const requestedPublicationStateContract = input.arguments.publicationStateContract === listingRemoteStateContractVersion

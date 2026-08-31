@@ -26,6 +26,24 @@ const detailUrls = Array.from(
 );
 const representativeUrl = "https://images.example.com/representative.jpg";
 const sellerManagementCode = "SELLERPILOT-QA-001";
+const missingFixtureField = Symbol("missing-fixture-field");
+
+function setFixtureField(
+  root: Record<string, unknown>,
+  path: string[],
+  value: unknown | typeof missingFixtureField,
+) {
+  let current = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    assert.ok(next && typeof next === "object" && !Array.isArray(next));
+    current = next as Record<string, unknown>;
+  }
+  const key = path.at(-1);
+  assert.ok(key);
+  if (value === missingFixtureField) delete current[key];
+  else current[key] = value;
+}
 
 function listingArguments(operation: "listing.create" | "listing.update") {
   return {
@@ -274,6 +292,67 @@ test("Smartstore exact recovery rejects a price or SKU contract mismatch before 
     );
     assert.deepEqual(calls, []);
     assert.deepEqual(mutations, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Smartstore exact recovery rejects missing or null provider fields before any request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  const mutations: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error(`unexpected request: ${String(input)}`);
+  };
+  const baseInput = runtimeInput("listing.update", mutations);
+  const originProduct = baseInput.arguments.body.originProduct;
+  const validArguments = bindSmartstoreExactQaRecoveryArguments({
+    ...baseInput.arguments,
+    originProductNo: smartstoreExactQaRecoveryIdentity.originProductNo,
+    publicationExpectedLocale: "ko-KR",
+    publicationExpectedImageCount: 8,
+    body: {
+      ...baseInput.arguments.body,
+      originProduct: {
+        ...originProduct,
+        salePrice: smartstoreExactQaRecoveryIdentity.priceKrw,
+        stockQuantity: 1,
+        detailAttribute: {
+          ...originProduct.detailAttribute,
+          sellerCodeInfo: {
+            sellerManagementCode: smartstoreExactQaRecoveryIdentity.centralSku,
+          },
+        },
+      },
+    },
+  });
+  const requiredFields = [
+    ["originProductNo", ["originProductNo"]],
+    ["sellerManagementCode", ["body", "originProduct", "detailAttribute", "sellerCodeInfo", "sellerManagementCode"]],
+    ["salePrice", ["body", "originProduct", "salePrice"]],
+    ["stockQuantity", ["body", "originProduct", "stockQuantity"]],
+    ["publicationIntent", ["publicationIntent"]],
+    ["publicationExpectedLocale", ["publicationExpectedLocale"]],
+    ["publicationExpectedImageCount", ["publicationExpectedImageCount"]],
+  ] as const;
+  try {
+    for (const [field, path] of requiredFields) {
+      for (const [variant, value] of [
+        ["missing", missingFixtureField],
+        ["null", null],
+      ] as const) {
+        const argumentsValue = structuredClone(validArguments);
+        setFixtureField(argumentsValue, [...path], value);
+        await assert.rejects(
+          prepareMarketplaceListingArguments({ ...baseInput, arguments: argumentsValue }),
+          /NAVER_ORIGIN_PRODUCT_ID_MISSING|NAVER_SELLER_MANAGEMENT_CODE_MISSING|SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH/,
+          `${field}:${variant}`,
+        );
+        assert.deepEqual(calls, [], `${field}:${variant}`);
+        assert.deepEqual(mutations, [], `${field}:${variant}`);
+      }
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

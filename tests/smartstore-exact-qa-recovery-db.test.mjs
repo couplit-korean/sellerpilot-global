@@ -190,6 +190,57 @@ test("Smartstore exact QA recovery identity and enqueue are transactionally fenc
       /SMARTSTORE_EXACT_QA_ENQUEUE_FENCE_MISMATCH/,
     );
 
+    const requiredProviderFields = [
+      ["originProductNo", (payload) => { delete payload.arguments.originProductNo; }],
+      ["originProductNo=null", (payload) => { payload.arguments.originProductNo = null; }],
+      ["sellerManagementCode", (payload) => {
+        delete payload.arguments.body.originProduct.detailAttribute
+          .sellerCodeInfo.sellerManagementCode;
+      }],
+      ["sellerManagementCode=null", (payload) => {
+        payload.arguments.body.originProduct.detailAttribute
+          .sellerCodeInfo.sellerManagementCode = null;
+      }],
+      ["salePrice", (payload) => { delete payload.arguments.body.originProduct.salePrice; }],
+      ["salePrice=null", (payload) => {
+        payload.arguments.body.originProduct.salePrice = null;
+      }],
+      ["stockQuantity", (payload) => {
+        delete payload.arguments.body.originProduct.stockQuantity;
+      }],
+      ["stockQuantity=null", (payload) => {
+        payload.arguments.body.originProduct.stockQuantity = null;
+      }],
+      ["publicationIntent", (payload) => { delete payload.arguments.publicationIntent; }],
+      ["publicationIntent=null", (payload) => { payload.arguments.publicationIntent = null; }],
+      ["publicationExpectedLocale", (payload) => {
+        delete payload.arguments.publicationExpectedLocale;
+      }],
+      ["publicationExpectedLocale=null", (payload) => {
+        payload.arguments.publicationExpectedLocale = null;
+      }],
+      ["publicationExpectedImageCount", (payload) => {
+        delete payload.arguments.publicationExpectedImageCount;
+      }],
+      ["publicationExpectedImageCount=null", (payload) => {
+        payload.arguments.publicationExpectedImageCount = null;
+      }],
+    ];
+    for (const [field, mutate] of requiredProviderFields) {
+      const invalid = structuredClone(updatePayload(marker));
+      mutate(invalid);
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_enqueue_listing_gateway_job(
+             $1,$2,$3,'smartstore','listing.update',$4::jsonb
+           )`,
+          [listingId, credentialId, attemptId, JSON.stringify(invalid)],
+        ),
+        /SMARTSTORE_EXACT_QA_ENQUEUE_FENCE_MISMATCH/,
+        field,
+      );
+    }
+
     await db.query(
       `update sellerpilot_private.product_listings
           set marketplace_sku='QA-20260823-CC-001' where id=$1`,

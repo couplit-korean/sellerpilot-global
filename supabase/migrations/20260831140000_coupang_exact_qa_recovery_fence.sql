@@ -183,17 +183,18 @@ begin
 
   if p_listing_id = '7ffc6e46-3173-4695-9889-5fa1529765f1'::uuid
      or v_marker is not null then
-    if p_channel <> 'coupang'
-       or p_operation not in ('listing.update', 'listing.stop')
+    if p_channel is distinct from 'coupang'
+       or (p_operation is distinct from 'listing.update'
+         and p_operation is distinct from 'listing.stop')
        or jsonb_typeof(v_marker) is distinct from 'object'
-       or v_marker->>'contract' <> 'coupang_exact_qa_recovery_v1'
-       or v_marker->>'phase' <> p_operation
-       or v_marker->>'productId' <> 'ddccde35-9c58-4856-b673-d7aa27ce4220'
-       or v_marker->>'listingId' <> '7ffc6e46-3173-4695-9889-5fa1529765f1'
-       or v_marker->>'sellerProductId' <> '16356981734'
-       or v_marker->>'vendorItemId' <> '95962393877'
-       or v_marker->>'sellerSku' <> 'QA-20260823-CC-001'
-       or v_marker->>'sellerAccountLineage' <> 'validated_by_service_rpc' then
+       or v_marker->>'contract' is distinct from 'coupang_exact_qa_recovery_v1'
+       or v_marker->>'phase' is distinct from p_operation
+       or v_marker->>'productId' is distinct from 'ddccde35-9c58-4856-b673-d7aa27ce4220'
+       or v_marker->>'listingId' is distinct from '7ffc6e46-3173-4695-9889-5fa1529765f1'
+       or v_marker->>'sellerProductId' is distinct from '16356981734'
+       or v_marker->>'vendorItemId' is distinct from '95962393877'
+       or v_marker->>'sellerSku' is distinct from 'QA-20260823-CC-001'
+       or v_marker->>'sellerAccountLineage' is distinct from 'validated_by_service_rpc' then
       raise exception 'COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';
     end if;
@@ -260,19 +261,19 @@ begin
     end if;
 
     if p_operation = 'listing.update' and (
-      p_request_payload#>>'{arguments,body,sellerProductId}' <> '16356981734'
-      or p_request_payload#>>'{arguments,publicationIntent}' <> 'live'
-      or p_request_payload#>>'{arguments,publicationExpectedLocale}' <> 'ko-KR'
-      or p_request_payload#>>'{arguments,publicationExpectedImageCount}' <> '8'
+      p_request_payload#>>'{arguments,body,sellerProductId}' is distinct from '16356981734'
+      or p_request_payload#>>'{arguments,publicationIntent}' is distinct from 'live'
+      or p_request_payload#>>'{arguments,publicationExpectedLocale}' is distinct from 'ko-KR'
+      or p_request_payload#>>'{arguments,publicationExpectedImageCount}' is distinct from '8'
     ) then
       raise exception 'COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';
     end if;
     if p_operation = 'listing.stop' and (
-      p_request_payload#>>'{arguments,sellerProductId}' <> '16356981734'
-      or p_request_payload#>>'{arguments,vendorItemId}' <> '95962393877'
-      or p_request_payload#>>'{arguments,sellerSku}' <> 'QA-20260823-CC-001'
-      or p_request_payload#>>'{arguments,publicationExpectedImageCount}' <> '0'
+      p_request_payload#>>'{arguments,sellerProductId}' is distinct from '16356981734'
+      or p_request_payload#>>'{arguments,vendorItemId}' is distinct from '95962393877'
+      or p_request_payload#>>'{arguments,sellerSku}' is distinct from 'QA-20260823-CC-001'
+      or p_request_payload#>>'{arguments,publicationExpectedImageCount}' is distinct from '0'
     ) then
       raise exception 'COUPANG_EXACT_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';

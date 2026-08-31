@@ -88,6 +88,33 @@ export function bindCoupangExactQaRecoveryArguments(
   };
 }
 
+export function assertCoupangExactQaProviderContract(
+  argumentsValue: Record<string, unknown>,
+  phase: CoupangExactQaRecoveryPhase,
+) {
+  const binding = coupangExactQaRecoveryBinding(argumentsValue, phase);
+  if (!binding) {
+    throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
+
+  if (phase === "listing.update") {
+    const body = recordValue(argumentsValue.body);
+    if (String(body?.sellerProductId ?? "") !== binding.sellerProductId
+        || argumentsValue.publicationIntent !== "live"
+        || argumentsValue.publicationExpectedLocale !== "ko-KR"
+        || argumentsValue.publicationExpectedImageCount !== 8) {
+      throw new Error("COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH");
+    }
+  } else if (String(argumentsValue.sellerProductId ?? "") !== binding.sellerProductId
+      || String(argumentsValue.vendorItemId ?? "") !== binding.vendorItemId
+      || argumentsValue.sellerSku !== binding.sellerSku
+      || argumentsValue.publicationExpectedImageCount !== 0) {
+    throw new Error("COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH");
+  }
+
+  return binding;
+}
+
 export function coupangExactQaCreateForbidden(input: {
   productId?: string | null;
   argumentsValue?: Record<string, unknown> | null;

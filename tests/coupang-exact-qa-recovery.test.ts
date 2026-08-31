@@ -16,6 +16,24 @@ import { executeChannelOperation } from "../lib/channels/operations";
 import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime";
 
 const fingerprint = "c".repeat(64);
+const missingFixtureField = Symbol("missing-fixture-field");
+
+function setFixtureField(
+  root: Record<string, unknown>,
+  path: string[],
+  value: unknown | typeof missingFixtureField,
+) {
+  let current = root;
+  for (const segment of path.slice(0, -1)) {
+    const next = current[segment];
+    assert.ok(next && typeof next === "object" && !Array.isArray(next));
+    current = next as Record<string, unknown>;
+  }
+  const key = path.at(-1);
+  assert.ok(key);
+  if (value === missingFixtureField) delete current[key];
+  else current[key] = value;
+}
 
 function detailContents() {
   return Array.from({ length: 8 }, (_, index) => ({
@@ -88,6 +106,18 @@ function baseRecoveryArguments() {
       }],
     },
   }, "listing.update");
+}
+
+function baseStopRecoveryArguments() {
+  return bindCoupangExactQaRecoveryArguments({
+    sellerProductId: coupangExactQaRecoveryIdentity.sellerProductId,
+    vendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+    sellerSku: coupangExactQaRecoveryIdentity.sellerSku,
+    publicationStateContract: "verified_remote_state_v1",
+    publicationExpectedLocale: "ko-KR",
+    publicationExpectedFingerprint: fingerprint,
+    publicationExpectedImageCount: 0,
+  }, "listing.stop");
 }
 
 function outboundResponse() {
@@ -262,6 +292,86 @@ test("exact recovery fails before PUT without an active return center and carrie
   );
 });
 
+test("exact update rejects missing or null provider fields before any Coupang request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error(`unexpected request: ${String(input)}`);
+  };
+  const requiredFields = [
+    ["body.sellerProductId", ["body", "sellerProductId"]],
+    ["publicationIntent", ["publicationIntent"]],
+    ["publicationExpectedLocale", ["publicationExpectedLocale"]],
+    ["publicationExpectedImageCount", ["publicationExpectedImageCount"]],
+  ] as const;
+  try {
+    for (const [field, path] of requiredFields) {
+      for (const [variant, value] of [
+        ["missing", missingFixtureField],
+        ["null", null],
+      ] as const) {
+        const argumentsValue = structuredClone(baseRecoveryArguments());
+        setFixtureField(argumentsValue, [...path], value);
+        await assert.rejects(
+          executeChannelOperation({
+            channel: "coupang",
+            operation: "listing.update",
+            payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+            arguments: argumentsValue,
+            environment: "production",
+          }),
+          /COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH/,
+          `${field}:${variant}`,
+        );
+        assert.deepEqual(calls, [], `${field}:${variant}`);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact stop rejects missing or null provider fields before any Coupang request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error(`unexpected request: ${String(input)}`);
+  };
+  const requiredFields = [
+    ["sellerProductId", ["sellerProductId"]],
+    ["vendorItemId", ["vendorItemId"]],
+    ["sellerSku", ["sellerSku"]],
+    ["publicationExpectedImageCount", ["publicationExpectedImageCount"]],
+  ] as const;
+  try {
+    for (const [field, path] of requiredFields) {
+      for (const [variant, value] of [
+        ["missing", missingFixtureField],
+        ["null", null],
+      ] as const) {
+        const argumentsValue = structuredClone(baseStopRecoveryArguments());
+        setFixtureField(argumentsValue, [...path], value);
+        await assert.rejects(
+          executeChannelOperation({
+            channel: "coupang",
+            operation: "listing.stop",
+            payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+            arguments: argumentsValue,
+            environment: "production",
+          }),
+          /COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH/,
+          `${field}:${variant}`,
+        );
+        assert.deepEqual(calls, [], `${field}:${variant}`);
+      }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("exact update proves signed GET before PUT and verifies the strict readback", async () => {
   const { prepared } = await prepareExactRecoveryWithFetch();
   const originalFetch = globalThis.fetch;
@@ -312,15 +422,7 @@ test("exact update proves signed GET before PUT and verifies the strict readback
 });
 
 test("exact stop binds one vendor item and completes only after onSale false readback", async () => {
-  const argumentsValue = bindCoupangExactQaRecoveryArguments({
-    sellerProductId: coupangExactQaRecoveryIdentity.sellerProductId,
-    vendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
-    sellerSku: coupangExactQaRecoveryIdentity.sellerSku,
-    publicationStateContract: "verified_remote_state_v1",
-    publicationExpectedLocale: "ko-KR",
-    publicationExpectedFingerprint: fingerprint,
-    publicationExpectedImageCount: 0,
-  }, "listing.stop");
+  const argumentsValue = baseStopRecoveryArguments();
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {

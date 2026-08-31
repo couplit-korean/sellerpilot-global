@@ -176,20 +176,20 @@ begin
 
   if p_listing_id = '7babb554-48dc-4869-81b1-cd4d435d7b96'::uuid
      or v_marker is not null then
-    if p_channel <> 'smartstore'
-       or p_operation <> 'listing.update'
+    if p_channel is distinct from 'smartstore'
+       or p_operation is distinct from 'listing.update'
        or jsonb_typeof(v_marker) is distinct from 'object'
-       or v_marker->>'contract' <> 'smartstore_exact_qa_recovery_v1'
-       or v_marker->>'phase' <> 'listing.update'
-       or v_marker->>'productId' <> 'ddccde35-9c58-4856-b673-d7aa27ce4220'
-       or v_marker->>'listingId' <> '7babb554-48dc-4869-81b1-cd4d435d7b96'
-       or v_marker->>'originProductNo' <> '13671684696'
-       or v_marker->>'channelProductNo' <> '13732202182'
-       or v_marker->>'centralSku' <> 'QA-20260823-CC-001'
+       or v_marker->>'contract' is distinct from 'smartstore_exact_qa_recovery_v1'
+       or v_marker->>'phase' is distinct from 'listing.update'
+       or v_marker->>'productId' is distinct from 'ddccde35-9c58-4856-b673-d7aa27ce4220'
+       or v_marker->>'listingId' is distinct from '7babb554-48dc-4869-81b1-cd4d435d7b96'
+       or v_marker->>'originProductNo' is distinct from '13671684696'
+       or v_marker->>'channelProductNo' is distinct from '13732202182'
+       or v_marker->>'centralSku' is distinct from 'QA-20260823-CC-001'
        or v_marker->>'sellerManagementCodeSource'
-            <> 'provider_readback_required'
+            is distinct from 'provider_readback_required'
        or v_marker->>'sellerAccountLineage'
-            <> 'validated_by_service_rpc' then
+            is distinct from 'validated_by_service_rpc' then
       raise exception 'SMARTSTORE_EXACT_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';
     end if;
@@ -262,17 +262,17 @@ begin
         using errcode = '55000';
     end if;
 
-    if p_request_payload#>>'{arguments,originProductNo}' <> '13671684696'
+    if p_request_payload#>>'{arguments,originProductNo}' is distinct from '13671684696'
        or p_request_payload#>>'{arguments,body,originProduct,detailAttribute,sellerCodeInfo,sellerManagementCode}'
-            <> 'QA-20260823-CC-001'
+            is distinct from 'QA-20260823-CC-001'
        or p_request_payload#>>'{arguments,body,originProduct,salePrice}'
-            <> '5000'
+            is distinct from '5000'
        or coalesce(
          p_request_payload#>>'{arguments,body,originProduct,stockQuantity}', ''
        ) !~ '^[1-9][0-9]{0,7}$'
-       or p_request_payload#>>'{arguments,publicationIntent}' <> 'live'
-       or p_request_payload#>>'{arguments,publicationExpectedLocale}' <> 'ko-KR'
-       or p_request_payload#>>'{arguments,publicationExpectedImageCount}' <> '8'
+       or p_request_payload#>>'{arguments,publicationIntent}' is distinct from 'live'
+       or p_request_payload#>>'{arguments,publicationExpectedLocale}' is distinct from 'ko-KR'
+       or p_request_payload#>>'{arguments,publicationExpectedImageCount}' is distinct from '8'
     then
       raise exception 'SMARTSTORE_EXACT_QA_ENQUEUE_FENCE_MISMATCH'
         using errcode = '55000';

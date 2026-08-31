@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import {
-  coupangExactQaRecoveryBinding,
+  assertCoupangExactQaProviderContract,
   coupangExactQaRecoveryIdentity,
   type CoupangExactQaRecoveryBinding,
 } from "./coupang-exact-qa-recovery";
@@ -57,8 +57,10 @@ function strictAttributes(value: unknown) {
 export function prepareCoupangExactQaRecoveryArguments(
   argumentsValue: Record<string, unknown>,
 ): Record<string, unknown> {
-  const binding = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
-  if (!binding) throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  const binding = assertCoupangExactQaProviderContract(
+    argumentsValue,
+    "listing.update",
+  );
   const body = structuredClone(recordValue(argumentsValue.body));
   const items = Array.isArray(body.items) ? body.items.map(recordValue) : [];
   if (String(body.sellerProductId ?? "") !== binding.sellerProductId || items.length !== 1) {
