@@ -12,6 +12,10 @@ const headingNormalizationMigrationUrl = new URL(
   "../supabase/migrations/20260831056900_accept_exact_qoo10_heading_normalization.sql",
   import.meta.url,
 );
+const claimPriorityMigrationUrl = new URL(
+  "../supabase/migrations/20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql",
+  import.meta.url,
+);
 
 function functionDefinition(sql, signature) {
   const start = sql.indexOf(`create function ${signature}`);
@@ -685,6 +689,296 @@ test("Qoo10 S1 activation migration keeps a two-stage, one-shot provider fence",
     /permit\.invalidated_at is null[\s\S]*permit\.expires_at <= statement_timestamp\(\)[\s\S]*job\.status = 'queued'[\s\S]*job\.operation = 'listing\.activate'[\s\S]*return 0/,
     "ordinary claims return before the global recovery lock unless an exact expired activation is safely terminalizable",
   );
+});
+
+test("Qoo10 exact S1 claim priority pins deployed claim postimages without widening queue eligibility", async () => {
+  const sql = await readFile(claimPriorityMigrationUrl, "utf8");
+  const priorityDefinition = functionDefinition(
+    sql,
+    "sellerpilot_private.qoo10_exact_s1_activation_claim_priority",
+  );
+  for (const hash of [
+    "c6c51378ef8d1542ed3611d434e4c6986fa2310d3b924c6be1d78d7f393b3f96",
+    "e607d71cbb12ac1f987b721781ac1520fba1720447e7511aac744ff8d48f3f1f",
+    "a4533e53a0f310e43d01530130884054acf8497597720eecdb705cb3727c91ee",
+    "ffbb9fa90c827171641f17a0ab5dde49ff6251c509a29b56d99da713433229e3",
+  ]) {
+    assert.match(sql, new RegExp(hash), `missing deployed claim fingerprint ${hash}`);
+  }
+  assert.match(
+    priorityDefinition,
+    /job\.channel = 'qoo10'[\s\S]*job\.operation = 'listing\.activate'[\s\S]*job\.environment = 'production'/,
+  );
+  assert.match(
+    priorityDefinition,
+    /permit\.bound_at is null[\s\S]*permit\.bound_claim_token is null[\s\S]*permit\.consumed_at is null[\s\S]*permit\.invalidated_at is null/,
+  );
+  assert.match(priorityDefinition, /permit\.expires_at > statement_timestamp\(\)/);
+  assert.match(priorityDefinition, /qoo10_exact_s1_release_is_current/);
+  assert.match(priorityDefinition, /qoo10_exact_s1_source_is_current/);
+  assert.match(priorityDefinition, /extensions\.digest\(job\.request_payload::text, 'sha256'\)/);
+  assert.match(
+    sql,
+    /qoo10_exact_s1_activation_claim_priority\(j\.id\)[\s\S]{0,180}case when j\.prepared_credential_id is null/,
+    "persistent claimant priority must precede every generic ordering key",
+  );
+  assert.match(
+    sql,
+    /qoo10_exact_s1_activation_claim_priority\(job\.id\)[\s\S]{0,180}case when job\.prepared_credential_id is null/,
+    "serverless claimant priority must precede every generic ordering key",
+  );
+  assert.doesNotMatch(
+    sql,
+    /create (?:or replace )?function public\.sellerpilot_claim_(?:channel|serverless)_gateway_job/i,
+    "outer token, OAuth and static-egress wrappers must not be replaced",
+  );
+});
+
+test("only a fresh current exact permit outranks an older generic Qoo10 read", async () => {
+  const sql = await readFile(claimPriorityMigrationUrl, "utf8");
+  const db = new PGlite();
+  const activationJobId = "71000000-0000-4000-8000-000000000001";
+  const genericJobId = "71000000-0000-4000-8000-000000000002";
+  const verifierJobId = "71000000-0000-4000-8000-000000000003";
+  const sourceJobId = "71000000-0000-4000-8000-000000000004";
+  const credentialId = "71000000-0000-4000-8000-000000000005";
+  const attemptId = "71000000-0000-4000-8000-000000000006";
+  const listingId = "71000000-0000-4000-8000-000000000007";
+  const ownerId = "71000000-0000-4000-8000-000000000008";
+  const sellerAccountKey = "7".repeat(64);
+  const releaseSha = "8".repeat(40);
+  const resourceKey = "9".repeat(64);
+  const remoteId = "1217336970";
+  const payload = {
+    arguments: {
+      sellerpilotQoo10S1Activation: {
+        contract: "qoo10_s1_activation_v1",
+        verifierJobId,
+        sourceJobId,
+        listingId,
+        remoteId,
+      },
+    },
+  };
+  try {
+    await db.exec(`
+      create schema sellerpilot_private;
+      create schema extensions;
+      create function extensions.digest(value text, algorithm text)
+      returns bytea language sql immutable as $$
+        select case when lower(algorithm) = 'sha256'
+          then sha256(convert_to(value, 'UTF8'))
+          else convert_to(md5(value || algorithm), 'UTF8') end
+      $$;
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,
+        status text not null,
+        channel text not null,
+        operation text not null,
+        environment text not null,
+        attempt_count integer not null,
+        worker_token_id uuid,
+        claim_token uuid,
+        lease_expires_at timestamptz,
+        started_at timestamptz,
+        provider_mutation_started_at timestamptz,
+        response_payload jsonb,
+        completed_at timestamptz,
+        credential_id uuid,
+        attempt_id uuid,
+        listing_id uuid,
+        seller_account_key text,
+        write_resource_kind text,
+        write_resource_key text,
+        request_fingerprint text,
+        request_payload jsonb not null default '{}'::jsonb,
+        prepared_credential_id uuid,
+        created_at timestamptz not null
+      );
+      create table sellerpilot_private.qoo10_exact_s1_activation_permits (
+        activation_job_id uuid primary key,
+        activation_attempt_id uuid not null,
+        verifier_job_id uuid not null,
+        source_job_id uuid not null,
+        listing_id uuid not null,
+        credential_id uuid not null,
+        owner_id uuid not null,
+        remote_id text not null,
+        seller_account_key text not null,
+        release_sha text not null,
+        activation_request_sha256 text not null,
+        activation_request_bytes integer not null,
+        write_resource_key text not null,
+        contract text not null,
+        armed_at timestamptz not null,
+        expires_at timestamptz not null,
+        bound_at timestamptz,
+        bound_worker_token_id uuid,
+        bound_claim_token uuid,
+        consumed_at timestamptz,
+        invalidated_at timestamptz,
+        invalidation_reason text
+      );
+      create table sellerpilot_private.qoo10_exact_s1_verifier_runs (
+        verifier_job_id uuid primary key,
+        source_job_id uuid not null,
+        listing_id uuid not null,
+        credential_id uuid not null,
+        owner_id uuid not null,
+        remote_id text not null,
+        seller_account_key text not null,
+        release_sha text not null,
+        contract text not null
+      );
+      create table sellerpilot_private.qoo10_exact_s1_observations (
+        verifier_job_id uuid primary key,
+        source_job_id uuid not null,
+        listing_id uuid not null,
+        remote_id text not null,
+        release_sha text not null,
+        provider_status text not null,
+        remote_visibility text not null,
+        verifier_completed_at timestamptz not null,
+        contract text not null
+      );
+      create function sellerpilot_private.qoo10_exact_s1_release_is_current(value text)
+      returns boolean language sql stable as $$
+        select current_setting('test.release_current', true) = 'true'
+      $$;
+      create function sellerpilot_private.qoo10_exact_s1_source_is_current()
+      returns boolean language sql stable as $$
+        select current_setting('test.source_current', true) = 'true'
+      $$;
+    `);
+    await db.exec(functionDefinition(
+      sql,
+      "sellerpilot_private.qoo10_exact_s1_activation_claim_priority",
+    ));
+    await db.query("select set_config('test.release_current','true',false)");
+    await db.query("select set_config('test.source_current','true',false)");
+    const requestFacts = (await db.query(
+      `select encode(extensions.digest($1::jsonb::text,'sha256'),'hex') sha,
+              octet_length($1::jsonb::text) bytes`,
+      [JSON.stringify(payload)],
+    )).rows[0];
+    await db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         id,status,channel,operation,environment,attempt_count,credential_id,
+         attempt_id,listing_id,seller_account_key,write_resource_kind,
+         write_resource_key,request_fingerprint,request_payload,
+         prepared_credential_id,created_at
+       ) values
+       ($1,'queued','qoo10','orders.list','production',0,$3,null,null,$4,
+        null,null,null,'{}'::jsonb,$3,clock_timestamp() - interval '1 hour'),
+       ($2,'queued','qoo10','listing.activate','production',0,$3,$5,$6,$4,
+        'listing_mutation',$7,$8,$9::jsonb,null,clock_timestamp())`,
+      [
+        genericJobId,
+        activationJobId,
+        credentialId,
+        sellerAccountKey,
+        attemptId,
+        listingId,
+        resourceKey,
+        requestFacts.sha,
+        JSON.stringify(payload),
+      ],
+    );
+    await db.query(
+      `insert into sellerpilot_private.qoo10_exact_s1_verifier_runs values
+       ($1,$2,$3,$4,$5,$6,$7,$8,'qoo10_exact_s1_verifier_v1')`,
+      [
+        verifierJobId,
+        sourceJobId,
+        listingId,
+        credentialId,
+        ownerId,
+        remoteId,
+        sellerAccountKey,
+        releaseSha,
+      ],
+    );
+    await db.query(
+      `insert into sellerpilot_private.qoo10_exact_s1_observations values
+       ($1,$2,$3,$4,$5,'S1','non_public',
+        clock_timestamp() - interval '10 seconds',
+        'qoo10_exact_s1_observation_v1')`,
+      [verifierJobId, sourceJobId, listingId, remoteId, releaseSha],
+    );
+    await db.query(
+      `insert into sellerpilot_private.qoo10_exact_s1_activation_permits (
+         activation_job_id,activation_attempt_id,verifier_job_id,source_job_id,
+         listing_id,credential_id,owner_id,remote_id,seller_account_key,
+         release_sha,activation_request_sha256,activation_request_bytes,
+         write_resource_key,contract,armed_at,expires_at
+       ) select $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+         'qoo10_exact_s1_activation_permit_v1',clock_timestamp() - interval '5 seconds',
+         observation.verifier_completed_at + interval '2 minutes'
+       from sellerpilot_private.qoo10_exact_s1_observations observation
+       where observation.verifier_job_id = $3`,
+      [
+        activationJobId,
+        attemptId,
+        verifierJobId,
+        sourceJobId,
+        listingId,
+        credentialId,
+        ownerId,
+        remoteId,
+        sellerAccountKey,
+        releaseSha,
+        requestFacts.sha,
+        requestFacts.bytes,
+        resourceKey,
+      ],
+    );
+
+    const firstByPatchedOrder = () => scalar(
+      db,
+      `select job.id::text value
+         from sellerpilot_private.channel_gateway_jobs job
+        where job.status = 'queued'
+        order by
+          case when sellerpilot_private.qoo10_exact_s1_activation_claim_priority(job.id)
+            then 0 else 1 end,
+          case when job.prepared_credential_id is null then 1 else 0 end,
+          job.created_at, job.id
+        limit 1`,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.qoo10_exact_s1_activation_claim_priority($1) value",
+        [activationJobId],
+      ),
+      true,
+    );
+    assert.equal(await firstByPatchedOrder(), activationJobId);
+
+    await db.query("select set_config('test.source_current','false',false)");
+    assert.equal(await firstByPatchedOrder(), genericJobId);
+    await db.query("select set_config('test.source_current','true',false)");
+    await db.query("select set_config('test.release_current','false',false)");
+    assert.equal(await firstByPatchedOrder(), genericJobId);
+    await db.query("select set_config('test.release_current','true',false)");
+    await db.query(
+      `update sellerpilot_private.qoo10_exact_s1_activation_permits
+          set expires_at = clock_timestamp() - interval '1 second'
+        where activation_job_id = $1`,
+      [activationJobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.qoo10_exact_s1_activation_claim_priority($1) value",
+        [activationJobId],
+      ),
+      false,
+    );
+    assert.equal(await firstByPatchedOrder(), genericJobId);
+  } finally {
+    await db.close();
+  }
 });
 
 test("activation claim and provider boundary bind once while expired preclaim work terminalizes without a call", async () => {

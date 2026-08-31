@@ -63,6 +63,8 @@ const QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION =
   "20260831056900_accept_exact_qoo10_heading_normalization.sql";
 const QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION =
   "20260831057000_retire_stale_qoo10_s1_verifier.sql";
+const QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION =
+  "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -291,9 +293,20 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
   const isStaleVerifierRetirement = normalized.includes(
     "exact Qoo10 verifier retirement migration history drifted",
   );
-  if (!isHeadingNormalization && !isStaleVerifierRetirement) return normalized;
+  const isExactActivationClaimPriority = normalized.includes(
+    "exact Qoo10 activation priority migration history drifted",
+  );
+  if (
+    !isHeadingNormalization
+    && !isStaleVerifierRetirement
+    && !isExactActivationClaimPriority
+  ) return normalized;
   const retirementPredecessor = isStaleVerifierRetirement
     ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
+    : "";
+  const claimPriorityPredecessors = isExactActivationClaimPriority
+    ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
+      + ",\n      ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')"
     : "";
   return `
     create schema if not exists supabase_migrations;
@@ -305,7 +318,7 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     insert into supabase_migrations.schema_migrations(version,statements,name)
     values
       ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
-      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}
     on conflict (version) do nothing;
     ${normalized}
   `;
@@ -623,6 +636,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION,
       QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION,
       QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION,
+      QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -686,6 +700,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         < migrationNames.indexOf(QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION),
       "stale Qoo10 verifier retirement must replay after heading normalization",
     );
+    assert.ok(
+      migrationNames.indexOf(QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION),
+      "exact Qoo10 activation claim priority must replay after stale verifier retirement",
+    );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -737,6 +756,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         await db.query(
           `insert into supabase_migrations.schema_migrations(version,statements,name)
            values ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')`,
+        );
+      }
+      if (name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION) {
+        await db.query(
+          "delete from supabase_migrations.schema_migrations where version = '20260831057000'",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /migration history drifted/,
+          "activation claim priority must fail closed without stale-verifier retirement history",
+        );
+        await db.exec("rollback");
+        await db.query(
+          `insert into supabase_migrations.schema_migrations(version,statements,name)
+           values ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')`,
         );
       }
       if (name === QOO10_SCOPED_GATE_MIGRATION) {
@@ -1264,6 +1298,78 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           0,
           "a clean replay must not fabricate a production retirement audit",
+        );
+      }
+      if (name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831056700','20260831056800','20260831056900',
+                '20260831057000','20260831057100'
+              )`,
+          ),
+          5,
+          "claim priority must be recorded after all exact S1 predecessors",
+        );
+        const localClaimDefinition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
+          )`,
+        );
+        const serverlessClaimDefinition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
+          )`,
+        );
+        assert.match(
+          localClaimDefinition,
+          /order by\s+case\s+when sellerpilot_private\.qoo10_exact_s1_activation_claim_priority\(j\.id\)[\s\S]*case when j\.prepared_credential_id is null/,
+          "local claimant must place exact fresh activation before its unchanged generic order",
+        );
+        assert.match(
+          serverlessClaimDefinition,
+          /order by\s+case\s+when sellerpilot_private\.qoo10_exact_s1_activation_claim_priority\(job\.id\)[\s\S]*case when job\.prepared_credential_id is null/,
+          "serverless claimant must place exact fresh activation before its unchanged generic order",
+        );
+        assert.match(localClaimDefinition, /serverless_gateway_job_allowed/);
+        assert.match(serverlessClaimDefinition, /serverless_static_egress_allowed/);
+        assert.deepEqual(
+          (await db.query(`
+            select
+              encode(extensions.digest(replace(pg_get_functiondef(
+                'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
+              ), E'   order by\n     case\n       when sellerpilot_private.qoo10_exact_s1_activation_claim_priority(j.id)\n         then 0\n       else 1\n     end,\n     case when j.prepared_credential_id is null then 1 else 0 end,', E'   order by\n     case when j.prepared_credential_id is null then 1 else 0 end,'), 'sha256'), 'hex') local_pre_sha,
+              encode(extensions.digest(replace(pg_get_functiondef(
+                'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
+              ), E'   order by\n     case\n       when sellerpilot_private.qoo10_exact_s1_activation_claim_priority(job.id)\n         then 0\n       else 1\n     end,\n     case when job.prepared_credential_id is null then 1 else 0 end,', E'   order by\n     case when job.prepared_credential_id is null then 1 else 0 end,'), 'sha256'), 'hex') serverless_pre_sha,
+              encode(extensions.digest(pg_get_functiondef(
+                'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
+              ), 'sha256'), 'hex') local_sha,
+              encode(extensions.digest(pg_get_functiondef(
+                'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
+              ), 'sha256'), 'hex') serverless_sha
+          `)).rows,
+          [{
+            local_pre_sha: "01f86b17fb6a84e4fd02c62ccabeb83dc599cb00604c3da093f742878df5bce7",
+            serverless_pre_sha: "2de41863d8e2f495c5c96562eaf7014a726aebf876427722ea3a06443a2b7c24",
+            local_sha: "e66c646d6af44e4c3429c85c151b8a04083c4d61f61dc9b38fdd0538659b3b45",
+            serverless_sha: "03eaf14f7368f92f36c45c1f2b6b910df55e1ab8bb62b9f28d278e74f9d59677",
+          }],
+          "claim priority full function postimages must stay pinned",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.channel_gateway_jobs
+              where operation = 'listing.activate'`,
+          ),
+          0,
+          "claim-priority migration must not enqueue or claim an activation",
         );
       }
     }
@@ -9661,6 +9767,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       /j\.channel = 'shopee'[\s\S]*serverless_gateway_job_allowed\([\s\S]*j\.channel in \('coupang', 'smartstore', 'elevenst', 'temu'\)/i,
     );
+    assert.deepEqual(
+      (await db.query(`
+        select
+          encode(extensions.digest(pg_get_functiondef(
+            'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
+          ),'sha256'),'hex') local_sha,
+          encode(extensions.digest(pg_get_functiondef(
+            'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
+          ),'sha256'),'hex') serverless_sha
+      `)).rows,
+      [{
+        local_sha: "e607d71cbb12ac1f987b721781ac1520fba1720447e7511aac744ff8d48f3f1f",
+        serverless_sha: "ffbb9fa90c827171641f17a0ab5dde49ff6251c509a29b56d99da713433229e3",
+      }],
+      "delayed clean replay must converge to the observed production claim postimages",
+    );
     const firstShopeeStaticEgressStatus = await scalar(
       db,
       "select public.sellerpilot_service_serverless_static_egress_status()",
@@ -10092,6 +10214,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION
         && name !== QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION
         && name !== QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION
+        && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -11788,6 +11911,11 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         lazadaOauthReauthorizationMigration = source;
       } else if (name === QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION) {
         qoo10StaleVerifierRetirementMigration = source;
+      } else if (name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION) {
+        // This fixture deliberately applies the 204000 Lazada wrapper after
+        // the exact-S1 recovery migration, unlike chronological production.
+        // The 571 claim-priority migration is covered by the chronological
+        // full replay and must not bless this synthetic wrapper postimage.
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }

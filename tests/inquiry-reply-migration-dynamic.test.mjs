@@ -19,6 +19,9 @@ const SERVERLESS_CS_MIGRATIONS = new Set([
   "20260828145950_extend_serverless_cs_qoo10_inquiries.sql",
   "20260828200500_gate_serverless_static_egress.sql",
   "20260828201500_cleanup_static_egress_queued_reads.sql",
+  // The exact Qoo10 claim-priority patch pins the complete production
+  // serverless claimant chain that this intentionally reduced CS fixture omits.
+  "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql",
 ]);
 
 const supabaseCompatibilityLayer = String.raw`
