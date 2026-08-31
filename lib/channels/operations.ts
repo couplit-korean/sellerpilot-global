@@ -60,6 +60,13 @@ import { assertEbayListingCreateConfiguration } from "./ebay-listing-configurati
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
 import {
+  assertElevenstExactExistingUpdate,
+  elevenstExactExistingBaselineVerified,
+  elevenstExactExistingCreateForbidden,
+  elevenstExactExistingLiveReadbackVerified,
+  elevenstExactExistingUpdateTarget,
+} from "./elevenst-exact-existing-publication";
+import {
   assertCoupangExactQaCurrentProduct,
   assertCoupangExactQaUpdateReadback,
   coupangListingUpdateWrite,
@@ -71,6 +78,7 @@ import {
 } from "./coupang-exact-qa-recovery";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
+  elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
   listingUpdateRemoteIdentity,
   mergeListingUpdatePatch,
@@ -1087,6 +1095,12 @@ async function executeElevenst(input: ExecuteInput) {
     )], categoryId);
   }
   if (input.operation === "listing.create") {
+    if (elevenstExactExistingCreateForbidden({ argumentsValue: input.arguments })) {
+      return result(input, [elevenstPrewriteFailureStep(
+        "product-duplicate-create-fence",
+        new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN"),
+      )]);
+    }
     let product: Record<string, unknown>;
     try {
       product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
@@ -1254,8 +1268,10 @@ async function executeElevenst(input: ExecuteInput) {
     const productNo = pathSegment(stringArgument(input.arguments, "productNo"));
     let product: Record<string, unknown>;
     let snapshotMutableFingerprint: string;
+    const exactExistingPublication = elevenstExactExistingUpdateTarget(input.arguments);
     try {
       product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+      if (exactExistingPublication) assertElevenstExactExistingUpdate(input.arguments);
       snapshotMutableFingerprint = stringArgument(input.arguments, "sellerpilotSnapshotMutableFingerprint");
       if (!/^[a-f0-9]{64}$/u.test(snapshotMutableFingerprint)) {
         throw new Error("ELEVENST_UPDATE_SNAPSHOT_FINGERPRINT_INVALID");
@@ -1284,15 +1300,29 @@ async function executeElevenst(input: ExecuteInput) {
       && String(beforeProduct.sellerPrdCd ?? "") === sellerProductCode;
     const beforeMutableFingerprint = Object.keys(beforeProduct).length
       ? createHash("sha256")
-        .update(elevenstListingUpdateProjectionDigestInput(beforeProduct))
+        .update(exactExistingPublication
+          ? elevenstExactExistingUpdateProjectionDigestInput(beforeProduct)
+          : elevenstListingUpdateProjectionDigestInput(beforeProduct))
         .digest("hex")
       : "";
     const snapshotVerified = beforeMutableFingerprint === snapshotMutableFingerprint;
-    const beforeVerified = identityVerified && snapshotVerified;
+    const exactBaselineVerified = !exactExistingPublication
+      || elevenstExactExistingBaselineVerified(beforeProduct);
+    const beforeVerified = identityVerified && snapshotVerified && exactBaselineVerified;
     const beforeStep = elevenstVerifiedStep("product-update-preflight", beforeRemote, beforeVerified);
     beforeStep.data = {
       ...beforeStep.data,
       sellerpilotSnapshotMutableProjectionMatched: snapshotVerified,
+      ...(exactExistingPublication
+        ? { sellerpilotExactExistingBaselineStatus105Verified: exactBaselineVerified }
+        : {}),
+      ...((identityVerified && snapshotVerified && !exactBaselineVerified)
+        ? {
+            error: "ELEVENST_EXACT_EXISTING_BASELINE_STATUS_REQUIRED",
+            message: "정확한 기존 11번가 상품이 판매중지 상태 105인지 확인되지 않아 PUT을 시작하지 않았습니다.",
+            sellerpilotVerification: "ELEVENST_EXACT_EXISTING_BASELINE_STATUS_REQUIRED",
+          }
+        : {}),
       ...((identityVerified && !snapshotVerified)
         ? {
             error: "ELEVENST_UPDATE_SNAPSHOT_DRIFT",
@@ -1349,6 +1379,8 @@ async function executeElevenst(input: ExecuteInput) {
         : null;
       readbackVerified = identityVerified
         && contentVerified.ok
+        && (!exactExistingPublication
+          || elevenstExactExistingLiveReadbackVerified(input.arguments, readbackProduct))
         && (!publicationExpectation || Boolean(remoteState));
       readbackRemote.data.sellerpilotMismatches = contentVerified.mismatches.slice(0, 50);
     }

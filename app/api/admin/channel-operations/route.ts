@@ -27,7 +27,19 @@ import {
   loadAuthoritativeKrwSgdUsdRate,
   shopeeSgArgumentsForFingerprint,
 } from "../../../../lib/channels/shopee-sg-listing-create";
-import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
+import {
+  mergeElevenstListingUpdateProduct,
+  validateElevenstListingProduct,
+} from "../../../../lib/channels/elevenst-listing";
+import {
+  bindElevenstExactExistingPublication,
+  elevenstExactExistingCentralCommerceVerified,
+  elevenstExactExistingCentralSkuVerified,
+  elevenstExactExistingCreateForbidden,
+  elevenstExactExistingPublicationArgument,
+  elevenstExactExistingPublicationCandidate,
+  elevenstExactExistingPublicationIdentity,
+} from "../../../../lib/channels/elevenst-exact-existing-publication";
 import {
   bindCoupangExactQaRecoveryArguments,
   coupangExactQaCentralSkuVerified,
@@ -39,6 +51,7 @@ import {
   type CoupangExactQaRecoveryPhase,
 } from "../../../../lib/channels/coupang-exact-qa-recovery";
 import {
+  elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
   bindQoo10RollbackUpdateRecoveryArguments,
   listingUpdateRemoteIdentity,
@@ -279,6 +292,17 @@ export async function POST(request: NextRequest) {
       message: "상품 원장 ID가 없는 상품 등록·수정·판매 중지는 중복 방지를 위해 실행할 수 없습니다.",
     }, { status: 409 });
   }
+  if (channel === "elevenst"
+      && operation === "listing.create"
+      && elevenstExactExistingCreateForbidden({
+        productId: parsed.data.productId,
+        argumentsValue: parsed.data.arguments,
+      })) {
+    return NextResponse.json({
+      message: "이미 존재하는 정확한 11번가 QA 상품은 신규 등록하지 않고 기존 상품 수정으로만 복구합니다.",
+      mode: "elevenst_exact_existing_duplicate_create_forbidden",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (operation === "listing.create" && (parsed.data.currency === undefined || parsed.data.price === undefined)) {
     return NextResponse.json({
       message: "상품 등록 가격과 통화를 확인하지 못해 임의 값으로 판매채널에 전송하지 않았습니다.",
@@ -458,6 +482,7 @@ export async function POST(request: NextRequest) {
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
+  let boundElevenstExactExistingPublication = false;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -703,6 +728,34 @@ export async function POST(request: NextRequest) {
       }
       boundQoo10RollbackUpdateRecovery = identity.data;
     }
+    if (operation === "listing.update"
+        && channel === "elevenst"
+        && elevenstExactExistingPublicationCandidate({
+          channel,
+          listingId: String(exactListing.id ?? ""),
+          remoteId: String(exactListing.remoteId ?? ""),
+          marketplaceSku: typeof exactListing.marketplaceSku === "string" ? exactListing.marketplaceSku : null,
+          status: String(exactListing.status ?? ""),
+          requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+            ? exactListing.requestedPublicationIntent
+            : null,
+          remoteVisibility: typeof exactListing.remoteVisibility === "string" ? exactListing.remoteVisibility : null,
+          providerStatus: typeof exactListing.providerStatus === "string" ? exactListing.providerStatus : null,
+          publishedAt: typeof exactListing.publishedAt === "string" ? exactListing.publishedAt : null,
+          failureClass: typeof exactListing.failureClass === "string" ? exactListing.failureClass : null,
+        })) {
+      if (productId !== elevenstExactExistingPublicationIdentity.productId
+          || !elevenstExactExistingCentralSkuVerified(contextRecord)
+          || !elevenstExactExistingCentralCommerceVerified(contextRecord)
+          || boundListingCurrency !== elevenstExactExistingPublicationIdentity.currency
+          || boundListingPrice !== elevenstExactExistingPublicationIdentity.priceKrw) {
+        return NextResponse.json({
+          message: "11번가 기존 QA 상품의 SKU·5,000원·재고 1 결속을 확인하지 못해 수정하지 않았습니다.",
+          mode: "elevenst_exact_existing_central_contract_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundElevenstExactExistingPublication = true;
+    }
     if (channel === "ebay" && operation === "listing.update") {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
         "sellerpilot_service_get_ebay_listing_update_identity",
@@ -814,6 +867,7 @@ export async function POST(request: NextRequest) {
   );
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
+  delete effectiveArguments[elevenstExactExistingPublicationArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -881,19 +935,45 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     try {
-      const product = mergeElevenstListingUpdateProduct(snapshot.product, parsed.data.arguments.productPatch);
+      const requestedPatch = isRecord(parsed.data.arguments.productPatch)
+        ? parsed.data.arguments.productPatch
+        : {};
+      let productPatch: Record<string, unknown> = structuredClone(requestedPatch);
+      let product: Record<string, unknown>;
+      let snapshotDigestInput: string;
+      if (boundElevenstExactExistingPublication) {
+        const { selPrc, prdSelQty, ...genericPatch } = requestedPatch;
+        if (String(selPrc ?? "").trim() !== String(elevenstExactExistingPublicationIdentity.priceKrw)
+            || String(prdSelQty ?? "").trim() !== String(elevenstExactExistingPublicationIdentity.stock)) {
+          throw new Error("ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED");
+        }
+        const genericProduct = mergeElevenstListingUpdateProduct(snapshot.product, genericPatch);
+        productPatch = {
+          ...genericPatch,
+          selPrc: String(elevenstExactExistingPublicationIdentity.priceKrw),
+          prdSelQty: String(elevenstExactExistingPublicationIdentity.stock),
+        };
+        product = validateElevenstListingProduct({ ...genericProduct, ...productPatch });
+        snapshotDigestInput = elevenstExactExistingUpdateProjectionDigestInput(snapshot.product);
+      } else {
+        product = mergeElevenstListingUpdateProduct(snapshot.product, requestedPatch);
+        snapshotDigestInput = elevenstListingUpdateProjectionDigestInput(snapshot.product);
+      }
       const sellerpilotSnapshotMutableFingerprint = createHash("sha256")
-        .update(elevenstListingUpdateProjectionDigestInput(snapshot.product))
+        .update(snapshotDigestInput)
         .digest("hex");
       effectiveArguments = {
         ...(parsed.data.arguments.sellerpilotAssets === undefined
           ? {}
           : { sellerpilotAssets: structuredClone(parsed.data.arguments.sellerpilotAssets) }),
         productNo,
-        productPatch: structuredClone(parsed.data.arguments.productPatch),
+        productPatch,
         product,
         sellerpilotSnapshotMutableFingerprint,
       };
+      if (boundElevenstExactExistingPublication) {
+        effectiveArguments = bindElevenstExactExistingPublication(effectiveArguments);
+      }
     } catch {
       return NextResponse.json({
         message: "11번가에서 안전하게 수정할 수 있는 상품명·설명·필수정보·이미지 값만 입력해 주세요.",

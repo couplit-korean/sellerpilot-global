@@ -61,6 +61,13 @@ import {
   temuActivationBinding,
   temuContainmentDiscoveryBinding,
 } from "./provider-temu-publication-readback";
+import {
+  assertElevenstExactExistingUpdate,
+  elevenstExactExistingCreateForbidden,
+  elevenstExactExistingPublicationArgument,
+  elevenstExactExistingPublicationBinding,
+  elevenstExactExistingUpdateTarget,
+} from "./elevenst-exact-existing-publication";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -573,6 +580,22 @@ export async function executeServerlessGatewayProviderJob(
         && input.job.operation === "listing.create"
         && coupangExactQaCreateForbidden({ argumentsValue: rawArguments })) {
       throw new Error("COUPANG_EXACT_QA_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    if (input.job.channel === "elevenst"
+        && input.job.operation === "listing.create"
+        && elevenstExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
+        && (input.job.channel !== "elevenst"
+          || input.job.operation !== "listing.update"
+          || !elevenstExactExistingPublicationBinding(rawArguments))) {
+      throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "elevenst"
+        && input.job.operation === "listing.update"
+        && elevenstExactExistingUpdateTarget(rawArguments)) {
+      assertElevenstExactExistingUpdate(rawArguments);
     }
     const coupangRecoveryPhase = input.job.operation === "listing.update"
       || input.job.operation === "listing.stop"

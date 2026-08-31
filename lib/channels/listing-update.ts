@@ -7,6 +7,11 @@ import {
   elevenstListingUpdatePatchFromProduct,
   elevenstListingUpdateProjection,
 } from "./elevenst-listing";
+import {
+  elevenstExactExistingPublicationArgument,
+  elevenstExactExistingPublicationCandidate,
+  elevenstExactExistingPublicationIdentity,
+} from "./elevenst-exact-existing-publication";
 import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 
 export type ListingUpdateReference = {
@@ -332,6 +337,18 @@ export function listingUpdateServerCandidate(
       channel,
       listingId: listing.listingId,
       remoteId: listing.remoteId,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    })
+    || elevenstExactExistingPublicationCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
+      marketplaceSku: listing.marketplaceSku,
       status: listing.status,
       requestedPublicationIntent: listing.requestedPublicationIntent,
       remoteVisibility: listing.remoteVisibility,
@@ -841,13 +858,41 @@ export function prepareListingUpdateArguments(
     const suppliedPatch = recordValue(createArguments.productPatch);
     const suppliedProduct = recordValue(createArguments.product);
     const hasSuppliedPatch = Object.keys(suppliedPatch).length > 0;
+    const exactExistingPublication = elevenstExactExistingPublicationCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
+      marketplaceSku: listing.marketplaceSku,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    });
+    if (exactExistingPublication
+        && (identityValue(suppliedProduct.sellerPrdCd) !== elevenstExactExistingPublicationIdentity.sellerSku
+          || identityValue(suppliedProduct.dispCtgrNo) !== elevenstExactExistingPublicationIdentity.categoryId
+          || identityValue(suppliedProduct.selPrc) !== String(elevenstExactExistingPublicationIdentity.priceKrw)
+          || identityValue(suppliedProduct.prdSelQty) !== String(elevenstExactExistingPublicationIdentity.stock))) {
+      throw new Error("ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED");
+    }
+    const basePatch = hasSuppliedPatch
+      ? structuredClone(suppliedPatch)
+      : elevenstListingUpdatePatchFromProduct(createArguments.product);
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
+      ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       ...optionalArgument(createArguments, "sellerpilotSnapshotMutableFingerprint"),
+      ...optionalArgument(createArguments, elevenstExactExistingPublicationArgument),
       productNo: remoteId,
-      productPatch: hasSuppliedPatch
-        ? structuredClone(suppliedPatch)
-        : elevenstListingUpdatePatchFromProduct(createArguments.product),
+      productPatch: exactExistingPublication
+        ? {
+            ...basePatch,
+            selPrc: String(elevenstExactExistingPublicationIdentity.priceKrw),
+            prdSelQty: String(elevenstExactExistingPublicationIdentity.stock),
+          }
+        : basePatch,
       ...(hasSuppliedPatch && Object.keys(suppliedProduct).length
         ? { product: structuredClone(suppliedProduct) }
         : {}),
@@ -910,6 +955,15 @@ function canonicalComparableJson(value: unknown): string {
  */
 export function elevenstListingUpdateProjectionDigestInput(value: unknown) {
   return canonicalComparableJson(normalizedComparable(elevenstListingUpdateProjection(value)));
+}
+
+export function elevenstExactExistingUpdateProjectionDigestInput(value: unknown) {
+  const product = recordValue(value);
+  return canonicalComparableJson(normalizedComparable({
+    ...elevenstListingUpdateProjection(product),
+    selPrc: product.selPrc,
+    prdSelQty: product.prdSelQty,
+  }));
 }
 
 function subsetMismatches(expectedValue: unknown, actualValue: unknown, path = ""): string[] {
