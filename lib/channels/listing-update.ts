@@ -7,7 +7,7 @@ import {
   elevenstListingUpdatePatchFromProduct,
   elevenstListingUpdateProjection,
 } from "./elevenst-listing";
-import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-recovery";
+import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 
 export type ListingUpdateReference = {
   listingId?: string | null;

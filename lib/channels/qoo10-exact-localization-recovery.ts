@@ -2,17 +2,10 @@ import {
   listingPublicationLanguageVerified,
   normalizedListingPublicationText,
 } from "./listing-publication-content";
+import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 import { qoo10DetailImageUrls } from "./qoo10-listing-create-preflight";
 
-export const qoo10ExactLocalizationRecoveryIdentity = Object.freeze({
-  remoteId: "1217336970",
-  sellerSku: "QA-20260823-CC-001",
-  categoryCode: "320000542",
-  title: "貼り付け式ケーブル整理クリップ6個セット",
-  sourceKeyword: "貼り付け式ケーブル整理クリップ6個セット,No Brand,購入前確認",
-  providerKeyword: "No Brand,購入前確認",
-  legacyRomanizedName: "buchakhyeong keibeul jeongri keulrip 6gae seteu",
-});
+export { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 
 type UnknownRecord = Record<string, unknown>;
 
