@@ -89,11 +89,11 @@ test("scoped and exact permits cannot authorize any unrelated channel mutation",
     /: channel === "qoo10"[\s\S]{0,180}&& qoo10ScopedReleaseGateIsExact[\s\S]{0,180}&& releaseGateStatus\.qoo10EffectiveOpen === true\)/,
   );
   const closedGateGuard = route.match(
-    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\s*&& !smartstoreExactQaUpdatePermitArmed\)/,
+    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\s*&& !smartstoreExactQaUpdatePermitArmed\s*&& !exactExistingUpdatePermitArmed\)/,
   );
   assert.ok(
     closedGateGuard,
-    "closed gate must admit only the separately armed exact Qoo10 or Smartstore permit",
+    "closed gate must admit only separately armed exact Qoo10, Smartstore, or exact existing-update permits",
   );
   assert.ok(
     (closedGateGuard.index ?? Number.POSITIVE_INFINITY)

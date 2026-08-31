@@ -592,6 +592,9 @@ export async function POST(request: NextRequest) {
   let boundQoo10ExactLocalizationUpdate = false;
   let qoo10ExactLocalizationUpdatePermitArmed = false;
   let smartstoreExactQaUpdatePermitArmed = false;
+  let exactExistingUpdatePermitArmed = false;
+  let boundExactExistingClosedGateUpdateChannel:
+    "coupang" | "elevenst" | "ebay" | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
@@ -821,6 +824,7 @@ export async function POST(request: NextRequest) {
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
         boundCoupangExactQaRecoveryPhase = "listing.update";
+        boundExactExistingClosedGateUpdateChannel = "coupang";
       } else if (operation === "listing.stop") {
         boundCoupangExactQaRecoveryPhase = "listing.stop";
       }
@@ -988,6 +992,7 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
       boundElevenstExactExistingPublication = true;
+      boundExactExistingClosedGateUpdateChannel = "elevenst";
     }
     if (channel === "ebay" && operation === "listing.update") {
       const exactRecovery = ebayExactExistingQaRecoveryCandidate({
@@ -1045,6 +1050,7 @@ export async function POST(request: NextRequest) {
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
         boundEbayExactExistingQaRecovery = binding;
+        boundExactExistingClosedGateUpdateChannel = "ebay";
       } else {
         const { data: identityData, error: identityError } = await serviceClient.rpc(
           "sellerpilot_service_get_ebay_listing_update_identity",
@@ -1607,6 +1613,38 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
     }
+    if (boundExactExistingClosedGateUpdateChannel && closedReleaseGateIsExact) {
+      if (runtimeRelease.status !== "valid") {
+        return NextResponse.json({
+          message: "기존 exact 상품 수정을 현재 서버 릴리스에 결속하지 못했습니다.",
+          mode: "exact_existing_update_release_required",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: permitData, error: permitError } = await serviceClient.rpc(
+        "sellerpilot_service_arm_exact_existing_update",
+        {
+          p_channel: boundExactExistingClosedGateUpdateChannel,
+          p_listing_id: parsed.data.resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_release_sha: runtimeRelease.release,
+          p_request_fingerprint: requestFingerprint,
+        },
+      );
+      exactExistingUpdatePermitArmed = !permitError
+        && isRecord(permitData)
+        && permitData.contract === "exact_existing_update_permit_v1"
+        && permitData.channel === boundExactExistingClosedGateUpdateChannel
+        && permitData.listingId === parsed.data.resourceListingId
+        && permitData.releaseSha === runtimeRelease.release
+        && permitData.requestFingerprint === requestFingerprint
+        && permitData.bound === false;
+      if (!exactExistingUpdatePermitArmed) {
+        return NextResponse.json({
+          message: "기존 exact 상품 수정의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
+          mode: "exact_existing_update_permit_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
     const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
       && (globalReleaseGateIsExact
         ? releaseGateStatus.effectiveOpen === true
@@ -1615,7 +1653,8 @@ export async function POST(request: NextRequest) {
           && releaseGateStatus.qoo10EffectiveOpen === true);
     if (!channelReleaseGateIsEffective
         && !qoo10ExactLocalizationUpdatePermitArmed
-        && !smartstoreExactQaUpdatePermitArmed) {
+        && !smartstoreExactQaUpdatePermitArmed
+        && !exactExistingUpdatePermitArmed) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",
