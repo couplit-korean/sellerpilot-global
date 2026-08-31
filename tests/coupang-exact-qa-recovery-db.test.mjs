@@ -4,7 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const migrationUrl = new URL(
-  "../supabase/migrations/20260831133000_coupang_exact_qa_recovery_fence.sql",
+  "../supabase/migrations/20260831140000_coupang_exact_qa_recovery_fence.sql",
   import.meta.url,
 );
 

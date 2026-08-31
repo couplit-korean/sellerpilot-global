@@ -84,7 +84,7 @@ const COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS = {
 const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
   "20260831132000_competitor_identity_lineage_fence.sql";
 const COUPANG_EXACT_QA_RECOVERY_MIGRATION =
-  "20260831133000_coupang_exact_qa_recovery_fence.sql";
+  "20260831140000_coupang_exact_qa_recovery_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([

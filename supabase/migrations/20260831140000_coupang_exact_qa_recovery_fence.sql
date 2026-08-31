@@ -96,10 +96,10 @@ grant execute on function
 
 alter function public.sellerpilot_service_reserve_and_enqueue_listing_create(
   uuid, uuid, uuid, text, text, text, text, numeric, text, jsonb
-) rename to sellerpilot_311330_reserve_listing_before_coupang_exact_qa_fence;
+) rename to sellerpilot_311400_reserve_listing_before_coupang_exact_qa_fence;
 
 revoke all on function
-  public.sellerpilot_311330_reserve_listing_before_coupang_exact_qa_fence(
+  public.sellerpilot_311400_reserve_listing_before_coupang_exact_qa_fence(
     uuid, uuid, uuid, text, text, text, text, numeric, text, jsonb
   ) from public, anon, authenticated, service_role;
 
@@ -127,7 +127,7 @@ begin
     raise exception 'COUPANG_EXACT_QA_DUPLICATE_CREATE_FORBIDDEN'
       using errcode = '55000';
   end if;
-  return public.sellerpilot_311330_reserve_listing_before_coupang_exact_qa_fence(
+  return public.sellerpilot_311400_reserve_listing_before_coupang_exact_qa_fence(
     p_product_id,
     p_credential_id,
     p_attempt_id,
@@ -151,10 +151,10 @@ grant execute on function public.sellerpilot_service_reserve_and_enqueue_listing
 
 alter function public.sellerpilot_service_enqueue_listing_gateway_job(
   uuid, uuid, uuid, text, text, jsonb
-) rename to sellerpilot_311330_enqueue_listing_before_coupang_exact_qa_fence;
+) rename to sellerpilot_311400_enqueue_listing_before_coupang_exact_qa_fence;
 
 revoke all on function
-  public.sellerpilot_311330_enqueue_listing_before_coupang_exact_qa_fence(
+  public.sellerpilot_311400_enqueue_listing_before_coupang_exact_qa_fence(
     uuid, uuid, uuid, text, text, jsonb
   ) from public, anon, authenticated, service_role;
 
@@ -279,7 +279,7 @@ begin
     end if;
   end if;
 
-  return public.sellerpilot_311330_enqueue_listing_before_coupang_exact_qa_fence(
+  return public.sellerpilot_311400_enqueue_listing_before_coupang_exact_qa_fence(
     p_listing_id,
     p_credential_id,
     p_attempt_id,
