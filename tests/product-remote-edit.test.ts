@@ -404,7 +404,10 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(workbench, /channelTargetOptionValue\(item\)/);
   assert.match(workbench, /providerStatus\?: string \| null/);
   assert.match(workbench, /qoo10RollbackListingUpdateCandidate\(channel, listing\)/);
-  assert.match(workbench, /failureClass === "external_action" && !recoverableEbayUpdate/);
+  assert.match(workbench, /recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate/);
+  assert.match(workbench, /failureClass === "external_action"[\s\S]{0,180}&& !recoverableEbayUpdate[\s\S]{0,180}&& !recoverableSmartstoreUpdate/);
+  assert.match(source, /allowExactSmartstoreRecovery = smartstoreExactQaRecoveryCandidate/);
+  assert.match(source, /&& !allowExactLazadaRecovery[\s\S]{0,120}&& !allowExactSmartstoreRecovery/);
   assert.doesNotMatch(workbench, /failureClass === "external_action" && !recoverableEbayUpdate && !recoverableQoo10RollbackUpdate/);
   const channelOperations = readFileSync(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   assert.match(channelOperations, /boundListingCurrency = policy\.targetCurrency/);

@@ -123,3 +123,18 @@ test("Smartstore exact QA central SKU accepts no conflicting product or manual v
     manualFields: { sellerSku: smartstoreExactQaRecoveryIdentity.centralSku },
   }), false);
 });
+
+test("Smartstore exact recovery is exposed only through the exact UI and proxy fences", async () => {
+  const [workbench, remoteEdit] = await Promise.all([
+    readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/products/[id]/remote-edit/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(workbench, /smartstoreExactQaWorkbenchRecoveryCandidate/);
+  assert.match(workbench, /productId === smartstoreExactQaRecoveryIdentity\.productId/);
+  assert.match(workbench, /recoverableSmartstoreUpdate/);
+  assert.match(remoteEdit, /allowExactSmartstoreRecovery = smartstoreExactQaRecoveryCandidate/);
+  assert.match(
+    remoteEdit,
+    /&& !allowExactLazadaRecovery[\s\S]{0,160}&& !allowExactSmartstoreRecovery/,
+  );
+});

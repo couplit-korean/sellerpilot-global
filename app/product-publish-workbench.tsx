@@ -10,6 +10,10 @@ import {
   qoo10ExactReviewedJapaneseDetail,
 } from "../lib/channels/qoo10-exact-localization-identity";
 import {
+  smartstoreExactQaRecoveryCandidate,
+  smartstoreExactQaRecoveryIdentity,
+} from "../lib/channels/smartstore-exact-qa-recovery";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
   marketplaceMinimumThumbnailCount,
@@ -103,6 +107,25 @@ type Listing = {
   providerStatus?: string | null;
   operationAttemptId?: string | null;
 };
+
+function smartstoreExactQaWorkbenchRecoveryCandidate(
+  productId: string | null,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  return productId === smartstoreExactQaRecoveryIdentity.productId
+    && smartstoreExactQaRecoveryCandidate({
+      channel,
+      listingId: listing?.id,
+      remoteId: listing?.remoteId,
+      status: listing?.status,
+      requestedPublicationIntent: listing?.requestedPublicationIntent,
+      remoteVisibility: listing?.remoteVisibility,
+      providerStatus: listing?.providerStatus,
+      publishedAt: listing?.publishedAt,
+      failureClass: listing?.failureClass,
+    });
+}
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
 const ebayMarketplaceTargets: ChannelTarget[] = [
@@ -1210,7 +1233,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
     const recoverableQoo10RollbackUpdate = qoo10RollbackListingUpdateCandidate(channel, listing);
-    if (listing?.failureClass === "external_action" && !recoverableEbayUpdate) {
+    const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+      productId,
+      channel,
+      listing,
+    );
+    if (listing?.failureClass === "external_action"
+        && !recoverableEbayUpdate
+        && !recoverableSmartstoreUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
       return false;
     }
@@ -1464,6 +1494,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const operation = listingWriteOperation(listing);
       const parsedDraft = parseDraft(drafts[channel]);
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
       const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft, operation).length > 0 || missingNativeValues(channel, parsedDraft, operation).length > 0;
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
       return Boolean(imagePackageReady
@@ -1475,7 +1510,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && !["queued", "publishing"].includes(listing?.status ?? "")
         && !(listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review")
         && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
-        && (listing?.failureClass !== "external_action" || recoverableEbayUpdate));
+        && (listing?.failureClass !== "external_action"
+          || recoverableEbayUpdate
+          || recoverableSmartstoreUpdate));
     }).slice(0, publicationSelectableChannelKeys.length);
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
@@ -1819,7 +1856,19 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
-      const result = listing?.failureClass === "external_action" && !recoverableEbayUpdate
+      const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
+      const recoverableExternalActionUpdate = recoverableEbayUpdate
+        || recoverableSmartstoreUpdate;
+      const recoveryReadyMessage = recoverableEbayUpdate
+        ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다."
+        : recoverableSmartstoreUpdate
+          ? `불변 스마트스토어 원상품 ${smartstoreExactQaRecoveryIdentity.originProductNo}·채널상품 ${smartstoreExactQaRecoveryIdentity.channelProductNo} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+          : "";
+      const result = listing?.failureClass === "external_action" && !recoverableExternalActionUpdate
         ? { phase: "blocked" as const, message: listing.lastError ?? "원격 판매자센터 상태를 수동 확인해야 합니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id }
         : listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review"
           ? { phase: "pending_review" as const, message: "판매채널 심사 대기 중입니다. 공개 상태 readback 전에는 게시 성공으로 집계하거나 다시 등록하지 않습니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id, remoteId: listing.remoteId ?? undefined }
@@ -1896,7 +1945,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             </label>)}</div>}
           </div>}
           {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}
-          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableEbayUpdate ? "blocked" : "failed"}`}><b>{recoverableEbayUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableEbayUpdate ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다." : listing.lastError}</p>}
+          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableExternalActionUpdate ? "blocked" : "failed"}`}><b>{recoverableExternalActionUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableExternalActionUpdate ? recoveryReadyMessage : listing.lastError}</p>}
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
