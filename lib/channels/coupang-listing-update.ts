@@ -18,6 +18,33 @@ function identityValue(value: unknown) {
   return "";
 }
 
+function exactText(value: unknown) {
+  return typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
+}
+
+function strictBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (value === 1 || value === "1") return true;
+  if (value === 0 || value === "0") return false;
+  return undefined;
+}
+
+function uniqueHttpsUrls(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const urls = value.map(exactText).filter((url) => {
+    try {
+      return new URL(url).protocol === "https:";
+    } catch {
+      return false;
+    }
+  });
+  return urls.length === value.length && new Set(urls).size === urls.length
+    ? urls
+    : [];
+}
+
 function exactItem(currentValue: unknown) {
   const current = recordValue(currentValue);
   const items = Array.isArray(current.items) ? current.items.map(recordValue) : [];
@@ -44,6 +71,36 @@ function exactDetailImageUrls(contentsValue: unknown) {
   });
 }
 
+function exactBoundDetailImageUrls(argumentsValue: Record<string, unknown>) {
+  const binding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+  const transport = Array.isArray(binding.providerTransportImages)
+    ? binding.providerTransportImages.map(recordValue)
+    : [];
+  return uniqueHttpsUrls(transport.map((image) => image.publicUrl));
+}
+
+function exactGalleryImageUrls(imagesValue: unknown) {
+  const images = Array.isArray(imagesValue) ? imagesValue.map(recordValue) : [];
+  const expectedCount = coupangExactQaRecoveryIdentity.representativeImageCount
+    + coupangExactQaRecoveryIdentity.detailImageCount;
+  if (images.length !== expectedCount
+      || images.some((image, index) => Number(image.imageOrder) !== index)) return null;
+  const representations = images.filter((image) =>
+    exactText(image.imageType).toUpperCase() === "REPRESENTATION");
+  const details = images.filter((image) =>
+    exactText(image.imageType).toUpperCase() === "DETAIL");
+  const urls = uniqueHttpsUrls(images.map((image) => image.vendorPath));
+  if (representations.length !== coupangExactQaRecoveryIdentity.representativeImageCount
+      || details.length !== coupangExactQaRecoveryIdentity.detailImageCount
+      || exactText(images[0]?.imageType).toUpperCase() !== "REPRESENTATION"
+      || images.slice(1).some((image) => exactText(image.imageType).toUpperCase() !== "DETAIL")
+      || urls.length !== expectedCount) return null;
+  return {
+    representative: urls[0],
+    details: urls.slice(1),
+  };
+}
+
 function strictAttributes(value: unknown) {
   const source = Array.isArray(value) ? value.map(recordValue) : [];
   const withoutColor = source.filter((attribute) =>
@@ -68,8 +125,19 @@ export function prepareCoupangExactQaRecoveryArguments(
   }
   const item = items[0];
   const details = exactDetailImageUrls(item.contents);
-  if (details.length !== 8 || new Set(details).size !== 8) {
+  const boundDetails = exactBoundDetailImageUrls(argumentsValue);
+  const gallery = exactGalleryImageUrls(item.images);
+  if (details.length !== coupangExactQaRecoveryIdentity.detailImageCount
+      || new Set(details).size !== coupangExactQaRecoveryIdentity.detailImageCount
+      || uniqueHttpsUrls(details).length !== coupangExactQaRecoveryIdentity.detailImageCount
+      || boundDetails.length !== coupangExactQaRecoveryIdentity.detailImageCount
+      || details.some((url, index) => url !== boundDetails[index])) {
     throw new Error("COUPANG_EXACT_QA_BUYER_CONTENT_IMAGES_REQUIRED");
+  }
+  if (!gallery
+      || gallery.details.some((url, index) => url !== boundDetails[index])
+      || boundDetails.includes(gallery.representative)) {
+    throw new Error("COUPANG_EXACT_QA_GALLERY_IMAGES_REQUIRED");
   }
 
   return {
@@ -87,16 +155,19 @@ export function prepareCoupangExactQaRecoveryArguments(
       ...body,
       sellerProductId: Number(coupangExactQaRecoveryIdentity.sellerProductId),
       displayCategoryCode: coupangExactQaRecoveryIdentity.displayCategoryCode,
-      sellerProductName: "부착형 케이블 정리 클립 6개 세트",
-      displayProductName: "부착형 케이블 정리 클립 6개 세트",
+      sellerProductName: coupangExactQaRecoveryIdentity.sellerProductName,
+      displayProductName: coupangExactQaRecoveryIdentity.sellerProductName,
       brand: coupangExactQaRecoveryIdentity.brand,
       manufacture: coupangExactQaRecoveryIdentity.manufacturer,
       generalProductName: "케이블 정리소품",
       items: [{
         ...item,
         sellerpilotItemMatchId: coupangExactQaRecoveryIdentity.vendorItemId,
-        itemName: "부착형 케이블 정리 클립 검정색 6개",
+        itemName: coupangExactQaRecoveryIdentity.itemName,
         modelNo: coupangExactQaRecoveryIdentity.sellerSku,
+        originalPrice: coupangExactQaRecoveryIdentity.priceKrw,
+        salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+        maximumBuyCount: coupangExactQaRecoveryIdentity.stock,
         attributes: strictAttributes(item.attributes),
         notices: [],
       }],
@@ -111,7 +182,35 @@ export function assertCoupangExactQaCurrentProduct(
   if (binding.phase !== "listing.update" && binding.phase !== "listing.stop") {
     throw new Error("COUPANG_EXACT_QA_RECOVERY_PHASE_INVALID");
   }
-  return exactItem(currentValue);
+  const exact = exactItem(currentValue);
+  const status = exactText(
+    exact.current.statusName
+      ?? exact.current.approvalStatus
+      ?? exact.current.status,
+  ).toUpperCase();
+  if (strictBoolean(exact.current.requested) !== true
+      || !/(?:부분승인완료|승인완료|PARTIAL_APPROVED|APPROVED)/u.test(status)) {
+    throw new Error("COUPANG_EXACT_QA_REMOTE_PUBLICATION_STATE_MISMATCH");
+  }
+  return exact;
+}
+
+export function assertCoupangExactQaInventoryReadback(
+  currentValue: unknown,
+  binding: CoupangExactQaRecoveryBinding,
+) {
+  if (binding.phase !== "listing.update") {
+    throw new Error("COUPANG_EXACT_QA_RECOVERY_PHASE_INVALID");
+  }
+  const current = recordValue(currentValue);
+  const remoteItemId = exactText(current.vendorItemId ?? current.sellerItemId);
+  if (remoteItemId !== binding.vendorItemId
+      || Number(current.salePrice) !== coupangExactQaRecoveryIdentity.priceKrw
+      || Number(current.amountInStock) !== coupangExactQaRecoveryIdentity.stock
+      || strictBoolean(current.onSale) !== true) {
+    throw new Error("COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH");
+  }
+  return current;
 }
 
 export function assertCoupangExactQaUpdateReadback(
@@ -122,18 +221,27 @@ export function assertCoupangExactQaUpdateReadback(
   const attributes = Array.isArray(item.attributes) ? item.attributes.map(recordValue) : [];
   const notices = Array.isArray(item.notices) ? item.notices.map(recordValue) : [];
   const details = exactDetailImageUrls(item.contents);
+  const gallery = exactGalleryImageUrls(item.images);
+  const displayProductName = exactText(current.displayProductName);
   const noticeText = JSON.stringify(notices);
   const noticeCategories = new Set(notices.map((notice) => String(notice.noticeCategoryName ?? "").trim()));
   if (Number(current.displayCategoryCode) !== coupangExactQaRecoveryIdentity.displayCategoryCode
+      || current.sellerProductName !== coupangExactQaRecoveryIdentity.sellerProductName
+      || !/[가-힣]/u.test(displayProductName)
+      || /화이트|white/iu.test(displayProductName)
       || current.brand !== coupangExactQaRecoveryIdentity.brand
       || current.manufacture !== coupangExactQaRecoveryIdentity.manufacturer
-      || /화이트|white/iu.test(String(current.sellerProductName ?? ""))
-      || /화이트|white/iu.test(String(item.itemName ?? ""))
+      || item.itemName !== coupangExactQaRecoveryIdentity.itemName
+      || Number(item.originalPrice) !== coupangExactQaRecoveryIdentity.priceKrw
+      || Number(item.salePrice) !== coupangExactQaRecoveryIdentity.priceKrw
+      || Number(item.maximumBuyCount) !== coupangExactQaRecoveryIdentity.stock
       || !attributes.some((attribute) =>
         String(attribute.attributeTypeName ?? "").trim() === "색상"
         && String(attribute.attributeValueName ?? "").trim() === coupangExactQaRecoveryIdentity.color)
-      || details.length !== 8
-      || new Set(details).size !== 8
+      || details.length !== coupangExactQaRecoveryIdentity.detailImageCount
+      || new Set(details).size !== coupangExactQaRecoveryIdentity.detailImageCount
+      || !gallery
+      || gallery.details.some((url, index) => url !== details[index])
       || notices.length === 0
       || noticeCategories.size !== 1
       || !noticeCategories.has(coupangExactQaRecoveryIdentity.noticeCategoryName)

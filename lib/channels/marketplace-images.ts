@@ -7,6 +7,10 @@ import sharp from "sharp";
 import { aiDetailAssetIds } from "../ai-generated-assets";
 import type { ActiveChannelKey } from "./catalog";
 import {
+  buildCoupangExactQaGalleryImages,
+  coupangExactQaRecoveryBinding,
+} from "./coupang-exact-qa-recovery";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
@@ -931,6 +935,7 @@ export async function prepareMarketplaceImages(
   if (channel === "coupang") {
     const body = record(next.body);
     const items = Array.isArray(body?.items) ? body.items : [];
+    const exactRecovery = coupangExactQaRecoveryBinding(next, "listing.update");
     const classification = record(assets?.classification);
     const localizedSections = Array.isArray(assets?.localizedDetailSections)
       ? assets.localizedDetailSections.map(record).filter((section): section is Record<string, unknown> => Boolean(section))
@@ -940,8 +945,16 @@ export async function prepareMarketplaceImages(
     for (const itemValue of items) {
       const item = record(itemValue);
       if (item && gallery.length) {
-        const combined = uniqueStrings([...gallery, ...details]).slice(0, 10);
-        item.images = combined.map((url, index) => ({
+        const exactImages = exactRecovery
+          ? buildCoupangExactQaGalleryImages(gallery, details)
+          : null;
+        if (exactRecovery && !exactImages) {
+          throw new Error("COUPANG_EXACT_QA_GALLERY_IMAGES_REQUIRED");
+        }
+        const combined = exactImages
+          ? exactImages.map((image) => image.vendorPath)
+          : uniqueStrings([...gallery, ...details]).slice(0, 10);
+        item.images = exactImages ?? combined.map((url, index) => ({
           imageOrder: index,
           imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
           vendorPath: url,

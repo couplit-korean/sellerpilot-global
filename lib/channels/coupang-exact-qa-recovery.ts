@@ -10,7 +10,15 @@ export const coupangExactQaRecoveryIdentity = Object.freeze({
   sellerProductId: "16356981734",
   vendorItemId: "95962393877",
   sellerSku: "QA-20260823-CC-001",
+  locale: "ko-KR",
+  currency: "KRW",
+  priceKrw: 5_000,
+  stock: 1,
+  representativeImageCount: 1,
+  detailImageCount: 8,
   displayCategoryCode: 64574,
+  sellerProductName: "부착형 케이블 정리 클립 6개 세트",
+  itemName: "부착형 케이블 정리 클립 검정색 6개",
   color: "검정색",
   brand: "No Brand",
   manufacturer: "Generic OEM",
@@ -36,6 +44,62 @@ function recordValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
+}
+
+function exactText(value: unknown) {
+  return typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
+}
+
+function uniqueHttpsUrls(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  const urls = value.map(exactText).filter((url) => {
+    try {
+      return new URL(url).protocol === "https:";
+    } catch {
+      return false;
+    }
+  });
+  return urls.length === value.length && new Set(urls).size === urls.length
+    ? urls
+    : [];
+}
+
+/**
+ * Coupang exposes one representative plus eight detail gallery positions for
+ * this exact recovery. The eight approved detail assets are also carried in
+ * buyer content; additional first-stage gallery variants must not displace
+ * them from the exact outbound gallery.
+ */
+export function buildCoupangExactQaGalleryImages(
+  galleryValue: unknown,
+  detailValue: unknown,
+) {
+  const gallery = uniqueHttpsUrls(galleryValue);
+  const details = uniqueHttpsUrls(detailValue);
+  if (details.length !== coupangExactQaRecoveryIdentity.detailImageCount) return null;
+  const representative = gallery.find((url) => !details.includes(url));
+  if (!representative) return null;
+  return [representative, ...details].map((vendorPath, imageOrder) => ({
+    imageOrder,
+    imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
+    vendorPath,
+  }));
+}
+
+function exactBoundDetailUrls(argumentsValue: Record<string, unknown>) {
+  const binding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+  const transport = Array.isArray(binding?.providerTransportImages)
+    ? binding.providerTransportImages.map(recordValue)
+    : [];
+  if (binding?.contract !== "sellerpilot_publication_asset_binding_v1"
+      || binding.providerImageSurface !== "detail_content"
+      || transport.some((image) => !image)
+      || transport.length !== coupangExactQaRecoveryIdentity.detailImageCount) {
+    return [];
+  }
+  return uniqueHttpsUrls(transport.map((image) => image?.publicUrl));
 }
 
 export function coupangExactQaRecoveryBindingValue(
@@ -91,6 +155,7 @@ export function bindCoupangExactQaRecoveryArguments(
 export function assertCoupangExactQaProviderContract(
   argumentsValue: Record<string, unknown>,
   phase: CoupangExactQaRecoveryPhase,
+  options: { sanitizedUpdate?: boolean } = {},
 ) {
   const binding = coupangExactQaRecoveryBinding(argumentsValue, phase);
   if (!binding) {
@@ -99,11 +164,28 @@ export function assertCoupangExactQaProviderContract(
 
   if (phase === "listing.update") {
     const body = recordValue(argumentsValue.body);
-    if (String(body?.sellerProductId ?? "") !== binding.sellerProductId
-        || argumentsValue.publicationIntent !== "live"
-        || argumentsValue.publicationExpectedLocale !== "ko-KR"
-        || argumentsValue.publicationExpectedImageCount !== 8) {
-      throw new Error("COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH");
+    const items = Array.isArray(body?.items) ? body.items.map(recordValue) : [];
+    const item = items.length === 1 ? items[0] : null;
+    const boundDetails = exactBoundDetailUrls(argumentsValue);
+    const mismatches = [
+      ...(String(body?.sellerProductId ?? "") === binding.sellerProductId ? [] : ["sellerProductId"]),
+      ...(argumentsValue.publicationIntent === "live" ? [] : ["publicationIntent"]),
+      ...(argumentsValue.publicationStateContract === "verified_remote_state_v1" ? [] : ["publicationStateContract"]),
+      ...(argumentsValue.publicationExpectedLocale === coupangExactQaRecoveryIdentity.locale ? [] : ["publicationExpectedLocale"]),
+      ...(/^[a-f0-9]{64}$/u.test(exactText(argumentsValue.publicationExpectedFingerprint)) ? [] : ["publicationExpectedFingerprint"]),
+      ...(argumentsValue.publicationExpectedImageCount === coupangExactQaRecoveryIdentity.detailImageCount ? [] : ["publicationExpectedImageCount"]),
+      ...(item ? [] : ["item"]),
+      ...(item && (options.sanitizedUpdate
+        ? exactText(item.sellerpilotItemMatchId) === binding.vendorItemId
+        : exactText(item.externalVendorSku) === binding.sellerSku) ? [] : ["externalVendorSku"]),
+      ...(item && exactText(item.modelNo) === binding.sellerSku ? [] : ["modelNo"]),
+      ...(options.sanitizedUpdate || (item && Number(item.originalPrice) === coupangExactQaRecoveryIdentity.priceKrw) ? [] : ["originalPrice"]),
+      ...(options.sanitizedUpdate || (item && Number(item.salePrice) === coupangExactQaRecoveryIdentity.priceKrw) ? [] : ["salePrice"]),
+      ...(options.sanitizedUpdate || (item && Number(item.maximumBuyCount) === coupangExactQaRecoveryIdentity.stock) ? [] : ["maximumBuyCount"]),
+      ...(options.sanitizedUpdate || boundDetails.length === coupangExactQaRecoveryIdentity.detailImageCount ? [] : ["sellerpilotPublicationAssetBinding"]),
+    ];
+    if (mismatches.length) {
+      throw new Error(`COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH:${mismatches.join(",")}`);
     }
   } else if (String(argumentsValue.sellerProductId ?? "") !== binding.sellerProductId
       || String(argumentsValue.vendorItemId ?? "") !== binding.vendorItemId

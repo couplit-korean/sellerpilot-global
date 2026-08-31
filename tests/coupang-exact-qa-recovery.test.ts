@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   bindCoupangExactQaRecoveryArguments,
+  buildCoupangExactQaGalleryImages,
   coupangExactQaCreateForbidden,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryCandidate,
@@ -17,6 +18,7 @@ import { prepareMarketplaceListingArguments } from "../lib/channels/provider-lis
 
 const fingerprint = "c".repeat(64);
 const missingFixtureField = Symbol("missing-fixture-field");
+const representativeImageUrl = "https://cdn.example.com/coupang-exact-representative.jpg";
 
 function setFixtureField(
   root: Record<string, unknown>,
@@ -35,14 +37,40 @@ function setFixtureField(
   else current[key] = value;
 }
 
+function detailImageUrls() {
+  return Array.from(
+    { length: coupangExactQaRecoveryIdentity.detailImageCount },
+    (_, index) => `https://cdn.example.com/coupang-exact-${index + 1}.jpg`,
+  );
+}
+
 function detailContents() {
-  return Array.from({ length: 8 }, (_, index) => ({
+  return detailImageUrls().map((url) => ({
     contentsType: "IMAGE",
     contentDetails: [{
       detailType: "IMAGE",
-      content: `https://cdn.example.com/coupang-exact-${index + 1}.jpg`,
+      content: url,
     }],
   }));
+}
+
+function exactGalleryImages() {
+  return [representativeImageUrl, ...detailImageUrls()].map((vendorPath, imageOrder) => ({
+    imageOrder,
+    imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
+    vendorPath,
+  }));
+}
+
+function exactPublicationAssetBinding() {
+  return {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    providerImageSurface: "detail_content",
+    providerTransportImages: detailImageUrls().map((publicUrl, index) => ({
+      role: `detail-role-${index + 1}`,
+      publicUrl,
+    })),
+  };
 }
 
 function exactNotices() {
@@ -74,6 +102,10 @@ function exactRemoteProduct(overrides: Record<string, unknown> = {}) {
       externalVendorSku: coupangExactQaRecoveryIdentity.sellerSku,
       modelNo: coupangExactQaRecoveryIdentity.sellerSku,
       itemName: "부착형 케이블 정리 클립 검정색 6개",
+      originalPrice: coupangExactQaRecoveryIdentity.priceKrw,
+      salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+      maximumBuyCount: coupangExactQaRecoveryIdentity.stock,
+      images: exactGalleryImages(),
       attributes: [{ attributeTypeName: "색상", attributeValueName: "검정색" }],
       notices: exactNotices(),
       contents: detailContents(),
@@ -89,14 +121,20 @@ function baseRecoveryArguments() {
     publicationExpectedLocale: "ko-KR",
     publicationExpectedFingerprint: fingerprint,
     publicationExpectedImageCount: 8,
+    sellerpilotPublicationAssetBinding: exactPublicationAssetBinding(),
     body: {
       sellerProductId: Number(coupangExactQaRecoveryIdentity.sellerProductId),
       displayCategoryCode: coupangExactQaRecoveryIdentity.displayCategoryCode,
       sellerProductName: "부착형 케이블 정리 클립 6개 세트",
       items: [{
         sellerpilotItemMatchId: coupangExactQaRecoveryIdentity.sellerSku,
+        externalVendorSku: coupangExactQaRecoveryIdentity.sellerSku,
         itemName: "부착형 케이블 정리 클립 화이트 6개",
         modelNo: coupangExactQaRecoveryIdentity.sellerSku,
+        originalPrice: coupangExactQaRecoveryIdentity.priceKrw,
+        salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+        maximumBuyCount: coupangExactQaRecoveryIdentity.stock,
+        images: exactGalleryImages(),
         attributes: [
           { attributeTypeName: "색상", attributeValueName: "화이트" },
           { attributeTypeName: "수량", attributeValueName: "6개" },
@@ -255,6 +293,17 @@ test("the exact QA product and immutable remote SKU can never enter listing.crea
   }), false);
 });
 
+test("exact gallery keeps one representative plus all eight approved detail images", () => {
+  const images = buildCoupangExactQaGalleryImages(
+    [representativeImageUrl, "https://cdn.example.com/unused-gallery.jpg"],
+    detailImageUrls(),
+  );
+  assert.ok(images);
+  assert.equal(images.length, 9);
+  assert.equal(images[0].imageType, "REPRESENTATION");
+  assert.deepEqual(images.slice(1).map((image) => image.vendorPath), detailImageUrls());
+});
+
 test("exact recovery prepares current category, active shipping metadata, strict facts, and eight buyer images", async () => {
   const { prepared, calls } = await prepareExactRecoveryWithFetch();
   const body = prepared.arguments.body as Record<string, unknown>;
@@ -268,6 +317,10 @@ test("exact recovery prepares current category, active shipping metadata, strict
   assert.equal(body.returnCenterCode, "RET-001");
   assert.equal(body.deliveryCompanyCode, "CJGLS");
   assert.equal(item.sellerpilotItemMatchId, coupangExactQaRecoveryIdentity.vendorItemId);
+  assert.equal(item.originalPrice, coupangExactQaRecoveryIdentity.priceKrw);
+  assert.equal(item.salePrice, coupangExactQaRecoveryIdentity.priceKrw);
+  assert.equal(item.maximumBuyCount, coupangExactQaRecoveryIdentity.stock);
+  assert.deepEqual(item.images, exactGalleryImages());
   assert.equal((item.contents as unknown[]).filter((value) =>
     (value as Record<string, unknown>).contentsType === "IMAGE").length, 8);
   assert.deepEqual(item.notices, exactNotices());
@@ -302,8 +355,11 @@ test("exact update rejects missing or null provider fields before any Coupang re
   const requiredFields = [
     ["body.sellerProductId", ["body", "sellerProductId"]],
     ["publicationIntent", ["publicationIntent"]],
+    ["publicationStateContract", ["publicationStateContract"]],
     ["publicationExpectedLocale", ["publicationExpectedLocale"]],
+    ["publicationExpectedFingerprint", ["publicationExpectedFingerprint"]],
     ["publicationExpectedImageCount", ["publicationExpectedImageCount"]],
+    ["sellerpilotPublicationAssetBinding", ["sellerpilotPublicationAssetBinding"]],
   ] as const;
   try {
     for (const [field, path] of requiredFields) {
@@ -326,6 +382,58 @@ test("exact update rejects missing or null provider fields before any Coupang re
         );
         assert.deepEqual(calls, [], `${field}:${variant}`);
       }
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact update rejects price, stock, SKU, or image drift before any Coupang request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error(`unexpected request: ${String(input)}`);
+  };
+  const mutations: Array<(argumentsValue: ReturnType<typeof baseRecoveryArguments>) => void> = [
+    (argumentsValue) => {
+      const item = (argumentsValue.body as { items: Array<Record<string, unknown>> }).items[0];
+      item.salePrice = 5_010;
+    },
+    (argumentsValue) => {
+      const item = (argumentsValue.body as { items: Array<Record<string, unknown>> }).items[0];
+      item.maximumBuyCount = 2;
+    },
+    (argumentsValue) => {
+      const item = (argumentsValue.body as { items: Array<Record<string, unknown>> }).items[0];
+      item.externalVendorSku = "OTHER-SKU";
+    },
+    (argumentsValue) => {
+      const item = (argumentsValue.body as { items: Array<Record<string, unknown>> }).items[0];
+      (item.images as Array<Record<string, unknown>>).pop();
+    },
+    (argumentsValue) => {
+      const binding = argumentsValue.sellerpilotPublicationAssetBinding as {
+        providerTransportImages: Array<Record<string, unknown>>;
+      };
+      binding.providerTransportImages[7].publicUrl = "https://cdn.example.com/tampered.jpg";
+    },
+  ];
+  try {
+    for (const mutate of mutations) {
+      const argumentsValue = structuredClone(baseRecoveryArguments());
+      mutate(argumentsValue);
+      await assert.rejects(
+        executeChannelOperation({
+          channel: "coupang",
+          operation: "listing.update",
+          payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+          arguments: argumentsValue,
+          environment: "production",
+        }),
+        /COUPANG_EXACT_QA_(?:PROVIDER_CONTRACT_MISMATCH|BUYER_CONTENT_IMAGES_REQUIRED|GALLERY_IMAGES_REQUIRED)/,
+      );
+      assert.deepEqual(calls, []);
     }
   } finally {
     globalThis.fetch = originalFetch;
@@ -387,7 +495,15 @@ test("exact update proves signed GET before PUT and verifies the strict readback
       return Response.json({ code: "SUCCESS", data: null });
     }
     if (pathname.includes(`/vendor-items/${coupangExactQaRecoveryIdentity.vendorItemId}/inventories`)) {
-      return Response.json({ code: "SUCCESS", data: { vendorItemId: Number(coupangExactQaRecoveryIdentity.vendorItemId), onSale: true } });
+      return Response.json({
+        code: "SUCCESS",
+        data: {
+          sellerItemId: Number(coupangExactQaRecoveryIdentity.vendorItemId),
+          amountInStock: coupangExactQaRecoveryIdentity.stock,
+          salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+          onSale: true,
+        },
+      });
     }
     sellerReads += 1;
     return Response.json({
@@ -408,7 +524,7 @@ test("exact update proves signed GET before PUT and verifies the strict readback
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.remoteState?.visibility, "live");
     assert.equal(sellerReads, 3);
-    assert.deepEqual(calls.slice(0, 3).map((call) => call.method), ["GET", "PUT", "GET"]);
+    assert.deepEqual(calls.slice(0, 4).map((call) => call.method), ["GET", "GET", "PUT", "GET"]);
     const transmitted = JSON.parse(calls.find((call) => call.method === "PUT")!.body);
     assert.equal(transmitted.sellerProductId, Number(coupangExactQaRecoveryIdentity.sellerProductId));
     assert.equal(transmitted.items.length, 1);
@@ -419,6 +535,70 @@ test("exact update proves signed GET before PUT and verifies the strict readback
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("exact update blocks before PUT when authoritative commerce state is not 5,000 KRW, stock 1, and on sale", async () => {
+  const { prepared } = await prepareExactRecoveryWithFetch();
+  const cases = [
+    { amountInStock: 2, salePrice: 5_000, onSale: true },
+    { amountInStock: 1, salePrice: 5_010, onSale: true },
+    { amountInStock: 1, salePrice: 5_000, onSale: false },
+  ];
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const commerce of cases) {
+      const calls: Array<{ method: string; pathname: string }> = [];
+      globalThis.fetch = async (input, init) => {
+        const pathname = new URL(String(input)).pathname;
+        const method = init?.method ?? "GET";
+        calls.push({ method, pathname });
+        if (pathname.includes(`/vendor-items/${coupangExactQaRecoveryIdentity.vendorItemId}/inventories`)) {
+          return Response.json({
+            code: "SUCCESS",
+            data: {
+              sellerItemId: Number(coupangExactQaRecoveryIdentity.vendorItemId),
+              ...commerce,
+            },
+          });
+        }
+        return Response.json({ code: "SUCCESS", data: exactRemoteProduct() });
+      };
+      const result = await executeChannelOperation({
+        channel: "coupang",
+        operation: "listing.update",
+        payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+        arguments: prepared.arguments,
+        environment: "production",
+      });
+      assert.equal(result.ok, false, JSON.stringify(commerce));
+      assert.equal(calls.some((call) => call.method === "PUT"), false, JSON.stringify(commerce));
+      assert.equal(
+        result.steps.at(-1)?.data.sellerpilotVerification,
+        "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact update readback rejects price and representative/detail gallery drift", () => {
+  const argumentsValue = baseRecoveryArguments();
+  const binding = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
+  assert.ok(binding);
+  const priceDrift = exactRemoteProduct();
+  (priceDrift.items[0] as Record<string, unknown>).salePrice = 5_010;
+  assert.throws(
+    () => assertCoupangExactQaUpdateReadback(priceDrift, binding),
+    /COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH/,
+  );
+  const galleryDrift = exactRemoteProduct();
+  (galleryDrift.items[0].images as Array<Record<string, unknown>>)[8].vendorPath =
+    "https://cdn.example.com/tampered-detail.jpg";
+  assert.throws(
+    () => assertCoupangExactQaUpdateReadback(galleryDrift, binding),
+    /COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH/,
+  );
 });
 
 test("exact stop binds one vendor item and completes only after onSale false readback", async () => {

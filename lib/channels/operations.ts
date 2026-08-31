@@ -72,6 +72,7 @@ import {
 } from "./elevenst-exact-existing-publication";
 import {
   assertCoupangExactQaCurrentProduct,
+  assertCoupangExactQaInventoryReadback,
   assertCoupangExactQaUpdateReadback,
   coupangListingUpdateWrite,
 } from "./coupang-listing-update";
@@ -80,6 +81,7 @@ import {
   coupangExactQaRecoveryArgument,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryIdentity,
+  type CoupangExactQaRecoveryBinding,
 } from "./coupang-exact-qa-recovery";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
@@ -3670,6 +3672,7 @@ async function coupangListingResultWithPublicationReadback(
   steps: ChannelOperationStep[],
   remoteId: string,
   expectedStopVendorItemIds?: string[],
+  exactRecovery?: CoupangExactQaRecoveryBinding | null,
 ) {
   if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
     return result(input, steps, remoteId);
@@ -3710,6 +3713,35 @@ async function coupangListingResultWithPublicationReadback(
     };
     readbackSteps.push(vendorStep);
   });
+  if (exactRecovery?.phase === "listing.update") {
+    const commerceReadback = readback.vendorItemReadbacks.find(({ vendorItemId }) =>
+      vendorItemId === exactRecovery.vendorItemId);
+    const commerceStep: ChannelOperationStep = commerceReadback
+      ? step("coupang-exact-commerce-readback", commerceReadback.remote)
+      : {
+          name: "coupang-exact-commerce-readback",
+          ok: false,
+          status: 422,
+          data: {},
+        };
+    if (commerceStep.ok && commerceReadback) {
+      try {
+        assertCoupangExactQaInventoryReadback(
+          objectValue(commerceReadback.remote.data, "data", false),
+          exactRecovery,
+        );
+      } catch {
+        commerceStep.ok = false;
+      }
+    }
+    commerceStep.data = {
+      ...commerceStep.data,
+      sellerpilotVerification: commerceStep.ok
+        ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
+        : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
+    };
+    readbackSteps.push(commerceStep);
+  }
   readbackSteps.push(publicationStateVerificationStep(input.channel, readback.state, readback.failureCode));
   return result(input, [...steps, ...readbackSteps], remoteId, undefined, readback.state);
 }
@@ -3764,7 +3796,9 @@ async function executeCoupang(input: ExecuteInput) {
       throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
     }
     if (exactRecovery) {
-      assertCoupangExactQaProviderContract(input.arguments, "listing.update");
+      assertCoupangExactQaProviderContract(input.arguments, "listing.update", {
+        sanitizedUpdate: true,
+      });
     }
     const patchBody = objectValue(input.arguments, "body");
     const remoteId = String(patchBody.sellerProductId ?? "").trim();
@@ -3791,12 +3825,61 @@ async function executeCoupang(input: ExecuteInput) {
     };
     if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
 
+    const preflightSteps = [preflightStep];
+    if (exactRecovery) {
+      const commerceRemote = await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${pathSegment(exactRecovery.vendorItemId)}/inventories`,
+      });
+      const commerceStep = step("listing-update-commerce-preflight", commerceRemote);
+      if (commerceStep.ok) {
+        try {
+          assertCoupangExactQaInventoryReadback(
+            objectValue(commerceRemote.data, "data", false),
+            exactRecovery,
+          );
+        } catch {
+          commerceStep.ok = false;
+        }
+      }
+      commerceStep.data = {
+        ...commerceStep.data,
+        sellerpilotVerification: commerceStep.ok
+          ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
+          : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
+      };
+      preflightSteps.push(commerceStep);
+      if (!commerceStep.ok) return result(input, preflightSteps, remoteId);
+    }
+
     const coupangUpdate = coupangListingUpdateWrite(currentBody, patchBody);
     const mergedBody = coupangUpdate.body;
     mergedBody.vendorId = vendorId;
     mergedBody.sellerProductId = patchBody.sellerProductId;
     if (listingPublicationReadbackRequested(input)) {
       mergedBody.requested = listingPublicationIntentFromArguments(input.arguments) === "live";
+    }
+    if (exactRecovery) {
+      const documentStep: ChannelOperationStep = {
+        name: "listing-update-document-preflight",
+        ok: true,
+        status: 200,
+        data: {},
+      };
+      try {
+        assertCoupangExactQaUpdateReadback(mergedBody, exactRecovery);
+      } catch {
+        documentStep.ok = false;
+        documentStep.status = 422;
+      }
+      documentStep.data = {
+        sellerpilotVerification: documentStep.ok
+          ? "COUPANG_EXACT_QA_UPDATE_DOCUMENT_VERIFIED"
+          : "COUPANG_EXACT_QA_UPDATE_DOCUMENT_MISMATCH",
+      };
+      preflightSteps.push(documentStep);
+      if (!documentStep.ok) return result(input, preflightSteps, remoteId);
     }
     const writeRemote = await coupangRequest({
       payload: input.payload,
@@ -3805,7 +3888,7 @@ async function executeCoupang(input: ExecuteInput) {
       body: mergedBody,
     });
     const writeStep = step("listing.update", writeRemote);
-    if (!writeStep.ok) return result(input, [preflightStep, writeStep], remoteId);
+    if (!writeStep.ok) return result(input, [...preflightSteps, writeStep], remoteId);
     const readbackRemote = await readProduct();
     const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, {
       ...input.arguments,
@@ -3824,7 +3907,13 @@ async function executeCoupang(input: ExecuteInput) {
         };
       }
     }
-    return coupangListingResultWithPublicationReadback(input, [preflightStep, writeStep, readbackStep], remoteId);
+    return coupangListingResultWithPublicationReadback(
+      input,
+      [...preflightSteps, writeStep, readbackStep],
+      remoteId,
+      undefined,
+      exactRecovery,
+    );
   }
   if (input.operation === "listing.create") {
     const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
