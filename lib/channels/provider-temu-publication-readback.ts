@@ -25,8 +25,20 @@ export type TemuPublicationReadbackVerification = {
     imageCountVerified: boolean;
     imageOrderVerified: boolean;
     contentVerified: boolean;
+    skuIdentityVerified: boolean;
+    priceVerified: boolean;
+    stockVerified: boolean;
     goodsIdVerified: boolean;
     externalGoodsIdVerified: boolean;
+  };
+};
+
+export type TemuPublicationExpectedSku = {
+  externalSkuId: string;
+  quantity: number;
+  basePrice: {
+    amount: string;
+    currency: string;
   };
 };
 
@@ -275,6 +287,112 @@ function exactStringArray(value: unknown) {
     : [];
 }
 
+function canonicalMoneyAmount(value: unknown) {
+  const text = exactText(value);
+  if (!/^(?:0|[1-9]\d*)(?:\.\d+)?$/u.test(text)) return "";
+  const [integer, fraction = ""] = text.split(".");
+  const normalizedFraction = fraction.replace(/0+$/u, "");
+  const normalizedInteger = BigInt(integer).toString();
+  return normalizedFraction ? `${normalizedInteger}.${normalizedFraction}` : normalizedInteger;
+}
+
+function exactNonNegativeInteger(value: unknown) {
+  if (typeof value === "string" && value !== value.trim()) return null;
+  const text = exactText(value);
+  if (!/^(?:0|[1-9]\d*)$/u.test(text)) return null;
+  const numeric = Number(text);
+  return Number.isSafeInteger(numeric) && numeric >= 0 && String(numeric) === text
+    ? numeric
+    : null;
+}
+
+function canonicalMoney(value: unknown) {
+  const money = recordValue(value);
+  const amount = canonicalMoneyAmount(money.amount);
+  const currency = exactText(money.currency).toUpperCase();
+  return amount && amount !== "0" && /^[A-Z]{3}$/u.test(currency)
+    ? { amount, currency }
+    : null;
+}
+
+/**
+ * Extracts the immutable commerce contract from the exact V3 create body.
+ * Temu echoes `externalSkuId` as `outSkuSn`, V3 `basePrice` as the detail
+ * response's retail price, and regular inventory through the dedicated stock
+ * query. Any incomplete or duplicate source SKU fails closed before a write.
+ */
+export function temuPublicationExpectedSkus(bodyValue: unknown): TemuPublicationExpectedSku[] | null {
+  const body = recordValue(bodyValue);
+  const skus = recordArray(body.skuList);
+  if (skus.length === 0) return null;
+  const normalized = skus.map((sku) => {
+    const externalSkuId = exactText(sku.externalSkuId);
+    const quantity = exactNonNegativeInteger(sku.quantity);
+    const basePrice = canonicalMoney(recordValue(sku.price).basePrice);
+    return externalSkuId
+      && externalSkuId.length <= 128
+      && !/\p{Cc}/u.test(externalSkuId)
+      && quantity !== null
+      && basePrice
+      ? { externalSkuId, quantity, basePrice }
+      : null;
+  });
+  if (normalized.some((sku) => !sku)) return null;
+  const exact = normalized.filter((sku): sku is TemuPublicationExpectedSku => Boolean(sku));
+  return new Set(exact.map((sku) => sku.externalSkuId)).size === exact.length ? exact : null;
+}
+
+function exactRemoteRetailPrice(sku: UnknownRecord) {
+  const nestedPrice = recordValue(sku.price);
+  const candidates = [nestedPrice.retailPrice, sku.retailPrice]
+    .map(canonicalMoney)
+    .filter((value): value is NonNullable<ReturnType<typeof canonicalMoney>> => Boolean(value));
+  if (candidates.length === 0) return null;
+  return candidates.every((candidate) => candidate.amount === candidates[0].amount
+      && candidate.currency === candidates[0].currency)
+    ? candidates[0]
+    : null;
+}
+
+function temuCommerceReadbackChecks(input: {
+  remoteId: string;
+  detail: UnknownRecord;
+  stockData: UnknownRecord;
+  expectedSkus: TemuPublicationExpectedSku[];
+}) {
+  const detailSkus = recordArray(input.detail.skuList);
+  const detailMatches = input.expectedSkus.map((expected) => {
+    const matches = detailSkus.filter((sku) => exactText(sku.outSkuSn) === expected.externalSkuId);
+    const sku = matches.length === 1 ? matches[0] : null;
+    const skuId = sku ? temuExactLongGoodsId(sku.skuId) : null;
+    return { expected, sku, skuId, price: sku ? exactRemoteRetailPrice(sku) : null };
+  });
+  const skuIdentityVerified = detailSkus.length === input.expectedSkus.length
+    && detailMatches.every((match) => Boolean(match.sku && match.skuId));
+  const priceVerified = skuIdentityVerified && detailMatches.every((match) =>
+    match.price?.amount === match.expected.basePrice.amount
+    && match.price.currency === match.expected.basePrice.currency);
+
+  const stockRoot = resultRecord(input.stockData);
+  const goodsStocks = recordArray(stockRoot.stockList).filter((item) =>
+    firstText(item, ["goodsId"]) === input.remoteId);
+  const skuStocks = goodsStocks.length === 1
+    ? recordArray(goodsStocks[0].skuStockInfoList)
+    : [];
+  const stockVerified = skuIdentityVerified
+    && goodsStocks.length === 1
+    && skuStocks.length === input.expectedSkus.length
+    && detailMatches.every((match) => {
+      const matches = skuStocks.filter((stock) =>
+        temuExactLongGoodsId(stock.skuId) === match.skuId
+        && exactText(stock.outSkuSn) === match.expected.externalSkuId);
+      if (matches.length !== 1) return false;
+      return exactNonNegativeInteger(recordValue(matches[0].selfOrdinaryStock).stock)
+        === match.expected.quantity;
+    });
+  return { skuIdentityVerified, priceVerified, stockVerified };
+}
+
 function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -427,6 +545,8 @@ export function normalizeTemuListingPublicationReadback(input: {
   expectedGoodsName?: string;
   expectedGoodsDesc?: string;
   expectedBulletPoints?: string[];
+  expectedSkus?: TemuPublicationExpectedSku[];
+  stockData?: UnknownRecord;
   verifiedAt?: Date;
 }): TemuPublicationReadbackVerification {
   const remoteId = input.remoteId.trim();
@@ -500,6 +620,18 @@ export function normalizeTemuListingPublicationReadback(input: {
   const imageOrderVerified = exactImageOperation
     ? imageCountVerified && sameOrderedValues(input.expectedDetailImages, detailImages)
     : true;
+  const commerceChecks = exactImageOperation && input.expectedSkus?.length && input.stockData
+    ? temuCommerceReadbackChecks({
+        remoteId,
+        detail,
+        stockData: input.stockData,
+        expectedSkus: input.expectedSkus,
+      })
+    : {
+        skuIdentityVerified: !exactImageOperation,
+        priceVerified: !exactImageOperation,
+        stockVerified: !exactImageOperation,
+      };
   const checks = {
     identityVerified,
     statusVerified,
@@ -508,6 +640,7 @@ export function normalizeTemuListingPublicationReadback(input: {
     imageCountVerified,
     imageOrderVerified,
     contentVerified,
+    ...commerceChecks,
     goodsIdVerified,
     externalGoodsIdVerified,
   };
@@ -530,12 +663,21 @@ export function normalizeTemuListingPublicationReadback(input: {
     providerStatus,
     verifiedAt: (input.verifiedAt ?? new Date()).toISOString(),
     evidence: {
-      version: "temu_list_status_detail_v1",
-      readbackMethods: [
-        "temu.local.goods.list.retrieve",
-        "bg.local.goods.publish.status.get",
-        "bg.local.goods.detail.query",
-      ],
+      version: exactImageOperation
+        ? "temu_list_status_detail_stock_v2"
+        : "temu_list_status_detail_v1",
+      readbackMethods: exactImageOperation
+        ? [
+            "temu.local.goods.list.retrieve",
+            "bg.local.goods.publish.status.get",
+            "bg.local.goods.detail.query",
+            "temu.local.goods.sku.stock.query",
+          ]
+        : [
+            "temu.local.goods.list.retrieve",
+            "bg.local.goods.publish.status.get",
+            "bg.local.goods.detail.query",
+          ],
       identityVerified: true,
       statusVerified: true,
       localeVerified: true,
@@ -543,10 +685,14 @@ export function normalizeTemuListingPublicationReadback(input: {
       imageCountVerified: true,
       imageOrderVerified: true,
       contentVerified: true,
+      skuIdentityVerified: true,
+      priceVerified: true,
+      stockVerified: true,
       goodsIdVerified: true,
       externalGoodsIdVerified: true,
       observedDetailImageCount: detailImages.length,
       orderedDetailImageDigest: sha256(detailImages),
+      observedSkuCount: recordArray(detail.skuList).length,
     },
     resources: {
       goodsId: remoteId,

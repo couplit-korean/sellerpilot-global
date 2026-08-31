@@ -55,6 +55,7 @@ import {
   normalizeTemuListingPublicationReadback,
   temuExactLongGoodsId,
   temuExactGoodsListArguments,
+  temuPublicationExpectedSkus,
 } from "./provider-temu-publication-readback";
 import {
   qoo10ExactRecoveryContentRemoteState,
@@ -1090,17 +1091,19 @@ export async function executeListingPublicationVerification(
     const expectedBulletPoints = Array.isArray(sourceGoodsBasic.bulletPoints)
       ? sourceGoodsBasic.bulletPoints.map(exactText).filter(Boolean)
       : [];
+    const expectedSkus = temuPublicationExpectedSkus(sourceBody);
     if (exactGoodsId === null
         || immutableGoodsId !== remoteId
         || !immutableExternalGoodsId
         || immutableExternalGoodsId !== sourceExternalGoodsId
         || sourceBody.language !== "ko"
         || expected.locale !== "ko-KR"
+        || !expectedSkus
         || expectedDetailImages.length !== expected.imageCount
         || new Set(expectedDetailImages).size !== expected.imageCount) {
       throw new Error("TEMU_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
     }
-    const [listRemote, statusRemote, detailRemote] = await Promise.all([
+    const [listRemote, statusRemote, detailRemote, stockRemote] = await Promise.all([
       temuRequest({
         payload: input.payload,
         type: "temu.local.goods.list.retrieve",
@@ -1115,6 +1118,11 @@ export async function executeListingPublicationVerification(
         payload: input.payload,
         type: "bg.local.goods.detail.query",
         arguments: { goodsId: temuExactLong(exactGoodsId), versionQueryType: 1, language: "ko" },
+      }),
+      temuRequest({
+        payload: input.payload,
+        type: "temu.local.goods.sku.stock.query",
+        arguments: { goodsId: temuExactLong(exactGoodsId) },
       }),
     ]);
     const publication = normalizeTemuListingPublicationReadback({
@@ -1132,6 +1140,8 @@ export async function executeListingPublicationVerification(
       expectedGoodsName: exactText(sourceGoodsBasic.goodsName),
       expectedGoodsDesc: exactText(sourceGoodsBasic.goodsDesc),
       expectedBulletPoints,
+      expectedSkus,
+      stockData: stockRemote.data,
     });
     const listStep = providerStep("goods-list-publication-reverification", listRemote);
     listStep.ok = listStep.ok
@@ -1151,12 +1161,20 @@ export async function executeListingPublicationVerification(
         ? "TEMU_PUBLICATION_STATE_REVERIFIED"
         : "TEMU_PUBLICATION_STATE_UNVERIFIED",
     };
+    const stockStep = providerStep("goods-stock-publication-reverification", stockRemote);
+    stockStep.ok = stockStep.ok && publication.checks.stockVerified;
+    stockStep.data = {
+      ...stockStep.data,
+      sellerpilotVerification: publication.checks.stockVerified
+        ? "TEMU_PUBLICATION_STOCK_REVERIFIED"
+        : "TEMU_PUBLICATION_STOCK_UNVERIFIED",
+    };
     return verifiedExecution({
       channel: input.channel,
       source,
       remoteId,
       expectedLocale: expected.locale,
-      steps: [listStep, statusStep, detailStep],
+      steps: [listStep, statusStep, detailStep, stockStep],
       remoteState: publication.remoteState,
       remotePayload: detailRemote.data,
     });

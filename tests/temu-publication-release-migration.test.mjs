@@ -18,6 +18,12 @@ test("Temu publication release is a forward-only migration after the deployed 13
   assert.match(migration, /adapters\.ready_count = 8/);
   assert.match(migration, /p_operation = 'listing\.publication\.verify' and p_channel = 'temu'/);
   assert.match(migration, /in \('coupang','smartstore','elevenst','temu'\)/);
+  assert.match(migration, /\{evidence,skuIdentityVerified\}'<>\s*'true'/);
+  assert.match(migration, /\{evidence,priceVerified\}'<>\s*'true'/);
+  assert.match(migration, /\{evidence,stockVerified\}'<>\s*'true'/);
+  assert.match(migration, /temu_list_status_detail_stock_v2/);
+  assert.match(migration, /temu\.local\.goods\.sku\.stock\.query/);
+  assert.match(migration, /\{evidence,observedSkuCount\}/);
   assert.match(migration, /opened_channel is null[\s\S]*eight-channel global gate/);
   assert.doesNotMatch(migration, /p_operation = 'listing\.update' and p_channel = 'temu'/);
   assert.doesNotMatch(migration, /opened_channel = 'temu'/);

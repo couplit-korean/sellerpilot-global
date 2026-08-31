@@ -2157,13 +2157,25 @@ begin
   exception when others then return false; end;
   if v_state#>>'{evidence,imageOrderVerified}'<>'true'
      or v_state#>>'{evidence,contentVerified}'<>'true'
+     or v_state#>>'{evidence,skuIdentityVerified}'<>'true'
+     or v_state#>>'{evidence,priceVerified}'<>'true'
+     or v_state#>>'{evidence,stockVerified}'<>'true'
      or v_state#>>'{evidence,goodsIdVerified}'<>'true'
      or v_state#>>'{evidence,externalGoodsIdVerified}'<>'true' then
     return false;
   end if;
   if p_expected_image_count=8 then
     v_asset:=v_state#>'{evidence,publicationAssetBinding}';
-    if jsonb_typeof(v_asset)<>'object'
+    if v_state#>>'{evidence,version}'<>'temu_list_status_detail_stock_v2'
+       or not (
+         coalesce(v_state#>'{evidence,readbackMethods}','[]'::jsonb)
+           @> '["temu.local.goods.sku.stock.query"]'::jsonb
+       )
+       or jsonb_typeof(v_job.request_payload#>'{arguments,body,skuList}')<>'array'
+       or jsonb_array_length(v_job.request_payload#>'{arguments,body,skuList}')<1
+       or v_state#>>'{evidence,observedSkuCount}'<>
+            jsonb_array_length(v_job.request_payload#>'{arguments,body,skuList}')::text
+       or jsonb_typeof(v_asset)<>'object'
        or v_asset->>'contract'<>'sellerpilot_provider_asset_binding_v1'
        or v_asset->>'providerImageSurface'<>'detail_content'
        or coalesce(v_asset->>'sourceAssetBindingDigest','') !~ '^[a-f0-9]{64}$'

@@ -324,6 +324,7 @@ export async function temuRequest(input: {
     "temu.local.goods.list.retrieve",
     "bg.local.goods.publish.status.get",
     "bg.local.goods.detail.query",
+    "temu.local.goods.sku.stock.query",
   ]).has(input.type);
   assertProviderReadOnlyTransport("POST", readOnlyRpc ? "temu_read_rpc" : undefined);
   const appKey = textValue(input.payload, "app_key");

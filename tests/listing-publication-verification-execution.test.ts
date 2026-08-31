@@ -281,6 +281,11 @@ const temuGoodsBasic = {
   goodsCarouselImage: [galleryUrl],
   detailImage: detailUrls,
 };
+const temuSku = {
+  externalSkuId: "TEMU-KR-001-01",
+  quantity: 2,
+  price: { basePrice: { amount: "5000", currency: "KRW" } },
+};
 const temuDetailData = {
   success: true,
   result: {
@@ -293,6 +298,25 @@ const temuDetailData = {
       goodsCarouselImage: temuGoodsBasic.goodsCarouselImage,
       detailImage: detailUrls,
     },
+    skuList: [{
+      skuId: "88000002",
+      outSkuSn: temuSku.externalSkuId,
+      price: { retailPrice: temuSku.price.basePrice },
+      retailPrice: temuSku.price.basePrice,
+    }],
+  },
+};
+const temuStockData = {
+  success: true,
+  result: {
+    stockList: [{
+      goodsId: "88000001",
+      skuStockInfoList: [{
+        skuId: "88000002",
+        outSkuSn: temuSku.externalSkuId,
+        selfOrdinaryStock: { stock: temuSku.quantity, stockType: 1 },
+      }],
+    }],
   },
 };
 
@@ -570,7 +594,7 @@ const fixtures: Fixture[] = [
       publicationExpectedLocale: "ko-KR",
       publicationExpectedFingerprint: FINGERPRINT,
       publicationExpectedImageCount: 8,
-      body: { language: "ko", goodsBasic: temuGoodsBasic, skuList: [] },
+      body: { language: "ko", goodsBasic: temuGoodsBasic, skuList: [temuSku] },
     }),
     sourceStepName: "goods-detail-image-readback",
     remoteData: temuDetailData,
@@ -728,6 +752,7 @@ test("all eight real provider executors reverify read-only state without opening
           "temu.local.goods.list.retrieve",
           "bg.local.goods.publish.status.get",
           "bg.local.goods.detail.query",
+          "temu.local.goods.sku.stock.query",
         ].includes(String(temuRequestBody.type ?? ""));
       if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead && !isExactTemuRead) {
         providerWriteRequests += 1;
@@ -791,6 +816,10 @@ test("all eight real provider executors reverify read-only state without opening
         if (temuRequestBody.type === "bg.local.goods.detail.query") {
           assert.equal(temuRequestBody.language, "ko");
           return Response.json(temuDetailData);
+        }
+        if (temuRequestBody.type === "temu.local.goods.sku.stock.query") {
+          assert.equal("language" in temuRequestBody, false);
+          return Response.json(temuStockData);
         }
       }
       return Response.json(fixture.remoteData);

@@ -12,6 +12,19 @@ const DETAIL_IMAGES = Array.from(
 );
 const GOODS_ID = "90000001";
 const EXTERNAL_GOODS_ID = "TEMU-KR-STRICT-001";
+const SKU_ID = "91000001";
+const BASE_PRICE = { amount: "5000", currency: "KRW" };
+const QUANTITY = 1;
+const SOURCE_SKU = {
+  externalSkuId: EXTERNAL_GOODS_ID,
+  price: { basePrice: BASE_PRICE },
+  quantity: QUANTITY,
+};
+const EXPECTED_SKUS = [{
+  externalSkuId: EXTERNAL_GOODS_ID,
+  basePrice: BASE_PRICE,
+  quantity: QUANTITY,
+}];
 const GOODS_BASIC = {
   externalGoodsId: EXTERNAL_GOODS_ID,
   goodsName: "한국어로 확인된 테무 판매 상품",
@@ -74,7 +87,33 @@ function detailData(images = DETAIL_IMAGES, overrides: Record<string, unknown> =
         goodsCarouselImage: GOODS_BASIC.goodsCarouselImage,
         detailImage: images,
       },
+      skuList: [{
+        skuId: SKU_ID,
+        outSkuSn: EXTERNAL_GOODS_ID,
+        price: { retailPrice: BASE_PRICE },
+        retailPrice: BASE_PRICE,
+      }],
       ...overrides,
+    },
+  };
+}
+
+function stockData(
+  goodsId = GOODS_ID,
+  skuOverrides: Record<string, unknown> = {},
+) {
+  return {
+    success: true,
+    result: {
+      stockList: [{
+        goodsId,
+        skuStockInfoList: [{
+          skuId: SKU_ID,
+          outSkuSn: EXTERNAL_GOODS_ID,
+          selfOrdinaryStock: { stock: QUANTITY, stockType: 1 },
+          ...skuOverrides,
+        }],
+      }],
     },
   };
 }
@@ -85,10 +124,12 @@ function normalize(input: {
   list?: Record<string, unknown>;
   status?: Record<string, unknown>;
   detail?: Record<string, unknown>;
+  stock?: Record<string, unknown>;
   expectedImages?: string[];
 } = {}) {
+  const operation = input.operation ?? "listing.create";
   return normalizeTemuListingPublicationReadback({
-    operation: input.operation ?? "listing.create",
+    operation,
     intent: input.intent ?? "live",
     remoteId: GOODS_ID,
     externalGoodsId: EXTERNAL_GOODS_ID,
@@ -102,6 +143,10 @@ function normalize(input: {
     expectedGoodsName: GOODS_BASIC.goodsName,
     expectedGoodsDesc: GOODS_BASIC.goodsDesc,
     expectedBulletPoints: GOODS_BASIC.bulletPoints,
+    ...(operation === "listing.stop" ? {} : {
+      expectedSkus: EXPECTED_SKUS,
+      stockData: input.stock ?? stockData(),
+    }),
   });
 }
 
@@ -116,6 +161,43 @@ test("Temu binds ko-KR, immutable goods IDs, and the exact ordered eight-image r
   });
   assert.equal(result.remoteState?.fingerprint, FINGERPRINT);
   assert.equal(result.checks.imageOrderVerified, true);
+  assert.equal(result.checks.skuIdentityVerified, true);
+  assert.equal(result.checks.priceVerified, true);
+  assert.equal(result.checks.stockVerified, true);
+  assert.equal(result.remoteState?.evidence.version, "temu_list_status_detail_stock_v2");
+  assert.deepEqual(result.remoteState?.evidence.readbackMethods, [
+    "temu.local.goods.list.retrieve",
+    "bg.local.goods.publish.status.get",
+    "bg.local.goods.detail.query",
+    "temu.local.goods.sku.stock.query",
+  ]);
+  assert.equal(result.remoteState?.evidence.observedSkuCount, 1);
+});
+
+test("Temu rejects mismatched SKU identity, base price, and regular stock readbacks", () => {
+  assert.equal(normalize({
+    detail: detailData(DETAIL_IMAGES, {
+      skuList: [{
+        skuId: SKU_ID,
+        outSkuSn: EXTERNAL_GOODS_ID,
+        price: { retailPrice: { amount: "4999", currency: "KRW" } },
+      }],
+    }),
+  }).remoteState, undefined);
+  assert.equal(normalize({
+    stock: stockData(GOODS_ID, { selfOrdinaryStock: { stock: QUANTITY + 1, stockType: 1 } }),
+  }).remoteState, undefined);
+  assert.equal(normalize({
+    stock: stockData(GOODS_ID, { outSkuSn: "TEMU-OTHER" }),
+  }).remoteState, undefined);
+  assert.equal(normalize({
+    detail: detailData(DETAIL_IMAGES, {
+      skuList: [
+        ...detailData().result.skuList,
+        { skuId: "91000002", outSkuSn: "TEMU-EXTRA", retailPrice: BASE_PRICE },
+      ],
+    }),
+  }).remoteState, undefined);
 });
 
 test("Temu pending review is durable evidence but never fulfilled publication", () => {
@@ -192,7 +274,7 @@ test("Temu safe-test and stop require an off-shelf readback", () => {
 
 function strictArguments(intent: "live" | "safe_test" = "live") {
   return {
-    body: { language: "ko", goodsBasic: GOODS_BASIC, skuList: [{ externalSkuId: EXTERNAL_GOODS_ID }] },
+    body: { language: "ko", goodsBasic: GOODS_BASIC, skuList: [SOURCE_SKU] },
     publicationIntent: intent,
     publicationStateContract: "verified_remote_state_v1",
     publicationExpectedLocale: "ko-KR",
@@ -207,6 +289,117 @@ function strictArguments(intent: "live" | "safe_test" = "live") {
   };
 }
 
+function activationArguments() {
+  return {
+    ...strictArguments("live"),
+    goodsId: GOODS_ID,
+    externalGoodsId: EXTERNAL_GOODS_ID,
+    sellerpilotTemuActivation: {
+      version: "temu_verified_non_public_activation_v1",
+      sourceJobId: "11111111-1111-4111-8111-111111111111",
+      listingId: "22222222-2222-4222-8222-222222222222",
+      activationFingerprint: "c".repeat(64),
+      goodsId: GOODS_ID,
+      externalGoodsId: EXTERNAL_GOODS_ID,
+    },
+  };
+}
+
+test("Temu activation verifies exact price and stock before and after the provider write", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  let listReads = 0;
+  let statusReads = 0;
+  let beginCalls = 0;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "temu.local.goods.list.retrieve") {
+      listReads += 1;
+      return Response.json(listData({ onsale: listReads === 1 ? 0 : 1 }));
+    }
+    if (body.type === "bg.local.goods.publish.status.get") {
+      statusReads += 1;
+      return Response.json(statusReads === 1
+        ? statusData(0, 0, "OFF_SHELF")
+        : statusData());
+    }
+    if (body.type === "bg.local.goods.detail.query") return Response.json(detailData());
+    if (body.type === "temu.local.goods.sku.stock.query") {
+      assert.equal("language" in body, false);
+      return Response.json(stockData());
+    }
+    if (body.type === "bg.local.goods.sale.status.set") {
+      return Response.json({ success: true, result: { goodsId: Number(GOODS_ID) } });
+    }
+    throw new Error(`unexpected Temu method: ${String(body.type)}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
+      operation: "listing.activate",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      arguments: activationArguments(),
+      environment: "production",
+      providerMutationHooks: {
+        assertLeaseHealthy: async () => undefined,
+        begin: async () => { beginCalls += 1; },
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteState?.visibility, "live");
+    assert.equal(result.remoteState?.evidence.priceVerified, true);
+    assert.equal(result.remoteState?.evidence.stockVerified, true);
+    assert.equal(beginCalls, 1);
+    assert.equal(
+      calls.filter((call) => call.type === "temu.local.goods.sku.stock.query").length,
+      2,
+    );
+    assert.equal(
+      calls.filter((call) => call.type === "bg.local.goods.sale.status.set").length,
+      1,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu activation blocks before the provider write when source stock no longer matches", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  let beginCalls = 0;
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "temu.local.goods.list.retrieve") return Response.json(listData({ onsale: 0 }));
+    if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData(0, 0, "OFF_SHELF"));
+    if (body.type === "bg.local.goods.detail.query") return Response.json(detailData());
+    if (body.type === "temu.local.goods.sku.stock.query") {
+      return Response.json(stockData(GOODS_ID, { selfOrdinaryStock: { stock: QUANTITY + 1 } }));
+    }
+    throw new Error("provider write must not run");
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "temu",
+      operation: "listing.activate",
+      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      arguments: activationArguments(),
+      environment: "production",
+      providerMutationHooks: {
+        assertLeaseHealthy: async () => undefined,
+        begin: async () => { beginCalls += 1; },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(beginCalls, 0);
+    assert.equal(calls.some((call) => call.type === "bg.local.goods.sale.status.set"), false);
+    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXACT_NON_PUBLIC_ACTIVATION_SOURCE_UNVERIFIED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Temu create timeout reconciles once by externalGoodsId and never sends a second create", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
@@ -220,6 +413,7 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
     }
     if (body.type === "temu.local.goods.v3.add") throw new DOMException("timed out", "TimeoutError");
     if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData());
+    if (body.type === "temu.local.goods.sku.stock.query") return Response.json(stockData());
     return Response.json(detailData());
   };
   try {
@@ -254,6 +448,7 @@ test("Temu strict create returns pending-review without claiming publication suc
       return Response.json(listReadCount === 1 ? emptyListData() : listData());
     }
     if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData(1, 1));
+    if (body.type === "temu.local.goods.sku.stock.query") return Response.json(stockData());
     return Response.json(detailData());
   };
   try {
@@ -290,6 +485,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
       return Response.json({ success: true, result: { goodsId: Number(GOODS_ID) } });
     }
     if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData(0, 0, "OFF_SHELF"));
+    if (body.type === "temu.local.goods.sku.stock.query") return Response.json(stockData());
     return Response.json(detailData());
   };
   try {
@@ -311,6 +507,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
       "temu.local.goods.list.retrieve",
       "bg.local.goods.publish.status.get",
       "bg.local.goods.detail.query",
+      "temu.local.goods.sku.stock.query",
     ]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -351,6 +548,9 @@ test("Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf a
         result: { goodsPublishStatusList: [{ goodsId: longGoodsId, statusName: "OFF_SHELF" }] },
       });
     }
+    if (body.type === "temu.local.goods.sku.stock.query") {
+      return Response.json(stockData(longGoodsId));
+    }
     return Response.json({
       ...detailData().result,
       success: true,
@@ -371,6 +571,7 @@ test("Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf a
       "bg.local.goods.sale.status.set",
       "bg.local.goods.publish.status.get",
       "bg.local.goods.detail.query",
+      "temu.local.goods.sku.stock.query",
     ]) {
       const body = requestBodies.find((candidate) => candidate.includes(`"type":"${type}"`));
       assert.ok(body, type);
@@ -487,6 +688,92 @@ test("Temu rejects an invalid strict image contract before the create call", asy
     assert.equal(fetchCount, 0);
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu rejects an incomplete strict price or stock contract before the create call", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    throw new Error("unexpected provider call");
+  };
+  try {
+    for (const invalidSku of [
+      { externalSkuId: EXTERNAL_GOODS_ID, quantity: QUANTITY },
+      { externalSkuId: EXTERNAL_GOODS_ID, price: SOURCE_SKU.price },
+    ]) {
+      const invalid = strictArguments();
+      invalid.body.skuList = [invalidSku as typeof SOURCE_SKU];
+      const result = await executeChannelOperation({
+        channel: "temu",
+        operation: "listing.create",
+        payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+        arguments: invalid,
+        environment: "production",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_PUBLICATION_PREWRITE_REJECTED");
+    }
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu quarantines a provider-accepted create when price or stock readback drifts", async () => {
+  const originalFetch = globalThis.fetch;
+  for (const drift of ["price", "stock"] as const) {
+    let listReadCount = 0;
+    globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.type === "temu.local.goods.v3.add") {
+        return Response.json({ success: true, result: { goodsId: Number(GOODS_ID), externalGoodsId: EXTERNAL_GOODS_ID } });
+      }
+      if (body.type === "temu.local.goods.list.retrieve") {
+        listReadCount += 1;
+        return Response.json(listReadCount === 1 ? emptyListData() : listData());
+      }
+      if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData());
+      if (body.type === "temu.local.goods.sku.stock.query") {
+        return Response.json(drift === "stock"
+          ? stockData(GOODS_ID, { selfOrdinaryStock: { stock: QUANTITY + 1 } })
+          : stockData());
+      }
+      return Response.json(drift === "price"
+        ? detailData(DETAIL_IMAGES, {
+            skuList: [{
+              skuId: SKU_ID,
+              outSkuSn: EXTERNAL_GOODS_ID,
+              price: { retailPrice: { amount: "4900", currency: "KRW" } },
+            }],
+          })
+        : detailData());
+    };
+    try {
+      const result = await executeChannelOperation({
+        channel: "temu",
+        operation: "listing.create",
+        payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+        arguments: strictArguments(),
+        environment: "production",
+      });
+      assert.equal(result.ok, false, drift);
+      assert.notEqual(result.publicationFulfilled, true, drift);
+      assert.equal(result.remoteState, undefined, drift);
+      assert.equal(
+        result.steps.at(-1)?.data.sellerpilotVerification,
+        drift === "price" ? "TEMU_PRICE_READBACK_MISMATCH" : "TEMU_STOCK_READBACK_MISMATCH",
+        drift,
+      );
+      assert.equal(
+        gatewayJobCompletionStatus(result.operation, result.ok, result.steps),
+        "reconciliation_required",
+        drift,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   }
 });
 

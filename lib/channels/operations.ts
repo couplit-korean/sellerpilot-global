@@ -128,6 +128,7 @@ import {
   temuCreateCorrelationMatches,
   temuExactLongGoodsId,
   temuExactGoodsListArguments,
+  temuPublicationExpectedSkus,
 } from "./provider-temu-publication-readback";
 
 export const channelOperationNames = [
@@ -4742,6 +4743,7 @@ async function executeTemu(input: ExecuteInput) {
     const goodsBasic = objectValue(body, "goodsBasic", false);
     const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
+    const expectedSkus = temuPublicationExpectedSkus(body);
     const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
     const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
     const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
@@ -4756,6 +4758,7 @@ async function executeTemu(input: ExecuteInput) {
       && expectedDetailImages.length === marketplaceChannelDetailImageCount
       && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
       && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
+      && Boolean(expectedSkus)
     );
     if (!exactInput || !activation) {
       return result(input, [{
@@ -4784,6 +4787,11 @@ async function executeTemu(input: ExecuteInput) {
       type: "bg.local.goods.detail.query",
       arguments: { goodsId: temuExactLong(activation.exactGoodsId), versionQueryType: 1, language: "ko" },
     });
+    const preStock = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.sku.stock.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId) },
+    });
     const prePublication = normalizeTemuListingPublicationReadback({
       operation: "listing.create",
       intent: "safe_test",
@@ -4799,15 +4807,19 @@ async function executeTemu(input: ExecuteInput) {
       expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
       expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
       expectedBulletPoints,
+      expectedSkus: expectedSkus!,
+      stockData: preStock.data,
     });
     const preListStep = step("temu-activation-pre-list", preList);
     const preStatusStep = step("temu-activation-pre-status", preStatus);
     const preDetailStep = step("temu-activation-pre-detail", preDetail);
+    const preStockStep = step("temu-activation-pre-stock", preStock);
     const preflightStep: ChannelOperationStep = {
       name: "temu-activation-non-public-preflight",
       ok: Boolean(preListStep.ok
         && preStatusStep.ok
         && preDetailStep.ok
+        && preStockStep.ok
         && prePublication.remoteState
         && ["non_public", "withdrawn"].includes(prePublication.remoteState.visibility)),
       status: prePublication.remoteState ? 200 : 422,
@@ -4858,6 +4870,11 @@ async function executeTemu(input: ExecuteInput) {
       type: "bg.local.goods.detail.query",
       arguments: { goodsId: temuExactLong(activation.exactGoodsId), versionQueryType: 1, language: "ko" },
     });
+    const postStock = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.sku.stock.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId) },
+    });
     const postPublication = normalizeTemuListingPublicationReadback({
       operation: "listing.create",
       intent: "live",
@@ -4873,15 +4890,19 @@ async function executeTemu(input: ExecuteInput) {
       expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
       expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
       expectedBulletPoints,
+      expectedSkus: expectedSkus!,
+      stockData: postStock.data,
     });
     const postListStep = step("temu-activation-post-list", postList);
     const postStatusStep = step("temu-activation-post-status", postStatus);
     const postDetailStep = step("temu-activation-post-detail", postDetail);
+    const postStockStep = step("temu-activation-post-stock", postStock);
     const postStep: ChannelOperationStep = {
       name: "temu-activation-post-readback",
       ok: Boolean(postListStep.ok
         && postStatusStep.ok
         && postDetailStep.ok
+        && postStockStep.ok
         && postPublication.remoteState),
       status: postPublication.remoteState ? 200 : 422,
       data: {
@@ -4896,7 +4917,7 @@ async function executeTemu(input: ExecuteInput) {
     };
     return result(
       input,
-      [preflightStep, activateStep, postStep],
+      [preflightStep, activateStep, postStockStep, postStep],
       activation.goodsId,
       undefined,
       postPublication.remoteState,
@@ -4913,6 +4934,7 @@ async function executeTemu(input: ExecuteInput) {
     const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
     const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
+    const expectedSkus = temuPublicationExpectedSkus(body);
     if (strictPublication) {
       const providerLanguage = String(body.language ?? goodsBasic.language ?? "")
         .trim()
@@ -4927,7 +4949,8 @@ async function executeTemu(input: ExecuteInput) {
         && expectedDetailImages.length === marketplaceChannelDetailImageCount
         && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
         && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
-        && temuCreateCorrelationMatches(input.arguments, externalGoodsId),
+        && temuCreateCorrelationMatches(input.arguments, externalGoodsId)
+        && Boolean(expectedSkus)
       );
       if (!exactPublicationInput) {
         return result(input, [{
@@ -5190,6 +5213,29 @@ async function executeTemu(input: ExecuteInput) {
       });
       return result(input, steps, remoteId);
     }
+    let stockRemote: RemoteResponse | null = null;
+    if (strictPublication) {
+      try {
+        stockRemote = await temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(remoteId) },
+        });
+      } catch {
+        steps.push({
+          name: "goods-sku-stock-readback",
+          ok: false,
+          status: 408,
+          data: {
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "TEMU_POST_CREATE_STOCK_TRANSPORT_UNCERTAIN",
+            sellerpilotKnownGoodsId: remoteId,
+            sellerpilotKnownExternalGoodsId: externalGoodsId,
+          },
+        });
+        return result(input, steps, remoteId);
+      }
+    }
     const detailStep = step("goods-detail-image-readback", detailRemote);
     const detail = temuResultObject(detailRemote.data);
     const gallery = objectValue(detail, "goodsGallery", false);
@@ -5221,8 +5267,21 @@ async function executeTemu(input: ExecuteInput) {
           expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
           expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
           expectedBulletPoints,
+          expectedSkus: expectedSkus!,
+          stockData: stockRemote!.data,
         })
       : null;
+    if (stockRemote) {
+      const stockStep = step("goods-sku-stock-readback", stockRemote);
+      stockStep.ok = stockStep.ok && Boolean(publication?.checks.stockVerified);
+      stockStep.data = {
+        ...stockStep.data,
+        sellerpilotVerification: publication?.checks.stockVerified
+          ? "TEMU_SKU_STOCK_VERIFIED"
+          : "TEMU_SKU_STOCK_MISMATCH",
+      };
+      steps.push(stockStep);
+    }
     detailStep.ok = detailStep.ok && detailMatches && imagesMatch;
     if (strictPublication) detailStep.ok = detailStep.ok && Boolean(publication?.remoteState);
     detailStep.data = {
@@ -5236,7 +5295,15 @@ async function executeTemu(input: ExecuteInput) {
           sellerpilotRemoteVisibility: publication.visibility,
           sellerpilotProviderStatus: publication.providerStatus,
         } : {}),
-      sellerpilotVerification: detailStep.ok ? "IMAGES_VERIFIED" : "TEMU_IMAGE_READBACK_MISSING",
+      sellerpilotVerification: detailStep.ok
+        ? "IMAGES_VERIFIED"
+        : publication && !publication.checks.skuIdentityVerified
+          ? "TEMU_SKU_IDENTITY_READBACK_MISMATCH"
+          : publication && !publication.checks.priceVerified
+            ? "TEMU_PRICE_READBACK_MISMATCH"
+            : publication && !publication.checks.stockVerified
+              ? "TEMU_STOCK_READBACK_MISMATCH"
+              : "TEMU_IMAGE_READBACK_MISSING",
     };
     steps.push(detailStep);
     return result(input, steps, remoteId, undefined, publication?.remoteState);
