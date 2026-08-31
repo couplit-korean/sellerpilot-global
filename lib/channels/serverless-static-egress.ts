@@ -1,6 +1,5 @@
 export const SERVERLESS_STATIC_EGRESS_CHANNELS = [
   "coupang",
-  "smartstore",
   "elevenst",
   "temu",
   "shopee",

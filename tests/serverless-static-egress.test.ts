@@ -23,15 +23,60 @@ test("serverless static egress is disabled by default and on unknown values", ()
 });
 
 test("serverless static egress accepts only explicit supported channels", () => {
-  const configured = parseServerlessStaticEgressChannels("temu, shopee, smartstore, elevenst, coupang");
-  assert.deepEqual(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]);
+  const configured = parseServerlessStaticEgressChannels("temu, shopee, elevenst, coupang");
+  assert.deepEqual(configured, ["coupang", "elevenst", "temu", "shopee"]);
   assert.equal(
-    hasServerlessStaticEgressFor(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]),
+    hasServerlessStaticEgressFor(configured, ["coupang", "elevenst", "temu", "shopee"]),
     true,
   );
   assert.equal(
     serverlessStaticEgressHeaderValue(configured),
-    "coupang,smartstore,elevenst,temu,shopee",
+    "coupang,elevenst,temu,shopee",
+  );
+  assert.deepEqual(parseServerlessStaticEgressChannels("smartstore"), []);
+});
+
+test("Smartstore forward migration releases only Smartstore from static egress", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260831145000_release_smartstore_from_static_egress.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /when p_channel = 'smartstore' then true/);
+  assert.match(migration, /p_channel in \('coupang', 'elevenst', 'temu', 'shopee'\)/);
+  assert.match(migration, /to_regclass\('supabase_migrations\.schema_migrations'\)/);
+  assert.match(migration, /migration\.version >= '20260831143000'/);
+  assert.match(migration, /migration\.name = 'ebay_exact_existing_qa_recovery_fence'/);
+  assert.match(migration, /Smartstore non-static egress executable preimage drifted/);
+  assert.match(migration, /p_channel = 'smartstore' and p_operation = 'inquiries\.list'/);
+  assert.match(migration, /if p_channel = 'coupang'[\s\S]*STATIC_EGRESS_REQUIRED/);
+  assert.match(migration, /SMARTSTORE_NONSTATIC_EGRESS_V1/);
+  const combinedHistoryGate = migration.slice(
+    migration.indexOf("create or replace function public.sellerpilot_start_inquiry_history_backfill"),
+    migration.indexOf("-- Migration-local executable postimage proof"),
+  );
+  assert.match(combinedHistoryGate, /policy\.channel = 'coupang'[\s\S]*STATIC_EGRESS_REQUIRED/);
+  assert.doesNotMatch(combinedHistoryGate, /policy\.channel = 'smartstore'/);
+  assert.match(
+    migration,
+    /sellerpilot_service_serverless_static_egress_status\(\)[\s\S]*from public, anon, authenticated, service_role[\s\S]*to service_role/,
+  );
+  assert.match(
+    migration,
+    /sellerpilot_service_enqueue_periodic_sync\([\s\S]*from public, anon, authenticated, service_role[\s\S]*to service_role/,
+  );
+  assert.match(migration, /serverless_static_egress_allowed\('smartstore'\)[\s\S]*is distinct from true/);
+  assert.match(migration, /serverless_static_egress_allowed\('coupang'\)[\s\S]*is distinct from false/);
+  assert.match(migration, /v_policy_postimage is distinct from current_setting/);
+  assert.doesNotMatch(
+    migration,
+    /(?:update|delete from) sellerpilot_private\.serverless_static_egress_policy/i,
+  );
+  assert.doesNotMatch(
+    migration,
+    /insert into sellerpilot_private\.serverless_static_egress_policy/i,
   );
 });
 
@@ -101,7 +146,11 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.ok(temuEgressGate < inquiryEnqueue);
   assert.match(inquiryFlow, /hasServerlessStaticEgressFor\(staticEgressChannels, \["temu"\]\)/);
   assert.match(inquiryFlow, /status: "fixed_egress_required" as const,[\s\S]*queuedJobs: 0,[\s\S]*pendingJobs: 0/);
-  assert.match(route, /Temu·쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다/);
+  assert.match(route, /Temu·쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다/);
+  assert.match(
+    route,
+    /쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다[\s\S]*쿠팡과 스마트스토어를 묶은 30일 작업/,
+  );
   assert.match(route, /fixedEgressRequired \? \{ blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED \} : \{\}/);
   assert.match(page, /Vercel 고정 egress 설정 필요/);
   assert.match(page, /작업을 접수하거나 자동 재시도하지 않습니다/);

@@ -503,7 +503,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
         completedEnqueues += 1;
         return { data: { status: "already_pending" }, error: null };
       }
-      assert.equal(completedEnqueues, 2);
+      assert.equal(completedEnqueues, 4);
       return { data: null, error: null };
     },
   });
@@ -515,9 +515,9 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
-      pending: 2,
+      pending: 4,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -527,7 +527,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     jobs: [],
   });
   const enqueues = calls.filter(({ name }) => name === "sellerpilot_service_enqueue_periodic_sync");
-  assert.equal(enqueues.length, 2);
+  assert.equal(enqueues.length, 4);
   assert.equal(maxActiveEnqueues, Math.min(SERVERLESS_CS_ENQUEUE_CONCURRENCY, enqueues.length));
   assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
   assert.equal(
@@ -546,7 +546,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
   assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
   assert.deepEqual(
     enqueues.map(({ arguments_ }) => arguments_.p_channel).sort(),
-    ["ebay", "qoo10"],
+    ["ebay", "qoo10", "smartstore", "smartstore"],
   );
   assert.ok(enqueues.every(({ arguments_ }) =>
     arguments_.p_operation === "inquiries.list"
@@ -559,6 +559,8 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     [
       "ebay:inquiries:0",
       "qoo10:inquiries:0",
+      "smartstore:inquiries:customer",
+      "smartstore:inquiries:product",
     ],
   );
   const serializedEnqueues = JSON.stringify(enqueues);
@@ -591,10 +593,10 @@ test("missing generic claim RPC falls back to the inquiries-only compatibility c
   assert.equal(names.filter((name) => name === "sellerpilot_claim_ebay_asq_serverless_job").length, 0);
 });
 
-test("explicit static egress enables Coupang and Smartstore current reads", () => {
+test("Smartstore current reads need no static egress while Coupang still does", () => {
   const enqueues = serverlessCsCurrentInquiryEnqueues(
     new Date("2026-08-28T07:00:00.000Z"),
-    ["coupang", "smartstore"],
+    ["coupang"],
   );
   assert.equal(enqueues.length, 7);
   assert.deepEqual(
@@ -608,10 +610,10 @@ test("explicit Temu static egress enables its current inquiry read", () => {
     new Date("2026-08-28T07:00:00.000Z"),
     ["temu"],
   );
-  assert.equal(enqueues.length, 3);
+  assert.equal(enqueues.length, 5);
   assert.deepEqual(
     enqueues.map(({ channel }) => channel).sort(),
-    ["ebay", "qoo10", "temu"],
+    ["ebay", "qoo10", "smartstore", "smartstore", "temu"],
   );
   const temu = enqueues.find(({ channel }) => channel === "temu");
   assert.equal(temu?.operation, "inquiries.list");
@@ -747,9 +749,9 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(body.processed, 1);
   assert.equal(body.needsAttention, true);
   assert.deepEqual(body.enqueue, {
-    attempted: 2,
+    attempted: 4,
     queued: 0,
-    pending: 1,
+    pending: 3,
     notConnected: 0,
     reconnectRequired: 0,
     reconciliationRequired: 0,
@@ -759,7 +761,7 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(providerCalls, 1);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 1, total: 2 }],
+    ["enqueue", { status: 503, failed: 1, total: 4 }],
   ]);
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|private_provider_body/);
   assert.doesNotMatch(JSON.stringify(logged), /private_provider_body/);
@@ -791,14 +793,14 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
       pending: 0,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
       fixedEgressRequired: 0,
-      failed: 2,
+      failed: 4,
     },
     needsAttention: true,
     jobs: [],
@@ -806,7 +808,7 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
   assert.equal(claimCalls, SERVERLESS_CS_DRAIN_CONCURRENCY);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 2, total: 2 }],
+    ["enqueue", { status: 503, failed: 4, total: 4 }],
   ]);
 });
 
@@ -900,9 +902,9 @@ test("inquiry list completion normalizes provider data in the atomic transaction
     processed: 1,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
-      pending: 2,
+      pending: 4,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -986,7 +988,6 @@ test("Smartstore customer inquiry arguments and reply lineage survive direct exe
   let observedArguments: unknown;
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
-    staticEgressChannels: ["smartstore"],
     rpc: baseRpc(customerJob, calls),
     executeProvider: async ({ job }) => {
       observedArguments = structuredClone(job.request.arguments);
@@ -1161,7 +1162,7 @@ for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
     let fenceObserved = false;
     const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
       cronSecret: CRON_SECRET,
-      staticEgressChannels: channel === "coupang" || channel === "smartstore" ? [channel] : [],
+      staticEgressChannels: channel === "coupang" ? [channel] : [],
       rpc: baseRpc(claim(channel, "inquiries.reply"), calls),
       executeProvider: async ({ hooks }) => {
         await hooks.beginProviderMutation();
@@ -1366,7 +1367,6 @@ for (const safeReason of [
     const privateDiagnostic = "private provider response body";
     const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
       cronSecret: CRON_SECRET,
-      staticEgressChannels: ["smartstore"],
       rpc: baseRpc(claim("smartstore", "inquiries.list"), calls),
       executeProvider: async () => {
         const error = new Error(safeReason);
@@ -1396,7 +1396,6 @@ test("atomic completion retries the exact same payload once after an uncertain r
   };
   const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
     cronSecret: CRON_SECRET,
-    staticEgressChannels: ["smartstore"],
     rpc: baseRpc(claim("smartstore", "inquiries.list"), calls, {
       sellerpilot_service_complete_serverless_cs_transaction: () => {
         completionCalls += 1;
