@@ -14,6 +14,7 @@ registerHooks({
 
 const {
   activateServerlessRuntimeRelease,
+  runCandidateServerlessRuntimeCanary,
   ServerlessRuntimeReleaseError,
 } = await import("../lib/serverless-runtime-release");
 
@@ -137,11 +138,146 @@ test("a mismatched no-work canary never completes a receipt or activates schedul
   ]);
 });
 
+test("release activation rejects a candidate deployment before any RPC or fetch", async () => {
+  const rpcCalls: string[] = [];
+  let fetchCalls = 0;
+  await assert.rejects(
+    activateServerlessRuntimeRelease({
+      origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
+      release,
+      cronSecret: "server-runtime-secret-for-tests",
+      rpc: async (name) => {
+        rpcCalls.push(name);
+        return { data: null, error: null };
+      },
+      fetchImpl: (async () => {
+        fetchCalls += 1;
+        return response({});
+      }) as typeof fetch,
+    }),
+    (error: unknown) => error instanceof ServerlessRuntimeReleaseError
+      && error.safeCode === "runtime_production_origin_required"
+      && error.status === 409,
+  );
+  assert.deepEqual(rpcCalls, []);
+  assert.equal(fetchCalls, 0);
+});
+
+test("a candidate canary checks only the exact deployment origin without any runtime RPC", async () => {
+  const requests: Array<{
+    url: string;
+    method: string;
+    authorization: string | null;
+    cache: RequestCache | undefined;
+    redirect: RequestRedirect | undefined;
+  }> = [];
+  const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const path = new URL(url).pathname;
+    requests.push({
+      url,
+      method: init?.method ?? "GET",
+      authorization: new Headers(init?.headers).get("authorization"),
+      cache: init?.cache,
+      redirect: init?.redirect,
+    });
+    return path === "/api/internal/channel-gateway-drain"
+      ? response({ status: "canary", claimed: 0, processed: 0, release })
+      : response({ status: "canary", executed: false, release });
+  };
+
+  const result = await runCandidateServerlessRuntimeCanary({
+    origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
+    vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+    release: release.toUpperCase(),
+    cronSecret: "server-runtime-secret-for-tests",
+    fetchImpl: fetchImpl as typeof fetch,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.release, release);
+  assert.equal(result.canaries.gateway, 200);
+  assert.equal(result.canaries.schedules.length, 5);
+  assert.equal(requests.length, 6);
+  assert.equal(requests.filter((request) => request.method === "POST").length, 1);
+  assert.equal(requests.every((request) => request.url.startsWith("https://sellerpilot-global-candidate1-project-e59d.vercel.app/api/internal/")), true);
+  assert.equal(requests.every((request) => request.authorization?.startsWith("Bearer ")), true);
+  assert.equal(requests.every((request) => !request.authorization?.includes("server-runtime-secret-for-tests")), true);
+  assert.equal(requests.every((request) => request.cache === "no-store"), true);
+  assert.equal(requests.every((request) => request.redirect === "error"), true);
+});
+
+test("a candidate canary rejects custom domains and malformed deployment origins before fetch", async () => {
+  for (const origin of [
+    "https://sellerpilot-global.vercel.app",
+    "https://sellerpilot-global-project-e59d.vercel.app",
+    "https://sellerpilot-global-candidate1-project-e59d.vercel.app.evil.test",
+    "http://sellerpilot-global-candidate1-project-e59d.vercel.app",
+    "https://user:password@sellerpilot-global-candidate1-project-e59d.vercel.app",
+    "https://sellerpilot-global-candidate1-project-e59d.vercel.app:8443",
+    "https://sellerpilot-global-candidate1-project-e59d.vercel.app/path",
+    "https://sellerpilot-global-candidate1-project-e59d.vercel.app?mode=canary",
+  ]) {
+    await assert.rejects(
+      runCandidateServerlessRuntimeCanary({
+        origin,
+        vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+        release,
+        cronSecret: "server-runtime-secret-for-tests",
+        fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+      }),
+      (error: unknown) => error instanceof ServerlessRuntimeReleaseError
+        && error.safeCode === "runtime_candidate_origin_required"
+        && error.status === 409,
+    );
+  }
+});
+
+test("a candidate canary requires request origin to match the exact Vercel deployment identity", async () => {
+  await assert.rejects(
+    runCandidateServerlessRuntimeCanary({
+      origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
+      vercelUrl: "sellerpilot-global-candidate2-project-e59d.vercel.app",
+      release,
+      cronSecret: "server-runtime-secret-for-tests",
+      fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+    }),
+    (error: unknown) => error instanceof ServerlessRuntimeReleaseError
+      && error.safeCode === "runtime_candidate_origin_required"
+      && error.status === 409,
+  );
+});
+
+test("a candidate canary rejects an unavailable runtime secret before fetch", async () => {
+  await assert.rejects(
+    runCandidateServerlessRuntimeCanary({
+      origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
+      vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+      release,
+      cronSecret: "",
+      fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+    }),
+    (error: unknown) => error instanceof ServerlessRuntimeReleaseError
+      && error.safeCode === "runtime_secret_unavailable"
+      && error.status === 503,
+  );
+});
+
 test("the admin release route is authenticated and does not expose server secrets", async () => {
   const route = await readFile(new URL("../app/api/admin/serverless-runtime-release/route.ts", import.meta.url), "utf8");
   assert.match(route, /authenticateAdminRequest\(request/);
-  assert.match(route, /body\?\.action !== "canary_activate"/);
+  assert.match(route, /body\?\.action !== "candidate_canary" && body\?\.action !== "canary_activate"/);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
+  assert.match(route, /if \(body\.action === "candidate_canary"\)[\s\S]*runCandidateServerlessRuntimeCanary/);
+  assert.match(route, /vercelUrl: process\.env\.VERCEL_URL/);
+  assert.match(route, /후보 배포의 무작업 점검 6개를 통과했습니다\. 운영 일정은 변경하지 않았습니다/);
+  const candidateBranch = route.match(
+    /if \(body\.action === "candidate_canary"\) \{[\s\S]*?\n[ ]{2}\}\n[ ]{2}try \{/,
+  )?.[0];
+  assert.ok(candidateBranch);
+  assert.doesNotMatch(candidateBranch, /admin\.serviceClient/);
+  assert.doesNotMatch(candidateBranch, /activateServerlessRuntimeRelease/);
+  assert.doesNotMatch(candidateBranch, /readServerlessRuntimeReleaseStatus/);
   assert.match(route, /process\.env\.CRON_SECRET/);
   assert.doesNotMatch(route, /cronSecret:\s*process\.env\.CRON_SECRET[\s\S]{0,300}NextResponse\.json\([^)]*cronSecret/);
   assert.match(route, /운영 일정 재검증 결과를 확정하지 못했습니다/);

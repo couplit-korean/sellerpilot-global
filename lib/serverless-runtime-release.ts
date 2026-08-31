@@ -12,6 +12,7 @@ import {
 
 const releasePattern = /^[0-9a-f]{40}$/;
 const receiptPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const candidateDeploymentHostPattern = /^sellerpilot-global-[a-z0-9]+-project-e59d\.vercel\.app$/;
 const internalSchedulePaths = [
   "/api/internal/product-research",
   "/api/internal/channel-sync",
@@ -45,6 +46,15 @@ export type ServerlessRuntimeReleaseResult = {
     activeRelease: string;
     scheduleCount: number;
     unsafePendingMutations: number;
+  };
+};
+
+export type ServerlessRuntimeCandidateCanaryResult = {
+  ok: true;
+  release: string;
+  canaries: {
+    gateway: number;
+    schedules: Array<{ path: string; status: number }>;
   };
 };
 
@@ -93,6 +103,8 @@ async function runNoWorkCanaries(input: {
 }) {
   const request = (path: string, init: RequestInit) => input.fetchImpl(`${input.origin}${path}`, {
     ...init,
+    cache: "no-store",
+    redirect: "error",
     signal: AbortSignal.timeout(10_000),
   });
   const [gatewayResponse, ...scheduleResponses] = await Promise.all([
@@ -139,6 +151,53 @@ async function runNoWorkCanaries(input: {
       path: internalSchedulePaths[index],
       status: response.status,
     })),
+  };
+}
+
+export async function runCandidateServerlessRuntimeCanary(input: {
+  origin: string;
+  vercelUrl: string;
+  release: string;
+  cronSecret: string;
+  fetchImpl?: typeof fetch;
+}): Promise<ServerlessRuntimeCandidateCanaryResult> {
+  const release = input.release.trim().toLowerCase();
+  if (!releasePattern.test(release)) {
+    throw new ServerlessRuntimeReleaseError("runtime_release_invalid", 503);
+  }
+  const cronSecret = input.cronSecret.trim();
+  if (cronSecret.length < 16) {
+    throw new ServerlessRuntimeReleaseError("runtime_secret_unavailable", 503);
+  }
+  let parsedOrigin: URL;
+  try {
+    parsedOrigin = new URL(input.origin);
+  } catch {
+    throw new ServerlessRuntimeReleaseError("runtime_origin_invalid", 503);
+  }
+  const vercelHost = input.vercelUrl.trim().toLowerCase();
+  if (parsedOrigin.protocol !== "https:"
+      || !candidateDeploymentHostPattern.test(parsedOrigin.hostname)
+      || !candidateDeploymentHostPattern.test(vercelHost)
+      || parsedOrigin.host !== vercelHost
+      || parsedOrigin.username
+      || parsedOrigin.password
+      || parsedOrigin.port
+      || parsedOrigin.pathname !== "/"
+      || parsedOrigin.search
+      || parsedOrigin.hash) {
+    throw new ServerlessRuntimeReleaseError("runtime_candidate_origin_required", 409);
+  }
+  const canaries = await runNoWorkCanaries({
+    origin: parsedOrigin.origin,
+    release,
+    bearer: deriveSupabaseInternalScheduleBearer(cronSecret),
+    fetchImpl: input.fetchImpl ?? fetch,
+  });
+  return {
+    ok: true,
+    release,
+    canaries,
   };
 }
 

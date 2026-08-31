@@ -4,6 +4,7 @@ import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-schedule
 import {
   activateServerlessRuntimeRelease,
   readServerlessRuntimeReleaseStatus,
+  runCandidateServerlessRuntimeCanary,
   ServerlessRuntimeReleaseError,
 } from "../../../../lib/serverless-runtime-release";
 
@@ -15,12 +16,34 @@ export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
   if (isAdminApiError(admin)) return admin;
   const body = await request.json().catch(() => null) as { action?: unknown } | null;
-  if (body?.action !== "canary_activate") {
+  if (body?.action !== "candidate_canary" && body?.action !== "canary_activate") {
     return NextResponse.json({ message: "운영 일정 재검증 요청을 확인하지 못했습니다." }, { status: 400 });
   }
   const identity = resolveRuntimeReleaseIdentity();
   if (identity.status !== "valid") {
     return NextResponse.json({ message: "현재 운영 배포 식별자를 확인할 수 없습니다.", code: "runtime_release_unavailable" }, { status: 503 });
+  }
+  if (body.action === "candidate_canary") {
+    try {
+      const result = await runCandidateServerlessRuntimeCanary({
+        origin: new URL(request.url).origin,
+        vercelUrl: process.env.VERCEL_URL ?? "",
+        release: identity.release,
+        cronSecret: process.env.CRON_SECRET ?? "",
+      });
+      return NextResponse.json({
+        ...result,
+        message: "후보 배포의 무작업 점검 6개를 통과했습니다. 운영 일정은 변경하지 않았습니다.",
+      }, { headers: { "cache-control": "no-store" } });
+    } catch (error) {
+      const failure = error instanceof ServerlessRuntimeReleaseError
+        ? error
+        : new ServerlessRuntimeReleaseError("runtime_candidate_canary_failed", 503);
+      return NextResponse.json({
+        message: "후보 배포의 무작업 점검을 완료하지 못했습니다. 운영 일정은 변경하지 않았습니다.",
+        code: failure.safeCode,
+      }, { status: failure.status, headers: { "cache-control": "no-store" } });
+    }
   }
   try {
     const result = await activateServerlessRuntimeRelease({
