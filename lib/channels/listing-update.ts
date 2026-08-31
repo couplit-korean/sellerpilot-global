@@ -920,13 +920,11 @@ export function prepareListingUpdateArguments(
   if (channel === "ebay") {
     const sourceInventoryItem = recordValue(createArguments.inventoryItem);
     const sourceProduct = recordValue(sourceInventoryItem.product);
-    const inventoryProduct = definedEntries(sourceProduct, [
-      "title", "description", "imageUrls", "aspects",
-    ]);
     const sourceOffer = Object.keys(recordValue(createArguments.body)).length
       ? recordValue(createArguments.body)
       : recordValue(createArguments.offer);
-    const exactRecovery = ebayExactExistingQaRecoveryBinding(createArguments)
+    const boundExactRecovery = ebayExactExistingQaRecoveryBinding(createArguments);
+    const exactRecovery = boundExactRecovery
       ?? (ebayExactExistingQaRecoveryCandidate({
         channel,
         listingId: listing.listingId,
@@ -939,10 +937,19 @@ export function prepareListingUpdateArguments(
         publishedAt: listing.publishedAt,
         failureClass: listing.failureClass,
       }) ? true : null);
+    const inventoryProduct = exactRecovery
+      ? boundExactRecovery
+        ? definedEntries(sourceProduct, ["description", "imageUrls"])
+        : {}
+      : definedEntries(sourceProduct, [
+          "title", "description", "imageUrls", "aspects",
+        ]);
     const offer = definedEntries(sourceOffer, exactRecovery
-      ? ["availableQuantity", "listingDescription", "pricingSummary"]
+      ? boundExactRecovery
+        ? ["availableQuantity", "listingDescription", "pricingSummary"]
+        : ["availableQuantity", "pricingSummary"]
       : ["listingDescription"]);
-    if (!Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
+    if (!exactRecovery && !Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
       throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
     }
     return {
@@ -950,17 +957,13 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       ...optionalArgument(createArguments, ebayExactExistingQaRecoveryArgument),
       listingId: remoteId,
-      ...(Object.keys(inventoryProduct).length
+      ...(exactRecovery || Object.keys(inventoryProduct).length
         ? {
             inventoryItem: {
               ...(exactRecovery
                 ? definedEntries(sourceInventoryItem, ["availability", "condition"])
                 : {}),
-              product: exactRecovery
-                ? definedEntries(sourceProduct, [
-                    "title", "description", "imageUrls", "aspects", "brand", "mpn",
-                  ])
-                : inventoryProduct,
+              product: inventoryProduct,
             },
           }
         : {}),

@@ -21,8 +21,9 @@ import {
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
 import {
-  assertEbayExactExistingQaUpdateArguments,
+  assertEbayExactExistingQaProviderCopyRequest,
   bindEbayExactExistingQaRecoveryArguments,
+  ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCentralProductVerified,
   ebayExactExistingQaCreateForbidden,
   ebayExactExistingQaRecoveryArgument,
@@ -1008,6 +1009,12 @@ export async function POST(request: NextRequest) {
           : null,
       });
       if (exactRecovery) {
+        if (ebayExactExistingQaClientBuyerCopySupplied(parsed.data.arguments)) {
+          return NextResponse.json({
+            message: "eBay exact QA 상품의 제목·설명은 검증된 공급자 원문을 보존하므로 브라우저 입력값을 받을 수 없습니다.",
+            mode: "ebay_exact_existing_provider_copy_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
         const { data: identityData, error: identityError } = await serviceClient.rpc(
           "sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity",
           {
@@ -1375,7 +1382,7 @@ export async function POST(request: NextRequest) {
   }
   if (boundEbayExactExistingQaRecovery) {
     try {
-      assertEbayExactExistingQaUpdateArguments(effectiveArguments, {
+      assertEbayExactExistingQaProviderCopyRequest(effectiveArguments, {
         requirePreparedImages: false,
       });
     } catch {
@@ -1751,7 +1758,7 @@ export async function POST(request: NextRequest) {
           })
         : effectiveArguments;
       if (boundEbayExactExistingQaRecovery) {
-        assertEbayExactExistingQaUpdateArguments(gatewayArguments);
+        assertEbayExactExistingQaProviderCopyRequest(gatewayArguments);
       }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {

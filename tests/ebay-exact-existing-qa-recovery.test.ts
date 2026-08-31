@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  assertEbayExactExistingQaProviderCopyRequest,
   assertEbayExactExistingQaUpdateArguments,
   bindEbayExactExistingQaRecoveryArguments,
+  ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCreateForbidden,
   ebayExactExistingQaRecoveryBindingValue,
   ebayExactExistingQaRecoveryCandidate,
@@ -168,6 +170,43 @@ test("exact eBay recovery requires one representative image and genuinely Englis
   );
 });
 
+test("exact eBay provider-copy request permits only image transport and rejects buyer text", () => {
+  const imageOnly = html().replace(
+    "<p>This durable cable organizer keeps charging cords tidy and easy to reach.</p>",
+    "",
+  );
+  const argumentsValue = bindEbayExactExistingQaRecoveryArguments({
+    publicationIntent: "live",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedImageCount: 8,
+    inventoryItem: {
+      condition: "NEW",
+      availability: { shipToLocationAvailability: { quantity: 7 } },
+      product: {
+        description: imageOnly,
+        imageUrls: ["https://cdn.example.com/main.jpg"],
+      },
+    },
+    offer: {
+      availableQuantity: 7,
+      listingDescription: imageOnly,
+      pricingSummary: { price: { currency: "USD", value: 12.9 } },
+    },
+  }, binding());
+  assert.doesNotThrow(() => assertEbayExactExistingQaProviderCopyRequest(argumentsValue));
+  assert.equal(ebayExactExistingQaClientBuyerCopySupplied(argumentsValue), false);
+
+  const forged = structuredClone(argumentsValue);
+  ((forged.inventoryItem as Record<string, unknown>).product as Record<string, unknown>).description =
+    `<p>Browser supplied text must not be accepted.</p>${imageOnly}`;
+  assert.equal(ebayExactExistingQaClientBuyerCopySupplied(forged), true);
+  assert.throws(
+    () => assertEbayExactExistingQaProviderCopyRequest(forged),
+    /EBAY_EXACT_EXISTING_QA_PROVIDER_COPY_REQUEST_REQUIRED/u,
+  );
+});
+
 test("exact failed eBay candidate preserves price and central-stock fields before the server marker exists", () => {
   const prepared = prepareListingUpdateArguments("ebay", {
     inventoryItem: {
@@ -206,4 +245,12 @@ test("exact failed eBay candidate preserves price and central-stock fields befor
     price: { currency: "USD", value: 12.9 },
   });
   assert.equal((prepared.offer as Record<string, unknown>).availableQuantity, 7);
+  assert.deepEqual(
+    (prepared.inventoryItem as Record<string, unknown>).product,
+    {},
+  );
+  assert.equal(
+    Object.hasOwn(prepared.offer as Record<string, unknown>, "listingDescription"),
+    false,
+  );
 });

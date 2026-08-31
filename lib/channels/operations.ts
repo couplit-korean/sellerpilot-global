@@ -61,8 +61,11 @@ import {
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import {
   assertEbayExactExistingQaUpdateArguments,
+  assertEbayExactExistingQaProviderCopyRequest,
   ebayExactExistingQaRecoveryBinding,
 } from "./ebay-exact-existing-qa-recovery";
+import { upsertMarketplaceDetailImages } from "./marketplace-images";
+import { parseListingPublicationAssetBinding } from "./listing-publication-content";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
 import {
@@ -6020,6 +6023,84 @@ async function ebayListingResultWithPublicationReadback(
   );
 }
 
+function ebayProviderDescriptionWithoutImages(value: unknown) {
+  return String(value ?? "")
+    .replace(/<img\b[^>]*>/giu, "")
+    .trim();
+}
+
+function ebayExactProviderCopyArguments(input: {
+  sourceArguments: Record<string, unknown>;
+  currentOffer: Record<string, unknown>;
+  currentInventoryItem: Record<string, unknown>;
+  requestedOffer: Record<string, unknown>;
+  requestedInventoryItem: Record<string, unknown>;
+}) {
+  const publicationBinding = parseListingPublicationAssetBinding(
+    input.sourceArguments.sellerpilotPublicationAssetBinding,
+  );
+  if (!publicationBinding
+      || publicationBinding.providerImageSurface !== "detail_content") {
+    throw new Error("EBAY_EXACT_EXISTING_QA_APPROVED_DETAIL_BINDING_REQUIRED");
+  }
+  const detailUrls = publicationBinding.providerTransportImages.map((image) => image.publicUrl);
+  const detailRoles = publicationBinding.providerTransportImages.map((image) => image.role);
+  const detailAltTexts = detailRoles.map((_, index) =>
+    `Cable organizer product detail image ${index + 1}`);
+  const currentProduct = objectValue(input.currentInventoryItem, "product");
+  const requestedProduct = objectValue(input.requestedInventoryItem, "product");
+  const representativeImageUrls = Array.isArray(requestedProduct.imageUrls)
+    ? requestedProduct.imageUrls
+    : [];
+  const description = upsertMarketplaceDetailImages(
+    ebayProviderDescriptionWithoutImages(currentProduct.description),
+    detailUrls,
+    detailAltTexts,
+    detailRoles,
+  );
+  const listingDescription = upsertMarketplaceDetailImages(
+    ebayProviderDescriptionWithoutImages(input.currentOffer.listingDescription),
+    detailUrls,
+    detailAltTexts,
+    detailRoles,
+  );
+  const inventoryBody = mergeListingUpdatePatch(input.currentInventoryItem, {
+    condition: input.requestedInventoryItem.condition,
+    availability: input.requestedInventoryItem.availability,
+    product: {
+      imageUrls: representativeImageUrls,
+      description,
+    },
+  }) as Record<string, unknown>;
+  const offerBody = mergeListingUpdatePatch(input.currentOffer, {
+    availableQuantity: input.requestedOffer.availableQuantity,
+    pricingSummary: input.requestedOffer.pricingSummary,
+    listingDescription,
+  }) as Record<string, unknown>;
+  const providerProduct = objectValue(inventoryBody, "product");
+  const readbackArguments = {
+    ...input.sourceArguments,
+    inventoryItem: {
+      condition: inventoryBody.condition,
+      availability: inventoryBody.availability,
+      product: {
+        title: providerProduct.title,
+        description: providerProduct.description,
+        imageUrls: providerProduct.imageUrls,
+      },
+    },
+    offer: {
+      availableQuantity: offerBody.availableQuantity,
+      listingDescription: offerBody.listingDescription,
+      pricingSummary: offerBody.pricingSummary,
+    },
+  };
+  assertEbayExactExistingQaUpdateArguments(readbackArguments, {
+    expectedDetailImageUrls: detailUrls,
+  });
+  return { inventoryBody, offerBody, readbackArguments };
+}
+
 async function executeEbay(input: ExecuteInput) {
   if (input.operation === "categories.list") {
     const categoryTreeId = pathSegment(stringArgument(input.arguments, "categoryTreeId"));
@@ -6185,7 +6266,7 @@ async function executeEbay(input: ExecuteInput) {
   }
   if (input.operation === "listing.update") {
     const exactRecovery = ebayExactExistingQaRecoveryBinding(input.arguments);
-    if (exactRecovery) assertEbayExactExistingQaUpdateArguments(input.arguments);
+    if (exactRecovery) assertEbayExactExistingQaProviderCopyRequest(input.arguments);
     const listingId = stringArgument(input.arguments, "listingId");
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const decodedSku = decodeURIComponent(sku);
@@ -6296,19 +6377,29 @@ async function executeEbay(input: ExecuteInput) {
     ] as const;
     const currentOffer = Object.fromEntries(offerWritableFields.flatMap((key) =>
       offerRead.data[key] === undefined ? [] : [[key, structuredClone(offerRead.data[key])]]));
-    const offerBody = mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<string, unknown>;
-    offerBody.sku = decodedSku;
-    offerBody.marketplaceId = marketplaceId;
-
     const inventoryWritableFields = [
       "availability", "condition", "conditionDescription", "packageWeightAndSize", "product",
     ] as const;
     const currentInventoryItem = Object.fromEntries(inventoryWritableFields.flatMap((key) =>
       inventoryRead.data[key] === undefined ? [] : [[key, structuredClone(inventoryRead.data[key])]]));
-    const inventoryBody = mergeListingUpdatePatch(
-      currentInventoryItem,
-      requestedInventoryItem,
-    ) as Record<string, unknown>;
+    const exactPrepared = exactRecovery
+      ? ebayExactProviderCopyArguments({
+          sourceArguments: input.arguments,
+          currentOffer,
+          currentInventoryItem,
+          requestedOffer,
+          requestedInventoryItem,
+        })
+      : null;
+    const offerBody = exactPrepared?.offerBody
+      ?? mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<string, unknown>;
+    offerBody.sku = decodedSku;
+    offerBody.marketplaceId = marketplaceId;
+    const inventoryBody = exactPrepared?.inventoryBody
+      ?? mergeListingUpdatePatch(
+        currentInventoryItem,
+        requestedInventoryItem,
+      ) as Record<string, unknown>;
 
     if (Object.keys(requestedOffer).length) {
       assertEbayListingCreateConfiguration({ offer: offerBody });
@@ -6347,7 +6438,7 @@ async function executeEbay(input: ExecuteInput) {
       if (!offerStep.ok) return result(input, steps, listingId);
     }
     return ebayListingResultWithPublicationReadback(
-      input,
+      exactPrepared ? { ...input, arguments: exactPrepared.readbackArguments } : input,
       steps,
       listingId,
       decodedOfferId,
@@ -6581,6 +6672,11 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       && Number.isInteger(input.arguments.publicationExpectedImageCount)
     ? input.arguments.publicationExpectedImageCount
     : undefined;
+  if (input.channel === "ebay"
+      && input.operation === "listing.update"
+      && ebayExactExistingQaRecoveryBinding(input.arguments)) {
+    assertEbayExactExistingQaProviderCopyRequest(input.arguments);
+  }
   const safeInput = input.operation === "listing.update"
     ? {
       ...input,

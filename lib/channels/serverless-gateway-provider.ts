@@ -3,7 +3,7 @@ import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "..
 import { ebayAsqOperationMarketplaceId } from "./ebay-asq";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import {
-  assertEbayExactExistingQaUpdateArguments,
+  assertEbayExactExistingQaProviderCopyRequest,
   ebayExactExistingQaCreateForbidden,
   ebayExactExistingQaRecoveryArgument,
   ebayExactExistingQaRecoveryBinding,
@@ -622,7 +622,7 @@ export async function executeServerlessGatewayProviderJob(
       if (input.job.credential_id !== ebayExactRecovery.credentialId) {
         throw new Error("EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH");
       }
-      assertEbayExactExistingQaUpdateArguments(rawArguments);
+      assertEbayExactExistingQaProviderCopyRequest(rawArguments);
     }
     const elevenstExactPublication = elevenstExactExistingPublicationBinding(rawArguments);
     if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
@@ -720,11 +720,13 @@ export async function executeServerlessGatewayProviderJob(
       if (!parseListingPublicationAssetBinding(rawArguments.sellerpilotPublicationAssetBinding)) {
         throw new Error("LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED");
       }
-      assertListingPublicationSourceLocalized({
-        channel: input.job.channel,
-        expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
-        sourceArguments: rawArguments,
-      });
+      if (!ebayExactRecovery) {
+        assertListingPublicationSourceLocalized({
+          channel: input.job.channel,
+          expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
+          sourceArguments: rawArguments,
+        });
+      }
     }
 
     const preparedCredential = await prepareCredential(input, rawArguments);

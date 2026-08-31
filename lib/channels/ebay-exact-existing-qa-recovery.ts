@@ -199,6 +199,31 @@ function imageCount(value: unknown) {
   return (exactText(value).match(/<img\b/giu) ?? []).length;
 }
 
+function htmlImageUrls(value: unknown) {
+  return [...exactText(value).matchAll(
+    /<img\b[^>]*\bsrc\s*=\s*(?:["']([^"']+)["']|([^\s>]+))/giu,
+  )].map((match) => (match[1] ?? match[2] ?? "")
+    .replaceAll("&amp;", "&")
+    .trim())
+    .filter(Boolean);
+}
+
+function exactOrderedValues(left: readonly string[], right: readonly string[]) {
+  return left.length === right.length
+    && left.every((value, index) => value === right[index]);
+}
+
+function visibleHtmlText(value: unknown) {
+  return exactText(value)
+    .replace(/<!--[^]*?-->/gu, " ")
+    .replace(/<script\b[^]*?<\/script>/giu, " ")
+    .replace(/<style\b[^]*?<\/style>/giu, " ")
+    .replace(/<[^>]*>/gu, " ")
+    .replace(/&(?:nbsp|#160);/giu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
 function exactEnglishText(value: unknown) {
   const text = exactText(value)
     .replace(/<[^>]*>/gu, " ")
@@ -211,7 +236,10 @@ function exactEnglishText(value: unknown) {
 
 export function assertEbayExactExistingQaUpdateArguments(
   argumentsValue: Record<string, unknown>,
-  options: { requirePreparedImages?: boolean } = {},
+  options: {
+    requirePreparedImages?: boolean;
+    expectedDetailImageUrls?: readonly string[];
+  } = {},
 ) {
   const binding = ebayExactExistingQaRecoveryBinding(argumentsValue);
   const inventoryItem = recordValue(argumentsValue.inventoryItem);
@@ -228,6 +256,9 @@ export function assertEbayExactExistingQaUpdateArguments(
   const description = exactText(product?.description);
   const listingDescription = exactText(offer?.listingDescription);
   const urls = uniqueHttpsUrls(product?.imageUrls);
+  const expectedDetailImageUrls = options.expectedDetailImageUrls ?? [];
+  const descriptionImages = htmlImageUrls(description);
+  const listingDescriptionImages = htmlImageUrls(listingDescription);
   if (!binding
       || exactText(argumentsValue.listingId) !== binding.publicListingId
       || exactText(argumentsValue.sku) !== binding.marketplaceSku
@@ -252,10 +283,80 @@ export function assertEbayExactExistingQaUpdateArguments(
       || listingDescription.length < 20
       || !exactEnglishText(listingDescription)
       || urls.length !== 1
-      || (options.requirePreparedImages !== false && imageCount(description) < 8)
-      || (options.requirePreparedImages !== false && imageCount(listingDescription) < 8)
+      || (options.requirePreparedImages !== false && imageCount(description) !== 8)
+      || (options.requirePreparedImages !== false && imageCount(listingDescription) !== 8)
+      || (expectedDetailImageUrls.length > 0
+        && (!exactOrderedValues(descriptionImages, expectedDetailImageUrls)
+          || !exactOrderedValues(listingDescriptionImages, expectedDetailImageUrls)))
       || argumentsValue.publish === true) {
     throw new Error("EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED");
+  }
+  return binding;
+}
+
+export function ebayExactExistingQaClientBuyerCopySupplied(
+  argumentsValue: Record<string, unknown>,
+) {
+  const inventoryItem = recordValue(argumentsValue.inventoryItem);
+  const product = recordValue(inventoryItem?.product);
+  const offer = recordValue(argumentsValue.offer);
+  const body = recordValue(argumentsValue.body);
+  return Boolean(
+    exactText(product?.title)
+    || visibleHtmlText(product?.description)
+    || visibleHtmlText(offer?.listingDescription)
+    || visibleHtmlText(body?.listingDescription),
+  );
+}
+
+/**
+ * Exact eBay recovery requests transport commerce values and server-prepared
+ * images only. Buyer-facing title/description text is deliberately absent;
+ * the provider executor derives it from the immutable offer/inventory GETs.
+ */
+export function assertEbayExactExistingQaProviderCopyRequest(
+  argumentsValue: Record<string, unknown>,
+  options: { requirePreparedImages?: boolean } = {},
+) {
+  const binding = ebayExactExistingQaRecoveryBinding(argumentsValue);
+  const inventoryItem = recordValue(argumentsValue.inventoryItem);
+  const product = recordValue(inventoryItem?.product);
+  const availability = recordValue(inventoryItem?.availability);
+  const shipToLocationAvailability = recordValue(
+    availability?.shipToLocationAvailability,
+  );
+  const offer = recordValue(argumentsValue.offer);
+  const pricingSummary = recordValue(offer?.pricingSummary);
+  const price = recordValue(pricingSummary?.price);
+  const requestedPrice = exactNumber(price?.value);
+  const urls = uniqueHttpsUrls(product?.imageUrls);
+  const description = exactText(product?.description);
+  const listingDescription = exactText(offer?.listingDescription);
+  const preparedImagesRequired = options.requirePreparedImages !== false;
+  if (!binding
+      || exactText(argumentsValue.listingId) !== binding.publicListingId
+      || exactText(argumentsValue.sku) !== binding.marketplaceSku
+      || exactText(argumentsValue.marketplaceId).toUpperCase() !== binding.marketplaceId
+      || exactText(argumentsValue.offerId)
+      || exactText(argumentsValue.providerResourceId)
+      || argumentsValue.publicationIntent !== "live"
+      || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
+      || argumentsValue.publicationExpectedLocale !== "en-US"
+      || argumentsValue.publicationExpectedImageCount !== 8
+      || inventoryItem?.condition !== "NEW"
+      || Number(shipToLocationAvailability?.quantity) !== binding.stock
+      || Number(offer?.availableQuantity) !== binding.stock
+      || exactText(price?.currency).toUpperCase() !== binding.currency
+      || !Number.isFinite(requestedPrice)
+      || Math.abs(requestedPrice - binding.priceUsd) > 0.000_001
+      || exactText(product?.title)
+      || visibleHtmlText(description)
+      || visibleHtmlText(listingDescription)
+      || (preparedImagesRequired && urls.length !== 1)
+      || (preparedImagesRequired && imageCount(description) !== 8)
+      || (preparedImagesRequired && imageCount(listingDescription) !== 8)
+      || argumentsValue.publish === true) {
+    throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_COPY_REQUEST_REQUIRED");
   }
   return binding;
 }

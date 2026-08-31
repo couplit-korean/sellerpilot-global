@@ -11,6 +11,10 @@ const contentFenceMigrationUrl = new URL(
   "../supabase/migrations/20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql",
   import.meta.url,
 );
+const providerCopyMigrationUrl = new URL(
+  "../supabase/migrations/20260901050509_preserve_ebay_exact_provider_copy.sql",
+  import.meta.url,
+);
 
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const listingId = "8b2cbfaf-3854-437d-b381-abfd70291354";
@@ -125,6 +129,7 @@ async function createDatabase() {
   `);
   await db.exec(await readFile(recoveryMigrationUrl, "utf8"));
   await db.exec(await readFile(contentFenceMigrationUrl, "utf8"));
+  await db.exec(await readFile(providerCopyMigrationUrl, "utf8"));
   await db.query(
     `insert into sellerpilot_private.products
        (id,owner_id,sku,on_hand,demo,status)
@@ -218,10 +223,23 @@ async function identity(db) {
 }
 
 function detailHtml() {
-  return `<p>This durable cable organizer keeps charging cords tidy and easy to reach.</p>${Array.from(
+  return `<section data-sellerpilot-detail-images="true">${Array.from(
     { length: 8 },
     (_, index) => `<img src="https://cdn.example.com/detail-${index + 1}.jpg">`,
-  ).join("")}`;
+  ).join("")}</section>`;
+}
+
+function detailBinding() {
+  const images = Array.from({ length: 8 }, (_, index) => ({
+    role: `detail-${index + 1}`,
+    publicUrl: `https://cdn.example.com/detail-${index + 1}.jpg`,
+  }));
+  return {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    providerImageSurface: "detail_content",
+    approvedDetailImages: images,
+    providerTransportImages: images,
+  };
 }
 
 function updatePayload(marker) {
@@ -238,7 +256,6 @@ function updatePayload(marker) {
         condition: "NEW",
         availability: { shipToLocationAvailability: { quantity: marker.stock } },
         product: {
-          title: "Adhesive Cable Organizer Clips",
           description: detailHtml(),
           imageUrls: ["https://cdn.example.com/main.jpg"],
         },
@@ -248,12 +265,7 @@ function updatePayload(marker) {
         listingDescription: detailHtml(),
         pricingSummary: { price: { currency: "USD", value: "12.9" } },
       },
-      sellerpilotPublicationAssetBinding: {
-        contract: "sellerpilot_publication_asset_binding_v1",
-        providerImageSurface: "detail_content",
-        approvedDetailImages: Array.from({ length: 8 }, () => ({})),
-        providerTransportImages: Array.from({ length: 8 }, () => ({})),
-      },
+      sellerpilotPublicationAssetBinding: detailBinding(),
       sellerpilotEbayExactExistingQaRecovery: marker,
     },
   };
@@ -365,15 +377,28 @@ test("eBay exact existing QA identity and content update enqueue are transaction
       /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
     );
 
-    const koreanTitle = structuredClone(updatePayload(marker));
-    koreanTitle.arguments.inventoryItem.product.title =
-      "부착형 케이블 정리 클립 6개 세트";
+    const browserTitle = structuredClone(updatePayload(marker));
+    browserTitle.arguments.inventoryItem.product.title =
+      "Browser supplied title";
     await assert.rejects(
       db.query(
         `select public.sellerpilot_service_enqueue_listing_gateway_job(
            $1,$2,$3,'ebay','listing.update',$4::jsonb
          )`,
-        [listingId, credentialId, updateAttemptId, JSON.stringify(koreanTitle)],
+        [listingId, credentialId, updateAttemptId, JSON.stringify(browserTitle)],
+      ),
+      /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
+    );
+
+    const browserDescription = structuredClone(updatePayload(marker));
+    browserDescription.arguments.offer.listingDescription =
+      `<p>Browser supplied description</p>${detailHtml()}`;
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'ebay','listing.update',$4::jsonb
+         )`,
+        [listingId, credentialId, updateAttemptId, JSON.stringify(browserDescription)],
       ),
       /EBAY_EXACT_EXISTING_QA_ENQUEUE_FENCE_MISMATCH/,
     );
