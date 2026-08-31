@@ -222,6 +222,7 @@ fieldset.intake-confirmations {
 .account-security-overlay,
 .product-edit-overlay,
 .credential-modal-backdrop,
+.competitor-review-overlay,
 .shipment-dialog-overlay {
   z-index: var(--layer-modal);
 }
@@ -231,14 +232,29 @@ fieldset.intake-confirmations {
 /* A modal or drawer owns the pointer surface. Navigation, push prompts and
    transient toasts remain visible only where useful, but cannot receive a tap
    through a translucent backdrop. */
-body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-bottom-nav,
-body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-gate,
-body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-chip,
-body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .toast,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .competitor-review-overlay, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-bottom-nav,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .competitor-review-overlay, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-gate,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .competitor-review-overlay, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .mobile-push-chip,
+body:has(.command-overlay, .account-security-overlay, .product-edit-overlay, .credential-modal-backdrop, .competitor-review-overlay, .shipment-dialog-overlay, .puck-editor-modal, .sidebar.open) .toast,
 body:has(.notification-popover) .mobile-bottom-nav,
 body:has(.notification-popover) .mobile-push-gate,
 body:has(.notification-popover) .mobile-push-chip {
   pointer-events: none;
+}
+
+.competitor-review-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-y: auto;
+  padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  background: rgb(14 25 23 / 62%);
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  backdrop-filter: blur(4px);
+  -webkit-overflow-scrolling: touch;
 }
 
 /* Orders had responsive fragments but no complete base dialog shell. */

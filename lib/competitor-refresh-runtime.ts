@@ -1,5 +1,6 @@
 import type {
   CompetitorPriceCandidate,
+  CompetitorProductIdentity,
   CompetitorProviderStatus,
 } from "./competitor-prices";
 
@@ -8,10 +9,12 @@ export type ClaimedCompetitorProduct = {
   query: string;
   aliases: string[];
   claimToken: string;
+  identity: CompetitorProductIdentity;
 };
 
 export type CompetitorRefreshSearchResult = {
   items: CompetitorPriceCandidate[];
+  sourceItems?: CompetitorPriceCandidate[];
   providers: CompetitorProviderStatus[];
   available: boolean;
   pending: boolean;
@@ -34,6 +37,7 @@ type RunCompetitorProductRefreshOptions = {
   product: ClaimedCompetitorProduct;
   unavailableProviders: CompetitorProviderStatus[];
   matcherVersion: string;
+  terminalizePendingProviders?: readonly CompetitorProviderStatus["provider"][];
   search: (product: ClaimedCompetitorProduct) => Promise<CompetitorRefreshSearchResult>;
   release: (product: ClaimedCompetitorProduct) => Promise<boolean>;
   complete: (input: {
@@ -120,6 +124,7 @@ export async function runClaimedCompetitorProductRefresh({
   product,
   unavailableProviders,
   matcherVersion,
+  terminalizePendingProviders = [],
   search,
   release,
   complete,
@@ -131,14 +136,22 @@ export async function runClaimedCompetitorProductRefresh({
     return releaseAfterSearchFailure(product, unavailableProviders, release, true);
   }
 
-  if (searched.pending) {
+  const terminalized = new Set(terminalizePendingProviders);
+  const providers = searched.providers.map((provider) => (
+    provider.status === "pending" && terminalized.has(provider.provider)
+      ? { ...provider, status: "failed" as const, count: 0 }
+      : provider
+  ));
+  const pending = providers.some((provider) => provider.status === "pending");
+
+  if (pending) {
     return {
       result: {
         productId: product.productId,
         ok: false,
         pending: true,
         count: 0,
-        providers: searched.providers,
+        providers,
       },
       infrastructureFailure: false,
       failureStage: null,
@@ -149,21 +162,29 @@ export async function runClaimedCompetitorProductRefresh({
   // truth. Finish the fenced claim with an empty item snapshot so the UI can
   // distinguish failed/unavailable providers from a successful zero-match
   // search. Only an exception thrown by search itself takes the release path.
-  const items = searched.available
-    ? searched.items.map((item) => ({ ...item, matcherVersion }))
+  const searchedProviders = new Set(
+    providers
+      .filter((provider) => provider.status === "searched")
+      .map((provider) => provider.provider),
+  );
+  const available = searchedProviders.size > 0;
+  const items = available
+    ? (searched.sourceItems ?? searched.items)
+        .filter((item) => searchedProviders.has(item.provider))
+        .map((item) => ({ ...item, matcherVersion }))
     : [];
   try {
-    const savedCount = await complete({ product, items, providers: searched.providers });
+    const savedCount = await complete({ product, items, providers });
     if (!Number.isFinite(savedCount) || savedCount < 0) {
       return {
-        result: failedResult(product, searched.providers),
+        result: failedResult(product, providers),
         infrastructureFailure: true,
         failureStage: "snapshot_complete",
       };
     }
-    if (!searched.available) {
+    if (!available) {
       return {
-        result: failedResult(product, searched.providers),
+        result: failedResult(product, providers),
         infrastructureFailure: false,
         failureStage: null,
       };
@@ -171,10 +192,10 @@ export async function runClaimedCompetitorProductRefresh({
     return {
       result: {
         productId: product.productId,
-        ok: true,
+        ok: providers.every((provider) => provider.status === "searched"),
         pending: false,
         count: savedCount,
-        providers: searched.providers,
+        providers,
       },
       infrastructureFailure: false,
       failureStage: null,
@@ -183,7 +204,7 @@ export async function runClaimedCompetitorProductRefresh({
     // Completion may have committed before a response was lost. Never release
     // the claim here: the lease fence prevents a blind duplicate completion.
     return {
-      result: failedResult(product, searched.providers),
+      result: failedResult(product, providers),
       infrastructureFailure: true,
       failureStage: "snapshot_complete",
     };

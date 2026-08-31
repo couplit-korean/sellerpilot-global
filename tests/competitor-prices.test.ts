@@ -12,6 +12,7 @@ import {
   normalizedCompetitorQueries,
   searchBraveMarketplaceWebVariants,
   searchCompetitorProviders,
+  searchEbayBrowse,
   searchEbayBrowseVariants,
   searchElevenstProductVariants,
   searchElevenstProducts,
@@ -239,8 +240,8 @@ test("provider deadline aborts active fetches, removes queued fetches, and leave
     };
 
     const result = await searchCompetitorProviders(registry, "synthetic deadline product", [], 30, 25);
-    assert.equal(result.pending, true);
-    assert.equal(result.providers[0]?.status, "pending");
+    assert.equal(result.pending, false);
+    assert.equal(result.providers[0]?.status, "failed");
 
     for (let attempt = 0; attempt < 20 && activeFetches > 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 5));
@@ -314,9 +315,10 @@ test("Brave marketplace queries stay within the documented limits and only name 
 });
 
 test("marketplace web URLs and structured prices fail closed on lookalike hosts, non-products, and snippet-only prices", () => {
+  const shopeeUrl = "https://www.shopee.sg/Sajo-Tuna-i.12.34";
   assert.equal(
-    canonicalMarketplaceWebProductUrl("https://www.shopee.sg/Sajo-Tuna-i.12.34?utm_source=test#reviews", "shopee"),
-    "https://www.shopee.sg/Sajo-Tuna-i.12.34",
+    canonicalMarketplaceWebProductUrl(`${shopeeUrl}?utm_source=test#reviews`, "shopee"),
+    shopeeUrl,
   );
   assert.equal(canonicalMarketplaceWebProductUrl("https://shopee.sg.example.com/Sajo-Tuna-i.12.34", "shopee"), "");
   assert.equal(canonicalMarketplaceWebProductUrl("https://www.lazada.com.my/catalog/?q=tuna", "lazada"), "");
@@ -331,11 +333,46 @@ test("marketplace web URLs and structured prices fail closed on lookalike hosts,
   assert.equal(canonicalMarketplaceWebImageUrl("", "shopee"), "");
 
   assert.deepEqual(structuredMarketplaceWebPrice({
-    product: { offers: { price: "RM 34.90", priceCurrency: "MYR" } },
-  }), { price: 34.9, currency: "MYR" });
-  assert.equal(structuredMarketplaceWebPrice({ description: "Sale price $9.99" }), null);
-  assert.equal(structuredMarketplaceWebPrice({ product: { price: "$9.99" } }), null);
-  assert.equal(structuredMarketplaceWebPrice({ product: { price: "from 9.99" } }), null);
+    product: {
+      type: "Product",
+      url: shopeeUrl,
+      offers: [{ url: `${shopeeUrl}?tracking=remove`, price: "34.90", priceCurrency: "SGD" }],
+    },
+  }, "shopee", shopeeUrl), { price: 34.9, currency: "SGD" });
+  assert.equal(structuredMarketplaceWebPrice({ description: "Sale price $9.99" }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    product: { type: "Product", url: shopeeUrl, price: "9.99", currency: "SGD" },
+  }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    schemas: [{ "@type": "Product", offers: [{ url: shopeeUrl, price: "9.99", priceCurrency: "SGD" }] }],
+  }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    product: { type: "Product", url: shopeeUrl, offers: [{ url: shopeeUrl, price: "9.99" }] },
+  }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    product: {
+      type: "Product",
+      url: shopeeUrl,
+      offers: [{ url: "https://www.shopee.sg/Other-i.12.35", price: "9.99", priceCurrency: "SGD" }],
+    },
+  }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    product: {
+      type: "Product",
+      url: shopeeUrl,
+      offers: [
+        { url: shopeeUrl, price: "9.99", priceCurrency: "SGD" },
+        { url: "https://www.shopee.sg/Other-i.12.35", price: "10.99", priceCurrency: "SGD" },
+      ],
+    },
+  }, "shopee", shopeeUrl), null);
+  assert.equal(structuredMarketplaceWebPrice({
+    product: {
+      type: "Product",
+      url: shopeeUrl,
+      offers: [{ url: shopeeUrl, price: "from 9.99", priceCurrency: "SGD" }],
+    },
+  }, "shopee", shopeeUrl), null);
 });
 
 test("Brave marketplace web search reuses multilingual aliases, rejects untrusted results, and caps every marketplace at three", async () => {
@@ -355,23 +392,27 @@ test("Brave marketplace web search reuses multilingual aliases, rejects untruste
       : query.includes("site:lazada.sg") ? "lazada"
       : "temu";
     const validResults = Array.from({ length: 5 }, (_, index) => {
-      if (marketplace === "shopee") return {
-        title: "Sajo lean tuna 95g 8 pack",
-        url: `https://shopee.sg/Sajo-Tuna-i.111.${100 + index}?tracking=remove`,
-        thumbnail: { original: `https://cf.shopee.sg/file/${index}` },
-        product: { offers: { price: String(12.5 + index) } },
-      };
-      if (marketplace === "lazada") return {
-        title: "Sajo lean tuna 95g 8 pack",
-        url: `https://www.lazada.com.my/products/sajo-tuna-i${200 + index}-s1.html?spm=remove`,
-        schemas: [{ "@type": "Product", offers: { lowPrice: String(34.9 + index), priceCurrency: "MYR" } }],
-      };
+      const itemUrl = marketplace === "shopee"
+        ? `https://shopee.sg/Sajo-Tuna-i.111.${100 + index}?tracking=remove`
+        : marketplace === "lazada"
+          ? `https://www.lazada.com.my/products/sajo-tuna-i${200 + index}-s1.html?spm=remove`
+          : `https://www.temu.com/sajo-tuna-g-${300 + index}.html?refer_page=remove`;
+      const price = marketplace === "shopee" ? String(12.5 + index)
+        : marketplace === "lazada" ? String(34.9 + index)
+          : String(9.99 + index);
+      const currency = marketplace === "shopee" ? "SGD" : marketplace === "lazada" ? "MYR" : "USD";
       return {
         title: "Sajo lean tuna 95g 8 pack",
-        url: `https://www.temu.com/sajo-tuna-g-${300 + index}.html?refer_page=remove`,
-        product: { price: String(9.99 + index), currency: "USD" },
+        url: itemUrl,
+        thumbnail: marketplace === "shopee" ? { original: `https://cf.shopee.sg/file/${index}` } : undefined,
+        product: { type: "Product", url: itemUrl, offers: [{ url: itemUrl, price, priceCurrency: currency }] },
       };
     });
+    const wrongPackUrl = marketplace === "shopee"
+      ? "https://shopee.sg/Wrong-Pack-i.111.999"
+      : marketplace === "lazada"
+        ? "https://www.lazada.com.my/products/wrong-pack-i999-s1.html"
+        : "https://www.temu.com/wrong-pack-g-999.html";
     return Response.json({ web: { results: [
       ...validResults,
       {
@@ -381,12 +422,16 @@ test("Brave marketplace web search reuses multilingual aliases, rejects untruste
       },
       {
         title: "Sajo lean tuna 95g 40 pack",
-        url: marketplace === "shopee"
-          ? "https://shopee.sg/Wrong-Pack-i.111.999"
-          : marketplace === "lazada"
-            ? "https://www.lazada.com.my/products/wrong-pack-i999-s1.html"
-            : "https://www.temu.com/wrong-pack-g-999.html",
-        product: { price: "1.00", priceCurrency: marketplace === "lazada" ? "MYR" : "USD" },
+        url: wrongPackUrl,
+        product: {
+          type: "Product",
+          url: wrongPackUrl,
+          offers: [{
+            url: wrongPackUrl,
+            price: "1.00",
+            priceCurrency: marketplace === "shopee" ? "SGD" : marketplace === "lazada" ? "MYR" : "USD",
+          }],
+        },
       },
       {
         title: "Sajo lean tuna 95g 8 pack",
@@ -521,7 +566,11 @@ test("Brave marketplace results use all aliases when the search language and ret
     return Response.json({ web: { results: [{
       title: "Kellogg Choco Chex 570g",
       url: "https://shopee.com.mx/Kellogg-Chex-i.11.22",
-      product: { offers: { price: "149.00", priceCurrency: "MXN" } },
+      product: {
+        type: "Product",
+        url: "https://shopee.com.mx/Kellogg-Chex-i.11.22",
+        offers: [{ url: "https://shopee.com.mx/Kellogg-Chex-i.11.22", price: "149.00", priceCurrency: "MXN" }],
+      },
     }] } });
   };
   try {
@@ -1094,6 +1143,7 @@ test("11st official ProductSearch parses only catalog fields and uses English se
       <ProductSearchResponse><Products><Product>
         <ProductCode>123456789</ProductCode><ProductName><![CDATA[Kellogg's Choco Chex 570g]]></ProductName>
         <ProductPrice>9900</ProductPrice><SalePrice>7900</SalePrice>
+        <Delivery>무료</Delivery><Benefit><Discount>2000</Discount></Benefit><StockQuantity>999</StockQuantity>
         <ProductImage>https://image.11st.co.kr/example.jpg</ProductImage><Seller>official-store</Seller>
         <DetailPageUrl>http://www.11st.co.kr/products/123456789</DetailPageUrl>
       </Product></Products></ProductSearchResponse>`, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
@@ -1113,6 +1163,38 @@ test("11st official ProductSearch parses only catalog fields and uses English se
       mallName: "official-store",
     })]);
     assert.equal(JSON.stringify(items).includes("A".repeat(32)), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st keeps only a positive observed item price and never promotes delivery, discount, or stock fields", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(`<?xml version="1.0" encoding="UTF-8"?>
+    <ProductSearchResponse><Products>
+      <Product>
+        <ProductCode>fallback-price</ProductCode><ProductName>Fallback item</ProductName>
+        <ProductPrice>12300</ProductPrice><SalePrice>0</SalePrice>
+        <Delivery>2500</Delivery><Benefit><Discount>500</Discount></Benefit><StockQuantity>7</StockQuantity>
+        <DetailPageUrl>https://www.11st.co.kr/products/12300</DetailPageUrl>
+      </Product>
+      <Product>
+        <ProductCode>zero-price</ProductCode><ProductName>Unavailable item</ProductName>
+        <ProductPrice>0</ProductPrice><SalePrice>0</SalePrice>
+        <DetailPageUrl>https://www.11st.co.kr/products/0</DetailPageUrl>
+      </Product>
+    </Products></ProductSearchResponse>`, {
+    status: 200,
+    headers: { "content-type": "text/xml; charset=utf-8" },
+  });
+  try {
+    const items = await searchElevenstProducts("Fallback item", { apiKey: "A".repeat(32) }, 3);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.externalId, "fallback-price");
+    assert.equal(items[0]?.price, 12_300);
+    assert.equal(items[0]?.currency, "KRW");
+    assert.equal("priceComponents" in (items[0] ?? {}), false);
+    assert.equal("inventoryStatus" in (items[0] ?? {}), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1239,6 +1321,7 @@ test("11st pack-neutral retrieval also searches a base query for non-measured mu
 test("eBay Browse exchanges an application token once and searches every multilingual alias", async () => {
   const originalFetch = globalThis.fetch;
   const searches: string[] = [];
+  const filters: string[] = [];
   let tokenCalls = 0;
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -1248,11 +1331,47 @@ test("eBay Browse exchanges an application token once and searches every multili
       return Response.json({ access_token: "application-token", expires_in: 7200 });
     }
     searches.push(url.searchParams.get("q") ?? "");
+    filters.push(url.searchParams.get("filter") ?? "");
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer application-token");
-    return Response.json({ itemSummaries: [{
-      itemId: `v1|${searches.length}|0`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/${searches.length}`,
-      image: { imageUrl: "https://i.ebayimg.com/example.jpg" }, seller: { username: "seller" }, price: { value: "12.50", currency: "USD" },
-    }] });
+    return Response.json({ itemSummaries: [
+      {
+        itemId: `v1|${searches.length}|0`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/${searches.length}`,
+        image: { imageUrl: "https://i.ebayimg.com/example.jpg" }, seller: { username: "seller" },
+        price: { value: "12.50", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `auction-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/auction-${searches.length}`,
+        price: { value: "1.00", currency: "USD" }, buyingOptions: ["AUCTION"],
+      },
+      {
+        itemId: `missing-currency-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/missing-currency-${searches.length}`,
+        price: { value: "1.00" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `zero-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/zero-${searches.length}`,
+        price: { value: "0", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `malformed-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com/itm/malformed-${searches.length}`,
+        price: { value: "1e3", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `lookalike-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com.evil.test/itm/lookalike-${searches.length}`,
+        price: { value: "0.01", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `http-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `http://www.ebay.com/itm/http-${searches.length}`,
+        price: { value: "0.01", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `port-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.com:443/itm/port-${searches.length}`,
+        price: { value: "0.01", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+      {
+        itemId: `wrong-market-${searches.length}`, title: "Kellogg's Choco Chex 570g", itemWebUrl: `https://www.ebay.de/itm/wrong-market-${searches.length}`,
+        price: { value: "0.01", currency: "USD" }, buyingOptions: ["FIXED_PRICE"],
+      },
+    ] });
   };
   try {
     const items = await searchEbayBrowseVariants("첵스초코 570g", ["Kellogg's Choco Chex 570g"], {
@@ -1260,11 +1379,127 @@ test("eBay Browse exchanges an application token once and searches every multili
       clientSecret: "client-secret",
       marketplaceId: "EBAY_US",
       environment: "production",
-    }, 3);
+    }, 12);
     assert.equal(tokenCalls, 1);
     assert.deepEqual(searches, ["첵스초코 570g", "Kellogg's Choco Chex 570g"]);
+    assert.deepEqual(filters, ["buyingOptions:{FIXED_PRICE}", "buyingOptions:{FIXED_PRICE}"]);
     assert.equal(items.length, 2);
     assert.equal(items.every((item) => item.provider === "ebay_browse" && item.currency === "USD"), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay Browse preserves structured identity, condition, availability, and known shipping", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ itemSummaries: [
+    {
+      itemId: "117132865354",
+      title: "Sony WH-1000XM6 (Black) Noise Cancelling Headphones – Brand New (Sealed)",
+      itemWebUrl: "https://www.ebay.com/itm/117132865354",
+      price: { value: "329.99", currency: "USD" },
+      buyingOptions: ["FIXED_PRICE"],
+      condition: "New",
+      localizedAspects: [
+        { name: "Brand", value: "Sony" },
+        { name: "Model", value: "WH-1000XM6" },
+        { name: "Color", value: "Black" },
+        { name: "MPN", value: "WH1000XM6/B" },
+      ],
+      shippingOptions: [{ shippingCost: { value: "0.00", currency: "USD" } }],
+      estimatedAvailabilities: [{ estimatedAvailabilityStatus: "IN_STOCK" }],
+    },
+    {
+      itemId: "287461829028",
+      title: "Sony WH-1000XM6 Headphones Black - Open Box Condition",
+      itemWebUrl: "https://www.ebay.com/itm/287461829028",
+      price: { value: "319.99", currency: "USD" },
+      buyingOptions: ["FIXED_PRICE"],
+      condition: "Open box",
+      localizedAspects: [
+        { name: "Brand", value: "Sony" },
+        { name: "Model", value: "WH-1000XM6" },
+        { name: "Color", value: "Black" },
+      ],
+    },
+  ] });
+  try {
+    const items = await searchEbayBrowse("Sony WH-1000XM6", {
+      clientId: "client-id",
+      clientSecret: "client-secret",
+      marketplaceId: "EBAY_US",
+      environment: "production",
+    }, "access-token", 10);
+
+    assert.equal(items.length, 2);
+    assert.deepEqual(items[0]?.identity, {
+      brand: "Sony",
+      manufacturerPartNumber: "WH1000XM6/B",
+      modelNumber: "WH-1000XM6",
+      condition: "new",
+      options: { color: "Black" },
+    });
+    assert.equal(items[0]?.inventoryStatus, "in_stock");
+    assert.deepEqual(items[0]?.priceComponents?.shipping, {
+      status: "known",
+      amount: 0,
+      currency: "USD",
+    });
+    assert.equal(items[1]?.identity?.condition, "used");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Naver exposes only its positive lprice item price and ignores unreported purchase components", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ items: [
+    {
+      productId: "naver-item-price",
+      title: "테스트 상품",
+      link: "https://smartstore.naver.com/store/products/123",
+      image: "https://example.test/item.jpg",
+      mallName: "네이버 스마트스토어",
+      lprice: "7900",
+      brand: "테스트브랜드",
+      maker: "테스트제조사",
+      productType: "2",
+      hprice: "12000",
+      shippingFee: "2500",
+      discount: "500",
+      stockQuantity: "99",
+    },
+    {
+      productId: "naver-unavailable",
+      title: "판매 불가 상품",
+      link: "https://smartstore.naver.com/store/products/0",
+      mallName: "네이버 스마트스토어",
+      lprice: "0",
+    },
+    {
+      productId: "naver-malformed",
+      title: "형식 오류 상품",
+      link: "https://smartstore.naver.com/store/products/999",
+      mallName: "네이버 스마트스토어",
+      lprice: 1,
+    },
+  ] });
+  try {
+    const items = await searchNaverShopping("테스트 상품", {
+      clientId: "search-id",
+      clientSecret: "search-secret",
+    }, 3);
+    assert.equal(items.length, 1);
+    assert.equal(items[0]?.externalId, "naver-item-price");
+    assert.equal(items[0]?.price, 7_900);
+    assert.equal(items[0]?.currency, "KRW");
+    assert.deepEqual(items[0]?.identity, {
+      brand: "테스트브랜드",
+      manufacturer: "테스트제조사",
+      condition: "used",
+    });
+    assert.equal("priceComponents" in (items[0] ?? {}), false);
+    assert.equal("inventoryStatus" in (items[0] ?? {}), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1322,7 +1557,7 @@ test("Qoo10 query-parameter product ids keep distinct listings while deduplicati
   assert.equal(result.items.every((item) => item.marketplace === "qoo10"), true);
 });
 
-test("an unfinished local gateway search remains pending instead of being treated as a completed empty search", async () => {
+test("an 11st gateway deadline becomes terminal so the next cycle can safely reclaim it", async () => {
   const pendingError = new Error("CHANNEL_GATEWAY_TIMEOUT");
   pendingError.name = "ChannelGatewayInProgressError";
   const registry: CompetitorProviderRegistry = {
@@ -1336,16 +1571,16 @@ test("an unfinished local gateway search remains pending instead of being treate
 
   const result = await searchCompetitorProviders(registry, "첵스초코 570g", [], 30, 50);
   assert.equal(result.available, false);
-  assert.equal(result.pending, true);
+  assert.equal(result.pending, false);
   assert.deepEqual(result.providers, [{
     provider: "elevenst_product_search",
-    status: "pending",
+    status: "failed",
     count: 0,
     marketplaces: ["elevenst"],
   }]);
 });
 
-test("a completed provider never masks another provider that is still pending", async () => {
+test("a completed provider preserves another provider's terminal failure", async () => {
   const pendingError = new Error("CHANNEL_GATEWAY_TIMEOUT");
   pendingError.name = "ChannelGatewayInProgressError";
   const registry: CompetitorProviderRegistry = {
@@ -1366,15 +1601,15 @@ test("a completed provider never masks another provider that is still pending", 
 
   const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", [], 30, 50);
   assert.equal(result.available, true);
-  assert.equal(result.pending, true);
+  assert.equal(result.pending, false);
   assert.equal(result.items.length, 1);
   assert.deepEqual(result.providers.map(({ provider, status }) => ({ provider, status })), [
     { provider: "naver_shopping", status: "searched" },
-    { provider: "elevenst_product_search", status: "pending" },
+    { provider: "elevenst_product_search", status: "failed" },
   ]);
 });
 
-test("the scheduler budget expiring around an 11st gateway poll also remains resumable", async () => {
+test("the scheduler budget expiring around an 11st gateway poll terminates for safe reclaim", async () => {
   const registry: CompetitorProviderRegistry = {
     configured: [{
       id: "elevenst_product_search",
@@ -1386,11 +1621,11 @@ test("the scheduler budget expiring around an 11st gateway poll also remains res
 
   const result = await searchCompetitorProviders(registry, "첵스초코 570g", [], 30, 5);
   assert.equal(result.available, false);
-  assert.equal(result.pending, true);
-  assert.equal(result.providers[0]?.status, "pending");
+  assert.equal(result.pending, false);
+  assert.equal(result.providers[0]?.status, "failed");
 });
 
-test("a direct provider crossing the shared budget cannot be silently dropped from a completed refresh", async () => {
+test("a direct provider crossing the shared budget is recorded as failed", async () => {
   const registry: CompetitorProviderRegistry = {
     configured: [{
       id: "ebay_browse",
@@ -1402,8 +1637,8 @@ test("a direct provider crossing the shared budget cannot be silently dropped fr
 
   const result = await searchCompetitorProviders(registry, "Kellogg Choco Chex 570g", [], 30, 5);
   assert.equal(result.available, false);
-  assert.equal(result.pending, true);
-  assert.equal(result.providers[0]?.status, "pending");
+  assert.equal(result.pending, false);
+  assert.equal(result.providers[0]?.status, "failed");
 });
 
 test("multilingual Naver searches merge duplicate products and keep up to three per marketplace", async () => {

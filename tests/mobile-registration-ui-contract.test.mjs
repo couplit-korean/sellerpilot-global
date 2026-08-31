@@ -6,6 +6,7 @@ const pageUrl = new URL("../app/page.tsx", import.meta.url);
 const globalStylesUrl = new URL("../app/globals.css", import.meta.url);
 const mobileStylesUrl = new URL("../app/mobile-optimization.css", import.meta.url);
 const commerceStylesUrl = new URL("../app/commerce-ux-refactor.css", import.meta.url);
+const competitorPriceUiUrl = new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url);
 
 test("registration keeps product research before required seller fields and uses the shared sale dropdown", async () => {
   const page = await readFile(pageUrl, "utf8");
@@ -71,16 +72,17 @@ test("mobile detail authoring keeps competitor prices visible but optional and n
   const globalStyles = await readFile(globalStylesUrl, "utf8");
   const mobileStyles = await readFile(mobileStylesUrl, "utf8");
   const commerceStyles = await readFile(commerceStylesUrl, "utf8");
+  const competitorPriceUi = await readFile(competitorPriceUiUrl, "utf8");
 
   assert.match(page, /const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis\([\s\S]{0,160}pendingCompetitorBypassConfirmed/);
   const finalAuthoring = page.slice(page.indexOf("const startAutomation = () =>"), page.indexOf("const totalPhotoCount ="));
   assert.doesNotMatch(finalAuthoring, /competitorResearchBlocksAnalysis|manualMvp|manual_mvp/);
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /동일상품 가격은 별도 확인 중\(상세페이지 제작 가능\)/);
-  assert.match(page, /가격 없이 계속/);
+  assert.match(competitorPriceUi, /가격 없이 계속/);
   assert.match(page, /setPendingCompetitorBypassConfirmed\(true\)/);
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
-  assert.match(page, /상품 식별정보가 변경되었습니다/);
+  assert.match(competitorPriceUi, /상품 식별정보가 변경되었습니다/);
   assert.match(commerceStyles, /@media \(max-width: 560px\)[\s\S]*?\.competitor-retry-actions\s*\{[^}]*width:\s*100%;[^}]*flex-direction:\s*column/);
   assert.match(commerceStyles, /@media \(max-width: 720px\)[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*sticky/);
   assert.match(mobileStyles, /Fold-safe mobile overlay lanes[\s\S]*?\.analysis-start-bar\s*\{[^}]*position:\s*static;[^}]*bottom:\s*auto !important/);

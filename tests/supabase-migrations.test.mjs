@@ -67,6 +67,12 @@ const QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION =
   "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql";
 const QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION =
   "20260831057200_allow_exact_qoo10_s1_activation_provider_boundary.sql";
+const COMPETITOR_PRICE_V3_MIGRATION =
+  "20260831130000_competitor_price_v3.sql";
+const COMPETITOR_MATCH_REVIEW_MIGRATION =
+  "20260831131000_competitor_match_review_ledger.sql";
+const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
+  "20260831132000_competitor_identity_lineage_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -649,6 +655,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION,
       QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION,
       QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION,
+      COMPETITOR_PRICE_V3_MIGRATION,
+      COMPETITOR_MATCH_REVIEW_MIGRATION,
+      COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -721,6 +730,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION)
         < migrationNames.indexOf(QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION),
       "exact Qoo10 provider-boundary repair must replay after claim priority",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION)
+        < migrationNames.indexOf(COMPETITOR_PRICE_V3_MIGRATION)
+        && migrationNames.indexOf(COMPETITOR_PRICE_V3_MIGRATION)
+          < migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
+        && migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
+          < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION),
+      "competitor v3, review ledger, and identity fence must replay after Qoo10 572 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;
@@ -5806,6 +5824,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(firstCompetitorClaims.rows.length, 1);
     assert.equal(firstCompetitorClaims.rows[0].product_id, aiProductId);
     assert.match(firstCompetitorClaims.rows[0].claim_token, /^[0-9a-f-]{36}$/i);
+    assert.equal(firstCompetitorClaims.rows[0].identity.productName, requiredManualFields.productName);
+    assert.equal(firstCompetitorClaims.rows[0].identity.brand, requiredManualFields.brandName);
+    assert.equal(firstCompetitorClaims.rows[0].identity.packageContents, requiredManualFields.packageContents);
     const competitorClaimToken = firstCompetitorClaims.rows[0].claim_token;
     assert.equal(
       (await db.query("select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)")).rows.length,
@@ -5814,14 +5835,18 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
 
     const competitorGatewayJobId = await scalar(
       db,
-      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
-      [elevenstCredentialId, aiProductId, competitorClaimToken],
+      "select public.sellerpilot_enqueue_competitor_search_job($1, $4, $5::jsonb, 30, $2, $3)",
+      [elevenstCredentialId, aiProductId, competitorClaimToken,
+        firstCompetitorClaims.rows[0].query,
+        JSON.stringify(firstCompetitorClaims.rows[0].aliases)],
     );
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
-        [elevenstCredentialId, aiProductId, competitorClaimToken],
+        "select public.sellerpilot_enqueue_competitor_search_job($1, $4, $5::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, competitorClaimToken,
+          firstCompetitorClaims.rows[0].query,
+          JSON.stringify(firstCompetitorClaims.rows[0].aliases)],
       ),
       competitorGatewayJobId,
     );
@@ -5873,16 +5898,20 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.notEqual(resumedCompetitorClaim.claim_token, competitorClaimToken);
     await assert.rejects(
       db.query(
-        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
-        [elevenstCredentialId, aiProductId, competitorClaimToken],
+        "select public.sellerpilot_enqueue_competitor_search_job($1, $4, $5::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, competitorClaimToken,
+          firstCompetitorClaims.rows[0].query,
+          JSON.stringify(firstCompetitorClaims.rows[0].aliases)],
       ),
       /active competitor refresh claim required/,
     );
     assert.equal(
       await scalar(
         db,
-        "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 570g', '[\"Kellogg Choco Chex 570g\"]'::jsonb, 30, $2, $3)",
-        [elevenstCredentialId, aiProductId, resumedCompetitorClaim.claim_token],
+        "select public.sellerpilot_enqueue_competitor_search_job($1, $4, $5::jsonb, 30, $2, $3)",
+        [elevenstCredentialId, aiProductId, resumedCompetitorClaim.claim_token,
+          resumedCompetitorClaim.query,
+          JSON.stringify(resumedCompetitorClaim.aliases)],
       ),
       competitorGatewayJobId,
     );
@@ -6133,7 +6162,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and external_id in ('obsolete-elevenst', 'obsolete-ebay')",
         [aiProductId],
       ),
-      0,
+      2,
     );
     assert.equal(
       await scalar(
@@ -6238,14 +6267,514 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       persistedProviderFetchedAt.toISOString(),
     );
 
+    const v3ObservedAt = "2026-08-31T03:00:00.000Z";
+    const v3Candidate = {
+      provider: "naver_shopping",
+      externalId: "v3-mug-white-1",
+      title: "No Brand 흰색 도자기 머그컵 1개",
+      url: "https://smartstore.naver.com/example/products/v3-mug-white-1",
+      imageUrl: "",
+      mallName: "테스트 스마트스토어",
+      marketplace: "smartstore",
+      price: 10_000,
+      currency: "KRW",
+      matcherVersion: "strict-2026-08-31-v3",
+      matchScore: 100,
+      matchTier: "exact",
+      matchEvidence: [
+        { code: "brand_exact", attribute: "brand", expected: "No Brand", actual: "No Brand", source: "provider_structured" },
+        { code: "name_exact", attribute: "productName", expected: "흰색 도자기 머그컵", actual: "흰색 도자기 머그컵", source: "listing_title" },
+      ],
+      mismatchEvidence: [],
+      priceComponents: {
+        itemPrice: { status: "known", amount: 10_000, currency: "KRW", krwAmount: 10_000 },
+        requiredOptionSurcharge: { status: "known", amount: 0, currency: "KRW", krwAmount: 0 },
+        shipping: { status: "known", amount: 3_000, currency: "KRW", krwAmount: 3_000 },
+        taxAndDuty: { status: "known", amount: 0, currency: "KRW", krwAmount: 0 },
+        discount: { status: "known", amount: 100, currency: "KRW", krwAmount: 100 },
+      },
+      totalPurchasePrice: { amount: 12_900, currency: "KRW", krwAmount: 12_900 },
+      exchangeRate: null,
+      unitPrice: {
+        amount: 12_900,
+        currency: "KRW",
+        krwAmount: 12_900,
+        quantity: { value: 1, unit: "item" },
+      },
+      canonicalUrl: "https://smartstore.naver.com/example/products/v3-mug-white-1",
+      provenance: [{
+        provider: "naver_shopping",
+        marketplace: "smartstore",
+        externalId: "v3-mug-white-1",
+        url: "https://smartstore.naver.com/example/products/v3-mug-white-1",
+        collectedAt: v3ObservedAt,
+      }],
+      observedAt: v3ObservedAt,
+      inventoryStatus: "in_stock",
+    };
+    const v3Providers = [{
+      provider: "naver_shopping",
+      status: "searched",
+      count: 1,
+      marketplaces: ["smartstore", "coupang", "elevenst", "qoo10", "other"],
+    }];
+    const preservedV2AndManualCount = await scalar(
+      db,
+      `select count(*)::integer
+         from sellerpilot_private.competitor_price_observations
+        where product_id = $1
+          and (provider = 'manual' or matcher_version = 'strict-2026-08-28-v2')`,
+      [aiProductId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'sellerpilot_private.record_competitor_prices(uuid,jsonb,boolean)', 'EXECUTE')",
+      ),
+      false,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_record_competitor_prices($1, $2::jsonb)",
+        [aiProductId, JSON.stringify([v3Candidate])],
+      ),
+      /competitor v3 observations require refresh completion/,
+    );
+
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const v3Claim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(v3Claim.product_id, aiProductId);
+    const missingMatchScore = structuredClone(v3Candidate);
+    delete missingMatchScore.matchScore;
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, $3::jsonb, $4::jsonb)",
+        [aiProductId, v3Claim.claim_token, JSON.stringify([missingMatchScore]), JSON.stringify(v3Providers)],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    const invalidUnknownExchange = structuredClone(v3Candidate);
+    invalidUnknownExchange.priceComponents.shipping = {
+      status: "unknown",
+      amount: null,
+      currency: "KRW",
+      krwAmount: null,
+    };
+    invalidUnknownExchange.totalPurchasePrice = null;
+    invalidUnknownExchange.unitPrice = null;
+    invalidUnknownExchange.exchangeRate = { provider: "unvalidated" };
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.valid_competitor_v3_item($1::jsonb)",
+        [JSON.stringify({ ...invalidUnknownExchange, exchangeRate: null })],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.valid_competitor_v3_item($1::jsonb)",
+        [JSON.stringify({
+          ...invalidUnknownExchange,
+          exchangeRate: null,
+          unitPrice: v3Candidate.unitPrice,
+        })],
+      ),
+      false,
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, $3::jsonb, $4::jsonb)",
+        [aiProductId, v3Claim.claim_token, JSON.stringify([invalidUnknownExchange]), JSON.stringify(v3Providers)],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    const inconsistentFx = {
+      ...v3Candidate,
+      price: 10,
+      currency: "USD",
+      priceComponents: {
+        itemPrice: { status: "known", amount: 10, currency: "USD", krwAmount: 13_000 },
+        requiredOptionSurcharge: { status: "known", amount: 0, currency: "USD", krwAmount: 0 },
+        shipping: { status: "known", amount: 2, currency: "USD", krwAmount: 2_600 },
+        taxAndDuty: { status: "known", amount: 0, currency: "USD", krwAmount: 0 },
+        discount: { status: "known", amount: 0, currency: "USD", krwAmount: 0 },
+      },
+      totalPurchasePrice: { amount: 12, currency: "USD", krwAmount: 9_999 },
+      exchangeRate: {
+        provider: "synthetic-fx",
+        quotedAt: v3ObservedAt,
+        rate: 1_300,
+        fromCurrency: "USD",
+        toCurrency: "KRW",
+      },
+      unitPrice: null,
+    };
+    const foreignWithoutFx = {
+      ...inconsistentFx,
+      priceComponents: Object.fromEntries(Object.entries(inconsistentFx.priceComponents).map(([key, component]) => [
+        key,
+        { ...component, krwAmount: null },
+      ])),
+      totalPurchasePrice: { amount: 12, currency: "USD", krwAmount: null },
+      exchangeRate: null,
+    };
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.valid_competitor_v3_item($1::jsonb)",
+        [JSON.stringify(foreignWithoutFx)],
+      ),
+      true,
+    );
+    const badKrwComponent = structuredClone(v3Candidate);
+    badKrwComponent.priceComponents.shipping.krwAmount = 2_999;
+    const badKrwUnit = structuredClone(v3Candidate);
+    badKrwUnit.unitPrice.krwAmount = 12_899;
+    const validForeignFx = {
+      ...inconsistentFx,
+      totalPurchasePrice: { amount: 12, currency: "USD", krwAmount: 15_600 },
+      unitPrice: {
+        amount: 6,
+        currency: "USD",
+        krwAmount: 7_800,
+        quantity: { value: 1, unit: "item" },
+      },
+    };
+    const badFxComponent = structuredClone(validForeignFx);
+    badFxComponent.priceComponents.shipping.krwAmount = 2_599;
+    const badFxUnit = structuredClone(validForeignFx);
+    badFxUnit.unitPrice.krwAmount = 7_799;
+    assert.equal(
+      await scalar(db, "select sellerpilot_private.valid_competitor_v3_item($1::jsonb)", [JSON.stringify(validForeignFx)]),
+      true,
+    );
+    for (const invalidKrwPayload of [badKrwComponent, badKrwUnit, badFxComponent, badFxUnit]) {
+      assert.equal(
+        await scalar(db, "select sellerpilot_private.valid_competitor_v3_item($1::jsonb)", [JSON.stringify(invalidKrwPayload)]),
+        false,
+      );
+    }
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, $3::jsonb, $4::jsonb)",
+        [aiProductId, v3Claim.claim_token, JSON.stringify([inconsistentFx]), JSON.stringify(v3Providers)],
+      ),
+      /invalid competitor refresh snapshot/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_refresh_claims where product_id = $1 and claim_token = $2",
+        [aiProductId, v3Claim.claim_token],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, $3::jsonb, $4::jsonb)",
+        [aiProductId, v3Claim.claim_token, JSON.stringify([v3Candidate]), JSON.stringify(v3Providers)],
+      ),
+      1,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.competitor_price_observations
+          where product_id = $1
+            and (provider = 'manual' or matcher_version = 'strict-2026-08-28-v2')`,
+        [aiProductId],
+      ),
+      preservedV2AndManualCount,
+    );
+
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const repeatedProviderClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(repeatedProviderClaim.product_id, aiProductId);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, $3::jsonb)",
+        [aiProductId, repeatedProviderClaim.claim_token, JSON.stringify([{ ...v3Providers[0], count: 0 }])],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.competitor_price_observations where product_id = $1 and matcher_version = 'strict-2026-08-31-v3'",
+        [aiProductId],
+      ),
+      0,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.competitor_price_observations
+          where product_id = $1
+            and (provider = 'manual' or matcher_version = 'strict-2026-08-28-v2')`,
+        [aiProductId],
+      ),
+      preservedV2AndManualCount,
+    );
+
+    for (let iteration = 0; iteration < 40; iteration += 1) {
+      const collectedAt = new Date(Date.parse(v3ObservedAt) + ((iteration + 1) * 1_000)).toISOString();
+      const repeatedCandidate = {
+        ...v3Candidate,
+        observedAt: collectedAt,
+        provenance: [{
+          ...v3Candidate.provenance[0],
+          url: `${v3Candidate.provenance[0].url}?utm_cycle=${iteration + 1}`,
+          collectedAt,
+        }],
+      };
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.record_competitor_prices($1, $2::jsonb, true)",
+          [aiProductId, JSON.stringify([repeatedCandidate])],
+        ),
+        1,
+      );
+    }
+    const deduplicatedV3Observation = (await db.query(
+      `select count(*) over ()::integer as row_count,
+              jsonb_array_length(provenance)::integer as provenance_count,
+              provenance->0->>'collectedAt' as collected_at,
+              provenance->0->>'url' as provenance_url,
+              match_tier, match_score::text, price_components, total_purchase_price,
+              exchange_rate, unit_price, inventory_status
+         from sellerpilot_private.competitor_price_observations
+        where product_id = $1
+          and matcher_version = 'strict-2026-08-31-v3'
+          and canonical_url = $2`,
+      [aiProductId, v3Candidate.canonicalUrl],
+    )).rows[0];
+    assert.deepEqual(
+      {
+        rowCount: deduplicatedV3Observation.row_count,
+        provenanceCount: deduplicatedV3Observation.provenance_count,
+        matchTier: deduplicatedV3Observation.match_tier,
+        matchScore: deduplicatedV3Observation.match_score,
+        inventoryStatus: deduplicatedV3Observation.inventory_status,
+      },
+      {
+        rowCount: 1,
+        provenanceCount: 1,
+        matchTier: "exact",
+        matchScore: "100.00",
+        inventoryStatus: "in_stock",
+      },
+    );
+    assert.equal(
+      deduplicatedV3Observation.collected_at,
+      new Date(Date.parse(v3ObservedAt) + (40 * 1_000)).toISOString(),
+    );
+    assert.equal(deduplicatedV3Observation.provenance_url, `${v3Candidate.provenance[0].url}?utm_cycle=40`);
+    assert.equal(deduplicatedV3Observation.price_components.shipping.amount, 3_000);
+    assert.equal(deduplicatedV3Observation.total_purchase_price.krwAmount, 12_900);
+    assert.equal(deduplicatedV3Observation.exchange_rate, null);
+    assert.equal(deduplicatedV3Observation.unit_price.quantity.value, 1);
+
+    const sharedCanonicalUrl = "https://market.example.test/products/shared-mug";
+    const rawNaverCandidate = {
+      ...v3Candidate,
+      externalId: "naver-shared-mug",
+      url: sharedCanonicalUrl,
+      marketplace: "other",
+      canonicalUrl: sharedCanonicalUrl,
+      provenance: [{
+        provider: "naver_shopping",
+        marketplace: "other",
+        externalId: "naver-shared-mug",
+        url: sharedCanonicalUrl,
+        collectedAt: v3ObservedAt,
+      }],
+    };
+    const rawBraveCandidate = {
+      ...rawNaverCandidate,
+      provider: "brave_marketplace_web",
+      externalId: "brave-shared-mug",
+      marketplace: "temu",
+      price: 20_000,
+      priceComponents: {
+        itemPrice: { status: "known", amount: 20_000, currency: "KRW", krwAmount: 20_000 },
+        requiredOptionSurcharge: { status: "known", amount: 0, currency: "KRW", krwAmount: 0 },
+        shipping: { status: "known", amount: 3_000, currency: "KRW", krwAmount: 3_000 },
+        taxAndDuty: { status: "known", amount: 0, currency: "KRW", krwAmount: 0 },
+        discount: { status: "known", amount: 100, currency: "KRW", krwAmount: 100 },
+      },
+      totalPurchasePrice: { amount: 22_900, currency: "KRW", krwAmount: 22_900 },
+      unitPrice: {
+        amount: 22_900,
+        currency: "KRW",
+        krwAmount: 22_900,
+        quantity: { value: 1, unit: "item" },
+      },
+      provenance: [{
+        provider: "brave_marketplace_web",
+        marketplace: "temu",
+        externalId: "brave-shared-mug",
+        url: sharedCanonicalUrl,
+        collectedAt: v3ObservedAt,
+      }],
+    };
+    const rawProviderSnapshot = [
+      { ...v3Providers[0], count: 1 },
+      {
+        provider: "brave_marketplace_web",
+        status: "searched",
+        count: 1,
+        marketplaces: ["shopee", "lazada", "temu"],
+      },
+    ];
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const rawProviderClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, $3::jsonb, $4::jsonb)",
+        [
+          aiProductId,
+          rawProviderClaim.claim_token,
+          JSON.stringify([rawNaverCandidate, rawBraveCandidate]),
+          JSON.stringify(rawProviderSnapshot),
+        ],
+      ),
+      2,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select provider, external_id, price::text, provenance->0->>'provider' as provenance_provider
+           from sellerpilot_private.competitor_price_observations
+          where product_id = $1 and matcher_version = 'strict-2026-08-31-v3' and canonical_url = $2
+          order by provider`,
+        [aiProductId, sharedCanonicalUrl],
+      )).rows,
+      [
+        { provider: "brave_marketplace_web", external_id: "brave-shared-mug", price: "20000.00", provenance_provider: "brave_marketplace_web" },
+        { provider: "naver_shopping", external_id: "naver-shared-mug", price: "10000.00", provenance_provider: "naver_shopping" },
+      ],
+    );
+
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const braveEmptyClaim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_complete_competitor_price_refresh($1, $2, '[]'::jsonb, $3::jsonb)",
+        [aiProductId, braveEmptyClaim.claim_token, JSON.stringify([
+          { ...v3Providers[0], status: "failed", count: 0 },
+          { ...rawProviderSnapshot[1], count: 0 },
+        ])],
+      ),
+      0,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select provider, external_id, price::text, provenance->0->>'provider' as provenance_provider
+           from sellerpilot_private.competitor_price_observations
+          where product_id = $1 and matcher_version = 'strict-2026-08-31-v3' and canonical_url = $2`,
+        [aiProductId, sharedCanonicalUrl],
+      )).rows,
+      [{ provider: "naver_shopping", external_id: "naver-shared-mug", price: "10000.00", provenance_provider: "naver_shopping" }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.competitor_price_observations
+          where product_id = $1
+            and (provider = 'manual' or matcher_version = 'strict-2026-08-28-v2')`,
+        [aiProductId],
+      ),
+      preservedV2AndManualCount,
+    );
+
+    await setClaims(db);
+    const v3Operations = await scalar(
+      db,
+      "select public.sellerpilot_get_product_operations_v2($1)",
+      [aiProductId],
+    );
+    const v3Operation = v3Operations.competitorPrices.find((item) => item.canonicalUrl === sharedCanonicalUrl);
+    assert.equal(v3Operation.matcherVersion, "strict-2026-08-31-v3");
+    assert.equal(v3Operation.externalId, "naver-shared-mug");
+    assert.equal(v3Operation.matchEvidence[0].source, "provider_structured");
+    assert.equal(v3Operation.totalPurchasePrice.krwAmount, 12_900);
+    assert.equal(v3Operations.competitorPrices.some((item) => item.provider === "manual"), true);
+
+    await setClaims(db, "service_role");
+    await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
+    const expiredV3Claim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 30)",
+    )).rows[0];
+    await db.query(
+      "update sellerpilot_private.competitor_price_refresh_claims set claimed_at = now() - interval '31 seconds', lease_expires_at = now() - interval '1 second' where product_id = $1",
+      [aiProductId],
+    );
+    const providerStateBeforeExpiredCompletion = (await db.query(
+      "select latest_providers, providers_fetched_at from sellerpilot_private.competitor_price_refresh_claims where product_id = $1",
+      [aiProductId],
+    )).rows[0];
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"naver_shopping","status":"failed","count":0,"marketplaces":["smartstore","coupang","elevenst","qoo10","other"]}]'::jsonb
+        )`,
+        [aiProductId, expiredV3Claim.claim_token],
+      ),
+      -1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        "select latest_providers, providers_fetched_at from sellerpilot_private.competitor_price_refresh_claims where product_id = $1",
+        [aiProductId],
+      )).rows[0],
+      providerStateBeforeExpiredCompletion,
+    );
+    const reclaimedV3Claim = (await db.query(
+      "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
+    )).rows[0];
+    assert.equal(reclaimedV3Claim.product_id, aiProductId);
+    assert.notEqual(reclaimedV3Claim.claim_token, expiredV3Claim.claim_token);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_complete_competitor_price_refresh(
+          $1, $2, '[]'::jsonb,
+          '[{"provider":"naver_shopping","status":"failed","count":0,"marketplaces":["smartstore","coupang","elevenst","qoo10","other"]}]'::jsonb
+        )`,
+        [aiProductId, reclaimedV3Claim.claim_token],
+      ),
+      0,
+    );
+
     await db.query("update sellerpilot_private.products set competitor_checked_at = null where id = $1", [aiProductId]);
     const retentionCompetitorClaim = (await db.query(
       "select * from public.sellerpilot_service_claim_due_competitor_products(1, 90)",
     )).rows[0];
     const retentionGatewayJobId = await scalar(
       db,
-      "select public.sellerpilot_enqueue_competitor_search_job($1, '첵스초코 보존 정리', '[]'::jsonb, 30, $2, $3)",
-      [elevenstCredentialId, aiProductId, retentionCompetitorClaim.claim_token],
+      "select public.sellerpilot_enqueue_competitor_search_job($1, $4, $5::jsonb, 30, $2, $3)",
+      [elevenstCredentialId, aiProductId, retentionCompetitorClaim.claim_token,
+        retentionCompetitorClaim.query,
+        JSON.stringify(retentionCompetitorClaim.aliases)],
     );
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
@@ -10334,6 +10863,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION
         && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         && name !== QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+        && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {

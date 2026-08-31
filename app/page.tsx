@@ -127,13 +127,10 @@ import { createAbortableConcurrencyGate } from "../lib/abortable-concurrency-gat
 import { createStudioPhotoEditSession } from "../lib/studio-photo-edit-session";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
 import {
-  competitorMarketplaceProviderState,
   parseCompetitorProviderSnapshot,
   savedCompetitorPriceState,
   validCompetitorProviderFetchedAt,
-  type CompetitorMarketplaceId,
   type CompetitorProviderDisplayStatus,
-  type CompetitorProviderId,
 } from "../lib/competitor-provider-snapshot";
 
 import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
@@ -166,12 +163,17 @@ import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
 import {
   buildCompetitorResearchRetryPath,
-  competitorResearchEmptySlot,
   isCompetitorResearchBlockingAnalysis,
   pollCompetitorResearch,
   shouldInvalidateCompetitorResearch,
   type CompetitorResearchUiState,
 } from "./_publishing/competitor-research-polling";
+import {
+  CompetitorPriceSlots,
+  isEligibleCompetitorObservation,
+  type CompetitorDisplayItem,
+  type CompetitorResearchItem,
+} from "./_publishing/competitor-price-v3-ui";
 import {
   clearUnchangedResearchAppliedValues,
   collectResearchAppliedValues,
@@ -1215,7 +1217,7 @@ type ProductCommerceOperations = {
     inventoryError: string | null; inventorySyncedAt: string | null; categoryId: string | null; categoryPath: string[] | null;
     categoryStatus: string | null; sold30d: number; revenue30dKrw: number;
   }>;
-  competitorPrices: Array<{ id: string; marketplace: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; checkedAt: string; provider: CompetitorProviderId | "manual" | null; preserved: boolean }>;
+  competitorPrices: CompetitorDisplayItem[];
   competitorProviders: CompetitorProviderDisplayStatus[];
   competitorProvidersFetchedAt: string | null;
 };
@@ -1323,71 +1325,6 @@ function detailFieldValue(value: unknown) {
   if (typeof value === "number" && Number.isFinite(value)) return value.toLocaleString("ko-KR");
   if (typeof value === "string" && value.trim()) return value.trim();
   return null;
-}
-
-type CompetitorDisplayItem = { id: string; marketplace?: string; title: string; url: string; imageUrl: string | null; mallName: string; price: number; currency: string; provider?: CompetitorProviderId | "manual" | null; preserved?: boolean };
-type CompetitorMarketplace = CompetitorMarketplaceId;
-type CompetitorProvider = CompetitorProviderId;
-type CompetitorResearchItem = CompetitorDisplayItem & { provider: CompetitorProvider; marketplace: CompetitorMarketplace; externalId: string; verifiedSameProduct: true };
-
-function CompetitorPriceSlots({ items, providers = [], state = "ready", compact = false, retryAvailable = false, onRetry, onProceedWithoutPrices }: { items: CompetitorDisplayItem[]; providers?: CompetitorProviderDisplayStatus[]; state?: Exclude<CompetitorResearchUiState, "idle">; compact?: boolean; retryAvailable?: boolean; onRetry?: () => void; onProceedWithoutPrices?: () => void }) {
-  const marketplaceOrder: CompetitorMarketplace[] = [...activeChannelKeys];
-  const marketplaceLabels: Record<string, string> = Object.fromEntries(Object.entries(channels).map(([key, channel]) => [key, channel.name]));
-  const providerLabels: Record<CompetitorProviderDisplayStatus["provider"], string> = { naver_shopping: "네이버 쇼핑 검색", elevenst_product_search: "11번가 상품검색", ebay_browse: "eBay Browse", brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색" };
-  marketplaceLabels.other = "기타 판매처";
-  const groups: Array<{ marketplace: CompetitorMarketplace; items: CompetitorDisplayItem[] }> = marketplaceOrder.map((marketplace) => ({ marketplace, items: items.filter((item) => (item.marketplace || "other") === marketplace).slice(0, 3) }));
-  const marketplaceOrderSet = new Set<string>(marketplaceOrder);
-  const otherItems = items.filter((item) => !marketplaceOrderSet.has(item.marketplace || "other")).slice(0, 3);
-  if (otherItems.length) groups.push({ marketplace: "other", items: otherItems });
-  const marketplaceGroups = groups.map((group) => ({
-    ...group,
-    providerState: competitorMarketplaceProviderState(group.marketplace, providers),
-  }));
-  const hasPreservedItems = items.some((item) => item.preserved === true);
-  const hasIncompleteMarketplace = marketplaceGroups.some((group) => group.providerState === "partial" || group.providerState === "unavailable");
-  const unavailableNotice = state === "stale"
-    ? null
-    : hasPreservedItems
-      ? "일부 공급자의 새 응답을 확인하지 못해 해당 가격은 이전 확인값으로 표시합니다."
-      : state === "unavailable"
-        ? items.length > 0
-          ? "가격 공급자의 새 응답은 확인하지 못했습니다. 수동 입력 가격만 표시합니다."
-          : "가격 조회 연결을 확인하지 못했습니다. 상품 등록은 계속할 수 있으며 값은 공란으로 유지됩니다."
-        : hasIncompleteMarketplace
-          ? "일부 판매처의 가격 조회 연결을 확인하지 못해 빈 가격은 확인 불가로 표시합니다."
-          : null;
-  return <div className={`competitor-market-groups ${compact ? "compact" : ""}`}>
-    {state === "loading" && <div className="competitor-loading"><LoaderCircle className="spin" size={17} />동일 상품 가격을 채널별로 찾고 있습니다.</div>}
-    {state === "pending" && !retryAvailable && <div className="competitor-loading pending"><Clock3 size={17} />공식 채널 조회가 계속 진행 중입니다. 확인된 결과부터 표시합니다.</div>}
-    {((retryAvailable && onRetry) || state === "stale") && <div className="competitor-retry" role="status"><span><Clock3 size={17} /><span><b>{state === "stale" ? "상품 식별정보가 변경되었습니다." : "자동 확인을 마쳤습니다."}</b><small>{state === "stale" ? "이전 상품의 가격 근거는 제거했습니다. 변경한 정보로 다시 확인하거나 공란으로 계속할 수 있습니다." : "공식 채널 작업이 늦게 끝날 수 있습니다. 다시 확인하거나, 현재 공란을 유지한 채 분석을 계속할 수 있습니다."}</small></span></span><div className="competitor-retry-actions">{retryAvailable && onRetry && <button type="button" onClick={onRetry}><RefreshCw size={15} />가격 다시 확인</button>}{(state === "pending" || state === "stale") && onProceedWithoutPrices && <button type="button" onClick={onProceedWithoutPrices}><ArrowRight size={15} />가격 없이 계속</button>}</div></div>}
-    {providers.length > 0 && <div className="competitor-provider-summary" aria-label="가격 검색 공급자 상태">{providers.map((provider) => <span className={provider.status} key={provider.provider}><b>{providerLabels[provider.provider]}</b>{provider.status === "searched" ? `조회 완료 · 일치 ${provider.count}건` : provider.status === "pending" ? "조회 진행 중" : provider.status === "failed" ? "응답 실패" : "미연결"}</span>)}</div>}
-    {marketplaceGroups.map((group) => {
-      const groupState: Exclude<CompetitorResearchUiState, "idle"> = state === "stale"
-        ? "stale"
-        : group.providerState === "partial" || group.providerState === "unavailable"
-          ? "unavailable"
-          : group.providerState === "loading"
-            ? state === "pending" ? "pending" : "loading"
-            : group.providerState ?? state;
-      const emptySlot = competitorResearchEmptySlot(groupState);
-      const preservedCount = group.items.filter((item) => item.preserved === true).length;
-      const groupSummary = preservedCount > 0
-        ? `${preservedCount}개 이전 확인값${group.providerState === "partial" ? " · 일부 확인 불가" : ""}`
-        : group.providerState === "partial"
-          ? "일부 공급자 확인 불가"
-          : groupState === "unavailable"
-            ? "공급자 확인 불가"
-            : state === "stale"
-              ? "이전 결과 만료"
-              : "최대 3개";
-      return <section key={group.marketplace}><header><b>{marketplaceLabels[group.marketplace] ?? group.marketplace}</b><small>{groupSummary}</small></header><div className="competitor-price-grid">{Array.from({ length: 3 }, (_, index) => {
-        const item = group.items[index];
-        return item ? <a href={item.url} target="_blank" rel="noreferrer" key={item.id}><span>{item.imageUrl ? <Image src={item.imageUrl} alt="" fill sizes="80px" unoptimized /> : <Package size={18} />}</span><div><small>{item.mallName || marketplaceLabels[group.marketplace] || "판매처"}{item.preserved === true ? " · 이전 확인값" : ""}</small><b>{item.title}</b><strong>{new Intl.NumberFormat("ko-KR", { style: "currency", currency: item.currency || "KRW", maximumFractionDigits: 0 }).format(item.price)}</strong></div><ExternalLink size={14} /></a>
-          : <div className="competitor-price-empty" key={`${group.marketplace}-empty-${index}`} aria-busy={emptySlot.loading}><span>{emptySlot.loading ? <LoaderCircle className="spin" size={16} /> : <Search size={16} />}</span><div><small>{marketplaceLabels[group.marketplace] ?? "판매처"}</small><b>{emptySlot.label}</b><strong>{emptySlot.value}</strong></div></div>;
-      })}</div></section>;
-    })}
-    {unavailableNotice && <p className="competitor-unavailable"><AlertCircle size={14} />{unavailableNotice}</p>}
-  </div>;
 }
 
 function productEditDraft(product: DisplayProduct, fields: Record<string, unknown>): ProductIntakeDraft {
@@ -2408,7 +2345,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       <section className="panel competitor-price-panel">
         <div className="panel-heading"><div><span className="panel-kicker">30분 자동 조회 · 채널별 최대 3개</span><h3>동일 상품 가격 비교</h3></div><span className={`live-label ${competitorMonitorEnabled ? "" : "paused"}`}><i />{competitorMonitorEnabled ? "자동 조회" : "조회 중지"}</span></div>
         <div className="competitor-query-row"><label><span>검색어</span><input value={competitorQuery} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorQuery(event.target.value)} placeholder={product.name} /></label><label className="monitor-toggle"><input type="checkbox" checked={competitorMonitorEnabled} disabled={!commerceNotesEditing} onChange={(event) => setCompetitorMonitorEnabled(event.target.checked)} /><span>상품 판매 중 30분마다 조회</span></label><small>최근 조회 {competitorLastCheckedAt ? relativeTime(competitorLastCheckedAt) : "대기"}</small></div>
-        <CompetitorPriceSlots items={commerceOperations.competitorPrices} providers={commerceOperations.competitorProviders} state={competitorProviderSnapshotState} />
+        <CompetitorPriceSlots items={commerceOperations.competitorPrices} providers={commerceOperations.competitorProviders} state={competitorProviderSnapshotState} lastCheckedAt={competitorLastCheckedAt} productId={product.sourceId} marginScenarios={productMarginData.scenarios} />
       </section>
 
       <section className="product-detail-grid">
@@ -2721,6 +2658,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [firstDraftReviewed, setFirstDraftReviewed] = useState(false);
   const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
+  const [competitorFetchedAt, setCompetitorFetchedAt] = useState<string | null>(null);
   const [competitorResearchState, setCompetitorResearchState] = useState<CompetitorResearchUiState>("idle");
   const [pendingCompetitorBypassConfirmed, setPendingCompetitorBypassConfirmed] = useState(false);
   const competitorResearchBlocksAnalysis = isCompetitorResearchBlockingAnalysis(
@@ -2799,6 +2737,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setFirstDraftReviewed(false);
     setResearchCompetitors([]);
     setCompetitorProviders([]);
+    setCompetitorFetchedAt(null);
     setCompetitorResearchState("stale");
     setPendingCompetitorBypassConfirmed(false);
     setCompetitorResearchRetryAvailable(false);
@@ -2855,7 +2794,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       count: provider.count,
       marketplaces: provider.marketplaces,
     })),
-    candidates: researchCompetitors.filter((item) => item.verifiedSameProduct).slice(0, 24).flatMap((item) => {
+    candidates: researchCompetitors
+      .filter(isEligibleCompetitorObservation)
+      .slice(0, 24)
+      .flatMap((item) => {
       const url = canonicalizeStudioCompetitorUrl(item);
       if (!url) return [];
       return [{
@@ -2865,8 +2807,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         title: item.title,
         url,
         mallName: item.mallName,
-        price: item.price,
-        currency: item.currency,
+        price: item.totalPurchasePrice!.amount,
+        currency: item.totalPurchasePrice!.currency,
         verifiedSameProduct: true as const,
       }];
     }),
@@ -3008,6 +2950,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       if (key === "researchInput") setFirstDraftImages([]);
       setResearchCompetitors([]);
       setCompetitorProviders([]);
+      setCompetitorFetchedAt(null);
       setCompetitorResearchState(invalidatedExistingContext ? "stale" : "idle");
       setPendingCompetitorBypassConfirmed(false);
       setCompetitorResearchRetryInput(invalidatedExistingContext ? nextCompetitorRetryPath : "");
@@ -3193,7 +3136,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const runCompetitorResearchPolling = (
     input: string,
-    initialSnapshot: { items: typeof researchCompetitors; providers: CompetitorProviderDisplayStatus[] },
+    initialSnapshot: { items: typeof researchCompetitors; providers: CompetitorProviderDisplayStatus[]; fetchedAt?: string | null },
   ) => {
     if (!publishingMountedRef.current) return;
     competitorResearchControllerRef.current?.abort();
@@ -3216,6 +3159,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             || competitorResearchControllerRef.current !== competitorController) return;
         setResearchCompetitors(snapshot.items);
         setCompetitorProviders(snapshot.providers);
+        setCompetitorFetchedAt(snapshot.fetchedAt);
         setCompetitorResearchState(snapshot.state);
         setCompetitorResearchRetryAvailable(snapshot.retryAvailable);
       },
@@ -3290,6 +3234,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setProductResearchError("");
     setResearchCompetitors([]);
     setCompetitorProviders([]);
+    setCompetitorFetchedAt(null);
     setPendingCompetitorBypassConfirmed(false);
     setCompetitorResearchRetryAvailable(false);
     const initialCompetitorResearchPath = buildCompetitorResearchRetryPath(
@@ -3297,7 +3242,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       result.searchQueries.map((searchQuery) => searchQuery.query),
     );
     if (initialCompetitorResearchPath) {
-      runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [] });
+      runCompetitorResearchPolling(initialCompetitorResearchPath, { items: [], providers: [], fetchedAt: null });
     } else {
       competitorResearchControllerRef.current?.abort();
       competitorResearchControllerRef.current = null;
@@ -3500,6 +3445,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     runCompetitorResearchPolling(competitorResearchRetryInput, {
       items: researchCompetitors,
       providers: competitorProviders,
+      fetchedAt: competitorFetchedAt,
     });
   };
 
@@ -3550,6 +3496,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     competitorResearchControllerRef.current = null;
     setResearchCompetitors([]);
     setCompetitorProviders([]);
+    setCompetitorFetchedAt(null);
     setCompetitorResearchState("idle");
     setPendingCompetitorBypassConfirmed(false);
     setCompetitorResearchRetryInput("");
@@ -4135,7 +4082,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>상세페이지 제작 전에 사람이 확인하는 서버 결과입니다.</small></span><em>{firstDraftImages.length} / 6장</em></header>
               <div>{firstDraftImages.map((image) => <figure key={image.id}><span><Image src={image.url} alt={firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized /></span><figcaption>{firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]}</figcaption></figure>)}</div>
             </section>}
-            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
+            {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
           </section>
           <section className="product-context-section required-product-intake">
             <div className="upload-section-heading"><div><b>판매자 필수 입력</b><span className="required-chip">전부 필수</span><small>AI가 추측하면 안 되는 실물·포장·책임 정보입니다. 사진과 함께 입력해야 다음 단계로 갈 수 있습니다.</small></div><em>{intakeReady ? "입력 완료" : "확인 필요"}</em></div>

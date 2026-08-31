@@ -1,10 +1,28 @@
 import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import {
+  COMPETITOR_MATCHER_VERSION,
+  deduplicateCompetitorObservations,
+  deduplicateCompetitorSourceObservations,
+  enrichCompetitorCandidateV3,
+  knownCompetitorPriceComponent,
+  unknownCompetitorPriceComponent,
+  type CompetitorCandidateIdentity,
+  type CompetitorExchangeRate,
+  type CompetitorInventoryStatus,
+  type CompetitorMatchEvidence,
+  type CompetitorMatchTier,
+  type CompetitorNormalizedPrice,
+  type CompetitorObservationProvenance,
+  type CompetitorPriceComponentsInput,
+  type CompetitorPriceObservationV3Fields,
+  type CompetitorProductIdentity,
+} from "./competitor-price-model";
+
+export * from "./competitor-price-model";
 
 export type CompetitorMarketplace = "smartstore" | "coupang" | "elevenst" | "qoo10" | "shopee" | "lazada" | "ebay" | "temu" | "other";
 export type CompetitorSearchProvider = "naver_shopping" | "elevenst_product_search" | "ebay_browse" | "brave_marketplace_web";
-
-export const COMPETITOR_MATCHER_VERSION = "strict-2026-08-28-v2" as const;
 
 export type CompetitorPriceCandidate = {
   provider: CompetitorSearchProvider;
@@ -16,13 +34,44 @@ export type CompetitorPriceCandidate = {
   marketplace: CompetitorMarketplace;
   price: number;
   currency: string;
+  identity?: CompetitorCandidateIdentity;
+  priceComponents?: CompetitorPriceComponentsInput;
+  exchangeRate?: CompetitorExchangeRate | null;
+  inventoryStatus?: CompetitorInventoryStatus;
+  observedAt?: string;
+  canonicalUrl?: string;
+  provenance?: CompetitorObservationProvenance[];
+  /** Legacy/manual rows may carry an older version; v3 enrichment emits the exact v3 literal. */
+  matcherVersion?: string;
+  matchTier?: CompetitorMatchTier;
+  matchScore?: number;
+  matchEvidence?: CompetitorMatchEvidence[];
+  mismatchEvidence?: CompetitorMatchEvidence[];
+  totalPurchasePrice?: CompetitorNormalizedPrice["totalPurchasePrice"];
+  unitPrice?: CompetitorNormalizedPrice["unitPrice"];
 };
+
+export type CompetitorPriceCandidateV3 = CompetitorPriceCandidate & CompetitorPriceObservationV3Fields;
 
 export type CompetitorProviderStatus = {
   provider: CompetitorSearchProvider;
   status: "searched" | "unavailable" | "failed" | "pending";
   count: number;
   marketplaces: CompetitorMarketplace[];
+};
+
+export type CompetitorProviderSearchResult = {
+  /** Cross-provider deduplicated observations intended for UI/read consumers. */
+  items: CompetitorPriceCandidate[];
+  /**
+   * Fully enriched per-provider observations intended for persistence. Present
+   * for structured-identity v3 searches; legacy callers may fall back to items.
+   */
+  sourceItems?: CompetitorPriceCandidateV3[];
+  providers: CompetitorProviderStatus[];
+  available: boolean;
+  pending: boolean;
+  configured: boolean;
 };
 
 type ActiveCredential = { credential_id?: unknown; secret_payload?: unknown };
@@ -32,7 +81,12 @@ type ElevenstSearchCredentials = { apiKey: string; credentialId?: string };
 type EbayBrowseCredentials = { clientId: string; clientSecret: string; marketplaceId: string; environment: "production" | "sandbox" };
 type BraveMarketplaceWebCredentials = { apiKey: string };
 export type MarketplaceWebMarketplace = Extract<CompetitorMarketplace, "shopee" | "lazada" | "temu">;
-export type CompetitorRefreshContext = { productId?: string; claimToken?: string; signal?: AbortSignal };
+export type CompetitorRefreshContext = {
+  productId?: string;
+  claimToken?: string;
+  signal?: AbortSignal;
+  identity?: CompetitorProductIdentity;
+};
 type SearchProvider = {
   id: CompetitorSearchProvider;
   marketplaces: CompetitorMarketplace[];
@@ -65,6 +119,37 @@ const providerMarketplaces: Record<CompetitorSearchProvider, CompetitorMarketpla
   elevenst_product_search: ["elevenst"],
   ebay_browse: ["ebay"],
   brave_marketplace_web: ["shopee", "lazada", "temu"],
+};
+
+// Keep Browse evidence on the marketplace site selected by
+// X-EBAY-C-MARKETPLACE-ID. A loose `ebay.*` suffix accepts lookalikes such as
+// `ebay.com.example`, while accepting every eBay root would let a response
+// cross the requested marketplace boundary.
+const ebayMarketplaceRoots: Readonly<Record<string, readonly string[]>> = {
+  EBAY_US: ["ebay.com"],
+  EBAY_MOTORS_US: ["ebay.com"],
+  EBAY_AT: ["ebay.at"],
+  EBAY_AU: ["ebay.com.au"],
+  EBAY_BE: ["ebay.be"],
+  EBAY_BE_FR: ["ebay.be"],
+  EBAY_BE_NL: ["ebay.be"],
+  EBAY_CA: ["ebay.ca"],
+  EBAY_CA_FR: ["ebay.ca"],
+  EBAY_CH: ["ebay.ch"],
+  EBAY_DE: ["ebay.de"],
+  EBAY_ES: ["ebay.es"],
+  EBAY_FR: ["ebay.fr"],
+  EBAY_GB: ["ebay.co.uk"],
+  EBAY_HK: ["ebay.com.hk"],
+  EBAY_IE: ["ebay.ie"],
+  EBAY_IN: ["ebay.in"],
+  EBAY_IT: ["ebay.it"],
+  EBAY_MY: ["ebay.com.my"],
+  EBAY_NL: ["ebay.nl"],
+  EBAY_PH: ["ebay.ph"],
+  EBAY_PL: ["ebay.pl"],
+  EBAY_SG: ["ebay.com.sg", "ebay.sg"],
+  EBAY_TW: ["ebay.com.tw"],
 };
 
 // Keep the eight user-facing sales channels ahead of the catch-all bucket.
@@ -153,14 +238,9 @@ async function withCompetitorFetchSlot<T>(request: () => Promise<T>, signal?: Ab
     dispatchCompetitorFetchWaiters();
   }
 }
-const marketplaceWebCurrencies = new Set([
-  "AUD", "BRL", "CAD", "CLP", "COP", "EUR", "GBP", "IDR", "JPY", "KRW", "MXN", "MYR", "PHP", "SGD", "THB", "TWD", "USD", "VND",
-]);
-
 type MarketplaceWebTarget = {
   label: string;
   roots: readonly string[];
-  currencyByRoot: Readonly<Record<string, string>>;
 };
 
 const marketplaceWebTargets: Record<MarketplaceWebMarketplace, MarketplaceWebTarget> = {
@@ -170,24 +250,14 @@ const marketplaceWebTargets: Record<MarketplaceWebMarketplace, MarketplaceWebTar
       "shopee.sg", "shopee.com.my", "shopee.ph", "shopee.co.th", "shopee.vn", "shopee.co.id",
       "shopee.tw", "shopee.com.br", "shopee.com.mx", "shopee.cl", "shopee.com.co",
     ],
-    currencyByRoot: {
-      "shopee.sg": "SGD", "shopee.com.my": "MYR", "shopee.ph": "PHP", "shopee.co.th": "THB",
-      "shopee.vn": "VND", "shopee.co.id": "IDR", "shopee.tw": "TWD", "shopee.com.br": "BRL",
-      "shopee.com.mx": "MXN", "shopee.cl": "CLP", "shopee.com.co": "COP",
-    },
   },
   lazada: {
     label: "Lazada",
     roots: ["lazada.sg", "lazada.com.my", "lazada.com.ph", "lazada.co.th", "lazada.vn", "lazada.co.id"],
-    currencyByRoot: {
-      "lazada.sg": "SGD", "lazada.com.my": "MYR", "lazada.com.ph": "PHP", "lazada.co.th": "THB",
-      "lazada.vn": "VND", "lazada.co.id": "IDR",
-    },
   },
   temu: {
     label: "Temu",
     roots: ["temu.com"],
-    currencyByRoot: {},
   },
 };
 
@@ -244,6 +314,20 @@ function hostnameMatchesRoot(hostname: string, root: string) {
 function isIpLiteral(hostname: string) {
   const candidate = hostname.replace(/^\[|\]$/gu, "");
   return /^\d{1,3}(?:\.\d{1,3}){3}$/u.test(candidate) || candidate.includes(":");
+}
+
+function ebayBrowseItemUrl(value: unknown, marketplaceId: string) {
+  const rawValue = typeof value === "string" ? value.trim() : "";
+  const candidate = validHttpUrl(rawValue);
+  const roots = ebayMarketplaceRoots[marketplaceId.trim().toUpperCase()];
+  if (!candidate || !roots) return "";
+  const url = new URL(candidate);
+  const hostname = url.hostname.toLocaleLowerCase().replace(/\.$/u, "");
+  const authority = rawValue.match(/^https:\/\/([^/?#]+)/iu)?.[1] ?? "";
+  const hasExplicitPort = /:\d+$/u.test(authority);
+  if (url.protocol !== "https:" || url.port || hasExplicitPort || isIpLiteral(hostname)) return "";
+  if (!roots.some((root) => hostnameMatchesRoot(hostname, root))) return "";
+  return url.toString().slice(0, 4_000);
 }
 
 export function canonicalMarketplaceWebImageUrl(value: unknown, marketplace: MarketplaceWebMarketplace) {
@@ -308,85 +392,111 @@ function marketplaceWebExternalId(url: string, marketplace: MarketplaceWebMarket
   return `${hostname}:sha256:${createHash("sha256").update(url).digest("hex")}`.slice(0, 500);
 }
 
-function structuredRecords(value: unknown, maximum = 500) {
-  const records: Record<string, unknown>[] = [];
-  const seen = new Set<object>();
-  const visit = (candidate: unknown, depth: number) => {
-    if (records.length >= maximum || depth > 8 || !candidate) return;
-    if (Array.isArray(candidate)) {
-      for (const item of candidate.slice(0, 100)) visit(item, depth + 1);
-      return;
-    }
-    if (!isRecord(candidate) || seen.has(candidate)) return;
-    seen.add(candidate);
-    records.push(candidate);
-    for (const item of Object.values(candidate).slice(0, 100)) visit(item, depth + 1);
-  };
-  visit(value, 0);
-  return records;
-}
-
-function structuredValue(record: Record<string, unknown>, keys: readonly string[]) {
-  const expected = new Set(keys.map((key) => key.toLocaleLowerCase()));
-  const entry = Object.entries(record).find(([key]) => expected.has(key.toLocaleLowerCase()));
-  return entry?.[1];
-}
-
-function structuredPriceNumber(value: unknown) {
-  if (typeof value === "number") return Number.isFinite(value) && value > 0 && value <= 1_000_000_000_000 ? value : null;
+function documentedPositiveDecimalPrice(value: unknown) {
   if (typeof value !== "string") return null;
-  const text = plainText(value).replace(/[\u00a0\s]/gu, " ").trim();
-  if (!text || text.length > 80) return null;
-  const matches = text.match(/\d[\d., ]*(?:\d|[.,]\d)/gu) ?? text.match(/\d+/gu) ?? [];
-  if (matches.length !== 1) return null;
-  let numeric = matches[0].replaceAll(" ", "");
-  const comma = numeric.lastIndexOf(",");
-  const dot = numeric.lastIndexOf(".");
-  if (comma >= 0 && dot >= 0) {
-    numeric = comma > dot ? numeric.replaceAll(".", "").replace(",", ".") : numeric.replaceAll(",", "");
-  } else if (comma >= 0) {
-    const decimalDigits = numeric.length - comma - 1;
-    numeric = decimalDigits > 0 && decimalDigits <= 2 ? numeric.replace(",", ".") : numeric.replaceAll(",", "");
-  } else if (dot >= 0) {
-    const decimalDigits = numeric.length - dot - 1;
-    if (decimalDigits === 3 && /^\d{1,3}(?:\.\d{3})+$/u.test(numeric)) numeric = numeric.replaceAll(".", "");
-  }
-  const parsed = Number(numeric);
-  return Number.isFinite(parsed) && parsed > 0 && parsed <= 1_000_000_000_000 ? parsed : null;
+  const text = value.trim();
+  if (!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,6})?$/u.test(text)) return null;
+  const price = Number(text);
+  return Number.isFinite(price) && price > 0 && price <= 1_000_000_000_000 ? price : null;
 }
 
-function structuredCurrency(value: unknown, fallback: string) {
-  const text = plainText(value).trim().toUpperCase();
-  const explicit = text.match(/(?:^|[^A-Z])([A-Z]{3})(?:$|[^A-Z])/u)?.[1] ?? (/^[A-Z]{3}$/u.test(text) ? text : "");
-  if (marketplaceWebCurrencies.has(explicit)) return explicit;
-  if (/\bRM\b/u.test(text)) return "MYR";
-  if (/S\$/u.test(text)) return "SGD";
-  if (/\bRP\b/u.test(text)) return "IDR";
-  if (/NT\$/u.test(text)) return "TWD";
-  if (/R\$/u.test(text)) return "BRL";
-  if (/MX\$/u.test(text)) return "MXN";
-  if (/₱/u.test(text)) return "PHP";
-  if (/฿/u.test(text)) return "THB";
-  if (/₫/u.test(text)) return "VND";
-  if (/₩/u.test(text)) return "KRW";
-  return marketplaceWebCurrencies.has(fallback) ? fallback : "";
+function documentedNonnegativeDecimalPrice(value: unknown) {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!/^(?:0|[1-9]\d{0,11})(?:\.\d{1,6})?$/u.test(text)) return null;
+  const price = Number(text);
+  return Number.isFinite(price) && price >= 0 && price <= 1_000_000_000_000 ? price : null;
 }
 
-export function structuredMarketplaceWebPrice(result: Record<string, unknown>, fallbackCurrency = "") {
-  const records = structuredRecords([result.product, result.schemas]);
-  const prices: Array<{ price: number; currency: string }> = [];
-  for (const record of records) {
-    const rawPrice = structuredValue(record, ["price", "lowPrice", "salePrice", "currentPrice"]);
-    const price = structuredPriceNumber(rawPrice);
-    if (price === null) continue;
-    const currency = structuredCurrency(
-      structuredValue(record, ["priceCurrency", "currency", "currencyCode"]) ?? rawPrice,
-      fallbackCurrency,
-    );
-    if (!/^[A-Z]{3}$/u.test(currency)) continue;
-    prices.push({ price, currency });
+function providerCondition(value: unknown) {
+  const normalized = normalizedSearchText(plainText(value));
+  if (!normalized) return undefined;
+  if (/(?:^| )(?:refurbished|refurb|remanufactured|renewed|리퍼|리퍼비시|재생품)(?: |$)/u.test(normalized)) return "refurbished" as const;
+  if (/(?:^| )(?:used|pre owned|second hand|open box|opened box|display model|floor model|중고|개봉품|전시상품|반품상품)(?: |$)/u.test(normalized)) return "used" as const;
+  if (/(?:^| )(?:new|brand new|new with tags|new without tags|새상품|새제품|신품|미개봉)(?: |$)/u.test(normalized)) return "new" as const;
+  return undefined;
+}
+
+function ebayLocalizedIdentity(item: Record<string, unknown>): CompetitorCandidateIdentity | undefined {
+  const aspects = Array.isArray(item.localizedAspects) ? item.localizedAspects.filter(isRecord) : [];
+  const values = new Map<string, string>();
+  for (const aspect of aspects) {
+    const name = normalizedSearchText(plainText(aspect.name));
+    const value = plainText(aspect.value).slice(0, 240);
+    if (name && value && !values.has(name)) values.set(name, value);
   }
-  return prices.sort((left, right) => left.price - right.price)[0] ?? null;
+  const first = (...names: string[]) => names.map((name) => values.get(name)).find(Boolean) ?? "";
+  const brand = first("brand", "브랜드");
+  const manufacturer = first("manufacturer", "제조사");
+  const manufacturerPartNumber = first("mpn", "manufacturer part number", "manufacturer part no", "제조사 부품 번호");
+  const modelNumber = first("model", "model number", "model no", "모델", "모델명", "모델 번호");
+  const color = first("color", "colour", "색상");
+  const size = first("size", "사이즈");
+  const condition = providerCondition(item.condition);
+  const gtins = [first("gtin"), first("ean"), first("upc"), first("isbn")]
+    .map((value) => value.replace(/\D/gu, ""))
+    .filter((value) => /^\d{8,14}$/u.test(value));
+  const identity: CompetitorCandidateIdentity = {
+    ...(brand ? { brand } : {}),
+    ...(manufacturer ? { manufacturer } : {}),
+    ...(manufacturerPartNumber ? { manufacturerPartNumber } : {}),
+    ...(modelNumber ? { modelNumber } : {}),
+    ...(condition ? { condition } : {}),
+    ...(gtins.length ? { gtins: [...new Set(gtins)] } : {}),
+    ...(color || size ? { options: { ...(color ? { color } : {}), ...(size ? { size } : {}) } } : {}),
+  };
+  return Object.keys(identity).length > 0 ? identity : undefined;
+}
+
+function ebayInventoryStatus(item: Record<string, unknown>): CompetitorInventoryStatus | undefined {
+  const statuses = (Array.isArray(item.estimatedAvailabilities) ? item.estimatedAvailabilities : [])
+    .filter(isRecord)
+    .map((availability) => plainText(availability.estimatedAvailabilityStatus).toUpperCase());
+  if (statuses.some((status) => status === "IN_STOCK" || status === "LIMITED_STOCK")) return "in_stock";
+  if (statuses.length > 0 && statuses.every((status) => status === "OUT_OF_STOCK")) return "out_of_stock";
+  return undefined;
+}
+
+function ebayPriceComponents(item: Record<string, unknown>, itemPrice: number, currency: string): CompetitorPriceComponentsInput {
+  const shippingCosts = (Array.isArray(item.shippingOptions) ? item.shippingOptions : [])
+    .filter(isRecord)
+    .map((option) => isRecord(option.shippingCost) ? option.shippingCost : null)
+    .filter((cost): cost is Record<string, unknown> => Boolean(cost))
+    .filter((cost) => plainText(cost.currency).toUpperCase() === currency)
+    .map((cost) => documentedNonnegativeDecimalPrice(cost.value))
+    .filter((amount): amount is number => amount !== null);
+  const shipping = shippingCosts.length > 0
+    ? knownCompetitorPriceComponent(Math.min(...shippingCosts), currency)
+    : unknownCompetitorPriceComponent(currency);
+  return {
+    itemPrice: knownCompetitorPriceComponent(itemPrice, currency),
+    requiredOptionSurcharge: unknownCompetitorPriceComponent(currency),
+    shipping,
+    taxAndDuty: unknownCompetitorPriceComponent(currency),
+    discount: unknownCompetitorPriceComponent(currency),
+  };
+}
+
+export function structuredMarketplaceWebPrice(
+  result: Record<string, unknown>,
+  marketplace: MarketplaceWebMarketplace,
+  itemUrl: string,
+) {
+  const canonicalItemUrl = canonicalMarketplaceWebProductUrl(itemUrl, marketplace);
+  const product = isRecord(result.product) ? result.product : null;
+  if (!canonicalItemUrl || product?.type !== "Product"
+      || !Array.isArray(product.offers) || product.offers.length !== 1) return null;
+  if (product.url !== undefined && product.url !== null
+      && canonicalMarketplaceWebProductUrl(product.url, marketplace) !== canonicalItemUrl) return null;
+
+  const offer = product.offers[0];
+  if (!isRecord(offer)
+      || canonicalMarketplaceWebProductUrl(offer.url, marketplace) !== canonicalItemUrl) return null;
+  const price = documentedPositiveDecimalPrice(offer.price);
+  const currency = typeof offer.priceCurrency === "string"
+    ? offer.priceCurrency.trim().toUpperCase()
+    : "";
+  return price !== null && /^[A-Z]{3}$/u.test(currency) ? { price, currency } : null;
 }
 
 const ignoredSearchTokens = new Set([
@@ -1379,11 +1489,33 @@ export async function searchNaverShopping(
     const itemUrl = validHttpUrl(item.link);
     const imageUrl = validHttpUrl(item.image);
     const mallName = plainText(item.mallName).slice(0, 240);
-    const price = Number(item.lprice ?? 0);
+    const rawPrice = typeof item.lprice === "string" ? item.lprice.trim() : "";
+    const price = /^\d{1,15}$/u.test(rawPrice) ? Number(rawPrice) : Number.NaN;
     const externalId = String(item.productId ?? itemUrl).trim().slice(0, 500);
     const title = plainText(item.title).slice(0, 1000);
-    if (!externalId || !itemUrl || !title || !Number.isFinite(price) || price < 0) return [];
-    return [{ provider: "naver_shopping" as const, externalId, title, url: itemUrl, imageUrl, mallName, marketplace: competitorMarketplace(mallName, itemUrl), price, currency: "KRW" }];
+    if (!externalId || !itemUrl || !title || !Number.isSafeInteger(price) || price <= 0) return [];
+    const brand = plainText(item.brand).slice(0, 120);
+    const manufacturer = plainText(item.maker).slice(0, 160);
+    // Naver documents productType=2 as used. Other product types do not prove
+    // that a listing is new, so they deliberately remain unknown.
+    const condition = String(item.productType ?? "").trim() === "2" ? "used" as const : undefined;
+    const identity: CompetitorCandidateIdentity | undefined = brand || manufacturer || condition ? {
+      ...(brand ? { brand } : {}),
+      ...(manufacturer ? { manufacturer } : {}),
+      ...(condition ? { condition } : {}),
+    } : undefined;
+    return [{
+      provider: "naver_shopping" as const,
+      externalId,
+      title,
+      url: itemUrl,
+      imageUrl,
+      mallName,
+      marketplace: competitorMarketplace(mallName, itemUrl),
+      price,
+      currency: "KRW",
+      ...(identity ? { identity } : {}),
+    }];
   });
 }
 
@@ -1433,6 +1565,12 @@ function elevenstXmlValue(xml: string, tag: string) {
   return plainText((elevenstXmlNodes(xml, tag)[0] ?? "").replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1"));
 }
 
+function elevenstPositivePrice(value: string) {
+  if (!/^\d{1,9}$/u.test(value)) return null;
+  const price = Number(value);
+  return Number.isSafeInteger(price) && price > 0 ? price : null;
+}
+
 async function elevenstResponseXml(response: Response) {
   const bytes = await response.arrayBuffer();
   try {
@@ -1466,12 +1604,13 @@ export async function searchElevenstProducts(
   return elevenstXmlNodes(xml, "Product").slice(0, display).flatMap((product) => {
     const externalId = elevenstXmlValue(product, "ProductCode").slice(0, 500);
     const title = elevenstXmlValue(product, "ProductName").slice(0, 1000);
-    const price = Number(elevenstXmlValue(product, "SalePrice") || elevenstXmlValue(product, "ProductPrice") || "0");
+    const price = elevenstPositivePrice(elevenstXmlValue(product, "SalePrice"))
+      ?? elevenstPositivePrice(elevenstXmlValue(product, "ProductPrice"));
     const rawDetailUrl = validHttpUrl(elevenstXmlValue(product, "DetailPageUrl"), /(^|\.)11st\.co\.kr$/i);
     const detailUrl = rawDetailUrl
       ? rawDetailUrl.replace(/^http:/i, "https:")
       : (/^\d+$/.test(externalId) ? `https://www.11st.co.kr/products/${externalId}` : "");
-    if (!externalId || !title || !detailUrl || !Number.isFinite(price) || price < 0) return [];
+    if (!externalId || !title || !detailUrl || price === null) return [];
     return [{ provider: "elevenst_product_search" as const, externalId, title, url: detailUrl, imageUrl: validHttpUrl(elevenstXmlValue(product, "ProductImage")), mallName: elevenstXmlValue(product, "Seller").slice(0, 240) || "11번가", marketplace: "elevenst" as const, price, currency: "KRW" }];
   });
 }
@@ -1532,6 +1671,7 @@ export async function searchEbayBrowse(
   const url = new URL(`${apiHost}/buy/browse/v1/item_summary/search`);
   url.searchParams.set("q", query);
   url.searchParams.set("limit", String(Math.max(1, Math.min(display, 200))));
+  url.searchParams.set("filter", "buyingOptions:{FIXED_PRICE}");
   const payload = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
     const response = await fetch(url, {
@@ -1549,11 +1689,30 @@ export async function searchEbayBrowse(
     const sellerRecord = item.seller && typeof item.seller === "object" && !Array.isArray(item.seller) ? item.seller as Record<string, unknown> : {};
     const externalId = String(item.itemId ?? "").trim().slice(0, 500);
     const title = plainText(item.title).slice(0, 1000);
-    const itemUrl = validHttpUrl(item.itemWebUrl, /(^|\.)ebay\.[a-z.]+$/i);
-    const price = Number(priceRecord.value ?? 0);
-    const currency = String(priceRecord.currency ?? "USD").trim().toUpperCase().slice(0, 3);
-    if (!externalId || !title || !itemUrl || !Number.isFinite(price) || price < 0 || !/^[A-Z]{3}$/.test(currency)) return [];
-    return [{ provider: "ebay_browse" as const, externalId, title, url: itemUrl, imageUrl: validHttpUrl(imageRecord.imageUrl), mallName: plainText(sellerRecord.username).slice(0, 240) || "eBay", marketplace: "ebay" as const, price, currency }];
+    const itemUrl = ebayBrowseItemUrl(item.itemWebUrl, credentials.marketplaceId);
+    const price = documentedPositiveDecimalPrice(priceRecord.value);
+    const currency = typeof priceRecord.currency === "string" ? priceRecord.currency.trim().toUpperCase() : "";
+    const buyingOptions = Array.isArray(item.buyingOptions)
+      ? item.buyingOptions.filter((option): option is string => typeof option === "string")
+      : [];
+    if (!externalId || !title || !itemUrl || price === null
+        || !/^[A-Z]{3}$/.test(currency) || !buyingOptions.includes("FIXED_PRICE")) return [];
+    const identity = ebayLocalizedIdentity(item);
+    const inventoryStatus = ebayInventoryStatus(item);
+    return [{
+      provider: "ebay_browse" as const,
+      externalId,
+      title,
+      url: itemUrl,
+      imageUrl: validHttpUrl(imageRecord.imageUrl),
+      mallName: plainText(sellerRecord.username).slice(0, 240) || "eBay",
+      marketplace: "ebay" as const,
+      price,
+      currency,
+      ...(identity ? { identity } : {}),
+      priceComponents: ebayPriceComponents(item, price, currency),
+      ...(inventoryStatus ? { inventoryStatus } : {}),
+    }];
   });
 }
 
@@ -1680,7 +1839,7 @@ export async function searchBraveMarketplaceWeb(
     if (!itemUrl) return [];
     const parsedUrl = new URL(itemUrl);
     const root = officialMarketplaceRoot(parsedUrl.hostname, marketplace);
-    const price = structuredMarketplaceWebPrice(rawResult, marketplaceWebTargets[marketplace].currencyByRoot[root] ?? "");
+    const price = structuredMarketplaceWebPrice(rawResult, marketplace, itemUrl);
     const title = plainText(rawResult.title).slice(0, 1_000);
     if (!title || !price) return [];
     const thumbnail = isRecord(rawResult.thumbnail) ? rawResult.thumbnail : {};
@@ -1871,6 +2030,94 @@ async function withProviderTimeout<T>(
   }
 }
 
+export function competitorProviderFailureStatus(
+  provider: CompetitorSearchProvider,
+  reason: unknown,
+): CompetitorProviderStatus["status"] {
+  if (!(reason instanceof Error)) return "failed";
+  // Once the bounded provider budget has elapsed, the claim must reach a
+  // terminal state so the next scheduler cycle can reclaim it. In particular,
+  // an 11st gateway timeout must not survive forever as "pending".
+  if (reason.message === "COMPETITOR_PROVIDER_TIMEOUT") return "failed";
+  if (reason.name === "ChannelGatewayInProgressError") {
+    return provider === "elevenst_product_search" ? "failed" : "pending";
+  }
+  return "failed";
+}
+
+function isCompetitorV3Candidate(
+  item: CompetitorPriceCandidate,
+): item is CompetitorPriceCandidateV3 {
+  return item.matcherVersion === COMPETITOR_MATCHER_VERSION
+    && typeof item.matchScore === "number"
+    && Boolean(item.matchTier)
+    && Array.isArray(item.matchEvidence)
+    && Array.isArray(item.mismatchEvidence)
+    && Boolean(item.priceComponents)
+    && typeof item.observedAt === "string"
+    && typeof item.inventoryStatus === "string"
+    && Array.isArray(item.provenance);
+}
+
+function groupCompetitorV3Candidates(
+  items: CompetitorPriceCandidateV3[],
+) {
+  const visibleCounts = new Map<CompetitorMarketplace, number>();
+  const rejectedCounts = new Map<CompetitorMarketplace, number>();
+  const tierOrder: Record<CompetitorMatchTier, number> = { exact: 0, probable: 1, rejected: 2 };
+  return items
+    .sort((left, right) => (
+      competitorMarketplaceOrder.indexOf(left.marketplace) - competitorMarketplaceOrder.indexOf(right.marketplace)
+      || tierOrder[left.matchTier] - tierOrder[right.matchTier]
+      || right.matchScore - left.matchScore
+      || (left.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY) - (right.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY)
+      || left.price - right.price
+    ))
+    .filter((item) => {
+      if (item.matchTier === "rejected") {
+        const count = rejectedCounts.get(item.marketplace) ?? 0;
+        if (count >= 1) return false;
+        rejectedCounts.set(item.marketplace, count + 1);
+        return true;
+      }
+      const count = visibleCounts.get(item.marketplace) ?? 0;
+      if (count >= 3) return false;
+      visibleCounts.set(item.marketplace, count + 1);
+      return true;
+    })
+    .slice(0, 30);
+}
+
+function capCompetitorV3SourceCandidates(
+  items: CompetitorPriceCandidateV3[],
+  limit = 30,
+) {
+  const tierOrder: Record<CompetitorMatchTier, number> = { exact: 0, probable: 1, rejected: 2 };
+  const sorted = [...items].sort((left, right) => (
+    tierOrder[left.matchTier] - tierOrder[right.matchTier]
+    || right.matchScore - left.matchScore
+    || competitorMarketplaceOrder.indexOf(left.marketplace) - competitorMarketplaceOrder.indexOf(right.marketplace)
+    || (left.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY) - (right.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY)
+    || left.price - right.price
+  ));
+  const providerOrder = [...new Set(sorted.map((item) => item.provider))]
+    .sort((left, right) => Object.keys(providerMarketplaces).indexOf(left) - Object.keys(providerMarketplaces).indexOf(right));
+  const queues = new Map(providerOrder.map((provider) => [provider, sorted.filter((item) => item.provider === provider)]));
+  const selected: CompetitorPriceCandidateV3[] = [];
+  while (selected.length < limit) {
+    let added = false;
+    for (const provider of providerOrder) {
+      const item = queues.get(provider)?.shift();
+      if (!item) continue;
+      selected.push(item);
+      added = true;
+      if (selected.length >= limit) break;
+    }
+    if (!added) break;
+  }
+  return selected;
+}
+
 export async function searchCompetitorProviders(
   registry: CompetitorProviderRegistry,
   primary: string,
@@ -1878,8 +2125,10 @@ export async function searchCompetitorProviders(
   displayPerQuery = 30,
   providerTimeoutMs = 0,
   refreshContext?: CompetitorRefreshContext,
-) {
+): Promise<CompetitorProviderSearchResult> {
   const queries = normalizedCompetitorQueries(primary, aliases);
+  const identity = refreshContext?.identity;
+  const observedAt = new Date().toISOString();
   const effectivePrimary = queries[0] ?? primary.replace(/\p{Cc}/gu, " ").trim().slice(0, 160);
   const effectiveAliases = queries.slice(1);
   const settled = await Promise.allSettled(registry.configured.map(async (provider) => {
@@ -1894,14 +2143,29 @@ export async function searchCompetitorProviders(
       },
       providerTimeoutMs,
     );
-    const ranked = items
-      .map((item) => ({ item, score: competitorCandidateRelevance(item, queries) }))
-      // A zero/NaN price is not a usable market-price observation. Reject it
-      // at the shared provider boundary so direct APIs and gateway-backed 11st
-      // searches follow the same fail-closed rule.
-      .filter(({ item, score }) => score > 0 && Number.isFinite(item.price) && item.price > 0)
-      .sort((left, right) => right.score - left.score || left.item.price - right.item.price)
-      .map(({ item }) => item);
+    const usable = items.filter((item) => Number.isFinite(item.price) && item.price > 0);
+    const ranked = identity
+      ? usable
+          .map((item) => enrichCompetitorCandidateV3(identity, item, observedAt))
+          // Keep probable candidates and one bounded rejected candidate per
+          // marketplace, but discard unrelated provider noise that supplied no
+          // positive identity evidence at all.
+          .filter((item) => item.matchTier !== "rejected" || item.matchEvidence.some((evidence) => (
+            ["gtin", "brand", "productName", "manufacturerPartNumber", "modelNumber"].includes(evidence.attribute)
+          )))
+          .sort((left, right) => (
+            ({ exact: 0, probable: 1, rejected: 2 } as const)[left.matchTier]
+            - ({ exact: 0, probable: 1, rejected: 2 } as const)[right.matchTier]
+            || right.matchScore - left.matchScore
+            || left.price - right.price
+          ))
+      : usable
+          .map((item) => ({ item, score: competitorCandidateRelevance(item, queries) }))
+          // A zero/NaN price is not a usable market-price observation. Reject
+          // it at the shared provider boundary so every provider fails closed.
+          .filter(({ score }) => score > 0)
+          .sort((left, right) => right.score - left.score || left.item.price - right.item.price)
+          .map(({ item }) => item);
     return { provider, items: ranked };
   }));
   if (refreshContext?.signal?.aborted) throw competitorAbortReason(refreshContext.signal);
@@ -1914,12 +2178,21 @@ export async function searchCompetitorProviders(
       providers.push({ provider: provider.id, status: "searched", count: result.value.items.length, marketplaces: provider.marketplaces });
       candidates.push(...result.value.items);
     } else {
-      const pending = result.reason instanceof Error && (
-        result.reason.name === "ChannelGatewayInProgressError"
-        || result.reason.message === "COMPETITOR_PROVIDER_TIMEOUT"
-      );
-      providers.push({ provider: provider.id, status: pending ? "pending" : "failed", count: 0, marketplaces: provider.marketplaces });
+      providers.push({ provider: provider.id, status: competitorProviderFailureStatus(provider.id, result.reason), count: 0, marketplaces: provider.marketplaces });
     }
+  }
+  const order = Object.keys(providerMarketplaces);
+  if (identity) {
+    const v3Candidates = candidates.filter(isCompetitorV3Candidate);
+    const sourceItems = capCompetitorV3SourceCandidates(deduplicateCompetitorSourceObservations(v3Candidates));
+    return {
+      items: groupCompetitorV3Candidates(deduplicateCompetitorObservations(sourceItems)),
+      sourceItems,
+      providers: providers.sort((left, right) => order.indexOf(left.provider) - order.indexOf(right.provider)),
+      available: providers.some((provider) => provider.status === "searched"),
+      pending: providers.some((provider) => provider.status === "pending"),
+      configured: registry.configured.length > 0,
+    };
   }
   const unique = new Map<string, CompetitorPriceCandidate>();
   for (const item of candidates) {
@@ -1929,7 +2202,6 @@ export async function searchCompetitorProviders(
     const currentScore = current ? competitorCandidateRelevance(current, queries) : 0;
     if (!current || score > currentScore || (score === currentScore && item.imageUrl && !current.imageUrl) || (score === currentScore && Boolean(item.imageUrl) === Boolean(current.imageUrl) && item.price < current.price)) unique.set(key, item);
   }
-  const order = Object.keys(providerMarketplaces);
   return {
     items: groupCompetitorPrices([...unique.values()], 3, queries),
     providers: providers.sort((left, right) => order.indexOf(left.provider) - order.indexOf(right.provider)),

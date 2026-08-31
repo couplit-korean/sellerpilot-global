@@ -12,6 +12,11 @@ const product: ClaimedCompetitorProduct = {
   claimToken: "019d2a88-ec56-7ce7-933a-2f9cdfa05020",
   query: "켈로그 첵스초코 570g",
   aliases: ["Kellogg Choco Chex 570g"],
+  identity: {
+    productName: "켈로그 첵스초코",
+    brand: "켈로그",
+    packageContents: "570g 1개",
+  },
 };
 
 const searchedProvider: CompetitorProviderStatus = {
@@ -88,6 +93,31 @@ test("synthetic competitor refresh completes a fenced snapshot with the matcher 
   });
 });
 
+test("completion persists raw provider source items instead of the cross-provider display projection", async () => {
+  let completedItems: Array<CompetitorPriceCandidate & { matcherVersion: string }> = [];
+  const outcome = await runClaimedCompetitorProductRefresh({
+    product,
+    unavailableProviders: [],
+    matcherVersion: "strict-synthetic-v1",
+    search: async () => ({
+      items: [],
+      sourceItems: [item],
+      providers: [searchedProvider],
+      available: true,
+      pending: false,
+    }),
+    release: async () => true,
+    complete: async ({ items }) => {
+      completedItems = items;
+      return items.length;
+    },
+  });
+
+  assert.deepEqual(completedItems, [{ ...item, matcherVersion: "strict-synthetic-v1" }]);
+  assert.equal(outcome.result.ok, true);
+  assert.equal(outcome.result.count, 1);
+});
+
 test("synthetic pending gateway work retains its claim and never writes a partial snapshot", async () => {
   let releaseCalls = 0;
   let completeCalls = 0;
@@ -104,6 +134,75 @@ test("synthetic pending gateway work retains its claim and never writes a partia
   assert.equal(releaseCalls, 0);
   assert.equal(completeCalls, 0);
   assert.equal(outcome.result.pending, true);
+  assert.equal(outcome.infrastructureFailure, false);
+});
+
+test("11st pending at the route deadline becomes a terminal failed snapshot", async () => {
+  let releaseCalls = 0;
+  let completeCalls = 0;
+  let completedProviders: CompetitorProviderStatus[] = [];
+  const pendingElevenst: CompetitorProviderStatus = {
+    provider: "elevenst_product_search",
+    status: "pending",
+    count: 0,
+    marketplaces: ["elevenst"],
+  };
+  const outcome = await runClaimedCompetitorProductRefresh({
+    product,
+    unavailableProviders: [],
+    matcherVersion: "strict-synthetic-v1",
+    terminalizePendingProviders: ["elevenst_product_search"],
+    search: async () => ({ items: [], providers: [pendingElevenst], available: false, pending: true }),
+    release: async () => { releaseCalls += 1; return true; },
+    complete: async ({ providers }) => {
+      completeCalls += 1;
+      completedProviders = providers;
+      return 0;
+    },
+  });
+
+  assert.equal(releaseCalls, 0);
+  assert.equal(completeCalls, 1);
+  assert.deepEqual(completedProviders, [{ ...pendingElevenst, status: "failed" }]);
+  assert.deepEqual(outcome.result, {
+    productId: product.productId,
+    ok: false,
+    pending: false,
+    count: 0,
+    providers: [{ ...pendingElevenst, status: "failed" }],
+  });
+  assert.equal(outcome.infrastructureFailure, false);
+});
+
+test("a searched provider plus a terminal provider failure completes but remains a partial failure", async () => {
+  const failedElevenst: CompetitorProviderStatus = {
+    provider: "elevenst_product_search",
+    status: "failed",
+    count: 0,
+    marketplaces: ["elevenst"],
+  };
+  let completedItems: Array<CompetitorPriceCandidate & { matcherVersion: string }> = [];
+  const outcome = await runClaimedCompetitorProductRefresh({
+    product,
+    unavailableProviders: [],
+    matcherVersion: "strict-synthetic-v1",
+    search: async () => ({
+      items: [item],
+      providers: [searchedProvider, failedElevenst],
+      available: true,
+      pending: false,
+    }),
+    release: async () => true,
+    complete: async ({ items }) => {
+      completedItems = items;
+      return items.length;
+    },
+  });
+
+  assert.deepEqual(completedItems, [{ ...item, matcherVersion: "strict-synthetic-v1" }]);
+  assert.equal(outcome.result.ok, false);
+  assert.equal(outcome.result.pending, false);
+  assert.equal(outcome.result.count, 1);
   assert.equal(outcome.infrastructureFailure, false);
 });
 

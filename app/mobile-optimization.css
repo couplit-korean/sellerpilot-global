@@ -2937,7 +2937,68 @@
   .registration-product h3 { font-size: 11px; }
   .registration-card dt { font-size: 8px; }
   .registration-card dd { font-size: 9px; }
-  .competitor-market-groups .competitor-price-grid { grid-auto-columns: minmax(244px, 84vw); }
+  .competitor-market-groups .competitor-price-grid,
+  .competitor-review-grid {
+    width: 100%;
+    max-width: 100%;
+    grid-auto-columns: auto;
+    grid-auto-flow: row;
+    grid-template-columns: minmax(0, 1fr);
+    overflow-x: visible;
+    padding: 0;
+    scroll-snap-type: none;
+  }
+  .competitor-market-groups *,
+  .competitor-observation-card,
+  .competitor-observation-card > header > div,
+  .competitor-price-components > div,
+  .competitor-price-provenance > span,
+  .competitor-rejected-list article,
+  .competitor-legacy-section article { min-width: 0; max-width: 100%; }
+  .competitor-lowest-summary,
+  .competitor-price-follow,
+  .competitor-rejected-list article { grid-template-columns: minmax(0, 1fr); }
+  .competitor-lowest-summary > small,
+  .competitor-price-follow em { text-align: left; }
+  .competitor-provider-summary { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .competitor-provider-summary > span { width: 100%; grid-template-columns: minmax(0, 1fr); border-radius: 10px; overflow-wrap: anywhere; }
+  .competitor-provider-summary > span small { grid-column: 1; }
+  .competitor-retry { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .competitor-retry-actions { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr); }
+  .competitor-retry button { width: 100%; min-width: 0; }
+  .competitor-price-components { grid-template-columns: minmax(0, 1fr); }
+  .competitor-price-provenance > span { grid-template-columns: minmax(0, 1fr); }
+  .competitor-observation-card > header { grid-template-columns: 44px minmax(0, 1fr) 28px; }
+  .competitor-observation-card b,
+  .competitor-observation-card small,
+  .competitor-observation-card em,
+  .competitor-rejected-list li,
+  .competitor-legacy-section * { overflow-wrap: anywhere; }
+  .competitor-provider-summary > span,
+  .competitor-observation-card > header b,
+  .competitor-total-price em,
+  .competitor-price-components dd b,
+  .competitor-price-provenance small,
+  .competitor-match-evidence li,
+  .competitor-observation-card > footer span,
+  .competitor-observation-card > footer em,
+  .competitor-price-follow small { font-size: 10px; }
+  .competitor-provider-summary > span small,
+  .competitor-observation-card > header small,
+  .competitor-observation-card > header em,
+  .competitor-price-components dt,
+  .competitor-price-components dd small,
+  .competitor-price-provenance b,
+  .competitor-match-evidence > b,
+  .competitor-match-evidence > small { font-size: 9px; }
+  .competitor-review-open { min-height: 44px; font-size: 10px; }
+  .competitor-review-overlay { align-items: stretch; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
+  .competitor-review-dialog { width: 100%; max-height: none; margin: 0; border-radius: 13px; }
+  .competitor-review-dialog > header { padding: 13px; }.competitor-review-dialog > header h2 { font-size: 16px; }.competitor-review-dialog > header p, .competitor-review-dialog > header small { font-size: 10px; }
+  .competitor-review-dialog-body { gap: 11px; padding: 13px; }
+  .competitor-review-source { display: grid; grid-template-columns: minmax(0, 1fr); }.competitor-review-source b, .competitor-review-source small { font-size: 10px; }.competitor-review-source a { width: 100%; min-height: 44px; justify-content: center; font-size: 10px; }
+  .competitor-review-decision label, .competitor-review-reasons label { min-height: 44px; font-size: 10px; }.competitor-review-decision legend, .competitor-review-reasons legend, .competitor-review-note > span, .competitor-review-existing, .competitor-review-error { font-size: 10px; }
+  .competitor-review-dialog > footer { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 11px 13px; }.competitor-review-dialog > footer button { min-width: 0; font-size: 10px; }
   .dashboard-product-readiness-grid { grid-template-columns: minmax(0, 1fr); }
 }
 

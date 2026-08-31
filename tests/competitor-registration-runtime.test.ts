@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  buildCompetitorResearchRetryPath,
   createCompetitorResearchPollingCoordinator,
   pollCompetitorResearch,
 } from "../app/_publishing/competitor-research-polling";
@@ -12,8 +13,9 @@ import {
   type RegistrationActivity,
 } from "../app/_registration/registration-status";
 
-type Provider = { status: "pending" | "searched"; count: number };
+type Provider = { status: "pending" | "searched" | "failed" | "unavailable"; count: number };
 type Item = { id: string };
+const fetchedAt = "2026-08-31T03:00:00.000Z";
 
 function jsonResponse(status: number, body: unknown) {
   return new Response(JSON.stringify(body), {
@@ -71,6 +73,7 @@ test("competitor polling is capped at three attempts and exposes an explicit ret
       return jsonResponse(202, {
         items: [{ id: `partial-${calls}` }],
         providers: [{ status: "pending", count: 0 }],
+        fetchedAt,
       });
     },
   });
@@ -79,6 +82,7 @@ test("competitor polling is capped at three attempts and exposes an explicit ret
   assert.deepEqual(result, {
     items: [{ id: "partial-3" }],
     providers: [{ status: "pending", count: 0 }],
+    fetchedAt,
     state: "pending",
     retryAvailable: true,
   });
@@ -89,6 +93,7 @@ test("a later failed or invalid response preserves the last successful partial s
   const partial = {
     items: [{ id: "confirmed" }],
     providers: [{ status: "pending" as const, count: 1 }],
+    fetchedAt,
   };
   const snapshots: Array<{ items: Item[]; state: string }> = [];
   const result = await pollCompetitorResearch<Item, Provider>({
@@ -120,6 +125,68 @@ test("a later failed or invalid response preserves the last successful partial s
   assert.deepEqual(malformed, { ...partial, state: "unavailable", retryAvailable: true });
 });
 
+test("polling consumes 207 partial success and preserves a real timestamp when a legacy payload omits it", async () => {
+  const partialSuccess = await pollCompetitorResearch<Item, Provider>({
+    input: "/api/admin/competitor-prices?query=test",
+    signal: new AbortController().signal,
+    maxAttempts: 1,
+    fetcher: async () => jsonResponse(207, {
+      items: [{ id: "confirmed" }],
+      providers: [{ status: "searched", count: 1 }, { status: "failed", count: 0 }],
+      fetchedAt,
+    }),
+  });
+  assert.deepEqual(partialSuccess, {
+    items: [{ id: "confirmed" }],
+    providers: [{ status: "searched", count: 1 }, { status: "failed", count: 0 }],
+    fetchedAt,
+    state: "ready",
+    retryAvailable: false,
+  });
+
+  const legacy = await pollCompetitorResearch<Item, Provider>({
+    input: "/api/admin/competitor-prices?query=test",
+    signal: new AbortController().signal,
+    maxAttempts: 1,
+    initialSnapshot: { items: [], providers: [], fetchedAt },
+    fetcher: async () => jsonResponse(200, {
+      items: [{ id: "legacy" }],
+      providers: [{ status: "searched", count: 1 }],
+    }),
+  });
+  assert.equal(legacy.fetchedAt, fetchedAt);
+  assert.equal(legacy.items[0]?.id, "legacy");
+});
+
+test("registration sends confirmed structured identity while query-only admin search cannot assert exact", async () => {
+  const path = buildCompetitorResearchRetryPath({
+    productName: "브랜드 모델 500ml",
+    brandName: "브랜드",
+    manufacturer: "제조사",
+    manufacturerPartNumber: "MFG-WH1000XM6-B",
+    modelNumber: "WH-1000XM6",
+    packageContents: "상품 6개",
+    condition: "NEW",
+    gtinStatus: "HAS_GTIN",
+    gtin: "8801234567890",
+  });
+  const url = new URL(path, "https://sellerpilot.local");
+  assert.equal(url.searchParams.get("productName"), "브랜드 모델 500ml");
+  assert.equal(url.searchParams.get("brand"), "브랜드");
+  assert.equal(url.searchParams.get("manufacturer"), "제조사");
+  assert.equal(url.searchParams.get("manufacturerPartNumber"), "MFG-WH1000XM6-B");
+  assert.equal(url.searchParams.get("modelNumber"), "WH-1000XM6");
+  assert.equal(url.searchParams.get("packageContents"), "상품 6개");
+  assert.equal(url.searchParams.get("condition"), "NEW");
+  assert.equal(url.searchParams.get("gtin"), "8801234567890");
+
+  const route = await readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8");
+  assert.match(route, /identity \? \{ identity \} : undefined/);
+  assert.match(route, /verifiedSameProduct: "matchTier" in item && item\.matchTier === "exact"/);
+  assert.doesNotMatch(route, /verifiedSameProduct:\s*true/);
+  assert.match(route, /status: partial \? 207 : 200/);
+});
+
 test("the polling coordinator fences stale responses, supports same-input retry, and stops after disposal", async () => {
   const staleResponse = deferredResponse();
   const disposalResponse = deferredResponse();
@@ -139,10 +206,10 @@ test("the polling coordinator fences stale responses, supports same-input retry,
       if (input === "/retry") {
         retryCalls += 1;
         return retryCalls <= 3
-          ? jsonResponse(202, { items: [{ id: "partial" }], providers: [{ status: "pending", count: 0 }] })
-          : jsonResponse(200, { items: [{ id: "settled" }], providers: [{ status: "searched", count: 1 }] });
+          ? jsonResponse(202, { items: [{ id: "partial" }], providers: [{ status: "pending", count: 0 }], fetchedAt })
+          : jsonResponse(200, { items: [{ id: "settled" }], providers: [{ status: "searched", count: 1 }], fetchedAt });
       }
-      return jsonResponse(200, { items: [{ id: "current" }], providers: [{ status: "searched", count: 1 }] });
+      return jsonResponse(200, { items: [{ id: "current" }], providers: [{ status: "searched", count: 1 }], fetchedAt });
     },
     onSnapshot: (snapshot) => emitted.push(snapshot.items[0]?.id ?? "empty"),
   });
@@ -150,7 +217,7 @@ test("the polling coordinator fences stale responses, supports same-input retry,
   const staleRun = coordinator.run("/stale");
   await Promise.resolve();
   const currentResult = await coordinator.run("/current");
-  staleResponse.resolve(jsonResponse(200, { items: [{ id: "stale" }], providers: [{ status: "searched", count: 1 }] }));
+  staleResponse.resolve(jsonResponse(200, { items: [{ id: "stale" }], providers: [{ status: "searched", count: 1 }], fetchedAt }));
   assert.equal(await staleRun, null);
   assert.equal(staleSignal?.aborted, true);
   assert.equal(currentResult?.items[0]?.id, "current");
@@ -167,7 +234,7 @@ test("the polling coordinator fences stale responses, supports same-input retry,
   const disposedRun = coordinator.run("/dispose");
   await Promise.resolve();
   coordinator.dispose();
-  disposalResponse.resolve(jsonResponse(200, { items: [{ id: "disposed" }], providers: [{ status: "searched", count: 1 }] }));
+  disposalResponse.resolve(jsonResponse(200, { items: [{ id: "disposed" }], providers: [{ status: "searched", count: 1 }], fetchedAt }));
   assert.equal(await disposedRun, null);
   assert.equal(await coordinator.run("/after-dispose"), null);
   assert.ok(!emitted.includes("disposed"));
@@ -203,7 +270,7 @@ test("the scheduler sends provider-level outcomes to the snapshot completion RPC
   );
   assert.match(source, /COMPETITOR_MATCHER_VERSION/);
   assert.match(source, /matcherVersion: COMPETITOR_MATCHER_VERSION/);
-  assert.match(runtime, /searched\.items\.map\(\(item\) => \(\{ \.\.\.item, matcherVersion \}\)\)/);
+  assert.match(runtime, /\(searched\.sourceItems \?\? searched\.items\)[\s\S]*\.filter\(\(item\) => searchedProviders\.has\(item\.provider\)\)[\s\S]*\.map\(\(item\) => \(\{ \.\.\.item, matcherVersion \}\)\)/);
   assert.match(completion, /p_items: items/);
   assert.match(completion, /p_providers: providers/);
 });

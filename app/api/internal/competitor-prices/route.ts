@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { executeCompetitorSearchViaChannelGateway } from "../../../../lib/channels/gateway";
-import { COMPETITOR_MATCHER_VERSION, competitorProviderRegistry, searchCompetitorProviders } from "../../../../lib/competitor-prices";
+import {
+  COMPETITOR_MATCHER_VERSION,
+  competitorProviderRegistry,
+  searchCompetitorProviders,
+  type CompetitorProductIdentity,
+} from "../../../../lib/competitor-prices";
 import {
   type ClaimedCompetitorProduct,
   type CompetitorRefreshResult,
@@ -29,7 +34,23 @@ const COMPETITOR_ELEVENST_WAIT_MS = 18_000;
 const COMPETITOR_PROVIDER_BUDGET_MS = 32_000;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-type DueProductRow = { product_id: string; query: string; aliases: string[]; claim_token: string };
+type DueProductRow = {
+  product_id: string;
+  query: string;
+  aliases: string[];
+  claim_token: string;
+  identity: CompetitorProductIdentity;
+};
+
+function isCompetitorProductIdentity(value: unknown): value is CompetitorProductIdentity {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const identity = value as Record<string, unknown>;
+  return typeof identity.productName === "string"
+    && identity.productName.trim().length > 0
+    && identity.productName.length <= 1_000
+    && (identity.packageContents === undefined
+      || (typeof identity.packageContents === "string" && identity.packageContents.length <= 500));
+}
 
 function serverClient() {
   const serviceKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
@@ -109,6 +130,7 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
         || typeof item.product_id !== "string"
         || typeof item.query !== "string"
         || typeof item.claim_token !== "string"
+        || !isCompetitorProductIdentity(item.identity)
         || !UUID_PATTERN.test(item.product_id)
         || !UUID_PATTERN.test(item.claim_token)) {
       invalidDueRows += 1;
@@ -124,7 +146,13 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
     seenProductIds.add(item.product_id);
     seenClaimTokens.add(item.claim_token);
     const aliases = Array.isArray(item.aliases) ? item.aliases.filter((alias: unknown): alias is string => typeof alias === "string") : [];
-    return [{ product_id: item.product_id, query: item.query, aliases, claim_token: item.claim_token } satisfies DueProductRow];
+    return [{
+      product_id: item.product_id,
+      query: item.query,
+      aliases,
+      claim_token: item.claim_token,
+      identity: item.identity,
+    } satisfies DueProductRow];
   });
   let infrastructureFailures = invalidDueRows;
   const outcomes = await runBoundedCompetitorRefreshBatch(
@@ -136,18 +164,24 @@ async function runCompetitorPrices(serviceClient: NonNullable<ReturnType<typeof 
         query: dueProduct.query,
         aliases: dueProduct.aliases,
         claimToken: dueProduct.claim_token,
+        identity: dueProduct.identity,
       };
       const outcome = await runClaimedCompetitorProductRefresh({
         product,
         unavailableProviders: registry.unavailable,
         matcherVersion: COMPETITOR_MATCHER_VERSION,
+        terminalizePendingProviders: ["elevenst_product_search"],
         search: (claimed) => searchCompetitorProviders(
           registry,
           claimed.query,
           claimed.aliases,
           30,
           COMPETITOR_PROVIDER_BUDGET_MS,
-          { productId: claimed.productId, claimToken: claimed.claimToken },
+          {
+            productId: claimed.productId,
+            claimToken: claimed.claimToken,
+            identity: claimed.identity,
+          },
         ),
         release: (claimed) => releaseCompetitorClaim(serviceClient, claimed),
         complete: async ({ product: claimed, items, providers }) => {

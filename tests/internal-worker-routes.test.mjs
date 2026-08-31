@@ -95,6 +95,9 @@ test("competitor scheduler bounds three durable claims and preserves pending gat
   assert.match(source, /const seenProductIds = new Set<string>\(\)/);
   assert.match(source, /const seenClaimTokens = new Set<string>\(\)/);
   assert.match(source, /seenProductIds\.has\(item\.product_id\) \|\| seenClaimTokens\.has\(item\.claim_token\)/);
+  assert.match(source, /!isCompetitorProductIdentity\(item\.identity\)/);
+  assert.match(source, /identity: claimed\.identity/);
+  assert.match(source, /terminalizePendingProviders: \["elevenst_product_search"\]/);
   assert.match(source, /sellerpilot_service_complete_competitor_price_refresh/);
   assert.match(source, /p_claim_token: claimed\.claimToken/);
   assert.match(source, /p_providers: providers/);
@@ -106,7 +109,7 @@ test("competitor scheduler bounds three durable claims and preserves pending gat
   assert.match(source, /if \(saveError\) throw saveError/);
   assert.match(refreshRuntime, /!Number\.isFinite\(savedCount\) \|\| savedCount < 0/);
   assert.match(refreshRuntime, /MAX_COMPETITOR_PRODUCT_CONCURRENCY = 3/);
-  assert.match(refreshRuntime, /if \(searched\.pending\)[\s\S]{0,260}pending: true/);
+  assert.match(refreshRuntime, /const pending = providers\.some\(\(provider\) => provider\.status === "pending"\)[\s\S]{0,260}pending: true/);
   assert.match(refreshRuntime, /Completion may have committed before a response was lost/);
   assert.match(source, /status: providerConfigurationMissing \|\| infrastructureFailures > 0 \? 503 : pending \? 202 : results\.some\(\(item\) => !item\.ok\) \? 207 : 200/);
 });

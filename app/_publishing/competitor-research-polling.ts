@@ -13,6 +13,8 @@ const competitorResearchIdentityFields = new Set([
   "categoryHint",
   "brandName",
   "manufacturer",
+  "manufacturerPartNumber",
+  "modelNumber",
   "packageContents",
   "condition",
   "gtinStatus",
@@ -25,6 +27,8 @@ type CompetitorResearchRetryIdentity = Partial<Record<
   | "categoryHint"
   | "brandName"
   | "manufacturer"
+  | "manufacturerPartNumber"
+  | "modelNumber"
   | "packageContents"
   | "condition"
   | "gtinStatus"
@@ -89,16 +93,39 @@ export function buildCompetitorResearchRetryPath(
   const manufacturer = normalizedIdentityPart(identity.manufacturer, 80);
   const producerIdentity = searchableBrand || manufacturer;
   const productName = normalizedIdentityPart(identity.productName, 160);
-  const productModels = stableProductModelParts(productName);
+  const manufacturerPartNumber = normalizedIdentityPart(identity.manufacturerPartNumber, 120);
+  const modelNumber = normalizedIdentityPart(identity.modelNumber, 120);
+  const productModels = [...new Set([
+    modelNumber,
+    manufacturerPartNumber,
+    ...stableProductModelParts(productName),
+  ].filter(Boolean))];
   const packageContents = normalizedIdentityPart(identity.packageContents, 40);
   const condition = normalizedIdentityPart(identity.condition, 24);
   const gtin = identity.gtinStatus === "NO_GTIN" ? "" : normalizedIdentityPart(identity.gtin, 14);
   const researchInput = normalizedIdentityPart(identity.researchInput, 160);
-  const primaryParts = [searchableBrand, manufacturer !== searchableBrand ? manufacturer : "", productName, packageContents, condition !== "NEW" ? condition : "", gtin].filter(Boolean);
+  const primaryParts = [
+    searchableBrand,
+    manufacturer !== searchableBrand ? manufacturer : "",
+    productName,
+    modelNumber && !containsNormalizedIdentity(productName, modelNumber) ? modelNumber : "",
+    manufacturerPartNumber && !containsNormalizedIdentity(productName, manufacturerPartNumber) ? manufacturerPartNumber : "",
+    packageContents,
+    condition !== "NEW" ? condition : "",
+    gtin,
+  ].filter(Boolean);
   const primary = (primaryParts.join(" ") || researchInput).slice(0, 500);
   if (primary.length < 2) return "";
 
   const params = new URLSearchParams({ query: primary });
+  if (productName) params.set("productName", productName);
+  if (brand) params.set("brand", brand);
+  if (manufacturer) params.set("manufacturer", manufacturer);
+  if (manufacturerPartNumber) params.set("manufacturerPartNumber", manufacturerPartNumber);
+  if (modelNumber) params.set("modelNumber", modelNumber);
+  if (packageContents) params.set("packageContents", packageContents);
+  if (condition) params.set("condition", condition);
+  if (gtin) params.set("gtin", gtin);
   const aliases = [
     ...localizedAliases,
     productName,
@@ -143,6 +170,7 @@ export function isCompetitorResearchBlockingAnalysis(
 export type CompetitorResearchPollSnapshot<Item extends object, Provider extends object> = {
   items: Item[];
   providers: Provider[];
+  fetchedAt: string | null;
   state: "ready" | "pending" | "unavailable";
   retryAvailable: boolean;
 };
@@ -150,7 +178,7 @@ export type CompetitorResearchPollSnapshot<Item extends object, Provider extends
 export type CompetitorResearchSnapshotSeed<Item extends object, Provider extends object> = Pick<
   CompetitorResearchPollSnapshot<Item, Provider>,
   "items" | "providers"
->;
+> & Partial<Pick<CompetitorResearchPollSnapshot<Item, Provider>, "fetchedAt">>;
 
 export type CompetitorResearchPollOptions<Item extends object, Provider extends CompetitorResearchProviderSnapshot> = {
   fetcher: (input: string, init?: RequestInit) => Promise<Response>;
@@ -239,6 +267,7 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
   let latest: CompetitorResearchPollSnapshot<Item, Provider> = {
     items: initialSnapshot?.items ?? [],
     providers: initialSnapshot?.providers ?? [],
+    fetchedAt: initialSnapshot?.fetchedAt ?? null,
     state: "unavailable",
     retryAvailable: false,
   };
@@ -246,11 +275,15 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (signal.aborted) throw abortError(signal);
     let response: Response;
-    let payload: { items?: unknown; providers?: unknown } | null;
+    let payload: { items?: unknown; providers?: unknown; fetchedAt?: unknown } | null;
     try {
       ({ response, payload } = await withCompetitorAttemptDeadline(async (attemptSignal) => {
         const attemptResponse = await fetcher(input, { signal: attemptSignal });
-        const attemptPayload = await attemptResponse.json().catch(() => null) as { items?: unknown; providers?: unknown } | null;
+        const attemptPayload = await attemptResponse.json().catch(() => null) as {
+          items?: unknown;
+          providers?: unknown;
+          fetchedAt?: unknown;
+        } | null;
         return { response: attemptResponse, payload: attemptPayload };
       }, signal, attemptTimeout));
     } catch {
@@ -269,7 +302,9 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
       && Array.isArray(payload.items)
       && payload.items.every((item) => Boolean(item) && typeof item === "object" && !Array.isArray(item))
       && Array.isArray(payload.providers)
-      && payload.providers.every((provider) => Boolean(provider) && typeof provider === "object" && !Array.isArray(provider)),
+      && payload.providers.every((provider) => Boolean(provider) && typeof provider === "object" && !Array.isArray(provider))
+      && (payload.fetchedAt === undefined || payload.fetchedAt === null
+        || typeof payload.fetchedAt === "string" && Number.isFinite(Date.parse(payload.fetchedAt))),
     );
     if (!validPayload || !response.ok) {
       latest = { ...latest, state: "unavailable", retryAvailable: true };
@@ -278,10 +313,12 @@ export async function pollCompetitorResearch<Item extends object, Provider exten
     }
     const items = payload!.items as Item[];
     const providers = payload!.providers as Provider[];
+    const fetchedAt = typeof payload!.fetchedAt === "string" ? payload!.fetchedAt : latest.fetchedAt;
     const pending = response.status === 202 || providers.some((provider) => provider?.status === "pending");
     latest = {
       items,
       providers,
+      fetchedAt,
       state: pending ? "pending" : "ready",
       retryAvailable: pending && attempt === attempts - 1,
     };
@@ -309,6 +346,7 @@ export function createCompetitorResearchPollingCoordinator<
   let latestSnapshot: CompetitorResearchPollSnapshot<Item, Provider> = {
     items: [],
     providers: [],
+    fetchedAt: null,
     state: "unavailable",
     retryAvailable: false,
   };
@@ -319,7 +357,7 @@ export function createCompetitorResearchPollingCoordinator<
 
   const run = async (
     input: string,
-    initialSnapshot: CompetitorResearchSnapshotSeed<Item, Provider> = { items: [], providers: [] },
+    initialSnapshot: CompetitorResearchSnapshotSeed<Item, Provider> = { items: [], providers: [], fetchedAt: null },
   ): Promise<CompetitorResearchPollSnapshot<Item, Provider> | null> => {
     if (!mounted) return null;
     activeController?.abort();
@@ -329,6 +367,7 @@ export function createCompetitorResearchPollingCoordinator<
     latestSnapshot = {
       items: initialSnapshot.items,
       providers: initialSnapshot.providers,
+      fetchedAt: initialSnapshot.fetchedAt ?? null,
       state: "unavailable",
       retryAvailable: false,
     };
@@ -368,7 +407,7 @@ export function createCompetitorResearchPollingCoordinator<
       activeController?.abort();
       activeController = null;
       retryInput = "";
-      latestSnapshot = { items: [], providers: [], state: "unavailable", retryAvailable: false };
+      latestSnapshot = { items: [], providers: [], fetchedAt: null, state: "unavailable", retryAvailable: false };
     },
     dispose() {
       mounted = false;

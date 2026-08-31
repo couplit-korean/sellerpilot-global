@@ -223,7 +223,7 @@ test("competitor research polls a pending gateway result and publishes the settl
 
   assert.equal(calls, 2);
   assert.deepEqual(snapshots, ["pending", "ready"]);
-  assert.deepEqual(result, { items: [{ id: "settled" }], providers: [{ status: "searched", count: 1 }], state: "ready", retryAvailable: false });
+  assert.deepEqual(result, { items: [{ id: "settled" }], providers: [{ status: "searched", count: 1 }], fetchedAt: null, state: "ready", retryAvailable: false });
 });
 
 test("competitor research stops after a bounded number of pending responses", async () => {
@@ -269,7 +269,7 @@ test("competitor research fails closed on a malformed successful response", asyn
     signal: new AbortController().signal,
     fetcher: async () => jsonResponse(200, { message: "missing contract" }),
   });
-  assert.deepEqual(result, { items: [], providers: [], state: "unavailable", retryAvailable: true });
+  assert.deepEqual(result, { items: [], providers: [], fetchedAt: null, state: "unavailable", retryAvailable: true });
 });
 
 test("a later 5xx keeps the last valid partial competitor snapshot", async () => {
@@ -288,7 +288,7 @@ test("a later 5xx keeps the last valid partial competitor snapshot", async () =>
   });
 
   assert.equal(calls, 2);
-  assert.deepEqual(result, { ...partial, state: "unavailable", retryAvailable: true });
+  assert.deepEqual(result, { ...partial, fetchedAt: null, state: "unavailable", retryAvailable: true });
 });
 
 test("a manual retry preserves the displayed snapshot when its first request fails", async () => {
@@ -300,7 +300,7 @@ test("a manual retry preserves the displayed snapshot when its first request fai
     fetcher: async () => { throw new TypeError("network unavailable"); },
   });
 
-  assert.deepEqual(result, { ...initialSnapshot, state: "unavailable", retryAvailable: true });
+  assert.deepEqual(result, { ...initialSnapshot, fetchedAt: null, state: "unavailable", retryAvailable: true });
 });
 
 test("competitor research bounds a fetcher that never settles", async () => {
@@ -315,7 +315,7 @@ test("competitor research bounds a fetcher that never settles", async () => {
     onSnapshot: (snapshot) => snapshots.push(snapshot.state),
   });
 
-  assert.deepEqual(result, { items: [], providers: [], state: "unavailable", retryAvailable: true });
+  assert.deepEqual(result, { items: [], providers: [], fetchedAt: null, state: "unavailable", retryAvailable: true });
   assert.deepEqual(snapshots, ["unavailable"]);
   assert.ok(Date.now() - startedAt < 2_000);
 });
@@ -391,11 +391,11 @@ test("a timeout preserves the last valid partial competitor snapshot", async () 
     },
   });
 
-  assert.deepEqual(result, { ...partial, state: "unavailable", retryAvailable: true });
+  assert.deepEqual(result, { ...partial, fetchedAt: null, state: "unavailable", retryAvailable: true });
 });
 
 test("every authenticated competitor-price response explicitly disables intermediary caching", async () => {
   const route = await readFile(new URL("../app/api/admin/competitor-prices/route.ts", import.meta.url), "utf8");
   assert.match(route, /const NO_STORE_HEADERS = \{ "cache-control": "no-store, max-age=0" \}/);
-  assert.equal((route.match(/headers: NO_STORE_HEADERS/g) ?? []).length, 5);
+  assert.equal((route.match(/headers: NO_STORE_HEADERS/g) ?? []).length, 7);
 });

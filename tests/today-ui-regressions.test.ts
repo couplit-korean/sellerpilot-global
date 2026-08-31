@@ -391,7 +391,7 @@ test("product edit preserves sold-out stock and bounded promises cannot hang for
 });
 
 test("today dashboard routes and tablet overflow fix remain wired", async () => {
-  const [page, publishWorkbench, mobileStyles, commerceStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager, competitorProviderSnapshot] = await Promise.all([
+  const [page, publishWorkbench, mobileStyles, commerceStyles, studio, competitorScheduler, operationsSnapshotRoute, mobilePushManager, competitorProviderSnapshot, competitorPriceUi] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
@@ -401,6 +401,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/competitor-provider-snapshot.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(page, /onNavigate\("registration-activity", "failed"\)[^\n]*등록·분석 재시도/);
   assert.match(page, /등록·분석 재시도/);
@@ -481,15 +482,15 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(competitorScheduler, /searchCompetitorProviders\([\s\S]{0,120}registry,[\s\S]{0,80}claimed\.query,[\s\S]{0,80}claimed\.aliases/);
   assert.match(competitorScheduler, /sellerpilot_service_complete_competitor_price_refresh/);
   assert.match(competitorProviderSnapshot, /status: CompetitorProviderTerminalStatus \| "pending"/);
-  assert.match(page, /brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색"/);
+  assert.match(competitorPriceUi, /brave_marketplace_web: "Shopee·Lazada·Temu 웹 검색"/);
   assert.match(page, /competitorProviders\.slice\(0, 4\)/);
-  assert.match(page, /provider\.status === "pending" \? "조회 진행 중"/);
+  assert.match(competitorPriceUi, /provider\.status === "pending" \? "조회 진행 중"/);
   assert.match(page, /competitorResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /pollCompetitorResearch/);
   assert.match(page, /maxAttempts: 3/);
   assert.match(page, /runCompetitorResearchPolling\(competitorResearchRetryInput/);
   assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
-  assert.match(page, /가격 다시 확인/);
+  assert.match(competitorPriceUi, /가격 다시 확인/);
   assert.match(page, /productResearchPendingStorageKey/);
   assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256\)/);
   assert.match(page, /JSON\.stringify\(\{[\s\S]{0,220}version: 3,[\s\S]{0,120}jobId,[\s\S]{0,120}researchInput,[\s\S]{0,120}ownerId,[\s\S]{0,120}sourcePhotoSha256,[\s\S]{0,120}lineageReceipt,[\s\S]{0,220}imagePaths,[\s\S]{0,120}imageSpecs,[\s\S]{0,120}cleanupPaths/);
@@ -511,13 +512,13 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
   assert.match(page, /동일상품 가격은 별도 확인 중/);
   assert.match(page, /상세페이지 제작 시작/);
-  assert.match(page, /가격 없이 계속/);
+  assert.match(competitorPriceUi, /가격 없이 계속/);
   assert.match(page, /invalidatedExistingContext = interruptedResearch[\s\S]{0,180}competitorResearchState !== "idle"/);
   assert.match(page, /invalidatedExistingContext && competitorResearchState !== "stale"/);
   assert.match(page, /setCompetitorResearchState\(invalidatedExistingContext \? "stale" : "idle"\)/);
   assert.match(page, /const nextCompetitorRetryPath = buildCompetitorResearchRetryPath\(nextIntake\)/);
   assert.match(page, /const initialCompetitorResearchPath = buildCompetitorResearchRetryPath\([\s\S]{0,120}nextIntake,[\s\S]{0,160}result\.searchQueries\.map/);
-  assert.match(page, /runCompetitorResearchPolling\(initialCompetitorResearchPath, \{ items: \[\], providers: \[\] \}\)/);
+  assert.match(page, /runCompetitorResearchPolling\(initialCompetitorResearchPath, \{ items: \[\], providers: \[\], fetchedAt: null \}\)/);
   assert.doesNotMatch(page, /const competitorQuery = suggestion\.productName/);
   assert.match(page, /clearUnchangedResearchAppliedValues\([\s\S]{0,180}researchAppliedValuesRef\.current/);
   assert.match(page, /researchAppliedValuesRef\.current = collectResearchAppliedValues\(/);
