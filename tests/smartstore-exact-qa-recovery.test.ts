@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   bindSmartstoreExactQaRecoveryArguments,
+  smartstoreExactQaApprovedContentRequired,
   smartstoreExactQaCentralSkuVerified,
   smartstoreExactQaCreateForbidden,
   smartstoreExactQaRecoveryArgument,
@@ -77,6 +79,34 @@ test("Smartstore exact QA product is update-only and requires the observed faile
     ...exactState,
     status: "published",
   }), false);
+});
+
+test("Smartstore exact QA update always requires the approved detail manifest", async () => {
+  const exact = {
+    channel: "smartstore",
+    operation: "listing.update",
+    productId: smartstoreExactQaRecoveryIdentity.productId,
+    listingId: smartstoreExactQaRecoveryIdentity.listingId,
+  };
+  assert.equal(smartstoreExactQaApprovedContentRequired(exact), true);
+  assert.equal(smartstoreExactQaApprovedContentRequired({
+    ...exact,
+    listingId: "00000000-0000-4000-8000-000000000000",
+  }), false);
+  assert.equal(smartstoreExactQaApprovedContentRequired({
+    ...exact,
+    operation: "listing.stop",
+  }), false);
+
+  const route = await readFile(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(route, /exactSmartstoreContentUpdate = smartstoreExactQaApprovedContentRequired/);
+  assert.match(
+    route,
+    /contentBoundListingOperation = operation === "listing\.create"[\s\S]{0,300}\|\| exactSmartstoreContentUpdate/,
+  );
 });
 
 test("Smartstore exact QA central SKU accepts no conflicting product or manual value", () => {

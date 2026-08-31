@@ -96,6 +96,24 @@ export function smartstoreExactQaCreateForbidden(input: {
       === smartstoreExactQaRecoveryIdentity.centralSku;
 }
 
+/**
+ * The exact QA recovery always replaces the buyer-visible detail document and
+ * its eight approved images. Treat it as content-bound even when a forged or
+ * incomplete browser request omits sellerpilotAssets; the admin route must
+ * resolve the approved manifest from the product ledger before it can proceed.
+ */
+export function smartstoreExactQaApprovedContentRequired(input: {
+  channel: string;
+  operation: string;
+  productId?: string | null;
+  listingId?: string | null;
+}) {
+  return input.channel === "smartstore"
+    && input.operation === "listing.update"
+    && input.productId === smartstoreExactQaRecoveryIdentity.productId
+    && input.listingId === smartstoreExactQaRecoveryIdentity.listingId;
+}
+
 export function smartstoreExactQaRecoveryCandidate(input: {
   channel: string;
   listingId?: string | null;

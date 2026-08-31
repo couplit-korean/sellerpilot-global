@@ -68,6 +68,7 @@ import {
 } from "../../../../lib/channels/coupang-exact-qa-recovery";
 import {
   bindSmartstoreExactQaRecoveryArguments,
+  smartstoreExactQaApprovedContentRequired,
   smartstoreExactQaCentralSkuVerified,
   smartstoreExactQaCreateForbidden,
   smartstoreExactQaRecoveryArgument,
@@ -405,8 +406,15 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const exactSmartstoreContentUpdate = smartstoreExactQaApprovedContentRequired({
+    channel,
+    operation,
+    productId: parsed.data.productId,
+    listingId: parsed.data.resourceListingId,
+  });
   const contentBoundListingOperation = operation === "listing.create"
     || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
+    || exactSmartstoreContentUpdate
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
