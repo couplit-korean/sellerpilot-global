@@ -8,7 +8,7 @@ import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-ja
 import {
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactReviewedJapaneseDetail,
-} from "../lib/channels/qoo10-exact-localization-recovery";
+} from "../lib/channels/qoo10-exact-localization-identity";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,

@@ -11,6 +11,7 @@ import { qoo10DetailImageUrls } from "./qoo10-listing-create-preflight";
 
 export {
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactReviewedJapaneseDetail,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
 } from "./qoo10-exact-localization-identity";
@@ -146,27 +147,6 @@ export function bindQoo10ExactLocalizationUpdateArguments(
       releaseSha,
     } satisfies Qoo10ExactLocalizationUpdateBinding,
   };
-}
-
-export function qoo10ExactReviewedJapaneseDetail(detailImageUrls: readonly string[]) {
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  if (detailImageUrls.length !== 8
-      || new Set(detailImageUrls).size !== 8
-      || !detailImageUrls.every(safeHttpsUrl)) {
-    throw new Error("QOO10_EXACT_LOCALIZATION_IMAGES_REQUIRED");
-  }
-  return [
-    '<section lang="ja-JP">',
-    `<h1>${identity.title}</h1>`,
-    "<p>ケーブルをすっきり整理できる貼り付け式クリップの6個セットです。</p>",
-    `<p>販売価格は${identity.priceJpy.toLocaleString("ja-JP")}円です。購入前にサイズ、設置面、内容物をご確認ください。</p>`,
-    "</section>",
-    '<section data-sellerpilot-detail-images="true">',
-    ...detailImageUrls.map((url, index) => (
-      `<img src="${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" alt="商品詳細画像 ${index + 1}">`
-    )),
-    "</section>",
-  ].join("");
 }
 
 const qoo10ExactForbiddenRomanizedTokens = Object.freeze([

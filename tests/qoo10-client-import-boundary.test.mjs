@@ -4,11 +4,13 @@ import test from "node:test";
 
 const listingUpdateUrl = new URL("../lib/channels/listing-update.ts", import.meta.url);
 const identityUrl = new URL("../lib/channels/qoo10-exact-localization-identity.ts", import.meta.url);
+const workbenchUrl = new URL("../app/product-publish-workbench.tsx", import.meta.url);
 
 test("Qoo10 exact identity stays client-safe while provider recovery remains server-only", async () => {
-  const [listingUpdate, identity] = await Promise.all([
+  const [listingUpdate, identity, workbench] = await Promise.all([
     readFile(listingUpdateUrl, "utf8"),
     readFile(identityUrl, "utf8"),
+    readFile(workbenchUrl, "utf8"),
   ]);
 
   assert.match(
@@ -18,6 +20,14 @@ test("Qoo10 exact identity stays client-safe while provider recovery remains ser
   assert.doesNotMatch(
     listingUpdate,
     /from "\.\/qoo10-exact-localization-recovery"/u,
+  );
+  assert.match(
+    workbench,
+    /from "\.\.\/lib\/channels\/qoo10-exact-localization-identity"/u,
+  );
+  assert.doesNotMatch(
+    workbench,
+    /from "\.\.\/lib\/channels\/qoo10-exact-localization-recovery"/u,
   );
   assert.doesNotMatch(
     identity,
