@@ -3,6 +3,11 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
+const OUT_OF_SCOPE_COMPETITOR_MIGRATIONS = new Set([
+  "20260831131500_retire_pre_v3_competitor_search_queue.sql",
+  "20260831132000_competitor_identity_lineage_fence.sql",
+]);
+
 const ADMIN_ID = "60000000-0000-4000-8000-000000000001";
 const TOKEN_ID = "60000000-0000-4000-8000-000000000002";
 const TOKEN_HASH = "7".repeat(64);
@@ -209,6 +214,7 @@ async function createDatabase() {
     .filter((name) => name.endsWith(".sql"))
     .sort();
   for (const name of names) {
+    if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
   }

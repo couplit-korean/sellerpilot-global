@@ -4,6 +4,10 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const migrationName = "20260831054000_recover_elevenst_listing_snapshot.sql";
+const OUT_OF_SCOPE_COMPETITOR_MIGRATIONS = new Set([
+  "20260831131500_retire_pre_v3_competitor_search_queue.sql",
+  "20260831132000_competitor_identity_lineage_fence.sql",
+]);
 const migration = await readFile(new URL(
   `../supabase/migrations/${migrationName}`,
   import.meta.url,
@@ -46,6 +50,7 @@ async function createDatabase(options = { includeRecovery: true }) {
   const { migrationUrl, names } = await migrationNames();
   for (const name of names) {
     if (!options.includeRecovery && name >= migrationName) break;
+    if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     await db.exec(stripUnavailableExtensions(await readFile(new URL(name, migrationUrl), "utf8")));
   }
   return db;

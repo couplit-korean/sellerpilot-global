@@ -9,7 +9,7 @@ const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.s
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
 const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
 const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql";
-const SERVERLESS_CS_MIGRATIONS = new Set([
+const FIXTURE_EXCLUDED_MIGRATIONS = new Set([
   "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
   "20260828145700_schedule_serverless_cs_wakeup.sql",
   // These four forward migrations depend on the dedicated serverless runtime
@@ -22,6 +22,10 @@ const SERVERLESS_CS_MIGRATIONS = new Set([
   // The exact Qoo10 claim-priority patch pins the complete production
   // serverless claimant chain that this intentionally reduced CS fixture omits.
   "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql",
+  // Production-specific competitor queue retirement and its follow-up lineage
+  // fence are independent of inquiry ingestion and reply delivery contracts.
+  "20260831131500_retire_pre_v3_competitor_search_queue.sql",
+  "20260831132000_competitor_identity_lineage_fence.sql",
 ]);
 
 const supabaseCompatibilityLayer = String.raw`
@@ -256,7 +260,7 @@ async function migrationEntries() {
 async function applyMigrations(db, { through } = {}) {
   const { migrationUrl, names } = await migrationEntries();
   for (const name of names) {
-    if (SERVERLESS_CS_MIGRATIONS.has(name)) continue;
+    if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
     if (name === through) break;

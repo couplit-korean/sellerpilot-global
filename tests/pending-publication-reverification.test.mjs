@@ -26,6 +26,10 @@ const STUDIO_ASSET_ROLES = [
   "detail-routine", "detail-scale", "detail-storage", "detail-context",
   "detail-material", "detail-dimensions", "detail-contents", "detail-care",
 ];
+const OUT_OF_SCOPE_COMPETITOR_MIGRATIONS = new Set([
+  "20260831131500_retire_pre_v3_competitor_search_queue.sql",
+  "20260831132000_competitor_identity_lineage_fence.sql",
+]);
 
 function uuid(value) {
   return `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
@@ -65,6 +69,7 @@ async function createDatabase() {
     .filter((name) => name.endsWith(".sql"))
     .sort();
   for (const name of migrationNames) {
+    if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     await db.exec(stripUnavailableExtensions(
       await readFile(new URL(name, migrationUrl), "utf8"),
     ));
