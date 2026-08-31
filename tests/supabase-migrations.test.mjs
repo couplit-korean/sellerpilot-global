@@ -65,6 +65,8 @@ const QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION =
   "20260831057000_retire_stale_qoo10_s1_verifier.sql";
 const QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION =
   "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql";
+const QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION =
+  "20260831057200_allow_exact_qoo10_s1_activation_provider_boundary.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -296,10 +298,14 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
   const isExactActivationClaimPriority = normalized.includes(
     "exact Qoo10 activation priority migration history drifted",
   );
+  const isExactActivationProviderBoundary = normalized.includes(
+    "exact Qoo10 S1 provider-boundary preimage drifted",
+  );
   if (
     !isHeadingNormalization
     && !isStaleVerifierRetirement
     && !isExactActivationClaimPriority
+    && !isExactActivationProviderBoundary
   ) return normalized;
   const retirementPredecessor = isStaleVerifierRetirement
     ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
@@ -307,6 +313,11 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
   const claimPriorityPredecessors = isExactActivationClaimPriority
     ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
       + ",\n      ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')"
+    : "";
+  const providerBoundaryPredecessors = isExactActivationProviderBoundary
+    ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
+      + ",\n      ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')"
+      + ",\n      ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')"
     : "";
   return `
     create schema if not exists supabase_migrations;
@@ -318,7 +329,7 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     insert into supabase_migrations.schema_migrations(version,statements,name)
     values
       ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
-      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}${providerBoundaryPredecessors}
     on conflict (version) do nothing;
     ${normalized}
   `;
@@ -637,6 +648,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION,
       QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION,
       QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION,
+      QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -705,7 +717,14 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         < migrationNames.indexOf(QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION),
       "exact Qoo10 activation claim priority must replay after stale verifier retirement",
     );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION),
+      "exact Qoo10 provider-boundary repair must replay after claim priority",
+    );
     let shopeeStaticEgressMigration;
+    let qoo10ProviderBoundaryOuterPreimage;
+    let qoo10ProviderBoundaryJobPreimage;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
@@ -771,6 +790,43 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         await db.query(
           `insert into supabase_migrations.schema_migrations(version,statements,name)
            values ('20260831057000','{}'::text[],'retire_stale_qoo10_s1_verifier')`,
+        );
+      }
+      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select encode(extensions.digest(pg_get_functiondef(
+              'public.sellerpilot_300950_begin_serverless_gateway_mutation_before_release_gate(text,uuid,uuid)'::regprocedure
+            ),'sha256'),'hex')`,
+          ),
+          "0c5c70e952cba84608b59bc04930d3627d49412d2a8d132f4d72d7f48ca0f407",
+          "572 must see the exact original bounded serverless marker",
+        );
+        qoo10ProviderBoundaryOuterPreimage = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'public.sellerpilot_service_begin_serverless_gateway_provider_mutation(text,uuid,uuid)'::regprocedure
+          )`,
+        );
+        qoo10ProviderBoundaryJobPreimage = (
+          await db.query(`
+            select id::text,status,provider_mutation_started_at,updated_at
+              from sellerpilot_private.channel_gateway_jobs order by id
+          `)
+        ).rows;
+        await db.query(
+          "delete from supabase_migrations.schema_migrations where version = '20260831057100'",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /provider-boundary preimage drifted/,
+          "provider-boundary repair must fail closed without claim-priority history",
+        );
+        await db.exec("rollback");
+        await db.query(
+          `insert into supabase_migrations.schema_migrations(version,statements,name)
+           values ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')`,
         );
       }
       if (name === QOO10_SCOPED_GATE_MIGRATION) {
@@ -1370,6 +1426,68 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           0,
           "claim-priority migration must not enqueue or claim an activation",
+        );
+      }
+      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831056700','20260831056800','20260831056900',
+                '20260831057000','20260831057100','20260831057200'
+              )`,
+          ),
+          6,
+          "provider-boundary repair must be recorded after all exact S1 predecessors",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select encode(extensions.digest(pg_get_functiondef(
+              'public.sellerpilot_300950_begin_serverless_gateway_mutation_before_release_gate(text,uuid,uuid)'::regprocedure
+            ),'sha256'),'hex')`,
+          ),
+          "968b6336c02432bd790445b90902548f6182e3b4128d2c533151d95c90347b06",
+          "the innermost serverless provider marker postimage must stay pinned",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select pg_get_functiondef(
+              'public.sellerpilot_service_begin_serverless_gateway_provider_mutation(text,uuid,uuid)'::regprocedure
+            )`,
+          ),
+          qoo10ProviderBoundaryOuterPreimage,
+          "572 must not replace the public permit/consume wrapper",
+        );
+        assert.deepEqual(
+          (
+            await db.query(`
+              select id::text,status,provider_mutation_started_at,updated_at
+                from sellerpilot_private.channel_gateway_jobs order by id
+            `)
+          ).rows,
+          qoo10ProviderBoundaryJobPreimage,
+          "572 must not mutate or synthesize any gateway job",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select not exists (
+              select 1 from (values
+                ('public'::name),('anon'::name),('authenticated'::name),
+                ('service_role'::name)
+              ) role(role_name)
+              where has_function_privilege(
+                role.role_name,
+                'public.sellerpilot_300950_begin_serverless_gateway_mutation_before_release_gate(text,uuid,uuid)',
+                'EXECUTE'
+              )
+            )`,
+          ),
+          true,
+          "the internal provider marker must remain uncallable by API roles",
         );
       }
     }
@@ -10215,6 +10333,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION
         && name !== QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION
         && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
+        && name !== QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -11690,6 +11809,7 @@ test("TracX binding rollout backfills only exact typed credential evidence and b
       .filter((name) => name.endsWith(".sql") && name < rolloutName)
       .sort();
     for (const name of migrationNames) {
+      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) continue;
       const sql = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(sql));
     }
@@ -11911,10 +12031,13 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         lazadaOauthReauthorizationMigration = source;
       } else if (name === QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION) {
         qoo10StaleVerifierRetirementMigration = source;
-      } else if (name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION) {
+      } else if (
+        name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
+        || name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
+      ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
-        // The 571 claim-priority migration is covered by the chronological
+        // The 571/572 exact-chain migrations are covered by the chronological
         // full replay and must not bless this synthetic wrapper postimage.
       } else {
         await db.exec(withoutUnavailableExtensions(source));
@@ -15321,6 +15444,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       .sort();
     assert.equal(migrationNames.includes(migrationName), true);
     for (const name of migrationNames) {
+      if (name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(source));
     }
