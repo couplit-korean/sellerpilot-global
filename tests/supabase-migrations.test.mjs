@@ -55,6 +55,8 @@ const QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION =
   "20260831056500_resume_exact_qoo10_preprovider_job.sql";
 const QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION =
   "20260831056600_correct_exact_qoo10_resume_payload_contract.sql";
+const QOO10_EXACT_S1_ACTIVATION_MIGRATION =
+  "20260831056700_recover_exact_qoo10_s1_activation.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -586,6 +588,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION,
       QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION,
       QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION,
+      QOO10_EXACT_S1_ACTIVATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -628,6 +631,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION)
         < migrationNames.indexOf(QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION),
       "corrected Qoo10 payload contract must replay after the one-shot resume",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_S1_ACTIVATION_MIGRATION),
+      "exact Qoo10 S1 activation recovery must replay after the corrected source contract",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -922,6 +930,101 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         assert.match(correctedLineage, /\? 'ItemQty'/);
         assert.doesNotMatch(correctedLineage, /params,ItemPrice.*= '1871'/);
         assert.doesNotMatch(correctedLineage, /params,ItemQty.*= '1'/);
+      }
+      if (name === QOO10_EXACT_S1_ACTIVATION_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831033000', '20260831050000', '20260831052500',
+                '20260831053500', '20260831055000', '20260831056000',
+                '20260831056500', '20260831056600', '20260831056700'
+              )`,
+          ),
+          9,
+          "exact Qoo10 S1 recovery must be the ninth recorded release-tail migration",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regclass(
+              'sellerpilot_private.qoo10_exact_s1_activation_permits'
+            )::text`,
+          ),
+          "sellerpilot_private.qoo10_exact_s1_activation_permits",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select sellerpilot_private.serverless_gateway_job_allowed(
+              'qoo10','listing.activate'
+            )`,
+          ),
+          true,
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select sellerpilot_private.serverless_gateway_job_allowed(
+              'smartstore','listing.activate'
+            )`,
+          ),
+          false,
+        );
+        for (const signature of [
+          "public.sellerpilot_service_set_listing_mutation_release_gate(boolean,text)",
+          "public.sellerpilot_service_set_listing_channel_mutation_release_gate(text,boolean,text)",
+          "public.sellerpilot_service_listing_mutation_release_gate_status()",
+        ]) {
+          assert.match(
+            await scalar(
+              db,
+              "select pg_get_functiondef($1::regprocedure)",
+              [signature],
+            ),
+            /qoo10_exact_s1_source_reconciliation_resolved/,
+            `${signature} must discount only the exact completed S2 recovery`,
+          );
+        }
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regprocedure(
+              'sellerpilot_private.qoo10_exact_activation_expectation_valid(jsonb,jsonb)'
+            ) is not null`,
+          ),
+          true,
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.qoo10_exact_s1_verifier_runs`,
+          ),
+          0,
+          "applying the migration must not enqueue the read-only verifier",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.channel_gateway_jobs
+              where operation = 'listing.activate'`,
+          ),
+          0,
+          "applying the migration must never arm or execute the remote activation",
+        );
+        assert.match(
+          await scalar(
+            db,
+            `select pg_get_functiondef(
+              'sellerpilot_private.guard_product_listing_seller_lineage()'::regprocedure
+            )`,
+          ),
+          /sellerpilot\.qoo10_s1_activation_apply[\s\S]*qoo10_exact_s1_activation_listing_update_allowed/,
+          "only the exact terminal S2 outcome may project the listing live",
+        );
       }
     }
     assert.equal(typeof shopeeStaticEgressMigration, "string");
@@ -9745,6 +9848,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_ADULTYN_RETRY_IDENTITY_MIGRATION
         && name !== QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION
         && name !== QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION
+        && name !== QOO10_EXACT_S1_ACTIVATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -12652,6 +12756,24 @@ test("bounded serverless gateway can hold five independent channel claims withou
     assert.match(
       claimDefinition.slice(fastPathIndex, advisoryIndex),
       /sellerpilot_204000_claim_serverless_gateway_unsafe/i,
+    );
+    const activationExpiryDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('sellerpilot_private.expire_exact_qoo10_s1_activation_preclaim()'::regprocedure)",
+    );
+    const normalizedActivationExpiryDefinition = activationExpiryDefinition.toLowerCase();
+    const activationExpiryFastPath = normalizedActivationExpiryDefinition.indexOf("if not exists");
+    const activationExpiryLock = normalizedActivationExpiryDefinition.indexOf(
+      "perform pg_catalog.pg_advisory_xact_lock",
+    );
+    assert.ok(
+      activationExpiryFastPath >= 0
+        && activationExpiryLock > activationExpiryFastPath,
+      "ordinary claims must return before the Qoo10 recovery advisory lock when no exact expired activation exists",
+    );
+    assert.match(
+      activationExpiryDefinition.slice(activationExpiryFastPath, activationExpiryLock),
+      /permit\.invalidated_at IS NULL[\s\S]*permit\.expires_at <= statement_timestamp\(\)[\s\S]*job\.status = 'queued'[\s\S]*job\.operation = 'listing\.activate'[\s\S]*RETURN 0/i,
     );
 
     await db.query(

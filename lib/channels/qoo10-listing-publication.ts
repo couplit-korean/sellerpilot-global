@@ -7,7 +7,7 @@ import {
   type Qoo10ListingCreateExpectation,
 } from "./qoo10-listing-create-preflight";
 
-export type Qoo10ListingReadbackOperation = "listing.create" | "listing.update" | "listing.stop";
+export type Qoo10ListingReadbackOperation = "listing.create" | "listing.update" | "listing.stop" | "listing.activate";
 
 type Qoo10ListingReadbackInput = {
   operation: Qoo10ListingReadbackOperation;
@@ -230,7 +230,7 @@ export function normalizeQoo10ListingPublicationReadback(
   const strict = input.expectedCreate;
   const recovery = input.expectedRecovery;
   const recoveryExpectationVerified = !recovery
-    || (input.operation === "listing.update"
+    || ((input.operation === "listing.update" || input.operation === "listing.activate")
       && expectedImageCountVerified
       && validRollbackRecoveryExpectation(recovery, input.expectedImageCount));
   const sellerAccountIdentityVerified = !strict

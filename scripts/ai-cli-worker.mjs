@@ -79,6 +79,10 @@ import {
 import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import {
+  qoo10S1ActivationArgument,
+  qoo10S1ActivationArgumentsValid,
+} from "../lib/channels/qoo10-listing-activation.ts";
 import { channelPriceUpdateRelease } from "../lib/channels/price-update-release.ts";
 import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq.ts";
 import { executeProviderOAuthExchange } from "../lib/channels/provider-oauth-runtime.ts";
@@ -4207,6 +4211,20 @@ async function processGatewayJob(job) {
     } else {
       let credential = job.credential;
       let operationArguments = job.request?.arguments ?? {};
+      const activationArgumentsAreRecord = Boolean(
+        operationArguments
+        && typeof operationArguments === "object"
+        && !Array.isArray(operationArguments),
+      );
+      const activationMarkerSupplied = activationArgumentsAreRecord
+        && Object.hasOwn(operationArguments, qoo10S1ActivationArgument);
+      if (activationMarkerSupplied !== (job.operation === "listing.activate")
+          || (job.operation === "listing.activate"
+            && (job.channel !== "qoo10"
+              || !activationArgumentsAreRecord
+              || !qoo10S1ActivationArgumentsValid(operationArguments)))) {
+        throw new Error("QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED");
+      }
       let shopeeShopCredential;
       if (job.channel === "shopee") {
         const globalProduct = operationArguments.globalProduct === true;

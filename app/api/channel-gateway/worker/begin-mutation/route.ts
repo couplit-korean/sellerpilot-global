@@ -109,7 +109,7 @@ export async function POST(request: Request) {
     if (!context || context.status !== "running") {
       return NextResponse.json({ message: "채널 작업 실행 권한 또는 lease가 만료됐습니다." }, { status: 409 });
     }
-    if (["listing.create", "listing.update", "listing.stop"].includes(String(context.operation))
+    if (["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(String(context.operation))
         && context.publication_verification_boundary != null) {
       return providerMutationStateUncertainResponse();
     }

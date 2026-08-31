@@ -463,6 +463,7 @@ const trustedMutationSteps: Readonly<Record<string, ReadonlySet<string>>> = {
     "stop-display", "editgoodsstatus", "listing.stop", "/product/deactivate",
     "sales-stop", "status-stop", "goods-off-shelf", "offer-withdraw",
   ]),
+  "listing.activate": new Set(["qoo10-s1-activation"]),
   "price.update": new Set([
     "setgoodspriceqty", "price.update", "/product/price_quantity/update",
     "price", "bulk-price", "offer-price",

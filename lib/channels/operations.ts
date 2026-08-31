@@ -31,6 +31,13 @@ import {
   type Qoo10RollbackRecoveryReadbackExpectation,
 } from "./qoo10-listing-publication";
 import {
+  qoo10S1ActivationArgument,
+  qoo10S1ActivationArgumentsValid,
+  qoo10S1ActivationBinding,
+  qoo10ExactSuccessResultCode,
+  verifyQoo10S1ActivationReadback,
+} from "./qoo10-listing-activation";
+import {
   qoo10DetailImageUrls,
   qoo10ListingCreateExpectation,
   runQoo10ListingCreateProviderPreflight,
@@ -94,6 +101,7 @@ export const channelOperationNames = [
   "listing.create",
   "listing.update",
   "listing.stop",
+  "listing.activate",
   "listing.publication.verify",
   "price.update",
   "inventory.update",
@@ -115,6 +123,7 @@ export const channelOperationCapabilities: Record<ChannelOperationName, ChannelC
   "listing.create": "listingCreate",
   "listing.update": "listingUpdate",
   "listing.stop": "listingStop",
+  "listing.activate": "listingStop",
   "listing.publication.verify": "listingCreate",
   "price.update": "price",
   "inventory.update": "inventory",
@@ -130,6 +139,7 @@ export const writeChannelOperations = new Set<ChannelOperationName>([
   "listing.create",
   "listing.update",
   "listing.stop",
+  "listing.activate",
   "price.update",
   "inventory.update",
   "inquiries.reply",
@@ -1450,6 +1460,81 @@ function qoo10ExplicitProviderRejection(remote: RemoteResponse) {
   return Boolean(normalized) && normalized !== "0";
 }
 
+function qoo10UnavailableResponse(message: string): RemoteResponse {
+  return {
+    response: new Response(null, { status: 503 }),
+    text: "",
+    data: { ResultMsg: message },
+  };
+}
+
+function qoo10S1ActivationResponseStep(remote: RemoteResponse) {
+  const ownResultCode = Object.hasOwn(remote.data, "ResultCode");
+  const resultCode = ownResultCode ? String(remote.data.ResultCode) : "";
+  const accepted = remote.response.ok && ownResultCode && resultCode === "0";
+  const explicitRejection = remote.response.ok && ownResultCode && /^-?[1-9]\d*$/u.test(resultCode);
+  return {
+    accepted,
+    explicitRejection,
+    step: {
+      name: "qoo10-s1-activation",
+      ok: accepted,
+      status: remote.response.status,
+      requestId: requestIdentifier(remote.data),
+      data: {
+        ...remote.data,
+        sellerpilotVerification: accepted
+          ? "QOO10_S1_ACTIVATION_ACCEPTED"
+          : explicitRejection
+            ? "QOO10_S1_ACTIVATION_EXPLICITLY_REJECTED"
+            : "QOO10_S1_ACTIVATION_OUTCOME_AMBIGUOUS",
+        sellerpilotExactResultCodeObserved: ownResultCode ? resultCode : null,
+        ...(accepted ? { sellerpilotMutation: "accepted" } : {}),
+        ...(explicitRejection ? { sellerpilotNoWriteConfirmed: true } : {}),
+        ...(!accepted && !explicitRejection ? { sellerpilotReconciliationRequired: true } : {}),
+      },
+    } satisfies ChannelOperationStep,
+  };
+}
+
+function qoo10S1ActivationReadbackStep(input: {
+  remote: RemoteResponse;
+  arguments: Record<string, unknown>;
+  expectedStatus: "S1" | "S2";
+  outcomeAmbiguous: boolean;
+}) {
+  const base = step("qoo10-s1-activation-post-readback", input.remote);
+  const verification = verifyQoo10S1ActivationReadback({
+    arguments: input.arguments,
+    resultObject: input.remote.data.ResultObject,
+    expectedStatus: input.expectedStatus,
+  });
+  const exactProviderSuccess = input.remote.response.ok
+    && qoo10ExactSuccessResultCode(input.remote.data);
+  const ok = exactProviderSuccess && verification.ok && !input.outcomeAmbiguous;
+  return {
+    step: {
+      ...base,
+      ok,
+      data: {
+        ...base.data,
+        sellerpilotVerification: ok
+          ? input.expectedStatus === "S2"
+            ? "QOO10_S1_ACTIVATION_S2_CONTENT_VERIFIED"
+            : "QOO10_S1_ACTIVATION_REJECTION_S1_VERIFIED"
+          : "QOO10_S1_ACTIVATION_POST_READBACK_UNVERIFIED",
+        sellerpilotExpectedProviderStatus: input.expectedStatus,
+        sellerpilotActualProviderStatus: verification.publication.providerStatus || null,
+        sellerpilotExactResultCodeVerified: exactProviderSuccess,
+        sellerpilotPublicationChecks: verification.publication.checks,
+        sellerpilotActivationContentChecks: verification.checks,
+        ...(!ok ? { sellerpilotReconciliationRequired: true } : {}),
+      },
+    } satisfies ChannelOperationStep,
+    remoteState: ok ? verification.publication.remoteState : undefined,
+  };
+}
+
 function qoo10RollbackRecoveryExpectation(
   expectedState: Omit<Qoo10RollbackRecoveryReadbackExpectation, "detailImageUrls">,
   detailHtml: string,
@@ -1786,6 +1871,75 @@ async function executeQoo10(input: ExecuteInput) {
         exactLeafMatchCount: matches.length,
       },
     }], categoryId);
+  }
+  const activationMarkerSupplied = Object.hasOwn(input.arguments, qoo10S1ActivationArgument);
+  const activationBinding = qoo10S1ActivationBinding(input.arguments);
+  if (activationMarkerSupplied !== (input.operation === "listing.activate")
+      || (input.operation === "listing.activate"
+        && (!activationBinding || !qoo10S1ActivationArgumentsValid(input.arguments)))) {
+    return result(input, [{
+      name: "qoo10-s1-activation-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_S1_ACTIVATION_CONTEXT_INVALID",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }], activationBinding?.remoteId ?? suppliedParams.ItemCode);
+  }
+  if (input.operation === "listing.activate" && activationBinding) {
+    // This dedicated recovery operation deliberately starts at the mutation.
+    // The server-owned verifier binding proves the preceding S1 readback; a
+    // preflight GET here would reopen a race between verification and write.
+    let activationRemote: RemoteResponse;
+    try {
+      activationRemote = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsBasic",
+        method: "EditGoodsStatus",
+        params: { ItemCode: activationBinding.remoteId, Status: "2" },
+      });
+    } catch {
+      activationRemote = qoo10UnavailableResponse("QOO10_S1_ACTIVATION_RESPONSE_UNAVAILABLE");
+    }
+    const activation = qoo10S1ActivationResponseStep(activationRemote);
+
+    // Never repeat EditGoodsStatus automatically. One read-only observation is
+    // the only call allowed after the single activation attempt.
+    let readbackRemote: RemoteResponse;
+    try {
+      readbackRemote = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: {
+          ItemCode: activationBinding.remoteId,
+          SellerCode: activationBinding.expectedSellerCode ?? "",
+        },
+      });
+    } catch {
+      readbackRemote = qoo10UnavailableResponse("QOO10_S1_ACTIVATION_POST_READBACK_UNAVAILABLE");
+    }
+    const postReadback = qoo10S1ActivationReadbackStep({
+      remote: readbackRemote,
+      arguments: input.arguments,
+      expectedStatus: activation.accepted ? "S2" : "S1",
+      outcomeAmbiguous: !activation.accepted && !activation.explicitRejection,
+    });
+    const verifiedTerminalRemoteState = (activation.accepted || activation.explicitRejection)
+      && postReadback.step.ok
+      ? postReadback.remoteState
+      : undefined;
+    return result(
+      input,
+      [activation.step, postReadback.step],
+      activationBinding.remoteId,
+      undefined,
+      verifiedTerminalRemoteState,
+    );
   }
   if (input.operation === "listing.create"
       && listingPublicationIntentFromArguments(input.arguments) === "safe_test") {
@@ -5188,6 +5342,11 @@ async function executeEbay(input: ExecuteInput) {
 
 export async function executeChannelOperation(input: ExecuteInput): Promise<ChannelOperationResult> {
   ensureProviderSupport(input.channel, input.operation);
+  if (input.channel === "qoo10"
+      && Object.hasOwn(input.arguments, qoo10S1ActivationArgument)
+      && input.operation !== "listing.activate") {
+    return executeQoo10(input);
+  }
   if (input.operation === "listing.publication.verify") {
     if (input.channel === "temu") throw new Error("CHANNEL_OPERATION_UNSUPPORTED:listing.publication.verify");
     const verification = await executeListingPublicationVerification({

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ActiveChannelKey } from "./catalog";
 import { assertProviderAccountIdentity } from "./provider-account-identity";
@@ -36,11 +37,24 @@ import {
   readShopeeListingPublicationState,
 } from "./provider-shopee-publication-readback";
 import { qoo10ResultMessage } from "./qoo10";
-import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
+import {
+  normalizeQoo10ListingPublicationReadback,
+  qoo10VerifiedListingRemoteState,
+} from "./qoo10-listing-publication";
 import {
   qoo10ListingCreateExpectation,
+  qoo10DetailImageUrls,
   qoo10SellerAccountIdentityDigestFromReadback,
 } from "./qoo10-listing-create-preflight";
+import {
+  qoo10RollbackUpdateRecoveryBinding,
+} from "./listing-update";
+import {
+  qoo10ExactRecoveryContentRemoteState,
+  qoo10ExactSuccessResultCode,
+  qoo10ProviderKeywordMatches,
+  qoo10CriticalReadbackAliasesConsistent,
+} from "./qoo10-listing-activation";
 
 type PublicationChannel = Exclude<ActiveChannelKey, "temu">;
 type SourceOperation = "listing.create" | "listing.update";
@@ -212,7 +226,31 @@ function sourceContext(input: VerificationInput) {
     && sourceArguments.publicationExpectedImageCount === undefined
     && sourceArguments.sellerpilotPublicationAssetBinding === undefined
     && Object.keys(recordValue(source.data.sourceResponsePayload.remoteState)).length === 0;
-  if (!validLegacyElevenstSnapshot && (sourceArguments.publicationIntent !== "live"
+  const qoo10RecoveryBinding = input.channel === "qoo10"
+    ? qoo10RollbackUpdateRecoveryBinding(sourceArguments)
+    : null;
+  const sourceResponse = source.data.sourceResponsePayload;
+  const sourceSteps = responseSteps(sourceResponse);
+  const exactQoo10S1Recovery = input.channel === "qoo10"
+    && input.arguments.sellerpilotQoo10ExactS1Recovery === "qoo10_exact_s1_verifier_v1"
+    && source.data.sourceOperation === "listing.update"
+    && Boolean(qoo10RecoveryBinding)
+    && qoo10RecoveryBinding?.remoteId === remoteId
+    && exactText(recordValue(sourceArguments.params).ItemCode) === remoteId
+    && sourceResponse.channel === "qoo10"
+    && sourceResponse.operation === "listing.update"
+    && exactText(sourceResponse.remoteId) === remoteId
+    && sourceSteps.filter((item) => exactText(item.name) === "qoo10-rollback-pre-activation-readback").length === 1
+    && sourceSteps.every((item) => ![
+      "qoo10-rollback-recovery-activate",
+      "qoo10-s1-activation",
+    ].includes(exactText(item.name)))
+    && sourceArguments.publicationIntent === "live"
+    && sourceArguments.publicationStateContract === "verified_remote_state_v1"
+    && sourceArguments.publicationExpectedLocale === expectedLocale
+    && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
+    && sourceArguments.publicationExpectedImageCount === 8;
+  if (!validLegacyElevenstSnapshot && !exactQoo10S1Recovery && (sourceArguments.publicationIntent !== "live"
       || sourceArguments.publicationStateContract !== "verified_remote_state_v1"
       || sourceArguments.publicationExpectedLocale !== expectedLocale
       || sourceArguments.publicationExpectedFingerprint !== expectedFingerprint
@@ -228,6 +266,7 @@ function sourceContext(input: VerificationInput) {
     source: source.data,
     remoteId,
     legacyElevenstSnapshot: validLegacyElevenstSnapshot,
+    exactQoo10S1Recovery,
     expected: {
       locale: expectedLocale,
       fingerprint: expectedFingerprint,
@@ -352,6 +391,41 @@ function sourceRemotePayload(
   };
 }
 
+function qoo10ExactRecoveryItems(
+  value: unknown,
+  remoteId: string,
+  depth = 0,
+  found: UnknownRecord[] = [],
+) {
+  if (depth > 7 || value === null || value === undefined) return found;
+  if (Array.isArray(value)) {
+    for (const item of value) qoo10ExactRecoveryItems(item, remoteId, depth + 1, found);
+    return found;
+  }
+  const record = recordValue(value);
+  if (!Object.keys(record).length) return found;
+  const identities = ["ItemNo", "ItemCode", "GdNo"]
+    .filter((key) => Object.hasOwn(record, key))
+    .map((key) => typeof record[key] === "string" || typeof record[key] === "number"
+      ? String(record[key])
+      : "");
+  if (identities.length > 0 && identities.every((identity) => identity === remoteId)) found.push(record);
+  for (const nested of Object.values(record)) {
+    qoo10ExactRecoveryItems(nested, remoteId, depth + 1, found);
+  }
+  return found;
+}
+
+function qoo10ExactRecoveryField(record: UnknownRecord, aliases: readonly string[]) {
+  const normalized = new Set(aliases.map((alias) => alias.toLowerCase()));
+  const value = Object.entries(record).find(([key]) => normalized.has(key.toLowerCase()))?.[1];
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function sha256(value: string) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
 function verificationStep(input: {
   source: ListingPublicationVerificationSource;
   remoteState?: VerifiedListingRemoteState | null;
@@ -468,7 +542,7 @@ function verifiedExecution(input: {
 export async function executeListingPublicationVerification(
   input: VerificationInput,
 ): Promise<ListingPublicationVerificationExecution> {
-  const { source, remoteId, expected, legacyElevenstSnapshot } = sourceContext(input);
+  const { source, remoteId, expected, legacyElevenstSnapshot, exactQoo10S1Recovery } = sourceContext(input);
   const sourceOperation = source.sourceOperation as SourceOperation;
   const sourceArguments = source.sourceArguments;
 
@@ -548,6 +622,121 @@ export async function executeListingPublicationVerification(
     });
     const remoteState = strictIdentityVerified ? verifiedReadbackState : null;
     const readbackStep = providerStep("GetItemDetailInfo-publication-reverification", remote);
+    if (exactQoo10S1Recovery) {
+      const recovery = qoo10RollbackUpdateRecoveryBinding(sourceArguments)!;
+      const params = recordValue(sourceArguments.params);
+      const sourceTitle = qoo10ExactRecoveryField(params, ["ItemTitle"]);
+      const sourceKeyword = qoo10ExactRecoveryField(params, ["Keyword"]);
+      const sourceDetailHtml = qoo10ExactRecoveryField(params, ["ItemDescription"]);
+      const sourceDetailImageUrls = qoo10DetailImageUrls(sourceDetailHtml);
+      const matches = qoo10ExactRecoveryItems(remote.data.ResultObject, remoteId);
+      const item = matches.length === 1 ? matches[0] : {};
+      const remoteTitle = qoo10ExactRecoveryField(item, ["ItemTitle"]);
+      const remoteKeyword = qoo10ExactRecoveryField(item, ["Keyword", "Keywords"]);
+      const remoteDetailHtml = qoo10ExactRecoveryField(item, ["ItemDetail", "ItemDescription", "Description"]);
+      const remoteDetailImageUrls = qoo10DetailImageUrls(remoteDetailHtml);
+      const sourceSellerCodeValue = qoo10ExactRecoveryField(params, ["SellerCode"]);
+      const publication = normalizeQoo10ListingPublicationReadback({
+        operation: "listing.update",
+        remoteId,
+        resultObject: remote.data.ResultObject,
+        expectedLocale: expected.locale,
+        expectedFingerprint: expected.fingerprint,
+        expectedImageCount: expected.imageCount,
+        ...(sourceSellerCodeValue ? { expectedSellerCode: sourceSellerCodeValue } : {}),
+        expectedRecovery: {
+          ...recovery.expectedState,
+          detailImageUrls: sourceDetailImageUrls,
+        },
+      });
+      const mutableChecks = {
+        exactItemVerified: matches.length === 1,
+        criticalAliasesConsistent: matches.length === 1
+          && qoo10CriticalReadbackAliasesConsistent(item),
+        s1Verified: publication.providerStatus.trim().toUpperCase() === "S1"
+          && publication.remoteState?.visibility === "non_public",
+        titleVerified: Boolean(sourceTitle) && remoteTitle === sourceTitle,
+        promotionNameVerified: qoo10ExactRecoveryField(item, ["PromotionName", "PromotionNm"])
+          === qoo10ExactRecoveryField(params, ["PromotionName"]),
+        industrialCodeVerified: qoo10ExactRecoveryField(item, ["IndustrialCode", "barcode", "gtin"])
+          === qoo10ExactRecoveryField(params, ["IndustrialCode"]),
+        keywordVerified: qoo10ProviderKeywordMatches(sourceKeyword, remoteKeyword, sourceTitle),
+        detailHtmlVerified: Boolean(sourceDetailHtml) && remoteDetailHtml === sourceDetailHtml,
+        orderedDetailImagesVerified: sourceDetailImageUrls.length === 8
+          && remoteDetailImageUrls.length === 8
+          && remoteDetailImageUrls.every((url, index) => url === sourceDetailImageUrls[index]),
+        originTypeVerified: qoo10ExactRecoveryField(item, ["ProductionPlaceType", "OriginType"])
+          === qoo10ExactRecoveryField(params, ["ProductionPlaceType"]),
+        originCodeVerified: qoo10ExactRecoveryField(item, ["ProductionPlace", "Origin", "OriginCode"])
+          === qoo10ExactRecoveryField(params, ["ProductionPlace"]),
+        adultYnVerified: qoo10ExactRecoveryField(item, ["AdultYN", "AdultYn", "AdultFlag"])
+          === qoo10ExactRecoveryField(params, ["AdultYN"]),
+      };
+      const exactContentVerified = Boolean(publication.remoteState)
+        && Object.values(mutableChecks).every(Boolean);
+      const boundS1State = exactContentVerified && publication.remoteState
+        ? qoo10ExactRecoveryContentRemoteState({
+            remoteState: publication.remoteState,
+            title: remoteTitle,
+            keyword: remoteKeyword,
+            detailHtml: remoteDetailHtml,
+            detailImageUrls: remoteDetailImageUrls,
+            sourceJobId: source.sourceJobId,
+            sourceOperation: "listing.update",
+          })
+        : undefined;
+      const exactProviderSuccess = remote.response.ok && qoo10ExactSuccessResultCode(remote.data);
+      readbackStep.ok = exactProviderSuccess && Boolean(boundS1State);
+      readbackStep.data = {
+        ...readbackStep.data,
+        sellerpilotVerification: exactProviderSuccess && boundS1State
+          ? "QOO10_EXACT_S1_RECOVERY_REVERIFIED"
+          : "QOO10_EXACT_S1_RECOVERY_UNVERIFIED",
+        sellerpilotPublicationChecks: publication.checks,
+        sellerpilotMutableChecks: mutableChecks,
+        sellerpilotExactResultCodeVerified: exactProviderSuccess,
+      };
+      const activationExpectation = boundS1State
+        ? {
+            expectedState: {
+              ...recovery.expectedState,
+              originType: qoo10ExactRecoveryField(params, ["ProductionPlaceType"]),
+              originCode: qoo10ExactRecoveryField(params, ["ProductionPlace"]),
+              adultYn: qoo10ExactRecoveryField(params, ["AdultYN"]),
+            },
+            expectedTitle: remoteTitle,
+            expectedKeyword: remoteKeyword,
+            expectedPromotionName: qoo10ExactRecoveryField(params, ["PromotionName"]),
+            expectedIndustrialCode: qoo10ExactRecoveryField(params, ["IndustrialCode"]),
+            expectedDetailHtmlSha256: sha256(remoteDetailHtml),
+            expectedDetailImageUrls: remoteDetailImageUrls,
+            ...(sourceSellerCodeValue ? { expectedSellerCode: sourceSellerCodeValue } : {}),
+          }
+        : undefined;
+      const exactStep: ChannelOperationStep = {
+        name: "qoo10-exact-s1-recovery-verification",
+        ok: Boolean(exactProviderSuccess && boundS1State && activationExpectation),
+        status: exactProviderSuccess && boundS1State ? 200 : 422,
+        data: {
+          ...remote.data,
+          sellerpilotVerification: exactProviderSuccess && boundS1State
+            ? "QOO10_EXACT_S1_RECOVERY_VERIFIED"
+            : "QOO10_EXACT_S1_RECOVERY_UNVERIFIED",
+          sellerpilotPublicationChecks: publication.checks,
+          sellerpilotMutableChecks: mutableChecks,
+          sellerpilotExactResultCodeVerified: exactProviderSuccess,
+          ...(exactProviderSuccess && boundS1State ? { remoteState: boundS1State } : {}),
+          ...(exactProviderSuccess && activationExpectation
+            ? { sellerpilotQoo10ActivationExpectation: activationExpectation }
+            : { sellerpilotReconciliationRequired: true }),
+        },
+      };
+      return {
+        remoteId,
+        steps: [readbackStep, exactStep],
+        ...(exactProviderSuccess && boundS1State ? { remoteState: boundS1State } : {}),
+      };
+    }
     readbackStep.ok = readbackStep.ok && Boolean(remoteState);
     readbackStep.data = {
       ...readbackStep.data,

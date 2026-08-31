@@ -210,6 +210,16 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(gatewayProcess, /effectiveError = heartbeatError/);
   assert.match(gatewayProcess, /effectiveError instanceof WorkerRequestTerminalError[\s\S]*\[채널 상태 보존\]/);
   assert.match(gatewayProcess, /const markExternalWriteStarted = async \(\) => \{[\s\S]*"\/api\/channel-gateway\/worker\/begin-mutation"[\s\S]*await assertGatewayLeaseHealthy\(\);[\s\S]*externalWriteStarted = true/);
+  const activationContextFence = gatewayProcess.indexOf("const activationArgumentsAreRecord");
+  const credentialPreparation = gatewayProcess.indexOf('if (job.channel === "shopee")', activationContextFence);
+  const providerMutationFence = gatewayProcess.indexOf("await markExternalWriteStarted();", credentialPreparation);
+  assert.ok(activationContextFence > 0);
+  assert.ok(credentialPreparation > activationContextFence);
+  assert.ok(providerMutationFence > credentialPreparation);
+  assert.match(
+    gatewayProcess.slice(activationContextFence, credentialPreparation),
+    /activationMarkerSupplied !== \(job\.operation === "listing\.activate"\)[\s\S]*job\.channel !== "qoo10"[\s\S]*qoo10S1ActivationArgumentsValid\(operationArguments\)[\s\S]*QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED/,
+  );
   assert.match(gatewayProcess, /if \(writeChannelOperations\.has\(job\.operation\)\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeChannelOperation/);
   assert.doesNotMatch(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
   assert.match(gatewayProcess, /status: "reconciliation_required"/);

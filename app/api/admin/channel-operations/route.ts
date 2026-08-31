@@ -208,6 +208,12 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 요청 형식이 올바르지 않습니다." }, { status: 400 });
 
   const { channel, operation } = parsed.data;
+  if (operation === "listing.activate") {
+    return NextResponse.json({
+      message: "Qoo10 활성화 복구는 직전 S1 검증 원장에 의해 서버에서만 생성됩니다.",
+      mode: "server_owned_activation_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   const capability = channelCatalog[channel].capabilities[channelOperationCapabilities[operation]];
   if (capability.mode === "unsupported") {
     return NextResponse.json({ message: capability.note, mode: capability.mode }, { status: 409 });

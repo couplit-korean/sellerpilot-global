@@ -47,6 +47,10 @@ import {
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
 import { channelPriceUpdateRelease } from "./price-update-release";
+import {
+  qoo10S1ActivationArgument,
+  qoo10S1ActivationArgumentsValid,
+} from "./qoo10-listing-activation";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -58,6 +62,7 @@ const serverlessWriteMatrix = {
   "listing.stop": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore",
   ]),
+  "listing.activate": new Set(["qoo10"]),
   "inventory.update": new Set([
     "qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay",
   ]),
@@ -554,6 +559,12 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     const rawArguments = requestArguments(input.job);
+    const activationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
+    if (activationMarkerSupplied !== (input.job.operation === "listing.activate")
+        || (input.job.operation === "listing.activate"
+          && (input.job.channel !== "qoo10" || !qoo10S1ActivationArgumentsValid(rawArguments)))) {
+      throw new Error("QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED");
+    }
     if (input.job.operation === "listing.publication.verify") {
       const source = listingPublicationVerificationSourceSchema.safeParse(
         rawArguments.sellerpilotPublicationSource,

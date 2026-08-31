@@ -16,6 +16,7 @@ const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> 
   "listing.create": "listingCreate",
   "listing.update": "listingUpdate",
   "listing.stop": "listingStop",
+  "listing.activate": "listingStop",
   "listing.publication.verify": "listingCreate",
   "price.update": "price",
   "inventory.update": "inventory",
@@ -91,6 +92,13 @@ export function channelOperationRelease(
   operation: ChannelOperationName,
   environment: ChannelEnvironment = "production",
 ): ChannelOperationRelease {
+  if (operation === "listing.activate" && channel !== "qoo10") {
+    return {
+      available: false,
+      mode: "release_verification_required",
+      reason: "S1 검증 원장에 묶인 Qoo10 전용 활성화 복구 작업입니다.",
+    };
+  }
   if (operation === "listing.publication.verify" && !publicationVerificationChannels.has(channel)) {
     return {
       available: false,
