@@ -20,3 +20,8 @@ export const qoo10ExactLocalizationRecoveryIdentity = Object.freeze({
   promotionName: "購入前確認",
   legacyRomanizedName: "buchakhyeong keibeul jeongri keulrip 6gae seteu",
 });
+
+export const qoo10ExactLocalizationUpdateArgument =
+  "sellerpilotQoo10ExactLocalization" as const;
+export const qoo10ExactLocalizationUpdateContract =
+  "qoo10_exact_localization_update_v2" as const;

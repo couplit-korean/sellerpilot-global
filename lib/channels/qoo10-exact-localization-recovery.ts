@@ -2,15 +2,18 @@ import {
   listingPublicationLanguageVerified,
   normalizedListingPublicationText,
 } from "./listing-publication-content";
-import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
+import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizationUpdateContract,
+} from "./qoo10-exact-localization-identity";
 import { qoo10DetailImageUrls } from "./qoo10-listing-create-preflight";
 
-export { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
-
-export const qoo10ExactLocalizationUpdateArgument =
-  "sellerpilotQoo10ExactLocalization" as const;
-export const qoo10ExactLocalizationUpdateContract =
-  "qoo10_exact_localization_update_v2" as const;
+export {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizationUpdateContract,
+} from "./qoo10-exact-localization-identity";
 
 export type Qoo10ExactLocalizationUpdateBinding = {
   status: "allowed";

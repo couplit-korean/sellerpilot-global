@@ -13,8 +13,10 @@ import {
   elevenstExactExistingPublicationIdentity,
 } from "./elevenst-exact-existing-identity";
 import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
-import { qoo10ExactLocalizationUpdateArgument } from "./qoo10-exact-localization-recovery";
-import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
+import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+} from "./qoo10-exact-localization-identity";
 import {
   smartstoreExactQaRecoveryArgument,
   smartstoreExactQaRecoveryCandidate,
