@@ -11,7 +11,7 @@ import {
   elevenstExactExistingPublicationArgument,
   elevenstExactExistingPublicationCandidate,
   elevenstExactExistingPublicationIdentity,
-} from "./elevenst-exact-existing-publication";
+} from "./elevenst-exact-existing-identity";
 import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 
 export type ListingUpdateReference = {
