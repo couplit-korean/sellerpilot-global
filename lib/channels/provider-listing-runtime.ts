@@ -52,10 +52,12 @@ import {
 } from "./coupang-exact-qa-recovery";
 import { prepareCoupangExactQaRecoveryArguments } from "./coupang-listing-update";
 import {
+  assertShopeeSgExactCreateProviderBinding,
   assertShopeeSgCurrentPrice,
   buildShopeeSgPreparedCreateEvidence,
   loadAuthoritativeKrwSgdUsdRate,
   shopeeSgExpectedCategoryPathVerified,
+  shopeeSgExactCreateRequested,
   shopeeSgListingCreateExpectation,
   shopeeSgListingCreateRequested,
 } from "./shopee-sg-listing-create";
@@ -223,6 +225,200 @@ export type ShopeeGlobalImagePlan = {
 function successfulShopeeRead(remote: ShopeeRemote, errorCode: string) {
   if (!remote.response.ok || remote.data.error) throw new Error(errorCode);
   return recordValue(remote.data.response) ?? {};
+}
+
+type ShopeeExactInventoryRead = (
+  path: string,
+  query: URLSearchParams,
+) => Promise<ShopeeRemote>;
+
+const shopeeExactInventoryPageSize = 100;
+const shopeeExactInventoryDetailBatchSize = 50;
+const shopeeExactLocalItemStatuses = [
+  "NORMAL",
+  "UNLIST",
+  "BANNED",
+  "DELETED",
+] as const;
+
+function shopeeInventoryRows(
+  response: UnknownRecord,
+  listKeys: readonly string[],
+  errorCode: string,
+) {
+  const presentKeys = listKeys.filter((key) => Object.hasOwn(response, key));
+  const listValue = presentKeys.length === 1 ? response[presentKeys[0]] : null;
+  if (!Array.isArray(listValue)) {
+    throw new Error(errorCode);
+  }
+  const rows = listValue.map(recordValue);
+  if (rows.some((row) => !row)) throw new Error(errorCode);
+  return rows as UnknownRecord[];
+}
+
+function shopeeInventoryId(value: unknown, errorCode: string) {
+  const id = typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
+  if (!/^[1-9][0-9]{0,31}$/u.test(id)) throw new Error(errorCode);
+  return id;
+}
+
+async function readCompleteShopeeInventoryIds(input: {
+  read: ShopeeExactInventoryRead;
+  path: string;
+  listKeys: readonly string[];
+  idKey: string;
+  errorCode: string;
+  fixedQuery?: Record<string, string>;
+}) {
+  const ids: string[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+  let expectedTotal: number | null = null;
+  for (let page = 0; page < 1_000; page += 1) {
+    const remote = await input.read(input.path, new URLSearchParams({
+      ...(input.fixedQuery ?? {}),
+      offset: String(offset),
+      page_size: String(shopeeExactInventoryPageSize),
+    }));
+    const response = successfulShopeeRead(remote, input.errorCode);
+    const totalCount = integerLimit(response.total_count);
+    if (totalCount === null
+        || (expectedTotal !== null && totalCount !== expectedTotal)) {
+      throw new Error(input.errorCode);
+    }
+    expectedTotal ??= totalCount;
+    const rows = shopeeInventoryRows(response, input.listKeys, input.errorCode);
+    if (rows.length > shopeeExactInventoryPageSize
+        || offset + rows.length > expectedTotal
+        || (offset < expectedTotal && rows.length === 0)) {
+      throw new Error(input.errorCode);
+    }
+    for (const row of rows) {
+      const id = shopeeInventoryId(row[input.idKey], input.errorCode);
+      if (seenIds.has(id)) throw new Error(input.errorCode);
+      seenIds.add(id);
+      ids.push(id);
+    }
+    const complete = offset + rows.length === expectedTotal;
+    if (Object.hasOwn(response, "has_next_page")) {
+      if (typeof response.has_next_page !== "boolean"
+          || response.has_next_page !== !complete) {
+        throw new Error(input.errorCode);
+      }
+    }
+    if (complete) return ids;
+    offset += rows.length;
+  }
+  throw new Error(input.errorCode);
+}
+
+async function readExactShopeeSkuMatches(input: {
+  ids: readonly string[];
+  read: ShopeeExactInventoryRead;
+  path: string;
+  queryKey: "global_item_id_list" | "item_id_list";
+  listKeys: readonly string[];
+  idKey: "global_item_id" | "item_id";
+  skuKey: "global_item_sku" | "item_sku";
+  sku: string;
+  errorCode: string;
+}) {
+  const matches: string[] = [];
+  for (let offset = 0; offset < input.ids.length; offset += shopeeExactInventoryDetailBatchSize) {
+    const batch = input.ids.slice(offset, offset + shopeeExactInventoryDetailBatchSize);
+    const remote = await input.read(input.path, new URLSearchParams({
+      [input.queryKey]: batch.join(","),
+    }));
+    const response = successfulShopeeRead(remote, input.errorCode);
+    const rows = shopeeInventoryRows(response, input.listKeys, input.errorCode);
+    if (rows.length !== batch.length) throw new Error(input.errorCode);
+    const expectedIds = new Set(batch);
+    const returnedIds = new Set<string>();
+    for (const row of rows) {
+      const id = shopeeInventoryId(row[input.idKey], input.errorCode);
+      if (!expectedIds.has(id) || returnedIds.has(id)
+          || !Object.hasOwn(row, input.skuKey)
+          || (typeof row[input.skuKey] !== "string"
+            && typeof row[input.skuKey] !== "number")) {
+        throw new Error(input.errorCode);
+      }
+      returnedIds.add(id);
+      if (String(row[input.skuKey]).trim() === input.sku) matches.push(id);
+    }
+    if (returnedIds.size !== expectedIds.size) throw new Error(input.errorCode);
+  }
+  return matches;
+}
+
+async function assertShopeeSgExactSkuAbsent(input: {
+  merchantRead: ShopeeExactInventoryRead;
+  shopRead: ShopeeExactInventoryRead;
+  sku: string;
+}) {
+  const globalIds = await readCompleteShopeeInventoryIds({
+    read: input.merchantRead,
+    path: "/api/v2/global_product/get_global_item_list",
+    listKeys: ["global_item_list"],
+    idKey: "global_item_id",
+    errorCode: "SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE",
+  });
+  const globalMatches = await readExactShopeeSkuMatches({
+    ids: globalIds,
+    read: input.merchantRead,
+    path: "/api/v2/global_product/get_global_item_info",
+    queryKey: "global_item_id_list",
+    listKeys: ["global_item_list"],
+    idKey: "global_item_id",
+    skuKey: "global_item_sku",
+    sku: input.sku,
+    errorCode: "SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE",
+  });
+  if (globalMatches.length) {
+    throw new Error("SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_GLOBAL");
+  }
+
+  const localIds: string[] = [];
+  const seenLocalIds = new Set<string>();
+  for (const itemStatus of shopeeExactLocalItemStatuses) {
+    const statusIds = await readCompleteShopeeInventoryIds({
+      read: input.shopRead,
+      path: "/api/v2/product/get_item_list",
+      listKeys: ["item", "item_list"],
+      idKey: "item_id",
+      errorCode: "SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE",
+      fixedQuery: { item_status: itemStatus },
+    });
+    for (const id of statusIds) {
+      if (seenLocalIds.has(id)) {
+        throw new Error("SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE");
+      }
+      seenLocalIds.add(id);
+      localIds.push(id);
+    }
+  }
+  const localMatches = await readExactShopeeSkuMatches({
+    ids: localIds,
+    read: input.shopRead,
+    path: "/api/v2/product/get_item_base_info",
+    queryKey: "item_id_list",
+    listKeys: ["item_list"],
+    idKey: "item_id",
+    skuKey: "item_sku",
+    sku: input.sku,
+    errorCode: "SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE",
+  });
+  if (localMatches.length) {
+    throw new Error("SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_LOCAL");
+  }
+  return {
+    contract: "sellerpilot_shopee_sg_exact_sku_absence_v1",
+    sku: input.sku,
+    globalItemCount: globalIds.length,
+    localItemCount: localIds.length,
+    localStatuses: [...shopeeExactLocalItemStatuses],
+  } as const;
 }
 
 function integerLimit(value: unknown) {
@@ -505,6 +701,13 @@ export async function prepareShopeeGlobalListing(
   if (strictSgCreate && (!strictExpectation || !strictExpectation.ok)) {
     throw new Error("SHOPEE_SG_CREATE_PREWRITE_MISMATCH");
   }
+  const exactCreateIdentity = strictExpectation?.ok
+    ? assertShopeeSgExactCreateProviderBinding({
+        expectation: strictExpectation.expectation,
+        merchantCredential: input.credential,
+        shopCredential: shopPayload,
+      })
+    : null;
   const globalCategoryId = Number(body.category_id);
   if (!Number.isSafeInteger(globalCategoryId) || globalCategoryId <= 0) {
     throw new Error("SHOPEE_GLOBAL_CATEGORY_MISSING");
@@ -605,6 +808,13 @@ export async function prepareShopeeGlobalListing(
     productHint,
     errorCode: "SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING",
   });
+  const exactSkuAbsenceEvidence = exactCreateIdentity
+    ? await assertShopeeSgExactSkuAbsent({
+        merchantRead,
+        shopRead,
+        sku: exactCreateIdentity.sku,
+      })
+    : null;
   const imageIds: string[] = [];
   for (const [index, imageUrl] of imageUrls.entries()) {
     await input.hooks.assertLeaseHealthy();
@@ -648,6 +858,9 @@ export async function prepareShopeeGlobalListing(
   };
   return {
     ...input.arguments,
+    ...(exactSkuAbsenceEvidence
+      ? { sellerpilotShopeeSgExactSkuAbsenceEvidence: exactSkuAbsenceEvidence }
+      : {}),
     ...(providerGlobalCategoryPath
       ? { sellerpilotProviderGlobalCategoryPath: providerGlobalCategoryPath }
       : {}),
@@ -1481,7 +1694,13 @@ export async function prepareMarketplaceListingArguments(
 ): Promise<PreparedProviderListing> {
   if (input.channel === "shopee") {
     if (input.arguments.globalProduct === true) {
-      if (input.operation !== "listing.create" || input.arguments.resumeOnly === true) {
+      if (input.operation !== "listing.create") {
+        return { arguments: input.arguments, mediaMutationObserved: false };
+      }
+      if (input.arguments.resumeOnly === true) {
+        if (shopeeSgExactCreateRequested(input.arguments)) {
+          throw new Error("SHOPEE_SG_EXACT_CREATE_RESUME_REQUIRES_FRESH_PREFLIGHT");
+        }
         return { arguments: input.arguments, mediaMutationObserved: false };
       }
       return {

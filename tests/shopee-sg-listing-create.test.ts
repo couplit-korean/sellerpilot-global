@@ -9,6 +9,7 @@ import {
   shopeeExactGlobalCategoryPath,
   shopeeGlobalLeafCategoryPaths,
   shopeeSgCableClipCategory,
+  shopeeSgExactCreateIdentity,
   shopeeSgListingCreateExpectation,
   shopeeSgListingCreateContextContract,
   shopeeSgPreparedCreateExpectation,
@@ -18,7 +19,7 @@ import {
   type ShopeeKrwSgdUsdRateEvidence,
 } from "../lib/channels/shopee-sg-listing-create";
 
-const PRODUCT_ID = "10000000-0000-4000-8000-000000000001";
+const PRODUCT_ID = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const ATTEMPT_ID = "20000000-0000-4000-8000-000000000001";
 const CLAIM_ID = "30000000-0000-4000-8000-000000000001";
 const SKU = "QA-20260823-CC-001";
@@ -243,6 +244,31 @@ test("Shopee SG context binds the exact central SKU, 5,000 KRW, stock one, categ
   assert.equal(shopeeSgdPriceFromKrw(5_000, 1_000), 5);
   assert.equal(shopeeUsdPriceFromKrw(5_000, 1_250), 4);
   assert.equal(shopeeSgListingCreateExpectation(arguments_).ok, true);
+  assert.deepEqual(shopeeSgExactCreateIdentity, {
+    productId: PRODUCT_ID,
+    sku: SKU,
+    merchantId: "5511564",
+    shopId: SHOP_ID,
+    market: "SG",
+  });
+});
+
+test("Shopee SG exact context rejects product, SKU, or shop drift before provider access", () => {
+  for (const [field, mutate] of [
+    ["productId", (context: Record<string, unknown>) => {
+      context.productId = "10000000-0000-4000-8000-000000000001";
+    }],
+    ["sku", (context: Record<string, unknown>) => { context.sku = `${SKU}-SG`; }],
+    ["targetId", (context: Record<string, unknown>) => { context.targetId = "1719148845"; }],
+  ] as const) {
+    const argumentsValue = strictArguments();
+    mutate(argumentsValue.sellerpilotShopeeSgCreateContext as Record<string, unknown>);
+    const parsed = shopeeSgListingCreateExpectation(argumentsValue);
+    assert.equal(parsed.ok, false, field);
+    if (!parsed.ok) {
+      assert.equal(parsed.mismatchFields.includes("sellerpilotShopeeSgCreateContext"), true, field);
+    }
+  }
 });
 
 test("Coinbase KRW exchange response is converted to authoritative KRW-per-SGD and KRW-per-USD evidence", async () => {

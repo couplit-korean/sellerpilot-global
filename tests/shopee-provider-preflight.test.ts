@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   planShopeeGlobalImages,
+  prepareMarketplaceListingArguments,
   prepareShopeeGlobalListing,
   type PrepareProviderListingInput,
   type ShopeeGlobalListingRuntimeDependencies,
@@ -14,10 +15,12 @@ import {
   type ShopeeKrwSgdUsdRateEvidence,
 } from "../lib/channels/shopee-sg-listing-create";
 
-const PRODUCT_ID = "10000000-0000-4000-8000-000000000001";
+const PRODUCT_ID = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const ATTEMPT_ID = "20000000-0000-4000-8000-000000000001";
 const CLAIM_ID = "30000000-0000-4000-8000-000000000001";
 const SKU = "QA-20260823-CC-001";
+const MERCHANT_ID = "5511564";
+const SHOP_ID = "1719148844";
 const GLOBAL_CATEGORY_ID = 100479;
 const LOCAL_CATEGORY_ID = 200456;
 const FINGERPRINT = "a".repeat(64);
@@ -161,7 +164,7 @@ function input(): PrepareProviderListingInput {
       confirmedAt: "2026-08-30T04:55:00.000Z",
     }],
     market: "SG",
-    targetId: "3001",
+    targetId: SHOP_ID,
     currency: "SGD",
     rate: rate(),
   });
@@ -183,7 +186,7 @@ function input(): PrepareProviderListingInput {
         attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
       },
       publish: {
-        shop_id: 3001,
+        shop_id: Number(SHOP_ID),
         shop_region: "SG",
         item: {
           category_id: GLOBAL_CATEGORY_ID,
@@ -200,13 +203,13 @@ function input(): PrepareProviderListingInput {
     credential: {
       partner_id: "1001",
       partner_key: "merchant-key",
-      merchant_id: "2001",
+      merchant_id: MERCHANT_ID,
       access_token: "merchant-access",
     },
     shopeeShopCredential: {
       partner_id: "1001",
       partner_key: "shop-key",
-      shop_id: "3001",
+      shop_id: SHOP_ID,
       access_token: "shop-access",
     },
     arguments: arguments_,
@@ -230,11 +233,30 @@ function dependencies(inputValue: {
   globalAttributeAvailable?: boolean;
   activeLogistics?: boolean;
   localCategoryAvailable?: boolean;
+  merchantInventoryRequest?: (
+    path: string,
+    query: URLSearchParams,
+  ) => RemoteResponse | null;
+  shopInventoryRequest?: (
+    path: string,
+    query: URLSearchParams,
+  ) => RemoteResponse | null;
 }): ShopeeGlobalListingRuntimeDependencies {
   let uploadIndex = 0;
   return {
     shopRequest: async ({ path, query }) => {
       inputValue.events.push(`shop:${path}?${query?.toString() ?? ""}`);
+      const inventoryOverride = inputValue.shopInventoryRequest?.(
+        path,
+        query ?? new URLSearchParams(),
+      );
+      if (inventoryOverride) return inventoryOverride;
+      if (path.endsWith("get_item_list")) {
+        return remote({
+          error: "",
+          response: { item: [], total_count: 0, has_next_page: false },
+        });
+      }
       if (path.endsWith("get_channel_list")) {
         return remote({
           error: "",
@@ -264,6 +286,17 @@ function dependencies(inputValue: {
     },
     merchantRequest: async ({ path, query }) => {
       inputValue.events.push(`merchant:${path}?${query?.toString() ?? ""}`);
+      const inventoryOverride = inputValue.merchantInventoryRequest?.(
+        path,
+        query ?? new URLSearchParams(),
+      );
+      if (inventoryOverride) return inventoryOverride;
+      if (path.endsWith("get_global_item_list")) {
+        return remote({
+          error: "",
+          response: { global_item_list: [], total_count: 0, has_next_page: false },
+        });
+      }
       if (path.endsWith("get_category")) {
         return categoryResponse(GLOBAL_CATEGORY_ID, inputValue.globalHasChildren ?? false);
       }
@@ -288,6 +321,81 @@ function dependencies(inputValue: {
       return `image-${uploadIndex}`;
     },
     loadKrwSgdUsdRate: async () => rate(),
+  };
+}
+
+type GlobalInventoryItem = {
+  global_item_id: number;
+  global_item_sku: string;
+};
+
+type LocalInventoryItem = {
+  item_id: number;
+  item_sku: string;
+  item_status: "NORMAL" | "UNLIST" | "BANNED" | "DELETED";
+};
+
+function page<T>(items: readonly T[], query: URLSearchParams) {
+  const offset = Number(query.get("offset"));
+  const pageSize = Number(query.get("page_size"));
+  const rows = items.slice(offset, offset + pageSize);
+  return {
+    rows,
+    totalCount: items.length,
+    hasNextPage: offset + rows.length < items.length,
+  };
+}
+
+function globalInventory(items: readonly GlobalInventoryItem[]) {
+  return (path: string, query: URLSearchParams) => {
+    if (path.endsWith("get_global_item_list")) {
+      const current = page(items, query);
+      return remote({
+        error: "",
+        response: {
+          global_item_list: current.rows.map(({ global_item_id }) => ({ global_item_id })),
+          total_count: current.totalCount,
+          has_next_page: current.hasNextPage,
+        },
+      });
+    }
+    if (path.endsWith("get_global_item_info")) {
+      const requested = new Set((query.get("global_item_id_list") ?? "").split(","));
+      return remote({
+        error: "",
+        response: {
+          global_item_list: items.filter((item) => requested.has(String(item.global_item_id))),
+        },
+      });
+    }
+    return null;
+  };
+}
+
+function localInventory(items: readonly LocalInventoryItem[]) {
+  return (path: string, query: URLSearchParams) => {
+    if (path.endsWith("get_item_list")) {
+      const statusItems = items.filter((item) => item.item_status === query.get("item_status"));
+      const current = page(statusItems, query);
+      return remote({
+        error: "",
+        response: {
+          item: current.rows.map(({ item_id, item_status }) => ({ item_id, item_status })),
+          total_count: current.totalCount,
+          has_next_page: current.hasNextPage,
+        },
+      });
+    }
+    if (path.endsWith("get_item_base_info")) {
+      const requested = new Set((query.get("item_id_list") ?? "").split(","));
+      return remote({
+        error: "",
+        response: {
+          item_list: items.filter((item) => requested.has(String(item.item_id))),
+        },
+      });
+    }
+    return null;
   };
 }
 
@@ -316,8 +424,10 @@ test("Shopee SG validates logistics, the global category/attributes, and the rec
   const events: string[] = [];
   const prepared = await prepareShopeeGlobalListing(input(), dependencies({ events }));
   const firstUpload = events.findIndex((event) => event.startsWith("upload:"));
-  assert.equal(firstUpload, 7);
+  assert.equal(firstUpload, 12);
   assert.equal(events.slice(0, firstUpload).every((event) => !event.startsWith("upload:")), true);
+  assert.equal(events.some((event) => event.includes("global_product/get_global_item_list?offset=0&page_size=100")), true);
+  assert.equal(events.filter((event) => event.includes("product/get_item_list?")).length, 4);
   assert.equal(events.some((event) => event.includes(`global_product/get_attribute_tree?category_id_list=${GLOBAL_CATEGORY_ID}`)), true);
   assert.equal(events.some((event) => event.includes("product/category_recommend?item_name=Reusable+Cable+Organizer+Clips")), true);
   assert.equal(events.some((event) => event.includes(`global_product/get_global_item_limit?category_id=${GLOBAL_CATEGORY_ID}`)), true);
@@ -349,10 +459,207 @@ test("Shopee SG validates logistics, the global category/attributes, and the rec
     String(LOCAL_CATEGORY_ID),
   );
   assert.equal(prepared.sellerpilotProviderImageSurface, "gallery");
+  assert.deepEqual(prepared.sellerpilotShopeeSgExactSkuAbsenceEvidence, {
+    contract: "sellerpilot_shopee_sg_exact_sku_absence_v1",
+    sku: SKU,
+    globalItemCount: 0,
+    localItemCount: 0,
+    localStatuses: ["NORMAL", "UNLIST", "BANNED", "DELETED"],
+  });
   assert.deepEqual(
     prepared.sellerpilotProviderDetailImageIds,
     Array.from({ length: 8 }, (_, index) => `image-${index + 2}`),
   );
+});
+
+test("Shopee SG exact create scans every Global and SG inventory page before the first media mutation", async () => {
+  const globalItems = Array.from({ length: 101 }, (_, index) => ({
+    global_item_id: 50_000 + index,
+    global_item_sku: `OTHER-GLOBAL-${index}`,
+  }));
+  const localItems = Array.from({ length: 101 }, (_, index) => ({
+    item_id: 60_000 + index,
+    item_sku: `OTHER-LOCAL-${index}`,
+    item_status: "UNLIST" as const,
+  }));
+  const events: string[] = [];
+  const prepared = await prepareShopeeGlobalListing(input(), dependencies({
+    events,
+    merchantInventoryRequest: globalInventory(globalItems),
+    shopInventoryRequest: localInventory(localItems),
+  }));
+  const firstUpload = events.findIndex((event) => event.startsWith("upload:"));
+  assert.ok(firstUpload > 0);
+  assert.equal(events.slice(0, firstUpload).every((event) => !event.startsWith("upload:")), true);
+  assert.equal(events.some((event) => event.includes("get_global_item_list?offset=100&page_size=100")), true);
+  assert.equal(events.some((event) => event.includes("get_item_list?item_status=UNLIST&offset=100&page_size=100")), true);
+  assert.equal(events.filter((event) => event.includes("get_global_item_info?")).length, 3);
+  assert.equal(events.filter((event) => event.includes("get_item_base_info?")).length, 3);
+  assert.deepEqual(prepared.sellerpilotShopeeSgExactSkuAbsenceEvidence, {
+    contract: "sellerpilot_shopee_sg_exact_sku_absence_v1",
+    sku: SKU,
+    globalItemCount: 101,
+    localItemCount: 101,
+    localStatuses: ["NORMAL", "UNLIST", "BANNED", "DELETED"],
+  });
+});
+
+test("Shopee SG exact create rejects any existing exact SKU globally or locally with zero provider writes", async () => {
+  for (const [surface, count, error] of [
+    ["global", 1, /SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_GLOBAL/],
+    ["global", 2, /SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_GLOBAL/],
+    ["local", 1, /SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_LOCAL/],
+    ["local", 2, /SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_LOCAL/],
+  ] as const) {
+    const events: string[] = [];
+    let mutationStarts = 0;
+    const candidate = input();
+    candidate.hooks.beginProviderMutation = async () => { mutationStarts += 1; };
+    const globalItems = surface === "global"
+      ? Array.from({ length: count }, (_, index) => ({
+          global_item_id: 70_000 + index,
+          global_item_sku: SKU,
+        }))
+      : [];
+    const localItems = surface === "local"
+      ? Array.from({ length: count }, (_, index) => ({
+          item_id: 80_000 + index,
+          item_sku: SKU,
+          item_status: "UNLIST" as const,
+        }))
+      : [];
+    await assert.rejects(
+      prepareShopeeGlobalListing(candidate, dependencies({
+        events,
+        merchantInventoryRequest: globalInventory(globalItems),
+        shopInventoryRequest: localInventory(localItems),
+      })),
+      error,
+      `${surface}:${count}`,
+    );
+    assert.equal(events.some((event) => event.startsWith("upload:")), false, `${surface}:${count}`);
+    assert.equal(mutationStarts, 0, `${surface}:${count}`);
+  }
+});
+
+test("Shopee SG exact create fails closed on incomplete, duplicate, or failed inventory reads", async () => {
+  const cases: Array<{
+    name: string;
+    merchantInventoryRequest?: (
+      path: string,
+      query: URLSearchParams,
+    ) => RemoteResponse | null;
+    shopInventoryRequest?: (
+      path: string,
+      query: URLSearchParams,
+    ) => RemoteResponse | null;
+    error: RegExp;
+  }> = [
+    {
+      name: "global transport failure",
+      merchantInventoryRequest: (path) => path.endsWith("get_global_item_list")
+        ? remote({ error: "system_error" }, 503)
+        : null,
+      error: /SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE/,
+    },
+    {
+      name: "global total missing",
+      merchantInventoryRequest: (path) => path.endsWith("get_global_item_list")
+        ? remote({ error: "", response: { global_item_list: [], has_next_page: false } })
+        : null,
+      error: /SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE/,
+    },
+    {
+      name: "global duplicate page identity",
+      merchantInventoryRequest: (path, query) => {
+        if (!path.endsWith("get_global_item_list")) return null;
+        const offset = Number(query.get("offset"));
+        const ids = offset === 0
+          ? Array.from({ length: 100 }, (_, index) => ({ global_item_id: 90_000 + index }))
+          : [{ global_item_id: 90_000 }];
+        return remote({
+          error: "",
+          response: { global_item_list: ids, total_count: 101, has_next_page: offset === 0 },
+        });
+      },
+      error: /SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE/,
+    },
+    {
+      name: "local page body missing",
+      shopInventoryRequest: (path) => path.endsWith("get_item_list")
+        ? remote({ error: "", response: { total_count: 0, has_next_page: false } })
+        : null,
+      error: /SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE/,
+    },
+    {
+      name: "local detail SKU missing",
+      shopInventoryRequest: (path, query) => {
+        if (path.endsWith("get_item_list")) {
+          const hasItem = query.get("item_status") === "UNLIST";
+          return remote({
+            error: "",
+            response: {
+              item: hasItem ? [{ item_id: 95_001 }] : [],
+              total_count: hasItem ? 1 : 0,
+              has_next_page: false,
+            },
+          });
+        }
+        return path.endsWith("get_item_base_info")
+          ? remote({ error: "", response: { item_list: [{ item_id: 95_001 }] } })
+          : null;
+      },
+      error: /SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE/,
+    },
+  ];
+  for (const fixture of cases) {
+    const events: string[] = [];
+    let mutationStarts = 0;
+    const candidate = input();
+    candidate.hooks.beginProviderMutation = async () => { mutationStarts += 1; };
+    await assert.rejects(
+      prepareShopeeGlobalListing(candidate, dependencies({
+        events,
+        merchantInventoryRequest: fixture.merchantInventoryRequest,
+        shopInventoryRequest: fixture.shopInventoryRequest,
+      })),
+      fixture.error,
+      fixture.name,
+    );
+    assert.equal(events.some((event) => event.startsWith("upload:")), false, fixture.name);
+    assert.equal(mutationStarts, 0, fixture.name);
+  }
+});
+
+test("Shopee SG exact create binds the provider-selected merchant and shop before every provider read", async () => {
+  for (const [name, mutate] of [
+    ["merchant", (value: PrepareProviderListingInput) => { value.credential.merchant_id = "5511565"; }],
+    ["shop", (value: PrepareProviderListingInput) => {
+      if (value.shopeeShopCredential) value.shopeeShopCredential.shop_id = "1719148845";
+    }],
+  ] as const) {
+    const candidate = input();
+    mutate(candidate);
+    const events: string[] = [];
+    await assert.rejects(
+      prepareShopeeGlobalListing(candidate, dependencies({ events })),
+      /SHOPEE_SG_EXACT_CREATE_PROVIDER_BINDING_MISMATCH/,
+      name,
+    );
+    assert.deepEqual(events, [], name);
+  }
+});
+
+test("Shopee SG exact create cannot use resume-only to bypass a fresh pre-media inventory scan", async () => {
+  const candidate = input();
+  candidate.arguments.resumeOnly = true;
+  let mutationStarts = 0;
+  candidate.hooks.beginProviderMutation = async () => { mutationStarts += 1; };
+  await assert.rejects(
+    prepareMarketplaceListingArguments(candidate),
+    /SHOPEE_SG_EXACT_CREATE_RESUME_REQUIRES_FRESH_PREFLIGHT/,
+  );
+  assert.equal(mutationStarts, 0);
 });
 
 test("Shopee SG falls back to buyer-visible extended description without dropping any approved detail image", async () => {
