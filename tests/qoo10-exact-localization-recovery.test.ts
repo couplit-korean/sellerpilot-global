@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
+  qoo10ExactForeignPriceCopyPresent,
   qoo10ExactLegacyRomanizedCopyPresent,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizedUpdate,
@@ -112,7 +113,13 @@ test("exact Qoo10 localization contract accepts only the reviewed Japanese copy 
   assert.equal(qoo10ExactLocalizedUpdate(exactArguments(), "9999999999"), null);
   assert.equal(qoo10ExactLegacyRomanizedCopyPresent(identity.legacyRomanizedName), true);
   assert.equal(qoo10ExactLegacyRomanizedCopyPresent("keibeul organizer"), true);
+  assert.equal(qoo10ExactLegacyRomanizedCopyPresent("色はgeomjeongsaekです。"), true);
   assert.equal(qoo10ExactLegacyRomanizedCopyPresent(identity.title), false);
+  assert.equal(qoo10ExactForeignPriceCopyPresent("価格は5000 KRWです。"), true);
+  assert.equal(qoo10ExactForeignPriceCopyPresent("価格は₩5,000です。"), true);
+  assert.equal(qoo10ExactForeignPriceCopyPresent("가격은 5,000원입니다."), true);
+  assert.equal(qoo10ExactForeignPriceCopyPresent("価格は5,000ウォンです。"), true);
+  assert.equal(qoo10ExactForeignPriceCopyPresent("販売価格は1,871円です。"), false);
 
   const legacyDetail = detailHtml.replace(
     "ケーブルをきれいに整理し",
@@ -122,6 +129,16 @@ test("exact Qoo10 localization contract accepts only the reviewed Japanese copy 
     () => qoo10ExactLocalizedUpdate(exactArguments(legacyDetail), identity.remoteId),
     /QOO10_EXACT_LOCALIZED_UPDATE_INVALID/,
   );
+  for (const residual of ["geomjeongsaek", "5000 KRW", "₩5,000", "5,000원", "5,000ウォン"]) {
+    assert.throws(
+      () => qoo10ExactLocalizedUpdate(
+        exactArguments(detailHtml.replace("購入前に", `${residual} 購入前に`)),
+        identity.remoteId,
+      ),
+      /QOO10_EXACT_LOCALIZED_UPDATE_INVALID/,
+      residual,
+    );
+  }
   const duplicateImageDetail = detailHtml.replace(detailImageUrls[7], detailImageUrls[6]);
   assert.throws(
     () => qoo10ExactLocalizedUpdate(exactArguments(duplicateImageDetail), identity.remoteId),
@@ -166,6 +183,10 @@ test("exact Qoo10 current-state verifier binds one S1 identity to the unchanged 
     readback("S1", { SellerCode: "" }),
     readback("S1", { SecondSubCatCd: "999999999" }),
     readback("S1", { ItemDetail: detailHtml.replace(detailImageUrls[7], "https://cdn.example.test/drift.jpg") }),
+    readback("S1", { ItemDetail: detailHtml.replace(
+      `${detailImageUrls[6]}"><img src="${detailImageUrls[7]}`,
+      `${detailImageUrls[7]}"><img src="${detailImageUrls[6]}`,
+    ) }),
     [readback("S1"), readback("S1")],
   ]) assert.equal(verifyQoo10ExactCurrentS1Readback({
     resultObject,

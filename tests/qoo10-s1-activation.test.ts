@@ -850,34 +850,43 @@ for (const [name, caseTitle, caseDetailHtml] of [
   });
 }
 
-test("exact Qoo10 activation rejects the residual romanized Korean source before provider access", async () => {
-  const legacyDetailHtml = `<section lang="ja-JP"><h1>${title}</h1><p>buchakhyeong keibeul jeongri keulrip 6gae seteu</p>${detailImageUrls
-    .map((url) => `<img src="${url}">`)
-    .join("")}</section>`;
-  const args = {
-    ...argumentsValue(),
-    params: {
-      ...argumentsValue().params,
-      ItemDescription: legacyDetailHtml,
-    },
-  };
-  assert.equal(qoo10S1ActivationArgumentsValid(args), false);
+for (const [name, residual] of [
+  ["romanized product name", "buchakhyeong keibeul jeongri keulrip 6gae seteu"],
+  ["romanized colour", "geomjeongsaek"],
+  ["source KRW price", "5000 KRW"],
+  ["source won symbol price", "₩5,000"],
+  ["source Hangul won price", "5,000원"],
+  ["source katakana won price", "5,000ウォン"],
+] as const) {
+  test(`exact Qoo10 activation rejects residual ${name} before provider access`, async () => {
+    const legacyDetailHtml = `<section lang="ja-JP"><h1>${title}</h1><p>${residual} 日本語の商品説明です。</p>${detailImageUrls
+      .map((url) => `<img src="${url}">`)
+      .join("")}</section>`;
+    const args = {
+      ...argumentsValue(),
+      params: {
+        ...argumentsValue().params,
+        ItemDescription: legacyDetailHtml,
+      },
+    };
+    assert.equal(qoo10S1ActivationArgumentsValid(args), false);
 
-  const originalFetch = globalThis.fetch;
-  let providerCalls = 0;
-  globalThis.fetch = async () => {
-    providerCalls += 1;
-    return Response.json({ ResultCode: 0 });
-  };
-  try {
-    const result = await operation("listing.activate", args);
-    assert.equal(result.ok, false);
-    assert.equal(result.steps[0]?.name, "qoo10-s1-activation-prewrite-fence");
-    assert.equal(providerCalls, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
+    const originalFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return Response.json({ ResultCode: 0 });
+    };
+    try {
+      const result = await operation("listing.activate", args);
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0]?.name, "qoo10-s1-activation-prewrite-fence");
+      assert.equal(providerCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
 
 test("serverless matrix exposes activation only for Qoo10 and Temu and rejects invalid context before the mutation fence", async () => {
   const channels: GatewayClaim["channel"][] = [

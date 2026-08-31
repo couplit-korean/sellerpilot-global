@@ -73,12 +73,32 @@ function localizationComparable(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "");
 }
 
+const qoo10ExactForbiddenRomanizedTokens = Object.freeze([
+  "buchakhyeong",
+  "keibeul",
+  "jeongri",
+  "keulrip",
+  "6gae",
+  "seteu",
+  // This colour label remained in the live S1 detail after the product-name
+  // repair. Keep the block scoped to the one exact recovery item instead of
+  // applying a speculative romanization dictionary to every Qoo10 listing.
+  "geomjeongsaek",
+]);
+
 export function qoo10ExactLegacyRomanizedCopyPresent(value: string) {
   const comparable = localizationComparable(value);
-  return qoo10ExactLocalizationRecoveryIdentity.legacyRomanizedName
-    .split(/\s+/u)
+  return qoo10ExactForbiddenRomanizedTokens
     .map(localizationComparable)
     .some((token) => token.length >= 4 && comparable.includes(token));
+}
+
+export function qoo10ExactForeignPriceCopyPresent(value: string) {
+  const normalized = value.normalize("NFKC").toLocaleLowerCase();
+  return /(?:^|[^a-z])krw(?:$|[^a-z])/u.test(normalized)
+    || normalized.includes("₩")
+    || /\d[\d,.\s]*\s*원/u.test(normalized)
+    || normalized.includes("ウォン");
 }
 
 export function qoo10ExactTargetCreateForbidden(argumentsValue: UnknownRecord) {
@@ -118,6 +138,7 @@ export function qoo10ExactLocalizedUpdate(
       || keyword !== qoo10ExactLocalizationRecoveryIdentity.sourceKeyword
       || !description.includes(qoo10ExactLocalizationRecoveryIdentity.title)
       || qoo10ExactLegacyRomanizedCopyPresent(legacyCopy)
+      || qoo10ExactForeignPriceCopyPresent(legacyCopy)
       || !listingPublicationLanguageVerified("ja-JP", title, "title")
       || !listingPublicationLanguageVerified("ja-JP", description, "description")
       || detailImageUrls.length !== 8
