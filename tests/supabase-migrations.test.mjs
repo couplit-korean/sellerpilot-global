@@ -61,6 +61,8 @@ const QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION =
   "20260831056800_allow_exact_qoo10_s1_verifier_overlap.sql";
 const QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION =
   "20260831056900_accept_exact_qoo10_heading_normalization.sql";
+const QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION =
+  "20260831057000_retire_stale_qoo10_s1_verifier.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -282,9 +284,17 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     .replace(/^create extension if not exists supabase_vault with schema vault;\s*$/gim, "")
     .replace(/^create extension if not exists pg_cron with schema pg_catalog;\s*$/gim, "")
     .replace(/^create extension if not exists pg_net with schema extensions;\s*$/gim, "");
-  if (!injectQoo10History || !normalized.includes(
+  if (!injectQoo10History) return normalized;
+  const isHeadingNormalization = normalized.includes(
     "exact Qoo10 heading-normalization migration history drifted",
-  )) return normalized;
+  );
+  const isStaleVerifierRetirement = normalized.includes(
+    "exact Qoo10 verifier retirement migration history drifted",
+  );
+  if (!isHeadingNormalization && !isStaleVerifierRetirement) return normalized;
+  const retirementPredecessor = isStaleVerifierRetirement
+    ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
+    : "";
   return `
     create schema if not exists supabase_migrations;
     create table if not exists supabase_migrations.schema_migrations (
@@ -295,7 +305,7 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     insert into supabase_migrations.schema_migrations(version,statements,name)
     values
       ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
-      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}
     on conflict (version) do nothing;
     ${normalized}
   `;
@@ -612,6 +622,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_S1_ACTIVATION_MIGRATION,
       QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION,
       QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION,
+      QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -670,6 +681,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         < migrationNames.indexOf(QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION),
       "Qoo10 heading normalization must replay after the verifier overlap repair",
     );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION),
+      "stale Qoo10 verifier retirement must replay after heading normalization",
+    );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
@@ -706,6 +722,21 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         await db.exec("rollback");
         await db.exec(
           "revoke all on function sellerpilot_private.qoo10_exact_item_matches_source(jsonb,jsonb,text) from authenticated",
+        );
+      }
+      if (name === QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION) {
+        await db.query(
+          "delete from supabase_migrations.schema_migrations where version = '20260831056900'",
+        );
+        await assert.rejects(
+          db.exec(withoutUnavailableExtensions(sql, { injectQoo10History: false })),
+          /migration history drifted/,
+          "stale verifier retirement must fail closed without heading-normalization history",
+        );
+        await db.exec("rollback");
+        await db.query(
+          `insert into supabase_migrations.schema_migrations(version,statements,name)
+           values ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')`,
         );
       }
       if (name === QOO10_SCOPED_GATE_MIGRATION) {
@@ -1189,6 +1220,50 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
             acl: "{postgres=X/postgres}",
           })),
           "heading normalization must leave the exact pinned private function postimage",
+        );
+      }
+      if (name === QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in (
+                '20260831056700','20260831056800','20260831056900','20260831057000'
+              )`,
+          ),
+          4,
+          "stale verifier retirement must be recorded after all exact S1 predecessors",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.channel_gateway_jobs
+              where id in (
+                'fac9c5c4-940d-4600-88f3-8f97a069dfbf'::uuid,
+                'ea191079-3016-4851-9f0c-4ce4281c1364'::uuid
+              )`,
+          ),
+          0,
+          "a clean replay must not synthesize production-only gateway jobs",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.qoo10_exact_s1_verifier_runs`,
+          ),
+          0,
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.operation_audit
+              where action = 'qoo10_s1_verifier_retired_for_recheck'`,
+          ),
+          0,
+          "a clean replay must not fabricate a production retirement audit",
         );
       }
     }
@@ -10016,6 +10091,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_S1_ACTIVATION_MIGRATION
         && name !== QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION
         && name !== QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION
+        && name !== QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -11693,6 +11769,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let shopeeStaticEgressMigration;
     let lazadaProviderMarkerMigration;
     let lazadaOauthReauthorizationMigration;
+    let qoo10StaleVerifierRetirementMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       if (name === legacyEbayDiagnosticMigrationName) {
@@ -11709,6 +11786,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         lazadaProviderMarkerMigration = source;
       } else if (name === lazadaOauthReauthorizationMigrationName) {
         lazadaOauthReauthorizationMigration = source;
+      } else if (name === QOO10_STALE_VERIFIER_RETIREMENT_MIGRATION) {
+        qoo10StaleVerifierRetirementMigration = source;
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -11720,6 +11799,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof shopeeStaticEgressMigration, "string");
     assert.equal(typeof lazadaProviderMarkerMigration, "string");
     assert.equal(typeof lazadaOauthReauthorizationMigration, "string");
+    assert.equal(typeof qoo10StaleVerifierRetirementMigration, "string");
     await attestPublicationRelease(db);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
@@ -12367,6 +12447,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
     await db.exec(withoutUnavailableExtensions(lazadaProviderMarkerMigration));
     await db.exec(withoutUnavailableExtensions(lazadaOauthReauthorizationMigration));
+    await db.exec(withoutUnavailableExtensions(qoo10StaleVerifierRetirementMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
       { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
