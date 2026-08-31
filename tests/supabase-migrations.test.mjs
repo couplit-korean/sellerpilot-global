@@ -105,6 +105,8 @@ const SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION =
   "20260901070000_correct_smartstore_representative_filename.sql";
 const EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION =
   "20260901080000_allow_exact_existing_updates_through_closed_gate.sql";
+const QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION =
+  "20260901081000_initialize_qoo10_release_status_records.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -793,6 +795,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION,
       SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION,
       EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION,
+      QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -907,6 +910,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION)
         < migrationNames.indexOf(EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION),
       "Coupang, 11st, and eBay exact one-time permits must replay after the Smartstore representative filename correction",
+    );
+    assert.ok(
+      migrationNames.indexOf(EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION)
+        < migrationNames.indexOf(QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION),
+      "Qoo10 release status record initialization must replay after all 080000 exact permits",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -11962,6 +11970,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
         && name !== SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
         && name !== EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION
+        && name !== QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
@@ -13679,6 +13688,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
         || name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
         || name === EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION
+        || name === QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
