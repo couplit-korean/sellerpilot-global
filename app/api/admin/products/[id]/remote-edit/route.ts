@@ -22,6 +22,7 @@ import { coupangExactQaRecoveryCandidate } from "../../../../../../lib/channels/
 import { elevenstExactExistingPublicationCandidate } from "../../../../../../lib/channels/elevenst-exact-existing-publication";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
+import { lazadaExactExistingPublicationCandidate } from "../../../../../../lib/channels/lazada-exact-existing-identity";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -145,10 +146,24 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
     publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
     failureClass,
   });
+  const allowExactLazadaRecovery = lazadaExactExistingPublicationCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
   if (failureClass === "external_action"
       && !allowVerifiedLegacyEbayUpdate
       && !allowExactCoupangRecovery
-      && !allowExactElevenstRecovery) {
+      && !allowExactElevenstRecovery
+      && !allowExactLazadaRecovery) {
     return {
       status: 409,
       mode: "external_reconciliation_required",

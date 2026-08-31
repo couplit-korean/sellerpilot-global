@@ -93,6 +93,14 @@ function requestedSku(argumentsValue: UnknownRecord) {
   return { sellerSku, price, quantity };
 }
 
+export function lazadaRequestedUpdateSellerSku(argumentsValue: UnknownRecord) {
+  try {
+    return requestedSku(argumentsValue).sellerSku;
+  } catch {
+    return null;
+  }
+}
+
 export function lazadaRequestedUpdateQuantity(argumentsValue: UnknownRecord) {
   try {
     return requestedSku(argumentsValue).quantity;
@@ -115,6 +123,57 @@ function specialPrice(sku: UnknownRecord) {
   if (!raw) return 0;
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : Number.NaN;
+}
+
+function productsFromGetProducts(remoteData: UnknownRecord) {
+  const data = recordValue(remoteData.data);
+  const lowercaseContainer = recordValue(data.products);
+  const uppercaseContainer = recordValue(data.Products);
+  const value = Array.isArray(data.products)
+    ? data.products
+    : Array.isArray(data.Products)
+      ? data.Products
+      : lowercaseContainer.product
+        ?? lowercaseContainer.Product
+        ?? uppercaseContainer.product
+        ?? uppercaseContainer.Product;
+  return strictArray(value);
+}
+
+/**
+ * GetProducts is queried by the exact SellerSku before GetProductItem is
+ * trusted. This detects the dangerous case where the requested SellerSku is
+ * absent or resolves to a different/duplicate item under the current seller.
+ */
+export function assertLazadaExistingListingGetProductsPreflight(input: {
+  argumentsValue: UnknownRecord;
+  remoteData: UnknownRecord;
+}) {
+  const itemId = exactText(input.argumentsValue.itemId);
+  if (!/^\d+$/u.test(itemId)) throw new Error("LAZADA_UPDATE_ITEM_ID_REQUIRED");
+  const requested = requestedSku(input.argumentsValue);
+  const products = productsFromGetProducts(input.remoteData);
+  const matches = products.flatMap((product) => {
+    const remoteItemId = exactText(product.item_id ?? product.ItemId ?? product.itemId);
+    return lazadaSkuRows(product)
+      .filter((sku) => exactText(sku.SellerSku ?? sku.seller_sku) === requested.sellerSku)
+      .map((sku) => ({ remoteItemId, sku }));
+  });
+  if (products.length !== 1 || matches.length !== 1) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_IDENTITY_AMBIGUOUS");
+  }
+  if (matches[0]?.remoteItemId !== itemId) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_ITEM_ID_MISMATCH");
+  }
+  const skuId = remoteSkuId(matches[0].sku);
+  if (!/^\d+$/u.test(skuId)) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_SKU_IDENTITY_MISMATCH");
+  }
+  return {
+    itemId,
+    sellerSku: requested.sellerSku,
+    skuId,
+  };
 }
 
 /**

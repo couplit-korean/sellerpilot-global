@@ -12,6 +12,7 @@ import {
   elevenstExactExistingPublicationCandidate,
   elevenstExactExistingPublicationIdentity,
 } from "./elevenst-exact-existing-identity";
+import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
 import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 import {
   smartstoreExactQaRecoveryArgument,
@@ -362,6 +363,17 @@ export function listingUpdateServerCandidate(
       failureClass: listing.failureClass,
     })
     || smartstoreExactQaRecoveryCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    })
+    || lazadaExactExistingPublicationCandidate({
       channel,
       listingId: listing.listingId,
       remoteId: listing.remoteId,

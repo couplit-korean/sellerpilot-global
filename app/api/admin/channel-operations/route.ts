@@ -73,6 +73,12 @@ import {
 } from "../../../../lib/channels/listing-update";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
+import {
+  lazadaExactExistingCentralSkuVerified,
+  lazadaExactExistingCreateForbidden,
+  lazadaExactExistingPublicationCandidate,
+  lazadaExactExistingPublicationIdentity,
+} from "../../../../lib/channels/lazada-exact-existing-identity";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import {
   listingOperationRequiresVerifiedRemoteState,
@@ -289,6 +295,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       message: "이미 존재하는 스마트스토어 QA 상품은 신규 등록하지 않고 정확한 기존 원상품만 복구 수정해야 합니다.",
       mode: "smartstore_exact_existing_listing_update_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (channel === "lazada"
+      && operation === "listing.create"
+      && lazadaExactExistingCreateForbidden({
+        productId: parsed.data.productId,
+        market: parsed.data.market,
+        argumentsValue: parsed.data.arguments,
+      })) {
+    return NextResponse.json({
+      message: "이미 존재하는 정확한 Lazada MY 상품은 신규 등록하지 않고 기존 item만 검증·수정해야 합니다.",
+      mode: "lazada_exact_existing_duplicate_create_forbidden",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (operation === "listing.activate" && channel !== "temu") {
@@ -628,6 +646,32 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({
             message: "중앙 KRW 판매가·재고와 고정된 MYR 최종 금액의 근거가 일치하지 않아 Lazada 상품 수정을 차단했습니다.",
             mode: "lazada_krw_myr_price_policy_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        const exactLazada = lazadaExactExistingPublicationCandidate({
+          channel,
+          listingId: String(exactListing.id ?? ""),
+          remoteId: typeof exactListing.remoteId === "string" ? exactListing.remoteId : null,
+          status: String(exactListing.status ?? ""),
+          requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+            ? exactListing.requestedPublicationIntent
+            : null,
+          remoteVisibility: typeof exactListing.remoteVisibility === "string"
+            ? exactListing.remoteVisibility
+            : null,
+          providerStatus: typeof exactListing.providerStatus === "string" ? exactListing.providerStatus : null,
+          publishedAt: typeof exactListing.publishedAt === "string" ? exactListing.publishedAt : null,
+          failureClass: typeof exactListing.failureClass === "string" ? exactListing.failureClass : null,
+        });
+        if (exactLazada
+            && (productId !== lazadaExactExistingPublicationIdentity.productId
+              || !lazadaExactExistingCentralSkuVerified(contextRecord)
+              || centralCurrency !== lazadaExactExistingPublicationIdentity.sourceCurrency
+              || centralPrice !== lazadaExactExistingPublicationIdentity.sourcePriceKrw
+              || centralStock !== lazadaExactExistingPublicationIdentity.stock)) {
+          return NextResponse.json({
+            message: "Lazada MY 기존 상품의 중앙 SKU·5,000원·재고 1 결속을 확인하지 못해 수정하지 않았습니다.",
+            mode: "lazada_exact_existing_central_contract_required",
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
         boundListingCurrency = policy.targetCurrency;

@@ -93,6 +93,15 @@ function remoteProduct(category = CATEGORY_ID) {
   };
 }
 
+function remoteProducts(products: Array<Record<string, unknown>> = [
+  remoteProduct().data as Record<string, unknown>,
+]) {
+  return {
+    code: "0",
+    data: { products },
+  };
+}
+
 function remote(data: Record<string, unknown>) {
   return {
     response: new Response(JSON.stringify(data), {
@@ -123,7 +132,11 @@ function input(events: string[]): PrepareProviderListingInput {
   };
 }
 
-function dependencies(events: string[], options: { category?: string; leaf?: boolean } = {}): LazadaListingRuntimeDependencies {
+function dependencies(events: string[], options: {
+  category?: string;
+  leaf?: boolean;
+  products?: Array<Record<string, unknown>>;
+} = {}): LazadaListingRuntimeDependencies {
   let migrationIndex = 0;
   return {
     loadKrwPerMyr: async () => {
@@ -142,8 +155,18 @@ function dependencies(events: string[], options: { category?: string; leaf?: boo
       events.push(`validate:${String(url)}`);
       return new URL(String(url));
     },
-    lazadaRequest: async ({ path }) => {
+    lazadaRequest: async ({ path, params }) => {
       events.push(`request:${path}`);
+      if (path === "/products/get") {
+        assert.deepEqual(params, {
+          filter: "all",
+          sku_seller_list: JSON.stringify([SELLER_SKU]),
+          options: "1",
+          limit: "100",
+          offset: "0",
+        });
+        return remote(remoteProducts(options.products));
+      }
       if (path === "/product/item/get") return remote(remoteProduct(options.category));
       if (path === "/category/tree/get") {
         return remote({ code: "0", data: [{ category_id: CATEGORY_ID, leaf: options.leaf ?? true }] });
@@ -167,6 +190,7 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
   const events: string[] = [];
   const prepared = await prepareLazadaListing(input(events), dependencies(events));
   const firstMutation = events.indexOf("mutation");
+  assert.equal(firstMutation > events.indexOf("request:/products/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/product/item/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/category/tree/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/category/attributes/get"), true);
@@ -213,6 +237,38 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     quantity: 1,
     providerStatus: "ACTIVE",
   });
+});
+
+test("Lazada MY blocks absent or duplicate GetProducts SellerSku identity before every mutation", async () => {
+  const product = remoteProduct().data as Record<string, unknown>;
+  for (const products of [
+    [],
+    [product, { ...product, item_id: "14976038920" }],
+  ]) {
+    const events: string[] = [];
+    await assert.rejects(
+      prepareLazadaListing(input(events), dependencies(events, { products })),
+      /LAZADA_UPDATE_GET_PRODUCTS_IDENTITY_AMBIGUOUS/u,
+    );
+    assert.equal(events.includes("request:/products/get"), true);
+    assert.equal(events.some((event) => event.startsWith("validate:")), false);
+    assert.equal(events.includes("mutation"), false);
+    assert.equal(events.includes("request:/image/migrate"), false);
+  }
+});
+
+test("Lazada MY requires GetProducts and GetProductItem to return the same immutable SkuId", async () => {
+  const product = structuredClone(remoteProduct().data) as Record<string, unknown>;
+  const skus = product.skus as Array<Record<string, unknown>>;
+  skus[0].SkuId = "170000000002";
+  const events: string[] = [];
+  await assert.rejects(
+    prepareLazadaListing(input(events), dependencies(events, { products: [product] })),
+    /LAZADA_UPDATE_PRODUCTS_ITEM_SKU_ID_MISMATCH/u,
+  );
+  assert.equal(events.some((event) => event.startsWith("validate:")), false);
+  assert.equal(events.includes("mutation"), false);
+  assert.equal(events.includes("request:/image/migrate"), false);
 });
 
 test("Lazada MY category or leaf mismatch fails before image validation and every provider mutation", async () => {

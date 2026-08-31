@@ -7,12 +7,15 @@ import {
   replaceMarketplaceImageUrls,
 } from "./listing-normalization";
 import {
+  assertLazadaExistingListingGetProductsPreflight,
   assertLazadaExistingListingUpdatePreflight,
   bindLazadaExistingSkuToUpdateRequest,
   lazadaCategoryAttributeCount,
   lazadaCategoryTreeLeaf,
   lazadaPrimaryCategory,
+  lazadaRequestedUpdateSellerSku,
 } from "./lazada-listing-update";
+import { lazadaExactExistingCreateForbidden } from "./lazada-exact-existing-identity";
 import {
   assertLazadaKrwMyrPricePolicy,
   loadAuthoritativeKrwPerMyr,
@@ -748,6 +751,10 @@ export async function prepareLazadaListing(
   input: PrepareProviderListingInput,
   dependencies: LazadaListingRuntimeDependencies = lazadaListingRuntimeDependencies,
 ): Promise<UnknownRecord> {
+  if (input.operation === "listing.create"
+      && lazadaExactExistingCreateForbidden({ argumentsValue: input.arguments })) {
+    throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+  }
   const sources = lazadaBoundPublicationImageSources(input.arguments);
   if (!sources.migrationSources.length || !sources.representative) {
     throw new Error("LAZADA_LISTING_IMAGES_MISSING");
@@ -757,15 +764,30 @@ export async function prepareLazadaListing(
     const request = recordValue(recordValue(recordValue(input.arguments.request)?.Request)?.Product);
     const primaryCategory = lazadaPrimaryCategory(request ?? {});
     const itemId = String(input.arguments.itemId ?? "").trim();
+    const sellerSku = lazadaRequestedUpdateSellerSku(input.arguments);
     const country = String(input.arguments.country ?? textValue(input.credential, "country") ?? "")
       .trim()
       .toLowerCase();
     const languageCode = lazadaLanguageCode(country);
-    if (!/^\d+$/u.test(itemId) || !/^\d+$/u.test(primaryCategory) || !languageCode) {
+    if (!/^\d+$/u.test(itemId)
+        || !/^\d+$/u.test(primaryCategory)
+        || !sellerSku
+        || !languageCode) {
       throw new Error("LAZADA_UPDATE_PREFLIGHT_ARGUMENTS_INVALID");
     }
     await input.hooks.assertLeaseHealthy();
-    const [itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+    const [productsRemote, itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/products/get",
+        params: {
+          filter: "all",
+          sku_seller_list: JSON.stringify([sellerSku]),
+          options: "1",
+          limit: "100",
+          offset: "0",
+        },
+      }),
       dependencies.lazadaRequest({
         payload: input.credential,
         path: "/product/item/get",
@@ -783,6 +805,9 @@ export async function prepareLazadaListing(
       }),
       dependencies.loadKrwPerMyr(input.signal),
     ]);
+    if (!lazadaAccepted(productsRemote)) {
+      throw new Error("LAZADA_UPDATE_PRODUCTS_PREFLIGHT_FAILED");
+    }
     if (!lazadaAccepted(itemRemote)) throw new Error("LAZADA_UPDATE_ITEM_PREFLIGHT_FAILED");
     if (!lazadaAccepted(treeRemote)
         || !lazadaCategoryTreeLeaf(treeRemote.data, primaryCategory)) {
@@ -796,11 +821,18 @@ export async function prepareLazadaListing(
       argumentsValue: input.arguments,
       authoritativeRate,
     });
+    const productsPreflight = assertLazadaExistingListingGetProductsPreflight({
+      argumentsValue: input.arguments,
+      remoteData: productsRemote.data,
+    });
     const preflight = assertLazadaExistingListingUpdatePreflight({
       argumentsValue: input.arguments,
       remoteData: itemRemote.data,
       country,
     });
+    if (productsPreflight.skuId !== preflight.skuId) {
+      throw new Error("LAZADA_UPDATE_PRODUCTS_ITEM_SKU_ID_MISMATCH");
+    }
     preparedArguments = bindLazadaExistingSkuToUpdateRequest(input.arguments, preflight);
   }
 
