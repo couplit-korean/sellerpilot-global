@@ -7,6 +7,22 @@ import { qoo10DetailImageUrls } from "./qoo10-listing-create-preflight";
 
 export { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 
+export const qoo10ExactLocalizationUpdateArgument =
+  "sellerpilotQoo10ExactLocalization" as const;
+export const qoo10ExactLocalizationUpdateContract =
+  "qoo10_exact_localization_update_v2" as const;
+
+export type Qoo10ExactLocalizationUpdateBinding = {
+  status: "allowed";
+  contract: typeof qoo10ExactLocalizationUpdateContract;
+  productId: string;
+  listingId: string;
+  credentialId: string;
+  remoteId: string;
+  sellerSku: string;
+  releaseSha: string;
+};
+
 type UnknownRecord = Record<string, unknown>;
 
 function recordValue(value: unknown): UnknownRecord {
@@ -73,6 +89,83 @@ function localizationComparable(value: string) {
   return value.normalize("NFKC").toLocaleLowerCase().replace(/[^a-z0-9]+/gu, "");
 }
 
+function exactBindingKeys(value: UnknownRecord) {
+  const expected = new Set([
+    "status",
+    "contract",
+    "productId",
+    "listingId",
+    "credentialId",
+    "remoteId",
+    "sellerSku",
+    "releaseSha",
+  ]);
+  return Object.keys(value).length === expected.size
+    && Object.keys(value).every((key) => expected.has(key));
+}
+
+export function qoo10ExactLocalizationUpdateBinding(
+  argumentsValue: UnknownRecord,
+): Qoo10ExactLocalizationUpdateBinding | null {
+  const marker = recordValue(argumentsValue[qoo10ExactLocalizationUpdateArgument]);
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  if (!exactBindingKeys(marker)
+      || marker.status !== "allowed"
+      || marker.contract !== qoo10ExactLocalizationUpdateContract
+      || marker.productId !== identity.productId
+      || marker.listingId !== identity.listingId
+      || marker.credentialId !== identity.credentialId
+      || marker.remoteId !== identity.remoteId
+      || marker.sellerSku !== identity.sellerSku
+      || typeof marker.releaseSha !== "string"
+      || !/^[a-f0-9]{40}$/u.test(marker.releaseSha)) return null;
+  return structuredClone(marker) as Qoo10ExactLocalizationUpdateBinding;
+}
+
+export function bindQoo10ExactLocalizationUpdateArguments(
+  argumentsValue: UnknownRecord,
+  releaseSha: string,
+) {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  if (!/^[a-f0-9]{40}$/u.test(releaseSha)) {
+    throw new Error("QOO10_EXACT_LOCALIZATION_RELEASE_INVALID");
+  }
+  return {
+    ...argumentsValue,
+    [qoo10ExactLocalizationUpdateArgument]: {
+      status: "allowed",
+      contract: qoo10ExactLocalizationUpdateContract,
+      productId: identity.productId,
+      listingId: identity.listingId,
+      credentialId: identity.credentialId,
+      remoteId: identity.remoteId,
+      sellerSku: identity.sellerSku,
+      releaseSha,
+    } satisfies Qoo10ExactLocalizationUpdateBinding,
+  };
+}
+
+export function qoo10ExactReviewedJapaneseDetail(detailImageUrls: readonly string[]) {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  if (detailImageUrls.length !== 8
+      || new Set(detailImageUrls).size !== 8
+      || !detailImageUrls.every(safeHttpsUrl)) {
+    throw new Error("QOO10_EXACT_LOCALIZATION_IMAGES_REQUIRED");
+  }
+  return [
+    '<section lang="ja-JP">',
+    `<h1>${identity.title}</h1>`,
+    "<p>ケーブルをすっきり整理できる貼り付け式クリップの6個セットです。</p>",
+    `<p>販売価格は${identity.priceJpy.toLocaleString("ja-JP")}円です。購入前にサイズ、設置面、内容物をご確認ください。</p>`,
+    "</section>",
+    '<section data-sellerpilot-detail-images="true">',
+    ...detailImageUrls.map((url, index) => (
+      `<img src="${url.replaceAll("&", "&amp;").replaceAll('"', "&quot;")}" alt="商品詳細画像 ${index + 1}">`
+    )),
+    "</section>",
+  ].join("");
+}
+
 const qoo10ExactForbiddenRomanizedTokens = Object.freeze([
   "buchakhyeong",
   "keibeul",
@@ -122,6 +215,7 @@ export type Qoo10ExactLocalizedUpdate = {
 export function qoo10ExactLocalizedUpdate(
   argumentsValue: UnknownRecord,
   remoteId: string,
+  requireServerBinding = false,
 ): Qoo10ExactLocalizedUpdate | null {
   if (remoteId !== qoo10ExactLocalizationRecoveryIdentity.remoteId) return null;
   const params = recordValue(argumentsValue.params);
@@ -131,7 +225,16 @@ export function qoo10ExactLocalizedUpdate(
   const description = normalizedListingPublicationText(detailHtml);
   const detailImageUrls = qoo10DetailImageUrls(detailHtml);
   const legacyCopy = `${title}\n${keyword}\n${description}`;
-  if (exactText(params, ["ItemCode"]) !== qoo10ExactLocalizationRecoveryIdentity.remoteId
+  const exactV2Commerce = !requireServerBinding || (
+    Boolean(qoo10ExactLocalizationUpdateBinding(argumentsValue))
+    && exactText(params, ["RetailPrice"]) === String(qoo10ExactLocalizationRecoveryIdentity.priceJpy)
+    && exactText(params, ["ItemPrice"]) === String(qoo10ExactLocalizationRecoveryIdentity.priceJpy)
+    && exactText(params, ["ItemQty"]) === String(qoo10ExactLocalizationRecoveryIdentity.quantity)
+    && exactText(params, ["ShippingNo"]) === qoo10ExactLocalizationRecoveryIdentity.shippingNo
+    && exactText(params, ["PromotionName"]) === qoo10ExactLocalizationRecoveryIdentity.promotionName
+  );
+  if (!exactV2Commerce
+      || exactText(params, ["ItemCode"]) !== qoo10ExactLocalizationRecoveryIdentity.remoteId
       || exactText(params, ["SellerCode"]) !== qoo10ExactLocalizationRecoveryIdentity.sellerSku
       || exactText(params, ["SecondSubCat"]) !== qoo10ExactLocalizationRecoveryIdentity.categoryCode
       || title !== qoo10ExactLocalizationRecoveryIdentity.title

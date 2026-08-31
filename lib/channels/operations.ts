@@ -2092,6 +2092,7 @@ async function executeQoo10(input: ExecuteInput) {
       exactLocalizedUpdate = qoo10ExactLocalizedUpdateOrThrow(
         input.arguments,
         rollbackRecovery.remoteId,
+        true,
       );
       if (!exactLocalizedUpdate) throw new Error("QOO10_EXACT_LOCALIZED_UPDATE_INVALID");
     } catch {

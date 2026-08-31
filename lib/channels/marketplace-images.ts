@@ -625,6 +625,7 @@ function injectMarketplaceDetailImages(value: unknown, urls: string[], altTexts:
 
 export function renderQoo10DetailDescription(value: unknown, urls: string[], altTexts: string[] = [], roles: string[] = []) {
   const source = (typeof value === "string" ? value : "")
+    .replace(/<section\b[^>]*\bdata-sellerpilot-detail-images=(?:"true"|'true')[^>]*>[\s\S]*?<\/section>/gi, "")
     .replace(/<\/?section(?:\s[^>]*)?>/gi, (tag) => tag.startsWith("</") ? "</div>" : "<div>")
     .replace(/<dl(?:\s[^>]*)?>/gi, "<div>")
     .replace(/<\/dl>/gi, "</div>")

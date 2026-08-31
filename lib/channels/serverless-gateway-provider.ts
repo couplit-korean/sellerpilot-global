@@ -62,7 +62,12 @@ import {
   qoo10S1ActivationArgument,
   qoo10S1ActivationArgumentsValid,
 } from "./qoo10-listing-activation";
-import { qoo10ExactTargetCreateForbidden } from "./qoo10-exact-localization-recovery";
+import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizationUpdateBinding,
+  qoo10ExactTargetCreateForbidden,
+} from "./qoo10-exact-localization-recovery";
 import {
   temuActivationBinding,
   temuContainmentDiscoveryBinding,
@@ -647,6 +652,19 @@ export async function executeServerlessGatewayProviderJob(
       // create before credential refresh, media preparation, or the worker's
       // provider-mutation fence; only the exact bound update is recoverable.
       throw new Error("QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const qoo10ExactLocalizationMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      qoo10ExactLocalizationUpdateArgument,
+    );
+    const qoo10ExactLocalizationTarget = input.job.channel === "qoo10"
+      && input.job.operation === "listing.update"
+      && String((rawArguments.params as Record<string, unknown> | undefined)?.ItemCode ?? "")
+        === qoo10ExactLocalizationRecoveryIdentity.remoteId;
+    if ((qoo10ExactLocalizationMarkerSupplied || qoo10ExactLocalizationTarget)
+        && (!qoo10ExactLocalizationTarget
+          || !qoo10ExactLocalizationUpdateBinding(rawArguments))) {
+      throw new Error("QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
     }
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"

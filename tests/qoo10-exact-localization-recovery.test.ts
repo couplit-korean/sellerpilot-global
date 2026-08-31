@@ -5,6 +5,8 @@ import {
   qoo10ExactForeignPriceCopyPresent,
   qoo10ExactLegacyRomanizedCopyPresent,
   qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizationUpdateContract,
   qoo10ExactLocalizedUpdate,
   qoo10ExactTargetCreateForbidden,
   verifyQoo10ExactCurrentS1Readback,
@@ -44,6 +46,16 @@ const recoveryBinding = {
 
 function exactArguments(detail = detailHtml) {
   return {
+    [qoo10ExactLocalizationUpdateArgument]: {
+      status: "allowed",
+      contract: qoo10ExactLocalizationUpdateContract,
+      productId: identity.productId,
+      listingId: identity.listingId,
+      credentialId: identity.credentialId,
+      remoteId: identity.remoteId,
+      sellerSku: identity.sellerSku,
+      releaseSha: "c".repeat(40),
+    },
     [qoo10RollbackUpdateRecoveryArgument]: recoveryBinding,
     publicationIntent: "live",
     publicationStateContract: "verified_remote_state_v1",
@@ -59,7 +71,10 @@ function exactArguments(detail = detailHtml) {
       ProductionPlaceType: "2",
       ProductionPlace: "CN",
       RetailPrice: "1871",
+      ItemPrice: "1871",
+      ItemQty: "1",
       ShippingNo: "806971",
+      PromotionName: identity.promotionName,
       AvailableDateType: "0",
       AvailableDateValue: "3",
       AdultYN: "N",
@@ -85,6 +100,7 @@ function readback(status: "S1" | "S2", overrides: Record<string, unknown> = {}) 
     ShippingNo: "806971",
     ItemTitle: identity.title,
     Keyword: identity.providerKeyword,
+    PromotionName: identity.promotionName,
     ProductionPlaceType: "2",
     ProductionPlace: "CN",
     AdultYN: "N",
@@ -110,6 +126,7 @@ function operation(argumentsValue = exactArguments()) {
 
 test("exact Qoo10 localization contract accepts only the reviewed Japanese copy and eight distinct HTTPS images", () => {
   assert.equal(qoo10ExactLocalizedUpdate(exactArguments(), identity.remoteId)?.detailImageUrls.length, 8);
+  assert.equal(qoo10ExactLocalizedUpdate(exactArguments(), identity.remoteId, true)?.detailImageUrls.length, 8);
   assert.equal(qoo10ExactLocalizedUpdate(exactArguments(), "9999999999"), null);
   assert.equal(qoo10ExactLegacyRomanizedCopyPresent(identity.legacyRomanizedName), true);
   assert.equal(qoo10ExactLegacyRomanizedCopyPresent("keibeul organizer"), true);

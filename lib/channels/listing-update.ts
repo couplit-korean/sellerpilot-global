@@ -13,6 +13,7 @@ import {
   elevenstExactExistingPublicationIdentity,
 } from "./elevenst-exact-existing-identity";
 import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
+import { qoo10ExactLocalizationUpdateArgument } from "./qoo10-exact-localization-recovery";
 import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-identity";
 import {
   smartstoreExactQaRecoveryArgument,
@@ -819,6 +820,10 @@ export function prepareListingUpdateArguments(
     if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
         && sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku) {
       params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
+      if (Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
+        params.ItemPrice = sourceParams.ItemPrice;
+        params.ItemQty = sourceParams.ItemQty;
+      }
     }
     // Qoo10 rehosts representative images. A rollback recovery must preserve
     // the already confirmed remote CDN image instead of triggering another
@@ -827,6 +832,7 @@ export function prepareListingUpdateArguments(
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, qoo10RollbackUpdateRecoveryArgument),
+      ...optionalArgument(createArguments, qoo10ExactLocalizationUpdateArgument),
       params,
     };
   }

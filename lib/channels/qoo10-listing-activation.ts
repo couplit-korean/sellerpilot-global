@@ -54,6 +54,7 @@ export type Qoo10S1ActivationBinding = {
   sourceJobId: string;
   verifierJobId: string;
   verifierResponseSha256: string;
+  sourceRequestFingerprint?: string;
   verifierCompletedAt: string;
   expectedState: {
     categoryCode: string;
@@ -143,7 +144,7 @@ export function qoo10S1ActivationBinding(argumentsValue: ActivationArguments): Q
     "verifierJobId", "verifierResponseSha256", "verifierCompletedAt", "expectedState",
     "expectedTitle", "expectedKeyword", "expectedPromotionName", "expectedIndustrialCode",
     "expectedDetailHtmlSha256", "expectedDetailImageUrls",
-  ], ["expectedSellerCode"])) return null;
+  ], ["expectedSellerCode", "sourceRequestFingerprint"])) return null;
 
   const expected = recordValue(marker.expectedState);
   const images = marker.expectedDetailImageUrls;
@@ -159,6 +160,8 @@ export function qoo10S1ActivationBinding(argumentsValue: ActivationArguments): Q
       || !uuid(marker.verifierJobId)
       || !exactString(marker.remoteId, /^\d{9,10}$/u, 10)
       || !sha256(marker.verifierResponseSha256)
+      || (marker.sourceRequestFingerprint !== undefined
+        && !sha256(marker.sourceRequestFingerprint))
       || !isoTimestamp(marker.verifierCompletedAt)
       || !exactString(expected.categoryCode, /^\d{9}$/u, 9)
       || !positiveInteger(expected.retailPriceJpy, 999_999_999)

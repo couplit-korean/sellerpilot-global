@@ -33,6 +33,11 @@ import {
 } from "../../../../lib/channels/ebay-exact-existing-qa-recovery";
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
+  bindQoo10ExactLocalizationUpdateArguments,
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+} from "../../../../lib/channels/qoo10-exact-localization-recovery";
+import {
   bindShopeeSgListingCreateArguments,
   buildShopeeSgListingCreateContext,
   loadAuthoritativeKrwSgdUsdRate,
@@ -544,6 +549,8 @@ export async function POST(request: NextRequest) {
   let boundEbayExactExistingQaRecovery: EbayExactExistingQaRecoveryBinding | null = null;
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
+  let boundQoo10ExactLocalizationUpdate = false;
+  let qoo10ExactLocalizationUpdatePermitArmed = false;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
@@ -850,7 +857,7 @@ export async function POST(request: NextRequest) {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
         "sellerpilot_service_get_qoo10_rollback_update_identity",
         {
-          p_listing_id: resourceListingId,
+          p_listing_id: parsed.data.resourceListingId,
           p_credential_id: parsed.data.credentialId,
           p_product_id: productId,
           p_market: parsed.data.market,
@@ -868,6 +875,25 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
       boundQoo10RollbackUpdateRecovery = identity.data;
+      const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
+      const exactQoo10LocalizationTarget = productId === exactIdentity.productId
+        && resourceListingId === exactIdentity.listingId
+        && parsed.data.credentialId === exactIdentity.credentialId
+        && requestedRemoteId === exactIdentity.remoteId;
+      if (exactQoo10LocalizationTarget) {
+        if (boundListingCurrency !== exactIdentity.currency
+            || boundListingPrice !== exactIdentity.priceJpy
+            || identity.data.expectedState.sellPriceJpy !== exactIdentity.priceJpy
+            || identity.data.expectedState.retailPriceJpy !== exactIdentity.priceJpy
+            || identity.data.expectedState.quantity !== exactIdentity.quantity
+            || identity.data.expectedState.shippingNo !== exactIdentity.shippingNo) {
+          return NextResponse.json({
+            message: "Qoo10 exact 상품의 JPY 1,871·재고 1·배송그룹 결속이 원장과 일치하지 않아 현지화 수정을 시작하지 않았습니다.",
+            mode: "qoo10_exact_localization_commerce_contract_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundQoo10ExactLocalizationUpdate = true;
+      }
     }
     if (operation === "listing.update"
         && channel === "elevenst"
@@ -1058,6 +1084,7 @@ export async function POST(request: NextRequest) {
     temuActivationSourceArguments ?? parsed.data.arguments,
   );
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
+  delete effectiveArguments[qoo10ExactLocalizationUpdateArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
@@ -1069,6 +1096,19 @@ export async function POST(request: NextRequest) {
         ...boundQoo10RollbackUpdateRecovery,
         contract: qoo10RollbackUpdateRecoveryContract,
       },
+    );
+  }
+  if (boundQoo10ExactLocalizationUpdate) {
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
+    if (runtimeRelease.status !== "valid") {
+      return NextResponse.json({
+        message: "Qoo10 exact 현지화 요청을 현재 서버 릴리스에 결속하지 못해 시작하지 않았습니다.",
+        mode: "qoo10_exact_localization_release_required",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = bindQoo10ExactLocalizationUpdateArguments(
+      effectiveArguments,
+      runtimeRelease.release,
     );
   }
   if (boundCoupangExactQaRecoveryPhase) {
@@ -1416,13 +1456,44 @@ export async function POST(request: NextRequest) {
         mode: "listing_mutation_release_gate_unavailable",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    if (boundQoo10ExactLocalizationUpdate && closedReleaseGateIsExact) {
+      if (runtimeRelease.status !== "valid") {
+        return NextResponse.json({
+          message: "Qoo10 exact 현지화 갱신을 현재 서버 릴리스에 결속하지 못했습니다.",
+          mode: "qoo10_exact_localization_release_required",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: permitData, error: permitError } = await serviceClient.rpc(
+        "sellerpilot_service_arm_exact_qoo10_localization_update",
+        {
+          p_listing_id: parsed.data.resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_release_sha: runtimeRelease.release,
+          p_request_fingerprint: requestFingerprint,
+        },
+      );
+      qoo10ExactLocalizationUpdatePermitArmed = !permitError
+        && isRecord(permitData)
+        && permitData.contract === "qoo10_exact_localization_update_permit_v2"
+        && permitData.listingId === parsed.data.resourceListingId
+        && permitData.releaseSha === runtimeRelease.release
+        && permitData.requestFingerprint === requestFingerprint
+        && permitData.bound === false;
+      if (!qoo10ExactLocalizationUpdatePermitArmed) {
+        return NextResponse.json({
+          message: "Qoo10 exact 일본어 갱신의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
+          mode: "qoo10_exact_localization_update_permit_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
     const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
       && (globalReleaseGateIsExact
         ? releaseGateStatus.effectiveOpen === true
         : channel === "qoo10"
           && qoo10ScopedReleaseGateIsExact
           && releaseGateStatus.qoo10EffectiveOpen === true);
-    if (!channelReleaseGateIsEffective) {
+    if (!channelReleaseGateIsEffective
+        && !qoo10ExactLocalizationUpdatePermitArmed) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",

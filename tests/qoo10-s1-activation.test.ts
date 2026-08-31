@@ -960,6 +960,35 @@ test("serverless worker rejects the exact Qoo10 duplicate create before credenti
   assert.deepEqual(events, []);
 });
 
+test("serverless worker rejects an unbound exact Qoo10 localization update before credentials or provider calls", async () => {
+  const events: string[] = [];
+  const job: GatewayClaim = {
+    id: "64000000-0000-4000-8000-000000000001",
+    claim_token: "65000000-0000-4000-8000-000000000001",
+    credential_id: "66000000-0000-4000-8000-000000000001",
+    channel: "qoo10",
+    operation: "listing.update",
+    environment: "production",
+    request: { arguments: { params: { ItemCode: remoteId } } },
+    credential: { api_key: "private-test-key" },
+    attempt_count: 1,
+  };
+  await assert.rejects(executeServerlessGatewayProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginCredentialMutation: async () => { events.push("credential"); },
+      stageCredentialRefresh: async () => { events.push("stage"); },
+      beginProviderMutation: async () => { events.push("mutation"); },
+    },
+  }, async () => {
+    events.push("provider");
+    throw new Error("provider must not execute");
+  }), /QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED/);
+  assert.deepEqual(events, []);
+});
+
 test("valid serverless activation crosses one mutation fence before its sole write and post-readback", async () => {
   const originalFetch = globalThis.fetch;
   const events: string[] = [];

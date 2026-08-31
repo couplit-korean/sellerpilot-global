@@ -6,6 +6,10 @@ import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactReviewedJapaneseDetail,
+} from "../lib/channels/qoo10-exact-localization-recovery";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
   marketplaceMinimumThumbnailCount,
@@ -444,6 +448,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     const productionPlace = qoo10ProductionPlaceFields(manual.countryOfOrigin);
+    const exactLocalizationUpdate = product.id === qoo10ExactLocalizationRecoveryIdentity.productId
+      && existingListing?.id === qoo10ExactLocalizationRecoveryIdentity.listingId
+      && existingListing.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
+      && qoo10RollbackListingUpdateCandidate(channel, existingListing);
+    const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
     return {
       sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
       params: {
@@ -452,27 +461,38 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: marketplaceTitle,
-        PromotionName: marketplaceShortDescription.slice(0, 20),
-        SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
+        ItemTitle: exactLocalizationUpdate ? exactIdentity.title : marketplaceTitle,
+        PromotionName: exactLocalizationUpdate
+          ? exactIdentity.promotionName
+          : marketplaceShortDescription.slice(0, 20),
+        SellerCode: exactLocalizationUpdate
+          ? exactIdentity.sellerSku
+          : qoo10SellerCode(
+              product.sku,
+              existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined,
+            ),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
         IndustrialCodeType: manual.gtinStatus === "HAS_GTIN" ? "J" : "",
         ...productionPlace,
         AdultYN: "N",
         ContactTel: "",
         StandardImage: sourceImage,
-        ItemDescription: richDescription,
+        ItemDescription: exactLocalizationUpdate
+          ? qoo10ExactReviewedJapaneseDetail(detailImageUrls)
+          : richDescription,
         AdditionalOption: "",
         ItemType: "",
-        RetailPrice: String(channelPrice),
-        ItemPrice: String(channelPrice),
+        RetailPrice: String(exactLocalizationUpdate ? exactIdentity.priceJpy : channelPrice),
+        ItemPrice: String(exactLocalizationUpdate ? exactIdentity.priceJpy : channelPrice),
         TaxRate: "S",
-        ItemQty: String(quantity),
+        ItemQty: String(exactLocalizationUpdate ? exactIdentity.quantity : quantity),
         ExpireDate: qoo10ExpiryDate(),
-        ShippingNo: "0",
+        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : "0",
         AvailableDateType: "0",
         AvailableDateValue: "3",
-        Keyword: seoKeywords.join(",").slice(0, 300),
+        Keyword: exactLocalizationUpdate
+          ? exactIdentity.sourceKeyword
+          : seoKeywords.join(",").slice(0, 300),
       },
     };
   }
