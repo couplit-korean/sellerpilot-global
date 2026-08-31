@@ -370,6 +370,16 @@ test("Lazada MY existing-product draft replaces the global USD default with the 
     market: "MY",
     categoryId: "10100205",
   }];
+  context.localizedListings = [{
+    channel: "lazada",
+    market: "MY",
+    locale: "ms-MY",
+    title: "Klip pengurusan kabel pelekat 6 keping",
+    shortDescription: "Set klip untuk menyusun kabel dengan kemas di ruang kerja.",
+    description: "Set enam klip pelekat untuk membantu menyusun kabel dengan kemas di meja atau ruang kerja.",
+    keywords: ["klip kabel", "pengurusan kabel", "ruang kerja"],
+    thumbnailAltText: "Set klip pengurusan kabel pelekat 6 keping",
+  }];
   context.listings = [{
     id: "22222222-2222-4222-8222-222222222222",
     channel: "lazada",
