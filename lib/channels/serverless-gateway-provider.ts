@@ -68,6 +68,7 @@ import {
   elevenstExactExistingPublicationBinding,
   elevenstExactExistingUpdateTarget,
 } from "./elevenst-exact-existing-publication";
+import { lazadaExactExistingCreateForbidden } from "./lazada-exact-existing-identity";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -585,6 +586,11 @@ export async function executeServerlessGatewayProviderJob(
         && input.job.operation === "listing.create"
         && elevenstExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
       throw new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    if (input.job.channel === "lazada"
+        && input.job.operation === "listing.create"
+        && lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
     }
     if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
         && (input.job.channel !== "elevenst"

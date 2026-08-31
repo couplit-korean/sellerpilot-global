@@ -83,6 +83,16 @@ test("admin route rejects the exact Lazada duplicate before credential or gatewa
     /lazada_exact_existing_duplicate_create_forbidden/u);
 });
 
+test("serverless gateway rejects a stale exact create before OAuth preparation", () => {
+  const source = readFileSync(
+    new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url),
+    "utf8",
+  );
+  const fence = source.indexOf("lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })");
+  assert.equal(fence > source.indexOf("const rawArguments = requestArguments"), true);
+  assert.equal(fence < source.indexOf("const preparedCredential = await prepareCredential"), true);
+});
+
 test("Lazada exact duplicate create fails before image validation or a provider request", async () => {
   const events: string[] = [];
   const dependencies: LazadaListingRuntimeDependencies = {
