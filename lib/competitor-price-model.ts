@@ -172,6 +172,8 @@ export type CompetitorCandidateV3Input = {
 
 type NormalizedQuantity = CompetitorQuantity & {
   dimension: "mass" | "volume" | "length" | "count" | "storage";
+  /** Original parsed unit retained only for conservative metric/imperial equivalence. */
+  sourceUnit?: string;
 };
 
 const quantityUnitDefinitions: ReadonlyArray<{
@@ -181,9 +183,12 @@ const quantityUnitDefinitions: ReadonlyArray<{
   aliases: readonly string[];
 }> = [
   { dimension: "mass", canonicalUnit: "g", factor: 1_000, aliases: ["kg", "kilogram", "kilograms", "킬로그램", "キログラム", "公斤", "千克"] },
+  { dimension: "mass", canonicalUnit: "g", factor: 453.59237, aliases: ["lb", "lbs", "pound", "pounds"] },
+  { dimension: "mass", canonicalUnit: "g", factor: 28.349523125, aliases: ["oz", "ounce", "ounces"] },
   { dimension: "mass", canonicalUnit: "g", factor: 1, aliases: ["g", "gram", "grams", "그램", "グラム", "克"] },
   { dimension: "mass", canonicalUnit: "g", factor: 0.001, aliases: ["mg", "milligram", "milligrams", "밀리그램", "ミリグラム", "毫克"] },
   { dimension: "volume", canonicalUnit: "ml", factor: 1_000, aliases: ["l", "liter", "liters", "litre", "litres", "리터", "リットル", "公升", "升"] },
+  { dimension: "volume", canonicalUnit: "ml", factor: 29.5735295625, aliases: ["fl oz", "floz", "fluid ounce", "fluid ounces"] },
   { dimension: "volume", canonicalUnit: "ml", factor: 1, aliases: ["ml", "milliliter", "milliliters", "millilitre", "millilitres", "밀리리터", "ミリリットル", "毫升"] },
   { dimension: "length", canonicalUnit: "mm", factor: 1_000, aliases: ["m", "meter", "meters", "metre", "metres", "미터", "メートル"] },
   { dimension: "length", canonicalUnit: "mm", factor: 10, aliases: ["cm", "centimeter", "centimeters", "센티미터", "センチメートル"] },
@@ -197,8 +202,10 @@ const quantityUnitDefinitions: ReadonlyArray<{
     canonicalUnit: "count",
     factor: 1,
     aliases: [
-      "count", "unit", "units", "item", "items", "piece", "pieces", "pc", "pcs", "ea", "pack", "packs",
-      "개", "개입", "입", "팩", "세트", "묶음", "병", "個", "個入", "本", "瓶", "パック", "セット",
+      "count", "ct", "unit", "units", "item", "items", "piece", "pieces", "pc", "pcs", "ea", "pack", "packs", "pk",
+      "bottle", "bottles", "tube", "tubes", "can", "cans", "jar", "jars", "box", "boxes", "bag", "bags",
+      "개", "개입", "입", "팩", "세트", "묶음", "병", "캔", "통", "박스", "봉",
+      "個", "個入", "本", "瓶", "缶", "箱", "袋", "パック", "セット", "罐", "盒",
     ],
   },
 ];
@@ -206,9 +213,13 @@ const quantityUnitDefinitions: ReadonlyArray<{
 const quantityUnitLookup = new Map(quantityUnitDefinitions.flatMap((definition) => (
   definition.aliases.map((alias) => [normalizeLooseText(alias).replaceAll(" ", ""), definition] as const)
 )));
-const explicitQuantityUnitPattern = [...quantityUnitLookup.keys()]
+const imperialQuantityUnitKeys = new Set([
+  "lb", "lbs", "pound", "pounds", "oz", "ounce", "ounces", "floz", "fluidounce", "fluidounces",
+]);
+const explicitQuantityUnitPattern = [...new Set(quantityUnitDefinitions.flatMap((definition) => definition.aliases)
+  .map((alias) => normalizeLooseText(alias)))]
   .sort((left, right) => right.length - left.length)
-  .map(escapeRegExp)
+  .map((alias) => alias.split(" ").map(escapeRegExp).join("\\s*"))
   .join("|");
 
 function escapeRegExp(value: string) {
@@ -264,7 +275,13 @@ function sameQuantity(left: CompetitorQuantity | null | undefined, right: Compet
   const normalizedLeft = normalizeCompetitorQuantity(left);
   const normalizedRight = normalizeCompetitorQuantity(right);
   if (!normalizedLeft || !normalizedRight || normalizedLeft.dimension !== normalizedRight.dimension) return false;
-  const tolerance = Math.max(0.000_001, Math.abs(normalizedLeft.value) * 0.000_001);
+  const leftUnit = normalizeLooseText((left as NormalizedQuantity | null | undefined)?.sourceUnit ?? left?.unit).replaceAll(" ", "");
+  const rightUnit = normalizeLooseText((right as NormalizedQuantity | null | undefined)?.sourceUnit ?? right?.unit).replaceAll(" ", "");
+  const crossesMetricImperialBoundary = imperialQuantityUnitKeys.has(leftUnit) !== imperialQuantityUnitKeys.has(rightUnit);
+  // Marketplace labels commonly round 12 fl oz to 355 ml or 1 lb to 454 g.
+  // Permit that documented unit-system conversion only; two metric labels such
+  // as 150 ml and 151 ml remain a hard mismatch.
+  const tolerance = Math.max(0.000_001, Math.abs(normalizedLeft.value) * (crossesMetricImperialBoundary ? 0.01 : 0.000_001));
   return Math.abs(normalizedLeft.value - normalizedRight.value) <= tolerance;
 }
 
@@ -280,14 +297,18 @@ function parseLocalizedNumber(value: string) {
 }
 
 function explicitQuantities(value: string) {
-  const normalized = String(value ?? "").normalize("NFKC").toLocaleLowerCase();
+  const normalized = String(value ?? "")
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/\bfl\.\s*oz\.?/giu, "fl oz");
   const quantities: NormalizedQuantity[] = [];
-  const pattern = new RegExp(`(?<![\\p{L}\\p{N}])(\\d[\\d.,]*)\\s*(${explicitQuantityUnitPattern})(?![\\p{L}\\p{N}])`, "giu");
+  const pattern = new RegExp(`(?<![\\p{Script=Latin}\\p{N}])(\\d[\\d.,]*)\\s*-?\\s*(${explicitQuantityUnitPattern})(?![\\p{L}\\p{N}])`, "giu");
   for (const match of normalized.matchAll(pattern)) {
     const amount = parseLocalizedNumber(match[1] ?? "");
     if (amount === null) continue;
     const unit = normalizeLooseText(match[2] ?? "").replaceAll(" ", "");
-    const quantity = normalizeCompetitorQuantity({ value: amount, unit });
+    const normalizedQuantity = normalizeCompetitorQuantity({ value: amount, unit });
+    const quantity = normalizedQuantity ? { ...normalizedQuantity, sourceUnit: unit } : null;
     if (quantity && !quantities.some((candidate) => candidate.dimension === quantity.dimension && candidate.value === quantity.value)) quantities.push(quantity);
   }
   return quantities;
@@ -301,7 +322,11 @@ function explicitItemCount(value: string) {
     /(?:^|[^\d])\d[\d.,]*\s*(?:kg|g|mg|l|ml)\s*[x×*]\s*(\d{1,4})(?!\d)/iu,
     /(?:^|[^\d])(\d{1,4})\s*[x×*]\s*\d[\d.,]*\s*(?:kg|g|mg|l|ml)(?![\p{L}\p{N}])/iu,
     /\b(?:set|pack|lot)\s+of\s+(\d{1,4})\b/iu,
+    /\b(?:case|box|carton|tray)\s+of\s+(\d{1,4})\b/iu,
+    /\b(?:pack|case|box|carton|tray)\s*[x×*]\s*(\d{1,4})\b/iu,
+    /(?:^|\s)[a-z0-9._-]*\d[a-z0-9._-]*\s+(?:x|×|\*)\s*(\d{1,4})(?![\p{L}\p{N}])/iu,
     /(?:^|[^\d])(\d{1,4})\s*(?:本|瓶|個|개|병)(?=\s*(?:セット|세트|묶음|組|入り|입|$))/iu,
+    /(?:^|[^\d])(\d{1,4})\s*件套(?![\p{L}\p{N}])/iu,
   ];
   for (const pattern of patterns) {
     const count = Number(normalized.match(pattern)?.[1]);
@@ -309,6 +334,9 @@ function explicitItemCount(value: string) {
   }
   const bonus = normalized.match(/(?<!\d)(\d{1,3})\s*\+\s*(\d{1,3})(?!\d)/u);
   if (bonus) return Number(bonus[1]) + Number(bonus[2]);
+  const buyGet = normalized.match(/(?:^|\s)buy\s+(\d{1,3})\s+get\s+(\d{1,3})(?:\s|$)/iu);
+  if (buyGet) return Number(buyGet[1]) + Number(buyGet[2]);
+  if (/(?:^|\s)(?:bogo|buy one get one)(?:\s|$)/iu.test(normalized)) return 2;
   return null;
 }
 
@@ -319,13 +347,19 @@ function explicitSpecification(value: string) {
 function multipliedQuantity(quantity: CompetitorQuantity | null, count: number | null) {
   const normalized = normalizeCompetitorQuantity(quantity);
   if (!normalized || !count || !Number.isInteger(count) || count <= 0) return null;
-  return { value: rounded(normalized.value * count), unit: normalized.unit } satisfies CompetitorQuantity;
+  const sourceUnit = (quantity as NormalizedQuantity | null)?.sourceUnit;
+  return {
+    dimension: normalized.dimension,
+    value: rounded(normalized.value * count),
+    unit: normalized.unit,
+    ...(sourceUnit ? { sourceUnit } : {}),
+  } satisfies NormalizedQuantity;
 }
 
 function explicitPackageType(value: string, count: number | null): CompetitorPackageType | undefined {
   const normalized = normalizeLooseText(value);
   if ((count ?? 0) > 1
-      || /(?:^|\s)(?:bundle|multipack|multi pack|set of|pack of|묶음|세트|번들|セット|セット品|まとめ買い|组合装|組合裝)(?:\s|$)/iu.test(normalized)
+      || /(?:^|\s)(?:bundle|multipack|multi pack|duo|twin pack|double pack|value pack|family pack|bulk pack|case of|set of|pack of|bogo|buy one get one|묶음|세트|번들|セット|セット品|まとめ買い|组合装|組合裝)(?:\s|$)/iu.test(normalized)
       || /\d+\s*\+\s*\d+/u.test(normalized)
       || /\d{1,4}\s*(?:本|瓶|個|개|병)\s*(?:セット|세트|묶음|組|入り|입)/iu.test(normalized)) return "bundle";
   if (count === 1 || /(?:^|\s)(?:single|single item|단품|낱개|単品)(?:\s|$)/iu.test(normalized)) return "single";
@@ -334,24 +368,41 @@ function explicitPackageType(value: string, count: number | null): CompetitorPac
 
 function explicitContentType(value: string): CompetitorContentType | undefined {
   const normalized = normalizeLooseText(value);
-  if (/(?:^|\s)(?:refill|refil|리필|詰め替え|リフィル|补充装|補充裝)(?:\s|$)/iu.test(normalized)) return "refill";
-  if (/(?:^|\s)(?:sample|tester|trial size|샘플|테스터|サンプル|小样|小樣)(?:\s|$)/iu.test(normalized)) return "sample";
-  if (/(?:^|\s)(?:main product|full size|본품|정품 본품|現品)(?:\s|$)/iu.test(normalized)) return "main";
+  if (/(?:^|\s)(?:refill(?: pouch| pack)?|refil)(?:\s|$)/iu.test(normalized)
+      || /리필(?:용|팩|제품|상품)?/u.test(normalized)
+      || /(?:詰め替え|詰替え?|リフィル)(?:用|パック)?/u.test(normalized)
+      || /(?:补充装|補充裝)/u.test(normalized)) return "refill";
+  if (/(?:^|\s)(?:sample|tester|trial size|sample size)(?:\s|$)/iu.test(normalized)
+      || /(?:샘플|테스터)(?:용|품|제품)?/u.test(normalized)
+      || /(?:サンプル|お試し)(?:品|用)?/u.test(normalized)
+      || /(?:小样|小樣)/u.test(normalized)) return "sample";
+  if (/(?:^|\s)(?:main product|full size)(?:\s|$)/iu.test(normalized)
+      || /(?:본품|정품본품|現品)/u.test(normalized)) return "main";
   return undefined;
 }
 
 function explicitCondition(value: string): CompetitorProductCondition | undefined {
   const normalized = normalizeLooseText(value);
-  if (/(?:^|\s)(?:refurbished|refurb|remanufactured|renewed|certified renewed|seller renewed|리퍼|리퍼비시|재생품|整備済み)(?:\s|$)/iu.test(normalized)) return "refurbished";
-  if (/(?:^|\s)(?:used|pre owned|second hand|open box|opened box|box opened|display model|floor model|customer return|returned item|중고|개봉품|전시상품|전시품|반품상품|반품품|中古|開封済み|展示品|返品)(?:\s|$)/iu.test(normalized)) return "used";
-  if (/(?:^|\s)(?:brand new|new item|new in box|new sealed|factory sealed|unopened|새상품|새제품|신품|미개봉|新品|未開封)(?:\s|$)/iu.test(normalized)) return "new";
+  if (/(?:^|\s)(?:refurbished|refurb|remanufactured|renewed|certified renewed|seller renewed)(?:\s|$)/iu.test(normalized)
+      || /(?:리퍼비시|리퍼|재생품)(?:제품|상품|품)?/u.test(normalized)
+      || /整備済み?/u.test(normalized)) return "refurbished";
+  if (/(?:^|\s)(?:used|pre owned|preloved|second hand|like new|open box|opened box|box opened|display model|floor model|demo unit|demonstration unit|ex display|for parts|parts only|customer return|returned item)(?:\s|$)/iu.test(normalized)
+      || /(?:중고|개봉|전시|진열|반품)(?:미사용|제품|상품|품)?/u.test(normalized)
+      || /(?:中古|開封済み?|展示品|返品)(?:品|商品)?/u.test(normalized)) return "used";
+  if (/(?:^|\s)(?:brand new|new item|new in box|new sealed|factory sealed|unopened)(?:\s|$)/iu.test(normalized)
+      || /(?:새상품|새제품|신품|미개봉)(?:제품|상품|품)?/u.test(normalized)
+      || /(?:新品|未開封)(?:品|商品)?/u.test(normalized)) return "new";
   return undefined;
 }
 
 function explicitPurchaseType(value: string): CompetitorPurchaseType | undefined {
   const normalized = normalizeLooseText(value);
-  if (/(?:^|\s)(?:subscription|subscribe|정기구독|구독|定期便)(?:\s|$)/iu.test(normalized)) return "subscription";
-  if (/(?:^|\s)(?:rental|rent|렌탈|대여|レンタル)(?:\s|$)/iu.test(normalized)) return "rental";
+  if (/(?:^|\s)(?:subscription|subscribe|subscribe save|autoship|auto delivery)(?:\s|$)/iu.test(normalized)
+      || /(?:정기구독|정기배송|정기구매|구독)(?:상품|제품)?/u.test(normalized)
+      || /(?:定期便|定期購入|サブスク)/u.test(normalized)) return "subscription";
+  if (/(?:^|\s)(?:rental|rent|lease|leasing)(?:\s|$)/iu.test(normalized)
+      || /(?:렌탈|렌트|대여|리스)(?:상품|제품|계약)?/u.test(normalized)
+      || /(?:レンタル|リース|租赁|租賃)/u.test(normalized)) return "rental";
   if (/(?:^|\s)(?:one time purchase|일시불|일반구매|通常購入)(?:\s|$)/iu.test(normalized)) return "one_time";
   return undefined;
 }
@@ -393,6 +444,13 @@ function exactOrContainedAlias(value: string | undefined, title: string, aliases
   return aliases.some((alias) => containsIdentityPhrase(title, alias));
 }
 
+function normalizeResolvedQuantity(quantity: CompetitorQuantity | null | undefined) {
+  const normalized = normalizeCompetitorQuantity(quantity);
+  if (!normalized || !quantity) return null;
+  const sourceUnit = (quantity as NormalizedQuantity).sourceUnit ?? quantity.unit;
+  return { ...normalized, sourceUnit } satisfies NormalizedQuantity;
+}
+
 function tokenSimilarity(reference: string, candidate: string) {
   const ignored = new Set(["the", "and", "with", "for", "상품", "제품", "정품", "공식", "new", "新品"]);
   const referenceTokens = [...new Set(normalizeLooseText(reference).split(" ").filter((token) => token.length >= 2 && !ignored.has(token) && !/^\d/u.test(token)))];
@@ -416,11 +474,11 @@ type ResolvedIdentity = CompetitorCandidateIdentity & {
 
 function resolveReferenceIdentity(identity: CompetitorProductIdentity): ResolvedIdentity & { productName: string } {
   const text = `${identity.productName} ${identity.packageContents ?? ""}`.trim();
-  const specification = normalizeCompetitorQuantity(identity.specification) ?? explicitSpecification(text) ?? undefined;
+  const specification = normalizeResolvedQuantity(identity.specification) ?? explicitSpecification(text) ?? undefined;
   const itemCount = finitePositive(identity.itemCount) && Number.isInteger(identity.itemCount)
     ? identity.itemCount
     : explicitItemCount(identity.packageContents ?? identity.productName) ?? undefined;
-  const totalQuantity = normalizeCompetitorQuantity(identity.totalQuantity) ?? multipliedQuantity(specification ?? null, itemCount ?? null) ?? undefined;
+  const totalQuantity = normalizeResolvedQuantity(identity.totalQuantity) ?? multipliedQuantity(specification ?? null, itemCount ?? null) ?? undefined;
   return {
     ...identity,
     specification,
@@ -434,11 +492,11 @@ function resolveReferenceIdentity(identity: CompetitorProductIdentity): Resolved
 function resolveCandidateIdentity(candidate: { title: string; identity?: CompetitorCandidateIdentity }): ResolvedIdentity {
   const identity = candidate.identity ?? {};
   const text = `${identity.productName ?? ""} ${identity.packageContents ?? ""} ${candidate.title}`.trim();
-  const specification = normalizeCompetitorQuantity(identity.specification) ?? explicitSpecification(text) ?? undefined;
+  const specification = normalizeResolvedQuantity(identity.specification) ?? explicitSpecification(text) ?? undefined;
   const itemCount = finitePositive(identity.itemCount) && Number.isInteger(identity.itemCount)
     ? identity.itemCount
     : explicitItemCount(text) ?? undefined;
-  const totalQuantity = normalizeCompetitorQuantity(identity.totalQuantity) ?? multipliedQuantity(specification ?? null, itemCount ?? null) ?? undefined;
+  const totalQuantity = normalizeResolvedQuantity(identity.totalQuantity) ?? multipliedQuantity(specification ?? null, itemCount ?? null) ?? undefined;
   return {
     ...identity,
     specification,
@@ -556,6 +614,10 @@ const detectableOptionAliases = {
 } as const;
 
 function canonicalDetectableOption(attribute: "flavor" | "color" | "size", value: string) {
+  if (attribute === "size") {
+    const alphaSize = ({ s: "small", m: "medium", l: "large", xl: "xlarge" } as const)[normalizeLooseText(value) as "s" | "m" | "l" | "xl"];
+    if (alphaSize) return alphaSize;
+  }
   for (const [canonical, aliases] of Object.entries(detectableOptionAliases[attribute]) as Array<[string, readonly string[]]>) {
     if (aliases.some((alias) => normalizeLooseText(alias) === normalizeLooseText(value))) return canonical;
   }
@@ -689,6 +751,31 @@ export function assessCompetitorMatch(
     matchEvidence.push({ code: "model_exact", attribute: "modelNumber", expected: reference.modelNumber, actual: observed.modelNumber ?? candidate.title, source: observed.modelNumber ? "provider_structured" : "listing_title" });
     score += 35;
   }
+  if (reference.modelNumber) {
+    const rawConfirmedModels = [
+      reference.modelNumber,
+      ...(referenceInput.verifiedAliases ?? [])
+        .filter((alias) => alias.attribute === "modelNumber" && alias.source.trim())
+        .map((alias) => alias.value),
+    ];
+    const compactModel = (value: string) => value.toLocaleUpperCase().replace(/[^A-Z0-9]/gu, "");
+    const modelFamily = (value: string) => compactModel(value).replace(/\d+/gu, "");
+    const confirmedTokens = new Set(rawConfirmedModels.flatMap(explicitLatinModelTokens).map(compactModel));
+    const confirmedFamilies = new Set([...confirmedTokens].map(modelFamily).filter((family) => family.length >= 2));
+    const conflictingTitleModels = explicitLatinModelTokens(candidate.title)
+      .map(compactModel)
+      .filter((token) => !confirmedTokens.has(token) && confirmedFamilies.has(modelFamily(token)));
+    if (conflictingTitleModels.length > 0) {
+      addMismatch(
+        mismatchEvidence,
+        "modelNumber",
+        reference.modelNumber,
+        [...new Set(conflictingTitleModels)].join(","),
+        "model_title_conflict",
+        "listing_title",
+      );
+    }
+  }
 
   if (reference.manufacturer && observed.manufacturer) {
     if (normalizeLooseText(reference.manufacturer) !== normalizeLooseText(observed.manufacturer)) addMismatch(mismatchEvidence, "manufacturer", reference.manufacturer, observed.manufacturer);
@@ -742,7 +829,18 @@ export function assessCompetitorMatch(
       || (Boolean(expectedNumericSize) && titleNumericSizes.length > 0
         && (!titleNumericSizes.includes(expectedNumericSize) || titleNumericSizes.length > 1));
     const titleOptionEvidence = [...new Set([...titleOptions, ...titleNumericSizes])].join(",");
-    if (actual && normalizeLooseText(expected) !== normalizeLooseText(actual)) addMismatch(mismatchEvidence, attribute, expected, actual, "option_mismatch");
+    const comparableOption = (value: string) => {
+      if (detectableAttribute) {
+        const canonical = canonicalDetectableOption(detectableAttribute, value);
+        if (canonical) return canonical;
+      }
+      if (attribute === "size") {
+        const numeric = canonicalNumericSize(value);
+        if (numeric) return `numeric:${numeric}`;
+      }
+      return normalizeLooseText(value);
+    };
+    if (actual && comparableOption(expected) !== comparableOption(actual)) addMismatch(mismatchEvidence, attribute, expected, actual, "option_mismatch");
     else if (explicitTitleConflict) addMismatch(mismatchEvidence, attribute, expected, titleOptionEvidence, "option_mismatch", "listing_title");
     else if (actual || matchedInTitle) {
       matchEvidence.push({ code: "option_exact", attribute, expected, actual: actual ?? expected, source: actual ? "provider_structured" : "listing_title" });

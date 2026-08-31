@@ -305,3 +305,180 @@ test("provider orchestration returns independent searched status and results for
   assert.equal(result.available, true);
   assert.equal(result.pending, false);
 });
+
+test("provider-structured localized option aliases match without weakening real option conflicts", () => {
+  for (const [reference, candidate] of [
+    [
+      { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6", options: { color: "black" } },
+      { title: "Sony WH-1000XM6 블랙", identity: { brand: "Sony", modelNumber: "WH-1000XM6", options: { color: "블랙" } } },
+    ],
+    [
+      { productName: "Kellogg Choco Chex", brand: "Kellogg", modelNumber: "KC-570", options: { flavor: "chocolate" } },
+      { title: "Kellogg Choco Chex KC-570 チョコ", identity: { brand: "Kellogg", modelNumber: "KC-570", options: { flavor: "チョコ" } } },
+    ],
+    [
+      { productName: "Nike Air Force 1", brand: "Nike", modelNumber: "CW2288-111", options: { size: "270" } },
+      { title: "Nike Air Force 1 CW2288-111 KR 270", identity: { brand: "Nike", modelNumber: "CW2288-111", options: { size: "KR 270" } } },
+    ],
+  ] as Array<[CompetitorProductIdentity, { title: string; identity: CompetitorCandidateIdentity }]>) {
+    assert.equal(assessCompetitorMatch(reference, candidate).matchTier, "exact", candidate.title);
+  }
+
+  const wrongLocalizedColor = assessCompetitorMatch(
+    { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6", options: { color: "black" } },
+    { title: "Sony WH-1000XM6 화이트", identity: { brand: "Sony", modelNumber: "WH-1000XM6", options: { color: "화이트" } } },
+  );
+  assert.equal(wrongLocalizedColor.matchTier, "rejected");
+});
+
+test("connected condition, refill, rental and compact multipack markers cannot bypass v3 fences", () => {
+  const cases: Array<{
+    label: string;
+    reference: CompetitorProductIdentity;
+    candidate: { title: string; identity?: CompetitorCandidateIdentity };
+    mismatchAttribute: string;
+  }> = [
+    {
+      label: "Korean refill suffix",
+      reference: { productName: "Couplit Hand Wash", brand: "Couplit", modelNumber: "HW-500", contentType: "main" },
+      candidate: { title: "Couplit Hand Wash HW-500 리필용 500ml", identity: { brand: "Couplit", modelNumber: "HW-500" } },
+      mismatchAttribute: "contentType",
+    },
+    {
+      label: "Japanese refill suffix",
+      reference: { productName: "Couplit Hand Wash", brand: "Couplit", modelNumber: "HW-500", contentType: "main" },
+      candidate: { title: "Couplit Hand Wash HW-500 詰替え用 500ml", identity: { brand: "Couplit", modelNumber: "HW-500" } },
+      mismatchAttribute: "contentType",
+    },
+    {
+      label: "Korean used suffix",
+      reference: { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6", condition: "new" },
+      candidate: { title: "Sony WH-1000XM6 중고상품", identity: { brand: "Sony", modelNumber: "WH-1000XM6" } },
+      mismatchAttribute: "condition",
+    },
+    {
+      label: "English like-new condition",
+      reference: { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6", condition: "new" },
+      candidate: { title: "Sony WH-1000XM6 Like New", identity: { brand: "Sony", modelNumber: "WH-1000XM6" } },
+      mismatchAttribute: "condition",
+    },
+    ...["demo unit", "ex-display", "진열상품", "for parts only"].map((condition) => ({
+      label: condition,
+      reference: { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6", condition: "new" } satisfies CompetitorProductIdentity,
+      candidate: { title: `Sony WH-1000XM6 ${condition}`, identity: { brand: "Sony", modelNumber: "WH-1000XM6" } },
+      mismatchAttribute: "condition",
+    })),
+    {
+      label: "Korean rental suffix",
+      reference: { productName: "Coway Airmega", brand: "Coway", modelNumber: "AP-100", purchaseType: "one_time" },
+      candidate: { title: "Coway Airmega AP-100 렌탈상품", identity: { brand: "Coway", modelNumber: "AP-100" } },
+      mismatchAttribute: "purchaseType",
+    },
+    ...["lease plan", "리스상품", "렌트상품", "autoship", "auto-delivery"].map((purchaseType) => ({
+      label: purchaseType,
+      reference: { productName: "Coway Airmega", brand: "Coway", modelNumber: "AP-100", purchaseType: "one_time" } satisfies CompetitorProductIdentity,
+      candidate: { title: `Coway Airmega AP-100 ${purchaseType}`, identity: { brand: "Coway", modelNumber: "AP-100" } },
+      mismatchAttribute: "purchaseType",
+    })),
+    ...[
+      "2-pack", "2pk", "2 ct", "2 bottles", "2 tubes", "2박스", "x2", "case of 12",
+      "buy 2 get 1 free", "BOGO", "family pack", "bulk pack", "2件套",
+    ].map((pack) => ({
+      label: pack,
+      reference: { productName: "COSRX Cleanser", brand: "COSRX", modelNumber: "CX-150", itemCount: 1, packageType: "single" } satisfies CompetitorProductIdentity,
+      candidate: { title: `COSRX Cleanser CX-150 ${pack}`, identity: { brand: "COSRX", modelNumber: "CX-150" } },
+      mismatchAttribute: pack === "family pack" || pack === "bulk pack" ? "packageType" : "itemCount",
+    })),
+  ];
+
+  for (const { label, reference, candidate, mismatchAttribute } of cases) {
+    const result = assessCompetitorMatch(reference, candidate);
+    assert.equal(result.matchTier, "rejected", label);
+    assert.equal(result.mismatchEvidence.some((evidence) => evidence.attribute === mismatchAttribute), true, label);
+  }
+});
+
+test("CJK-attached and imperial package quantities normalize while materially different sizes stay rejected", () => {
+  const attachedCjk = assessCompetitorMatch({
+    productName: "ANUA 토너",
+    brand: "ANUA",
+    specification: { value: 250, unit: "ml" },
+    itemCount: 1,
+    options: { option: "토너" },
+  }, { title: "ANUA 토너250ml 1개", identity: { brand: "ANUA" } });
+  assert.equal(attachedCjk.matchTier, "exact");
+
+  const imperialExact = assessCompetitorMatch({
+    productName: "Acme Shampoo",
+    brand: "Acme",
+    specification: { value: 12, unit: "fl oz" },
+    itemCount: 1,
+    options: { option: "original" },
+  }, { title: "Acme Shampoo 12 fl oz 1 bottle original", identity: { brand: "Acme" } });
+  assert.equal(imperialExact.matchTier, "exact");
+
+  const roundedMetricEquivalent = assessCompetitorMatch({
+    productName: "Acme Shampoo",
+    brand: "Acme",
+    specification: { value: 355, unit: "ml" },
+    itemCount: 1,
+    options: { option: "original" },
+  }, {
+    title: "Acme Shampoo 12 fl oz 1 bottle original",
+    identity: {
+      brand: "Acme",
+      specification: { value: 12, unit: "fl oz" },
+      itemCount: 1,
+      options: { option: "original" },
+    },
+  });
+  assert.equal(roundedMetricEquivalent.matchTier, "exact");
+
+  const materiallyDifferent = assessCompetitorMatch({
+    productName: "Acme Shampoo",
+    brand: "Acme",
+    specification: { value: 500, unit: "ml" },
+    itemCount: 1,
+    options: { option: "original" },
+  }, { title: "Acme Shampoo 16 fl oz 1 bottle original", identity: { brand: "Acme" } });
+  assert.equal(materiallyDifferent.matchTier, "rejected");
+
+  const metricRoundingMustNotRelax = assessCompetitorMatch({
+    productName: "Acme Serum",
+    brand: "Acme",
+    specification: { value: 150, unit: "ml" },
+    itemCount: 1,
+    options: { option: "original" },
+  }, { title: "Acme Serum 151ml 1 bottle original", identity: { brand: "Acme" } });
+  assert.equal(metricRoundingMustNotRelax.matchTier, "rejected");
+});
+
+test("a structured model cannot hide a sibling model also advertised in the title", () => {
+  const ambiguous = assessCompetitorMatch(
+    { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6" },
+    {
+      title: "Sony WH-1000XM5 / WH-1000XM6 Headphones",
+      identity: { brand: "Sony", modelNumber: "WH-1000XM6" },
+    },
+  );
+  assert.equal(ambiguous.matchTier, "rejected");
+  assert.equal(ambiguous.mismatchEvidence.some((evidence) => evidence.code === "model_title_conflict"), true);
+
+  const singleModel = assessCompetitorMatch(
+    { productName: "Sony WH-1000XM6", brand: "Sony", modelNumber: "WH-1000XM6" },
+    { title: "Sony WH-1000XM6 Headphones", identity: { brand: "Sony", modelNumber: "WH-1000XM6" } },
+  );
+  assert.equal(singleModel.matchTier, "exact");
+
+  const x2ModelIsNotAPackCount = assessCompetitorMatch(
+    {
+      productName: "Acme Camera X2",
+      brand: "Acme",
+      modelNumber: "X2",
+      itemCount: 1,
+      packageType: "single",
+    },
+    { title: "Acme Camera X2", identity: { brand: "Acme", modelNumber: "X2", itemCount: 1, packageType: "single" } },
+  );
+  assert.equal(x2ModelIsNotAPackCount.matchTier, "exact");
+});
