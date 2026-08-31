@@ -57,6 +57,8 @@ const QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION =
   "20260831056600_correct_exact_qoo10_resume_payload_contract.sql";
 const QOO10_EXACT_S1_ACTIVATION_MIGRATION =
   "20260831056700_recover_exact_qoo10_s1_activation.sql";
+const QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION =
+  "20260831056800_allow_exact_qoo10_s1_verifier_overlap.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -589,6 +591,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION,
       QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION,
       QOO10_EXACT_S1_ACTIVATION_MIGRATION,
+      QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -636,6 +639,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION)
         < migrationNames.indexOf(QOO10_EXACT_S1_ACTIVATION_MIGRATION),
       "exact Qoo10 S1 activation recovery must replay after the corrected source contract",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_EXACT_S1_ACTIVATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION),
+      "the exact verifier overlap repair must replay after its recovery contract",
     );
     let shopeeStaticEgressMigration;
     for (const name of migrationNames) {
@@ -1024,6 +1032,34 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           /sellerpilot\.qoo10_s1_activation_apply[\s\S]*qoo10_exact_s1_activation_listing_update_allowed/,
           "only the exact terminal S2 outcome may project the listing live",
+        );
+      }
+      if (name === QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260831056700','20260831056800')`,
+          ),
+          2,
+          "the overlap repair must be recorded only after the exact S1 contract",
+        );
+        const overlapIndex = await scalar(
+          db,
+          `select pg_get_indexdef(
+            'sellerpilot_private.channel_gateway_jobs_one_active_listing_or_lineage_idx'::regclass
+          )`,
+        );
+        assert.match(overlapIndex, /sellerpilotQoo10ExactS1Recovery/);
+        assert.match(overlapIndex, /qoo10_exact_s1_verifier_v1/);
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*)::integer
+               from sellerpilot_private.qoo10_exact_s1_verifier_runs`,
+          ),
+          0,
+          "the overlap repair must not enqueue a verifier",
         );
       }
     }
@@ -9849,6 +9885,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_PREPROVIDER_RESUME_MIGRATION
         && name !== QOO10_EXACT_RESUME_PAYLOAD_CONTRACT_MIGRATION
         && name !== QOO10_EXACT_S1_ACTIVATION_MIGRATION
+        && name !== QOO10_EXACT_S1_VERIFIER_OVERLAP_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
