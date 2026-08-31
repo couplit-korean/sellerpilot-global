@@ -144,7 +144,7 @@ export function smartstoreExactQaUpdateArgumentsValid(
     representative?.row.approvedSourceSha256 ?? "",
   );
   if (representative?.role !== "gallery-representative"
-      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/square\.png$/iu.test(
+      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/thumbnail-square\.png$/iu.test(
         representativeSourcePath,
       )
       || !/^[a-f0-9]{64}$/u.test(representativeSourceSha256)
@@ -243,7 +243,7 @@ export function bindSmartstoreExactQaApprovedRepresentative(
 ) {
   const assets = recordValue(argumentsValue.sellerpilotAssets);
   if (!assets
-      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/square\.png$/iu.test(
+      || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/thumbnail-square\.png$/iu.test(
         input.sourceObjectPath,
       )
       || !/^[a-f0-9]{64}$/u.test(input.sourceSha256)) {

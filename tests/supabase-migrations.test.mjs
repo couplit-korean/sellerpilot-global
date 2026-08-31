@@ -101,6 +101,8 @@ const QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION =
   "20260831195108_reach_exact_qoo10_localization_through_closed_gate.sql";
 const SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION =
   "20260901053500_allow_exact_smartstore_update_through_closed_gate.sql";
+const SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION =
+  "20260901070000_correct_smartstore_representative_filename.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -787,6 +789,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION,
       EBAY_EXACT_PROVIDER_COPY_MIGRATION,
       SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION,
+      SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -892,8 +895,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
         && migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
-          < migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION),
-      "eBay content, 11st snapshot, eBay provider copy, and Smartstore permit hardening must replay in deployed order",
+          < migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION)
+        && migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION),
+      "eBay content, 11st snapshot, eBay provider copy, Smartstore permit, and its representative filename correction must replay in deployed order",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -1183,6 +1188,47 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
              version, statements, name
            ) values ($1, '{}'::text[], $2)`,
           [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+      if (name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION) {
+        const definition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure
+          )`,
+        );
+        assert.match(
+          definition,
+          /\/thumbnail-square\[\.\]png\$/u,
+          "the chronological replay must finish on the canonical representative filename",
+        );
+        assert.doesNotMatch(
+          definition,
+          /\/square\[\.\]png\$/u,
+          "the legacy representative filename must not survive the forward correction",
+        );
+        assert.deepEqual(
+          (await db.query(
+            `select p.provolatile = 'i' as immutable,
+                    not p.prosecdef as invoker,
+                    p.proconfig = array['search_path=""']::text[] as empty_path,
+                    not has_function_privilege('public',p.oid,'EXECUTE') as public_closed,
+                    not has_function_privilege('anon',p.oid,'EXECUTE') as anon_closed,
+                    not has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_closed,
+                    not has_function_privilege('service_role',p.oid,'EXECUTE') as service_closed
+               from pg_proc p
+              where p.oid =
+                'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure`,
+          )).rows,
+          [{
+            immutable: true,
+            invoker: true,
+            empty_path: true,
+            public_closed: true,
+            anon_closed: true,
+            authenticated_closed: true,
+            service_closed: true,
+          }],
         );
       }
       if (name === QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION) {
@@ -11906,6 +11952,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_LOCALIZATION_V2_MIGRATION
         && name !== QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
         && name !== SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
+        && name !== SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
@@ -13621,6 +13668,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_EXACT_LOCALIZATION_V2_MIGRATION
         || name === QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
         || name === SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
+        || name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after

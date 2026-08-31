@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901053500_allow_exact_smartstore_update_through_closed_gate.sql",
   import.meta.url,
 );
+const representativeFilenameMigrationUrl = new URL(
+  "../supabase/migrations/20260901070000_correct_smartstore_representative_filename.sql",
+  import.meta.url,
+);
 const listingId = "7babb554-48dc-4869-81b1-cd4d435d7b96";
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const credentialId = "2aa76829-3d63-4842-9c3e-622acd3d0d2f";
@@ -27,7 +31,7 @@ function extractFunction(source, signature) {
   return source.slice(start, end + 3);
 }
 
-function exactArguments() {
+function exactArguments(representativeFilename = "thumbnail-square.png") {
   const details = Array.from({ length: 8 }, (_, offset) => {
     const index = offset + 1;
     const digest = index.toString(16).padStart(64, "0");
@@ -47,7 +51,7 @@ function exactArguments() {
   const representative = {
     role: "gallery-representative",
     approvedObjectPath:
-      "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/square.png",
+      `results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/${representativeFilename}`,
     approvedSourceSha256: "e".repeat(64),
     publicUrl:
       `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/ff/${representativeDigest}.jpg`,
@@ -107,7 +111,10 @@ function exactArguments() {
 }
 
 test("Smartstore exact closed-gate permit is five-minute, one-use, and provider-bound", async () => {
-  const migration = await readFile(migrationUrl, "utf8");
+  const [migration, filenameMigration] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(representativeFilenameMigrationUrl, "utf8"),
+  ]);
   assert.match(migration, /expires_at <= armed_at \+ interval '5 minutes'/u);
   assert.match(migration, /create unique index smartstore_exact_qa_one_active_update_per_listing/u);
   assert.match(migration, /sellerpilot_service_arm_exact_smartstore_qa_update/u);
@@ -128,10 +135,20 @@ test("Smartstore exact closed-gate permit is five-minute, one-use, and provider-
     /update\s+sellerpilot_private\.listing_mutation_release_gate/iu,
     "the forward migration must not open or modify the generic gate",
   );
+  assert.match(filenameMigration, /pg_catalog\.pg_get_functiondef/u);
+  assert.match(filenameMigration, /thumbnail-square\[\.\]png/u);
+  assert.doesNotMatch(
+    filenameMigration,
+    /update\s+sellerpilot_private\.listing_mutation_release_gate/iu,
+    "the filename correction must not modify the generic release gate",
+  );
 });
 
 test("Smartstore exact SQL payload fence accepts only Korean copy and one plus eight approved assets", async () => {
-  const migration = await readFile(migrationUrl, "utf8");
+  const [migration, filenameMigration] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(representativeFilenameMigrationUrl, "utf8"),
+  ]);
   const db = new PGlite();
   try {
     await db.exec("create schema sellerpilot_private");
@@ -144,6 +161,7 @@ test("Smartstore exact SQL payload fence accepts only Korean copy and one plus e
       "create function sellerpilot_private.smartstore_exact_qa_update_arguments_valid(",
     );
     await db.exec(validator);
+    const legacy = exactArguments("square.png");
     const valid = exactArguments();
     const allowed = async (argumentsValue) => (await db.query(
       `select sellerpilot_private.smartstore_exact_qa_update_arguments_valid(
@@ -151,7 +169,17 @@ test("Smartstore exact SQL payload fence accepts only Korean copy and one plus e
        ) value`,
       [JSON.stringify(argumentsValue), releaseSha],
     )).rows[0].value;
-    assert.equal(await allowed(valid), true);
+    assert.equal(await allowed(legacy), true, "the historical preimage must stay reproducible");
+    assert.equal(await allowed(valid), false, "the historical mismatch must be reproduced");
+
+    await db.exec(`
+      create role anon;
+      create role authenticated;
+      create role service_role;
+    `);
+    await db.exec(filenameMigration);
+    assert.equal(await allowed(valid), true, "the forward patch must allow the canonical asset");
+    assert.equal(await allowed(legacy), false, "the legacy filename must remain closed");
 
     const nearMisses = [
       (value) => { value.sellerpilotSmartstoreExactQaRecovery.listingId = crypto.randomUUID(); },
@@ -167,7 +195,10 @@ test("Smartstore exact SQL payload fence accepts only Korean copy and one plus e
       (value) => {
         value.sellerpilotPublicationAssetBinding.providerTransportImages[0]
           .approvedObjectPath = value.sellerpilotPublicationAssetBinding
-            .providerTransportImages[0].approvedObjectPath.replace("square.png", "hero.png");
+            .providerTransportImages[0].approvedObjectPath.replace(
+              "thumbnail-square.png",
+              "hero.png",
+            );
       },
     ];
     for (const mutate of nearMisses) {

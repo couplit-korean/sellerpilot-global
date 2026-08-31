@@ -37,7 +37,7 @@ function exactPreparedArguments() {
   const representative = {
     role: "gallery-representative",
     approvedObjectPath:
-      "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/square.png",
+      "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/thumbnail-square.png",
     approvedSourceSha256: "e".repeat(64),
     publicUrl: representativeAsset.publicUrl,
     objectPath: representativeAsset.objectPath,
@@ -237,6 +237,12 @@ test("Smartstore exact QA final gateway payload requires Korean copy and one plu
       transport[0].approvedObjectPath =
         "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/hero.png";
     }],
+    ["legacy representative filename", (value) => {
+      const binding = value.sellerpilotPublicationAssetBinding as Record<string, unknown>;
+      const transport = binding.providerTransportImages as Array<Record<string, unknown>>;
+      transport[0].approvedObjectPath = String(transport[0].approvedObjectPath)
+        .replace("thumbnail-square.png", "square.png");
+    }],
   ];
   for (const [name, mutate] of cases) {
     const invalid = structuredClone(valid);
@@ -252,7 +258,7 @@ test("Smartstore exact QA final gateway payload requires Korean copy and one plu
 
 test("Smartstore exact representative replaces browser gallery with server lineage", () => {
   const sourceObjectPath =
-    "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/square.png";
+    "results/33333333-3333-4333-8333-333333333333/claims/44444444-4444-4444-8444-444444444444/thumbnail-square.png";
   const signedUrl =
     `https://sellerpilot.supabase.co/storage/v1/object/sign/sellerpilot-ai/${sourceObjectPath}?token=signed`;
   const bound = bindSmartstoreExactQaApprovedRepresentative({
@@ -275,7 +281,12 @@ test("Smartstore exact representative replaces browser gallery with server linea
   );
   assert.throws(() => bindSmartstoreExactQaApprovedRepresentative(bound, {
     signedUrl,
-    sourceObjectPath: sourceObjectPath.replace("square.png", "hero.png"),
+    sourceObjectPath: sourceObjectPath.replace("thumbnail-square.png", "hero.png"),
+    sourceSha256: "a".repeat(64),
+  }), /SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID/u);
+  assert.throws(() => bindSmartstoreExactQaApprovedRepresentative(bound, {
+    signedUrl: signedUrl.replace("thumbnail-square.png", "square.png"),
+    sourceObjectPath: sourceObjectPath.replace("thumbnail-square.png", "square.png"),
     sourceSha256: "a".repeat(64),
   }), /SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID/u);
 });
@@ -287,7 +298,7 @@ test("Smartstore exact QA permit is armed before claim and final provider handof
   );
   const serverBinding = route.indexOf("boundSmartstoreExactQaRecovery = true");
   const representativeBinding = route.indexOf(
-    "bindSmartstoreExactQaApprovedRepresentative(",
+    "bindSmartstoreExactQaRepresentativeFromStorage({",
   );
   const permitArm = route.indexOf(
     '"sellerpilot_service_arm_exact_smartstore_qa_update"',
@@ -303,6 +314,10 @@ test("Smartstore exact QA permit is armed before claim and final provider handof
   assert.ok(claim > permitArm);
   assert.ok(finalValidation > claim);
   assert.ok(gateway > finalValidation);
+  assert.match(
+    route,
+    /mode: "smartstore_exact_qa_representative_required",[\s\S]{0,120}reasonCode: representative\.code/u,
+  );
   assert.match(
     route,
     /!channelReleaseGateIsEffective[\s\S]{0,160}!qoo10ExactLocalizationUpdatePermitArmed[\s\S]{0,160}!smartstoreExactQaUpdatePermitArmed/u,

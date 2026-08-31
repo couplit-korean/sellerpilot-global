@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
@@ -71,7 +72,6 @@ import {
 } from "../../../../lib/channels/coupang-exact-qa-recovery";
 import {
   assertSmartstoreExactQaUpdateArguments,
-  bindSmartstoreExactQaApprovedRepresentative,
   bindSmartstoreExactQaRecoveryArguments,
   smartstoreExactQaApprovedContentRequired,
   smartstoreExactQaCentralSkuVerified,
@@ -81,7 +81,9 @@ import {
   smartstoreExactQaRecoveryCandidate,
   smartstoreExactQaRecoveryIdentity,
 } from "../../../../lib/channels/smartstore-exact-qa-recovery";
-import { validateStoredProductGeneratedAssetPaths } from "../../../../lib/studio-result-assets";
+import {
+  bindSmartstoreExactQaRepresentativeFromStorage,
+} from "../../../../lib/server-smartstore-exact-representative";
 import {
   elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
@@ -219,10 +221,6 @@ function canonicalJson(value: unknown): string {
       .join(",")}}`;
   }
   return JSON.stringify(value);
-}
-
-function sha256Hex(value: Uint8Array) {
-  return createHash("sha256").update(value).digest("hex");
 }
 
 type ProductContentMode = "ai_generated" | "manual_mvp";
@@ -1321,39 +1319,23 @@ export async function POST(request: NextRequest) {
     }
   }
   if (boundSmartstoreExactQaRecovery) {
-    try {
-      const generatedAssets = validateStoredProductGeneratedAssetPaths(
-        verifiedPublishContext?.generatedImagePaths,
-      );
-      const representativePath = generatedAssets?.find(([id]) => id === "square")?.[1] ?? "";
-      if (!representativePath) {
-        throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
-      }
-      const bucket = serviceClient.storage.from("sellerpilot-ai");
-      const [downloaded, signed] = await Promise.all([
-        bucket.download(representativePath),
-        bucket.createSignedUrl(representativePath, 2 * 60 * 60),
-      ]);
-      if (downloaded.error || !downloaded.data
-          || downloaded.data.size < 1 || downloaded.data.size > 10 * 1024 * 1024
-          || signed.error || !signed.data?.signedUrl) {
-        throw new Error("SMARTSTORE_EXACT_QA_REPRESENTATIVE_INVALID");
-      }
-      const representativeBytes = Buffer.from(await downloaded.data.arrayBuffer());
-      effectiveArguments = bindSmartstoreExactQaApprovedRepresentative(
-        effectiveArguments,
-        {
-          signedUrl: signed.data.signedUrl,
-          sourceObjectPath: representativePath,
-          sourceSha256: sha256Hex(representativeBytes),
-        },
-      );
-    } catch {
+    const bucket = serviceClient.storage.from("sellerpilot-ai");
+    const representative = await bindSmartstoreExactQaRepresentativeFromStorage({
+      argumentsValue: effectiveArguments,
+      generatedImagePaths: verifiedPublishContext?.generatedImagePaths,
+      storage: {
+        download: (path) => bucket.download(path),
+        createSignedUrl: (path, expiresIn) => bucket.createSignedUrl(path, expiresIn),
+      },
+    });
+    if (!representative.ok) {
       return NextResponse.json({
         message: "스마트스토어 대표 이미지 1장을 현재 상품 원장의 승인된 square 원본과 결속하지 못해 전송을 시작하지 않았습니다.",
         mode: "smartstore_exact_qa_representative_required",
+        reasonCode: representative.code,
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    effectiveArguments = representative.argumentsValue;
   }
   if (channel === "temu" && operation === "listing.create") {
     const product = isRecord(verifiedPublishContext?.product)
