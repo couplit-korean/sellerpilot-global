@@ -35,7 +35,9 @@ export function elevenstExactExistingPublicationCandidate(input: {
   return input.channel === "elevenst"
     && input.listingId === identity.listingId
     && input.remoteId === identity.remoteId
-    && input.marketplaceSku === identity.sellerSku
+    && (input.marketplaceSku === null
+      || input.marketplaceSku === undefined
+      || input.marketplaceSku === identity.sellerSku)
     && input.status === "failed"
     && input.failureClass === "external_action"
     && input.requestedPublicationIntent === "live"

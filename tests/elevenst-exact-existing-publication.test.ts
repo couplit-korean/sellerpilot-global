@@ -148,6 +148,12 @@ const listing = {
 test("11st exact existing identity is the only failed external-action update candidate", () => {
   assert.equal(elevenstExactExistingPublicationCandidate({ channel: "elevenst", ...listing }), true);
   assert.equal(listingUpdateServerCandidate("elevenst", listing), true);
+  assert.equal(elevenstExactExistingPublicationCandidate({
+    channel: "elevenst",
+    ...listing,
+    marketplaceSku: null,
+  }), true);
+  assert.equal(listingUpdateServerCandidate("elevenst", { ...listing, marketplaceSku: null }), true);
   assert.equal(listingUpdateServerCandidate("elevenst", { ...listing, remoteId: "9573255805" }), false);
   assert.equal(listingUpdateServerCandidate("elevenst", { ...listing, marketplaceSku: "OTHER" }), false);
   assert.equal(elevenstExactExistingCreateForbidden({ productId: identity.productId }), true);
