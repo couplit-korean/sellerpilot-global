@@ -18,6 +18,11 @@ import {
   smartstoreExactQaRecoveryArgument,
   smartstoreExactQaRecoveryCandidate,
 } from "./smartstore-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryBinding,
+  ebayExactExistingQaRecoveryCandidate,
+} from "./ebay-exact-existing-qa-recovery";
 
 export type ListingUpdateReference = {
   listingId?: string | null;
@@ -337,6 +342,18 @@ export function listingUpdateServerCandidate(
   if (!listing) return false;
   return (
     (listing.failureClass !== "external_action" && listingHasVerifiedUpdateIdentity(listing))
+    || ebayExactExistingQaRecoveryCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
+      marketplaceSku: listing.marketplaceSku,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    })
     || legacyEbayListingUpdateCandidate(channel, listing)
     || qoo10RollbackListingUpdateCandidate(channel, listing)
     || coupangExactQaRecoveryCandidate({
@@ -879,16 +896,43 @@ export function prepareListingUpdateArguments(
     const sourceOffer = Object.keys(recordValue(createArguments.body)).length
       ? recordValue(createArguments.body)
       : recordValue(createArguments.offer);
-    const offer = definedEntries(sourceOffer, ["listingDescription"]);
+    const exactRecovery = ebayExactExistingQaRecoveryBinding(createArguments)
+      ?? (ebayExactExistingQaRecoveryCandidate({
+        channel,
+        listingId: listing.listingId,
+        remoteId: listing.remoteId,
+        marketplaceSku: listing.marketplaceSku,
+        status: listing.status,
+        requestedPublicationIntent: listing.requestedPublicationIntent,
+        remoteVisibility: listing.remoteVisibility,
+        providerStatus: listing.providerStatus,
+        publishedAt: listing.publishedAt,
+        failureClass: listing.failureClass,
+      }) ? true : null);
+    const offer = definedEntries(sourceOffer, exactRecovery
+      ? ["availableQuantity", "listingDescription", "pricingSummary"]
+      : ["listingDescription"]);
     if (!Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
       throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
     }
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
+      ...optionalArgument(createArguments, ebayExactExistingQaRecoveryArgument),
       listingId: remoteId,
       ...(Object.keys(inventoryProduct).length
-        ? { inventoryItem: { product: inventoryProduct } }
+        ? {
+            inventoryItem: {
+              ...(exactRecovery
+                ? definedEntries(sourceInventoryItem, ["availability", "condition"])
+                : {}),
+              product: exactRecovery
+                ? definedEntries(sourceProduct, [
+                    "title", "description", "imageUrls", "aspects", "brand", "mpn",
+                  ])
+                : inventoryProduct,
+            },
+          }
         : {}),
       ...(Object.keys(offer).length ? { offer } : {}),
     };

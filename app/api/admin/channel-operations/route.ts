@@ -20,6 +20,17 @@ import {
 } from "../../../../lib/channels/gateway";
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
+import {
+  assertEbayExactExistingQaUpdateArguments,
+  bindEbayExactExistingQaRecoveryArguments,
+  ebayExactExistingQaCentralProductVerified,
+  ebayExactExistingQaCreateForbidden,
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryBindingValue,
+  ebayExactExistingQaRecoveryCandidate,
+  ebayExactExistingQaRecoveryIdentity,
+  type EbayExactExistingQaRecoveryBinding,
+} from "../../../../lib/channels/ebay-exact-existing-qa-recovery";
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
   bindShopeeSgListingCreateArguments,
@@ -309,6 +320,19 @@ export async function POST(request: NextRequest) {
       mode: "lazada_exact_existing_duplicate_create_forbidden",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
+  if (channel === "ebay"
+      && operation === "listing.create"
+      && ebayExactExistingQaCreateForbidden({
+        productId: parsed.data.productId,
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+        argumentsValue: parsed.data.arguments,
+      })) {
+    return NextResponse.json({
+      message: "이미 존재하는 eBay QA 상품은 신규 등록하지 않고 정확한 기존 listing만 복구 수정해야 합니다.",
+      mode: "ebay_exact_existing_duplicate_create_forbidden",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (operation === "listing.activate" && channel !== "temu") {
     return NextResponse.json({
       message: "Qoo10 활성화 복구는 직전 S1 검증 원장에 의해 서버에서만 생성됩니다.",
@@ -517,6 +541,7 @@ export async function POST(request: NextRequest) {
   let boundListingPrice: number | undefined;
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   let boundEbayListingIdentity: Record<string, string> | null = null;
+  let boundEbayExactExistingQaRecovery: EbayExactExistingQaRecoveryBinding | null = null;
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
@@ -873,36 +898,87 @@ export async function POST(request: NextRequest) {
       boundElevenstExactExistingPublication = true;
     }
     if (channel === "ebay" && operation === "listing.update") {
-      const { data: identityData, error: identityError } = await serviceClient.rpc(
-        "sellerpilot_service_get_ebay_listing_update_identity",
-        {
-          p_listing_id: resourceListingId,
-          p_credential_id: parsed.data.credentialId,
-          p_product_id: productId,
-          p_market: parsed.data.market,
-          p_target_id: parsed.data.targetId,
-        },
-      );
-      const identity = isRecord(identityData) ? identityData : null;
-      const offerId = typeof identity?.offerId === "string" ? identity.offerId.trim() : "";
-      const sku = typeof identity?.sku === "string" ? identity.sku.trim() : "";
-      const listingId = typeof identity?.listingId === "string" ? identity.listingId.trim() : "";
-      const marketplaceId = typeof identity?.marketplaceId === "string"
-        ? identity.marketplaceId.trim().toUpperCase()
-        : "";
-      if (identityError
-          || identity?.status !== "allowed"
-          || identity.contract !== "ebay_listing_identity_v1"
-          || !offerId
-          || !sku
-          || listingId !== requestedRemoteId
-          || marketplaceId !== parsed.data.targetId.toUpperCase()) {
-        return NextResponse.json({
-          message: "eBay offer·SKU·listing·마켓 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
-          mode: "ebay_immutable_identity_required",
-        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      const exactRecovery = ebayExactExistingQaRecoveryCandidate({
+        channel,
+        listingId: String(exactListing.id ?? ""),
+        remoteId: String(exactListing.remoteId ?? ""),
+        marketplaceSku: typeof exactListing.marketplaceSku === "string"
+          ? exactListing.marketplaceSku
+          : null,
+        status: String(exactListing.status ?? ""),
+        requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+          ? exactListing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof exactListing.remoteVisibility === "string"
+          ? exactListing.remoteVisibility
+          : null,
+        providerStatus: typeof exactListing.providerStatus === "string"
+          ? exactListing.providerStatus
+          : null,
+        publishedAt: typeof exactListing.publishedAt === "string"
+          ? exactListing.publishedAt
+          : null,
+        failureClass: typeof exactListing.failureClass === "string"
+          ? exactListing.failureClass
+          : null,
+      });
+      if (exactRecovery) {
+        const { data: identityData, error: identityError } = await serviceClient.rpc(
+          "sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+          },
+        );
+        const binding = ebayExactExistingQaRecoveryBindingValue(identityData);
+        if (identityError
+            || !binding
+            || productId !== ebayExactExistingQaRecoveryIdentity.productId
+            || requestedRemoteId !== ebayExactExistingQaRecoveryIdentity.publicListingId
+            || boundListingCurrency !== ebayExactExistingQaRecoveryIdentity.currency
+            || boundListingPrice !== ebayExactExistingQaRecoveryIdentity.priceUsd
+            || !ebayExactExistingQaCentralProductVerified(contextRecord, binding)) {
+          return NextResponse.json({
+            message: "eBay exact QA 상품·SKU·USD 12.90·재고·인증정보 결속을 원장에서 확정하지 못했습니다.",
+            mode: "ebay_exact_existing_atomic_identity_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundEbayExactExistingQaRecovery = binding;
+      } else {
+        const { data: identityData, error: identityError } = await serviceClient.rpc(
+          "sellerpilot_service_get_ebay_listing_update_identity",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+          },
+        );
+        const identity = isRecord(identityData) ? identityData : null;
+        const offerId = typeof identity?.offerId === "string" ? identity.offerId.trim() : "";
+        const sku = typeof identity?.sku === "string" ? identity.sku.trim() : "";
+        const listingId = typeof identity?.listingId === "string" ? identity.listingId.trim() : "";
+        const marketplaceId = typeof identity?.marketplaceId === "string"
+          ? identity.marketplaceId.trim().toUpperCase()
+          : "";
+        if (identityError
+            || identity?.status !== "allowed"
+            || identity.contract !== "ebay_listing_identity_v1"
+            || !offerId
+            || !sku
+            || listingId !== requestedRemoteId
+            || marketplaceId !== parsed.data.targetId.toUpperCase()) {
+          return NextResponse.json({
+            message: "eBay offer·SKU·listing·마켓 결속을 독립 조회로 확정하기 전에는 기존 상품을 수정할 수 없습니다.",
+            mode: "ebay_immutable_identity_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundEbayListingIdentity = { offerId, sku, listingId, marketplaceId };
       }
-      boundEbayListingIdentity = { offerId, sku, listingId, marketplaceId };
     }
   }
 
@@ -985,6 +1061,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[coupangExactQaRecoveryArgument];
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
+  delete effectiveArguments[ebayExactExistingQaRecoveryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -1014,16 +1091,22 @@ export async function POST(request: NextRequest) {
     );
   }
   if (channel === "ebay" && operation === "listing.update") {
-    if (!boundEbayListingIdentity) {
+    if (boundEbayExactExistingQaRecovery) {
+      effectiveArguments = bindEbayExactExistingQaRecoveryArguments(
+        effectiveArguments,
+        boundEbayExactExistingQaRecovery,
+      );
+    } else if (boundEbayListingIdentity) {
+      effectiveArguments = {
+        ...effectiveArguments,
+        ...boundEbayListingIdentity,
+      };
+    } else {
       return NextResponse.json({
         message: "eBay 불변 원격 식별값을 확인하지 못해 상품 수정을 시작하지 않았습니다.",
         mode: "ebay_immutable_identity_required",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    effectiveArguments = {
-      ...effectiveArguments,
-      ...boundEbayListingIdentity,
-    };
   }
   if (channel === "temu" && (operation === "listing.stop" || operation === "listing.activate")) {
     if (!boundTemuListingIdentity) {
@@ -1190,6 +1273,18 @@ export async function POST(request: NextRequest) {
     effectiveArguments = { ...effectiveArguments };
     delete effectiveArguments.publicationIntent;
     delete effectiveArguments.publicationStateContract;
+  }
+  if (boundEbayExactExistingQaRecovery) {
+    try {
+      assertEbayExactExistingQaUpdateArguments(effectiveArguments, {
+        requirePreparedImages: false,
+      });
+    } catch {
+      return NextResponse.json({
+        message: "eBay exact QA 수정값은 en-US 제목·상세 8장·USD 12.90·중앙 재고·live 상태 계약과 정확히 일치해야 합니다.",
+        mode: "ebay_exact_existing_content_contract_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
   let effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   let effectivePrice = boundListingPrice ?? parsed.data.price;
@@ -1525,6 +1620,9 @@ export async function POST(request: NextRequest) {
             return prepared;
           })
         : effectiveArguments;
+      if (boundEbayExactExistingQaRecovery) {
+        assertEbayExactExistingQaUpdateArguments(gatewayArguments);
+      }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {
             ...channelWriteResource({

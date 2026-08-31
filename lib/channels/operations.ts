@@ -57,6 +57,10 @@ import {
   type EbayAsqMarketplaceId,
 } from "./ebay-asq";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
+import {
+  assertEbayExactExistingQaUpdateArguments,
+  ebayExactExistingQaRecoveryBinding,
+} from "./ebay-exact-existing-qa-recovery";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
 import {
@@ -5785,11 +5789,11 @@ async function executeEbay(input: ExecuteInput) {
       : result(input, steps, finalRemoteId);
   }
   if (input.operation === "listing.update") {
-    const offerId = pathSegment(stringArgument(input.arguments, "offerId"));
+    const exactRecovery = ebayExactExistingQaRecoveryBinding(input.arguments);
+    if (exactRecovery) assertEbayExactExistingQaUpdateArguments(input.arguments);
     const listingId = stringArgument(input.arguments, "listingId");
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const decodedSku = decodeURIComponent(sku);
-    const decodedOfferId = decodeURIComponent(offerId);
     const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);
     const requestedOffer = input.arguments.offer === undefined
       ? {}
@@ -5800,6 +5804,52 @@ async function executeEbay(input: ExecuteInput) {
     if (!Object.keys(requestedOffer).length && !Object.keys(requestedInventoryItem).length) {
       throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
     }
+
+    const steps: ChannelOperationStep[] = [];
+    let decodedOfferId = exactRecovery ? "" : stringArgument(input.arguments, "offerId");
+    if (exactRecovery) {
+      const discoveryRead = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/sell/inventory/v1/offer",
+        query: new URLSearchParams({
+          sku: decodedSku,
+          marketplace_id: marketplaceId,
+          limit: "25",
+        }),
+      });
+      const offers = Array.isArray(discoveryRead.data.offers)
+        ? discoveryRead.data.offers.filter((value): value is Record<string, unknown> =>
+          Boolean(value) && typeof value === "object" && !Array.isArray(value))
+        : [];
+      const exactOffers = offers.filter((candidate) => {
+        const candidateListing = candidate.listing
+          && typeof candidate.listing === "object"
+          && !Array.isArray(candidate.listing)
+          ? candidate.listing as Record<string, unknown>
+          : {};
+        return String(candidate.sku ?? "").trim() === decodedSku
+          && String(candidate.marketplaceId ?? "").trim().toUpperCase() === marketplaceId
+          && String(candidate.status ?? "").trim().toUpperCase() === "PUBLISHED"
+          && String(candidateListing.listingId ?? "").trim() === listingId
+          && String(candidateListing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE"
+          && Boolean(String(candidate.offerId ?? "").trim());
+      });
+      const discoveryStep = step("offer-update-discovery-readback", discoveryRead);
+      discoveryStep.ok = discoveryStep.ok && exactOffers.length === 1;
+      discoveryStep.data = {
+        ...discoveryStep.data,
+        sellerpilotVerification: discoveryStep.ok
+          ? "EBAY_EXACT_OFFER_DISCOVERED"
+          : "EBAY_EXACT_OFFER_DISCOVERY_MISMATCH",
+        exactOfferCount: exactOffers.length,
+      };
+      steps.push(discoveryStep);
+      if (!discoveryStep.ok) return result(input, steps, listingId);
+      decodedOfferId = String(exactOffers[0].offerId).trim();
+    }
+    const offerId = pathSegment(decodedOfferId);
 
     const offerRead = await ebayRequest({
       payload: input.payload,
@@ -5834,7 +5884,7 @@ async function executeEbay(input: ExecuteInput) {
     };
     const inventoryPreflight = step("inventory-item-update-preflight-readback", inventoryRead);
     inventoryPreflight.ok = inventoryPreflight.ok && identityVerified;
-    const steps: ChannelOperationStep[] = [offerPreflight, inventoryPreflight];
+    steps.push(offerPreflight, inventoryPreflight);
     if (!identityVerified) return result(input, steps, listingId);
 
     const offerWritableFields = [
@@ -5860,6 +5910,18 @@ async function executeEbay(input: ExecuteInput) {
       requestedInventoryItem,
     ) as Record<string, unknown>;
 
+    if (Object.keys(requestedOffer).length) {
+      assertEbayListingCreateConfiguration({ offer: offerBody });
+    }
+    if (exactRecovery) {
+      if (!input.providerMutationHooks) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_MUTATION_HOOKS_REQUIRED");
+      }
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+    }
+
     if (Object.keys(requestedInventoryItem).length) {
       const inventoryRemote = await ebayRequest({
         payload: input.payload,
@@ -5873,7 +5935,6 @@ async function executeEbay(input: ExecuteInput) {
       if (!inventoryStep.ok) return result(input, steps, listingId);
     }
     if (Object.keys(requestedOffer).length) {
-      assertEbayListingCreateConfiguration({ offer: offerBody });
       const offerRemote = await ebayRequest({
         payload: input.payload,
         environment: input.environment,

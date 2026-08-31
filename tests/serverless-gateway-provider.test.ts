@@ -35,7 +35,7 @@ const channels: GatewayClaim["channel"][] = [
 
 const expectedWrites: Record<string, GatewayClaim["channel"][]> = {
   "listing.create": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"],
-  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore"],
+  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"],
   "listing.stop": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore"],
   "inventory.update": ["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"],
   "shipment.acknowledge": ["qoo10", "shopee", "lazada", "coupang", "smartstore"],
@@ -155,6 +155,25 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   });
   assert.equal(result.ok, true);
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
+});
+
+test("generic eBay listing update remains closed without the exact server-owned recovery marker", async () => {
+  const events: string[] = [];
+  const job = genericClaim("ebay", "listing.update");
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
 });
 
 test("Temu safe-test requires the approved localized asset binding before its mutation fence", async () => {

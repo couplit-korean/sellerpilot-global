@@ -89,6 +89,8 @@ const SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION =
   "20260831132018_smartstore_exact_qa_recovery_fence.sql";
 const COUPANG_EXACT_QA_RECOVERY_MIGRATION =
   "20260831140000_coupang_exact_qa_recovery_fence.sql";
+const EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION =
+  "20260831143000_ebay_exact_existing_qa_recovery_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -760,6 +762,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION,
       TEMU_PUBLICATION_RELEASE_MIGRATION,
       COUPANG_EXACT_QA_RECOVERY_MIGRATION,
+      EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

@@ -2,6 +2,12 @@ import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnos
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { ebayAsqOperationMarketplaceId } from "./ebay-asq";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
+import {
+  assertEbayExactExistingQaUpdateArguments,
+  ebayExactExistingQaCreateForbidden,
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryBinding,
+} from "./ebay-exact-existing-qa-recovery";
 import type { GatewayClaim } from "./gateway-contract";
 import {
   executeProviderListingLineageVerification,
@@ -75,7 +81,7 @@ const serverlessWriteMatrix = {
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
   ]),
   "listing.update": new Set([
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore",
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
   ]),
   "listing.stop": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore",
@@ -592,6 +598,24 @@ export async function executeServerlessGatewayProviderJob(
         && lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
       throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
     }
+    if (input.job.channel === "ebay"
+        && input.job.operation === "listing.create"
+        && ebayExactExistingQaCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("EBAY_EXACT_EXISTING_QA_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const ebayExactRecovery = ebayExactExistingQaRecoveryBinding(rawArguments);
+    if (Object.hasOwn(rawArguments, ebayExactExistingQaRecoveryArgument)
+        && (input.job.channel !== "ebay"
+          || input.job.operation !== "listing.update"
+          || !ebayExactRecovery)) {
+      throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "ebay" && input.job.operation === "listing.update") {
+      if (!ebayExactRecovery) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
+      }
+      assertEbayExactExistingQaUpdateArguments(rawArguments);
+    }
     if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
         && (input.job.channel !== "elevenst"
           || input.job.operation !== "listing.update"
@@ -698,7 +722,12 @@ export async function executeServerlessGatewayProviderJob(
     await input.hooks.assertLeaseHealthy();
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
-    if (writeChannelOperations.has(input.job.operation) && !delayedTemuActivationBoundary) {
+    const delayedEbayExactUpdateBoundary = input.job.channel === "ebay"
+      && input.job.operation === "listing.update"
+      && Boolean(ebayExactRecovery);
+    if (writeChannelOperations.has(input.job.operation)
+        && !delayedTemuActivationBoundary
+        && !delayedEbayExactUpdateBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -709,7 +738,7 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedTemuActivationBoundary
+      ...(delayedTemuActivationBoundary || delayedEbayExactUpdateBoundary
         ? {
             providerMutationHooks: {
               begin: input.hooks.beginProviderMutation,
