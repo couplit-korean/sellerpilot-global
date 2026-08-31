@@ -14,6 +14,7 @@ registerHooks({
 
 const {
   activateServerlessRuntimeRelease,
+  candidateAutomationBypassAuthorized,
   runCandidateServerlessRuntimeCanary,
   ServerlessRuntimeReleaseError,
 } = await import("../lib/serverless-runtime-release");
@@ -168,6 +169,7 @@ test("a candidate canary checks only the exact deployment origin without any run
     url: string;
     method: string;
     authorization: string | null;
+    trustedOidc: string | null;
     cache: RequestCache | undefined;
     redirect: RequestRedirect | undefined;
   }> = [];
@@ -178,6 +180,7 @@ test("a candidate canary checks only the exact deployment origin without any run
       url,
       method: init?.method ?? "GET",
       authorization: new Headers(init?.headers).get("authorization"),
+      trustedOidc: new Headers(init?.headers).get("x-vercel-trusted-oidc-idp-token"),
       cache: init?.cache,
       redirect: init?.redirect,
     });
@@ -192,6 +195,7 @@ test("a candidate canary checks only the exact deployment origin without any run
     release: release.toUpperCase(),
     cronSecret: "server-runtime-secret-for-tests",
     fetchImpl: fetchImpl as typeof fetch,
+    oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
   });
 
   assert.equal(result.ok, true);
@@ -203,6 +207,7 @@ test("a candidate canary checks only the exact deployment origin without any run
   assert.equal(requests.every((request) => request.url.startsWith("https://sellerpilot-global-candidate1-project-e59d.vercel.app/api/internal/")), true);
   assert.equal(requests.every((request) => request.authorization?.startsWith("Bearer ")), true);
   assert.equal(requests.every((request) => !request.authorization?.includes("server-runtime-secret-for-tests")), true);
+  assert.equal(requests.every((request) => request.trustedOidc === "short-lived-vercel-oidc-token"), true);
   assert.equal(requests.every((request) => request.cache === "no-store"), true);
   assert.equal(requests.every((request) => request.redirect === "error"), true);
 });
@@ -225,6 +230,7 @@ test("a candidate canary rejects custom domains and malformed deployment origins
         release,
         cronSecret: "server-runtime-secret-for-tests",
         fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+        oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
       }),
       (error: unknown) => error instanceof ServerlessRuntimeReleaseError
         && error.safeCode === "runtime_candidate_origin_required"
@@ -241,6 +247,7 @@ test("a candidate canary requires request origin to match the exact Vercel deplo
       release,
       cronSecret: "server-runtime-secret-for-tests",
       fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+      oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
     }),
     (error: unknown) => error instanceof ServerlessRuntimeReleaseError
       && error.safeCode === "runtime_candidate_origin_required"
@@ -256,6 +263,7 @@ test("a candidate canary rejects an unavailable runtime secret before fetch", as
       release,
       cronSecret: "",
       fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+      oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
     }),
     (error: unknown) => error instanceof ServerlessRuntimeReleaseError
       && error.safeCode === "runtime_secret_unavailable"
@@ -263,9 +271,20 @@ test("a candidate canary rejects an unavailable runtime secret before fetch", as
   );
 });
 
+test("candidate automation bypass requires the exact runtime protection secret", () => {
+  const expected = "candidate-protection-bypass-secret";
+  assert.equal(candidateAutomationBypassAuthorized(expected, expected), true);
+  assert.equal(candidateAutomationBypassAuthorized("wrong", expected), false);
+  assert.equal(candidateAutomationBypassAuthorized(expected, "short"), false);
+  assert.equal(candidateAutomationBypassAuthorized(null, expected), false);
+});
+
 test("the admin release route is authenticated and does not expose server secrets", async () => {
   const route = await readFile(new URL("../app/api/admin/serverless-runtime-release/route.ts", import.meta.url), "utf8");
   assert.match(route, /authenticateAdminRequest\(request/);
+  assert.match(route, /candidateAutomationBypassAuthorized/);
+  assert.match(route, /VERCEL_AUTOMATION_BYPASS_SECRET/);
+  assert.match(route, /candidateAutomationAuthorized[\s\S]*\? null[\s\S]*authenticateAdminRequest/);
   assert.match(route, /body\?\.action !== "candidate_canary" && body\?\.action !== "canary_activate"/);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /if \(body\.action === "candidate_canary"\)[\s\S]*runCandidateServerlessRuntimeCanary/);

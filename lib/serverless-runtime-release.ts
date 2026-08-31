@@ -1,5 +1,7 @@
 import "server-only";
 
+import { timingSafeEqual } from "node:crypto";
+import { getVercelOidcToken } from "@vercel/oidc";
 import {
   SERVERLESS_CS_CANARY_MODE,
   SERVERLESS_CS_DRAIN_MODE_HEADER,
@@ -13,6 +15,8 @@ import {
 const releasePattern = /^[0-9a-f]{40}$/;
 const receiptPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const candidateDeploymentHostPattern = /^sellerpilot-global-[a-z0-9]+-project-e59d\.vercel\.app$/;
+export const VERCEL_PROTECTION_BYPASS_HEADER = "x-vercel-protection-bypass";
+const VERCEL_TRUSTED_OIDC_HEADER = "x-vercel-trusted-oidc-idp-token";
 const internalSchedulePaths = [
   "/api/internal/product-research",
   "/api/internal/channel-sync",
@@ -99,14 +103,22 @@ async function runNoWorkCanaries(input: {
   origin: string;
   release: string;
   bearer: string;
+  deploymentProtectionToken?: string;
   fetchImpl: typeof fetch;
 }) {
-  const request = (path: string, init: RequestInit) => input.fetchImpl(`${input.origin}${path}`, {
-    ...init,
-    cache: "no-store",
-    redirect: "error",
-    signal: AbortSignal.timeout(10_000),
-  });
+  const request = (path: string, init: RequestInit) => {
+    const headers = new Headers(init.headers);
+    if (input.deploymentProtectionToken) {
+      headers.set(VERCEL_TRUSTED_OIDC_HEADER, input.deploymentProtectionToken);
+    }
+    return input.fetchImpl(`${input.origin}${path}`, {
+      ...init,
+      headers,
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+  };
   const [gatewayResponse, ...scheduleResponses] = await Promise.all([
     request("/api/internal/channel-gateway-drain", {
       method: "POST",
@@ -154,12 +166,23 @@ async function runNoWorkCanaries(input: {
   };
 }
 
+export function candidateAutomationBypassAuthorized(
+  suppliedValue: string | null,
+  expectedValue: string | undefined,
+) {
+  if (!suppliedValue || !expectedValue || expectedValue.length < 16) return false;
+  const supplied = Buffer.from(suppliedValue, "utf8");
+  const expected = Buffer.from(expectedValue, "utf8");
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
 export async function runCandidateServerlessRuntimeCanary(input: {
   origin: string;
   vercelUrl: string;
   release: string;
   cronSecret: string;
   fetchImpl?: typeof fetch;
+  oidcTokenProvider?: () => Promise<string>;
 }): Promise<ServerlessRuntimeCandidateCanaryResult> {
   const release = input.release.trim().toLowerCase();
   if (!releasePattern.test(release)) {
@@ -188,10 +211,15 @@ export async function runCandidateServerlessRuntimeCanary(input: {
       || parsedOrigin.hash) {
     throw new ServerlessRuntimeReleaseError("runtime_candidate_origin_required", 409);
   }
+  const deploymentProtectionToken = (await (input.oidcTokenProvider ?? getVercelOidcToken)()).trim();
+  if (!deploymentProtectionToken) {
+    throw new ServerlessRuntimeReleaseError("runtime_candidate_self_auth_unavailable", 503);
+  }
   const canaries = await runNoWorkCanaries({
     origin: parsedOrigin.origin,
     release,
     bearer: deriveSupabaseInternalScheduleBearer(cronSecret),
+    deploymentProtectionToken,
     fetchImpl: input.fetchImpl ?? fetch,
   });
   return {

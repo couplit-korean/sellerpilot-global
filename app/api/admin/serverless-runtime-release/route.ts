@@ -3,9 +3,11 @@ import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import {
   activateServerlessRuntimeRelease,
+  candidateAutomationBypassAuthorized,
   readServerlessRuntimeReleaseStatus,
   runCandidateServerlessRuntimeCanary,
   ServerlessRuntimeReleaseError,
+  VERCEL_PROTECTION_BYPASS_HEADER,
 } from "../../../../lib/serverless-runtime-release";
 
 export const runtime = "nodejs";
@@ -13,9 +15,16 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 export async function POST(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
-  if (isAdminApiError(admin)) return admin;
   const body = await request.json().catch(() => null) as { action?: unknown } | null;
+  const candidateAutomationAuthorized = body?.action === "candidate_canary"
+    && candidateAutomationBypassAuthorized(
+      request.headers.get(VERCEL_PROTECTION_BYPASS_HEADER),
+      process.env.VERCEL_AUTOMATION_BYPASS_SECRET,
+    );
+  const admin = candidateAutomationAuthorized
+    ? null
+    : await authenticateAdminRequest(request, { timeoutMs: 10_000 });
+  if (admin && isAdminApiError(admin)) return admin;
   if (body?.action !== "candidate_canary" && body?.action !== "canary_activate") {
     return NextResponse.json({ message: "운영 일정 재검증 요청을 확인하지 못했습니다." }, { status: 400 });
   }
@@ -44,6 +53,9 @@ export async function POST(request: Request) {
         code: failure.safeCode,
       }, { status: failure.status, headers: { "cache-control": "no-store" } });
     }
+  }
+  if (!admin) {
+    return NextResponse.json({ message: "관리자 인증을 확인할 수 없습니다." }, { status: 401 });
   }
   try {
     const result = await activateServerlessRuntimeRelease({
