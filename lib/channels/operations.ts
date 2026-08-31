@@ -44,6 +44,13 @@ import {
   type Qoo10ListingCreateExpectation,
 } from "./qoo10-listing-create-preflight";
 import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizedUpdate as qoo10ExactLocalizedUpdateOrThrow,
+  qoo10ExactTargetCreateForbidden,
+  verifyQoo10ExactCurrentS1Readback,
+  type Qoo10ExactLocalizedUpdate,
+} from "./qoo10-exact-localization-recovery";
+import {
   ebayAsqMarketplaceId,
   ebayAsqMarketplaceIdFromSiteCode,
   type EbayAsqMarketplaceId,
@@ -1881,6 +1888,20 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], categoryId);
   }
+  if (input.operation === "listing.create"
+      && qoo10ExactTargetCreateForbidden(input.arguments)) {
+    return result(input, [{
+      name: "qoo10-exact-duplicate-create-fence",
+      ok: false,
+      status: 409,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }]);
+  }
   const activationMarkerSupplied = Object.hasOwn(input.arguments, qoo10S1ActivationArgument);
   const activationBinding = qoo10S1ActivationBinding(input.arguments);
   if (activationMarkerSupplied !== (input.operation === "listing.activate")
@@ -2013,9 +2034,62 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], suppliedParams.ItemCode);
   }
+  let exactLocalizedUpdate: Qoo10ExactLocalizedUpdate | null = null;
+  const exactPrewriteSteps: ChannelOperationStep[] = [];
+  if (rollbackRecovery?.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
+    try {
+      exactLocalizedUpdate = qoo10ExactLocalizedUpdateOrThrow(
+        input.arguments,
+        rollbackRecovery.remoteId,
+      );
+      if (!exactLocalizedUpdate) throw new Error("QOO10_EXACT_LOCALIZED_UPDATE_INVALID");
+    } catch {
+      return result(input, [{
+        name: "qoo10-exact-localization-prewrite-fence",
+        ok: false,
+        status: 422,
+        data: {
+          ResultCode: -9999,
+          ResultMsg: "QOO10_EXACT_LOCALIZED_UPDATE_INVALID",
+          sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }], rollbackRecovery.remoteId);
+    }
+    const currentRemote = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: {
+        ItemCode: rollbackRecovery.remoteId,
+        SellerCode: suppliedParams.SellerCode ?? "",
+      },
+    });
+    const currentVerification = verifyQoo10ExactCurrentS1Readback({
+      resultObject: currentRemote.data.ResultObject,
+      expectedDetailImageUrls: exactLocalizedUpdate?.detailImageUrls ?? [],
+    });
+    const currentStep = step("qoo10-exact-current-s1-prewrite-readback", currentRemote);
+    currentStep.ok = currentStep.ok
+      && qoo10ExactSuccessResultCode(currentRemote.data)
+      && currentVerification.ok;
+    currentStep.data = {
+      ...currentStep.data,
+      sellerpilotVerification: currentStep.ok
+        ? "QOO10_EXACT_CURRENT_S1_AND_IMAGES_VERIFIED"
+        : "QOO10_EXACT_CURRENT_S1_OR_IMAGES_MISMATCH",
+      sellerpilotExactCurrentChecks: currentVerification.checks,
+      sellerpilotActualProviderStatus: currentVerification.providerStatus || null,
+      sellerpilotExpectedDetailImageCount: 8,
+      ...(!currentStep.ok ? { sellerpilotNoWriteConfirmed: true } : {}),
+    };
+    exactPrewriteSteps.push(currentStep);
+    if (!currentStep.ok) return result(input, exactPrewriteSteps, rollbackRecovery.remoteId);
+  }
   let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
   let sellerAccountIdentityDigest = "";
-  let createPreflightSteps: ChannelOperationStep[] = [];
+  let createPreflightSteps: ChannelOperationStep[] = exactPrewriteSteps;
   if (input.operation === "listing.create"
       && input.arguments.publicationStateContract === listingRemoteStateContractVersion) {
     const localPreflight = qoo10ListingCreateExpectation({
@@ -2352,6 +2426,7 @@ async function executeQoo10(input: ExecuteInput) {
     // content. Only an exact mutable-field and eight-image S1 readback may
     // cross the separate activation mutation.
     let preActivationStep: ChannelOperationStep | null = null;
+    let preActivationRemoteState: VerifiedListingRemoteState | undefined;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (attempt > 0) await operationDelay(750 * attempt);
       const readback = await qoo10Request({
@@ -2382,7 +2457,10 @@ async function executeQoo10(input: ExecuteInput) {
         mutable,
         expectedDetailImages,
       });
-      if (preActivationStep.ok) break;
+      if (preActivationStep.ok) {
+        preActivationRemoteState = publication.remoteState;
+        break;
+      }
     }
     if (!preActivationStep?.ok) {
       return result(input, [
@@ -2391,6 +2469,18 @@ async function executeQoo10(input: ExecuteInput) {
         detailUpdateStep,
         preActivationStep!,
       ], remoteId);
+    }
+
+    // This one exact product remains S1 after the corrected update. A fresh
+    // verifier must bind the observed localized copy before root opens the
+    // separate, single-use listing.activate permit in the final release.
+    if (exactLocalizedUpdate) {
+      return result(input, [
+        ...createPreflightSteps,
+        createStep,
+        detailUpdateStep,
+        preActivationStep,
+      ], remoteId, undefined, preActivationRemoteState);
     }
 
     const activation = await qoo10Request({

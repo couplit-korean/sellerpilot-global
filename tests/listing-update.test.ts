@@ -284,6 +284,27 @@ test("updates preserve remote copy when localization is a current marked or lega
       description: "buchakhyeong keibeul jeongri keulrip 6gae seteu is shown for review.",
     },
   }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
+
+  const reviewedQoo10LegacyRepair = {
+    title: "buchakhyeong keibeul jeongri keulrip 6gae seteu - 購入前確認",
+    shortDescription: "販売者が確認した商品情報です。",
+    description: "buchakhyeong keibeul jeongri keulrip 6gae seteu の販売者確認済み詳細です。",
+  };
+  assert.deepEqual(listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: reviewedQoo10LegacyRepair,
+    allowReviewedQoo10LegacyRepair: true,
+  }), reviewedQoo10LegacyRepair);
+  assert.throws(() => listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: {
+      ...reviewedQoo10LegacyRepair,
+      title: `${unapprovedLocalizationReviewMarker} ${reviewedQoo10LegacyRepair.title}`,
+    },
+    allowReviewedQoo10LegacyRepair: true,
+  }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
 });
 
 test("Shopee SG and Lazada MY update payloads keep their channel-localized copy", () => {

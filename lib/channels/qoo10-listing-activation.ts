@@ -13,6 +13,10 @@ import {
   listingPublicationLanguageVerified,
   normalizedListingPublicationText,
 } from "./listing-publication-content";
+import {
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizedUpdate,
+} from "./qoo10-exact-localization-recovery";
 
 export const qoo10S1ActivationContract = "qoo10_s1_activation_v1" as const;
 export const qoo10S1ActivationArgument = "sellerpilotQoo10S1Activation" as const;
@@ -417,6 +421,13 @@ export function qoo10S1ActivationArgumentsValid(argumentsValue: ActivationArgume
   const binding = qoo10S1ActivationBinding(argumentsValue);
   const params = recordValue(argumentsValue.params);
   if (!binding || !params) return false;
+  if (binding.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
+    try {
+      if (!qoo10ExactLocalizedUpdate(argumentsValue, binding.remoteId)) return false;
+    } catch {
+      return false;
+    }
+  }
   const detailHtml = typeof params.ItemDescription === "string" ? params.ItemDescription : "";
   const sellerCode = typeof params.SellerCode === "string" ? params.SellerCode : "";
   const keyword = typeof params.Keyword === "string" ? params.Keyword : "";

@@ -352,6 +352,12 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     operation,
     central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
     localized,
+    allowReviewedQoo10LegacyRepair: channel === "qoo10"
+      && Boolean(localized?.title)
+      && repairLegacyQoo10JapaneseFallbackTitle(
+        localized?.title ?? "",
+        context.manualFields.productName,
+      ) !== localized?.title,
   });
   const manual = context.manualFields;
   const { title, description, shortDescription } = coreContent;

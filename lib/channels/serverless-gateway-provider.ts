@@ -56,6 +56,7 @@ import {
   qoo10S1ActivationArgument,
   qoo10S1ActivationArgumentsValid,
 } from "./qoo10-listing-activation";
+import { qoo10ExactTargetCreateForbidden } from "./qoo10-exact-localization-recovery";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -578,6 +579,14 @@ export async function executeServerlessGatewayProviderJob(
           || !coupangRecoveryPhase
           || !coupangExactQaRecoveryBinding(rawArguments, coupangRecoveryPhase))) {
       throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "qoo10"
+        && input.job.operation === "listing.create"
+        && qoo10ExactTargetCreateForbidden(rawArguments)) {
+      // This QA SKU already owns remote item 1217336970. Reject the stale
+      // create before credential refresh, media preparation, or the worker's
+       // provider-mutation fence; only the exact bound update is recoverable.
+      throw new Error("QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN");
     }
     const activationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
     if (activationMarkerSupplied !== (input.job.operation === "listing.activate")

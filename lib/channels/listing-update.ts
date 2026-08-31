@@ -7,6 +7,7 @@ import {
   elevenstListingUpdatePatchFromProduct,
   elevenstListingUpdateProjection,
 } from "./elevenst-listing";
+import { qoo10ExactLocalizationRecoveryIdentity } from "./qoo10-exact-localization-recovery";
 
 export type ListingUpdateReference = {
   listingId?: string | null;
@@ -393,6 +394,7 @@ function listingLocalizedContentOrThrow(input: {
   operation: "listing.create" | "listing.update";
   central: { title: string; description: string };
   localized?: Partial<ListingCoreContent>;
+  allowReviewedQoo10LegacyRepair?: boolean;
 }) {
   const title = input.localized?.title?.trim() ?? "";
   const shortDescription = input.localized?.shortDescription?.trim() ?? "";
@@ -403,9 +405,10 @@ function listingLocalizedContentOrThrow(input: {
   }
   if (!title || !shortDescription || !description) return null;
   const localized = { title, shortDescription, description };
+  const legacyFallback = isLegacyRomanizedLocalizationFallback(input.central, localized);
   if (Object.values(localized).some((value) => (
     value.includes(unapprovedLocalizationReviewMarker)
-  )) || isLegacyRomanizedLocalizationFallback(input.central, localized)) {
+  )) || (legacyFallback && !input.allowReviewedQoo10LegacyRepair)) {
     throw new Error("LISTING_LOCALIZATION_REVIEW_REQUIRED");
   }
   return localized;
@@ -415,6 +418,7 @@ export function listingCoreContentForOperation(input: {
   operation: "listing.create" | "listing.update";
   central: { title: string; description: string };
   localized?: Partial<ListingCoreContent>;
+  allowReviewedQoo10LegacyRepair?: boolean;
 }): ListingCoreContent {
   const centralTitle = input.central.title.trim();
   const centralDescription = input.central.description.trim();
@@ -731,6 +735,7 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "qoo10") {
+    const sourceParams = recordValue(createArguments.params);
     const params: Record<string, unknown> = {
       ...nonEmptyEntries(recordValue(createArguments.params), [
         ...qoo10MutableFields,
@@ -738,6 +743,10 @@ export function prepareListingUpdateArguments(
       ]),
       ItemCode: remoteId,
     };
+    if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
+        && sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku) {
+      params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
+    }
     // Qoo10 rehosts representative images. A rollback recovery must preserve
     // the already confirmed remote CDN image instead of triggering another
     // upload/content-id and a false literal-URL readback mismatch.
