@@ -13,6 +13,7 @@ export type LazadaExistingListingUpdatePreflight = {
   price: string;
   quantity: number;
   providerStatus: string;
+  updateSkuStatus?: "inactive";
 };
 
 function recordValue(value: unknown): UnknownRecord {
@@ -185,6 +186,7 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
   argumentsValue: UnknownRecord;
   remoteData: UnknownRecord;
   country: string;
+  requiredVisibility?: "live" | "non_public";
 }): LazadaExistingListingUpdatePreflight {
   const country = input.country.trim().toLowerCase();
   const requestedCountry = exactText(input.argumentsValue.country).toLowerCase();
@@ -217,8 +219,13 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
     throw new Error("LAZADA_UPDATE_SKU_IDENTITY_MISMATCH");
   }
   const status = providerStatus(product, remoteSku);
-  if (!["ACTIVE", "LIVE", "ONLINE"].includes(status)) {
+  const requiredVisibility = input.requiredVisibility ?? "live";
+  if (requiredVisibility === "live" && !["ACTIVE", "LIVE", "ONLINE"].includes(status)) {
     throw new Error("LAZADA_UPDATE_REMOTE_SKU_NOT_LIVE");
+  }
+  if (requiredVisibility === "non_public"
+      && !["INACTIVE", "OFFLINE", "SUSPENDED", "UNLIST", "UNLISTED"].includes(status)) {
+    throw new Error("LAZADA_UPDATE_REMOTE_SKU_NOT_NON_PUBLIC");
   }
   if (specialPrice(remoteSku) !== 0) {
     throw new Error("LAZADA_UPDATE_ACTIVE_SPECIAL_PRICE_UNSUPPORTED");
@@ -240,6 +247,7 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
     price: normalizedMoney(requested.price),
     quantity: requested.quantity,
     providerStatus: status,
+    ...(requiredVisibility === "non_public" ? { updateSkuStatus: "inactive" as const } : {}),
   };
 }
 
@@ -258,6 +266,7 @@ export function bindLazadaExistingSkuToUpdateRequest(
       SellerSku: preflight.sellerSku,
       price: preflight.price,
       quantity: String(preflight.quantity),
+      ...(preflight.updateSkuStatus ? { Status: preflight.updateSkuStatus } : {}),
     }],
   };
   requestRoot.Product = product;

@@ -15,7 +15,11 @@ import {
   lazadaPrimaryCategory,
   lazadaRequestedUpdateSellerSku,
 } from "./lazada-listing-update";
-import { lazadaExactExistingCreateForbidden } from "./lazada-exact-existing-identity";
+import {
+  assertLazadaExactExistingUpdateArguments,
+  lazadaExactExistingCreateForbidden,
+  lazadaExactExistingUpdateTarget,
+} from "./lazada-exact-existing-identity";
 import {
   assertLazadaKrwMyrPricePolicy,
   loadAuthoritativeKrwPerMyr,
@@ -968,6 +972,9 @@ export async function prepareLazadaListing(
       && lazadaExactExistingCreateForbidden({ argumentsValue: input.arguments })) {
     throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
   }
+  if (input.operation === "listing.update") {
+    assertLazadaExactExistingUpdateArguments(input.arguments);
+  }
   const sources = lazadaBoundPublicationImageSources(input.arguments);
   if (!sources.migrationSources.length || !sources.representative) {
     throw new Error("LAZADA_LISTING_IMAGES_MISSING");
@@ -1042,6 +1049,9 @@ export async function prepareLazadaListing(
       argumentsValue: input.arguments,
       remoteData: itemRemote.data,
       country,
+      requiredVisibility: lazadaExactExistingUpdateTarget(input.arguments)
+        ? "non_public"
+        : "live",
     });
     if (productsPreflight.skuId !== preflight.skuId) {
       throw new Error("LAZADA_UPDATE_PRODUCTS_ITEM_SKU_ID_MISMATCH");

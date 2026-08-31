@@ -23,7 +23,7 @@ function argumentsValue() {
     itemId: ITEM_ID,
     country: "my",
     publicationStateContract: "verified_remote_state_v1",
-    publicationIntent: "live",
+    publicationIntent: "safe_test",
     publicationExpectedLocale: "ms-MY",
     publicationExpectedFingerprint: "b".repeat(64),
     publicationExpectedImageCount: 8,
@@ -64,7 +64,12 @@ function argumentsValue() {
             brand: "No Brand",
           },
           Skus: {
-            Sku: [{ SellerSku: SELLER_SKU, price: String(TARGET_PRICE_MYR), quantity: "1" }],
+            Sku: [{
+              SellerSku: SELLER_SKU,
+              price: String(TARGET_PRICE_MYR),
+              quantity: "1",
+              Status: "inactive",
+            }],
           },
         },
       },
@@ -78,14 +83,14 @@ function remoteProduct(category = CATEGORY_ID) {
     data: {
       item_id: ITEM_ID,
       primary_category: category,
-      status: "active",
+      status: "inactive",
       skus: [{
         SkuId: "170000000001",
         SellerSku: SELLER_SKU,
         price: 40,
         quantity: 3,
         special_price: 0,
-        Status: "active",
+        Status: "inactive",
         multiWarehouseInventories: [],
         fblWarehouseInventories: [],
       }],
@@ -136,6 +141,7 @@ function dependencies(events: string[], options: {
   category?: string;
   leaf?: boolean;
   products?: Array<Record<string, unknown>>;
+  itemStatus?: "active" | "inactive";
 } = {}): LazadaListingRuntimeDependencies {
   let migrationIndex = 0;
   return {
@@ -167,7 +173,14 @@ function dependencies(events: string[], options: {
         });
         return remote(remoteProducts(options.products));
       }
-      if (path === "/product/item/get") return remote(remoteProduct(options.category));
+      if (path === "/product/item/get") {
+        const item = remoteProduct(options.category);
+        if (options.itemStatus) {
+          item.data.status = options.itemStatus;
+          item.data.skus[0].Status = options.itemStatus;
+        }
+        return remote(item);
+      }
       if (path === "/category/tree/get") {
         return remote({ code: "0", data: [{ category_id: CATEGORY_ID, leaf: options.leaf ?? true }] });
       }
@@ -212,6 +225,7 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
       SellerSku: SELLER_SKU,
       price: String(TARGET_PRICE_MYR),
       quantity: "1",
+      Status: "inactive",
       Images: {
         Image: Array.from({ length: 8 }, (_, index) => `https://my-live.slatic.net/p/provider-${index + 1}.jpg`),
       },
@@ -235,7 +249,8 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     skuId: "170000000001",
     price: String(TARGET_PRICE_MYR),
     quantity: 1,
-    providerStatus: "ACTIVE",
+    providerStatus: "INACTIVE",
+    updateSkuStatus: "inactive",
   });
 });
 
@@ -318,6 +333,70 @@ test("Lazada MY validates all nine public image URLs before the first image migr
     /PUBLIC_REFERENCE_URL_REJECTED/u,
   );
   assert.equal(events.filter((event) => event.startsWith("validate:")).length, 9);
+  assert.equal(events.includes("mutation"), false);
+  assert.equal(events.includes("request:/image/migrate"), false);
+});
+
+test("Lazada exact MY content contract fails before every provider read or mutation", async () => {
+  const invalidArguments = [
+    (value: Record<string, unknown>) => { value.publicationIntent = "live"; },
+    (value: Record<string, unknown>) => { value.publicationExpectedLocale = "en-MY"; },
+    (value: Record<string, unknown>) => {
+      const policy = value.sellerpilotLazadaPricePolicy as Record<string, unknown>;
+      policy.targetCurrency = "USD";
+    },
+    (value: Record<string, unknown>) => {
+      const policy = value.sellerpilotLazadaPricePolicy as Record<string, unknown>;
+      policy.sourcePriceKrw = 4_999;
+    },
+    (value: Record<string, unknown>) => {
+      const request = value.request as {
+        Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } };
+      };
+      request.Request.Product.Skus.Sku[0].quantity = "2";
+    },
+    (value: Record<string, unknown>) => {
+      const request = value.request as {
+        Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } };
+      };
+      request.Request.Product.Skus.Sku[0].Status = "active";
+    },
+    (value: Record<string, unknown>) => {
+      const binding = value.sellerpilotPublicationAssetBinding as {
+        providerTransportImages: Array<Record<string, unknown>>;
+      };
+      binding.providerTransportImages.pop();
+    },
+  ];
+
+  for (const invalidate of invalidArguments) {
+    const events: string[] = [];
+    const nextInput = input(events);
+    invalidate(nextInput.arguments);
+    await assert.rejects(
+      prepareLazadaListing(nextInput, dependencies(events)),
+      /LAZADA_EXACT_EXISTING_CONTENT_CONTRACT_REQUIRED/u,
+    );
+    assert.deepEqual(events, []);
+  }
+});
+
+test("Lazada exact MY requires an already non-public provider item before image migration", async () => {
+  const events: string[] = [];
+  const active = structuredClone(remoteProduct().data) as Record<string, unknown>;
+  active.status = "active";
+  const skus = active.skus as Array<Record<string, unknown>>;
+  skus[0].Status = "active";
+  await assert.rejects(
+    prepareLazadaListing(input(events), dependencies(events, {
+      products: [active],
+      itemStatus: "active",
+    })),
+    /LAZADA_UPDATE_REMOTE_SKU_NOT_NON_PUBLIC/u,
+  );
+  assert.equal(events.includes("request:/products/get"), true);
+  assert.equal(events.includes("request:/product/item/get"), true);
+  assert.equal(events.some((event) => event.startsWith("validate:")), false);
   assert.equal(events.includes("mutation"), false);
   assert.equal(events.includes("request:/image/migrate"), false);
 });
