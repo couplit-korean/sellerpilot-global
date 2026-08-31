@@ -68,6 +68,7 @@ import {
   elevenstExactExistingBaselineVerified,
   elevenstExactExistingCreateForbidden,
   elevenstExactExistingLiveReadbackVerified,
+  elevenstExactExistingStagedReadbackVerified,
   elevenstExactExistingUpdateTarget,
 } from "./elevenst-exact-existing-publication";
 import {
@@ -1358,6 +1359,149 @@ async function executeElevenst(input: ExecuteInput) {
     if (!updateStep.ok) return result(input, [beforeStep, updateStep], decodeURIComponent(productNo));
 
     const publicationExpectation = elevenstPublicationExpectation(input);
+    if (exactExistingPublication) {
+      let stagedRemote: RemoteResponse | null = null;
+      let stagedVerified = false;
+      let alreadyLive = false;
+      let stagedRemoteState: VerifiedListingRemoteState | null = null;
+      for (let attempt = 0; attempt < 3 && !stagedVerified; attempt += 1) {
+        if (attempt > 0) await operationDelay(800 * attempt);
+        try {
+          stagedRemote = await readExactProduct();
+        } catch {
+          stagedRemote = elevenstUnavailableRemote("11번가 상품 수정 내용의 판매 재개 전 재조회 응답을 확인하지 못했습니다.");
+          continue;
+        }
+        const stagedProduct = stagedRemote.data.product && typeof stagedRemote.data.product === "object" && !Array.isArray(stagedRemote.data.product)
+          ? stagedRemote.data.product as Record<string, unknown>
+          : {};
+        const stagedIdentityVerified = stagedRemote.data.accepted === true
+          && String(stagedRemote.data.productNo ?? stagedProduct.prdNo ?? "") === decodeURIComponent(productNo)
+          && String(stagedProduct.sellerPrdCd ?? "") === sellerProductCode;
+        const stagedContent = verifyListingUpdateReadback("elevenst", input.arguments, stagedRemote.data);
+        const exactStaged = elevenstExactExistingStagedReadbackVerified(input.arguments, stagedProduct);
+        const exactLive = elevenstExactExistingLiveReadbackVerified(input.arguments, stagedProduct);
+        alreadyLive = stagedIdentityVerified && stagedContent.ok && exactLive;
+        stagedVerified = stagedIdentityVerified && stagedContent.ok && (exactStaged || exactLive);
+        stagedRemoteState = alreadyLive && publicationExpectation
+          ? elevenstVerifiedListingRemoteState({
+              operation: input.operation,
+              remoteId: decodeURIComponent(productNo),
+              product: stagedProduct,
+              expectedSellerProductCode: sellerProductCode,
+              ...publicationExpectation,
+            })
+          : null;
+        stagedRemote.data.sellerpilotMismatches = stagedContent.mismatches.slice(0, 50);
+      }
+      if (!stagedRemote) throw new Error("ELEVENST_STAGED_READBACK_MISSING");
+      const stagedStep = elevenstVerifiedStep(
+        alreadyLive ? "listing-readback" : "listing-staged-readback",
+        stagedRemote,
+        stagedVerified && (!alreadyLive || !publicationExpectation || Boolean(stagedRemoteState)),
+      );
+      stagedStep.data = {
+        ...stagedStep.data,
+        sellerpilotMismatches: stagedRemote.data.sellerpilotMismatches,
+        sellerpilotExactExistingStagedStatus105Verified: stagedVerified && !alreadyLive,
+        sellerpilotExactExistingAlreadyLiveStatus103Verified: stagedVerified && alreadyLive,
+      };
+      if (alreadyLive && publicationExpectation) {
+        stagedStep.data = {
+          ...stagedStep.data,
+          ...elevenstPublicationReadbackStep(stagedRemote, stagedRemoteState).data,
+          sellerpilotMismatches: stagedRemote.data.sellerpilotMismatches,
+          sellerpilotExactExistingStagedStatus105Verified: false,
+          sellerpilotExactExistingAlreadyLiveStatus103Verified: true,
+        };
+      }
+      if (!stagedStep.ok || alreadyLive) {
+        return result(
+          input,
+          [beforeStep, updateStep, stagedStep],
+          decodeURIComponent(productNo),
+          undefined,
+          stagedRemoteState ?? undefined,
+        );
+      }
+
+      let restartRemote: RemoteResponse;
+      try {
+        restartRemote = await elevenstSellerXmlRequest({
+          payload: input.payload,
+          method: "PUT",
+          path: `/rest/prodstatservice/stat/restartdisplay/${productNo}`,
+        });
+      } catch {
+        restartRemote = elevenstUnavailableRemote("11번가 판매중지 해제 응답을 확인하지 못했습니다.");
+      }
+      const restartMessage = String(restartRemote.data.resultMessage ?? "");
+      const restartVerified = restartRemote.response.status === 200
+        && restartRemote.data.accepted === true
+        && String(restartRemote.data.resultCode ?? "") === "200"
+        && /\[\s*STAT\s*:\s*103\s*\]/iu.test(restartMessage);
+      const restartStep = elevenstVerifiedStep("restart-display", restartRemote, restartVerified);
+      if (restartRemote.response.ok && restartRemote.data.accepted === true) {
+        restartStep.data.sellerpilotMutation = "accepted";
+      }
+      if (!restartStep.ok) {
+        return result(
+          input,
+          [beforeStep, updateStep, stagedStep, restartStep],
+          decodeURIComponent(productNo),
+        );
+      }
+
+      let finalRemote: RemoteResponse | null = null;
+      let finalVerified = false;
+      let finalRemoteState: VerifiedListingRemoteState | null = null;
+      for (let attempt = 0; attempt < 3 && !finalVerified; attempt += 1) {
+        if (attempt > 0) await operationDelay(800 * attempt);
+        try {
+          finalRemote = await readExactProduct();
+        } catch {
+          finalRemote = elevenstUnavailableRemote("11번가 판매중지 해제 후 재조회 응답을 확인하지 못했습니다.");
+          continue;
+        }
+        const finalProduct = finalRemote.data.product && typeof finalRemote.data.product === "object" && !Array.isArray(finalRemote.data.product)
+          ? finalRemote.data.product as Record<string, unknown>
+          : {};
+        const finalIdentityVerified = finalRemote.data.accepted === true
+          && String(finalRemote.data.productNo ?? finalProduct.prdNo ?? "") === decodeURIComponent(productNo)
+          && String(finalProduct.sellerPrdCd ?? "") === sellerProductCode;
+        const finalContent = verifyListingUpdateReadback("elevenst", input.arguments, finalRemote.data);
+        finalRemoteState = publicationExpectation
+          ? elevenstVerifiedListingRemoteState({
+              operation: input.operation,
+              remoteId: decodeURIComponent(productNo),
+              product: finalProduct,
+              expectedSellerProductCode: sellerProductCode,
+              ...publicationExpectation,
+            })
+          : null;
+        finalVerified = finalIdentityVerified
+          && finalContent.ok
+          && elevenstExactExistingLiveReadbackVerified(input.arguments, finalProduct)
+          && (!publicationExpectation || Boolean(finalRemoteState));
+        finalRemote.data.sellerpilotMismatches = finalContent.mismatches.slice(0, 50);
+      }
+      if (!finalRemote) throw new Error("ELEVENST_READBACK_MISSING");
+      const finalStep = elevenstVerifiedStep("listing-readback", finalRemote, finalVerified);
+      if (publicationExpectation) {
+        finalStep.data = {
+          ...elevenstPublicationReadbackStep(finalRemote, finalRemoteState).data,
+          sellerpilotMismatches: finalRemote.data.sellerpilotMismatches,
+        };
+      }
+      return result(
+        input,
+        [beforeStep, updateStep, stagedStep, restartStep, finalStep],
+        decodeURIComponent(productNo),
+        undefined,
+        finalRemoteState ?? undefined,
+      );
+    }
+
     let readbackRemote: RemoteResponse | null = null;
     let readbackVerified = false;
     let remoteState: VerifiedListingRemoteState | null = null;

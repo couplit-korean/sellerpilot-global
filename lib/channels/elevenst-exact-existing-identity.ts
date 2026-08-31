@@ -7,6 +7,7 @@ export const elevenstExactExistingPublicationArgument =
 export const elevenstExactExistingPublicationIdentity = Object.freeze({
   productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
   listingId: "363f3b81-f364-4f22-af4e-4920199904d0",
+  credentialId: "b2dd0ff7-4420-495f-aead-a45857fb3bfe",
   remoteId: "9573255804",
   sellerSku: "QA-20260823-CC-001",
   categoryId: "1341821",
@@ -16,6 +17,7 @@ export const elevenstExactExistingPublicationIdentity = Object.freeze({
   baselineProviderStatus: "105",
   liveProviderStatus: "103",
   locale: "ko-KR",
+  representativeImageCount: 1,
   detailImageCount: 8,
 });
 

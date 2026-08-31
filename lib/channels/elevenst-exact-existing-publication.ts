@@ -20,6 +20,7 @@ export type ElevenstExactExistingPublicationBinding = {
   contract: typeof elevenstExactExistingPublicationContract;
   productId: string;
   listingId: string;
+  credentialId: string;
   remoteId: string;
   sellerSku: string;
   categoryId: string;
@@ -27,6 +28,7 @@ export type ElevenstExactExistingPublicationBinding = {
   liveProviderStatus: "103";
   priceKrw: 5000;
   stock: 1;
+  representativeImageCount: 1;
   sellerAccountLineage: "validated_by_service_rpc";
   trustedSnapshot: "sellerpilot_service_get_elevenst_listing_snapshot";
 };
@@ -94,6 +96,7 @@ export function bindElevenstExactExistingPublication(
     contract: elevenstExactExistingPublicationContract,
     productId: identity.productId,
     listingId: identity.listingId,
+    credentialId: identity.credentialId,
     remoteId: identity.remoteId,
     sellerSku: identity.sellerSku,
     categoryId: identity.categoryId,
@@ -101,6 +104,7 @@ export function bindElevenstExactExistingPublication(
     liveProviderStatus: identity.liveProviderStatus,
     priceKrw: identity.priceKrw,
     stock: identity.stock,
+    representativeImageCount: identity.representativeImageCount,
     sellerAccountLineage: "validated_by_service_rpc",
     trustedSnapshot: "sellerpilot_service_get_elevenst_listing_snapshot",
   };
@@ -115,6 +119,7 @@ export function elevenstExactExistingPublicationBinding(
   if (binding.contract !== elevenstExactExistingPublicationContract
       || binding.productId !== identity.productId
       || binding.listingId !== identity.listingId
+      || binding.credentialId !== identity.credentialId
       || binding.remoteId !== identity.remoteId
       || binding.sellerSku !== identity.sellerSku
       || binding.categoryId !== identity.categoryId
@@ -122,6 +127,7 @@ export function elevenstExactExistingPublicationBinding(
       || binding.liveProviderStatus !== identity.liveProviderStatus
       || binding.priceKrw !== identity.priceKrw
       || binding.stock !== identity.stock
+      || binding.representativeImageCount !== identity.representativeImageCount
       || binding.sellerAccountLineage !== "validated_by_service_rpc"
       || binding.trustedSnapshot !== "sellerpilot_service_get_elevenst_listing_snapshot") {
     return null;
@@ -152,6 +158,19 @@ function exactApprovedImageUrls(argumentsValue: UnknownRecord) {
     : null;
 }
 
+function exactRepresentativeImageVerified(value: unknown) {
+  const candidate = text(value);
+  try {
+    const url = new URL(candidate);
+    return url.protocol === "https:"
+      && Boolean(url.hostname)
+      && !url.username
+      && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 export function assertElevenstExactExistingUpdate(argumentsValue: UnknownRecord) {
   const identity = elevenstExactExistingPublicationIdentity;
   if (!elevenstExactExistingPublicationBinding(argumentsValue)) {
@@ -165,10 +184,16 @@ export function assertElevenstExactExistingUpdate(argumentsValue: UnknownRecord)
   const expectedImages = exactApprovedImageUrls(argumentsValue);
   const actualImages = htmlImageUrls(detailHtml);
   if (text(argumentsValue.productNo) !== identity.remoteId
+      || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
+      || argumentsValue.publicationIntent !== "live"
+      || argumentsValue.publicationExpectedLocale !== identity.locale
+      || argumentsValue.publicationExpectedImageCount !== identity.detailImageCount
+      || !/^[a-f0-9]{64}$/u.test(text(argumentsValue.publicationExpectedFingerprint))
       || text(product.sellerPrdCd) !== identity.sellerSku
       || text(product.dispCtgrNo) !== identity.categoryId
       || text(product.selPrc) !== String(identity.priceKrw)
       || text(product.prdSelQty) !== String(identity.stock)
+      || !exactRepresentativeImageVerified(product.prdImage01)
       || text(patch.selPrc) !== String(identity.priceKrw)
       || text(patch.prdSelQty) !== String(identity.stock)
       || !listingPublicationLanguageVerified(identity.locale, title, "title")
@@ -200,4 +225,17 @@ export function elevenstExactExistingLiveReadbackVerified(
     return false;
   }
   return text(product.selStatCd) === elevenstExactExistingPublicationIdentity.liveProviderStatus;
+}
+
+export function elevenstExactExistingStagedReadbackVerified(
+  argumentsValue: UnknownRecord,
+  productValue: unknown,
+) {
+  const product = recordValue(productValue);
+  try {
+    assertElevenstExactExistingUpdate({ ...argumentsValue, product });
+  } catch {
+    return false;
+  }
+  return text(product.selStatCd) === elevenstExactExistingPublicationIdentity.baselineProviderStatus;
 }

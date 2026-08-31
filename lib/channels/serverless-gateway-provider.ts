@@ -624,15 +624,22 @@ export async function executeServerlessGatewayProviderJob(
       }
       assertEbayExactExistingQaUpdateArguments(rawArguments);
     }
+    const elevenstExactPublication = elevenstExactExistingPublicationBinding(rawArguments);
     if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
         && (input.job.channel !== "elevenst"
           || input.job.operation !== "listing.update"
-          || !elevenstExactExistingPublicationBinding(rawArguments))) {
+          || !elevenstExactPublication)) {
       throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
     }
     if (input.job.channel === "elevenst"
         && input.job.operation === "listing.update"
         && elevenstExactExistingUpdateTarget(rawArguments)) {
+      if (!elevenstExactPublication) {
+        throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
+      }
+      if (input.job.credential_id !== elevenstExactPublication.credentialId) {
+        throw new Error("ELEVENST_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
+      }
       assertElevenstExactExistingUpdate(rawArguments);
     }
     const coupangRecoveryPhase = input.job.operation === "listing.update"

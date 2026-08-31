@@ -187,6 +187,18 @@ test("11st exact contract requires ko-KR and the approved ordered eight detail i
     () => assertElevenstExactExistingUpdate(exactArguments(completeProduct({ prdNm: "Cable clips" }))),
     /ELEVENST_EXACT_EXISTING_UPDATE_INVALID/u,
   );
+  for (const invalid of [
+    { ...good, publicationIntent: "safe_test" },
+    { ...good, publicationExpectedLocale: "en-US" },
+    { ...good, publicationExpectedImageCount: 7 },
+    { ...good, publicationExpectedFingerprint: "" },
+    exactArguments(completeProduct({ prdImage01: "http://sellerpilot.example/representative.jpg" })),
+  ]) {
+    assert.throws(
+      () => assertElevenstExactExistingUpdate(invalid),
+      /ELEVENST_EXACT_EXISTING_UPDATE_INVALID/u,
+    );
+  }
 });
 
 test("11st exact duplicate create is rejected before any provider request", async () => {
@@ -209,7 +221,7 @@ test("11st exact duplicate create is rejected before any provider request", asyn
   }
 });
 
-test("11st exact update performs GET status 105 before PUT then requires status 103 readback", async () => {
+test("11st exact update stages content at 105 before official restartdisplay and final 103 readback", async () => {
   const originalFetch = globalThis.fetch;
   const before = completeProduct({ prdNm: "기존 부착형 케이블 정리 클립" });
   const after = completeProduct();
@@ -219,13 +231,17 @@ test("11st exact update performs GET status 105 before PUT then requires status 
       .update(elevenstExactExistingUpdateProjectionDigestInput(before))
       .digest("hex"),
   };
-  const calls: string[] = [];
+  const calls: Array<{ method: string; url: string }> = [];
   globalThis.fetch = async (request, init) => {
+    const url = String(request);
     const method = String(init?.method ?? "GET");
-    calls.push(method);
+    calls.push({ method, url });
     if (method === "GET") {
-      const read = calls.filter((item) => item === "GET").length;
-      return new Response(productXml(read === 1 ? before : after, read === 1 ? "105" : "103"), { status: 200 });
+      const read = calls.filter((item) => item.method === "GET").length;
+      return new Response(productXml(read === 1 ? before : after, read === 3 ? "103" : "105"), { status: 200 });
+    }
+    if (url.endsWith(`/rest/prodstatservice/stat/restartdisplay/${identity.remoteId}`)) {
+      return new Response("<ClientMessage><message>판매상태가 수정되었습니다. [STAT : 103]</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
     return new Response(`<ClientMessage><productNo>${identity.remoteId}</productNo><resultCode>200</resultCode></ClientMessage>`, { status: 200 });
   };
@@ -237,10 +253,56 @@ test("11st exact update performs GET status 105 before PUT then requires status 
       arguments: argumentsValue,
       environment: "production",
     });
-    assert.deepEqual(calls, ["GET", "PUT", "GET"]);
+    assert.deepEqual(calls, [
+      { method: "GET", url: `https://api.11st.co.kr/rest/prodmarketservice/prodmarket/${identity.remoteId}` },
+      { method: "PUT", url: `https://api.11st.co.kr/rest/prodservices/product/${identity.remoteId}` },
+      { method: "GET", url: `https://api.11st.co.kr/rest/prodmarketservice/prodmarket/${identity.remoteId}` },
+      { method: "PUT", url: `https://api.11st.co.kr/rest/prodstatservice/stat/restartdisplay/${identity.remoteId}` },
+      { method: "GET", url: `https://api.11st.co.kr/rest/prodmarketservice/prodmarket/${identity.remoteId}` },
+    ]);
     assert.equal(result.ok, true);
     assert.equal(result.publicationFulfilled, true);
     assert.equal(result.remoteState?.providerStatus, "103");
+    assert.equal(result.steps[2]?.name, "listing-staged-readback");
+    assert.equal(result.steps[2]?.data.sellerpilotExactExistingStagedStatus105Verified, true);
+    assert.equal(result.steps[3]?.name, "restart-display");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st exact update never calls restartdisplay when staged content differs", async () => {
+  const originalFetch = globalThis.fetch;
+  const before = completeProduct({ prdNm: "기존 부착형 케이블 정리 클립" });
+  const after = completeProduct();
+  const mismatched = completeProduct({ prdNm: "다른 상품명" });
+  const argumentsValue = {
+    ...exactArguments(after),
+    sellerpilotSnapshotMutableFingerprint: createHash("sha256")
+      .update(elevenstExactExistingUpdateProjectionDigestInput(before))
+      .digest("hex"),
+  };
+  const calls: Array<{ method: string; url: string }> = [];
+  globalThis.fetch = async (request, init) => {
+    const call = { method: String(init?.method ?? "GET"), url: String(request) };
+    calls.push(call);
+    if (call.method === "GET") {
+      const reads = calls.filter((item) => item.method === "GET").length;
+      return new Response(productXml(reads === 1 ? before : mismatched, "105"), { status: 200 });
+    }
+    return new Response(`<ClientMessage><productNo>${identity.remoteId}</productNo><resultCode>200</resultCode></ClientMessage>`, { status: 200 });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.update",
+      payload: { api_key: "A".repeat(32) },
+      arguments: argumentsValue,
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.steps.at(-1)?.name, "listing-staged-readback");
+    assert.equal(calls.some((call) => call.url.includes("/restartdisplay/")), false);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -320,4 +382,40 @@ test("11st serverless worker rejects an exact duplicate create before mutation h
     },
   }), /ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN/u);
   assert.equal(mutations, 0);
+});
+
+test("11st serverless worker rejects a credential outside the exact listing lineage before mutation", async () => {
+  const job: GatewayClaim = {
+    id: "11111111-1111-4111-8111-111111111111",
+    claim_token: "22222222-2222-4222-8222-222222222222",
+    credential_id: "33333333-3333-4333-8333-333333333333",
+    channel: "elevenst",
+    operation: "listing.update",
+    environment: "production",
+    request: {
+      arguments: {
+        ...exactArguments(),
+        sellerpilotSnapshotMutableFingerprint: "c".repeat(64),
+      },
+    },
+    credential: { api_key: "A".repeat(32) },
+    attempt_count: 1,
+  };
+  let hooks = 0;
+  let executorCalls = 0;
+  await assert.rejects(executeServerlessGatewayProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { hooks += 1; },
+      beginProviderMutation: async () => { hooks += 1; },
+      beginCredentialMutation: async () => { hooks += 1; },
+      stageCredentialRefresh: async () => { hooks += 1; },
+    },
+  }, async () => {
+    executorCalls += 1;
+    throw new Error("unexpected provider executor");
+  }), /ELEVENST_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH/u);
+  assert.equal(hooks, 0);
+  assert.equal(executorCalls, 0);
 });
