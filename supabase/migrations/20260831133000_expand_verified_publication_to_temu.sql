@@ -2577,27 +2577,173 @@ declare
   v_name regprocedure;
   v_definition text;
   v_rewritten text;
-begin
-  foreach v_name in array array[
+  v_expected_md5 text;
+  v_expected_pairs integer;
+  v_current regprocedure;
+  v_310540 regprocedure;
+  v_056700 regprocedure;
+  v_source regprocedure;
+  v_source_definition text;
+  v_private_names regprocedure[] := array[
     'sellerpilot_private.guard_listing_publication_review()'::regprocedure,
     'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure,
     'sellerpilot_private.apply_listing_publication_verifier_completion(uuid)'::regprocedure,
-    'sellerpilot_private.listing_publication_review_is_current(uuid)'::regprocedure,
-    'public.sellerpilot_310540_listing_publication_verification_source(text,uuid,uuid)'::regprocedure
-  ] loop
+    'sellerpilot_private.listing_publication_review_is_current(uuid)'::regprocedure
+  ];
+  v_private_definitions text[] := array[]::text[];
+  v_private_pair_counts integer[] := array[]::integer[];
+  v_index integer;
+begin
+  -- Two immutable predecessor chains exist in deployed history. A database
+  -- with 310540 has the Elevenst wrapper plus its renamed original. The linked
+  -- production database intentionally has no 310540 history, so 056700 renamed
+  -- the original source resolver directly. Select exactly the observed chain;
+  -- never cast an optional historical function through regprocedure.
+  v_current := pg_catalog.to_regprocedure(
+    'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)'
+  );
+  v_310540 := pg_catalog.to_regprocedure(
+    'public.sellerpilot_310540_listing_publication_verification_source(text,uuid,uuid)'
+  );
+  v_056700 := pg_catalog.to_regprocedure(
+    'public.sellerpilot_056700_listing_publication_verification_source_before_qoo10_s1(text,uuid,uuid)'
+  );
+  if v_current is null then
+    raise exception 'Temu pending activation current source wrapper missing'
+      using errcode='55000';
+  end if;
+  select pg_catalog.pg_get_functiondef(v_current) into v_definition;
+  if pg_catalog.md5(v_definition) is distinct from
+       '4765c255abb7e84d7054c56b4cb1fc3d'
+     or sellerpilot_private.qoo10_definition_occurrences(
+          v_definition, '''listing.create'', ''listing.update'''
+        ) <> 0
+     or pg_catalog.strpos(v_definition, '''listing.activate''') <> 0
+  then
+    raise exception 'Temu pending activation current source wrapper drifted'
+      using errcode='55000';
+  end if;
+
+  if v_310540 is not null then
+    if v_056700 is null then
+      raise exception 'Temu pending activation chronological source chain incomplete'
+        using errcode='55000';
+    end if;
+    select pg_catalog.pg_get_functiondef(v_056700) into v_definition;
+    if pg_catalog.md5(v_definition) is distinct from
+         '324727e5d5da9929c4e02817ef261f3f'
+       or sellerpilot_private.qoo10_definition_occurrences(
+            v_definition, '''listing.create'', ''listing.update'''
+          ) <> 0
+       or pg_catalog.strpos(v_definition, '''listing.activate''') <> 0
+    then
+      raise exception 'Temu pending activation chronological wrapper drifted'
+        using errcode='55000';
+    end if;
+    v_source := v_310540;
+    v_expected_md5 := '0d7330a053d24a3ee02855a63d13780d';
+  else
+    if v_056700 is null then
+      raise exception 'Temu pending activation deployed source predecessor missing'
+        using errcode='55000';
+    end if;
+    v_source := v_056700;
+    v_expected_md5 := 'e3f30aa629b5a1a2bb4f46a3722ec115';
+  end if;
+  select pg_catalog.pg_get_functiondef(v_source) into v_definition;
+  if pg_catalog.md5(v_definition) is distinct from v_expected_md5
+     or sellerpilot_private.qoo10_definition_occurrences(
+          v_definition, '''listing.create'', ''listing.update'''
+        ) <> 1
+     or pg_catalog.strpos(v_definition, '''listing.activate''') <> 0
+  then
+    raise exception 'Temu pending activation source predecessor drifted: %',v_source
+      using errcode='55000';
+  end if;
+  v_source_definition := v_definition;
+
+  -- Validate and snapshot every dependent function before replacing any one
+  -- of them. CREATE OR REPLACE can invalidate a dependent parsed SQL body and
+  -- change its deparsed fingerprint even though its source contract is intact.
+  foreach v_name in array v_private_names loop
     select pg_catalog.pg_get_functiondef(v_name) into v_definition;
-    v_rewritten:=pg_catalog.replace(
+    case v_name::text
+      when 'sellerpilot_private.guard_listing_publication_review()' then
+        v_expected_md5 := '1216480d14bbda832778f8b9f82ee55d';
+        v_expected_pairs := 2;
+      when 'sellerpilot_private.register_pending_listing_publication_review(uuid)' then
+        v_expected_md5 := 'ffc6745ae02af71c199772a685746d37';
+        v_expected_pairs := 1;
+      when 'sellerpilot_private.apply_listing_publication_verifier_completion(uuid)' then
+        v_expected_md5 := '43c702a316401a65f952f02352e948c2';
+        v_expected_pairs := 2;
+      when 'sellerpilot_private.listing_publication_review_is_current(uuid)' then
+        v_expected_md5 := 'ddce8cb84825f978def563631ee031e7';
+        v_expected_pairs := 1;
+      else
+        raise exception 'Temu pending activation private source identity drifted: %',v_name
+          using errcode='55000';
+    end case;
+    if pg_catalog.md5(v_definition) is distinct from v_expected_md5
+       or sellerpilot_private.qoo10_definition_occurrences(
+            v_definition, '''listing.create'', ''listing.update'''
+          ) <> v_expected_pairs
+       or pg_catalog.strpos(v_definition, '''listing.activate''') <> 0
+    then
+      raise exception 'Temu pending activation private source preimage drifted: % (md5 %, pairs %, expected md5 %, pairs %)',
+        v_name,
+        pg_catalog.md5(v_definition),
+        sellerpilot_private.qoo10_definition_occurrences(
+          v_definition, '''listing.create'', ''listing.update'''
+        ),
+        v_expected_md5,
+        v_expected_pairs
+      using errcode='55000';
+    end if;
+    v_private_definitions := pg_catalog.array_append(
+      v_private_definitions, v_definition
+    );
+    v_private_pair_counts := pg_catalog.array_append(
+      v_private_pair_counts, v_expected_pairs
+    );
+  end loop;
+
+  for v_index in 1..pg_catalog.array_length(v_private_names,1) loop
+    v_name := v_private_names[v_index];
+    v_definition := v_private_definitions[v_index];
+    v_expected_pairs := v_private_pair_counts[v_index];
+    v_rewritten := pg_catalog.replace(
       v_definition,
       '''listing.create'', ''listing.update''',
       '''listing.create'', ''listing.update'', ''listing.activate'''
     );
-    if v_rewritten=v_definition
-       and pg_catalog.strpos(v_definition,'''listing.activate''')=0 then
-      raise exception 'Temu pending activation source preimage drifted: %',v_name
+    if v_rewritten is not distinct from v_definition
+       or sellerpilot_private.qoo10_definition_occurrences(
+            v_rewritten,
+            '''listing.create'', ''listing.update'', ''listing.activate'''
+          ) <> v_expected_pairs
+    then
+      raise exception 'Temu pending activation private source patch drifted: %',v_name
         using errcode='55000';
     end if;
-    if v_rewritten<>v_definition then execute v_rewritten; end if;
+    execute v_rewritten;
   end loop;
+
+  v_rewritten := pg_catalog.replace(
+    v_source_definition,
+    '''listing.create'', ''listing.update''',
+    '''listing.create'', ''listing.update'', ''listing.activate'''
+  );
+  if v_rewritten is not distinct from v_source_definition
+     or sellerpilot_private.qoo10_definition_occurrences(
+          v_rewritten,
+          '''listing.create'', ''listing.update'', ''listing.activate'''
+        ) <> 1
+  then
+    raise exception 'Temu pending activation source predecessor patch drifted: %',v_source
+      using errcode='55000';
+  end if;
+  execute v_rewritten;
 end;
 $temu_pending_activation_source_patch$;
 

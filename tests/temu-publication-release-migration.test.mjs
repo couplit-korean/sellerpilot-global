@@ -22,6 +22,13 @@ test("Temu publication release is a forward-only migration after the deployed 13
   assert.match(migration, /other_job\.id is distinct from job\.id[\s\S]*'listing\.activate'/);
   assert.match(migration, /gate\.is_open is not distinct from false/);
   assert.match(migration, /to_jsonb\(job\)[\s\S]*is distinct from v_exact_qoo10_source_before/);
+  assert.match(migration, /to_regprocedure\([\s\S]*sellerpilot_310540_listing_publication_verification_source/);
+  assert.match(migration, /e3f30aa629b5a1a2bb4f46a3722ec115/);
+  assert.match(migration, /4765c255abb7e84d7054c56b4cb1fc3d/);
+  assert.doesNotMatch(
+    migration,
+    /'public\.sellerpilot_310540_listing_publication_verification_source\(text,uuid,uuid\)'::regprocedure/,
+  );
   const installationFence = migration.match(
     /do \$temu_publication_installation_fence\$[\s\S]*?\$temu_publication_installation_fence\$;/,
   )?.[0];

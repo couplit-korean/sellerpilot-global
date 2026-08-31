@@ -11360,6 +11360,124 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
   }
 });
 
+test("Temu pending activation patches the exact production chain without 310540 history", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    await db.exec(`
+      create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations (
+        version text primary key,
+        statements text[] not null default '{}'::text[],
+        name text
+      );
+    `);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql")
+        && name <= TEMU_PUBLICATION_RELEASE_MIGRATION
+        && name !== ELEVENST_SNAPSHOT_RECOVERY_MIGRATION)
+      .sort();
+    for (const name of migrationNames) {
+      if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      let sql = name === "20260828210000_non_cs_release_integrity.sql"
+        ? withoutFinalStrictWorkerScopeFence(source)
+        : source;
+      if (name === TEMU_PUBLICATION_RELEASE_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regprocedure(
+              'public.sellerpilot_310540_listing_publication_verification_source(text,uuid,uuid)'
+            )`,
+          ),
+          null,
+        );
+        assert.deepEqual(
+          (await db.query(`
+            select
+              md5(pg_get_functiondef(
+                'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+              )) register_md5,
+              md5(pg_get_functiondef(to_regprocedure(
+                'public.sellerpilot_056700_listing_publication_verification_source_before_qoo10_s1(text,uuid,uuid)'
+              ))) source_md5,
+              md5(pg_get_functiondef(
+                'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)'::regprocedure
+              )) current_md5
+          `)).rows,
+          [{
+            register_md5: "ebca2a9602ffc003a80f68eeed874c99",
+            source_md5: "e3f30aa629b5a1a2bb4f46a3722ec115",
+            current_md5: "4765c255abb7e84d7054c56b4cb1fc3d",
+          }],
+          "the production-gap replay must reach the observed rolled-back preimage",
+        );
+        const registrarPatch = sql.match(
+          /do \$temu_pending_review_registrar\$[\s\S]*?\$temu_pending_review_registrar\$;/,
+        )?.[0];
+        assert.ok(registrarPatch);
+        await db.exec(registrarPatch);
+        assert.equal(
+          await scalar(
+            db,
+            `select md5(pg_get_functiondef(
+              'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+            ))`,
+          ),
+          "ffc6745ae02af71c199772a685746d37",
+          "the earlier 133000 registrar statement must produce statement 63's exact preimage",
+        );
+      }
+      await db.exec(withoutUnavailableExtensions(sql));
+      if (!UNRECORDED_QOO10_SCHEMA_MIGRATIONS.has(name)) {
+        const version = name.match(/^\d+/)?.[0];
+        assert.ok(version);
+        await db.query(
+          `insert into supabase_migrations.schema_migrations (
+             version, statements, name
+           ) values ($1, '{}'::text[], $2)`,
+          [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+    }
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from supabase_migrations.schema_migrations
+          where version in ('20260831054000','20260831133000')`,
+      ),
+      1,
+      "133000 must apply without fabricating or repairing 310540 history",
+    );
+    assert.deepEqual(
+      (await db.query(`
+        select
+          strpos(pg_get_functiondef(to_regprocedure(
+            'public.sellerpilot_056700_listing_publication_verification_source_before_qoo10_s1(text,uuid,uuid)'
+          )), '''listing.create'', ''listing.update'', ''listing.activate''') > 0
+            source_patched,
+          md5(pg_get_functiondef(
+            'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)'::regprocedure
+          )) current_md5,
+          strpos(pg_get_functiondef(
+            'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+          ), '''listing.create'', ''listing.update'', ''listing.activate''') > 0
+            registrar_patched
+      `)).rows,
+      [{
+        source_patched: true,
+        current_md5: "4765c255abb7e84d7054c56b4cb1fc3d",
+        registrar_patched: true,
+      }],
+      "only the exact gap predecessor and private sources may be patched",
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("Korean inquiry history runs are durable, idempotent, paginated, retryable, and serverless-owned", async () => {
   const db = new PGlite();
   const legacyHash = "4".repeat(64);
