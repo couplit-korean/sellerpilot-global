@@ -107,6 +107,8 @@ const EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION =
   "20260901080000_allow_exact_existing_updates_through_closed_gate.sql";
 const QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION =
   "20260901081000_initialize_qoo10_release_status_records.sql";
+const EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION =
+  "20260901081500_backfill_exact_domestic_market_targets.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -796,6 +798,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION,
       EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION,
       QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION,
+      EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -915,6 +918,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION)
         < migrationNames.indexOf(QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION),
       "Qoo10 release status record initialization must replay after all 080000 exact permits",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION)
+        < migrationNames.indexOf(EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION),
+      "the exact domestic market-target repair must replay after the deployed 081000 status initialization",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
