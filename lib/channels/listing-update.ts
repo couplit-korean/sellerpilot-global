@@ -1,6 +1,7 @@
 import type { ActiveChannelKey } from "./catalog";
 import {
   coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryCandidate,
 } from "./coupang-exact-qa-recovery";
 import {
@@ -1314,6 +1315,39 @@ function actualListingUpdateProjection(channel: ActiveChannelKey, argumentsValue
   return {};
 }
 
+function coupangProviderManagedGalleryMatches(
+  expectedValue: unknown,
+  actualValue: unknown,
+) {
+  const expected = Array.isArray(expectedValue) ? expectedValue.map(recordValue) : [];
+  const actual = Array.isArray(actualValue) ? actualValue.map(recordValue) : [];
+  if (!expected.length || expected.length !== actual.length) return false;
+  const actualIdentities = actual.map((image) =>
+    identityValue(image.cdnPath) || identityValue(image.vendorPath));
+  return actualIdentities.every(Boolean)
+    && new Set(actualIdentities).size === actual.length
+    && expected.every((image, index) =>
+      Number(image.imageOrder) === Number(actual[index].imageOrder)
+      && identityValue(image.imageType).toUpperCase()
+        === identityValue(actual[index].imageType).toUpperCase());
+}
+
+function coupangExactQaComparableReadback(
+  expectedValue: unknown,
+  actualValue: unknown,
+) {
+  const expected = recordValue(expectedValue);
+  const actual = structuredClone(recordValue(actualValue));
+  const expectedItems = Array.isArray(expected.items) ? expected.items.map(recordValue) : [];
+  const actualItems = Array.isArray(actual.items) ? actual.items.map(recordValue) : [];
+  if (expectedItems.length !== 1 || actualItems.length !== 1) return actual;
+  if (coupangProviderManagedGalleryMatches(expectedItems[0].images, actualItems[0].images)) {
+    actualItems[0].images = structuredClone(expectedItems[0].images);
+    actual.items = actualItems;
+  }
+  return actual;
+}
+
 export function verifyListingUpdateReadback(
   channel: ActiveChannelKey,
   argumentsValue: Record<string, unknown>,
@@ -1334,6 +1368,10 @@ export function verifyListingUpdateReadback(
       qooActual.Keyword = qooExpected.Keyword;
     }
     comparableActual = qooActual;
+  }
+  if (channel === "coupang"
+      && coupangExactQaRecoveryBinding(argumentsValue, "listing.update")) {
+    comparableActual = coupangExactQaComparableReadback(expected, actual);
   }
   const mismatches = subsetMismatches(expected, comparableActual).filter(Boolean);
   return { ok: Object.keys(expected).length > 0 && mismatches.length === 0, mismatches };

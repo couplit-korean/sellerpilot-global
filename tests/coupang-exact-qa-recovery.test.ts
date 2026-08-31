@@ -9,6 +9,8 @@ import {
   coupangExactQaRecoveryIdentity,
 } from "../lib/channels/coupang-exact-qa-recovery";
 import {
+  assertCoupangExactQaCurrentProduct,
+  assertCoupangExactQaInventoryReadback,
   assertCoupangExactQaUpdateReadback,
   prepareCoupangExactQaRecoveryArguments,
 } from "../lib/channels/coupang-listing-update";
@@ -60,6 +62,16 @@ function exactGalleryImages() {
     imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
     vendorPath,
   }));
+}
+
+function providerReadbackGalleryImages() {
+  return ["representative", ...detailImageUrls().map((_, index) => `detail-${index + 1}`)]
+    .map((name, imageOrder) => ({
+      imageOrder,
+      imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
+      cdnPath: `vendor_inventory/images/2026/09/01/${name}.jpg`,
+      vendorPath: `${name}.jpg`,
+    }));
 }
 
 function exactPublicationAssetBinding() {
@@ -498,7 +510,9 @@ test("exact update proves signed GET before PUT and verifies the strict readback
       return Response.json({
         code: "SUCCESS",
         data: {
-          sellerItemId: Number(coupangExactQaRecoveryIdentity.vendorItemId),
+          // Coupang names this response field sellerItemId and does not promise
+          // that it echoes the vendorItemId used in the request path.
+          sellerItemId: 123456789,
           amountInStock: coupangExactQaRecoveryIdentity.stock,
           salePrice: coupangExactQaRecoveryIdentity.priceKrw,
           onSale: true,
@@ -506,11 +520,18 @@ test("exact update proves signed GET before PUT and verifies the strict readback
       });
     }
     sellerReads += 1;
+    const providerReadback = transmittedBody
+      ? structuredClone(transmittedBody)
+      : null;
+    if (providerReadback) {
+      providerReadback.requested = true;
+      providerReadback.statusName = "승인완료";
+      const providerItems = providerReadback.items as Array<Record<string, unknown>>;
+      providerItems[0].images = providerReadbackGalleryImages();
+    }
     return Response.json({
       code: "SUCCESS",
-      data: transmittedBody
-        ? { ...transmittedBody, requested: true, statusName: "승인완료" }
-        : exactRemoteProduct(),
+      data: providerReadback ?? exactRemoteProduct(),
     });
   };
   try {
@@ -598,6 +619,50 @@ test("exact update readback rejects price and representative/detail gallery drif
   assert.throws(
     () => assertCoupangExactQaUpdateReadback(galleryDrift, binding),
     /COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH/,
+  );
+});
+
+test("exact readback accepts Coupang CDN paths without treating sellerItemId as vendorItemId", () => {
+  const argumentsValue = baseRecoveryArguments();
+  const binding = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
+  assert.ok(binding);
+  const providerProduct = exactRemoteProduct();
+  providerProduct.items[0].images = providerReadbackGalleryImages();
+  assert.doesNotThrow(() => assertCoupangExactQaUpdateReadback(
+    providerProduct,
+    binding,
+    { providerReadback: true },
+  ));
+  assert.doesNotThrow(() => assertCoupangExactQaInventoryReadback({
+    sellerItemId: 123456789,
+    amountInStock: coupangExactQaRecoveryIdentity.stock,
+    salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+    onSale: true,
+  }, binding, {
+    requestedVendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+    authoritativeVendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+  }));
+  assert.throws(() => assertCoupangExactQaInventoryReadback({
+    sellerItemId: 123456789,
+    amountInStock: coupangExactQaRecoveryIdentity.stock,
+    salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+    onSale: true,
+  }, binding, {
+    requestedVendorItemId: "95962393878",
+    authoritativeVendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+  }), /COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH/);
+});
+
+test("exact current-product preflight rejects status names that merely contain APPROVED", () => {
+  const argumentsValue = baseRecoveryArguments();
+  const binding = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
+  assert.ok(binding);
+  assert.throws(
+    () => assertCoupangExactQaCurrentProduct(
+      exactRemoteProduct({ statusName: "NOT_APPROVED" }),
+      binding,
+    ),
+    /COUPANG_EXACT_QA_REMOTE_PUBLICATION_STATE_MISMATCH/,
   );
 });
 

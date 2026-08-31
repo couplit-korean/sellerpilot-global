@@ -3870,9 +3870,19 @@ async function coupangListingResultWithPublicationReadback(
         };
     if (commerceStep.ok && commerceReadback) {
       try {
+        const sellerProduct = readback.sellerProductReadback
+          ? assertCoupangExactQaCurrentProduct(
+              objectValue(readback.sellerProductReadback.data, "data", false),
+              exactRecovery,
+            )
+          : null;
         assertCoupangExactQaInventoryReadback(
           objectValue(commerceReadback.remote.data, "data", false),
           exactRecovery,
+          {
+            requestedVendorItemId: commerceReadback.vendorItemId,
+            authoritativeVendorItemId: String(sellerProduct?.item.vendorItemId ?? ""),
+          },
         );
       } catch {
         commerceStep.ok = false;
@@ -3956,9 +3966,10 @@ async function executeCoupang(input: ExecuteInput) {
     const preflightStep = step("listing-update-preflight", preflightRemote);
     const currentBody = objectValue(preflightRemote.data, "data", false);
     preflightStep.ok = preflightStep.ok && String(currentBody.sellerProductId ?? "") === remoteId;
+    let exactCurrentProduct: ReturnType<typeof assertCoupangExactQaCurrentProduct> | null = null;
     if (preflightStep.ok && exactRecovery) {
       try {
-        assertCoupangExactQaCurrentProduct(currentBody, exactRecovery);
+        exactCurrentProduct = assertCoupangExactQaCurrentProduct(currentBody, exactRecovery);
       } catch {
         preflightStep.ok = false;
       }
@@ -3982,6 +3993,10 @@ async function executeCoupang(input: ExecuteInput) {
           assertCoupangExactQaInventoryReadback(
             objectValue(commerceRemote.data, "data", false),
             exactRecovery,
+            {
+              requestedVendorItemId: exactRecovery.vendorItemId,
+              authoritativeVendorItemId: String(exactCurrentProduct?.item.vendorItemId ?? ""),
+            },
           );
         } catch {
           commerceStep.ok = false;
@@ -4042,7 +4057,9 @@ async function executeCoupang(input: ExecuteInput) {
     readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
     if (readbackStep.ok && exactRecovery) {
       try {
-        assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery);
+        assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery, {
+          providerReadback: true,
+        });
       } catch {
         readbackStep.ok = false;
         readbackStep.data = {

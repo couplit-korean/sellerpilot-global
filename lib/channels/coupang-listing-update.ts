@@ -79,7 +79,10 @@ function exactBoundDetailImageUrls(argumentsValue: Record<string, unknown>) {
   return uniqueHttpsUrls(transport.map((image) => image.publicUrl));
 }
 
-function exactGalleryImageUrls(imagesValue: unknown) {
+function exactGalleryImageProjection(
+  imagesValue: unknown,
+  identityForImage: (image: Record<string, unknown>) => string,
+) {
   const images = Array.isArray(imagesValue) ? imagesValue.map(recordValue) : [];
   const expectedCount = coupangExactQaRecoveryIdentity.representativeImageCount
     + coupangExactQaRecoveryIdentity.detailImageCount;
@@ -89,16 +92,38 @@ function exactGalleryImageUrls(imagesValue: unknown) {
     exactText(image.imageType).toUpperCase() === "REPRESENTATION");
   const details = images.filter((image) =>
     exactText(image.imageType).toUpperCase() === "DETAIL");
-  const urls = uniqueHttpsUrls(images.map((image) => image.vendorPath));
+  const identities = images.map(identityForImage);
   if (representations.length !== coupangExactQaRecoveryIdentity.representativeImageCount
       || details.length !== coupangExactQaRecoveryIdentity.detailImageCount
       || exactText(images[0]?.imageType).toUpperCase() !== "REPRESENTATION"
       || images.slice(1).some((image) => exactText(image.imageType).toUpperCase() !== "DETAIL")
-      || urls.length !== expectedCount) return null;
+      || identities.some((identity) => !identity)
+      || new Set(identities).size !== expectedCount) return null;
   return {
-    representative: urls[0],
-    details: urls.slice(1),
+    representative: identities[0],
+    details: identities.slice(1),
   };
+}
+
+function exactOutboundGalleryImageUrls(imagesValue: unknown) {
+  return exactGalleryImageProjection(imagesValue, (image) => {
+    const urls = uniqueHttpsUrls([image.vendorPath]);
+    return urls.length === 1 ? urls[0] : "";
+  });
+}
+
+function exactProviderGalleryImageIdentities(imagesValue: unknown) {
+  return exactGalleryImageProjection(imagesValue, (image) => {
+    // Coupang downloads vendor URLs into its own CDN. The authoritative product
+    // GET therefore commonly returns a relative cdnPath and only a filename in
+    // vendorPath; neither value is required to echo the outbound HTTPS URL.
+    const identity = exactText(image.cdnPath) || exactText(image.vendorPath);
+    const hasControlCharacter = Array.from(identity).some((character) => {
+      const code = character.charCodeAt(0);
+      return code <= 0x1f || code === 0x7f;
+    });
+    return hasControlCharacter ? "" : identity;
+  });
 }
 
 function strictAttributes(value: unknown) {
@@ -126,7 +151,7 @@ export function prepareCoupangExactQaRecoveryArguments(
   const item = items[0];
   const details = exactDetailImageUrls(item.contents);
   const boundDetails = exactBoundDetailImageUrls(argumentsValue);
-  const gallery = exactGalleryImageUrls(item.images);
+  const gallery = exactOutboundGalleryImageUrls(item.images);
   if (details.length !== coupangExactQaRecoveryIdentity.detailImageCount
       || new Set(details).size !== coupangExactQaRecoveryIdentity.detailImageCount
       || uniqueHttpsUrls(details).length !== coupangExactQaRecoveryIdentity.detailImageCount
@@ -189,7 +214,12 @@ export function assertCoupangExactQaCurrentProduct(
       ?? exact.current.status,
   ).toUpperCase();
   if (strictBoolean(exact.current.requested) !== true
-      || !/(?:부분승인완료|승인완료|PARTIAL_APPROVED|APPROVED)/u.test(status)) {
+      || !new Set([
+        "부분승인완료",
+        "승인완료",
+        "PARTIAL_APPROVED",
+        "APPROVED",
+      ]).has(status)) {
     throw new Error("COUPANG_EXACT_QA_REMOTE_PUBLICATION_STATE_MISMATCH");
   }
   return exact;
@@ -198,13 +228,21 @@ export function assertCoupangExactQaCurrentProduct(
 export function assertCoupangExactQaInventoryReadback(
   currentValue: unknown,
   binding: CoupangExactQaRecoveryBinding,
+  identity: {
+    requestedVendorItemId: string;
+    authoritativeVendorItemId: string;
+  },
 ) {
   if (binding.phase !== "listing.update") {
     throw new Error("COUPANG_EXACT_QA_RECOVERY_PHASE_INVALID");
   }
   const current = recordValue(currentValue);
-  const remoteItemId = exactText(current.vendorItemId ?? current.sellerItemId);
-  if (remoteItemId !== binding.vendorItemId
+  const responseItemId = exactText(current.vendorItemId ?? current.sellerItemId);
+  const responseVendorItemId = exactText(current.vendorItemId);
+  if (exactText(identity.requestedVendorItemId) !== binding.vendorItemId
+      || exactText(identity.authoritativeVendorItemId) !== binding.vendorItemId
+      || !/^\d+$/u.test(responseItemId)
+      || (responseVendorItemId && responseVendorItemId !== binding.vendorItemId)
       || Number(current.salePrice) !== coupangExactQaRecoveryIdentity.priceKrw
       || Number(current.amountInStock) !== coupangExactQaRecoveryIdentity.stock
       || strictBoolean(current.onSale) !== true) {
@@ -216,12 +254,15 @@ export function assertCoupangExactQaInventoryReadback(
 export function assertCoupangExactQaUpdateReadback(
   currentValue: unknown,
   binding: CoupangExactQaRecoveryBinding,
+  options: { providerReadback?: boolean } = {},
 ) {
   const { current, item } = assertCoupangExactQaCurrentProduct(currentValue, binding);
   const attributes = Array.isArray(item.attributes) ? item.attributes.map(recordValue) : [];
   const notices = Array.isArray(item.notices) ? item.notices.map(recordValue) : [];
   const details = exactDetailImageUrls(item.contents);
-  const gallery = exactGalleryImageUrls(item.images);
+  const gallery = options.providerReadback
+    ? exactProviderGalleryImageIdentities(item.images)
+    : exactOutboundGalleryImageUrls(item.images);
   const displayProductName = exactText(current.displayProductName);
   const noticeText = JSON.stringify(notices);
   const noticeCategories = new Set(notices.map((notice) => String(notice.noticeCategoryName ?? "").trim()));
@@ -241,7 +282,8 @@ export function assertCoupangExactQaUpdateReadback(
       || details.length !== coupangExactQaRecoveryIdentity.detailImageCount
       || new Set(details).size !== coupangExactQaRecoveryIdentity.detailImageCount
       || !gallery
-      || gallery.details.some((url, index) => url !== details[index])
+      || (!options.providerReadback
+        && gallery.details.some((url, index) => url !== details[index]))
       || notices.length === 0
       || noticeCategories.size !== 1
       || !noticeCategories.has(coupangExactQaRecoveryIdentity.noticeCategoryName)
