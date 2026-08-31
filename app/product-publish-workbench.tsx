@@ -16,6 +16,22 @@ import {
   smartstoreExactQaRecoveryIdentity,
 } from "../lib/channels/smartstore-exact-qa-recovery";
 import {
+  coupangExactQaRecoveryCandidate,
+  coupangExactQaRecoveryIdentity,
+} from "../lib/channels/coupang-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryCandidate,
+  ebayExactExistingQaRecoveryIdentity,
+} from "../lib/channels/ebay-exact-existing-qa-recovery";
+import {
+  elevenstExactExistingPublicationCandidate,
+  elevenstExactExistingPublicationIdentity,
+} from "../lib/channels/elevenst-exact-existing-identity";
+import {
+  lazadaExactExistingPublicationCandidate,
+  lazadaExactExistingPublicationIdentity,
+} from "../lib/channels/lazada-exact-existing-identity";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
   marketplaceMinimumThumbnailCount,
@@ -41,7 +57,7 @@ import {
   lazadaKrwMyrPricePolicyFromArguments,
   type LazadaKrwMyrRateEvidence,
 } from "../lib/channels/lazada-price-policy";
-import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import { inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
@@ -127,6 +143,43 @@ function smartstoreExactQaWorkbenchRecoveryCandidate(
       publishedAt: listing?.publishedAt,
       failureClass: listing?.failureClass,
     });
+}
+
+export function exactExternalActionWorkbenchRecoveryCandidate(
+  productId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  if (!listing) return false;
+  const reference = {
+    channel,
+    listingId: listing.id,
+    remoteId: listing.remoteId,
+    marketplaceSku: listing.marketplaceSku,
+    status: listing.status,
+    requestedPublicationIntent: listing.requestedPublicationIntent,
+    remoteVisibility: listing.remoteVisibility,
+    providerStatus: listing.providerStatus,
+    publishedAt: listing.publishedAt,
+    failureClass: listing.failureClass,
+  };
+  if (channel === "ebay") {
+    return productId === ebayExactExistingQaRecoveryIdentity.productId
+      && ebayExactExistingQaRecoveryCandidate(reference);
+  }
+  if (channel === "coupang") {
+    return productId === coupangExactQaRecoveryIdentity.productId
+      && coupangExactQaRecoveryCandidate(reference);
+  }
+  if (channel === "elevenst") {
+    return productId === elevenstExactExistingPublicationIdentity.productId
+      && elevenstExactExistingPublicationCandidate(reference);
+  }
+  if (channel === "lazada") {
+    return productId === lazadaExactExistingPublicationIdentity.productId
+      && lazadaExactExistingPublicationCandidate(reference);
+  }
+  return false;
 }
 
 function qoo10ExactLocalizationListingCandidate(
@@ -420,17 +473,22 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const product = context.product;
   const listingMarket = target?.marketCode ?? ({ qoo10: "JP", coupang: "KR", elevenst: "KR", smartstore: "KR", ebay: "US", temu: "KR", shopee: "SG", lazada: "MY" } as const)[channel];
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === listingMarket);
-  const coreContent = listingCoreContentForOperation({
-    operation,
-    central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
-    localized,
-    allowReviewedQoo10LegacyRepair: channel === "qoo10"
-      && Boolean(localized?.title)
-      && repairLegacyQoo10JapaneseFallbackTitle(
-        localized?.title ?? "",
-        context.manualFields.productName,
-      ) !== localized?.title,
-  });
+  const exactEbayProviderCopyUpdate = channel === "ebay"
+    && operation === "listing.update"
+    && exactExternalActionWorkbenchRecoveryCandidate(product.id, channel, existingListing);
+  const coreContent = exactEbayProviderCopyUpdate
+    ? { title: "", shortDescription: "", description: "" }
+    : listingCoreContentForOperation({
+        operation,
+        central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
+        localized,
+        allowReviewedQoo10LegacyRepair: channel === "qoo10"
+          && Boolean(localized?.title)
+          && repairLegacyQoo10JapaneseFallbackTitle(
+            localized?.title ?? "",
+            context.manualFields.productName,
+          ) !== localized?.title,
+      });
   const manual = context.manualFields;
   const { title, description, shortDescription } = coreContent;
   const repairedQoo10Title = channel === "qoo10"
@@ -804,6 +862,25 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       },
     };
   }
+  if (exactEbayProviderCopyUpdate) {
+    return {
+      sellerpilotAssets,
+      inventoryItem: {
+        availability: { shipToLocationAvailability: { quantity } },
+        condition: manual.condition,
+        product: { imageUrls: galleryImageUrls },
+      },
+      offer: {
+        availableQuantity: quantity,
+        pricingSummary: {
+          price: {
+            value: String(channelPrice),
+            currency: target?.currency ?? ebayExactExistingQaRecoveryIdentity.currency,
+          },
+        },
+      },
+    };
+  }
   return {
     sellerpilotAssets,
     // eBay Inventory Items and Offers must reference the exact same SKU.
@@ -871,6 +948,52 @@ export function missingNativeValues(
   ].filter(Boolean);
   if (operation === "listing.update") return assetRequirements;
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
+}
+
+export function inspectWorkbenchListingDraft(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update" = "listing.create",
+  recoveryContext?: {
+    productId: string | null | undefined;
+    listing: Listing | null | undefined;
+  },
+) {
+  const requirements = inspectListingDraft(channel, draft, operation);
+  const exactEbayProviderCopyUpdate = operation === "listing.update"
+    && exactExternalActionWorkbenchRecoveryCandidate(
+      recoveryContext?.productId,
+      channel,
+      recoveryContext?.listing,
+    );
+  if (channel !== "ebay" || !exactEbayProviderCopyUpdate) {
+    return requirements;
+  }
+  return requirements.map((requirement) => (
+    requirement.key === "title" || requirement.key === "description"
+      ? {
+          ...requirement,
+          source: "eBay 공급자 원문",
+          status: "runtime" as const,
+          help: "브라우저 입력을 받지 않고 서버가 exact offer·SKU·listing을 재검증한 뒤 현재 eBay 원문을 보존합니다.",
+        }
+      : requirement
+  ));
+}
+
+function blockingWorkbenchListingRequirements(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update",
+  productId: string | null | undefined,
+  listing: Listing | null | undefined,
+) {
+  return inspectWorkbenchListingDraft(
+    channel,
+    draft,
+    operation,
+    { productId, listing },
+  ).filter((item) => item.status === "manual");
 }
 
 function parseDraft(value: string | undefined) {
@@ -1289,6 +1412,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return false;
     }
     const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+    const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+      productId,
+      channel,
+      listing,
+    );
     const recoverableQoo10RollbackUpdate = qoo10RollbackListingUpdateCandidate(channel, listing);
     const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
       productId,
@@ -1303,6 +1431,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     );
     if (listing?.failureClass === "external_action"
         && !recoverableEbayUpdate
+        && !recoverableExactExternalActionUpdate
         && !recoverableSmartstoreUpdate
         && !exactQoo10LocalizationUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
@@ -1329,7 +1458,13 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     const missing = [
       ...missingNativeValues(channel, channelArguments, operation),
-      ...blockingListingRequirements(channel, channelArguments, operation).map((item) => item.label),
+      ...blockingWorkbenchListingRequirements(
+        channel,
+        channelArguments,
+        operation,
+        productId,
+        listing,
+      ).map((item) => item.label),
     ].filter((value, index, values) => values.indexOf(value) === index);
     if (missing.length) {
       notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
@@ -1570,12 +1705,25 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const operation = listingWriteOperation(listing);
       const parsedDraft = parseDraft(drafts[channel]);
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
       const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
         productId,
         channel,
         listing,
       );
-      const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft, operation).length > 0 || missingNativeValues(channel, parsedDraft, operation).length > 0;
+      const hasMissingRequired = !parsedDraft
+        || blockingWorkbenchListingRequirements(
+          channel,
+          parsedDraft,
+          operation,
+          productId,
+          listing,
+        ).length > 0
+        || missingNativeValues(channel, parsedDraft, operation).length > 0;
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
       return Boolean(imagePackageReady
         && channelOperationAvailable(channel, operation)
@@ -1588,6 +1736,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
         && (listing?.failureClass !== "external_action"
           || recoverableEbayUpdate
+          || recoverableExactExternalActionUpdate
           || recoverableSmartstoreUpdate));
     }).slice(0, publicationSelectableChannelKeys.length);
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
@@ -1932,6 +2081,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
       const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
         productId,
         channel,
@@ -1944,10 +2098,17 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         listing,
       );
       const recoverableExternalActionUpdate = recoverableEbayUpdate
+        || recoverableExactExternalActionUpdate
         || recoverableSmartstoreUpdate
         || exactQoo10LocalizationUpdate;
       const recoveryReadyMessage = recoverableEbayUpdate
         ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다."
+        : recoverableExactExternalActionUpdate && channel === "coupang"
+          ? `불변 쿠팡 sellerProductId ${coupangExactQaRecoveryIdentity.sellerProductId}·vendorItemId ${coupangExactQaRecoveryIdentity.vendorItemId} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+          : recoverableExactExternalActionUpdate && channel === "elevenst"
+            ? `불변 11번가 productNo ${elevenstExactExistingPublicationIdentity.remoteId}·SKU 결속과 최초 원본 snapshot을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+            : recoverableExactExternalActionUpdate && channel === "lazada"
+              ? `Lazada OAuth 판매자 계보와 기존 MY item ${lazadaExactExistingPublicationIdentity.remoteId}의 비공개 상태를 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
         : recoverableSmartstoreUpdate
           ? `불변 스마트스토어 원상품 ${smartstoreExactQaRecoveryIdentity.originProductNo}·채널상품 ${smartstoreExactQaRecoveryIdentity.channelProductNo} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
           : exactQoo10LocalizationUpdate
@@ -1990,7 +2151,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const lazadaFinalPricePolicy = remoteCommerceUpdate && draftObject
         ? lazadaKrwMyrPricePolicyFromArguments(draftObject)
         : null;
-      const requirements = draftObject ? inspectListingDraft(channel, draftObject, operation) : [];
+      const requirements = draftObject
+        ? inspectWorkbenchListingDraft(
+          channel,
+          draftObject,
+          operation,
+          { productId, listing },
+        )
+        : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
       const nativeMissing = draftObject ? missingNativeValues(channel, draftObject, operation) : [];
       const blockingCount = blockingRequirements.length + nativeMissing.length;
