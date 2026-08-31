@@ -46,6 +46,11 @@ import {
 } from "./provider-oauth-runtime";
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
+import {
+  coupangExactQaCreateForbidden,
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBinding,
+} from "./coupang-exact-qa-recovery";
 import { channelPriceUpdateRelease } from "./price-update-release";
 import {
   qoo10S1ActivationArgument,
@@ -559,6 +564,21 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     const rawArguments = requestArguments(input.job);
+    if (input.job.channel === "coupang"
+        && input.job.operation === "listing.create"
+        && coupangExactQaCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("COUPANG_EXACT_QA_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const coupangRecoveryPhase = input.job.operation === "listing.update"
+      || input.job.operation === "listing.stop"
+      ? input.job.operation
+      : undefined;
+    if (Object.hasOwn(rawArguments, coupangExactQaRecoveryArgument)
+        && (input.job.channel !== "coupang"
+          || !coupangRecoveryPhase
+          || !coupangExactQaRecoveryBinding(rawArguments, coupangRecoveryPhase))) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
     const activationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
     if (activationMarkerSupplied !== (input.job.operation === "listing.activate")
         || (input.job.operation === "listing.activate"

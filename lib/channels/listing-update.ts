@@ -1,10 +1,15 @@
 import type { ActiveChannelKey } from "./catalog";
 import {
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryCandidate,
+} from "./coupang-exact-qa-recovery";
+import {
   elevenstListingUpdatePatchFromProduct,
   elevenstListingUpdateProjection,
 } from "./elevenst-listing";
 
 export type ListingUpdateReference = {
+  listingId?: string | null;
   remoteId: string | null;
   status: string;
   marketplaceSku?: string | null;
@@ -322,6 +327,17 @@ export function listingUpdateServerCandidate(
     (listing.failureClass !== "external_action" && listingHasVerifiedUpdateIdentity(listing))
     || legacyEbayListingUpdateCandidate(channel, listing)
     || qoo10RollbackListingUpdateCandidate(channel, listing)
+    || coupangExactQaRecoveryCandidate({
+      channel,
+      listingId: listing.listingId,
+      remoteId: listing.remoteId,
+      status: listing.status,
+      requestedPublicationIntent: listing.requestedPublicationIntent,
+      remoteVisibility: listing.remoteVisibility,
+      providerStatus: listing.providerStatus,
+      publishedAt: listing.publishedAt,
+      failureClass: listing.failureClass,
+    })
   );
 }
 
@@ -605,6 +621,7 @@ const coupangMutableProductFields = [
   "sellerProductName",
   "displayProductName",
   "brand",
+  "manufacture",
   "generalProductName",
 ] as const;
 
@@ -769,6 +786,7 @@ export function prepareListingUpdateArguments(
     const items = safeCoupangItems(sourceBody.items);
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
+      ...optionalArgument(createArguments, coupangExactQaRecoveryArgument),
       body: {
         ...definedEntries(sourceBody, coupangMutableProductFields),
         sellerProductId: remoteNumberOrText(remoteId),

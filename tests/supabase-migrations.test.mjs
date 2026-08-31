@@ -83,6 +83,8 @@ const COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS = {
 };
 const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
   "20260831132000_competitor_identity_lineage_fence.sql";
+const COUPANG_EXACT_QA_RECOVERY_MIGRATION =
+  "20260831133000_coupang_exact_qa_recovery_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -737,6 +739,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
+      COUPANG_EXACT_QA_RECOVERY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -823,8 +826,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
-          < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION),
-      "competitor v3, review ledger, queue retirement, and identity fence must replay after Qoo10 573 in order",
+          < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+        && migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+          < migrationNames.indexOf(COUPANG_EXACT_QA_RECOVERY_MIGRATION),
+      "competitor v3, review ledger, queue retirement, identity fence, and Coupang recovery fence must replay after Qoo10 573 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;

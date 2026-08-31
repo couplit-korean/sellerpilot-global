@@ -29,6 +29,16 @@ import {
 } from "../../../../lib/channels/shopee-sg-listing-create";
 import { mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 import {
+  bindCoupangExactQaRecoveryArguments,
+  coupangExactQaCentralSkuVerified,
+  coupangExactQaCreateForbidden,
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBindingValue,
+  coupangExactQaRecoveryCandidate,
+  coupangExactQaRecoveryIdentity,
+  type CoupangExactQaRecoveryPhase,
+} from "../../../../lib/channels/coupang-exact-qa-recovery";
+import {
   elevenstListingUpdateProjectionDigestInput,
   bindQoo10RollbackUpdateRecoveryArguments,
   listingUpdateRemoteIdentity,
@@ -140,6 +150,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function listingUpdateReferenceFromLedger(listing: Record<string, unknown>): ListingUpdateReference {
   return {
+    listingId: typeof listing.id === "string" ? listing.id : null,
     remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
     status: typeof listing.status === "string" ? listing.status : "",
     marketplaceSku: typeof listing.marketplaceSku === "string" ? listing.marketplaceSku : null,
@@ -208,6 +219,17 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 요청 형식이 올바르지 않습니다." }, { status: 400 });
 
   const { channel, operation } = parsed.data;
+  if (channel === "coupang"
+      && operation === "listing.create"
+      && coupangExactQaCreateForbidden({
+        productId: parsed.data.productId,
+        argumentsValue: parsed.data.arguments,
+      })) {
+    return NextResponse.json({
+      message: "이미 존재하는 쿠팡 QA 상품은 신규 등록하지 않고 정확한 기존 상품만 복구 수정해야 합니다.",
+      mode: "coupang_exact_existing_listing_update_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (operation === "listing.activate") {
     return NextResponse.json({
       message: "Qoo10 활성화 복구는 직전 S1 검증 원장에 의해 서버에서만 생성됩니다.",
@@ -358,6 +380,7 @@ export async function POST(request: NextRequest) {
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   let boundEbayListingIdentity: Record<string, string> | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
+  let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -497,6 +520,62 @@ export async function POST(request: NextRequest) {
         headers: { "cache-control": "no-store, max-age=0" },
       });
     }
+    const exactCoupangQaListing = channel === "coupang"
+      && productId === coupangExactQaRecoveryIdentity.productId
+      && resourceListingId === coupangExactQaRecoveryIdentity.listingId
+      && requestedRemoteId === coupangExactQaRecoveryIdentity.sellerProductId;
+    if (exactCoupangQaListing) {
+      if (!coupangExactQaCentralSkuVerified(contextRecord)) {
+        return NextResponse.json({
+          message: "쿠팡 기존 QA 상품의 중앙 SKU 결속을 확인하지 못해 원격 변경을 시작하지 않았습니다.",
+          mode: "coupang_exact_qa_sku_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      if (operation === "listing.update") {
+        if (!coupangExactQaRecoveryCandidate({
+          channel,
+          listingId: String(exactListing.id ?? ""),
+          remoteId: String(exactListing.remoteId ?? ""),
+          status: String(exactListing.status ?? ""),
+          requestedPublicationIntent: String(exactListing.requestedPublicationIntent ?? ""),
+          remoteVisibility: String(exactListing.remoteVisibility ?? ""),
+          providerStatus: typeof exactListing.providerStatus === "string" ? exactListing.providerStatus : null,
+          publishedAt: typeof exactListing.publishedAt === "string" ? exactListing.publishedAt : null,
+          failureClass: typeof exactListing.failureClass === "string" ? exactListing.failureClass : null,
+        })) {
+          return NextResponse.json({
+            message: "쿠팡 exact QA 복구 원장의 실패·미확인 상태가 예상값과 달라 수정하지 않았습니다.",
+            mode: "coupang_exact_qa_recovery_state_mismatch",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundCoupangExactQaRecoveryPhase = "listing.update";
+      } else if (operation === "listing.stop") {
+        boundCoupangExactQaRecoveryPhase = "listing.stop";
+      }
+      if (boundCoupangExactQaRecoveryPhase) {
+        const { data: exactIdentityData, error: exactIdentityError } = await serviceClient.rpc(
+          "sellerpilot_service_get_coupang_exact_qa_recovery_identity",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+            p_phase: boundCoupangExactQaRecoveryPhase,
+          },
+        );
+        const exactIdentity = coupangExactQaRecoveryBindingValue(
+          exactIdentityData,
+          boundCoupangExactQaRecoveryPhase,
+        );
+        if (exactIdentityError || !exactIdentity) {
+          return NextResponse.json({
+            message: "쿠팡 exact QA 상품과 현재 인증정보의 불변 결속을 트랜잭션 원장에서 확인하지 못했습니다.",
+            mode: "coupang_exact_qa_atomic_identity_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+      }
+    }
     if (operation === "listing.update"
         && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {
       const { data: identityData, error: identityError } = await serviceClient.rpc(
@@ -624,6 +703,7 @@ export async function POST(request: NextRequest) {
   // and recreate it only from the exact rollback identity RPC above.
   let effectiveArguments = structuredClone(parsed.data.arguments);
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
+  delete effectiveArguments[coupangExactQaRecoveryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -632,6 +712,20 @@ export async function POST(request: NextRequest) {
         contract: qoo10RollbackUpdateRecoveryContract,
       },
     );
+  }
+  if (boundCoupangExactQaRecoveryPhase) {
+    effectiveArguments = bindCoupangExactQaRecoveryArguments(
+      effectiveArguments,
+      boundCoupangExactQaRecoveryPhase,
+    );
+    if (boundCoupangExactQaRecoveryPhase === "listing.stop") {
+      effectiveArguments = {
+        ...effectiveArguments,
+        sellerProductId: coupangExactQaRecoveryIdentity.sellerProductId,
+        vendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+        sellerSku: coupangExactQaRecoveryIdentity.sellerSku,
+      };
+    }
   }
   if (channel === "ebay" && operation === "listing.update") {
     if (!boundEbayListingIdentity) {

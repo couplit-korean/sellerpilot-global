@@ -51,7 +51,16 @@ import {
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
-import { coupangListingUpdateWrite } from "./coupang-listing-update";
+import {
+  assertCoupangExactQaCurrentProduct,
+  assertCoupangExactQaUpdateReadback,
+  coupangListingUpdateWrite,
+} from "./coupang-listing-update";
+import {
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBinding,
+  coupangExactQaRecoveryIdentity,
+} from "./coupang-exact-qa-recovery";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
   elevenstListingUpdateProjectionDigestInput,
@@ -3608,6 +3617,10 @@ async function executeCoupang(input: ExecuteInput) {
     return result(input, [step("category-status", remote)], categoryId);
   }
   if (input.operation === "listing.update") {
+    const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.update");
+    if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
     const patchBody = objectValue(input.arguments, "body");
     const remoteId = String(patchBody.sellerProductId ?? "").trim();
     if (!remoteId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerProductId");
@@ -3620,6 +3633,13 @@ async function executeCoupang(input: ExecuteInput) {
     const preflightStep = step("listing-update-preflight", preflightRemote);
     const currentBody = objectValue(preflightRemote.data, "data", false);
     preflightStep.ok = preflightStep.ok && String(currentBody.sellerProductId ?? "") === remoteId;
+    if (preflightStep.ok && exactRecovery) {
+      try {
+        assertCoupangExactQaCurrentProduct(currentBody, exactRecovery);
+      } catch {
+        preflightStep.ok = false;
+      }
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok ? "COUPANG_EXISTING_LISTING_VERIFIED" : "COUPANG_EXISTING_LISTING_MISMATCH",
@@ -3648,6 +3668,17 @@ async function executeCoupang(input: ExecuteInput) {
     });
     const readbackBody = objectValue(readbackRemote.data, "data", false);
     readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
+    if (readbackStep.ok && exactRecovery) {
+      try {
+        assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery);
+      } catch {
+        readbackStep.ok = false;
+        readbackStep.data = {
+          ...readbackStep.data,
+          sellerpilotVerification: "COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH",
+        };
+      }
+    }
     return coupangListingResultWithPublicationReadback(input, [preflightStep, writeStep, readbackStep], remoteId);
   }
   if (input.operation === "listing.create") {
@@ -3767,6 +3798,10 @@ async function executeCoupang(input: ExecuteInput) {
     );
   }
   if (input.operation === "listing.stop") {
+    const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.stop");
+    if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
     const sellerProductId = stringArgument(input.arguments, "sellerProductId");
     const suppliedVendorItemId = stringArgument(input.arguments, "vendorItemId", false);
     const preflightRemote = await coupangRequest({
@@ -3785,6 +3820,18 @@ async function executeCoupang(input: ExecuteInput) {
       && rawVendorItemIds.every(Boolean)
       && vendorItemIds.length === items.length
       && (!suppliedVendorItemId || vendorItemIds.includes(suppliedVendorItemId));
+    if (preflightStep.ok && exactRecovery) {
+      try {
+        assertCoupangExactQaCurrentProduct(sellerProduct, exactRecovery);
+        preflightStep.ok = sellerProductId === coupangExactQaRecoveryIdentity.sellerProductId
+          && suppliedVendorItemId === coupangExactQaRecoveryIdentity.vendorItemId
+          && stringArgument(input.arguments, "sellerSku") === coupangExactQaRecoveryIdentity.sellerSku
+          && vendorItemIds.length === 1
+          && vendorItemIds[0] === coupangExactQaRecoveryIdentity.vendorItemId;
+      } catch {
+        preflightStep.ok = false;
+      }
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok

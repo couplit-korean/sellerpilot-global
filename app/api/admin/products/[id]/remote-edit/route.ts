@@ -18,6 +18,7 @@ import {
   type Qoo10RollbackUpdateRecoveryBinding,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
+import { coupangExactQaRecoveryCandidate } from "../../../../../../lib/channels/coupang-exact-qa-recovery";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
 
@@ -84,6 +85,7 @@ function listingRecords(value: unknown): ListingRecord[] {
 
 function listingReference(listing: ListingRecord): ListingUpdateReference {
   return {
+    listingId: listing.id,
     status: typeof listing.status === "string" ? listing.status : "",
     remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
     publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
@@ -115,7 +117,20 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
       message: "이 상품·채널의 기존 원격 작업이 진행 중이므로 새 쓰기를 실행하지 않았습니다.",
     };
   }
-  if (failureClass === "external_action" && !allowVerifiedLegacyEbayUpdate) {
+  const allowExactCoupangRecovery = coupangExactQaRecoveryCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
+  if (failureClass === "external_action" && !allowVerifiedLegacyEbayUpdate && !allowExactCoupangRecovery) {
     return {
       status: 409,
       mode: "external_reconciliation_required",

@@ -38,6 +38,12 @@ import {
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
 import {
+  coupangExactQaNoticeContent,
+  coupangExactQaRecoveryBinding,
+  coupangExactQaRecoveryIdentity,
+} from "./coupang-exact-qa-recovery";
+import { prepareCoupangExactQaRecoveryArguments } from "./coupang-listing-update";
+import {
   assertShopeeSgCurrentPrice,
   buildShopeeSgPreparedCreateEvidence,
   loadAuthoritativeKrwSgdUsdRate,
@@ -1038,6 +1044,7 @@ function prepareCoupangItem(
   itemValue: unknown,
   metadata: UnknownRecord,
   facts: UnknownRecord,
+  exactNoticeCategoryName?: string,
 ) {
   const item = structuredClone(recordValue(itemValue) ?? {});
   const metaAttributes = Array.isArray(metadata.attributes)
@@ -1103,27 +1110,39 @@ function prepareCoupangItem(
       : {}),
   }));
 
-  if (!Array.isArray(item.notices) || !item.notices.length) {
+  if (exactNoticeCategoryName || !Array.isArray(item.notices) || !item.notices.length) {
     const noticeCategories = Array.isArray(metadata.noticeCategories)
       ? metadata.noticeCategories.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
       : [];
-    const noticeCategory = noticeCategories.find((category) =>
-      Array.isArray(category.noticeCategoryDetailNames)
-      && category.noticeCategoryDetailNames.some((detail) =>
-        recordValue(detail)?.required === "MANDATORY"))
-      ?? noticeCategories[0];
+    const noticeCategory = exactNoticeCategoryName
+      ? noticeCategories.find((category) =>
+        String(category.noticeCategoryName ?? "").trim() === exactNoticeCategoryName)
+      : noticeCategories.find((category) =>
+        Array.isArray(category.noticeCategoryDetailNames)
+        && category.noticeCategoryDetailNames.some((detail) =>
+          recordValue(detail)?.required === "MANDATORY"))
+        ?? noticeCategories[0];
+    if (!noticeCategory) {
+      throw new Error(exactNoticeCategoryName
+        ? "COUPANG_EXACT_QA_NOTICE_CATEGORY_UNAVAILABLE"
+        : "COUPANG_NOTICE_METADATA_MISSING");
+    }
     const details = Array.isArray(noticeCategory?.noticeCategoryDetailNames)
       ? noticeCategory.noticeCategoryDetailNames
         .map(recordValue)
         .filter((row): row is UnknownRecord => Boolean(row))
       : [];
-    const notices = details
-      .filter((detail) => detail.required === "MANDATORY")
-      .map((detail) => ({
-        noticeCategoryName: String(noticeCategory?.noticeCategoryName ?? ""),
-        noticeCategoryDetailName: String(detail.noticeCategoryDetailName ?? ""),
-        content: "상품상세 참조",
-      }));
+    const mandatoryDetails = details.filter((detail) => detail.required === "MANDATORY");
+    const notices = mandatoryDetails.map((detail) => ({
+      noticeCategoryName: String(noticeCategory?.noticeCategoryName ?? ""),
+      noticeCategoryDetailName: String(detail.noticeCategoryDetailName ?? ""),
+      content: exactNoticeCategoryName
+        ? coupangExactQaNoticeContent(detail.noticeCategoryDetailName)
+        : "상품상세 참조",
+    }));
+    if (exactNoticeCategoryName && notices.some((notice) => !notice.content)) {
+      throw new Error("COUPANG_EXACT_QA_NOTICE_DETAIL_UNSUPPORTED");
+    }
     if (!notices.length) throw new Error("COUPANG_NOTICE_METADATA_MISSING");
     item.notices = notices;
   }
@@ -1149,14 +1168,21 @@ function prepareCoupangItem(
 async function prepareCoupangListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
   const requestedBy = textValue(input.credential, "requested_by");
   if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
-  const body = structuredClone(recordValue(input.arguments.body) ?? {});
+  const recovery = coupangExactQaRecoveryBinding(input.arguments, "listing.update");
+  if (Object.hasOwn(input.arguments, "sellerpilotCoupangExactQaRecovery") && !recovery) {
+    throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
+  const strictArguments = recovery
+    ? prepareCoupangExactQaRecoveryArguments(input.arguments)
+    : input.arguments;
+  const body = structuredClone(recordValue(strictArguments.body) ?? {});
   const categoryCode = Number(body.displayCategoryCode);
   if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) {
     throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
   }
   const vendorId = textValue(input.credential, "vendor_id");
   await input.hooks.assertLeaseHealthy();
-  const [outboundRemote, returnRemote, metadataRemote] = await Promise.all([
+  const [outboundRemote, returnRemote, metadataRemote, categoryStatusRemote] = await Promise.all([
     coupangRequest({
       payload: input.credential,
       method: "GET",
@@ -1174,10 +1200,21 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       method: "GET",
       path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryCode}`,
     }),
+    recovery ? coupangRequest({
+      payload: input.credential,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryCode}/status`,
+    }) : Promise.resolve(null),
   ]);
   if (!outboundRemote.response.ok) throw new Error("COUPANG_OUTBOUND_QUERY_FAILED");
   if (!returnRemote.response.ok) throw new Error("COUPANG_RETURN_CENTER_QUERY_FAILED");
   if (!metadataRemote.response.ok) throw new Error("COUPANG_CATEGORY_METADATA_FAILED");
+  if (recovery && (!categoryStatusRemote
+      || !categoryStatusRemote.response.ok
+      || categoryStatusRemote.data.code !== "SUCCESS"
+      || categoryStatusRemote.data.data !== true)) {
+    throw new Error("COUPANG_EXACT_QA_CATEGORY_INACTIVE");
+  }
 
   const outboundCenters = nestedContent(outboundRemote.data)
     .map(recordValue)
@@ -1186,9 +1223,16 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     .map(recordValue)
     .filter((row): row is UnknownRecord => Boolean(row));
   const outbound = outboundCenters.find((center) =>
-    coupangUsable(center.usable) && preferredKoreanAddress(center.placeAddresses));
+    coupangUsable(center.usable)
+    && preferredKoreanAddress(center.placeAddresses)
+    && (!recovery || (Number.isSafeInteger(Number(center.outboundShippingPlaceCode))
+      && Number(center.outboundShippingPlaceCode) > 0)));
   const returnCenter = returnCenters.find((center) =>
-    coupangUsable(center.usable) && preferredKoreanAddress(center.placeAddresses));
+    coupangUsable(center.usable)
+    && preferredKoreanAddress(center.placeAddresses)
+    && (!recovery || (String(center.returnCenterCode ?? "").trim()
+      && String(center.deliverCode ?? "").trim()
+      && positiveFee(center))));
   if (!returnCenter) {
     throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
   }
@@ -1198,15 +1242,27 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
   if (!returnAddress) throw new Error("COUPANG_RETURN_ADDRESS_MISSING");
   const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
-  const returnFee = positiveFee(returnCenter) ?? 3_000;
+  const returnFee = positiveFee(returnCenter) ?? (recovery ? null : 3_000);
+  if (!returnFee) throw new Error("COUPANG_RETURN_FEE_MISSING");
   const returnCenterCode = contractedDeliveryCode
     ? String(returnCenter.returnCenterCode)
     : "NO_RETURN_CENTERCODE";
+  if (recovery && (returnCenterCode === "NO_RETURN_CENTERCODE"
+      || !String(returnAddress.companyContactNumber ?? "").trim()
+      || !String(returnAddress.returnZipCode ?? "").trim()
+      || !String(returnAddress.returnAddress ?? "").trim())) {
+    throw new Error("COUPANG_EXACT_QA_ACTIVE_SHIPPING_METADATA_REQUIRED");
+  }
   const metadata = coupangMetadata(metadataRemote.data);
-  const facts = recordValue(input.arguments.facts) ?? {};
+  const facts = recordValue(strictArguments.facts) ?? {};
   const items = Array.isArray(body.items)
     ? body.items.map((item) => {
-      const prepared = prepareCoupangItem(item, metadata, facts);
+      const prepared = prepareCoupangItem(
+        item,
+        metadata,
+        facts,
+        recovery ? coupangExactQaRecoveryIdentity.noticeCategoryName : undefined,
+      );
       prepared.originalPrice = normalizeTenWonAmount(prepared.originalPrice);
       prepared.salePrice = normalizeTenWonAmount(prepared.salePrice);
       return prepared;
@@ -1215,7 +1271,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
 
   return {
-    ...input.arguments,
+    ...strictArguments,
     body: {
       ...body,
       vendorId,
@@ -1239,7 +1295,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       returnAddressDetail: String(returnAddress.returnAddressDetail ?? ""),
       returnCharge: returnFee,
       vendorUserId: requestedBy,
-      requested: input.arguments.publicationIntent === "safe_test" ? false : true,
+      requested: strictArguments.publicationIntent === "safe_test" ? false : true,
       items,
     },
   };
@@ -1275,7 +1331,8 @@ export async function prepareMarketplaceListingArguments(
       mediaMutationObserved: true,
     };
   }
-  if (input.channel === "coupang" && input.operation === "listing.create") {
+  if (input.channel === "coupang" && (input.operation === "listing.create"
+      || coupangExactQaRecoveryBinding(input.arguments, "listing.update"))) {
     return {
       arguments: await prepareCoupangListing(input),
       mediaMutationObserved: false,
