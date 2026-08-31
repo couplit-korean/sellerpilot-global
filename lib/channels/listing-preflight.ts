@@ -144,7 +144,22 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "uploaded-image", label: "네이버 이미지 업로드", source: "판매자 계정", runtime: true, help: "원본 이미지를 Commerce API로 업로드한 URL로 교체합니다." },
   ],
   temu: [
-    { key: "category", label: "Temu 카테고리", source: "카테고리", path: ["body", "goodsBasic", "extCatName"] },
+    {
+      key: "category",
+      label: "Temu 말단 카테고리 ID",
+      source: "카테고리",
+      test: (draft) => /^[1-9]\d*$/u.test(String(valueAt(draft, ["body", "goodsBasic", "extCatName"]) ?? "").trim()),
+      help: "Temu V3가 추천 카테고리로 대체하지 않도록 확정된 말단 카테고리 ID를 전송합니다.",
+    },
+    {
+      key: "shipping-template",
+      label: "Temu 배송 템플릿 ID 또는 이름",
+      source: "판매자 계정",
+      path: ["body", "goodsBasic", "costTemplate"],
+      manualPath: ["body", "goodsBasic", "costTemplate"],
+      placeholder: "Temu Seller Centre의 배송 템플릿 ID 또는 정확한 이름",
+      help: "비워 두면 스토어 기본 템플릿이 자동 적용되므로 exact QA 등록에서는 명시적으로 확인해야 합니다.",
+    },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "goodsBasic", "goodsName"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["body", "goodsBasic", "goodsDesc"] },
     { key: "external-id", label: "외부 상품·SKU ID", source: "상품 정보", path: ["body", "goodsBasic", "externalGoodsId"] },

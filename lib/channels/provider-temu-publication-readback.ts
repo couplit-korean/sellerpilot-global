@@ -16,12 +16,14 @@ export type TemuPublicationReadbackVerification = {
   remoteState?: VerifiedListingRemoteState;
   providerStatus: string;
   visibility?: VerifiedListingRemoteState["visibility"];
+  representativeImages: string[];
   detailImages: string[];
   checks: {
     identityVerified: boolean;
     statusVerified: boolean;
     localeVerified: boolean;
     fingerprintVerified: boolean;
+    representativeImageVerified: boolean;
     imageCountVerified: boolean;
     imageOrderVerified: boolean;
     contentVerified: boolean;
@@ -113,6 +115,7 @@ export function bindTemuCreateAttemptIdentity(input: {
     },
     sellerpilotTemuCreateCorrelation: {
       version: temuCreateCorrelationContract,
+      sourceSellerSku: sourceSku,
       externalGoodsId,
       scopeFingerprint,
       skuCount: skuList.length,
@@ -126,6 +129,9 @@ export function temuCreateCorrelationMatches(
 ) {
   const correlation = recordValue(argumentsValue.sellerpilotTemuCreateCorrelation);
   return correlation.version === temuCreateCorrelationContract
+    && Boolean(exactText(correlation.sourceSellerSku))
+    && exactText(correlation.sourceSellerSku).length <= 128
+    && !/\p{Cc}/u.test(exactText(correlation.sourceSellerSku))
     && exactText(correlation.externalGoodsId) === externalGoodsId
     && /^[a-f0-9]{64}$/u.test(exactText(correlation.scopeFingerprint))
     && Number.isSafeInteger(Number(correlation.skuCount))
@@ -507,6 +513,19 @@ function temuDetailImages(detail: UnknownRecord) {
   );
 }
 
+function temuRepresentativeImages(detail: UnknownRecord) {
+  const gallery = recordValue(detail.goodsGallery);
+  const goodsBasic = recordValue(detail.goodsBasic);
+  return stringArray(
+    gallery.goodsCarouselImage
+      ?? gallery.goodsCarouselImages
+      ?? goodsBasic.goodsCarouselImage
+      ?? goodsBasic.goodsCarouselImages
+      ?? detail.goodsCarouselImage
+      ?? detail.goodsCarouselImages,
+  );
+}
+
 function temuProviderStatus(statusItem: UnknownRecord, listItem: UnknownRecord) {
   const fields = [
     ["status", statusItem.status],
@@ -540,6 +559,7 @@ export function normalizeTemuListingPublicationReadback(input: {
   detailData: UnknownRecord;
   expectedLocale: string;
   expectedFingerprint: string;
+  expectedRepresentativeImages: string[];
   expectedDetailImages: string[];
   requestedLanguage?: string;
   expectedGoodsName?: string;
@@ -608,7 +628,19 @@ export function normalizeTemuListingPublicationReadback(input: {
     && contentVerified;
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expectedFingerprint)
     && contentVerified;
+  const representativeImages = temuRepresentativeImages(detail);
   const detailImages = temuDetailImages(detail);
+  const expectedRepresentativeImagesValid = exactImageOperation
+    ? input.expectedRepresentativeImages.length === 1
+      && new Set(input.expectedRepresentativeImages).size === 1
+      && input.expectedRepresentativeImages.every((url) => /^https:\/\//u.test(url))
+      && !input.expectedRepresentativeImages.some((url) => input.expectedDetailImages.includes(url))
+    : input.expectedRepresentativeImages.length === 0;
+  const representativeImageVerified = exactImageOperation
+    ? expectedRepresentativeImagesValid
+      && representativeImages.length === 1
+      && sameOrderedValues(input.expectedRepresentativeImages, representativeImages)
+    : true;
   const expectedImagesValid = exactImageOperation
     ? input.expectedDetailImages.length === 8
       && new Set(input.expectedDetailImages).size === 8
@@ -637,6 +669,7 @@ export function normalizeTemuListingPublicationReadback(input: {
     statusVerified,
     localeVerified,
     fingerprintVerified,
+    representativeImageVerified,
     imageCountVerified,
     imageOrderVerified,
     contentVerified,
@@ -654,7 +687,7 @@ export function normalizeTemuListingPublicationReadback(input: {
         ? visibility === "live" || visibility === "pending_review"
         : false;
   if (!Object.values(checks).every(Boolean) || !visibility || !visibilityMatchesOperation) {
-    return { providerStatus, visibility, detailImages, checks };
+    return { providerStatus, visibility, representativeImages, detailImages, checks };
   }
 
   const candidate = verifiedListingRemoteStateSchema.safeParse({
@@ -664,7 +697,7 @@ export function normalizeTemuListingPublicationReadback(input: {
     verifiedAt: (input.verifiedAt ?? new Date()).toISOString(),
     evidence: {
       version: exactImageOperation
-        ? "temu_list_status_detail_stock_v2"
+        ? "temu_list_status_detail_stock_v3"
         : "temu_list_status_detail_v1",
       readbackMethods: exactImageOperation
         ? [
@@ -682,6 +715,7 @@ export function normalizeTemuListingPublicationReadback(input: {
       statusVerified: true,
       localeVerified: true,
       fingerprintVerified: true,
+      representativeImageVerified: true,
       imageCountVerified: true,
       imageOrderVerified: true,
       contentVerified: true,
@@ -690,6 +724,8 @@ export function normalizeTemuListingPublicationReadback(input: {
       stockVerified: true,
       goodsIdVerified: true,
       externalGoodsIdVerified: true,
+      observedRepresentativeImageCount: representativeImages.length,
+      representativeImageDigest: sha256(representativeImages),
       observedDetailImageCount: detailImages.length,
       orderedDetailImageDigest: sha256(detailImages),
       observedSkuCount: recordArray(detail.skuList).length,
@@ -706,6 +742,7 @@ export function normalizeTemuListingPublicationReadback(input: {
     ...(candidate.success ? { remoteState: candidate.data } : {}),
     providerStatus,
     visibility,
+    representativeImages,
     detailImages,
     checks,
   };

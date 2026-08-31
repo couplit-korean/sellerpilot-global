@@ -4749,12 +4749,15 @@ async function executeTemu(input: ExecuteInput) {
     const activation = temuActivationBinding(input.arguments);
     const body = objectValue(input.arguments, "body", false);
     const goodsBasic = objectValue(body, "goodsBasic", false);
+    const expectedRepresentativeImages = temuStringArray(goodsBasic.goodsCarouselImage);
     const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
     const expectedSkus = temuPublicationExpectedSkus(body);
     const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
     const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
     const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
+    const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
+    const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
     const exactInput = Boolean(
       activation
       && input.arguments.publicationStateContract === listingRemoteStateContractVersion
@@ -4763,6 +4766,13 @@ async function executeTemu(input: ExecuteInput) {
       && body.language === "ko"
       && /^[a-f0-9]{64}$/u.test(expectedFingerprint)
       && expectedImageCount === marketplaceChannelDetailImageCount
+      && /^[1-9]\d*$/u.test(exactLeafCategoryId)
+      && Boolean(shippingTemplate)
+      && shippingTemplate.length <= 500
+      && !/\p{Cc}/u.test(shippingTemplate)
+      && expectedRepresentativeImages.length === 1
+      && /^https:\/\//u.test(expectedRepresentativeImages[0])
+      && !expectedDetailImages.includes(expectedRepresentativeImages[0])
       && expectedDetailImages.length === marketplaceChannelDetailImageCount
       && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
       && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
@@ -4810,6 +4820,7 @@ async function executeTemu(input: ExecuteInput) {
       detailData: preDetail.data,
       expectedLocale,
       expectedFingerprint,
+      expectedRepresentativeImages,
       expectedDetailImages,
       requestedLanguage: "ko",
       expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
@@ -4893,6 +4904,7 @@ async function executeTemu(input: ExecuteInput) {
       detailData: postDetail.data,
       expectedLocale,
       expectedFingerprint,
+      expectedRepresentativeImages,
       expectedDetailImages,
       requestedLanguage: "ko",
       expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
@@ -4940,6 +4952,7 @@ async function executeTemu(input: ExecuteInput) {
     const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
     const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
     const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
+    const expectedRepresentativeImages = temuStringArray(goodsBasic.goodsCarouselImage);
     const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
     const expectedSkus = temuPublicationExpectedSkus(body);
@@ -4948,12 +4961,22 @@ async function executeTemu(input: ExecuteInput) {
         .trim()
         .replaceAll("_", "-")
         .toLowerCase();
+      const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
+      const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
       const exactPublicationInput = Boolean(
         publicationIntent
         && expectedLocale === "ko-KR"
         && (providerLanguage === "ko" || providerLanguage === "ko-kr")
         && /^[a-f0-9]{64}$/u.test(expectedFingerprint)
         && input.arguments.publicationExpectedImageCount === marketplaceChannelDetailImageCount
+        && /^[1-9]\d*$/u.test(exactLeafCategoryId)
+        && Boolean(shippingTemplate)
+        && shippingTemplate.length <= 500
+        && !/\p{Cc}/u.test(shippingTemplate)
+        && !/^(?:server_managed|unknown|n\/a|미확인|확인 필요)$/iu.test(shippingTemplate)
+        && expectedRepresentativeImages.length === 1
+        && /^https:\/\//u.test(expectedRepresentativeImages[0])
+        && !expectedDetailImages.includes(expectedRepresentativeImages[0])
         && expectedDetailImages.length === marketplaceChannelDetailImageCount
         && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
         && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
@@ -5254,6 +5277,9 @@ async function executeTemu(input: ExecuteInput) {
     const detailMatches = String(detail.goodsId ?? "") === remoteId;
     const imagesMatch = strictPublication
       ? expectedImageCount === marketplaceChannelDetailImageCount
+        && expectedRepresentativeImages.length === 1
+        && actualCarouselImageCount === 1
+        && temuStringArray(gallery.goodsCarouselImage)[0] === expectedRepresentativeImages[0]
         && expectedDetailImageCount === marketplaceChannelDetailImageCount
         && actualDetailImageCount === marketplaceChannelDetailImageCount
         && temuStringArray(gallery.detailImage).every((url, index) => url === expectedDetailImages[index])
@@ -5270,6 +5296,7 @@ async function executeTemu(input: ExecuteInput) {
           detailData: detailRemote.data,
           expectedLocale,
           expectedFingerprint,
+          expectedRepresentativeImages,
           expectedDetailImages,
           requestedLanguage: "ko",
           expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
@@ -5360,6 +5387,7 @@ async function executeTemu(input: ExecuteInput) {
       detailData: detailRemote.data,
       expectedLocale: stringArgument(input.arguments, "publicationExpectedLocale", false),
       expectedFingerprint: stringArgument(input.arguments, "publicationExpectedFingerprint", false),
+      expectedRepresentativeImages: [],
       expectedDetailImages: [],
       requestedLanguage: "ko",
     });

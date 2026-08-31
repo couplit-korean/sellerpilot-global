@@ -276,6 +276,8 @@ const ebayInventory = {
 const temuGoodsBasic = {
   externalGoodsId: "TEMU-KR-001",
   goodsName: "한국어로 확인된 테무 판매 상품",
+  extCatName: "601099",
+  costTemplate: "QA_KR_STANDARD",
   goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
   bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
   goodsCarouselImage: [galleryUrl],

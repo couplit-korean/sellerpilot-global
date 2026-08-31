@@ -704,7 +704,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         goodsBasic: {
           externalGoodsId,
           goodsName: title.slice(0, 500),
-          extCatName: (assignment?.categoryPath.join(" > ") || manual.categoryHint).slice(0, 500),
+          // Temu V3 accepts a leaf category ID in extCatName. A path/name can
+          // fall back to an algorithmic recommendation, which is not exact
+          // enough for the one-product QA release.
+          extCatName: assignment?.categoryId ?? "",
+          costTemplate: "",
           goodsDesc: temuPlainDescription,
           goodsCarouselImage: galleryImageUrls.slice(0, 10),
           detailImage: detailImageUrls.slice(0, 10),
@@ -786,7 +790,14 @@ export function missingNativeValues(
   if (channel === "coupang") return [...assetRequirements, json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
   if (channel === "elevenst") return [...assetRequirements, !json.includes('"prdImage01":"https://') ? "public product image" : "", json.includes('"dispCtgrNo":""') ? "dispCtgrNo" : "", !json.includes('"ProductNotification"') ? "ProductNotification" : ""].filter(Boolean);
   if (channel === "smartstore") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
-  if (channel === "temu") return [...assetRequirements, json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
+  if (channel === "temu") return [
+    ...assetRequirements,
+    json.includes('"skuList":[]') ? "skuList" : "",
+    json.includes('"images":[]') ? "images" : "",
+    json.includes('"externalGoodsId":""') ? "externalGoodsId" : "",
+    json.includes('"extCatName":""') ? "Temu leaf category ID" : "",
+    json.includes('"costTemplate":""') ? "Temu shipping template" : "",
+  ].filter(Boolean);
   if (operation === "listing.update") return assetRequirements;
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
 }

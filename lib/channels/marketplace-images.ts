@@ -1022,12 +1022,16 @@ export async function prepareMarketplaceImages(
       ? gallery.slice(0, 10)
       : await normalizeList(goodsBasic.goodsCarouselImage, 10, "gallery-square");
     const normalizedDetails = details.length ? details.slice(0, 10) : normalized;
-    goodsBasic.goodsCarouselImage = normalized;
+    // The verified Temu contract has one buyer-visible representative image
+    // plus eight separately approved detail images. Keeping extra gallery
+    // candidates would make an exact representative readback impossible.
+    const representative = normalized.slice(0, 1);
+    goodsBasic.goodsCarouselImage = representative;
     goodsBasic.detailImage = normalizedDetails;
     const skuList = Array.isArray(body.skuList) ? body.skuList : [];
     for (const skuValue of skuList) {
       const sku = record(skuValue);
-      if (sku) sku.images = normalized;
+      if (sku) sku.images = representative;
     }
     return finish();
   }

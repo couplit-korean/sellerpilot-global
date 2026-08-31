@@ -2213,6 +2213,7 @@ test("Temu preserves an accepted create marker when goodsId and reconciliation a
       arguments: {
         sellerpilotTemuCreateCorrelation: {
           version: "temu_create_attempt_external_id_v1",
+          sourceSellerSku: "TEST-TEMU-NO-ID",
           externalGoodsId: "TEST-TEMU-NO-ID",
           scopeFingerprint: "a".repeat(64),
           skuCount: 1,

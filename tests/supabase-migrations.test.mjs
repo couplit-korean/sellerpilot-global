@@ -95,6 +95,8 @@ const QOO10_EXACT_LOCALIZATION_V2_MIGRATION =
   "20260831144000_generalize_qoo10_exact_localization_s1_activation.sql";
 const SMARTSTORE_NONSTATIC_EGRESS_MIGRATION =
   "20260831145000_release_smartstore_from_static_egress.sql";
+const TEMU_EXACT_CABLE_MIGRATION =
+  "20260831146000_temu_exact_cable_clips.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -769,6 +771,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION,
       QOO10_EXACT_LOCALIZATION_V2_MIGRATION,
       SMARTSTORE_NONSTATIC_EGRESS_MIGRATION,
+      TEMU_EXACT_CABLE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -11757,6 +11760,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_LOCALIZATION_V2_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
+        && name !== TEMU_EXACT_CABLE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -13467,6 +13471,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
         || name === TEMU_PUBLICATION_RELEASE_MIGRATION
         || name === QOO10_EXACT_LOCALIZATION_V2_MIGRATION
+        || name === TEMU_EXACT_CABLE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

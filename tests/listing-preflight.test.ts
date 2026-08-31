@@ -148,3 +148,37 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
   assert.equal(requirements.find((item) => item.key === "display-status")?.status, "ready");
   assert.deepEqual(blockingListingRequirements("smartstore", draft), []);
 });
+
+test("Temu preflight requires a numeric leaf category and an explicit shipping template", () => {
+  const draft = {
+    body: {
+      goodsBasic: {
+        extCatName: "생활 > 정리",
+        costTemplate: "",
+        goodsName: "부착형 케이블 정리 클립 6개 세트",
+        goodsDesc: "케이블 정리 상품의 구성과 사용 방법을 안내합니다.",
+        externalGoodsId: "QA-20260823-CC-001",
+        goodsCarouselImage: ["https://example.com/hero.jpg"],
+      },
+      attributes: [
+        { name: "Brand", value: ["COUPLIT"] },
+        { name: "Manufacturer", value: ["QA manufacturer"] },
+        { name: "Country of origin", value: ["China"] },
+        { name: "Material", value: ["ABS"] },
+      ],
+      skuList: [{
+        price: { basePrice: { amount: "5000", currency: "KRW" } },
+        quantity: 1,
+        packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
+      }],
+    },
+  };
+
+  assert.deepEqual(
+    blockingListingRequirements("temu", draft).map((item) => item.key),
+    ["category", "shipping-template"],
+  );
+  const withCategory = setListingDraftValue(draft, ["body", "goodsBasic", "extCatName"], "601099");
+  const ready = setListingDraftValue(withCategory, ["body", "goodsBasic", "costTemplate"], "QA_KR_STANDARD");
+  assert.deepEqual(blockingListingRequirements("temu", ready), []);
+});

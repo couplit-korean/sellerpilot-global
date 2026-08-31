@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -6,6 +7,10 @@ import { PGlite } from "@electric-sql/pglite";
 const OWNER_ID = "d0f39ad6-e4af-4b7e-965d-9e0a324f2fab";
 const RELEASE_SHA = "a".repeat(40);
 const SERVERLESS_TOKEN_HASH = "d".repeat(64);
+const EXACT_TEMU_PRODUCT_ID = "ddccde35-9c58-4856-b673-d7aa27ce4220";
+const EXACT_TEMU_SKU = "QA-20260823-CC-001";
+const EXACT_TEMU_CATEGORY_ID = "601099";
+const EXACT_TEMU_TEMPLATE = "QA_KR_STANDARD";
 
 async function scalar(db, sql, params = []) {
   const result = await db.query(sql, params);
@@ -109,6 +114,7 @@ function activationFixtureData(suffix) {
   const manifestDigest = String((Number(suffix) + 1) % 10).repeat(64);
   const goodsId = `9007199254740${990 + Number(suffix)}`;
   const externalGoodsId = `SP-TEMU-DYNAMIC-${suffix}`;
+  const representativeImage = `https://assets.example.test/products/temu-dynamic-${suffix}/hero.jpg`;
   const images = Array.from({ length: 8 }, (_, index) => ({
     role: `detail-${index + 1}`,
     path: `products/temu-dynamic-${suffix}/detail-${index + 1}.jpg`,
@@ -124,6 +130,12 @@ function activationFixtureData(suffix) {
       approvedObjectPath: image.path,
       approvedSourceSha256: image.sourceSha256,
     })),
+    providerTransportImages: images.map((image) => ({
+      role: image.role,
+      publicUrl: `https://assets.example.test/${image.path}`,
+      objectPath: image.path,
+      contentSha256: image.sourceSha256,
+    })),
   };
   const argumentsPayload = {
     publicationIntent: "safe_test",
@@ -137,8 +149,11 @@ function activationFixtureData(suffix) {
       goodsBasic: {
         externalGoodsId,
         goodsName: `Temu 동적 검증 상품 ${suffix}`,
+        extCatName: "601099",
+        costTemplate: "QA_KR_STANDARD",
         goodsDesc: "승인된 한국어 상세 설명",
         bulletPoints: ["승인된 한국어 상세 구성"],
+        goodsCarouselImage: [representativeImage],
         detailImage: images.map((image) => `https://assets.example.test/${image.path}`),
       },
       skuList: [{
@@ -153,6 +168,7 @@ function activationFixtureData(suffix) {
     manifestDigest,
     goodsId,
     externalGoodsId,
+    representativeImage,
     images,
     argumentsPayload,
   };
@@ -169,7 +185,9 @@ function temuProviderAssetBinding(fixture) {
     approvedDetailPageVersion: 1,
     approvedDetailRoles: roles,
     providerTransportRoles: roles,
-    providerDetailImageIdentities: fixture.images.map((image) => image.sourceSha256),
+    providerDetailImageIdentities: fixture.images.map(
+      (image) => `https://assets.example.test/${image.path}`,
+    ),
   };
 }
 
@@ -187,7 +205,7 @@ function validTemuActivationRemoteState(fixture, fingerprint) {
       externalGoodsId: fixture.externalGoodsId,
     },
     evidence: {
-      version: "temu_list_status_detail_stock_v2",
+      version: "temu_list_status_detail_stock_v3",
       readbackMethods: [
         "temu.local.goods.list.retrieve",
         "bg.local.goods.publish.status.get",
@@ -198,6 +216,7 @@ function validTemuActivationRemoteState(fixture, fingerprint) {
       statusVerified: true,
       localeVerified: true,
       fingerprintVerified: true,
+      representativeImageVerified: true,
       imageCountVerified: true,
       imageOrderVerified: true,
       contentVerified: true,
@@ -206,10 +225,180 @@ function validTemuActivationRemoteState(fixture, fingerprint) {
       stockVerified: true,
       goodsIdVerified: true,
       externalGoodsIdVerified: true,
+      observedRepresentativeImageCount: 1,
+      representativeImageDigest: createHash("sha256")
+        .update(JSON.stringify([fixture.representativeImage]), "utf8")
+        .digest("hex"),
       observedSkuCount: 1,
       publicationAssetBinding: temuProviderAssetBinding(fixture),
     },
   };
+}
+
+function exactTemuCreateFixture(idempotencyKey) {
+  const requestFingerprint = "6".repeat(64);
+  const scopeFingerprint = createHash("sha256").update(JSON.stringify({
+    contract: "temu_create_attempt_external_id_v1",
+    productId: EXACT_TEMU_PRODUCT_ID,
+    sourceSku: EXACT_TEMU_SKU,
+    market: "KR",
+    targetId: "",
+    idempotencyKey,
+  }), "utf8").digest("hex");
+  const externalGoodsId = `SP-DDCCDE359C58-${scopeFingerprint.slice(0, 32).toUpperCase()}`;
+  const manifestDigest = "8".repeat(64);
+  const representativeImage = "https://assets.example.test/products/temu-exact-cable/hero.jpg";
+  const images = Array.from({ length: 8 }, (_, index) => {
+    const ordinal = index + 1;
+    const role = `detail-${ordinal}`;
+    const objectPath = `products/temu-exact-cable/detail-${ordinal}.jpg`;
+    const publicUrl = `https://assets.example.test/${objectPath}`;
+    const contentSha256 = String(ordinal).repeat(64);
+    return { role, objectPath, publicUrl, contentSha256 };
+  });
+  const sellerpilotPublicationAssetBinding = {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: manifestDigest,
+    approvedDetailImages: images.map((image) => ({
+      role: image.role,
+      approvedObjectPath: image.objectPath,
+      approvedSourceSha256: image.contentSha256,
+      publicUrl: image.publicUrl,
+      objectPath: image.objectPath,
+      contentSha256: image.contentSha256,
+    })),
+    providerImageSurface: "detail_content",
+    providerTransportImages: images.map((image) => ({
+      role: image.role,
+      publicUrl: image.publicUrl,
+      objectPath: image.objectPath,
+      contentSha256: image.contentSha256,
+    })),
+  };
+  return {
+    idempotencyKey,
+    requestFingerprint,
+    scopeFingerprint,
+    externalGoodsId,
+    manifestDigest,
+    representativeImage,
+    images,
+    payload: {
+      arguments: {
+        publicationIntent: "safe_test",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ko-KR",
+        publicationExpectedImageCount: 8,
+        publicationExpectedFingerprint: requestFingerprint,
+        sellerpilotTemuCreateCorrelation: {
+          version: "temu_create_attempt_external_id_v1",
+          sourceSellerSku: EXACT_TEMU_SKU,
+          externalGoodsId,
+          scopeFingerprint,
+          skuCount: 1,
+        },
+        sellerpilotPublicationAssetBinding,
+        body: {
+          language: "ko",
+          goodsBasic: {
+            externalGoodsId,
+            goodsName: "케이블 정리 클립 QA 상품",
+            extCatName: EXACT_TEMU_CATEGORY_ID,
+            costTemplate: EXACT_TEMU_TEMPLATE,
+            goodsDesc: "승인된 한국어 케이블 정리 클립 상세 설명",
+            bulletPoints: ["승인된 한국어 상품 구성"],
+            goodsCarouselImage: [representativeImage],
+            detailImage: images.map((image) => image.publicUrl),
+          },
+          skuList: [{
+            externalSkuId: `${externalGoodsId}-01`,
+            quantity: 1,
+            price: { basePrice: { amount: "5000", currency: "KRW" } },
+          }],
+        },
+      },
+    },
+  };
+}
+
+async function seedExactTemuCreatePrerequisites(db) {
+  const fixture = exactTemuCreateFixture("temu-exact-cable-seed-0001");
+  await setClaims(db, "authenticated");
+  const credentialId = await scalar(
+    db,
+    `select public.sellerpilot_rotate_credential(
+      'temu','production',jsonb_build_object('app_key','temu-exact-cable-test'),
+      now()+interval '30 days',90,30,7
+    )`,
+  );
+  await db.query(
+    `insert into sellerpilot_private.products (
+       id,owner_id,external_code,sku,name,description,status,on_hand,reserved,
+       reorder_point,cost_krw,demo,detail_page_data,detail_page_version,
+       detail_page_updated_at,detail_page_approved_version,
+       detail_page_image_manifest
+     ) values (
+       $1,$2,$3,$3,'케이블 정리 클립 QA 상품',
+       '승인된 한국어 케이블 정리 클립 상세 설명','draft',1,0,1,1000,
+       false,'{}'::jsonb,1,clock_timestamp(),1,$4::jsonb
+     )`,
+    [
+      EXACT_TEMU_PRODUCT_ID,
+      OWNER_ID,
+      EXACT_TEMU_SKU,
+      JSON.stringify({
+        contract: "sellerpilot_detail_image_manifest_v2",
+        algorithm: "sha256",
+        digest: fixture.manifestDigest,
+        images: fixture.images.map((image) => ({
+          role: image.role,
+          path: image.objectPath,
+          sourceSha256: image.contentSha256,
+        })),
+      }),
+    ],
+  );
+  await db.query(
+    `insert into sellerpilot_private.product_category_assignments (
+       owner_id,product_id,source_ref,product_name,channel,environment,market,
+       category_id,category_path,is_leaf,confidence,classification_source,
+       missing_required_attributes,official_metadata,status,
+       official_verified_at,confirmed_at
+     ) values (
+       $1,$2,'temu-exact-cable-category-v1','케이블 정리 클립 QA 상품',
+       'temu','production','KR',$3,array['생활','케이블 정리'],true,1,
+       'seller_selected','[]'::jsonb,'{"verifiedBy":"focused-test"}'::jsonb,
+       'confirmed',clock_timestamp(),clock_timestamp()
+     )`,
+    [OWNER_ID, EXACT_TEMU_PRODUCT_ID, EXACT_TEMU_CATEGORY_ID],
+  );
+  return { credentialId };
+}
+
+async function reserveExactTemuCreate(db, credentialId, fixture) {
+  await setClaims(db, "authenticated");
+  const claim = await scalar(
+    db,
+    `select public.sellerpilot_claim_channel_operation(
+      $1,'temu','listing.create',$2,$3
+    )`,
+    [credentialId, fixture.idempotencyKey, fixture.requestFingerprint],
+  );
+  await setClaims(db, "service_role");
+  return scalar(
+    db,
+    `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+      $1,$2,$3,'temu','KR','','KRW',5000,$4,$5::jsonb
+    )`,
+    [
+      EXACT_TEMU_PRODUCT_ID,
+      credentialId,
+      claim.attempt_id,
+      fixture.requestFingerprint,
+      JSON.stringify(fixture.payload),
+    ],
+  );
 }
 
 async function seedVerifiedSafeTestListing(db, suffix) {
@@ -422,6 +611,177 @@ test("Temu publication migration dynamically fences durable activation and conta
        )`,
       [SERVERLESS_TOKEN_HASH, OWNER_ID],
     );
+    const exactCreatePrerequisites = await seedExactTemuCreatePrerequisites(db);
+
+    await t.test("exact cable create cannot synthesize a missing Temu credential", async () => {
+      await db.exec("begin");
+      try {
+        const fixture = exactTemuCreateFixture("temu-exact-cable-missing-credential-0001");
+        await setClaims(db, "service_role");
+        await assert.rejects(
+          scalar(
+            db,
+            `select public.sellerpilot_service_reserve_and_enqueue_listing_create(
+              $1,$2,$3,'temu','KR','','KRW',5000,$4,$5::jsonb
+            )`,
+            [
+              EXACT_TEMU_PRODUCT_ID,
+              "11111111-1111-4111-8111-111111111111",
+              "22222222-2222-4222-8222-222222222222",
+              fixture.requestFingerprint,
+              JSON.stringify(fixture.payload),
+            ],
+          ),
+          /TEMU_EXACT_CABLE_ACTIVE_CREDENTIAL_REQUIRED/,
+        );
+      } finally {
+        await db.exec("rollback").catch(() => undefined);
+      }
+    });
+
+    await t.test("exact cable create refuses source inventory above stock one", async () => {
+      await db.exec("begin");
+      try {
+        await db.query(
+          "update sellerpilot_private.products set on_hand=2 where id=$1",
+          [EXACT_TEMU_PRODUCT_ID],
+        );
+        const fixture = exactTemuCreateFixture("temu-exact-cable-source-stock-0001");
+        await assert.rejects(
+          reserveExactTemuCreate(db, exactCreatePrerequisites.credentialId, fixture),
+          /TEMU_EXACT_CABLE_PRODUCT_IDENTITY_MISMATCH/,
+        );
+      } finally {
+        await db.exec("rollback").catch(() => undefined);
+      }
+    });
+
+    await t.test("exact cable create accepts only the fully bound safe-test request", async () => {
+      const cases = [
+        {
+          label: "valid-control",
+          mutate: () => {},
+          error: null,
+        },
+        {
+          label: "category-path-instead-of-leaf",
+          mutate: (fixture) => { fixture.payload.arguments.body.goodsBasic.extCatName = "생활 > 케이블 정리"; },
+          error: /TEMU_EXACT_CABLE_REQUEST_CONTEXT_MISMATCH/,
+        },
+        {
+          label: "shipping-template-missing",
+          mutate: (fixture) => { delete fixture.payload.arguments.body.goodsBasic.costTemplate; },
+          error: /TEMU_EXACT_CABLE_REQUEST_CONTEXT_MISMATCH/,
+        },
+        {
+          label: "stock-drift",
+          mutate: (fixture) => { fixture.payload.arguments.body.skuList[0].quantity = 2; },
+          error: /TEMU_EXACT_CABLE_SKU_CONTRACT_MISMATCH/,
+        },
+        {
+          label: "price-drift",
+          mutate: (fixture) => { fixture.payload.arguments.body.skuList[0].price.basePrice.amount = "5001"; },
+          error: /TEMU_EXACT_CABLE_SKU_CONTRACT_MISMATCH/,
+        },
+        {
+          label: "source-sku-missing",
+          mutate: (fixture) => { delete fixture.payload.arguments.sellerpilotTemuCreateCorrelation.sourceSellerSku; },
+          error: /TEMU_EXACT_CABLE_EXTERNAL_ID_MISMATCH/,
+        },
+        {
+          label: "scope-fingerprint-drift",
+          mutate: (fixture) => {
+            fixture.payload.arguments.sellerpilotTemuCreateCorrelation.scopeFingerprint = "f".repeat(64);
+          },
+          error: /TEMU_EXACT_CABLE_EXTERNAL_ID_MISMATCH/,
+        },
+        {
+          label: "representative-reused-as-detail",
+          mutate: (fixture) => {
+            fixture.payload.arguments.body.goodsBasic.detailImage[0] = fixture.representativeImage;
+          },
+          error: /TEMU_EXACT_CABLE_IMAGE_CONTRACT_MISMATCH/,
+        },
+        {
+          label: "second-representative",
+          mutate: (fixture) => {
+            fixture.payload.arguments.body.goodsBasic.goodsCarouselImage.push(
+              "https://assets.example.test/products/temu-exact-cable/hero-2.jpg",
+            );
+          },
+          error: /TEMU_EXACT_CABLE_IMAGE_CONTRACT_MISMATCH/,
+        },
+        {
+          label: "seven-details",
+          mutate: (fixture) => { fixture.payload.arguments.body.goodsBasic.detailImage.pop(); },
+          error: /TEMU_EXACT_CABLE_IMAGE_CONTRACT_MISMATCH/,
+        },
+        {
+          label: "approved-binding-detail-drift",
+          mutate: (fixture) => {
+            fixture.payload.arguments.sellerpilotPublicationAssetBinding
+              .providerTransportImages[0].publicUrl =
+                "https://assets.example.test/products/temu-exact-cable/other-detail.jpg";
+          },
+          error: /TEMU_EXACT_CABLE_APPROVED_ASSET_BINDING_REQUIRED/,
+        },
+        {
+          label: "live-intent",
+          mutate: (fixture) => { fixture.payload.arguments.publicationIntent = "live"; },
+          error: /TEMU_EXACT_CABLE_REQUEST_CONTEXT_MISMATCH/,
+        },
+      ];
+      for (const [index, testCase] of cases.entries()) {
+        await db.exec("begin");
+        try {
+          const fixture = exactTemuCreateFixture(
+            `temu-exact-cable-create-${String(index + 1).padStart(4, "0")}`,
+          );
+          testCase.mutate(fixture);
+          const before = await scalar(
+            db,
+            "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where channel='temu' and operation='listing.create'",
+          );
+          if (testCase.error) {
+            await db.exec("savepoint exact_request_rejection");
+            await assert.rejects(
+              reserveExactTemuCreate(db, exactCreatePrerequisites.credentialId, fixture),
+              testCase.error,
+              testCase.label,
+            );
+            await db.exec("rollback to savepoint exact_request_rejection");
+            assert.equal(
+              await scalar(
+                db,
+                "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where channel='temu' and operation='listing.create'",
+              ),
+              before,
+              testCase.label,
+            );
+          } else {
+            const reserved = await reserveExactTemuCreate(
+              db,
+              exactCreatePrerequisites.credentialId,
+              fixture,
+            );
+            assert.equal(reserved.status, "queued");
+            assert.match(reserved.listing_id, /^[0-9a-f-]{36}$/i);
+            assert.match(reserved.job_id, /^[0-9a-f-]{36}$/i);
+            assert.equal(
+              await scalar(
+                db,
+                `select request_payload=$2::jsonb
+                   from sellerpilot_private.channel_gateway_jobs where id=$1`,
+                [reserved.job_id, JSON.stringify(fixture.payload)],
+              ),
+              true,
+            );
+          }
+        } finally {
+          await db.exec("rollback");
+        }
+      }
+    });
 
     await t.test("prewrite reaper closes generation one and permits only generation two", async () => {
       await db.exec("begin");
@@ -734,6 +1094,9 @@ test("Temu publication migration dynamically fences durable activation and conta
         { label: "valid-control", missing: null, expectedValid: true },
         { label: "image-order", missing: "imageOrderVerified", expectedValid: false },
         { label: "content", missing: "contentVerified", expectedValid: false },
+        { label: "representative", missing: "representativeImageVerified", expectedValid: false },
+        { label: "representative-count", missing: "observedRepresentativeImageCount", expectedValid: false },
+        { label: "representative-digest", missing: "representativeImageDigest", expectedValid: false },
         { label: "sku-identity", missing: "skuIdentityVerified", expectedValid: false },
         { label: "price", missing: "priceVerified", expectedValid: false },
         { label: "stock", missing: "stockVerified", expectedValid: false },

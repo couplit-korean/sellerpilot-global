@@ -6,6 +6,7 @@ import { executeChannelOperation } from "../lib/channels/operations";
 import { normalizeTemuListingPublicationReadback } from "../lib/channels/provider-temu-publication-readback";
 
 const FINGERPRINT = "a".repeat(64);
+const REPRESENTATIVE_IMAGES = ["https://cdn.example.test/temu/hero.jpg"];
 const DETAIL_IMAGES = Array.from(
   { length: 8 },
   (_, index) => `https://cdn.example.test/temu/detail-${index + 1}.jpg`,
@@ -28,9 +29,11 @@ const EXPECTED_SKUS = [{
 const GOODS_BASIC = {
   externalGoodsId: EXTERNAL_GOODS_ID,
   goodsName: "한국어로 확인된 테무 판매 상품",
+  extCatName: "601099",
+  costTemplate: "QA_KR_STANDARD",
   goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
   bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
-  goodsCarouselImage: ["https://cdn.example.test/temu/hero.jpg"],
+  goodsCarouselImage: REPRESENTATIVE_IMAGES,
   detailImage: DETAIL_IMAGES,
 };
 
@@ -125,6 +128,7 @@ function normalize(input: {
   status?: Record<string, unknown>;
   detail?: Record<string, unknown>;
   stock?: Record<string, unknown>;
+  expectedRepresentativeImages?: string[];
   expectedImages?: string[];
 } = {}) {
   const operation = input.operation ?? "listing.create";
@@ -138,6 +142,9 @@ function normalize(input: {
     detailData: input.detail ?? detailData(),
     expectedLocale: "ko-KR",
     expectedFingerprint: FINGERPRINT,
+    expectedRepresentativeImages: operation === "listing.stop"
+      ? []
+      : input.expectedRepresentativeImages ?? REPRESENTATIVE_IMAGES,
     expectedDetailImages: input.expectedImages ?? DETAIL_IMAGES,
     requestedLanguage: "ko",
     expectedGoodsName: GOODS_BASIC.goodsName,
@@ -161,10 +168,12 @@ test("Temu binds ko-KR, immutable goods IDs, and the exact ordered eight-image r
   });
   assert.equal(result.remoteState?.fingerprint, FINGERPRINT);
   assert.equal(result.checks.imageOrderVerified, true);
+  assert.equal(result.checks.representativeImageVerified, true);
   assert.equal(result.checks.skuIdentityVerified, true);
   assert.equal(result.checks.priceVerified, true);
   assert.equal(result.checks.stockVerified, true);
-  assert.equal(result.remoteState?.evidence.version, "temu_list_status_detail_stock_v2");
+  assert.equal(result.remoteState?.evidence.version, "temu_list_status_detail_stock_v3");
+  assert.equal(result.remoteState?.evidence.observedRepresentativeImageCount, 1);
   assert.deepEqual(result.remoteState?.evidence.readbackMethods, [
     "temu.local.goods.list.retrieve",
     "bg.local.goods.publish.status.get",
@@ -222,6 +231,25 @@ test("Temu rejects 7, 9, duplicate, and reordered approved detail-image readback
     const result = normalize({ detail: detailData(images) });
     assert.equal(result.remoteState, undefined, images.join("|"));
   }
+});
+
+test("Temu rejects missing, extra, reused, and drifted representative-image readbacks", () => {
+  const detailWithCarousel = (goodsCarouselImage: string[]) => detailData(DETAIL_IMAGES, {
+    goodsGallery: { goodsCarouselImage, detailImage: DETAIL_IMAGES },
+  });
+  for (const representativeImages of [
+    [],
+    [...REPRESENTATIVE_IMAGES, "https://cdn.example.test/temu/hero-2.jpg"],
+    [DETAIL_IMAGES[0]],
+    ["https://cdn.example.test/temu/other-hero.jpg"],
+  ]) {
+    const result = normalize({ detail: detailWithCarousel(representativeImages) });
+    assert.equal(result.remoteState, undefined, representativeImages.join("|"));
+    assert.equal(result.checks.representativeImageVerified, false);
+  }
+  assert.equal(normalize({
+    expectedRepresentativeImages: [DETAIL_IMAGES[0]],
+  }).remoteState, undefined);
 });
 
 test("Temu rejects unknown status, locale drift, and externalGoodsId drift", () => {
@@ -282,6 +310,7 @@ function strictArguments(intent: "live" | "safe_test" = "live") {
     publicationExpectedImageCount: 8,
     sellerpilotTemuCreateCorrelation: {
       version: "temu_create_attempt_external_id_v1",
+      sourceSellerSku: EXTERNAL_GOODS_ID,
       externalGoodsId: EXTERNAL_GOODS_ID,
       scopeFingerprint: "b".repeat(64),
       skuCount: 1,
@@ -685,6 +714,39 @@ test("Temu rejects an invalid strict image contract before the create call", asy
     });
     assert.equal(result.ok, false);
     assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_PUBLICATION_PREWRITE_REJECTED");
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu requires an exact leaf category, shipping template, and one distinct representative before create", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    throw new Error("unexpected provider call");
+  };
+  try {
+    for (const goodsBasic of [
+      { ...GOODS_BASIC, extCatName: "케이블 > 정리" },
+      { ...GOODS_BASIC, costTemplate: "" },
+      { ...GOODS_BASIC, goodsCarouselImage: [] },
+      { ...GOODS_BASIC, goodsCarouselImage: [REPRESENTATIVE_IMAGES[0], "https://cdn.example.test/temu/hero-2.jpg"] },
+      { ...GOODS_BASIC, goodsCarouselImage: [DETAIL_IMAGES[0]] },
+    ]) {
+      const invalid = strictArguments();
+      invalid.body.goodsBasic = goodsBasic;
+      const result = await executeChannelOperation({
+        channel: "temu",
+        operation: "listing.create",
+        payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+        arguments: invalid,
+        environment: "production",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_PUBLICATION_PREWRITE_REJECTED");
+    }
     assert.equal(fetchCount, 0);
   } finally {
     globalThis.fetch = originalFetch;

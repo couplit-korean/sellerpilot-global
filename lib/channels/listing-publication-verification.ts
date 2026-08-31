@@ -1085,6 +1085,9 @@ export async function executeListingPublicationVerification(
     const sourceGoodsBasic = recordValue(sourceBody.goodsBasic);
     const sourceExternalGoodsId = exactText(sourceGoodsBasic.externalGoodsId);
     const exactGoodsId = temuExactLongGoodsId(remoteId);
+    const expectedRepresentativeImages = Array.isArray(sourceGoodsBasic.goodsCarouselImage)
+      ? sourceGoodsBasic.goodsCarouselImage.map(exactText).filter(Boolean)
+      : [];
     const expectedDetailImages = Array.isArray(sourceGoodsBasic.detailImage)
       ? sourceGoodsBasic.detailImage.map(exactText).filter(Boolean)
       : [];
@@ -1098,7 +1101,11 @@ export async function executeListingPublicationVerification(
         || immutableExternalGoodsId !== sourceExternalGoodsId
         || sourceBody.language !== "ko"
         || expected.locale !== "ko-KR"
+        || !/^[1-9]\d*$/u.test(exactText(sourceGoodsBasic.extCatName))
+        || !exactText(sourceGoodsBasic.costTemplate)
         || !expectedSkus
+        || expectedRepresentativeImages.length !== 1
+        || expectedDetailImages.includes(expectedRepresentativeImages[0])
         || expectedDetailImages.length !== expected.imageCount
         || new Set(expectedDetailImages).size !== expected.imageCount) {
       throw new Error("TEMU_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
@@ -1135,6 +1142,7 @@ export async function executeListingPublicationVerification(
       detailData: detailRemote.data,
       expectedLocale: expected.locale,
       expectedFingerprint: expected.fingerprint,
+      expectedRepresentativeImages,
       expectedDetailImages,
       requestedLanguage: "ko",
       expectedGoodsName: exactText(sourceGoodsBasic.goodsName),

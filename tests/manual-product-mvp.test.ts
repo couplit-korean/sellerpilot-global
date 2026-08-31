@@ -433,6 +433,30 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
+test("Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied", () => {
+  const context = manualContext();
+  context.assignments = [{
+    ...context.assignments[0],
+    channel: "temu",
+    market: "KR",
+    categoryId: "601099",
+    categoryPath: ["Electronics", "Cable organizers"],
+  }];
+  const draft = buildChannelArguments(
+    "temu",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.1, length: 10, width: 8, height: 2 },
+    5,
+  ) as Record<string, unknown>;
+  const body = draft.body as { goodsBasic: Record<string, unknown> };
+  assert.equal(body.goodsBasic.extCatName, "601099");
+  assert.equal(body.goodsBasic.costTemplate, "");
+  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), true);
+});
+
 test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
   const context = manualContext();
   context.manualFields.sellingPrice = 5_000;
