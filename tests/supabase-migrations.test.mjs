@@ -73,6 +73,14 @@ const COMPETITOR_PRICE_V3_MIGRATION =
   "20260831130000_competitor_price_v3.sql";
 const COMPETITOR_MATCH_REVIEW_MIGRATION =
   "20260831131000_competitor_match_review_ledger.sql";
+const COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION =
+  "20260831131500_retire_pre_v3_competitor_search_queue.sql";
+const COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS = {
+  queueDigest: "cf636a14eb69f3260e1eb24077da87bd8f7d479d1e467303e51535955b3c3ed4",
+  fullRows: "a02c9210ce1be866bf721835b948ca09649505772f5c2783856d9c56001a8c82",
+  requestPayloads: "06a78b54eaa1a1782a5a1fa7b11b78eb781bedc7e34c570621ce0aa135734d9e",
+  linkages: "6a3e43d2c15c6f72f9919a10785170aa004e156ede2060c311ab1fb5e0309565",
+};
 const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
   "20260831132000_competitor_identity_lineage_fence.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
@@ -312,12 +320,16 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
   const isFailedPreproviderPermitRetirement = normalized.includes(
     "exact Qoo10 failed-permit migration history drifted",
   );
+  const isPreV3CompetitorQueueRetirement = normalized.includes(
+    "competitor queue retirement migration history drifted",
+  );
   if (
     !isHeadingNormalization
     && !isStaleVerifierRetirement
     && !isExactActivationClaimPriority
     && !isExactActivationProviderBoundary
     && !isFailedPreproviderPermitRetirement
+    && !isPreV3CompetitorQueueRetirement
   ) return normalized;
   const retirementPredecessor = isStaleVerifierRetirement
     ? ",\n      ('20260831056900','{}'::text[],'accept_exact_qoo10_heading_normalization')"
@@ -337,6 +349,10 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
       + ",\n      ('20260831057100','{}'::text[],'prioritize_exact_qoo10_s1_activation_claim')"
       + ",\n      ('20260831057200','{}'::text[],'allow_exact_qoo10_s1_activation_provider_boundary')"
     : "";
+  const competitorQueuePredecessors = isPreV3CompetitorQueueRetirement
+    ? ",\n      ('20260831130000','{}'::text[],'competitor_price_v3')"
+      + ",\n      ('20260831131000','{}'::text[],'competitor_match_review_ledger')"
+    : "";
   return `
     create schema if not exists supabase_migrations;
     create table if not exists supabase_migrations.schema_migrations (
@@ -347,7 +363,7 @@ function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
     insert into supabase_migrations.schema_migrations(version,statements,name)
     values
       ('20260831056700','{}'::text[],'recover_exact_qoo10_s1_activation'),
-      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}${providerBoundaryPredecessors}${failedPermitPredecessors}
+      ('20260831056800','{}'::text[],'allow_exact_qoo10_s1_verifier_overlap')${retirementPredecessor}${claimPriorityPredecessors}${providerBoundaryPredecessors}${failedPermitPredecessors}${competitorQueuePredecessors}
     on conflict (version) do nothing;
     ${normalized}
   `;
@@ -385,6 +401,55 @@ async function setClaims(db, role = "authenticated", userId = ADMIN_ID) {
 async function scalar(db, sql, params = []) {
   const result = await db.query(sql, params);
   return Object.values(result.rows[0] ?? {})[0];
+}
+
+async function competitorQueueRetirementDigests(db) {
+  return (await db.query(`
+    select
+      count(*)::integer as "targetCount",
+      encode(extensions.digest(coalesce(string_agg(
+        target.id::text || ':' || target.status || ':' || target.periodic_key,
+        ',' order by target.id
+      ), ''), 'sha256'), 'hex') as "queueDigest",
+      encode(extensions.digest(coalesce(string_agg(
+        target.id::text || ':' || target.row_sha,
+        ',' order by target.id
+      ), ''), 'sha256'), 'hex') as "fullRows",
+      encode(extensions.digest(coalesce(string_agg(
+        target.id::text || ':' || target.request_sha,
+        ',' order by target.id
+      ), ''), 'sha256'), 'hex') as "requestPayloads",
+      encode(extensions.digest(coalesce(string_agg(
+        target.id::text || ':' || target.link_count::text || ':' ||
+          target.linkage_sha,
+        ',' order by target.id
+      ), ''), 'sha256'), 'hex') as linkages
+    from (
+      select
+        job.id,
+        job.status,
+        coalesce(job.request_payload->>'periodicKey', '') periodic_key,
+        encode(extensions.digest(to_jsonb(job)::text, 'sha256'), 'hex') row_sha,
+        encode(extensions.digest(job.request_payload::text, 'sha256'), 'hex') request_sha,
+        coalesce(linkage.link_count, 0) link_count,
+        coalesce(linkage.linkage_sha,
+          encode(extensions.digest('', 'sha256'), 'hex')) linkage_sha
+      from sellerpilot_private.channel_gateway_jobs job
+      cross join lateral (
+        select count(*) link_count,
+               encode(extensions.digest(coalesce(string_agg(
+                 claim.product_id::text || ':' ||
+                   coalesce(claim.gateway_periodic_key, ''),
+                 ',' order by claim.product_id
+               ), ''), 'sha256'), 'hex') linkage_sha
+          from sellerpilot_private.competitor_price_refresh_claims claim
+         where claim.gateway_job_id = job.id
+      ) linkage
+      where job.channel='elevenst'
+        and job.operation='competitor.search'
+        and job.status in ('queued','running')
+    ) target
+  `)).rows[0];
 }
 
 async function attestPublicationRelease(db, releaseSha = PUBLICATION_RELEASE_SHA) {
@@ -670,6 +735,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION,
       COMPETITOR_PRICE_V3_MIGRATION,
       COMPETITOR_MATCH_REVIEW_MIGRATION,
+      COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
     ]);
     assert.ok(
@@ -755,12 +821,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(COMPETITOR_PRICE_V3_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
+          < migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
+        && migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION),
-      "competitor v3, review ledger, and identity fence must replay after Qoo10 573 in order",
+      "competitor v3, review ledger, queue retirement, and identity fence must replay after Qoo10 573 in order",
     );
     let shopeeStaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;
     let qoo10ProviderBoundaryJobPreimage;
+    let fullSchemaQueueFixture;
     for (const name of migrationNames) {
       if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
@@ -768,7 +837,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         shopeeStaticEgressMigration = source;
         continue;
       }
-      const sql = name === "20260828210000_non_cs_release_integrity.sql"
+      let sql = name === "20260828210000_non_cs_release_integrity.sql"
         ? withoutFinalStrictWorkerScopeFence(source)
         : source;
       if (name === QOO10_EXACT_HEADING_NORMALIZATION_MIGRATION) {
@@ -957,6 +1026,67 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           }],
           "Qoo10 retry identity must patch only the exact observed function pre-images",
         );
+      }
+      if (name === COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION) {
+        const ownerId = "92000000-0000-4000-8000-000000000001";
+        await db.query(
+          "insert into auth.users(id,email) values ($1,'queue-retirement-full-schema@example.test')",
+          [ownerId],
+        );
+        await db.query(
+          "insert into sellerpilot_private.admin_users(user_id,display_name) values ($1,'Queue retirement full-schema fixture')",
+          [ownerId],
+        );
+        await setClaims(db, "authenticated", ownerId);
+        const credentialId = await scalar(
+          db,
+          `select public.sellerpilot_rotate_credential(
+             'elevenst','production',
+             '{"key":"queue-retirement-fixture","access_token":"fixture-access","refresh_token":"fixture-refresh","client_id":"fixture-client","client_secret":"fixture-secret"}'::jsonb,
+             now() + interval '180 days',90,30,0
+           )`,
+        );
+        const vaultSecretId = await scalar(
+          db,
+          "select vault_secret_id from sellerpilot_private.channel_credentials where id=$1",
+          [credentialId],
+        );
+        await db.query(
+          `insert into sellerpilot_private.channel_gateway_jobs (
+             id,credential_id,channel,operation,environment,request_payload,
+             status,created_by,created_at,updated_at
+           )
+           select
+             ('93000000-0000-4000-8000-' || lpad(series.n::text,12,'0'))::uuid,
+             $1,'elevenst','competitor.search','production',
+             jsonb_build_object(
+               'primary','전체 스키마 큐 검증 ' || series.n::text,
+               'periodicKey','competitor:v1:full-schema-' || lpad(series.n::text,2,'0')
+             ),
+             'queued',$2,
+             '2026-08-31T03:00:00Z'::timestamptz + series.n * interval '1 second',
+             '2026-08-31T03:00:00Z'::timestamptz + series.n * interval '1 second'
+           from generate_series(1,19) series(n)`,
+          [credentialId, ownerId],
+        );
+        const digests = await competitorQueueRetirementDigests(db);
+        assert.equal(digests.targetCount, 19);
+        for (const [key, productionDigest] of Object.entries(
+          COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS,
+        )) {
+          assert.equal(
+            sql.split(productionDigest).length - 1,
+            1,
+            `${key} production digest must have one migration declaration`,
+          );
+          sql = sql.replace(productionDigest, digests[key]);
+        }
+        fullSchemaQueueFixture = {
+          ownerId,
+          credentialId,
+          vaultSecretId,
+          digests,
+        };
       }
       try {
         await db.exec(withoutUnavailableExtensions(sql));
@@ -1606,6 +1736,151 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           ),
           2,
           "both decisive-terminal partial indexes must exist",
+        );
+      }
+      if (name === COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION) {
+        assert.ok(fullSchemaQueueFixture);
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from supabase_migrations.schema_migrations
+              where version in ('20260831130000','20260831131000','20260831131500')`,
+          ),
+          3,
+          "queue retirement must be recorded after both exact v3 predecessors",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from information_schema.columns
+              where table_schema='sellerpilot_private'
+                and table_name='competitor_price_refresh_claims'
+                and column_name='identity_fingerprint'`,
+          ),
+          0,
+          "queue retirement must run before the identity lineage column exists",
+        );
+        assert.deepEqual(
+          (await db.query(`
+            select
+              encode(extensions.digest(pg_get_functiondef(
+                'sellerpilot_private.valid_competitor_v3_item(jsonb)'::regprocedure
+              ), 'sha256'), 'hex') valid_v3_sha,
+              encode(extensions.digest(pg_get_functiondef(
+                'sellerpilot_private.record_competitor_prices(uuid,jsonb,boolean)'::regprocedure
+              ), 'sha256'), 'hex') record_v3_sha,
+              encode(extensions.digest(pg_get_functiondef(
+                'public.sellerpilot_review_competitor_match(uuid,text,timestamptz,uuid,text,jsonb,text,uuid)'::regprocedure
+              ), 'sha256'), 'hex') review_sha,
+              encode(extensions.digest(pg_get_functiondef(
+                'sellerpilot_private.reject_competitor_match_review_mutation()'::regprocedure
+              ), 'sha256'), 'hex') append_only_sha
+          `)).rows,
+          [{
+            valid_v3_sha: "00e53e6b85ade85504c1096d10c39e07facb872870bb654a72a44ff04ae0a784",
+            record_v3_sha: "c68a53700e658c8c630aeeda624f848140fd879d5f0aeb2f6e6a94e5775d80b5",
+            review_sha: "dfe1cfa9e4a4222efbc8cca749393b224d1b9397c08dc570d7fe545052d01222",
+            append_only_sha: "8b6072ac2402977ae7425e3f73e96a95c4147fca4894a8ce596ca80129ffce27",
+          }],
+          "queue retirement must pin the actual 130/131 executable postimages",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select
+               (select relrowsecurity
+                  from pg_class
+                 where oid='sellerpilot_private.competitor_match_review_events'::regclass)
+               and exists (
+                 select 1 from pg_trigger
+                  where tgrelid='sellerpilot_private.competitor_match_review_events'::regclass
+                    and tgname='competitor_match_review_events_append_only'
+                    and not tgisinternal and tgenabled <> 'D'
+               )`,
+          ),
+          true,
+          "review ledger RLS and append-only trigger must match the pinned predecessor boundary",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from sellerpilot_private.channel_gateway_jobs
+              where channel='elevenst' and operation='competitor.search'
+                and status in ('queued','running')`,
+          ),
+          0,
+          "full-schema retirement must leave no active competitor search rows",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from sellerpilot_private.operation_audit
+              where action='competitor_search_queue_retired_before_identity_v3'
+                and safe_detail->>'queueDigest'=$1
+                and safe_detail->>'queueFullRowsDigest'=$2
+                and safe_detail->>'queueRequestPayloadsDigest'=$3
+                and safe_detail->>'queueLinkagesDigest'=$4`,
+            [
+              fullSchemaQueueFixture.digests.queueDigest,
+              fullSchemaQueueFixture.digests.fullRows,
+              fullSchemaQueueFixture.digests.requestPayloads,
+              fullSchemaQueueFixture.digests.linkages,
+            ],
+          ),
+          19,
+          "all full-schema rows must retain the exact aggregate preimage evidence",
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from sellerpilot_private.channel_gateway_jobs
+              where created_by=$1 and status='cancelled'
+                and error_message='COMPETITOR_SEARCH_RETIRED_BEFORE_IDENTITY_V3'
+                and attempt_count=0 and started_at is null`,
+            [fullSchemaQueueFixture.ownerId],
+          ),
+          19,
+          "the real 130/131 schema must retire all 19 untouched reads atomically",
+        );
+        await db.query(
+          `delete from sellerpilot_private.operation_audit
+            where action='competitor_search_queue_retired_before_identity_v3'
+              and owner_id=$1`,
+          [fullSchemaQueueFixture.ownerId],
+        );
+        await db.query(
+          "delete from sellerpilot_private.channel_gateway_jobs where created_by=$1",
+          [fullSchemaQueueFixture.ownerId],
+        );
+        await db.query(
+          "delete from sellerpilot_private.credential_audit where actor_user_id=$1",
+          [fullSchemaQueueFixture.ownerId],
+        );
+        await db.query(
+          "delete from sellerpilot_private.channel_credentials where id=$1",
+          [fullSchemaQueueFixture.credentialId],
+        );
+        await db.query(
+          "select vault.delete_secret($1)",
+          [fullSchemaQueueFixture.vaultSecretId],
+        );
+        await db.query(
+          "delete from sellerpilot_private.admin_users where user_id=$1",
+          [fullSchemaQueueFixture.ownerId],
+        );
+        await db.query(
+          "delete from auth.users where id=$1",
+          [fullSchemaQueueFixture.ownerId],
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from sellerpilot_private.channel_gateway_jobs
+              where created_by=$1`,
+            [fullSchemaQueueFixture.ownerId],
+          ),
+          0,
+          "full-schema queue fixture must not leak into later migration checks",
         );
       }
     }
@@ -14777,7 +15052,10 @@ test("exact Lazada recovery certifies only its fingerprinted Vault snapshot and 
       .replaceAll(productionStaleRequestSha256, fixtureStaleRequestSha256);
     await db.exec(withoutUnavailableExtensions(exactRecoverySql));
     for (const name of migrationNames.slice(exactRecoveryMigrationIndex + 1)) {
-      if (name === rejectedRecoveryCleanupMigrationName) continue;
+      if (
+        name === rejectedRecoveryCleanupMigrationName
+        || name === COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION
+      ) continue;
       const source = await readFile(new URL(name, migrationUrl), "utf8");
       await db.exec(withoutUnavailableExtensions(source));
     }
