@@ -133,7 +133,7 @@ test("Shopee static egress migration preserves prior flags and closes both claim
   assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy[\s\S]*shopee/i);
 });
 
-test("Shopee OAuth and channel operations fail before enqueue when static egress is unavailable", async () => {
+test("Shopee OAuth and channel operations fail before enqueue when runtime readiness is unavailable", async () => {
   const [oauthRoute, channelOperationsRoute] = await Promise.all([
     readFile(
       new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url),
@@ -142,13 +142,16 @@ test("Shopee OAuth and channel operations fail before enqueue when static egress
     readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
   ]);
   assert.match(oauthRoute, /async function shopeeStaticEgressReady[\s\S]*sellerpilot_service_serverless_static_egress_status/);
+  assert.match(oauthRoute, /async function shopeeGatewayWorkerReady[\s\S]*sellerpilot_service_serverless_cs_wakeup_status/);
   assert.match(oauthRoute, /hasServerlessStaticEgressFor\(configuredServerlessStaticEgressChannels\(\), \["shopee"\]\)/);
   assert.match(oauthRoute, /databaseServerlessStaticEgressAllows\(data, "shopee"\)/);
-  assert.match(oauthRoute, /if \(oauthCode && !await shopeeStaticEgressReady\(serviceClient\)\)/);
-  assert.match(oauthRoute, /if \(parsed\.data\.startOAuth && !await shopeeStaticEgressReady\(serviceClient\)\)/);
+  assert.match(oauthRoute, /runtimeState\.configured === true[\s\S]*runtimeState\.active === true/);
+  assert.match(oauthRoute, /if \(oauthCode\) {[\s\S]*shopeeOAuthGatewayBlocked\(serviceClient/);
+  assert.match(oauthRoute, /if \(parsed\.data\.startOAuth\) {[\s\S]*shopeeOAuthGatewayBlocked\(serviceClient/);
   assert.match(oauthRoute, /blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED/);
+  assert.match(oauthRoute, /blockedReason: "SERVERLESS_WORKER_REQUIRED"/);
   assert.ok(
-    oauthRoute.indexOf("blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED")
+    oauthRoute.indexOf("const blocked = await shopeeOAuthGatewayBlocked")
       < oauthRoute.indexOf("exchangeOAuthViaChannelGateway({"),
   );
   assert.match(channelOperationsRoute, /const staticEgressChannel = channel === "shopee"/);
