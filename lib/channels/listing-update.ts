@@ -33,6 +33,11 @@ import {
   ebayExactNoEffectRetryArgument,
   ebayExactV101ContentContractArgument,
 } from "./ebay-exact-existing-qa-recovery";
+import {
+  temuExactExistingUpdateArgument,
+  temuExactPreservedAssetsArgument,
+  temuExactExistingUpdateRequest,
+} from "./temu-existing-update";
 
 export type ListingUpdateReference = {
   listingId?: string | null;
@@ -647,6 +652,8 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
               ? [argumentsValue.productNo]
               : channel === "ebay"
                 ? [argumentsValue.listingId]
+                : channel === "temu"
+                  ? [argumentsValue.goodsId]
                 : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
@@ -1044,6 +1051,28 @@ export function prepareListingUpdateArguments(
       ...(hasSuppliedPatch && Object.keys(suppliedProduct).length
         ? { product: structuredClone(suppliedProduct) }
         : {}),
+    };
+  }
+
+  if (channel === "temu") {
+    const exact = temuExactExistingUpdateRequest(createArguments);
+    if (!exact || exact.binding.goodsId !== remoteId) {
+      throw new Error("LISTING_UPDATE_NOT_RELEASED:temu");
+    }
+    return {
+      goodsId: remoteId,
+      externalGoodsId: exact.binding.externalGoodsId,
+      body: structuredClone(createArguments.body),
+      sellerpilotTemuPartialUpdate: structuredClone(
+        createArguments.sellerpilotTemuPartialUpdate,
+      ),
+      [temuExactExistingUpdateArgument]: structuredClone(
+        createArguments[temuExactExistingUpdateArgument],
+      ),
+      [temuExactPreservedAssetsArgument]: structuredClone(
+        createArguments[temuExactPreservedAssetsArgument],
+      ),
+      ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
     };
   }
 

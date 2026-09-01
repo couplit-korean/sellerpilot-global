@@ -33,6 +33,10 @@ import {
   lazadaExactExistingPublicationIdentity,
 } from "../lib/channels/lazada-exact-existing-identity";
 import {
+  temuExactExistingUpdateCandidate,
+  temuExactExistingUpdateIdentity,
+} from "../lib/channels/temu-existing-update";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
   marketplaceMinimumThumbnailCount,
@@ -2429,10 +2433,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         channel,
         listing,
       );
+      const exactTemuExistingUpdate = Boolean(listing) && temuExactExistingUpdateCandidate({
+        channel,
+        operation: "listing.update",
+        productId: productId ?? undefined,
+        remoteId: listing?.remoteId,
+        status: listing?.status,
+        requestedPublicationIntent: listing?.requestedPublicationIntent,
+        remoteVisibility: listing?.remoteVisibility,
+      });
       const recoverableExternalActionUpdate = recoverableEbayUpdate
         || recoverableExactExternalActionUpdate
         || recoverableSmartstoreUpdate
-        || exactQoo10LocalizationUpdate;
+        || exactQoo10LocalizationUpdate
+        || exactTemuExistingUpdate;
       const recoveryReadyMessage = recoverableEbayUpdate
         ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다."
         : recoverableExactExternalActionUpdate && channel === "coupang"
@@ -2445,6 +2459,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           ? `불변 스마트스토어 원상품 ${smartstoreExactQaRecoveryIdentity.originProductNo}·채널상품 ${smartstoreExactQaRecoveryIdentity.channelProductNo} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
           : exactQoo10LocalizationUpdate
             ? "고정된 Qoo10 상품·원격 ID·운영 키를 서버의 일회성 허가와 다시 결속한 뒤 같은 상품만 수정합니다."
+          : exactTemuExistingUpdate
+            ? `Temu ACTIVE goods ${temuExactExistingUpdateIdentity.goodsId}의 한국어 제목·설명·핵심 bullet만 1회 부분 수정하고 가격·재고·이미지·ACTIVE 상태를 다시 조회합니다.`
           : "";
       const result = listing?.failureClass === "external_action" && !recoverableExternalActionUpdate
         ? { phase: "blocked" as const, message: listing.lastError ?? "원격 판매자센터 상태를 수동 확인해야 합니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id }
@@ -2459,7 +2475,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const exactSmartstoreReadiness = recoverableSmartstoreUpdate && listing
         ? remoteEditAvailability[listing.id]
         : null;
-      const operationAvailable = operationRelease.available
+      const operationAvailable = (operationRelease.available || exactTemuExistingUpdate)
         && (!recoverableSmartstoreUpdate || exactSmartstoreReadiness?.runnable === true);
       const exactSmartstoreBlockedLabel = exactSmartstoreReadiness?.mode === "static_egress_required"
         ? "스마트스토어 고정 egress 확인 필요"

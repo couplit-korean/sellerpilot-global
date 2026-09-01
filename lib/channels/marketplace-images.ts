@@ -20,6 +20,10 @@ import {
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
 import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
+import {
+  bindTemuExactPreservedAssetEvidence,
+  temuExactExistingUpdateArgument,
+} from "./temu-existing-update";
 
 const marketplaceImageBucket = "sellerpilot-marketplace";
 const inputMimeTypes = ["image/jpeg", "image/png", "image/webp"];
@@ -1081,6 +1085,9 @@ export async function prepareMarketplaceImages(
     for (const skuValue of skuList) {
       const sku = record(skuValue);
       if (sku) sku.images = representative;
+    }
+    if (record(next[temuExactExistingUpdateArgument])) {
+      Object.assign(next, bindTemuExactPreservedAssetEvidence(next));
     }
     return finish();
   }

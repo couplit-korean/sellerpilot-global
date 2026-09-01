@@ -9,6 +9,7 @@ type UnknownRecord = Record<string, unknown>;
 
 export type TemuPublicationReadbackOperation =
   | "listing.create"
+  | "listing.update"
   | "listing.stop"
   | "listing.publication.verify";
 
@@ -36,6 +37,7 @@ export type TemuPublicationReadbackVerification = {
 };
 
 export type TemuPublicationExpectedSku = {
+  skuId?: string;
   externalSkuId: string;
   quantity: number;
   basePrice: {
@@ -374,7 +376,11 @@ function temuCommerceReadbackChecks(input: {
     return { expected, sku, skuId, price: sku ? exactRemoteRetailPrice(sku) : null };
   });
   const skuIdentityVerified = detailSkus.length === input.expectedSkus.length
-    && detailMatches.every((match) => Boolean(match.sku && match.skuId));
+    && detailMatches.every((match) => Boolean(
+      match.sku
+      && match.skuId
+      && (!match.expected.skuId || match.skuId === match.expected.skuId),
+    ));
   const priceVerified = skuIdentityVerified && detailMatches.every((match) =>
     match.price?.amount === match.expected.basePrice.amount
     && match.price.currency === match.expected.basePrice.currency);
@@ -405,6 +411,12 @@ function sameOrderedValues(left: readonly string[], right: readonly string[]) {
 
 function sha256(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+}
+
+function temuContentDigest(goodsName: string, goodsDesc: string, bulletPoints: readonly string[]) {
+  return createHash("sha256")
+    .update(`${goodsName}\u001f${goodsDesc}\u001f${bulletPoints.join("\u001e")}`, "utf8")
+    .digest("hex");
 }
 
 function normalizedStatus(value: unknown) {
@@ -566,6 +578,7 @@ export function normalizeTemuListingPublicationReadback(input: {
   expectedGoodsDesc?: string;
   expectedBulletPoints?: string[];
   expectedSkus?: TemuPublicationExpectedSku[];
+  requireExactActiveStatus?: boolean;
   stockData?: UnknownRecord;
   verifiedAt?: Date;
 }): TemuPublicationReadbackVerification {
@@ -593,7 +606,20 @@ export function normalizeTemuListingPublicationReadback(input: {
   const identityVerified = goodsIdVerified && externalGoodsIdVerified;
   const visibility = temuVisibility(listItem, statusItem, detail);
   const providerStatus = temuProviderStatus(statusItem, listItem);
-  const statusVerified = Boolean(visibility && providerStatus);
+  const exactActiveStatusVerified = normalizedStatus(statusItem.statusName) === "ACTIVE"
+    && normalizedStatus(listItem.goodsStatus) === "ACTIVE"
+    && [
+      statusItem.status,
+      statusItem.subStatus,
+      statusItem.statusName,
+      statusItem.publishStatusName,
+      listItem.goodsShowSubStatus,
+      listItem.goodsStatus,
+      listItem.status4VO,
+      listItem.subStatus4VO,
+    ].map(normalizedStatus).filter(Boolean).every((status) => status === "ACTIVE");
+  const statusVerified = Boolean(visibility && providerStatus)
+    && (!input.requireExactActiveStatus || exactActiveStatusVerified);
   const requestedLanguage = exactText(input.requestedLanguage).replaceAll("_", "-").toLowerCase();
   const responseLocale = normalizedTemuLocale(detail);
   // detail.query does not promise to echo the request language. The locale
@@ -719,6 +745,11 @@ export function normalizeTemuListingPublicationReadback(input: {
       imageCountVerified: true,
       imageOrderVerified: true,
       contentVerified: true,
+      contentDigest: temuContentDigest(
+        remoteGoodsName,
+        remoteGoodsDesc,
+        remoteBulletPoints,
+      ),
       skuIdentityVerified: true,
       priceVerified: true,
       stockVerified: true,
@@ -733,6 +764,12 @@ export function normalizeTemuListingPublicationReadback(input: {
     resources: {
       goodsId: remoteId,
       externalGoodsId,
+      ...(input.expectedSkus?.length === 1 && input.expectedSkus[0].skuId
+        ? {
+            skuId: input.expectedSkus[0].skuId,
+            externalSkuId: input.expectedSkus[0].externalSkuId,
+          }
+        : {}),
     },
     locale,
     fingerprint: input.expectedFingerprint,

@@ -39,7 +39,7 @@ const channels: GatewayClaim["channel"][] = [
 
 const expectedWrites: Record<string, GatewayClaim["channel"][]> = {
   "listing.create": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"],
-  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"],
+  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"],
   "listing.stop": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore"],
   "inventory.update": ["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"],
   "shipment.acknowledge": ["qoo10", "shopee", "lazada", "coupang", "smartstore"],

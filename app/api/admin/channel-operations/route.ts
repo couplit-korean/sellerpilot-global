@@ -142,6 +142,15 @@ import {
   bindTemuCreateAttemptIdentity,
   temuImmutableListingIdentityFromPublishContext,
 } from "../../../../lib/channels/provider-temu-publication-readback";
+import {
+  bindTemuExactExistingUpdateArguments,
+  temuExactExistingUpdateArgument,
+  temuExactExistingUpdateBindingValue,
+  temuExactExistingUpdateCandidate,
+  temuExactExistingUpdateIdentity,
+  temuExactExistingUpdateRequest,
+  type TemuExactExistingUpdateBinding,
+} from "../../../../lib/channels/temu-existing-update";
 import { parseListingPublicationAssetBinding } from "../../../../lib/channels/listing-publication-content";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
@@ -457,6 +466,17 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  const exactTemuExistingContentUpdateRequest = channel === "temu"
+    && operation === "listing.update"
+    && parsed.data.productId === temuExactExistingUpdateIdentity.productId;
+  if (channel === "temu"
+      && operation === "listing.create"
+      && parsed.data.productId === temuExactExistingUpdateIdentity.productId) {
+    return NextResponse.json({
+      message: "이미 결속된 Temu ACTIVE 상품에는 신규 등록을 만들지 않습니다. 기존 goodsId의 안전한 부분 수정만 사용할 수 있습니다.",
+      mode: "temu_exact_existing_create_forbidden",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   const exactSmartstoreContentUpdate = smartstoreExactQaApprovedContentRequired({
     channel,
     operation,
@@ -466,6 +486,7 @@ export async function POST(request: NextRequest) {
   const contentBoundListingOperation = operation === "listing.create"
     || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
     || exactSmartstoreContentUpdate
+    || exactTemuExistingContentUpdateRequest
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
@@ -608,6 +629,7 @@ export async function POST(request: NextRequest) {
   let boundEbayExactExistingQaRecovery: EbayExactExistingQaRecoveryBinding | null = null;
   let boundEbayExactNoEffectRetry = false;
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
+  let boundTemuExactExistingUpdate: TemuExactExistingUpdateBinding | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundQoo10ExactLocalizationUpdate = false;
   let boundQoo10AdoptedLocalizationIdentity:
@@ -616,7 +638,7 @@ export async function POST(request: NextRequest) {
   let smartstoreExactQaUpdatePermitArmed = false;
   let exactExistingUpdatePermitArmed = false;
   let boundExactExistingClosedGateUpdateChannel:
-    "coupang" | "elevenst" | "ebay" | null = null;
+    "coupang" | "elevenst" | "ebay" | "temu" | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
@@ -731,6 +753,72 @@ export async function POST(request: NextRequest) {
       }
       boundListingCurrency = ledgerCurrency;
       boundListingPrice = ledgerPrice;
+      const exactTemuListing = temuExactExistingUpdateCandidate({
+        channel,
+        operation,
+        productId,
+        remoteId: typeof exactListing.remoteId === "string" ? exactListing.remoteId : null,
+        status: String(exactListing.status ?? ""),
+        requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+          ? exactListing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof exactListing.remoteVisibility === "string"
+          ? exactListing.remoteVisibility
+          : null,
+      });
+      if (exactTemuExistingContentUpdateRequest && !exactTemuListing) {
+        return NextResponse.json({
+          message: "Temu exact ACTIVE 상품의 공개상태·원격 ID 결속이 예상값과 달라 수정하지 않았습니다.",
+          mode: "temu_exact_existing_listing_state_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      if (exactTemuListing) {
+        if (ledgerCurrency !== temuExactExistingUpdateIdentity.currency
+            || ledgerPrice !== temuExactExistingUpdateIdentity.price
+            || !approvedDetailBinding
+            || approvedDetailBinding.manifest.images.length !== marketplaceChannelDetailImageCount) {
+          return NextResponse.json({
+            message: "Temu exact 상품의 KRW 5,000원·승인 상세 이미지 8장 결속을 확인하지 못해 수정하지 않았습니다.",
+            mode: "temu_exact_existing_content_lineage_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        const runtimeRelease = resolveRuntimeReleaseIdentity();
+        if (runtimeRelease.status !== "valid") {
+          return NextResponse.json({
+            message: "Temu exact 상품 수정을 현재 서버 릴리스에 결속하지 못했습니다.",
+            mode: "temu_exact_existing_release_required",
+          }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        const { data: identityData, error: identityError } = await serviceClient.rpc(
+          "sellerpilot_service_get_temu_exact_update_id",
+          {
+            p_listing_id: resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_product_id: productId,
+            p_market: parsed.data.market,
+            p_target_id: parsed.data.targetId,
+          },
+        );
+        const identityRecord = isRecord(identityData) ? identityData : {};
+        const binding = temuExactExistingUpdateBindingValue({
+          ...identityRecord,
+          approvedManifestDigest: approvedDetailBinding.manifest.digest,
+          releaseSha: runtimeRelease.release,
+        });
+        if (identityError
+            || identityRecord.contract !== "temu_exact_existing_update_identity_v1"
+            || identityRecord.approvedManifestDigest !== approvedDetailBinding.manifest.digest
+            || !binding
+            || binding.listingId !== resourceListingId
+            || binding.credentialId !== parsed.data.credentialId) {
+          return NextResponse.json({
+            message: "Temu exact goods·SKU·ACTIVE 인증정보 계보를 원장에서 확정하지 못해 수정하지 않았습니다.",
+            mode: "temu_exact_existing_atomic_identity_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        boundTemuExactExistingUpdate = binding;
+        boundExactExistingClosedGateUpdateChannel = "temu";
+      }
       if (channel === "lazada" && operation === "listing.update") {
         const policy = lazadaKrwMyrPricePolicyFromArguments(parsed.data.arguments);
         const manualFields = isRecord(contextRecord.manualFields)
@@ -1167,7 +1255,7 @@ export async function POST(request: NextRequest) {
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
   const operationRelease = channelOperationRelease(channel, operation, environment);
-  if (!operationRelease.available) {
+  if (!operationRelease.available && !boundTemuExactExistingUpdate) {
     return NextResponse.json({
       message: operationRelease.reason,
       mode: operationRelease.mode,
@@ -1293,6 +1381,7 @@ export async function POST(request: NextRequest) {
     ? "shopee"
     : channel === "temu" && [
         "listing.create",
+        "listing.update",
         "listing.stop",
         "listing.activate",
         "listing.publication.verify",
@@ -1359,6 +1448,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[ebayExactExistingQaRecoveryArgument];
   delete effectiveArguments[ebayExactNoEffectRetryArgument];
   delete effectiveArguments[ebayExactV101ContentContractArgument];
+  delete effectiveArguments[temuExactExistingUpdateArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -1443,6 +1533,25 @@ export async function POST(request: NextRequest) {
       ...effectiveArguments,
       ...boundTemuListingIdentity,
     };
+  }
+  if (channel === "temu" && operation === "listing.update") {
+    if (!boundTemuExactExistingUpdate) {
+      return NextResponse.json({
+        message: "Temu 기존 상품 수정은 exact ACTIVE goods 결속에서만 지원합니다.",
+        mode: "temu_exact_existing_atomic_identity_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      effectiveArguments = bindTemuExactExistingUpdateArguments(
+        effectiveArguments,
+        boundTemuExactExistingUpdate,
+      );
+    } catch {
+      return NextResponse.json({
+        message: "Temu 기존 상품의 한국어 콘텐츠·5,000원·재고 1·대표 1장·상세 8장 계약이 일치하지 않습니다.",
+        mode: "temu_exact_existing_update_contract_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
   if (channel === "elevenst" && operation === "listing.update") {
     const productNo = listingUpdateRemoteIdentity(channel, parsed.data.arguments);
@@ -1886,7 +1995,9 @@ export async function POST(request: NextRequest) {
         }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
       const { data: permitData, error: permitError } = await serviceClient.rpc(
-        boundEbayExactNoEffectRetry
+        boundExactExistingClosedGateUpdateChannel === "temu"
+          ? "sellerpilot_service_arm_temu_exact_update"
+          : boundEbayExactNoEffectRetry
           ? "sellerpilot_service_arm_ebay_no_effect_retry"
           : "sellerpilot_service_arm_exact_existing_update",
         {
@@ -2124,6 +2235,9 @@ export async function POST(request: NextRequest) {
       }
       if (boundSmartstoreExactQaRecovery) {
         assertSmartstoreExactQaUpdateArguments(gatewayArguments);
+      }
+      if (boundTemuExactExistingUpdate && !temuExactExistingUpdateRequest(gatewayArguments)) {
+        throw new Error("TEMU_EXACT_EXISTING_UPDATE_PREPARED_ARGUMENTS_INVALID");
       }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {

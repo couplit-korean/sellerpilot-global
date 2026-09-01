@@ -150,6 +150,10 @@ import {
   temuExistingAdoptionBinding,
   temuExistingAdoptionExternalGoodsId,
 } from "./temu-existing-adoption";
+import {
+  temuExactExistingUpdateIdentity,
+  temuExactExistingUpdateRequest,
+} from "./temu-existing-update";
 
 export const channelOperationNames = [
   "categories.list",
@@ -5306,6 +5310,237 @@ async function executeTemu(input: ExecuteInput) {
     });
     const categoryId = temuResultObject(remote.data).catId;
     return result(input, [step("category-recommend", remote)], categoryId === undefined ? undefined : String(categoryId));
+  }
+  if (input.operation === "listing.update") {
+    const update = temuExactExistingUpdateRequest(input.arguments);
+    const expectedFingerprint = stringArgument(
+      input.arguments,
+      "publicationExpectedFingerprint",
+      false,
+    );
+    const exactInput = Boolean(
+      update
+      && input.arguments.publicationStateContract === listingRemoteStateContractVersion
+      && listingPublicationIntentFromArguments(input.arguments) === "live"
+      && input.arguments.publicationExpectedLocale === "ko-KR"
+      && Number(input.arguments.publicationExpectedImageCount) === marketplaceChannelDetailImageCount
+      && /^[a-f0-9]{64}$/u.test(expectedFingerprint),
+    );
+    if (!exactInput || !update) {
+      return result(input, [{
+        name: "temu-exact-existing-update-prewrite-fence",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification: "TEMU_EXACT_EXISTING_UPDATE_CONTEXT_INVALID",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+
+    const readExact = async () => {
+      const [list, status, detail, stock] = await Promise.all([
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.list.retrieve",
+          arguments: temuExactGoodsListArguments(update.binding.externalGoodsId),
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.publish.status.get",
+          arguments: { goodsIdList: [temuExactLong(update.binding.goodsId)] },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.detail.query",
+          arguments: {
+            goodsId: temuExactLong(update.binding.goodsId),
+            versionQueryType: 1,
+            language: "ko",
+          },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(update.binding.goodsId) },
+        }),
+      ]);
+      return { list, status, detail, stock };
+    };
+
+    const tokenInfo = await temuRequest({
+      payload: input.payload,
+      type: "bg.open.accesstoken.info.get",
+      arguments: {},
+    });
+    const tokenTransport = step("temu-exact-update-current-credential", tokenInfo);
+    const tokenIdentity = tokenTransport.ok
+      ? normalizeTemuCredentialIdentityObservation(tokenInfo.data)
+      : null;
+    const tokenInfoResult = temuResultObject(tokenInfo.data);
+    const rawScopes = Array.isArray(tokenInfoResult.apiScopeList)
+      ? tokenInfoResult.apiScopeList
+      : [];
+    const scopes = rawScopes.map((scope) => typeof scope === "string" ? scope.trim() : "");
+    const credentialVerified = Boolean(tokenIdentity)
+      && tokenIdentity?.sellerAccountKey === update.binding.sellerAccountKey
+      && scopes.length === rawScopes.length
+      && scopes.every(Boolean)
+      && new Set(scopes).size === scopes.length
+      && scopes.includes(temuExactExistingUpdateIdentity.providerOperation);
+    const credentialStep: ChannelOperationStep = {
+      name: "temu-exact-update-current-credential",
+      ok: credentialVerified,
+      status: credentialVerified ? 200 : 422,
+      data: {
+        sellerpilotVerification: credentialVerified
+          ? "TEMU_CURRENT_TOKEN_SELLER_AND_PARTIAL_UPDATE_SCOPE_VERIFIED"
+          : "TEMU_CURRENT_TOKEN_SELLER_OR_PARTIAL_UPDATE_SCOPE_UNVERIFIED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    };
+    if (!credentialVerified) return result(input, [credentialStep], update.binding.goodsId);
+
+    const pre = await readExact();
+    const preSteps = [
+      credentialStep,
+      step("temu-exact-update-pre-list", pre.list),
+      step("temu-exact-update-pre-status", pre.status),
+      step("temu-exact-update-pre-detail", pre.detail),
+      step("temu-exact-update-pre-stock", pre.stock),
+    ];
+    const preReadback = normalizeTemuListingPublicationReadback({
+      operation: "listing.update",
+      intent: "live",
+      remoteId: update.binding.goodsId,
+      externalGoodsId: update.binding.externalGoodsId,
+      listData: pre.list.data,
+      publishStatusData: pre.status.data,
+      detailData: pre.detail.data,
+      stockData: pre.stock.data,
+      expectedLocale: temuExactExistingUpdateIdentity.locale,
+      expectedFingerprint,
+      expectedRepresentativeImages: update.expectedRepresentativeImages,
+      expectedDetailImages: update.expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: update.providerArguments.goodsName,
+      expectedGoodsDesc: update.providerArguments.goodsDesc,
+      expectedBulletPoints: update.providerArguments.bulletPoints,
+      expectedSkus: update.expectedSkus,
+      requireExactActiveStatus: true,
+    });
+    const preChecks = preReadback.checks;
+    const preflightOk = preSteps.every((entry) => entry.ok)
+      && preReadback.visibility === "live"
+      && preReadback.providerStatus === "statusName=ACTIVE;goodsStatus=ACTIVE"
+      && preChecks.identityVerified
+      && preChecks.statusVerified
+      && preChecks.representativeImageVerified
+      && preChecks.imageCountVerified
+      && preChecks.imageOrderVerified
+      && preChecks.skuIdentityVerified
+      && preChecks.priceVerified
+      && preChecks.stockVerified
+      && preChecks.goodsIdVerified
+      && preChecks.externalGoodsIdVerified;
+    const preflightStep: ChannelOperationStep = {
+      name: "temu-exact-existing-update-preflight",
+      ok: preflightOk,
+      status: preflightOk ? 200 : 422,
+      data: {
+        sellerpilotVerification: preflightOk
+          ? "TEMU_EXACT_ACTIVE_COMMERCE_AND_ASSETS_VERIFIED"
+          : "TEMU_EXACT_ACTIVE_COMMERCE_OR_ASSETS_MISMATCH",
+        sellerpilotPublicationChecks: preChecks,
+        sellerpilotRemoteVisibility: preReadback.visibility,
+        sellerpilotNoWriteConfirmed: true,
+      },
+    };
+    if (!preflightOk) return result(input, [...preSteps, preflightStep], update.binding.goodsId);
+
+    if (!input.providerMutationHooks) {
+      return result(input, [preflightStep, {
+        name: "temu-exact-existing-update-provider-boundary",
+        ok: false,
+        status: 409,
+        data: {
+          sellerpilotVerification: "TEMU_EXACT_UPDATE_PROVIDER_BOUNDARY_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }], update.binding.goodsId);
+    }
+    await input.providerMutationHooks.assertLeaseHealthy();
+    await input.providerMutationHooks.begin();
+    await input.providerMutationHooks.assertLeaseHealthy();
+
+    // The official partial-update contract is deliberately used here. Images,
+    // price, stock, SKU identity, and sale state are immutable in this action
+    // and were independently verified above. There is exactly one provider
+    // mutation; any ambiguous transport outcome is quarantined by the gateway.
+    const updateRemote = await temuRequest({
+      payload: input.payload,
+      type: temuExactExistingUpdateIdentity.providerOperation,
+      arguments: {
+        ...update.providerArguments,
+        goodsId: temuExactLong(update.binding.goodsId),
+      },
+    });
+    const updateStep = step("temu-exact-content-partial-update", updateRemote);
+
+    const post = await readExact();
+    const postTransportSteps = [
+      step("temu-exact-update-post-list", post.list),
+      step("temu-exact-update-post-status", post.status),
+      step("temu-exact-update-post-detail", post.detail),
+      step("temu-exact-update-post-stock", post.stock),
+    ];
+    const postReadback = normalizeTemuListingPublicationReadback({
+      operation: "listing.update",
+      intent: "live",
+      remoteId: update.binding.goodsId,
+      externalGoodsId: update.binding.externalGoodsId,
+      listData: post.list.data,
+      publishStatusData: post.status.data,
+      detailData: post.detail.data,
+      stockData: post.stock.data,
+      expectedLocale: temuExactExistingUpdateIdentity.locale,
+      expectedFingerprint,
+      expectedRepresentativeImages: update.expectedRepresentativeImages,
+      expectedDetailImages: update.expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: update.providerArguments.goodsName,
+      expectedGoodsDesc: update.providerArguments.goodsDesc,
+      expectedBulletPoints: update.providerArguments.bulletPoints,
+      expectedSkus: update.expectedSkus,
+      requireExactActiveStatus: true,
+    });
+    const postOk = updateStep.ok
+      && postTransportSteps.every((entry) => entry.ok)
+      && Boolean(postReadback.remoteState)
+      && postReadback.visibility === "live"
+      && postReadback.providerStatus === preReadback.providerStatus
+      && postReadback.providerStatus === "statusName=ACTIVE;goodsStatus=ACTIVE";
+    const postStep: ChannelOperationStep = {
+      name: "temu-exact-existing-update-post-readback",
+      ok: postOk,
+      status: postOk ? 200 : 422,
+      data: {
+        sellerpilotVerification: postOk
+          ? "TEMU_EXACT_CONTENT_UPDATE_AND_LIVE_STATE_VERIFIED"
+          : "TEMU_EXACT_CONTENT_UPDATE_READBACK_UNVERIFIED",
+        sellerpilotPublicationChecks: postReadback.checks,
+        sellerpilotRemoteVisibility: postReadback.visibility,
+        sellerpilotProviderStatus: postReadback.providerStatus,
+        ...(!postOk ? { sellerpilotReconciliationRequired: true } : {}),
+      },
+    };
+    return result(
+      input,
+      [preflightStep, updateStep, ...postTransportSteps, postStep],
+      update.binding.goodsId,
+      undefined,
+      postReadback.remoteState,
+    );
   }
   if (input.operation === "listing.activate") {
     const activation = temuActivationBinding(input.arguments);

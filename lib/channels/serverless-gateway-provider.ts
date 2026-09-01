@@ -78,6 +78,7 @@ import {
   temuCredentialCertificationBinding,
   temuExistingAdoptionBinding,
 } from "./temu-existing-adoption";
+import { temuExactExistingUpdateRequest } from "./temu-existing-update";
 import {
   assertElevenstExactExistingUpdate,
   elevenstExactExistingCreateForbidden,
@@ -92,7 +93,7 @@ const serverlessWriteMatrix = {
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
   ]),
   "listing.update": new Set([
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
   ]),
   "listing.stop": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore",
@@ -775,11 +776,20 @@ export async function executeServerlessGatewayProviderJob(
     await input.hooks.assertLeaseHealthy();
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
+    const delayedTemuExactUpdateBoundary = input.job.channel === "temu"
+      && input.job.operation === "listing.update"
+      && Boolean(temuExactExistingUpdateRequest(operationArguments));
+    if (input.job.channel === "temu"
+        && input.job.operation === "listing.update"
+        && !delayedTemuExactUpdateBoundary) {
+      throw new Error("TEMU_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+    }
     const delayedEbayExactUpdateBoundary = input.job.channel === "ebay"
       && input.job.operation === "listing.update"
       && Boolean(ebayExactRecovery);
     if (writeChannelOperations.has(input.job.operation)
         && !delayedTemuActivationBoundary
+        && !delayedTemuExactUpdateBoundary
         && !delayedEbayExactUpdateBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
@@ -791,7 +801,9 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedTemuActivationBoundary || delayedEbayExactUpdateBoundary
+      ...(delayedTemuActivationBoundary
+          || delayedTemuExactUpdateBoundary
+          || delayedEbayExactUpdateBoundary
         ? {
             providerMutationHooks: {
               begin: input.hooks.beginProviderMutation,

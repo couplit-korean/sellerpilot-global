@@ -321,6 +321,7 @@ export async function temuRequest(input: {
   arguments?: Record<string, unknown>;
 }) {
   const readOnlyRpc = new Set([
+    "bg.open.accesstoken.info.get",
     "temu.local.goods.list.retrieve",
     "bg.local.goods.publish.status.get",
     "bg.local.goods.detail.query",
