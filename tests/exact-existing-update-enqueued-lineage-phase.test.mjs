@@ -11,6 +11,10 @@ const phaseMigrationUrl = new URL(
   "../supabase/migrations/20260901140000_fix_exact_update_enqueued_lineage_phase.sql",
   import.meta.url,
 );
+const deferredJobMigrationUrl = new URL(
+  "../supabase/migrations/20260901150000_fix_exact_update_deferred_job_lineage.sql",
+  import.meta.url,
+);
 
 const listingId = "7ffc6e46-3173-4695-9889-5fa1529765f1";
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
@@ -41,10 +45,11 @@ function extractTaggedDo(source, tag) {
   return source.slice(start, end + marker.length + 1);
 }
 
-test("exact permit uses failed lineage before enqueue and queued lineage after the real predecessor transition", async () => {
-  const [closedGateMigration, phaseMigration] = await Promise.all([
+test("exact permit validates the current job after deferred insert and fingerprint update events", async () => {
+  const [closedGateMigration, phaseMigration, deferredJobMigration] = await Promise.all([
     readFile(closedGateMigrationUrl, "utf8"),
     readFile(phaseMigrationUrl, "utf8"),
+    readFile(deferredJobMigrationUrl, "utf8"),
   ]);
   const db = new PGlite();
   try {
@@ -93,7 +98,7 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
         listing_id uuid not null, credential_id uuid not null,
         channel text not null, operation text not null, environment text not null,
         status text not null, attempt_count integer not null,
-        seller_account_key text not null, request_fingerprint text not null,
+        seller_account_key text not null, request_fingerprint text,
         request_payload jsonb not null, worker_token_id uuid, claim_token uuid,
         lease_expires_at timestamptz, started_at timestamptz,
         completed_at timestamptz, response_payload jsonb,
@@ -163,9 +168,10 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
         )
       $$;
 
-      -- Unlike the old unit fake, this predecessor performs the same durable
-      -- listing transition as the real historical enqueue before inserting the
-      -- new job. The outer permit wrapper must validate this post-state.
+      -- The real historical enqueue inserts before the verified-publication
+      -- wrapper fills request_fingerprint. A deferred INSERT trigger therefore
+      -- receives a stale NEW image even though the final persisted job is
+      -- complete by commit time.
       create function public.sp_09010800_enqueue_before_exact_existing_permit(
         p_listing_id uuid, p_credential_id uuid, p_attempt_id uuid,
         p_channel text, p_operation text, p_request_payload jsonb
@@ -179,15 +185,20 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
          where listing.id = p_listing_id;
         insert into sellerpilot_private.channel_gateway_jobs(
           attempt_id,listing_id,credential_id,channel,operation,environment,
-          status,attempt_count,seller_account_key,request_fingerprint,
-          request_payload
+          status,attempt_count,seller_account_key,request_payload
         )
         select p_attempt_id,p_listing_id,p_credential_id,p_channel,p_operation,
                'production','queued',0,attempt.seller_account_key,
-               attempt.request_fingerprint,p_request_payload
+               p_request_payload
           from sellerpilot_private.channel_operation_attempts attempt
          where attempt.id = p_attempt_id
         returning id into v_job_id;
+        update sellerpilot_private.channel_gateway_jobs job
+           set request_fingerprint = attempt.request_fingerprint,
+               updated_at = clock_timestamp()
+          from sellerpilot_private.channel_operation_attempts attempt
+         where job.id = v_job_id
+           and attempt.id = p_attempt_id;
         return jsonb_build_object('job_id',v_job_id,'status','queued');
       end;
       $$;
@@ -197,6 +208,17 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
       closedGateMigration,
       "create function public.sellerpilot_service_enqueue_listing_gateway_job(",
     ));
+    await db.exec(extractFunction(
+      closedGateMigration,
+      "create function sellerpilot_private.guard_exact_existing_update_job()",
+    ));
+    await db.exec(`
+      create constraint trigger guard_exact_existing_update_job
+      after insert or update on sellerpilot_private.channel_gateway_jobs
+      deferrable initially deferred
+      for each row execute function
+        sellerpilot_private.guard_exact_existing_update_job();
+    `);
     await db.exec(`
       create function sellerpilot_private.bind_exact_existing_update_claim(
         p_old jsonb, p_new jsonb
@@ -305,6 +327,33 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
       "patch_exact_existing_enqueued_phase_calls",
     ));
 
+    await assert.rejects(
+      db.query(`
+        select public.sellerpilot_service_enqueue_listing_gateway_job(
+          $1,$2,$3,'coupang','listing.update',$4::jsonb
+        ) value
+      `, [listingId, credentialId, attemptId, JSON.stringify(payload)]),
+      /exact existing update job lineage invalid/u,
+      "140000 still validates the stale INSERT event before fingerprint binding",
+    );
+    assert.deepEqual((await db.query(`
+      select listing.status,listing.failure_class,listing.operation_attempt_id,
+             (select count(*)::integer
+                from sellerpilot_private.channel_gateway_jobs) job_count
+        from sellerpilot_private.product_listings listing
+       where listing.id=$1
+    `, [listingId])).rows[0], {
+      status: "failed",
+      failure_class: "external_action",
+      operation_attempt_id: null,
+      job_count: 0,
+    });
+
+    await db.exec(extractTaggedDo(
+      deferredJobMigration,
+      "patch_exact_existing_deferred_job_lineage",
+    ));
+
     const enqueued = await db.query(`
       select public.sellerpilot_service_enqueue_listing_gateway_job(
         $1,$2,$3,'coupang','listing.update',$4::jsonb
@@ -354,6 +403,137 @@ test("exact permit uses failed lineage before enqueue and queued lineage after t
       assert.match(definition, /exact_existing_update_enqueued_lineage_is_current/u);
       assert.doesNotMatch(definition, /exact_existing_update_lineage_is_current\(/u);
     }
+  } finally {
+    await db.close();
+  }
+});
+
+test("third Coupang rollback reconciliation is exact, pre-provider, and preserves the failed attempt binding", async () => {
+  const migration = await readFile(deferredJobMigrationUrl, "utf8");
+  const db = new PGlite();
+  const latestAttemptId = "2459dfc2-c049-44dd-926f-402663334acd";
+  const latestPermitId = "3db15496-9d88-4e92-9096-4662a9257a69";
+  const latestReleaseSha = "3ec287082a91fd81b0f7abc57b90846a7a516450";
+  const safeMessage =
+    "Vercel 서버리스 채널 게이트웨이에서 안전하게 처리된 오류가 발생했습니다.";
+  try {
+    await db.exec(`
+      create schema sellerpilot_private;
+      create table sellerpilot_private.products (
+        id uuid primary key,owner_id uuid not null,sku text not null,
+        on_hand integer not null,demo boolean not null,status text not null
+      );
+      create table sellerpilot_private.product_listings (
+        id uuid primary key,product_id uuid not null,owner_id uuid not null,
+        channel_key text not null,remote_id text,market text,target_id text,
+        currency text,price numeric,status text,failure_class text,
+        requested_publication_intent text,remote_visibility text,
+        provider_status text,published_at timestamptz,operation_attempt_id uuid,
+        last_error text,seller_account_key text
+      );
+      create table sellerpilot_private.channel_operation_attempts (
+        id uuid primary key,owner_id uuid not null,credential_id uuid not null,
+        channel text not null,operation text not null,status text not null,
+        http_status integer,remote_id text,safe_message text,
+        gateway_write_required boolean,pre_gateway_retryable boolean,
+        completed_at timestamptz,request_fingerprint text,
+        seller_account_key text
+      );
+      create table sellerpilot_private.channel_credentials (
+        id uuid primary key,channel text not null,seller_account_key text,
+        status text,environment text,seller_account_key_source text,
+        seller_account_verified_at timestamptz,last_check_status text,
+        last_checked_at timestamptz,expires_at timestamptz
+      );
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,attempt_id uuid,listing_id uuid,operation text,
+        status text,provider_mutation_started_at timestamptz
+      );
+      create table sellerpilot_private.exact_existing_update_permits (
+        permit_id uuid primary key,channel text,listing_id uuid,product_id uuid,
+        owner_id uuid,credential_id uuid,seller_account_key text,
+        request_fingerprint text,release_sha text,update_job_id uuid,
+        update_attempt_id uuid,arguments_sha256 text,arguments_bytes integer,
+        request_payload_sha256 text,request_payload_bytes integer,
+        bound_at timestamptz,bound_worker_token_id uuid,bound_claim_token uuid,
+        consumed_at timestamptz,invalidated_at timestamptz,
+        invalidation_reason text,expires_at timestamptz
+      );
+
+      insert into sellerpilot_private.products values(
+        '${productId}','${ownerId}','QA-20260823-CC-001',1,false,'ready'
+      );
+      insert into sellerpilot_private.channel_credentials values(
+        '${credentialId}','coupang','${sellerAccountKey}','active','production',
+        'credential_incarnation_v1',clock_timestamp(),'passed',
+        clock_timestamp(),null
+      );
+      insert into sellerpilot_private.channel_operation_attempts values(
+        '${latestAttemptId}','${ownerId}','${credentialId}','coupang',
+        'listing.update','failed',500,null,'${safeMessage}',true,true,
+        clock_timestamp(),'${fingerprint}','${sellerAccountKey}'
+      );
+      insert into sellerpilot_private.product_listings values(
+        '${listingId}','${productId}','${ownerId}','coupang','16356981734',
+        'KR','KR','KRW',5000,'failed','retryable','live','unknown',null,
+        null,'${latestAttemptId}','${safeMessage}','${sellerAccountKey}'
+      );
+      insert into sellerpilot_private.exact_existing_update_permits values(
+        '${latestPermitId}','coupang','${listingId}','${productId}','${ownerId}',
+        '${credentialId}','${sellerAccountKey}','${fingerprint}',
+        '${latestReleaseSha}',null,null,null,null,null,null,null,null,null,null,
+        null,null,clock_timestamp()-interval '1 minute'
+      );
+    `);
+
+    const reconciliation = extractTaggedDo(
+      migration,
+      "reconcile_coupang_exact_deferred_insert_rollback",
+    );
+    await assert.rejects(
+      db.exec(reconciliation),
+      /COUPANG_EXACT_DEFERRED_INSERT_RECONCILIATION_MISMATCH/u,
+      "a near-miss HTTP status must fail closed without changing the permit",
+    );
+    assert.deepEqual((await db.query(`
+      select listing.failure_class,listing.operation_attempt_id,
+             permit.invalidated_at,permit.invalidation_reason
+        from sellerpilot_private.product_listings listing
+        join sellerpilot_private.exact_existing_update_permits permit
+          on permit.listing_id=listing.id
+       where listing.id=$1
+    `, [listingId])).rows[0], {
+      failure_class: "retryable",
+      operation_attempt_id: latestAttemptId,
+      invalidated_at: null,
+      invalidation_reason: null,
+    });
+
+    await db.query(`
+      update sellerpilot_private.channel_operation_attempts
+         set http_status=422
+       where id=$1
+    `, [latestAttemptId]);
+    await db.exec(reconciliation);
+    const reconciled = (await db.query(`
+      select listing.status,listing.failure_class,listing.operation_attempt_id,
+             permit.invalidated_at is not null invalidated,
+             permit.invalidation_reason,
+             (select count(*)::integer
+                from sellerpilot_private.channel_gateway_jobs) job_count
+        from sellerpilot_private.product_listings listing
+        join sellerpilot_private.exact_existing_update_permits permit
+          on permit.listing_id=listing.id
+       where listing.id=$1
+    `, [listingId])).rows[0];
+    assert.deepEqual(reconciled, {
+      status: "failed",
+      failure_class: "external_action",
+      operation_attempt_id: latestAttemptId,
+      invalidated: true,
+      invalidation_reason: "expired_before_job",
+      job_count: 0,
+    });
   } finally {
     await db.close();
   }

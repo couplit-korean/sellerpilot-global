@@ -125,6 +125,8 @@ const ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION =
   "20260901130000_reconcile_exact_elevenst_manual_live_readback.sql";
 const EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION =
   "20260901140000_fix_exact_update_enqueued_lineage_phase.sql";
+const EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION =
+  "20260901150000_fix_exact_update_deferred_job_lineage.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -825,6 +827,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260901125000_fix_coupang_exact_item_match_binding.sql",
       ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION,
       EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION,
+      EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
