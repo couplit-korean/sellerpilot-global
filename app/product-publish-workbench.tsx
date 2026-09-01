@@ -35,7 +35,7 @@ import {
 import {
   temuExactExistingUpdateCandidate,
   temuExactExistingUpdateIdentity,
-} from "../lib/channels/temu-existing-update";
+} from "../lib/channels/temu-existing-update-shared";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
