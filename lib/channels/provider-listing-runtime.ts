@@ -703,11 +703,15 @@ async function prepareShopeeListing(
       throw new Error("SHOPEE_SG_EXISTING_UPDATE_PREWRITE_MISMATCH");
     }
   }
-  const logistics = await activeShopeeLogistics(
-    input.credential,
-    input.environment,
-    input.hooks,
-  );
+  // Exact existing-item updates are intentionally content-only. Supplying
+  // logistic_info to update_item would also mutate shipping configuration.
+  const logistics = exactExisting
+    ? null
+    : await activeShopeeLogistics(
+        input.credential,
+        input.environment,
+        input.hooks,
+      );
   const imageIds: string[] = [];
   for (const imageUrl of imageUrls) {
     await input.hooks.assertLeaseHealthy();
@@ -727,7 +731,7 @@ async function prepareShopeeListing(
     body: {
       ...(recordValue(input.arguments.body) ?? {}),
       image: { image_id_list: imageIds },
-      logistic_info: logistics,
+      ...(logistics ? { logistic_info: logistics } : {}),
     },
   };
 }

@@ -148,6 +148,143 @@ exception when others then
 end;
 $$;
 
+create function sellerpilot_private.shopee_sg_exact_content_receipt_valid(
+  p_response jsonb
+)
+returns boolean
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  v_readback jsonb;
+begin
+  if jsonb_typeof(p_response) <> 'object'
+     or p_response->>'ok' <> 'true'
+     or p_response->>'remoteId' <> '53717126190'
+     or p_response->>'publicationFulfilled' <> 'true'
+     or p_response#>>'{remoteState,visibility}' <> 'non_public'
+     or p_response#>>'{remoteState,providerStatus}' <> 'UNLIST'
+     or p_response#>>'{remoteState,locale}' <> 'en-SG'
+     or p_response#>>'{remoteState,imageCount}' <> '8'
+     or jsonb_typeof(p_response->'steps') <> 'array'
+  then return false; end if;
+
+  select step#>'{data,sellerpilotShopeeSgExistingReadback}'
+    into v_readback
+    from jsonb_array_elements(p_response->'steps') step
+   where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
+         'sellerpilot_shopee_sg_existing_content_readback_v1';
+  if not found
+     or (select count(*) from jsonb_array_elements(p_response->'steps') step
+          where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
+                'sellerpilot_shopee_sg_existing_content_readback_v1') <> 1
+     or jsonb_typeof(v_readback) <> 'object'
+     or (select count(*) from jsonb_object_keys(v_readback)) <> 12
+     or (v_readback - array[
+       'contract','itemId','sku','currency','priceSgd','providerStatus','visibility',
+       'providerImageIdentityDigest','representativeImageCount','detailImageCount',
+       'titleLanguageVerified','descriptionLanguageVerified'
+     ]) <> '{}'::jsonb
+  then return false; end if;
+
+  return v_readback->>'itemId' = '53717126190'
+    and v_readback->>'sku' = 'QA-20260823-CC-001'
+    and v_readback->>'currency' = 'SGD'
+    and (v_readback->>'priceSgd')::numeric = 16.77
+    and v_readback->>'providerStatus' = 'UNLIST'
+    and v_readback->>'visibility' = 'non_public'
+    and v_readback->>'providerImageIdentityDigest' ~ '^[a-f0-9]{64}$'
+    and (v_readback->>'representativeImageCount')::integer = 1
+    and (v_readback->>'detailImageCount')::integer = 8
+    and (v_readback->>'titleLanguageVerified')::boolean
+    and (v_readback->>'descriptionLanguageVerified')::boolean;
+exception when others then return false;
+end;
+$$;
+
+create function sellerpilot_private.shopee_sg_exact_inventory_receipt_valid(
+  p_response jsonb,
+  p_content_image_digest text
+)
+returns boolean
+language plpgsql
+immutable
+security invoker
+set search_path = ''
+as $$
+declare
+  v_readback jsonb;
+begin
+  if p_content_image_digest !~ '^[a-f0-9]{64}$'
+     or jsonb_typeof(p_response) <> 'object'
+     or p_response->>'ok' <> 'true'
+     or p_response->>'remoteId' <> '53717126190'
+     or jsonb_typeof(p_response->'steps') <> 'array'
+  then return false; end if;
+
+  select step#>'{data,sellerpilotShopeeSgExistingReadback}'
+    into v_readback
+    from jsonb_array_elements(p_response->'steps') step
+   where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
+         'sellerpilot_shopee_sg_existing_inventory_readback_v1';
+  if not found
+     or (select count(*) from jsonb_array_elements(p_response->'steps') step
+          where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
+                'sellerpilot_shopee_sg_existing_inventory_readback_v1') <> 1
+     or jsonb_typeof(v_readback) <> 'object'
+     or (select count(*) from jsonb_object_keys(v_readback)) <> 13
+     or (v_readback - array[
+       'contract','itemId','sku','currency','priceSgd','stock','providerStatus',
+       'visibility','providerImageIdentityDigest','representativeImageCount','detailImageCount',
+       'titleLanguageVerified','descriptionLanguageVerified'
+     ]) <> '{}'::jsonb
+  then return false; end if;
+
+  return v_readback->>'itemId' = '53717126190'
+    and v_readback->>'sku' = 'QA-20260823-CC-001'
+    and v_readback->>'currency' = 'SGD'
+    and (v_readback->>'priceSgd')::numeric = 16.77
+    and (v_readback->>'stock')::integer = 1
+    and v_readback->>'providerStatus' = 'UNLIST'
+    and v_readback->>'visibility' = 'non_public'
+    and v_readback->>'providerImageIdentityDigest' = p_content_image_digest
+    and (v_readback->>'representativeImageCount')::integer = 1
+    and (v_readback->>'detailImageCount')::integer = 8
+    and (v_readback->>'titleLanguageVerified')::boolean
+    and (v_readback->>'descriptionLanguageVerified')::boolean;
+exception when others then return false;
+end;
+$$;
+
+create function sellerpilot_private.shopee_sg_exact_content_receipt_image_digest(
+  p_listing_id uuid,
+  p_credential_id uuid,
+  p_seller_account_key text
+)
+returns text
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select step#>>'{data,sellerpilotShopeeSgExistingReadback,providerImageIdentityDigest}'
+    from sellerpilot_private.shopee_sg_exact_update_permits permit
+    join sellerpilot_private.channel_gateway_jobs job on job.id = permit.update_job_id
+    cross join lateral jsonb_array_elements(job.response_payload->'steps') step
+   where permit.phase = 'content'
+     and permit.listing_id = p_listing_id
+     and permit.credential_id = p_credential_id
+     and permit.seller_account_key = p_seller_account_key
+     and permit.invalidated_at is null
+     and permit.consumed_at is not null
+     and job.status = 'succeeded'
+     and sellerpilot_private.shopee_sg_exact_content_receipt_valid(job.response_payload)
+     and step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
+           'sellerpilot_shopee_sg_existing_content_readback_v1'
+$$;
+
 create function sellerpilot_private.shopee_sg_exact_content_succeeded(
   p_listing_id uuid,
   p_credential_id uuid,
@@ -172,22 +309,9 @@ as $$
        and job.status = 'succeeded'
        and job.attempt_count = 1
        and job.provider_mutation_started_at is not null
-       and job.response_payload->>'ok' = 'true'
-       and job.response_payload->>'remoteId' = '53717126190'
-       and job.response_payload->>'publicationFulfilled' = 'true'
-       and job.response_payload#>>'{remoteState,visibility}' = 'non_public'
-       and job.response_payload#>>'{remoteState,providerStatus}' = 'UNLIST'
-       and job.response_payload#>>'{remoteState,locale}' = 'en-SG'
-       and job.response_payload#>>'{remoteState,imageCount}' = '8'
-       and exists (
-         select 1 from jsonb_array_elements(job.response_payload->'steps') step
-          where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
-                'sellerpilot_shopee_sg_existing_content_readback_v1'
-            and step#>>'{data,sellerpilotShopeeSgExistingReadback,itemId}' = '53717126190'
-            and step#>>'{data,sellerpilotShopeeSgExistingReadback,sku}' = 'QA-20260823-CC-001'
-            and step#>>'{data,sellerpilotShopeeSgExistingReadback,providerStatus}' = 'UNLIST'
-            and step#>>'{data,sellerpilotShopeeSgExistingReadback,detailImageCount}' = '8'
-       )
+       and sellerpilot_private.shopee_sg_exact_content_receipt_valid(
+             job.response_payload
+           )
   )
 $$;
 
@@ -409,8 +533,18 @@ begin
   v_title := trim(coalesce(v_body->>'item_name', ''));
   v_description := trim(coalesce(v_body->>'description', ''));
   return p_arguments->>'localItemId' = '53717126190'
+    and (select count(*) from jsonb_object_keys(p_arguments)) = 12
+    and (p_arguments - array[
+      'sellerpilotShopeeSgExistingUpdate','localItemId','shopId','country','body',
+      'publicationStateContract','publicationIntent','publicationExpectedLocale',
+      'publicationExpectedImageCount','publicationExpectedFingerprint','imageUrls',
+      'sellerpilotPublicationAssetBinding'
+    ]) = '{}'::jsonb
     and p_arguments->>'shopId' = '1719148844'
     and p_arguments->>'country' = 'sg'
+    and jsonb_typeof(v_body) = 'object'
+    and (select count(*) from jsonb_object_keys(v_body)) = 3
+    and (v_body - array['item_id','item_name','description']) = '{}'::jsonb
     and v_body->>'item_id' = '53717126190'
     and not (v_body ?| array['item_status','item_sku','original_price','normal_stock','seller_stock'])
     and p_arguments->>'publicationStateContract' = 'verified_remote_state_v1'
@@ -474,6 +608,153 @@ as $$
             and credential.fingerprint = permit.credential_fingerprint
             and credential.seller_account_verified_at = permit.credential_verified_at
        )
+  )
+$$;
+
+-- Once the enqueue predecessor has accepted the exact paused listing it moves
+-- that listing to queued. Claim and provider-boundary checks must therefore
+-- validate the immutable enqueued lineage instead of reusing the pre-enqueue
+-- identity predicate, which deliberately requires listing.status = paused.
+create function sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(
+  p_permit_id uuid
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+      from sellerpilot_private.shopee_sg_exact_update_permits permit
+      join sellerpilot_private.product_listings listing
+        on listing.id = permit.listing_id
+       and listing.product_id = permit.product_id
+       and listing.owner_id = permit.owner_id
+       and listing.channel_key = 'shopee'
+       and listing.remote_id = permit.item_id
+       and listing.marketplace_sku = permit.marketplace_sku
+       and listing.market = permit.market
+       and listing.target_id = permit.shop_id
+       and listing.currency = permit.currency
+       and listing.price = permit.price
+       and listing.seller_account_key = permit.seller_account_key
+      join sellerpilot_private.products product
+        on product.id = permit.product_id
+       and product.owner_id = permit.owner_id
+       and product.sku = permit.marketplace_sku
+       and product.on_hand = permit.stock
+       and not product.demo and product.status <> 'archived'
+      join sellerpilot_private.channel_credentials credential
+        on credential.id = permit.credential_id
+       and credential.channel = 'shopee'
+       and credential.environment = 'production'
+       and credential.status = 'active'
+       and credential.version = permit.credential_version
+       and credential.fingerprint = permit.credential_fingerprint
+       and credential.seller_account_key = permit.seller_account_key
+       and credential.seller_account_key_source = 'provider_certified_v1'
+       and credential.seller_account_verified_at = permit.credential_verified_at
+      join sellerpilot_private.shopee_existing_adoption_attestations adoption
+        on adoption.id = permit.adoption_attestation_id
+       and adoption.gateway_job_id = permit.adoption_gateway_job_id
+       and adoption.evidence_digest = permit.adoption_evidence_digest
+       and adoption.listing_id = permit.listing_id
+       and adoption.product_id = permit.product_id
+       and adoption.owner_id = permit.owner_id
+       and adoption.credential_id = permit.credential_id
+       and adoption.seller_account_key = permit.seller_account_key
+       and adoption.remote_id = permit.item_id
+       and adoption.marketplace_sku = permit.marketplace_sku
+       and adoption.merchant_id = permit.merchant_id
+       and adoption.shop_id = permit.shop_id
+       and adoption.market = permit.market
+       and adoption.locale = permit.locale
+       and adoption.currency = permit.currency
+       and adoption.price = permit.price
+       and adoption.provider_status = permit.provider_status
+       and adoption.detail_image_count = 8
+      join sellerpilot_private.provider_listing_lineage_attestations lineage
+        on lineage.listing_id = permit.listing_id
+       and lineage.gateway_job_id = permit.adoption_gateway_job_id
+       and lineage.credential_id = permit.credential_id
+       and lineage.seller_account_key = permit.seller_account_key
+      join sellerpilot_private.channel_operation_attempts attempt
+        on attempt.id = permit.update_attempt_id
+       and attempt.owner_id = permit.owner_id
+       and attempt.credential_id = permit.credential_id
+       and attempt.channel = 'shopee'
+       and attempt.operation = case permit.phase
+             when 'content' then 'listing.update' else 'inventory.update' end
+       and attempt.status = 'running'
+       and attempt.seller_account_key = permit.seller_account_key
+       and attempt.request_fingerprint = permit.request_fingerprint
+      join sellerpilot_private.channel_gateway_jobs job
+        on job.id = permit.update_job_id
+       and job.attempt_id = permit.update_attempt_id
+       and job.listing_id = permit.listing_id
+       and job.credential_id = permit.credential_id
+       and job.channel = 'shopee'
+       and job.operation = case permit.phase
+             when 'content' then 'listing.update' else 'inventory.update' end
+       and job.environment = 'production'
+       and job.seller_account_key = permit.seller_account_key
+       and job.request_fingerprint = permit.request_fingerprint
+     where permit.permit_id = p_permit_id
+       and permit.invalidated_at is null
+       and permit.consumed_at is null
+       and permit.expires_at > statement_timestamp()
+       and permit.update_job_id is not null
+       and permit.update_attempt_id is not null
+       and listing.failure_class is null
+       and listing.requested_publication_intent = 'safe_test'
+       and listing.remote_visibility = 'non_public'
+       and listing.provider_status = 'UNLIST'
+       and listing.published_at is null
+       and listing.last_verified_at is not null
+       and (
+         (permit.phase = 'content' and listing.status = 'queued'
+           and listing.operation_attempt_id = permit.update_attempt_id)
+         or
+         (permit.phase = 'inventory' and listing.status = 'paused')
+       )
+       and (permit.phase = 'content'
+         or sellerpilot_private.shopee_sg_exact_content_succeeded(
+              permit.listing_id, permit.credential_id, permit.seller_account_key
+            ))
+       and sellerpilot_private.shopee_sg_exact_update_credential_allowed(
+             permit.credential_id
+           )
+       and sellerpilot_private.shopee_sg_exact_update_release_is_current(
+             permit.release_sha
+           )
+       and job.status in ('queued', 'running')
+       and job.attempt_count = case job.status when 'queued' then 0 else 1 end
+       and job.provider_mutation_started_at is null
+       and job.completed_at is null
+       and job.response_payload is null
+       and job.error_message is null
+       and (
+         (job.status = 'queued' and job.worker_token_id is null
+           and job.claim_token is null and job.started_at is null
+           and job.lease_expires_at is null)
+         or
+         (job.status = 'running' and job.worker_token_id = permit.bound_worker_token_id
+           and job.claim_token = permit.bound_claim_token
+           and job.started_at is not null
+           and job.lease_expires_at > statement_timestamp())
+       )
+       and permit.arguments_sha256 = encode(extensions.digest(
+             (job.request_payload->'arguments')::text, 'sha256'
+           ), 'hex')
+       and permit.request_payload_sha256 = encode(extensions.digest(
+             job.request_payload::text, 'sha256'
+           ), 'hex')
+       and sellerpilot_private.shopee_sg_exact_update_arguments_valid(
+             job.request_payload->'arguments', permit.phase, permit.release_sha,
+             permit.request_fingerprint, permit.listing_id,
+             permit.credential_id, permit.price
+           )
   )
 $$;
 
@@ -823,17 +1104,30 @@ security definer
 set search_path = ''
 as $$
 begin
-  if p_old->>'status' <> 'queued' or p_new->>'status' <> 'running'
+  if jsonb_typeof(p_old) <> 'object' or jsonb_typeof(p_new) <> 'object'
+     or p_new->>'id' is distinct from p_old->>'id'
+     or p_old->>'status' <> 'queued' or p_new->>'status' <> 'running'
      or p_old->>'channel' <> 'shopee'
      or p_old->>'operation' not in ('listing.update','inventory.update')
      or p_new->>'channel' <> p_old->>'channel'
      or p_new->>'operation' <> p_old->>'operation'
      or (p_old->>'attempt_count')::integer <> 0
      or (p_new->>'attempt_count')::integer <> 1
+     or p_old->'worker_token_id' <> 'null'::jsonb
      or p_old->'claim_token' <> 'null'::jsonb
+     or p_old->'provider_mutation_started_at' <> 'null'::jsonb
      or p_new->'claim_token' = 'null'::jsonb
      or p_new->'worker_token_id' = 'null'::jsonb
      or p_new->'provider_mutation_started_at' <> 'null'::jsonb
+     or p_new->'completed_at' <> 'null'::jsonb
+     or p_new->'response_payload' <> 'null'::jsonb
+     or p_new->'error_message' <> 'null'::jsonb
+     or (p_new->>'lease_expires_at')::timestamptz <= statement_timestamp()
+     or p_new-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+          -'lease_expires_at'-'started_at'-'error_message'-'updated_at'
+        is distinct from
+        p_old-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+          -'lease_expires_at'-'started_at'-'error_message'-'updated_at'
   then return false; end if;
   update sellerpilot_private.shopee_sg_exact_update_permits permit
      set bound_at = statement_timestamp(),
@@ -848,7 +1142,9 @@ begin
      and permit.request_payload_sha256 = encode(extensions.digest((p_new->'request_payload')::text,'sha256'),'hex')
      and permit.invalidated_at is null and permit.consumed_at is null
      and permit.bound_at is null and permit.expires_at > statement_timestamp()
-     and sellerpilot_private.shopee_sg_exact_update_lineage_is_current(permit.permit_id);
+     and sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(
+           permit.permit_id
+         );
   return found;
 exception when others then return false;
 end;
@@ -894,7 +1190,9 @@ as $$
      where permit.update_job_id = p_job_id and permit.bound_claim_token = p_claim_token
        and permit.bound_at is not null and permit.consumed_at is null
        and permit.invalidated_at is null and permit.expires_at > statement_timestamp()
-       and sellerpilot_private.shopee_sg_exact_update_lineage_is_current(permit.permit_id)
+       and sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(
+             permit.permit_id
+           )
        and job.status = 'running' and job.channel = 'shopee'
        and job.operation = case permit.phase when 'content' then 'listing.update' else 'inventory.update' end
        and job.environment = 'production' and job.claim_token = p_claim_token
@@ -1031,28 +1329,19 @@ begin
     if v_permit.consumed_at is null or new.provider_mutation_started_at is null
     then raise exception 'Shopee SG exact success without consumed permit' using errcode = '55000'; end if;
     if v_permit.phase = 'content' then
-      v_success_evidence := new.response_payload->>'ok' = 'true'
-        and new.response_payload->>'remoteId' = '53717126190'
-        and new.response_payload->>'publicationFulfilled' = 'true'
-        and new.response_payload#>>'{remoteState,visibility}' = 'non_public'
-        and new.response_payload#>>'{remoteState,providerStatus}' = 'UNLIST'
-        and new.response_payload#>>'{remoteState,locale}' = 'en-SG'
-        and new.response_payload#>>'{remoteState,imageCount}' = '8'
-        and exists (
-          select 1 from jsonb_array_elements(new.response_payload->'steps') step
-           where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
-             'sellerpilot_shopee_sg_existing_content_readback_v1'
-             and step#>>'{data,sellerpilotShopeeSgExistingReadback,detailImageCount}' = '8'
-        );
+      v_success_evidence := sellerpilot_private.shopee_sg_exact_content_receipt_valid(
+        new.response_payload
+      );
     else
-      v_success_evidence := new.response_payload->>'ok' = 'true'
-        and new.response_payload->>'remoteId' = '53717126190'
-        and exists (
-          select 1 from jsonb_array_elements(new.response_payload->'steps') step
-           where step#>>'{data,sellerpilotShopeeSgExistingReadback,contract}' =
-             'sellerpilot_shopee_sg_existing_inventory_readback_v1'
-             and step#>>'{data,sellerpilotShopeeSgExistingReadback,stock}' = '1'
-             and step#>>'{data,sellerpilotShopeeSgExistingReadback,providerStatus}' = 'UNLIST'
+      v_success_evidence := sellerpilot_private.shopee_sg_exact_content_succeeded(
+          v_permit.listing_id, v_permit.credential_id, v_permit.seller_account_key
+        )
+        and sellerpilot_private.shopee_sg_exact_inventory_receipt_valid(
+          new.response_payload,
+          sellerpilot_private.shopee_sg_exact_content_receipt_image_digest(
+            v_permit.listing_id, v_permit.credential_id,
+            v_permit.seller_account_key
+          )
         );
     end if;
     if not v_success_evidence then
@@ -1074,11 +1363,15 @@ for each row execute function sellerpilot_private.guard_shopee_sg_exact_update_j
 
 revoke all on function
   sellerpilot_private.shopee_sg_exact_update_credential_allowed(uuid),
+  sellerpilot_private.shopee_sg_exact_content_receipt_valid(jsonb),
+  sellerpilot_private.shopee_sg_exact_inventory_receipt_valid(jsonb,text),
   sellerpilot_private.shopee_sg_exact_content_succeeded(uuid,uuid,text),
+  sellerpilot_private.shopee_sg_exact_content_receipt_image_digest(uuid,uuid,text),
   sellerpilot_private.shopee_sg_exact_update_identity_json(uuid,uuid,uuid,text,text,text),
   sellerpilot_private.shopee_sg_exact_update_release_is_current(text),
   sellerpilot_private.shopee_sg_exact_update_arguments_valid(jsonb,text,text,text,uuid,uuid,numeric),
   sellerpilot_private.shopee_sg_exact_update_lineage_is_current(uuid),
+  sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(uuid),
   sellerpilot_private.shopee_sg_exact_update_enqueue_bypass_allowed(uuid,uuid,uuid,text,text,jsonb),
   sellerpilot_private.bind_shopee_sg_exact_update_claim(jsonb,jsonb),
   sellerpilot_private.shopee_sg_exact_update_provider_allowed(uuid,uuid),
@@ -1105,11 +1398,20 @@ grant execute on function
   to service_role;
 
 do $shopee_sg_exact_update_postimage$
-declare v_definition text;
+declare
+  v_definition text;
+  v_bind_definition text;
+  v_provider_definition text;
+  v_guard_definition text;
+  v_arguments_definition text;
 begin
   if pg_catalog.to_regclass('sellerpilot_private.shopee_sg_exact_update_permits') is null
      or pg_catalog.to_regprocedure('public.sellerpilot_service_get_shopee_sg_exact_update_identity(uuid,uuid,uuid,text,text,text)') is null
      or pg_catalog.to_regprocedure('public.sellerpilot_service_arm_shopee_sg_exact_update(text,uuid,uuid,text,text)') is null
+     or pg_catalog.to_regprocedure('sellerpilot_private.shopee_sg_exact_content_receipt_valid(jsonb)') is null
+     or pg_catalog.to_regprocedure('sellerpilot_private.shopee_sg_exact_inventory_receipt_valid(jsonb,text)') is null
+     or pg_catalog.to_regprocedure('sellerpilot_private.shopee_sg_exact_content_receipt_image_digest(uuid,uuid,text)') is null
+     or pg_catalog.to_regprocedure('sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(uuid)') is null
      or exists (select 1 from sellerpilot_private.shopee_sg_exact_update_permits)
   then raise exception 'Shopee SG exact update postimage invalid' using errcode = '55000'; end if;
   select pg_catalog.pg_get_functiondef(
@@ -1117,6 +1419,49 @@ begin
   ) into v_definition;
   if pg_catalog.strpos(v_definition,'bind_shopee_sg_exact_update_claim') = 0
   then raise exception 'Shopee SG exact claim postimage invalid' using errcode = '55000'; end if;
+  select pg_catalog.pg_get_functiondef(
+    'sellerpilot_private.bind_shopee_sg_exact_update_claim(jsonb,jsonb)'::regprocedure
+  ) into v_bind_definition;
+  select pg_catalog.pg_get_functiondef(
+    'sellerpilot_private.shopee_sg_exact_update_provider_allowed(uuid,uuid)'::regprocedure
+  ) into v_provider_definition;
+  select pg_catalog.pg_get_functiondef(
+    'sellerpilot_private.guard_shopee_sg_exact_update_job()'::regprocedure
+  ) into v_guard_definition;
+  select pg_catalog.pg_get_functiondef(
+    'sellerpilot_private.shopee_sg_exact_update_arguments_valid(jsonb,text,text,text,uuid,uuid,numeric)'::regprocedure
+  ) into v_arguments_definition;
+  if pg_catalog.strpos(
+       v_bind_definition,
+       'shopee_sg_exact_update_enqueued_lineage_is_current'
+     ) = 0
+     or pg_catalog.strpos(
+       v_provider_definition,
+       'shopee_sg_exact_update_enqueued_lineage_is_current'
+     ) = 0
+     or pg_catalog.strpos(
+       v_bind_definition,
+       'shopee_sg_exact_update_lineage_is_current'
+     ) > 0
+     or pg_catalog.strpos(
+       v_provider_definition,
+       'shopee_sg_exact_update_lineage_is_current'
+     ) > 0
+  then raise exception 'Shopee SG enqueued lineage postimage invalid'
+    using errcode = '55000'; end if;
+  if pg_catalog.strpos(v_guard_definition,'shopee_sg_exact_content_receipt_valid') = 0
+     or pg_catalog.strpos(v_guard_definition,'shopee_sg_exact_inventory_receipt_valid') = 0
+     or pg_catalog.strpos(v_guard_definition,'shopee_sg_exact_content_succeeded') = 0
+     or pg_catalog.strpos(v_arguments_definition,'jsonb_object_keys(p_arguments)') = 0
+     or pg_catalog.strpos(v_arguments_definition,'jsonb_object_keys(v_body)') = 0
+     or not exists (
+       select 1 from pg_catalog.pg_trigger trigger
+        where trigger.tgrelid = 'sellerpilot_private.channel_gateway_jobs'::regclass
+          and trigger.tgname = 'guard_shopee_sg_exact_update_job'
+          and not trigger.tgisinternal
+     )
+  then raise exception 'Shopee SG exact receipt postimage invalid'
+    using errcode = '55000'; end if;
 end;
 $shopee_sg_exact_update_postimage$;
 

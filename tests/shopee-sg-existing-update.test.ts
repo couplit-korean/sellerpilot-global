@@ -75,8 +75,11 @@ function contentSource() {
     identity: identity("content"),
     releaseSha: RELEASE_SHA,
   });
+  const prepared = structuredClone(bound);
+  delete prepared.sellerpilotAssets;
   return {
-    ...bound,
+    ...prepared,
+    imageUrls: normalizedImageUrls,
     publicationStateContract: "verified_remote_state_v1",
     publicationIntent: "safe_test",
     publicationExpectedLocale: "en-SG",
@@ -148,17 +151,25 @@ test("exact Shopee SG candidate is limited to the adopted non-public item", () =
   }), false);
 });
 
-test("server binding strips global/create, status, price, stock, and SKU mutation fields", () => {
+test("server binding rebuilds an exact content-only Shopee update payload", () => {
   const value = contentSource();
   const body = value.body as Record<string, unknown>;
-  assert.equal(value.globalProduct, undefined);
-  assert.equal(value.publish, undefined);
+  assert.deepEqual(Object.keys(value).sort(), [
+    "body", "country", "imageUrls", "localItemId", "publicationExpectedFingerprint",
+    "publicationExpectedImageCount", "publicationExpectedLocale",
+    "publicationIntent", "publicationStateContract",
+    "sellerpilotPublicationAssetBinding", "sellerpilotShopeeSgExistingUpdate",
+    "shopId",
+  ]);
+  assert.deepEqual(Object.keys(body).sort(), ["description", "item_id", "item_name"]);
   assert.equal(value.localItemId, "53717126190");
   assert.equal(body.item_id, 53717126190);
   assert.equal(body.item_status, undefined);
   assert.equal(body.item_sku, undefined);
   assert.equal(body.original_price, undefined);
   assert.equal(body.normal_stock, undefined);
+  assert.equal(body.image, undefined);
+  assert.equal(body.logistic_info, undefined);
   assert.ok(shopeeSgExistingUpdateBinding(value, "content"));
   assert.equal(shopeeSgExistingUpdateIdentity(identity("content"), "content")?.priceSgd, 16.77);
 });
@@ -199,6 +210,7 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
     priceSgd: 16.77,
     providerStatus: "UNLIST",
     visibility: "non_public",
+    providerImageIdentityDigest: "c314598136d395f8f2efad08ece1f72f8005048d4ff47aa335d7e6a5ed66247c",
     representativeImageCount: 1,
     detailImageCount: 8,
     titleLanguageVerified: true,
@@ -212,6 +224,12 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
   const attacked = structuredClone(provider);
   (attacked.body as Record<string, unknown>).item_name = "케이블 정리 클립";
   assert.throws(() => assertShopeeSgExistingContentSource(attacked));
+  const arbitraryMutation = structuredClone(provider);
+  (arbitraryMutation.body as Record<string, unknown>).category_id = 999;
+  assert.throws(() => assertShopeeSgExistingContentSource(arbitraryMutation));
+  const shippingMutation = structuredClone(provider);
+  (shippingMutation.body as Record<string, unknown>).logistic_info = [{ logistic_id: 1 }];
+  assert.throws(() => assertShopeeSgExistingContentSource(shippingMutation));
   assert.equal(verifyShopeeSgExistingContentReadback({
     argumentsValue: provider,
     remoteData: {
@@ -249,6 +267,24 @@ test("inventory phase is a separate minimal stock-one contract with authoritativ
     argumentsValue: inventory,
     remoteData: remoteItem(1),
   })?.stock, 1);
+  assert.deepEqual(verifyShopeeSgExistingInventoryReadback({
+    argumentsValue: inventory,
+    remoteData: remoteItem(1),
+  }), {
+    contract: "sellerpilot_shopee_sg_existing_inventory_readback_v1",
+    itemId: "53717126190",
+    sku: "QA-20260823-CC-001",
+    currency: "SGD",
+    priceSgd: 16.77,
+    stock: 1,
+    providerStatus: "UNLIST",
+    visibility: "non_public",
+    providerImageIdentityDigest: "c314598136d395f8f2efad08ece1f72f8005048d4ff47aa335d7e6a5ed66247c",
+    representativeImageCount: 1,
+    detailImageCount: 8,
+    titleLanguageVerified: true,
+    descriptionLanguageVerified: true,
+  });
   assert.equal(verifyShopeeSgExistingInventoryReadback({
     argumentsValue: inventory,
     remoteData: remoteItem(2),
@@ -296,10 +332,14 @@ test("route and provider wiring keep the exact capability server-owned and prewr
     'shopeeSgExistingUpdateBinding(input.arguments, "content")',
   );
   const prewrite = listingRuntime.indexOf("verifyShopeeSgExistingUpdatePrewrite({", exactListing);
-  const logistics = listingRuntime.indexOf("activeShopeeLogistics(", prewrite);
-  const upload = listingRuntime.indexOf("uploadShopeeImage(", logistics);
+  const noExactLogistics = listingRuntime.indexOf("const logistics = exactExisting", prewrite);
+  const upload = listingRuntime.indexOf("uploadShopeeImage(", noExactLogistics);
   assert.ok(exactListing >= 0 && prewrite > exactListing);
-  assert.ok(logistics > prewrite && upload > logistics);
+  assert.ok(noExactLogistics > prewrite && upload > noExactLogistics);
+  assert.match(
+    listingRuntime.slice(noExactLogistics, upload),
+    /exactExisting\s*\?\s*null\s*:\s*await activeShopeeLogistics/u,
+  );
 
   const shopeeStart = operations.indexOf("async function executeShopee(");
   const inventoryStart = operations.indexOf(

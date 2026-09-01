@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { listingPublicationLanguageVerified } from "./listing-publication-content";
 import { shopeeSgExistingAdoptionIdentity } from "./shopee-sg-existing-adoption";
 
@@ -135,6 +136,12 @@ function itemAvailableStock(item: UnknownRecord) {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 }
 
+function providerImageIdentityDigest(imageIds: string[]) {
+  return createHash("sha256")
+    .update(JSON.stringify(imageIds), "utf8")
+    .digest("hex");
+}
+
 export function shopeeSgExistingUpdateCandidate(input: {
   channel: string;
   operation: string;
@@ -251,23 +258,31 @@ export function bindShopeeSgExistingUpdateArguments(input: {
       quantity: 1,
     };
   }
-  const next = structuredClone(input.argumentsValue);
-  const body = recordValue(next.body);
-  delete next.globalProduct;
-  delete next.publish;
-  delete next.itemId;
-  delete next.item_id;
-  delete body.item_status;
-  delete body.item_sku;
-  delete body.original_price;
-  delete body.normal_stock;
-  delete body.seller_stock;
-  next.shopId = identity.shopId;
-  next.country = "sg";
-  next.localItemId = identity.itemId;
-  next.body = { ...body, item_id: Number(identity.itemId) };
-  next[shopeeSgExistingUpdateArgument] = marker;
-  return next;
+  const body = recordValue(input.argumentsValue.body);
+  const title = exactText(body.item_name);
+  const description = exactText(body.description);
+  const assets = recordValue(input.argumentsValue.sellerpilotAssets);
+  if (!listingPublicationLanguageVerified("en-SG", title, "title")
+      || !listingPublicationLanguageVerified("en-SG", description)
+      || !Object.keys(assets).length) {
+    throw new Error("SHOPEE_SG_EXISTING_CONTENT_CONTRACT_REQUIRED");
+  }
+  // The exact existing-item path must never inherit the generic Shopee body.
+  // update_item replaces every supplied mutable field, so keep only the two
+  // reviewed content fields plus the immutable item id. Approved image lineage
+  // is bound later by the server-owned detail manifest workflow.
+  return {
+    [shopeeSgExistingUpdateArgument]: marker,
+    shopId: identity.shopId,
+    country: "sg",
+    localItemId: identity.itemId,
+    sellerpilotAssets: structuredClone(assets),
+    body: {
+      item_id: Number(identity.itemId),
+      item_name: title,
+      description,
+    },
+  };
 }
 
 export function shopeeSgExistingUpdateBinding(
@@ -393,6 +408,7 @@ export function verifyShopeeSgExistingContentReadback(input: {
     priceSgd: binding.priceSgd,
     providerStatus: "UNLIST" as const,
     visibility: "non_public" as const,
+    providerImageIdentityDigest: providerImageIdentityDigest(actualImageIds),
     representativeImageCount: 1 as const,
     detailImageCount: 8 as const,
     titleLanguageVerified: true as const,
@@ -406,11 +422,17 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
 }) {
   const binding = shopeeSgExistingUpdateBinding(input.argumentsValue, "inventory");
   const item = binding ? exactItemCore(binding, input.remoteData) : null;
+  const title = exactText(item?.item_name);
+  const description = exactText(item?.description);
+  const images = item ? itemImageIds(item) : [];
   if (!binding
       || !item
       || input.argumentsValue.itemId !== binding.itemId
       || input.argumentsValue.quantity !== 1
-      || itemAvailableStock(item) !== 1) {
+      || itemAvailableStock(item) !== 1
+      || !listingPublicationLanguageVerified("en-SG", title, "title")
+      || !listingPublicationLanguageVerified("en-SG", description)
+      || images.length !== 9) {
     return null;
   }
   return {
@@ -422,6 +444,11 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
     stock: 1 as const,
     providerStatus: "UNLIST" as const,
     visibility: "non_public" as const,
+    providerImageIdentityDigest: providerImageIdentityDigest(images),
+    representativeImageCount: 1 as const,
+    detailImageCount: 8 as const,
+    titleLanguageVerified: true as const,
+    descriptionLanguageVerified: true as const,
   };
 }
 
@@ -438,7 +465,35 @@ export function assertShopeeSgExistingContentSource(
   const details = transport.map((row) => exactText(row.publicUrl)).filter(Boolean);
   const title = exactText(body.item_name);
   const description = exactText(body.description);
+  const providerDetailIds = uniqueTexts(
+    argumentsValue.sellerpilotProviderDetailImageIds,
+  );
+  const providerImageIds = uniqueTexts(recordValue(body.image).image_id_list);
+  const providerPrepared = Object.hasOwn(
+    argumentsValue,
+    "sellerpilotProviderDetailImageIds",
+  ) || Object.hasOwn(body, "image");
+  const expectedTopLevelKeys = [
+    shopeeSgExistingUpdateArgument,
+    "localItemId",
+    "shopId",
+    "country",
+    "body",
+    "publicationStateContract",
+    "publicationIntent",
+    "publicationExpectedLocale",
+    "publicationExpectedImageCount",
+    "publicationExpectedFingerprint",
+    "imageUrls",
+    "sellerpilotPublicationAssetBinding",
+    ...(providerPrepared ? ["sellerpilotProviderDetailImageIds"] : []),
+  ];
+  const expectedBodyKeys = [
+    "item_id", "item_name", "description", ...(providerPrepared ? ["image"] : []),
+  ];
   if (!binding
+      || !exactKeys(argumentsValue, expectedTopLevelKeys)
+      || !exactKeys(body, expectedBodyKeys)
       || argumentsValue.localItemId !== binding.itemId
       || exactText(body.item_id) !== binding.itemId
       || argumentsValue.shopId !== binding.shopId
@@ -454,7 +509,12 @@ export function assertShopeeSgExistingContentSource(
       || assets.providerImageSurface !== "buyer_visible"
       || details.length !== 8
       || details.some((url) => !imageUrls.includes(url))
-      || imageUrls.slice(1).some((url, index) => url !== details[index])) {
+      || imageUrls.slice(1).some((url, index) => url !== details[index])
+      || (providerPrepared && (
+        providerDetailIds.length !== 8
+        || providerImageIds.length !== 9
+        || providerImageIds.slice(1).some((id, index) => id !== providerDetailIds[index])
+      ))) {
     throw new Error("SHOPEE_SG_EXISTING_CONTENT_CONTRACT_REQUIRED");
   }
   return binding;
