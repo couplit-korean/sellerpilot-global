@@ -103,7 +103,7 @@ as $$
       'quantity','shippingNo','representativeImageCount','additionalImageCount',
       'detailImageCount','detailLocale','detailJapanese','sellerCenterObserved',
       'publicPageObserved','publicUrl','manualActivationCount',
-      'manualActivatedAt','observedAt'
+      'manualActivationConfirmedAt','observedAt'
     ]
     and p_observation-array[
       'contract','profileName','remoteId','sellerSku','title','promotionName',
@@ -111,7 +111,7 @@ as $$
       'quantity','shippingNo','representativeImageCount','additionalImageCount',
       'detailImageCount','detailLocale','detailJapanese','sellerCenterObserved',
       'publicPageObserved','publicUrl','manualActivationCount',
-      'manualActivatedAt','observedAt'
+      'manualActivationConfirmedAt','observedAt'
     ]='{}'::jsonb
     and p_observation->>'contract'=
           'qoo10_seller_center_manual_activation_readback_v1'
@@ -136,7 +136,7 @@ as $$
     and p_observation->'publicPageObserved'='true'::jsonb
     and p_observation->>'publicUrl'='https://www.qoo10.jp/g/1217336970'
     and p_observation->'manualActivationCount'=to_jsonb(1)
-    and p_observation->>'manualActivatedAt' ~
+    and p_observation->>'manualActivationConfirmedAt' ~
           '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$'
     and p_observation->>'observedAt' ~
           '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:[.][0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})$',
@@ -216,7 +216,7 @@ create table sellerpilot_private.qoo10_exact_manual_activation_outcomes (
   remote_id text not null,
   final_observation jsonb not null,
   final_observation_sha256 text not null,
-  manual_activated_at timestamptz not null,
+  manual_activation_confirmed_at timestamptz not null,
   final_observed_at timestamptz not null,
   provider_status text not null,
   remote_visibility text not null,
@@ -237,10 +237,10 @@ create table sellerpilot_private.qoo10_exact_manual_activation_outcomes (
         )
     and final_observation_sha256=
           encode(extensions.digest(final_observation::text,'sha256'),'hex')
-    and manual_activated_at=
-          (final_observation->>'manualActivatedAt')::timestamptz
+    and manual_activation_confirmed_at=
+          (final_observation->>'manualActivationConfirmedAt')::timestamptz
     and final_observed_at=(final_observation->>'observedAt')::timestamptz
-    and final_observed_at>=manual_activated_at
+    and final_observed_at>=manual_activation_confirmed_at
     and provider_status='S2'
     and remote_visibility='live'
     and purchase_available
@@ -405,7 +405,7 @@ begin
   v_expected:=p_old||jsonb_build_object(
     'status','published','remote_visibility','live','provider_status','S2',
     'remote_resources',v_resources,
-    'published_at',to_jsonb(v_outcome.manual_activated_at),
+    'published_at',to_jsonb(v_outcome.manual_activation_confirmed_at),
     'last_verified_at',to_jsonb(v_outcome.final_observed_at),
     'last_error','null'::jsonb,'failure_class','null'::jsonb,
     'updated_at',p_new->'updated_at'
@@ -808,7 +808,7 @@ declare
   v_attempt sellerpilot_private.channel_operation_attempts%rowtype;
   v_listing sellerpilot_private.product_listings%rowtype;
   v_later_jobs jsonb;
-  v_manual_activated_at timestamptz;
+  v_manual_activation_confirmed_at timestamptz;
   v_observed_at timestamptz;
   v_observation_sha text;
   v_resources jsonb;
@@ -827,10 +827,11 @@ begin
       using errcode='55000';
   end if;
   begin
-    v_manual_activated_at:=(p_observation->>'manualActivatedAt')::timestamptz;
+    v_manual_activation_confirmed_at:=
+      (p_observation->>'manualActivationConfirmedAt')::timestamptz;
     v_observed_at:=(p_observation->>'observedAt')::timestamptz;
   exception when others then
-    raise exception 'exact Qoo10 manual activation timestamp invalid'
+    raise exception 'exact Qoo10 manual activation confirmation timestamp invalid'
       using errcode='55000';
   end;
   v_observation_sha:=encode(
@@ -896,8 +897,8 @@ begin
      or not sellerpilot_private.qoo10_exact_partial_manual_later_jobs_valid(
           p_source_job_id,v_later_jobs
         )
-     or v_manual_activated_at<v_partial.partial_observed_at
-     or v_observed_at<v_manual_activated_at
+     or v_manual_activation_confirmed_at<v_partial.partial_observed_at
+     or v_observed_at<v_manual_activation_confirmed_at
      or v_observed_at>clock_timestamp()+interval '1 minute'
   then
     raise exception 'exact Qoo10 manual activation evidence incomplete'
@@ -906,13 +907,15 @@ begin
 
   insert into sellerpilot_private.qoo10_exact_manual_activation_outcomes (
     source_job_id,source_attempt_id,listing_id,product_id,credential_id,owner_id,
-    remote_id,final_observation,final_observation_sha256,manual_activated_at,
+    remote_id,final_observation,final_observation_sha256,
+    manual_activation_confirmed_at,
     final_observed_at,provider_status,remote_visibility,purchase_available,
     manual_activation_count,provider_call_replayed,finalized_at
   ) values (
     v_partial.source_job_id,v_partial.source_attempt_id,v_partial.listing_id,
     v_partial.product_id,v_partial.credential_id,v_partial.owner_id,
-    v_partial.remote_id,p_observation,v_observation_sha,v_manual_activated_at,
+    v_partial.remote_id,p_observation,v_observation_sha,
+    v_manual_activation_confirmed_at,
     v_observed_at,'S2','live',true,1,false,clock_timestamp()
   );
 
@@ -931,7 +934,8 @@ begin
   );
   update sellerpilot_private.product_listings listing
      set status='published',remote_visibility='live',provider_status='S2',
-         remote_resources=v_resources,published_at=v_manual_activated_at,
+         remote_resources=v_resources,
+         published_at=v_manual_activation_confirmed_at,
          last_verified_at=v_observed_at,last_error=null,failure_class=null,
          updated_at=clock_timestamp()
    where listing.id=v_partial.listing_id and listing.status='failed'
@@ -990,7 +994,7 @@ declare
   v_existing_partial sellerpilot_private.qoo10_exact_partial_manual_reconciliations%rowtype;
   v_existing_final sellerpilot_private.qoo10_exact_manual_activation_outcomes%rowtype;
   v_partial_observed_at timestamptz;
-  v_manual_activated_at timestamptz;
+  v_manual_activation_confirmed_at timestamptz;
   v_final_observed_at timestamptz;
   v_partial_result jsonb;
   v_final_result jsonb;
@@ -1014,15 +1018,15 @@ begin
   begin
     v_partial_observed_at:=
       (p_partial_observation->>'observedAt')::timestamptz;
-    v_manual_activated_at:=
-      (p_final_observation->>'manualActivatedAt')::timestamptz;
+    v_manual_activation_confirmed_at:=
+      (p_final_observation->>'manualActivationConfirmedAt')::timestamptz;
     v_final_observed_at:=(p_final_observation->>'observedAt')::timestamptz;
   exception when others then
     raise exception 'exact Qoo10 post-activation timestamp invalid'
       using errcode='55000';
   end;
-  if v_manual_activated_at<v_partial_observed_at
-     or v_final_observed_at<v_manual_activated_at
+  if v_manual_activation_confirmed_at<v_partial_observed_at
+     or v_final_observed_at<v_manual_activation_confirmed_at
      or v_final_observed_at>clock_timestamp()+interval '1 minute'
   then
     raise exception 'exact Qoo10 post-activation evidence order invalid'

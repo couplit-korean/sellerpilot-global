@@ -66,7 +66,7 @@ function finalObservation() {
     publicPageObserved: true,
     publicUrl: "https://www.qoo10.jp/g/1217336970",
     manualActivationCount: 1,
-    manualActivatedAt: "2026-09-01T02:50:00Z",
+    manualActivationConfirmedAt: "2026-09-01T02:50:00Z",
     observedAt: "2026-09-01T02:51:00Z",
   };
 }
@@ -246,7 +246,7 @@ test("listing projection accepts only the append-only partial then final evidenc
       );
       create table sellerpilot_private.qoo10_exact_manual_activation_outcomes (
         source_job_id uuid primary key,
-        manual_activated_at timestamptz not null,
+        manual_activation_confirmed_at timestamptz not null,
         final_observed_at timestamptz not null,
         final_observation_sha256 text not null
       );
@@ -398,7 +398,7 @@ test("partial and final reconciliation are append-only, ordered, and never enque
     atomic.indexOf("sellerpilot_service_reconcile_exact_qoo10_partial_manual")
       < atomic.indexOf("sellerpilot_service_finalize_exact_qoo10_manual_activation"),
   );
-  assert.match(atomic, /v_manual_activated_at<v_partial_observed_at/u);
+  assert.match(atomic, /v_manual_activation_confirmed_at<v_partial_observed_at/u);
   assert.match(atomic, /externalWriteCount',0/u);
   assert.doesNotMatch(atomic, /insert into sellerpilot_private\.channel_gateway_jobs/u);
   const grantBlock = sql.slice(
@@ -548,7 +548,7 @@ test("post-activation reconciliation records both phases atomically and rolls ba
              remote_visibility='unknown',provider_status=null;
     `);
     const invalidFinal = finalObservation();
-    invalidFinal.manualActivatedAt = "2026-09-01T02:39:59Z";
+    invalidFinal.manualActivationConfirmedAt = "2026-09-01T02:39:59Z";
     await assert.rejects(
       db.query(
         `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
