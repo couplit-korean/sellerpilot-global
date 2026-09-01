@@ -152,15 +152,31 @@ async function createDatabase({
     create table cron.job (
       jobid bigint generated always as identity primary key,
       jobname text not null,
+      schedule text not null default '* * * * *',
+      command text not null default '',
+      database text not null default 'postgres',
+      username text not null default 'postgres',
       active boolean not null
     );
-    insert into cron.job (jobname,active) values
-      ('sellerpilot-serverless-cs-wake-v1',${runtimeActive || partiallyActiveRuntime}),
-      ('sellerpilot-product-research-v1',${runtimeActive}),
-      ('sellerpilot-channel-sync-v1',${runtimeActive}),
-      ('sellerpilot-competitor-prices-v1',${runtimeActive}),
-      ('sellerpilot-kakao-notifications-v1',${runtimeActive}),
-      ('sellerpilot-maintenance-v1',${runtimeActive});
+    insert into cron.job (jobname,schedule,command,database,username,active) values
+      ('sellerpilot-serverless-cs-wake-v1','* * * * *',
+       'select sellerpilot_private.schedule_serverless_cs_wakeup();',
+       'postgres','postgres',${runtimeActive || partiallyActiveRuntime}),
+      ('sellerpilot-product-research-v1','*/5 * * * *',
+       'select sellerpilot_private.schedule_internal_route(''product_research'');',
+       'postgres','postgres',${runtimeActive}),
+      ('sellerpilot-channel-sync-v1','1-59/5 * * * *',
+       'select sellerpilot_private.schedule_internal_route(''channel_sync'');',
+       'postgres','postgres',${runtimeActive}),
+      ('sellerpilot-competitor-prices-v1','3-59/5 * * * *',
+       'select sellerpilot_private.schedule_internal_route(''competitor_prices'');',
+       'postgres','postgres',${runtimeActive}),
+      ('sellerpilot-kakao-notifications-v1','4-59/5 * * * *',
+       'select sellerpilot_private.schedule_internal_route(''kakao_notifications'');',
+       'postgres','postgres',${runtimeActive}),
+      ('sellerpilot-maintenance-v1','17 18 * * *',
+       'select sellerpilot_private.schedule_internal_route(''maintenance'');',
+       'postgres','postgres',${runtimeActive});
     create table sellerpilot_private.serverless_static_egress_policy (
       channel text primary key,
       enabled boolean not null
@@ -172,6 +188,12 @@ async function createDatabase({
     returns text language sql stable set search_path='' as $$
       select ${runtimeActive ? `'${releaseSha}'::text` : "null::text"}
     $$;
+    create function public.sellerpilot_service_activate_serverless_runtime(uuid,text)
+    returns jsonb language plpgsql security definer set search_path='' as $$
+    begin
+      perform pg_catalog.pg_advisory_xact_lock(193674993, 821065060);
+      return '{}'::jsonb;
+    end $$;
     create function sellerpilot_private.serverless_static_egress_allowed(text)
     returns boolean language sql stable set search_path='' as $$
       select ${staticEgress ? "true" : "false"}
@@ -411,8 +433,31 @@ test("migration source pins the exact production tuple and hashes", () => {
   assert.match(migration, /not egress_policy\.enabled/u);
   assert.match(migration, /pg_advisory_xact_lock\(193674993, 821065060\)/u);
   assert.doesNotMatch(migration, /lock table cron\.job/u);
-  assert.match(migration, /from cron\.job job[\s\S]+for update/u);
-  assert.match(migration, /count\(distinct schedule\.jobname\)/u);
+  const schedulePreflight = migration.match(
+    /-- The activation RPC uses the advisory lock[\s\S]+?select public\.sellerpilot_service_serverless_cs_wakeup_status\(\)/u,
+  )?.[0];
+  assert.ok(schedulePreflight);
+  assert.doesNotMatch(schedulePreflight, /for update/u);
+  assert.ok(
+    (migration.match(/count\(distinct schedule\.jobname\)/gu) ?? []).length >= 3,
+  );
+  for (const commandMd5 of [
+    "815889cb8db42f522fcc1cd60161ef26",
+    "4c1de876b257cec6a8731d130e202373",
+    "120c755989cde887b0b19653089d1997",
+    "aac1259223c7043f8f099c2ff31dcb8e",
+    "31fad1103e3cd103cd92af5afcbead07",
+    "a4b24e5c1c85c0abdc614af475d3dd01",
+  ]) {
+    assert.match(migration, new RegExp(commandMd5));
+  }
+  assert.match(migration, /pg_get_functiondef/u);
+  assert.match(
+    migration,
+    /sellerpilot_service_activate_serverless_runtime\(uuid,text\)/u,
+  );
+  assert.match(migration, /has_schema_privilege/u);
+  assert.match(migration, /has_table_privilege/u);
   assert.match(migration, /lock table sellerpilot_private\.channel_gateway_jobs\s+in share row exclusive mode/u);
   assert.match(migration, /not sellerpilot_private\.serverless_static_egress_allowed\('coupang'\)/u);
 });
@@ -515,6 +560,18 @@ test("the exact unclaimed job becomes a fully audited manual WING handoff", asyn
     assert.equal(audit.safe_detail.runtimeSchedulesActive, false);
     assert.equal(audit.safe_detail.runtimeScheduleCount, 6);
     assert.equal(audit.safe_detail.runtimeDistinctScheduleCount, 6);
+    assert.equal(audit.safe_detail.runtimeScheduleFingerprint.length, 6);
+    assert.deepEqual(
+      audit.safe_detail.runtimeScheduleFingerprint.map((row) => row.commandMd5),
+      [
+        "815889cb8db42f522fcc1cd60161ef26",
+        "4c1de876b257cec6a8731d130e202373",
+        "120c755989cde887b0b19653089d1997",
+        "aac1259223c7043f8f099c2ff31dcb8e",
+        "31fad1103e3cd103cd92af5afcbead07",
+        "a4b24e5c1c85c0abdc614af475d3dd01",
+      ],
+    );
     assert.deepEqual(audit.safe_detail.runtimePreimage, {
       active: false,
       activeRelease: null,
@@ -711,6 +768,69 @@ test("a fully active runtime fails closed", async () => {
     runtimeActive: true,
   });
   try {
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+for (const [label, statement] of [
+  ["schedule", "update cron.job set schedule='0 0 * * *' where jobid=3"],
+  ["command", "update cron.job set command=command || ' ' where jobid=4"],
+  ["database", "update cron.job set database='template1' where jobid=5"],
+  ["username", "update cron.job set username='service_role' where jobid=6"],
+  [
+    "job id",
+    "alter table cron.job alter column jobid drop identity; update cron.job set jobid=99 where jobid=2",
+  ],
+]) {
+  test(`exact runtime ${label} drift fails closed`, async () => {
+    const { db, migration: fixtureMigration } = await createDatabase();
+    try {
+      await db.exec(statement);
+      await assert.rejects(
+        db.exec(fixtureMigration),
+        /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+      );
+    } finally {
+      await db.close();
+    }
+  });
+}
+
+for (const [label, statement] of [
+  ["schema usage", "grant usage on schema cron to anon"],
+  ["insert", "grant insert on cron.job to authenticated"],
+  ["update", "grant update on cron.job to service_role"],
+  ["delete", "grant delete on cron.job to anon"],
+]) {
+  test(`effective cron ${label} privilege fails closed`, async () => {
+    const { db, migration: fixtureMigration } = await createDatabase();
+    try {
+      await db.exec(statement);
+      await assert.rejects(
+        db.exec(fixtureMigration),
+        /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+      );
+    } finally {
+      await db.close();
+    }
+  });
+}
+
+test("runtime activation RPC without the advisory lock fails closed", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase();
+  try {
+    await db.exec(`
+      create or replace function
+        public.sellerpilot_service_activate_serverless_runtime(uuid,text)
+      returns jsonb language sql security definer set search_path='' as $$
+        select '{}'::jsonb
+      $$;
+    `);
     await assert.rejects(
       db.exec(fixtureMigration),
       /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,

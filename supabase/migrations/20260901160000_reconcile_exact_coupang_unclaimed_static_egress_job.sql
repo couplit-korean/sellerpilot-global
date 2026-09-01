@@ -21,10 +21,8 @@ lock table sellerpilot_private.channel_gateway_jobs
 lock table sellerpilot_private.operation_audit
   in share row exclusive mode;
 
--- Supabase reserves table-level writes on cron.job for pg_cron. The runtime
--- activation RPC is serialized by the advisory lock above; lock the six
--- visible schedule rows in the preflight query instead of requesting a table
--- lock that the production SQL Editor role cannot acquire.
+-- Supabase reserves cron.job writes for pg_cron. The runtime activation RPC is
+-- serialized by the advisory lock above, so inspect the schedules read-only.
 
 -- The original permit state machine allowed expiration only before a job was
 -- attached. Add one terminal state for this exact, already-attached permit.
@@ -459,7 +457,17 @@ declare
     'e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd';
   v_manual_message constant text :=
     '쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.';
+  v_expected_runtime_schedules constant jsonb := $runtime_schedules$[
+    {"jobid":1,"jobname":"sellerpilot-serverless-cs-wake-v1","schedule":"* * * * *","database":"postgres","username":"postgres","commandMd5":"815889cb8db42f522fcc1cd60161ef26","commandBytes":59,"active":false},
+    {"jobid":2,"jobname":"sellerpilot-product-research-v1","schedule":"*/5 * * * *","database":"postgres","username":"postgres","commandMd5":"4c1de876b257cec6a8731d130e202373","commandBytes":71,"active":false},
+    {"jobid":3,"jobname":"sellerpilot-channel-sync-v1","schedule":"1-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"120c755989cde887b0b19653089d1997","commandBytes":67,"active":false},
+    {"jobid":4,"jobname":"sellerpilot-competitor-prices-v1","schedule":"3-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"aac1259223c7043f8f099c2ff31dcb8e","commandBytes":72,"active":false},
+    {"jobid":5,"jobname":"sellerpilot-kakao-notifications-v1","schedule":"4-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"31fad1103e3cd103cd92af5afcbead07","commandBytes":74,"active":false},
+    {"jobid":6,"jobname":"sellerpilot-maintenance-v1","schedule":"17 18 * * *","database":"postgres","username":"postgres","commandMd5":"a4b24e5c1c85c0abdc614af475d3dd01","commandBytes":66,"active":false}
+  ]$runtime_schedules$::jsonb;
   v_runtime_status jsonb;
+  v_runtime_schedules jsonb;
+  v_activation_definition text;
   v_schedule_count integer;
   v_distinct_schedule_count integer;
   v_active_schedule_count integer;
@@ -490,31 +498,64 @@ begin
       using errcode = '55000';
   end if;
 
-  -- The activation RPC uses the advisory lock acquired above. Lock the exact
-  -- six schedule rows as well, then prove that none is active.
+  -- The activation RPC uses the advisory lock acquired above. Prove the exact
+  -- six distinct schedule names are present and all six are inactive.
   select count(*)::integer,
          count(distinct schedule.jobname)::integer,
-         count(*) filter (where schedule.active)::integer
-    into v_schedule_count, v_distinct_schedule_count, v_active_schedule_count
-    from (
-      select job.jobname, job.active
-        from cron.job job
-       where job.jobname in (
-         'sellerpilot-serverless-cs-wake-v1',
-         'sellerpilot-product-research-v1',
-         'sellerpilot-channel-sync-v1',
-         'sellerpilot-competitor-prices-v1',
-         'sellerpilot-kakao-notifications-v1',
-         'sellerpilot-maintenance-v1'
-       )
-       for update
-    ) schedule;
+         count(*) filter (where schedule.active)::integer,
+         coalesce(jsonb_agg(jsonb_build_object(
+           'jobid', schedule.jobid,
+           'jobname', schedule.jobname,
+           'schedule', schedule.schedule,
+           'database', schedule.database,
+           'username', schedule.username,
+           'commandMd5', md5(schedule.command),
+           'commandBytes', octet_length(schedule.command),
+           'active', schedule.active
+         ) order by schedule.jobid), '[]'::jsonb)
+    into v_schedule_count, v_distinct_schedule_count, v_active_schedule_count,
+         v_runtime_schedules
+    from cron.job schedule
+   where schedule.jobname in (
+     'sellerpilot-serverless-cs-wake-v1',
+     'sellerpilot-product-research-v1',
+     'sellerpilot-channel-sync-v1',
+     'sellerpilot-competitor-prices-v1',
+     'sellerpilot-kakao-notifications-v1',
+     'sellerpilot-maintenance-v1'
+   );
+
+  select pg_catalog.pg_get_functiondef(
+           'public.sellerpilot_service_activate_serverless_runtime(uuid,text)'
+             ::regprocedure
+         )
+    into v_activation_definition;
 
   select public.sellerpilot_service_serverless_cs_wakeup_status()
     into v_runtime_status;
   if v_schedule_count <> 6
      or v_distinct_schedule_count <> 6
      or v_active_schedule_count <> 0
+     or v_runtime_schedules is distinct from v_expected_runtime_schedules
+     or regexp_replace(v_activation_definition, '\s+', '', 'g') !~
+          'pg_advisory_xact_lock\(193674993,821065060\)'
+     or exists (
+       select 1
+         from (values ('anon'), ('authenticated'), ('service_role'))
+              runtime_role(role_name)
+        where pg_catalog.has_schema_privilege(
+                runtime_role.role_name, 'cron', 'USAGE'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'INSERT'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'UPDATE'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'DELETE'
+              )
+     )
      or v_runtime_status->>'configured' <> 'true'
      or v_runtime_status->>'version' <> 'serverless_runtime_v2'
      or v_runtime_status->>'scheduleCount' <> '6'
@@ -700,6 +741,18 @@ begin
         )
      ) = 6
      and (
+       select count(distinct schedule.jobname)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) = 6
+     and (
        select count(*) filter (where schedule.active)::integer
          from cron.job schedule
         where schedule.jobname in (
@@ -711,6 +764,27 @@ begin
           'sellerpilot-maintenance-v1'
         )
      ) = 0
+     and (
+       select coalesce(jsonb_agg(jsonb_build_object(
+         'jobid', schedule.jobid,
+         'jobname', schedule.jobname,
+         'schedule', schedule.schedule,
+         'database', schedule.database,
+         'username', schedule.username,
+         'commandMd5', md5(schedule.command),
+         'commandBytes', octet_length(schedule.command),
+         'active', schedule.active
+       ) order by schedule.jobid), '[]'::jsonb)
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) = v_expected_runtime_schedules
      and not sellerpilot_private.serverless_static_egress_allowed('coupang')
      and not exists (
        select 1
@@ -881,6 +955,7 @@ begin
       'runtimeSchedulesActive', false,
       'runtimeScheduleCount', 6,
       'runtimeDistinctScheduleCount', 6,
+      'runtimeScheduleFingerprint', v_expected_runtime_schedules,
       'runtimePreimage', jsonb_build_object(
         'configured', (v_runtime_status->>'configured')::boolean,
         'version', v_runtime_status->>'version',
@@ -911,6 +986,14 @@ do $exact_coupang_unclaimed_static_egress_postimage$
 declare
   v_manual_message constant text :=
     '쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.';
+  v_expected_runtime_schedules constant jsonb := $runtime_schedules$[
+    {"jobid":1,"jobname":"sellerpilot-serverless-cs-wake-v1","schedule":"* * * * *","database":"postgres","username":"postgres","commandMd5":"815889cb8db42f522fcc1cd60161ef26","commandBytes":59,"active":false},
+    {"jobid":2,"jobname":"sellerpilot-product-research-v1","schedule":"*/5 * * * *","database":"postgres","username":"postgres","commandMd5":"4c1de876b257cec6a8731d130e202373","commandBytes":71,"active":false},
+    {"jobid":3,"jobname":"sellerpilot-channel-sync-v1","schedule":"1-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"120c755989cde887b0b19653089d1997","commandBytes":67,"active":false},
+    {"jobid":4,"jobname":"sellerpilot-competitor-prices-v1","schedule":"3-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"aac1259223c7043f8f099c2ff31dcb8e","commandBytes":72,"active":false},
+    {"jobid":5,"jobname":"sellerpilot-kakao-notifications-v1","schedule":"4-59/5 * * * *","database":"postgres","username":"postgres","commandMd5":"31fad1103e3cd103cd92af5afcbead07","commandBytes":74,"active":false},
+    {"jobid":6,"jobname":"sellerpilot-maintenance-v1","schedule":"17 18 * * *","database":"postgres","username":"postgres","commandMd5":"a4b24e5c1c85c0abdc614af475d3dd01","commandBytes":66,"active":false}
+  ]$runtime_schedules$::jsonb;
   v_runtime_status jsonb;
 begin
   if exists (
@@ -937,6 +1020,18 @@ begin
           and not policy.enabled
      ) <> 1
      or (
+       select count(*)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) <> 6
+     or (
        select count(distinct schedule.jobname)::integer
          from cron.job schedule
         where schedule.jobname in (
@@ -947,8 +1042,57 @@ begin
           'sellerpilot-kakao-notifications-v1',
           'sellerpilot-maintenance-v1'
         )
-          and not schedule.active
      ) <> 6
+     or (
+       select count(*) filter (where schedule.active)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) <> 0
+     or (
+       select coalesce(jsonb_agg(jsonb_build_object(
+         'jobid', schedule.jobid,
+         'jobname', schedule.jobname,
+         'schedule', schedule.schedule,
+         'database', schedule.database,
+         'username', schedule.username,
+         'commandMd5', md5(schedule.command),
+         'commandBytes', octet_length(schedule.command),
+         'active', schedule.active
+       ) order by schedule.jobid), '[]'::jsonb)
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) is distinct from v_expected_runtime_schedules
+     or exists (
+       select 1
+         from (values ('anon'), ('authenticated'), ('service_role'))
+              runtime_role(role_name)
+        where pg_catalog.has_schema_privilege(
+                runtime_role.role_name, 'cron', 'USAGE'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'INSERT'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'UPDATE'
+              )
+           or pg_catalog.has_table_privilege(
+                runtime_role.role_name, 'cron.job', 'DELETE'
+              )
+     )
     then
       raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_POSTIMAGE_INVALID'
         using errcode = '55000';
@@ -1081,6 +1225,8 @@ begin
                and audit.safe_detail->>'runtimeSchedulesActive' = 'false'
                and audit.safe_detail->>'runtimeScheduleCount' = '6'
                and audit.safe_detail->>'runtimeDistinctScheduleCount' = '6'
+               and audit.safe_detail->'runtimeScheduleFingerprint' =
+                     v_expected_runtime_schedules
                and audit.safe_detail->'runtimePreimage'->>'configured' = 'true'
                and audit.safe_detail->'runtimePreimage'->>'version' =
                      'serverless_runtime_v2'
