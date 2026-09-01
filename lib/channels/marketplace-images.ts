@@ -19,6 +19,7 @@ import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
+import { qoo10ExactAdoptedLocalizationBinding } from "./qoo10-exact-localization-identity";
 import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
 import {
   bindTemuExactPreservedAssetEvidence,
@@ -659,7 +660,10 @@ export function qoo10RollbackRecoveryPreservesRepresentativeImage(
   channel: ActiveChannelKey,
   argumentsValue: Record<string, unknown>,
 ) {
-  return channel === "qoo10" && Boolean(qoo10RollbackUpdateRecoveryBinding(argumentsValue));
+  return channel === "qoo10" && Boolean(
+    qoo10RollbackUpdateRecoveryBinding(argumentsValue)
+    || qoo10ExactAdoptedLocalizationBinding(argumentsValue),
+  );
 }
 
 /** Applies already-normalized Qoo10 images without authorizing the recovery. */

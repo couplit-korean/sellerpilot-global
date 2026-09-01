@@ -7,10 +7,15 @@ import {
   qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactAdoptedLocalizationArgument,
   qoo10ExactAdoptedLocalizationContract,
+  qoo10ExactLocalizedUpdate,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
 } from "../lib/channels/qoo10-exact-localization-recovery";
+import {
+  applyPreparedQoo10Images,
+  qoo10RollbackRecoveryPreservesRepresentativeImage,
+} from "../lib/channels/marketplace-images";
 import { executeChannelOperation } from "../lib/channels/operations";
 
 const identity = qoo10ExactLocalizationRecoveryIdentity;
@@ -108,6 +113,35 @@ test("server-owned adopted commerce rebinding preserves price and stock while re
   assert.equal(params.ItemPrice, String(identity.priceJpy));
   assert.equal(params.ItemQty, String(identity.quantity));
   assert.equal(Object.hasOwn(params, "StandardImage"), false);
+});
+
+test("the route image-preparation postimage preserves the adopted representative and exact commerce tuple", () => {
+  const routeArguments = argumentsValue();
+  (routeArguments.params as Record<string, unknown>).ItemDescription = [
+    `<div lang="ja-JP"><h1>${identity.title}</h1><p>ケーブルをすっきり整理できます。販売価格は1,871円です。</p></div>`,
+    `<section data-sellerpilot-detail-images="true">${detailImageUrls
+      .map((url) => `<img src="${url}">`)
+      .join("")}</section>`,
+  ].join("");
+  const prepared = applyPreparedQoo10Images(
+    routeArguments,
+    ["https://attacker.example/replace.jpg"],
+    detailImageUrls,
+  );
+  const params = prepared.params as Record<string, unknown>;
+  const localized = qoo10ExactLocalizedUpdate(prepared, identity.remoteId, true);
+
+  assert.equal(qoo10RollbackRecoveryPreservesRepresentativeImage("qoo10", prepared), true);
+  assert.equal(Object.hasOwn(params, "StandardImage"), false);
+  assert.equal(params.ItemCode, identity.remoteId);
+  assert.equal(params.SellerCode, identity.sellerSku);
+  assert.equal(params.SecondSubCat, identity.categoryCode);
+  assert.equal(params.ItemTitle, identity.title);
+  assert.equal(params.ShippingNo, identity.shippingNo);
+  assert.equal(params.ItemPrice, String(identity.priceJpy));
+  assert.equal(params.ItemQty, String(identity.quantity));
+  assert.equal(localized?.detailImageUrls.length, 8);
+  assert.deepEqual(localized?.detailImageUrls, detailImageUrls);
 });
 
 test("already-live candidate is the exact adopted published S2 tuple only", () => {
