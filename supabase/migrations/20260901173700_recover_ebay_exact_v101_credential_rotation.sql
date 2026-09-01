@@ -267,7 +267,16 @@ revoke all on function
 
 do $patch_ebay_v101_retry_availability$
 declare
+  v_signature constant regprocedure :=
+    'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)'::regprocedure;
+  v_preimage_sha256 constant text :=
+    'b5388d573e78fcfb4a752ca878ec005689c2cc14fcf2778e3dc464e8172dd40c';
+  v_postimage_sha256 constant text :=
+    '327202829188f619271744f99be91246d9be70fd382656b0a4892be4dc91b4bc';
   v_definition text;
+  v_prosrc text;
+  v_owner oid;
+  v_post_owner oid;
   v_anchor constant text := $old$
       )
     ),
@@ -281,24 +290,94 @@ declare
     false
   )$new$;
 begin
-  select pg_catalog.pg_get_functiondef(
-    'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)'::regprocedure
-  ) into v_definition;
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
   if (
-    pg_catalog.length(v_definition)
-    - pg_catalog.length(pg_catalog.replace(v_definition, v_anchor, ''))
-  ) / pg_catalog.length(v_anchor) <> 1
+       pg_catalog.encode(
+         extensions.digest(v_prosrc, 'sha256'), 'hex'
+       ) is distinct from v_preimage_sha256
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(v_definition, v_anchor, ''))
+     ) / pg_catalog.length(v_anchor) <> 1
+     or pg_catalog.strpos(
+          v_definition,
+          'sellerpilot_private.ebay_exact_v101_rotation_is_proved('
+        ) <> 0
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 's'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'sql'
+     )
+  )
   then
-    raise exception 'eBay v101 retry availability patch target missing'
+    raise exception 'eBay v101 retry availability preimage mismatch'
       using errcode = '55000';
   end if;
   execute pg_catalog.replace(v_definition, v_anchor, v_replacement);
+
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_post_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
+  if pg_catalog.encode(
+       extensions.digest(v_prosrc, 'sha256'), 'hex'
+     ) is distinct from v_postimage_sha256
+     or v_post_owner is distinct from v_owner
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition,
+           'sellerpilot_private.ebay_exact_v101_rotation_is_proved(',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'sellerpilot_private.ebay_exact_v101_rotation_is_proved('
+     ) <> 1
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 's'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'sql'
+     )
+  then
+    raise exception 'eBay v101 retry availability postimage mismatch'
+      using errcode = '55000';
+  end if;
 end;
 $patch_ebay_v101_retry_availability$;
 
 do $patch_ebay_v101_permit_transition$
 declare
+  v_signature constant regprocedure :=
+    'sellerpilot_private.guard_exact_existing_update_permit_transition()'::regprocedure;
+  v_preimage_sha256 constant text :=
+    'cd7cf419254b00848274a78eba3025821d9d98a1da7dc0b72a56aa5c9579536d';
+  v_postimage_sha256 constant text :=
+    '7ef1164cda06fda7cbda1df47fd5772bc5702fb9c26ae870bb98bfb94004d236';
   v_definition text;
+  v_prosrc text;
+  v_owner oid;
+  v_post_owner oid;
   v_fields_before constant text := $old$
     'credential_last_check_status'
   ];$old$;
@@ -394,13 +473,46 @@ declare
      and new.credential_id =
            '75853087-d2a8-4f56-9c05-e66fcc65e372'::uuid$new$;
 begin
-  select pg_catalog.pg_get_functiondef(
-    'sellerpilot_private.guard_exact_existing_update_permit_transition()'::regprocedure
-  ) into v_definition;
-  if pg_catalog.strpos(v_definition, v_fields_before) = 0
-     or pg_catalog.strpos(v_definition, v_transition_anchor) = 0
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
+  if pg_catalog.encode(
+       extensions.digest(v_prosrc, 'sha256'), 'hex'
+     ) is distinct from v_preimage_sha256
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition, v_fields_before, ''
+         ))
+     ) / pg_catalog.length(v_fields_before) <> 1
+     or pg_catalog.strpos(v_definition, v_fields_after) <> 0
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition, v_transition_anchor, ''
+         ))
+     ) / pg_catalog.length(v_transition_anchor) <> 1
+     or pg_catalog.strpos(
+          v_definition,
+          'f78397ec-c387-48ec-b562-64e754d90ac5'
+        ) <> 0
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 'v'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'plpgsql'
+     )
   then
-    raise exception 'eBay v101 permit transition patch target missing'
+    raise exception 'eBay v101 permit transition preimage mismatch'
       using errcode = '55000';
   end if;
   v_definition := pg_catalog.replace(
@@ -410,12 +522,64 @@ begin
     v_definition, v_transition_anchor, v_transition
   );
   execute v_definition;
+
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_post_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
+  if pg_catalog.encode(
+       extensions.digest(v_prosrc, 'sha256'), 'hex'
+     ) is distinct from v_postimage_sha256
+     or v_post_owner is distinct from v_owner
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition, v_fields_after, ''
+         ))
+     ) / pg_catalog.length(v_fields_after) <> 1
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition,
+           'f78397ec-c387-48ec-b562-64e754d90ac5',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'f78397ec-c387-48ec-b562-64e754d90ac5'
+     ) <> 1
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 'v'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'plpgsql'
+     )
+  then
+    raise exception 'eBay v101 permit transition postimage mismatch'
+      using errcode = '55000';
+  end if;
 end;
 $patch_ebay_v101_permit_transition$;
 
 do $patch_ebay_retry_arm_v101_rotation$
 declare
+  v_signature constant regprocedure :=
+    'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)'::regprocedure;
+  v_preimage_sha256 constant text :=
+    '6d1e06f43ce762917cc936aea0bdbaf1acd157d22804f589e0b92241b771b833';
+  v_postimage_sha256 constant text :=
+    '24682b20f45912cb2864cb880ba98179110088ec3be6ece49d52442c73129542';
   v_definition text;
+  v_prosrc text;
+  v_owner oid;
+  v_post_owner oid;
   v_anchor constant text := $old$
   if found then
     if v_permit.permit_id =
@@ -555,19 +719,133 @@ declare
        and p_credential_id =
          '75853087-d2a8-4f56-9c05-e66fcc65e372'::uuid$new$;
 begin
-  select pg_catalog.pg_get_functiondef(
-    'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)'::regprocedure
-  ) into v_definition;
-  if pg_catalog.strpos(v_definition, v_anchor) = 0 then
-    raise exception 'eBay v101 credential rotation arm patch target missing'
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
+  if pg_catalog.encode(
+       extensions.digest(v_prosrc, 'sha256'), 'hex'
+     ) is distinct from v_preimage_sha256
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(v_definition, v_anchor, ''))
+     ) / pg_catalog.length(v_anchor) <> 1
+     or pg_catalog.strpos(
+          v_definition,
+          'ebay_exact_pre_gateway_v101_credential_rotated'
+        ) <> 0
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition,
+           'v_now timestamptz := statement_timestamp()',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'v_now timestamptz := statement_timestamp()'
+     ) <> 1
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 'v'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'plpgsql'
+     )
+  then
+    raise exception 'eBay v101 credential rotation arm preimage mismatch'
       using errcode = '55000';
   end if;
   execute pg_catalog.replace(v_definition, v_anchor, v_replacement);
+
+  select pg_catalog.pg_get_functiondef(procedure.oid),
+         procedure.prosrc,
+         procedure.proowner
+    into strict v_definition, v_prosrc, v_post_owner
+    from pg_catalog.pg_proc procedure
+   where procedure.oid = v_signature;
+  if pg_catalog.encode(
+       extensions.digest(v_prosrc, 'sha256'), 'hex'
+     ) is distinct from v_postimage_sha256
+     or v_post_owner is distinct from v_owner
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition,
+           'ebay_exact_pre_gateway_v101_credential_rotated',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'ebay_exact_pre_gateway_v101_credential_rotated'
+     ) <> 1
+     or (
+       pg_catalog.length(v_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_definition,
+           'v_now timestamptz := statement_timestamp()',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'v_now timestamptz := statement_timestamp()'
+     ) <> 1
+     or not exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_signature
+          and procedure.prosecdef
+          and procedure.provolatile = 'v'
+          and procedure.prokind = 'f'
+          and procedure.proconfig = array['search_path=""']::text[]
+          and language.lanname = 'plpgsql'
+     )
+  then
+    raise exception 'eBay v101 credential rotation arm postimage mismatch'
+      using errcode = '55000';
+  end if;
 end;
 $patch_ebay_retry_arm_v101_rotation$;
 
+-- Reassert every touched privileged function's ACL after CREATE OR REPLACE.
+-- Private helpers and the trigger remain unreachable to API roles; only the
+-- service role may invoke the public arm RPC.
+revoke all on function
+  sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid),
+  sellerpilot_private.ebay_exact_no_effect_retry_available(uuid),
+  sellerpilot_private.guard_exact_existing_update_permit_transition(),
+  public.sellerpilot_service_arm_ebay_no_effect_retry(
+    text, uuid, uuid, text, text
+  ) from public, anon, authenticated, service_role;
+grant execute on function
+  public.sellerpilot_service_arm_ebay_no_effect_retry(
+    text, uuid, uuid, text, text
+  ) to service_role;
+
 do $ebay_exact_v101_rotation_postimage$
 declare
+  v_proof_signature constant regprocedure :=
+    'sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid)'::regprocedure;
+  v_available_signature constant regprocedure :=
+    'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)'::regprocedure;
+  v_transition_signature constant regprocedure :=
+    'sellerpilot_private.guard_exact_existing_update_permit_transition()'::regprocedure;
+  v_arm_signature constant regprocedure :=
+    'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)'::regprocedure;
+  v_proof_sha256 constant text :=
+    '0261afc163ecfa7025b5722836b87acf5c6f65058de9d2c4d34f06d43b3a0771';
+  v_available_sha256 constant text :=
+    '327202829188f619271744f99be91246d9be70fd382656b0a4892be4dc91b4bc';
+  v_transition_sha256 constant text :=
+    '7ef1164cda06fda7cbda1df47fd5772bc5702fb9c26ae870bb98bfb94004d236';
+  v_arm_sha256 constant text :=
+    '24682b20f45912cb2864cb880ba98179110088ec3be6ece49d52442c73129542';
   v_proof_definition text;
   v_available_definition text;
   v_arm_definition text;
@@ -586,7 +864,35 @@ begin
     'sellerpilot_private.guard_exact_existing_update_permit_transition()'::regprocedure
   ) into v_transition_definition;
 
-  if pg_catalog.strpos(v_proof_definition,
+  if (
+       select pg_catalog.encode(
+                extensions.digest(procedure.prosrc, 'sha256'), 'hex'
+              ) is distinct from v_proof_sha256
+         from pg_catalog.pg_proc procedure
+        where procedure.oid = v_proof_signature
+     )
+     or (
+       select pg_catalog.encode(
+                extensions.digest(procedure.prosrc, 'sha256'), 'hex'
+              ) is distinct from v_available_sha256
+         from pg_catalog.pg_proc procedure
+        where procedure.oid = v_available_signature
+     )
+     or (
+       select pg_catalog.encode(
+                extensions.digest(procedure.prosrc, 'sha256'), 'hex'
+              ) is distinct from v_transition_sha256
+         from pg_catalog.pg_proc procedure
+        where procedure.oid = v_transition_signature
+     )
+     or (
+       select pg_catalog.encode(
+                extensions.digest(procedure.prosrc, 'sha256'), 'hex'
+              ) is distinct from v_arm_sha256
+         from pg_catalog.pg_proc procedure
+        where procedure.oid = v_arm_signature
+     )
+     or pg_catalog.strpos(v_proof_definition,
        'f78397ec-c387-48ec-b562-64e754d90ac5') = 0
      or pg_catalog.strpos(v_proof_definition,
           'BEEF134012FD') = 0
@@ -600,20 +906,96 @@ begin
           'f78397ec-c387-48ec-b562-64e754d90ac5') = 0
      or pg_catalog.strpos(v_transition_definition,
           '''release_sha''') = 0
+     or (
+       pg_catalog.length(v_arm_definition)
+       - pg_catalog.length(pg_catalog.replace(
+           v_arm_definition,
+           'v_now timestamptz := statement_timestamp()',
+           ''
+         ))
+     ) / pg_catalog.length(
+       'v_now timestamptz := statement_timestamp()'
+     ) <> 1
+     or exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_proof_signature
+          and not (
+            procedure.prosecdef
+            and procedure.provolatile = 's'
+            and procedure.prokind = 'f'
+            and procedure.proconfig = array['search_path=""']::text[]
+            and language.lanname = 'sql'
+          )
+     )
+     or exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_available_signature
+          and not (
+            procedure.prosecdef
+            and procedure.provolatile = 's'
+            and procedure.prokind = 'f'
+            and procedure.proconfig = array['search_path=""']::text[]
+            and language.lanname = 'sql'
+          )
+     )
+     or exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_transition_signature
+          and not (
+            procedure.prosecdef
+            and procedure.provolatile = 'v'
+            and procedure.prokind = 'f'
+            and procedure.proconfig = array['search_path=""']::text[]
+            and language.lanname = 'plpgsql'
+          )
+     )
+     or exists (
+       select 1
+         from pg_catalog.pg_proc procedure
+         join pg_catalog.pg_language language
+           on language.oid = procedure.prolang
+        where procedure.oid = v_arm_signature
+          and not (
+            procedure.prosecdef
+            and procedure.provolatile = 'v'
+            and procedure.prokind = 'f'
+            and procedure.proconfig = array['search_path=""']::text[]
+            and language.lanname = 'plpgsql'
+          )
+     )
+     or exists (
+       select 1
+         from (values
+           (v_proof_signature),
+           (v_available_signature),
+           (v_transition_signature)
+         ) private_function(signature)
+        cross join (values
+          ('service_role'::name),
+          ('authenticated'::name),
+          ('anon'::name)
+        ) api_role(role_name)
+        where pg_catalog.has_function_privilege(
+          api_role.role_name, private_function.signature, 'EXECUTE'
+        )
+     )
      or pg_catalog.has_function_privilege(
-          'service_role',
-          'sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid)',
-          'EXECUTE'
+          'authenticated', v_arm_signature, 'EXECUTE'
         )
      or pg_catalog.has_function_privilege(
-          'authenticated',
-          'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)',
-          'EXECUTE'
+          'anon', v_arm_signature, 'EXECUTE'
         )
      or not pg_catalog.has_function_privilege(
-          'service_role',
-          'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)',
-          'EXECUTE'
+          'service_role', v_arm_signature, 'EXECUTE'
         )
   then
     raise exception 'eBay exact v101 credential rotation postimage invalid'

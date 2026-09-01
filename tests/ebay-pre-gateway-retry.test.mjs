@@ -15,8 +15,8 @@ const v101CredentialRotationMigrationUrl = new URL(
   "../supabase/migrations/20260901173700_recover_ebay_exact_v101_credential_rotation.sql",
   import.meta.url,
 );
-const closedGateMigrationUrl = new URL(
-  "../supabase/migrations/20260901080000_allow_exact_existing_updates_through_closed_gate.sql",
+const ebayNoEffectMigrationUrl = new URL(
+  "../supabase/migrations/20260901165500_recover_ebay_deterministic_no_effect_retry.sql",
   import.meta.url,
 );
 
@@ -27,6 +27,7 @@ const ids = {
   historicalCredential: "9e7de791-e6e6-4255-8d61-5a1f9576d797",
   currentCredential: "75853087-d2a8-4f56-9c05-e66fcc65e372",
   v101Credential: "f78397ec-c387-48ec-b562-64e754d90ac5",
+  competingCredential: "6dc1b794-2417-4fc8-af3d-cb404214927d",
   sourceJob: "08e8cff9-5d7c-4992-b668-6d932aa5ff10",
   sourceAttempt: "22457f2e-51d8-43c5-bb03-d2c1bb7fe697",
   sourcePermit: "c2e9f199-f6a7-425f-8668-7eebd5b08bb4",
@@ -48,11 +49,22 @@ const sellerAccountKey =
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);
   assert.notEqual(start, -1, `${signature} must exist`);
-  const bodyStart = source.indexOf("as $$", start);
-  assert.notEqual(bodyStart, -1, `${signature} body must exist`);
-  const end = source.indexOf("$$;", bodyStart + 5);
+  const delimiters = ["$$", "$function$"];
+  const bodyCandidates = delimiters
+    .map((delimiter) => ({
+      delimiter,
+      offset: source.indexOf(`as ${delimiter}`, start),
+    }))
+    .filter(({ offset }) => offset >= 0)
+    .sort((left, right) => left.offset - right.offset);
+  assert.notEqual(bodyCandidates.length, 0, `${signature} body must exist`);
+  const { delimiter, offset: bodyStart } = bodyCandidates[0];
+  const end = source.indexOf(
+    `${delimiter};`,
+    bodyStart + `as ${delimiter}`.length,
+  );
   assert.notEqual(end, -1, `${signature} end must exist`);
-  return source.slice(start, end + 3);
+  return source.slice(start, end + delimiter.length + 1);
 }
 
 function extractTaggedDo(source, tag) {
@@ -147,6 +159,29 @@ test("v101 rotation remains one exact unbound permit transition with no provider
   assert.match(migration, /release_sha = p_release_sha/u);
   assert.match(migration, /'providerMutationCount', 0/u);
   assert.match(migration, /'autoRetry', false/u);
+  for (const digest of [
+    "b5388d573e78fcfb4a752ca878ec005689c2cc14fcf2778e3dc464e8172dd40c",
+    "327202829188f619271744f99be91246d9be70fd382656b0a4892be4dc91b4bc",
+    "cd7cf419254b00848274a78eba3025821d9d98a1da7dc0b72a56aa5c9579536d",
+    "7ef1164cda06fda7cbda1df47fd5772bc5702fb9c26ae870bb98bfb94004d236",
+    "6d1e06f43ce762917cc936aea0bdbaf1acd157d22804f589e0b92241b771b833",
+    "24682b20f45912cb2864cb880ba98179110088ec3be6ece49d52442c73129542",
+    "0261afc163ecfa7025b5722836b87acf5c6f65058de9d2c4d34f06d43b3a0771",
+  ]) {
+    assert.match(migration, new RegExp(digest, "u"));
+  }
+  assert.match(
+    migration,
+    /v_now timestamptz := statement_timestamp\(\)/u,
+  );
+  assert.match(
+    migration,
+    /from public, anon, authenticated, service_role;\s*grant execute on function\s+public\.sellerpilot_service_arm_ebay_no_effect_retry/isu,
+  );
+  assert.match(
+    migration,
+    /not pg_catalog\.has_function_privilege\(\s*'service_role', v_arm_signature, 'EXECUTE'/u,
+  );
   assert.doesNotMatch(migration, /delete\s+from/iu);
   assert.doesNotMatch(
     migration,
@@ -165,7 +200,10 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
     v101CredentialRotationMigrationUrl,
     "utf8",
   );
-  const closedGateMigration = await readFile(closedGateMigrationUrl, "utf8");
+  const ebayNoEffectMigration = await readFile(
+    ebayNoEffectMigrationUrl,
+    "utf8",
+  );
   const proof = extractFunction(
     migration,
     "create function\n  sellerpilot_private.ebay_exact_pre_gateway_failure_is_proved(",
@@ -214,25 +252,9 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
     rotationMigration,
     "patch_ebay_retry_arm_credential_rotation",
   );
-  const v101Proof = extractFunction(
-    v101RotationMigration,
-    "create function sellerpilot_private.ebay_exact_v101_rotation_is_proved(",
-  );
-  const v101Availability = extractTaggedDo(
-    v101RotationMigration,
-    "patch_ebay_v101_retry_availability",
-  );
-  const v101PermitTransition = extractTaggedDo(
-    v101RotationMigration,
-    "patch_ebay_v101_permit_transition",
-  );
-  const v101Arm = extractTaggedDo(
-    v101RotationMigration,
-    "patch_ebay_retry_arm_v101_rotation",
-  );
-  const basePermitGuard = extractFunction(
-    closedGateMigration,
-    "create function sellerpilot_private.guard_exact_existing_update_permit_transition()",
+  const exactPermitGuard = extractFunction(
+    ebayNoEffectMigration,
+    "create or replace function\n  sellerpilot_private.guard_exact_existing_update_permit_transition()",
   );
   const db = new PGlite();
   try {
@@ -315,7 +337,11 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
 
       create function extensions.digest(p_value text, p_algorithm text)
       returns bytea language sql immutable as $$
-        select decode(repeat('a', 64), 'hex')
+        select case
+          when lower(p_algorithm) = 'sha256'
+          then sha256(convert_to(p_value, 'UTF8'))
+          else convert_to(md5(p_value || p_algorithm), 'UTF8')
+        end
       $$;
       create function sellerpilot_private.active_serverless_runtime_release_sha()
       returns text language sql stable as $$ select '${releaseSha}'::text $$;
@@ -596,7 +622,12 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
         null, null, null, '${releaseSha}', '${retryFingerprint}',
         '2026-09-01 08:58:00+00', '2026-09-01 09:03:00+00',
         '${ids.sourceJob}', '${ids.sourceAttempt}', '${ids.sourcePermit}',
-        repeat('a', 64)
+        encode(extensions.digest(
+          (select response_payload::text
+             from sellerpilot_private.channel_gateway_jobs
+            where id = '${ids.sourceJob}'),
+          'sha256'
+        ), 'hex')
       );
       insert into sellerpilot_private.marketplace_normalized_assets
         (object_path, status, uploaded_at)
@@ -626,7 +657,7 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
         on sellerpilot_private.exact_existing_update_permits;
       drop function sellerpilot_private.guard_exact_existing_update_permit_transition();
     `);
-    await db.exec(basePermitGuard);
+    await db.exec(exactPermitGuard);
     await db.exec(`
       create trigger guard_exact_existing_update_permit_transition
       before update or delete
@@ -640,11 +671,118 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
     await db.exec(rotatedAvailability);
     await db.exec(rotatedPermitTransition);
     await db.exec(rotatedArm);
-    await db.exec(v101Proof);
-    await db.exec(v101Availability);
-    await db.exec(v101PermitTransition);
-    await db.exec(v101Arm);
+
+    const preV101AvailabilityDefinition = (await db.query(`
+      select pg_catalog.pg_get_functiondef(
+        'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)'::regprocedure
+      ) definition
+    `)).rows[0].definition;
+    assert.match(preV101AvailabilityDefinition, /select coalesce\(/u);
+    await db.exec(preV101AvailabilityDefinition.replace(
+      "select coalesce(",
+      "select coalesce(/* unrelated drift */",
+    ));
+    await assert.rejects(
+      db.exec(v101RotationMigration),
+      /eBay v101 retry availability preimage mismatch/u,
+    );
+    await db.exec("rollback");
+    await db.exec(preV101AvailabilityDefinition);
+
+    await db.exec(v101RotationMigration);
     await db.exec("set request.jwt.claim.role = 'service_role'");
+
+    const functionPostimages = (await db.query(`
+      select procedure.oid::regprocedure::text signature,
+             pg_catalog.encode(
+               extensions.digest(procedure.prosrc, 'sha256'), 'hex'
+             ) digest,
+             owner.rolname owner,
+             procedure.prosecdef security_definer,
+             procedure.provolatile volatility,
+             procedure.prokind kind,
+             procedure.proconfig config,
+             language.lanname language
+        from pg_catalog.pg_proc procedure
+        join pg_catalog.pg_roles owner on owner.oid = procedure.proowner
+        join pg_catalog.pg_language language on language.oid = procedure.prolang
+       where procedure.oid in (
+         'sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid)'::regprocedure,
+         'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)'::regprocedure,
+         'sellerpilot_private.guard_exact_existing_update_permit_transition()'::regprocedure,
+         'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)'::regprocedure
+       )
+       order by signature
+    `)).rows;
+    assert.deepEqual(
+      Object.fromEntries(functionPostimages.map((row) => [row.signature, row.digest])),
+      {
+        "sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)":
+          "327202829188f619271744f99be91246d9be70fd382656b0a4892be4dc91b4bc",
+        "sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid)":
+          "0261afc163ecfa7025b5722836b87acf5c6f65058de9d2c4d34f06d43b3a0771",
+        "sellerpilot_private.guard_exact_existing_update_permit_transition()":
+          "7ef1164cda06fda7cbda1df47fd5772bc5702fb9c26ae870bb98bfb94004d236",
+        "sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)":
+          "24682b20f45912cb2864cb880ba98179110088ec3be6ece49d52442c73129542",
+      },
+    );
+    assert.equal(new Set(functionPostimages.map((row) => row.owner)).size, 1);
+    for (const row of functionPostimages) {
+      assert.equal(row.security_definer, true);
+      assert.equal(row.kind, "f");
+      assert.deepEqual(row.config, ["search_path=\"\""]);
+      if (row.signature.includes("guard_exact_existing_update_permit_transition")
+          || row.signature.includes("sellerpilot_service_arm_ebay_no_effect_retry")) {
+        assert.equal(row.volatility, "v");
+        assert.equal(row.language, "plpgsql");
+      } else {
+        assert.equal(row.volatility, "s");
+        assert.equal(row.language, "sql");
+      }
+    }
+
+    const privileges = (await db.query(`
+      select
+        pg_catalog.has_function_privilege(
+          'service_role',
+          'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)',
+          'EXECUTE'
+        ) arm_service,
+        pg_catalog.has_function_privilege(
+          'authenticated',
+          'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)',
+          'EXECUTE'
+        ) arm_authenticated,
+        pg_catalog.has_function_privilege(
+          'anon',
+          'public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)',
+          'EXECUTE'
+        ) arm_anon,
+        pg_catalog.has_function_privilege(
+          'service_role',
+          'sellerpilot_private.ebay_exact_v101_rotation_is_proved(uuid)',
+          'EXECUTE'
+        ) proof_service,
+        pg_catalog.has_function_privilege(
+          'authenticated',
+          'sellerpilot_private.ebay_exact_no_effect_retry_available(uuid)',
+          'EXECUTE'
+        ) availability_authenticated,
+        pg_catalog.has_function_privilege(
+          'anon',
+          'sellerpilot_private.guard_exact_existing_update_permit_transition()',
+          'EXECUTE'
+        ) guard_anon
+    `)).rows[0];
+    assert.deepEqual(privileges, {
+      arm_service: true,
+      arm_authenticated: false,
+      arm_anon: false,
+      proof_service: false,
+      availability_authenticated: false,
+      guard_anon: false,
+    });
 
     await db.exec("begin");
     const armed = (await db.query(
@@ -694,12 +832,103 @@ test("PGlite preserves v100 and rotates only the same expired permit to sole act
       $$;
     `);
 
-    const v101Armed = (await db.query(
+    const armRetry = async (
+      credentialId,
+      suppliedReleaseSha,
+      suppliedFingerprint,
+    ) => (await db.query(
       `select public.sellerpilot_service_arm_ebay_no_effect_retry(
          'ebay', $1, $2, $3, $4
        ) value`,
-      [ids.listing, ids.v101Credential, v101ReleaseSha, retryFingerprint],
+      [
+        ids.listing,
+        credentialId,
+        suppliedReleaseSha,
+        suppliedFingerprint,
+      ],
     )).rows[0].value;
+
+    await assert.rejects(
+      armRetry(
+        ids.currentCredential,
+        v101ReleaseSha,
+        retryFingerprint,
+      ),
+      /eBay deterministic no-effect retry identity invalid/u,
+    );
+    await assert.rejects(
+      armRetry(
+        ids.v101Credential,
+        "0000000000000000000000000000000000000000",
+        retryFingerprint,
+      ),
+      /eBay deterministic no-effect retry identity invalid/u,
+    );
+    await assert.rejects(
+      armRetry(
+        ids.v101Credential,
+        v101ReleaseSha,
+        "0000000000000000000000000000000000000000000000000000000000000000",
+      ),
+      /eBay deterministic no-effect retry (?:identity invalid|already consumed)/u,
+    );
+
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set fingerprint = 'BADF101BADF1'
+       where id = '${ids.v101Credential}'
+    `);
+    await assert.rejects(
+      armRetry(ids.v101Credential, v101ReleaseSha, retryFingerprint),
+      /eBay deterministic no-effect retry identity invalid/u,
+    );
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set fingerprint = 'BEEF134012FD'
+       where id = '${ids.v101Credential}'
+    `);
+
+    await db.exec(`
+      insert into sellerpilot_private.channel_credentials values (
+        '${ids.competingCredential}', 'ebay', '${sellerAccountKey}', 102,
+        'C0FFEE102ABC', 'provider_certified_v1',
+        clock_timestamp() - interval '10 minutes',
+        clock_timestamp() + interval '1 year',
+        clock_timestamp() - interval '1 minute', 'passed',
+        'production', 'active'
+      )
+    `);
+    await assert.rejects(
+      armRetry(ids.v101Credential, v101ReleaseSha, retryFingerprint),
+      /eBay deterministic no-effect retry identity invalid/u,
+    );
+    await db.exec(`
+      delete from sellerpilot_private.channel_credentials
+       where id = '${ids.competingCredential}'
+    `);
+
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, credential_version,
+                credential_fingerprint, release_sha, update_job_id
+           from sellerpilot_private.exact_existing_update_permits
+          where permit_id = $1`,
+        [ids.retryPermit],
+      )).rows[0],
+      {
+        credential_id: ids.historicalCredential,
+        credential_version: 99,
+        credential_fingerprint: "B99B99B99B99",
+        release_sha: releaseSha,
+        update_job_id: null,
+      },
+    );
+
+    const v101Armed = await armRetry(
+      ids.v101Credential,
+      v101ReleaseSha,
+      retryFingerprint,
+    );
     assert.equal(v101Armed.rearmed, true);
     assert.equal(v101Armed.reused, true);
     assert.equal(v101Armed.permitId, ids.retryPermit);
