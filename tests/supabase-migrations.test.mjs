@@ -111,6 +111,8 @@ const EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION =
   "20260901081500_backfill_exact_domestic_market_targets.sql";
 const EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION =
   "20260901082000_bind_ebay_exact_update_to_current_active_credential.sql";
+const COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION =
+  "20260901082500_reconcile_coupang_exact_pre_gateway_failure.sql";
 const QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION =
   "20260901083000_reconcile_exact_qoo10_uncertain_no_remote_effect.sql";
 const QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION =
@@ -806,6 +808,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION,
       EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION,
       EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION,
+      COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION,
       QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION,
       QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
     ]);
@@ -940,8 +943,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.ok(
       migrationNames.indexOf(EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION)
+        < migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION),
+      "Coupang proved pre-gateway reconciliation must replay after the current eBay credential fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
         < migrationNames.indexOf(QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION),
-      "Qoo10 no-effect reconciliation must replay after every existing exact-item fence",
+      "Qoo10 no-effect reconciliation must replay after the Coupang pre-gateway reconciliation",
     );
     assert.ok(
       migrationNames.indexOf(QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION)
@@ -13725,6 +13733,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION
         || name === QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION
         || name === EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION
+        || name === COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION
         || name === QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
         || name === QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
