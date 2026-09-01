@@ -210,7 +210,7 @@ end;
        seller_account_key,last_error
      ) values (
        $1,$2,$3,'elevenst','9573255804','KR','KR',
-       'QA-20260823-CC-001','KRW',5000,'failed','external_action',
+       null,'KRW',5000,'failed','external_action',
        'live','unknown',null,'{}'::jsonb,null,null,$4,$5,
        '기존 원격 상태 확인 필요'
      )`,
@@ -339,6 +339,7 @@ test("exact browser-verified tuple becomes published with a private receipt and 
     const listingsBefore = Number((await db.query(
       "select count(*) as count from sellerpilot_private.product_listings",
     )).rows[0].count);
+    assert.equal((await exactListing(db)).marketplace_sku, null);
 
     await db.exec(migration);
 
@@ -417,6 +418,17 @@ test("exact browser-verified tuple becomes published with a private receipt and 
     assert.equal(audit.sellerPilotGatewayJobCreated, false);
     assert.equal(audit.sourceAttemptRewritten, false);
     assert.equal(audit.newListingCreated, false);
+    assert.equal(audit.marketplaceSkuPreimage, null);
+    assert.equal(audit.marketplaceSkuBound, "QA-20260823-CC-001");
+    assert.equal(audit.marketplaceSkuBoundByMigration, true);
+    assert.equal(
+      audit.marketplaceSkuBindingSource,
+      "source_attempt_job_snapshot_seller_prd_cd_v1",
+    );
+    assert.equal((await db.query(
+      "select marketplace_sku from sellerpilot_private.product_listings where id=$1",
+      [IDS.unrelatedListing],
+    )).rows[0].marketplace_sku, null);
   } finally {
     await db.close();
   }
@@ -449,6 +461,38 @@ test("fresh replay creates only private schema and near-miss or active-job tuple
       const listing = await exactListing(db);
       assert.equal(listing.status, "failed");
       assert.equal(listing.remote_visibility, "unknown");
+      assert.equal(Number((await db.query(
+        `select count(*) as count
+           from pg_catalog.pg_tables
+          where schemaname='sellerpilot_private'
+            and tablename='elevenst_manual_live_reconciliations'`,
+      )).rows[0].count), 0);
+    } finally {
+      await db.close();
+    }
+  }
+
+  for (const marketplaceSku of [
+    "QA-20260823-CC-001",
+    "QA-20260823-CC-002",
+  ]) {
+    const db = await database();
+    try {
+      await db.query(
+        `update sellerpilot_private.product_listings
+            set marketplace_sku=$2
+          where id=$1`,
+        [IDS.listing, marketplaceSku],
+      );
+      await assert.rejects(
+        db.exec(migration),
+        /exact 11st manual live tuple does not match/u,
+        `pre-populated marketplace SKU ${marketplaceSku}`,
+      );
+      await db.exec("rollback");
+      const listing = await exactListing(db);
+      assert.equal(listing.status, "failed");
+      assert.equal(listing.marketplace_sku, marketplaceSku);
       assert.equal(Number((await db.query(
         `select count(*) as count
            from pg_catalog.pg_tables

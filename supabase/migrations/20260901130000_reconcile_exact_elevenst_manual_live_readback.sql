@@ -2,6 +2,9 @@
 -- state in the CHANGHEE Seller Office session and on the public product page.
 -- The migration performs no provider request, creates no gateway job or
 -- operation attempt, and never creates a second marketplace product.
+-- The one exact preimage has no marketplace_sku even though its immutable
+-- source attempt/job/snapshot all attest sellerPrdCd. Bind that receipt-backed
+-- SKU only inside the same exact reconciliation transaction.
 
 begin;
 
@@ -218,7 +221,7 @@ begin
      and p_old->>'product_id' = v_receipt.product_id::text
      and p_old->>'owner_id' = v_receipt.owner_id::text
      and p_old->>'remote_id' = v_receipt.remote_id
-     and p_old->>'marketplace_sku' = v_receipt.seller_sku
+     and p_old->'marketplace_sku' = 'null'::jsonb
      and p_old->>'operation_attempt_id' = v_receipt.source_attempt_id::text
      and p_old->>'seller_account_key' = v_receipt.seller_account_key
      and p_old->>'market' = 'KR'
@@ -234,6 +237,7 @@ begin
      and p_old->'published_at' = 'null'::jsonb
      and p_old->'last_verified_at' = 'null'::jsonb
      and p_new = p_old || jsonb_build_object(
+       'marketplace_sku', v_receipt.seller_sku,
        'status', 'published',
        'remote_visibility', 'live',
        'provider_status', v_receipt.provider_status,
@@ -444,6 +448,7 @@ begin
     if v_listing.status = 'published'
        and v_listing.remote_visibility = 'live'
        and v_listing.provider_status = '103'
+       and v_listing.marketplace_sku = v_existing_receipt.seller_sku
        and v_listing.remote_resources = v_resources
        and v_listing.published_at = v_existing_receipt.recorded_at
        and v_listing.last_verified_at = v_existing_receipt.recorded_at
@@ -461,7 +466,7 @@ begin
      or v_listing.remote_id <> '9573255804'
      or v_listing.market <> 'KR'
      or v_listing.target_id <> 'KR'
-     or v_listing.marketplace_sku <> 'QA-20260823-CC-001'
+     or v_listing.marketplace_sku is not null
      or v_listing.currency <> 'KRW'
      or v_listing.price <> 5000
      or v_listing.status <> 'failed'
@@ -574,7 +579,8 @@ begin
     'elevenst_seller_office_changhee_browser_verified_v1',
     date '2026-09-01', 'Asia/Seoul', null, false
   )
-  returning recorded_at into v_recorded_at;
+  returning * into v_existing_receipt;
+  v_recorded_at := v_existing_receipt.recorded_at;
 
   v_resources := sellerpilot_private.elevenst_manual_live_resources(
     v_listing.id
@@ -591,7 +597,8 @@ begin
     true
   );
   update sellerpilot_private.product_listings listing
-     set status = 'published',
+     set marketplace_sku = v_existing_receipt.seller_sku,
+         status = 'published',
          remote_visibility = 'live',
          provider_status = '103',
          remote_resources = v_resources,
@@ -602,6 +609,7 @@ begin
          updated_at = v_recorded_at
    where listing.id = v_listing.id
      and listing.operation_attempt_id = v_attempt.id
+     and listing.marketplace_sku is null
      and listing.status = 'failed'
      and listing.remote_visibility = 'unknown';
   if not found then
@@ -640,7 +648,12 @@ begin
       'sourceJobId', v_source_job.id,
       'credentialId', v_credential.id,
       'remoteId', '9573255804',
-      'sellerSku', 'QA-20260823-CC-001',
+      'sellerSku', v_existing_receipt.seller_sku,
+      'marketplaceSkuPreimage', null,
+      'marketplaceSkuBound', v_existing_receipt.seller_sku,
+      'marketplaceSkuBoundByMigration', true,
+      'marketplaceSkuBindingSource',
+        'source_attempt_job_snapshot_seller_prd_cd_v1',
       'locale', 'ko-KR',
       'title', '부착형 케이블 정리 클립 6개 세트',
       'priceKrw', 5000,
