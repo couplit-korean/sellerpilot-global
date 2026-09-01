@@ -285,7 +285,7 @@ async function createDatabase({ withExactRows = true, withGuards = true } = {}) 
      ) values
        ($1,$2,$3,'coupang','16356981734','','',null,'KRW',5000,$4,$5,
         'failed','external_action','live','unknown',null,null),
-       ($6,$2,$3,'elevenst','9573255804','','','QA-20260823-CC-001',
+       ($6,$2,$3,'elevenst','9573255804','','',null,
         'KRW',5000,$7,$8,
         'failed','external_action','live','unknown',null,null),
        ($9,$2,$3,'coupang','unrelated-remote','ZZ','OTHER',null,'KRW',
@@ -401,6 +401,11 @@ test("exact domestic market-target backfill is tuple-scoped and does not loosen 
   );
   assert.match(migration, /market = '' and v_coupang_listing\.target_id = ''/u);
   assert.match(migration, /market = 'KR' and v_coupang_listing\.target_id = 'KR'/u);
+  assert.match(
+    migration,
+    /v_elevenst_listing\.marketplace_sku is not null/u,
+    "the exact production 11st ledger keeps a NULL marketplace_sku",
+  );
   assert.doesNotMatch(
     migration,
     /(?:insert|update|delete)\s+(?:into\s+)?sellerpilot_private\.exact_existing_update_permits/iu,
@@ -578,6 +583,7 @@ const nearMisses = [
   ["half-filled target", `update sellerpilot_private.product_listings set market='',target_id='KR' where id='${coupangListingId}'`],
   ["foreign market", `update sellerpilot_private.product_listings set market='US',target_id='US' where id='${coupangListingId}'`],
   ["11st remote id", `update sellerpilot_private.product_listings set remote_id='9573255805' where id='${elevenstListingId}'`],
+  ["11st populated SKU", `update sellerpilot_private.product_listings set marketplace_sku='QA-20260823-CC-001' where id='${elevenstListingId}'`],
   ["11st SKU", `update sellerpilot_private.product_listings set marketplace_sku='QA-20260823-CC-002' where id='${elevenstListingId}'`],
   ["11st credential version", `update sellerpilot_private.channel_credentials set version=3 where id='${elevenstCredentialId}'`],
   ["11st credential lineage", `update sellerpilot_private.channel_credentials set seller_account_key='${"b".repeat(64)}' where id='${elevenstCredentialId}'`],

@@ -149,7 +149,7 @@ begin
            and listing.id =
                '363f3b81-f364-4f22-af4e-4920199904d0'::uuid
            and listing.remote_id = '9573255804'
-           and listing.marketplace_sku = 'QA-20260823-CC-001'
+           and listing.marketplace_sku is null
            and credential.created_by = listing.owner_id
            and credential.version = 2
            and credential.fingerprint ~ '^[A-F0-9]{12}$'
@@ -422,11 +422,7 @@ begin
      or v_elevenst_listing.remote_visibility is distinct from 'unknown'
      or v_elevenst_listing.provider_status is not null
      or v_elevenst_listing.published_at is not null
-     or (
-       v_elevenst_listing.marketplace_sku is not null
-       and v_elevenst_listing.marketplace_sku is distinct from
-           'QA-20260823-CC-001'
-     )
+     or v_elevenst_listing.marketplace_sku is not null
      or v_elevenst_listing.seller_account_key is null
      or v_elevenst_listing.seller_account_key !~ '^[a-f0-9]{64}$'
      or not (
@@ -652,6 +648,7 @@ begin
      and listing.product_id = v_product_id
      and listing.channel_key = 'elevenst'
      and listing.remote_id = '9573255804'
+     and listing.marketplace_sku is null
      and listing.currency = 'KRW'
      and listing.price = 5000
      and listing.seller_account_key = v_elevenst_credential.seller_account_key
