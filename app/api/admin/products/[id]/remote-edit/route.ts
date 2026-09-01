@@ -27,7 +27,11 @@ import {
 import { elevenstExactExistingPublicationCandidate } from "../../../../../../lib/channels/elevenst-exact-existing-publication";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
-import { lazadaExactExistingPublicationCandidate } from "../../../../../../lib/channels/lazada-exact-existing-identity";
+import {
+  lazadaExactExistingPublicationCandidate,
+  lazadaExactExistingPublicationIdentity,
+} from "../../../../../../lib/channels/lazada-exact-existing-identity";
+import { lazadaExactRemoteEditReadinessBlock } from "../../../../../../lib/channels/lazada-exact-remote-edit-readiness";
 import {
   smartstoreExactQaReadinessBlock,
   smartstoreExactQaRecoveryCandidate,
@@ -286,6 +290,61 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const loaded = await productContext(request, productId.data);
   if ("response" in loaded) return loaded.response;
   const listings = listingRecords(loaded.context.listings);
+  const credentialId = new URL(request.url).searchParams.get("credentialId");
+  const exactLazadaListing = listings.find((listing) => (
+    productId.data === lazadaExactExistingPublicationIdentity.productId
+      && lazadaExactExistingPublicationCandidate({
+        channel: listing.channel,
+        listingId: listing.id,
+        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+        status: typeof listing.status === "string" ? listing.status : null,
+        requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+          ? listing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof listing.remoteVisibility === "string"
+          ? listing.remoteVisibility
+          : null,
+        providerStatus: typeof listing.providerStatus === "string"
+          ? listing.providerStatus
+          : null,
+        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+        failureClass: typeof listing.failureClass === "string" ? listing.failureClass : null,
+      })
+  ));
+  let exactLazadaReadinessBlock: ListingAvailabilityBlock | null = null;
+  if (exactLazadaListing) {
+    const { data: preparationData, error: preparationError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_prepare_exact_lazada_live_adoption",
+      { p_listing_id: exactLazadaListing.id },
+    );
+    const preparation = recordValue(preparationData);
+    const targetId = typeof exactLazadaListing.targetId === "string"
+      ? exactLazadaListing.targetId.trim()
+      : "";
+    const mayReadProviderIdentity = preparation.status === "already_bound"
+      && productIdSchema.safeParse(credentialId).success
+      && /^\d+$/u.test(targetId);
+    const providerIdentityResult = mayReadProviderIdentity
+      ? await loaded.admin.serviceClient.rpc(
+          "sellerpilot_service_get_lazada_exact_update_id",
+          {
+            p_listing_id: exactLazadaListing.id,
+            p_credential_id: credentialId,
+            p_product_id: productId.data,
+            p_market: lazadaExactExistingPublicationIdentity.market,
+            p_target_id: targetId,
+          },
+        )
+      : { data: null, error: null };
+    exactLazadaReadinessBlock = lazadaExactRemoteEditReadinessBlock({
+      credentialId,
+      targetId,
+      preparationData,
+      preparationError: Boolean(preparationError),
+      providerIdentityData: providerIdentityResult.data,
+      providerIdentityError: Boolean(providerIdentityResult.error),
+    });
+  }
   const exactSmartstoreListing = listings.find((listing) => (
     productId.data === smartstoreExactQaRecoveryIdentity.productId
       && smartstoreExactQaRecoveryCandidate({
@@ -308,7 +367,6 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   ));
   let exactSmartstoreReadinessBlock: ListingAvailabilityBlock | null = null;
   if (exactSmartstoreListing) {
-    const credentialId = new URL(request.url).searchParams.get("credentialId");
     if (credentialId !== smartstoreExactQaRecoveryIdentity.credentialId) {
       exactSmartstoreReadinessBlock = smartstoreExactQaReadinessBlock({ credentialId });
     } else {
@@ -350,7 +408,11 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       listingAvailability(
         listing,
         productId.data,
-        listing.id === exactSmartstoreListing?.id ? exactSmartstoreReadinessBlock : null,
+        listing.id === exactSmartstoreListing?.id
+          ? exactSmartstoreReadinessBlock
+          : listing.id === exactLazadaListing?.id
+            ? exactLazadaReadinessBlock
+            : null,
       )
     )),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
