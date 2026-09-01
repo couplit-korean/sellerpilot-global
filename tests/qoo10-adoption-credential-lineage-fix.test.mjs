@@ -50,6 +50,22 @@ test("Qoo10 adoption credential follows the exact release actor, not seller owne
   );
   assert.match(
     lineageFixMigration,
+    /9f158f36c2c3c1348229ae2c7cc38fdb9f8552df2d702fdeba234438b32bc946[\s\S]*ee52ff84cb0346b38a4c6d5de690f42e7cf8933c4cfa214111359512b0352fa6/u,
+  );
+  assert.match(
+    lineageFixMigration,
+    /extensions\.digest\(v_prosrc, 'sha256'\)[\s\S]*v_preimage_prosrc_sha256[\s\S]*v_postimage_prosrc_sha256/u,
+  );
+  assert.match(
+    lineageFixMigration,
+    /revoke all on function[\s\S]*from public, anon, authenticated, service_role;[\s\S]*grant execute on function[\s\S]*to service_role;/u,
+  );
+  assert.match(
+    lineageFixMigration,
+    /has_function_privilege\([\s\S]*'service_role'[\s\S]*has_function_privilege\([\s\S]*'authenticated'[\s\S]*has_function_privilege\([\s\S]*'anon'/u,
+  );
+  assert.match(
+    lineageFixMigration,
     /without a provider call/u,
   );
 });

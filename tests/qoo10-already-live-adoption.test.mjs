@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901173400_adopt_exact_qoo10_already_live_readback.sql",
   import.meta.url,
 );
+const lineageFixMigrationUrl = new URL(
+  "../supabase/migrations/20260901173600_align_exact_qoo10_adoption_credential_lineage.sql",
+  import.meta.url,
+);
 
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);
@@ -154,7 +158,10 @@ test("already-live adoption is a separate exact internal-only ledger path", asyn
 
 test("already-live RPC atomically adopts the exact tuple without creating a provider job", async () => {
   const db = new PGlite();
-  const migration = await readFile(migrationUrl, "utf8");
+  const [migration, lineageFixMigration] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(lineageFixMigrationUrl, "utf8"),
+  ]);
   const sourceJobId = "fac9c5c4-940d-4600-88f3-8f97a069dfbf";
   const sourceAttemptId = "4402cc76-295b-4e17-8c07-d5d0e9967ce9";
   const listingId = "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc";
@@ -171,6 +178,9 @@ test("already-live RPC atomically adopts the exact tuple without creating a prov
   };
   try {
     await db.exec(`
+      create role anon noinherit;
+      create role authenticated noinherit;
+      create role service_role noinherit;
       create schema auth;
       create schema extensions;
       create schema sellerpilot_private;
@@ -188,7 +198,7 @@ test("already-live RPC atomically adopts the exact tuple without creating a prov
             'b2c09c6388fa048f789a8a272bf21cd3d68cf8a8caa4fc02a4e1ca1be6a6b768',
             'hex'
           )
-          else decode(repeat('0',64),'hex')
+          else sha256(convert_to(value, 'UTF8'))
         end
       $$;
       create function sellerpilot_private.qoo10_exact_s1_release_is_current(
@@ -288,10 +298,68 @@ test("already-live RPC atomically adopts the exact tuple without creating a prov
       migration,
       "create function sellerpilot_private.qoo10_exact_already_live_resources(",
     ));
-    await db.exec(extractFunction(
+    const adoptionRpc = extractFunction(
       migration,
       "create function public.sellerpilot_service_adopt_exact_qoo10_already_live(",
-    ));
+    );
+    await db.exec(adoptionRpc);
+    await db.exec(`
+      revoke all on function
+        public.sellerpilot_service_adopt_exact_qoo10_already_live(uuid,text,jsonb)
+        from public, anon, authenticated, service_role;
+      grant execute on function
+        public.sellerpilot_service_adopt_exact_qoo10_already_live(uuid,text,jsonb)
+        to service_role;
+    `);
+
+    const replaceableAdoptionRpc = adoptionRpc.replace(
+      "create function",
+      "create or replace function",
+    );
+    const driftedRpc = replaceableAdoptionRpc.replace(
+      "exact Qoo10 already-live tuple drifted",
+      "exact Qoo10 already-live tuple unexpectedly drifted",
+    );
+    assert.notEqual(driftedRpc, replaceableAdoptionRpc);
+    await db.exec(driftedRpc);
+    await assert.rejects(
+      db.exec(lineageFixMigration),
+      /credential lineage pre-image mismatch/u,
+    );
+    await db.exec("rollback");
+    await db.exec(replaceableAdoptionRpc);
+    await db.exec(lineageFixMigration);
+
+    const lineagePostimage = await db.query(`
+      select
+        encode(extensions.digest(procedure.prosrc, 'sha256'), 'hex')
+          prosrc_sha256,
+        procedure.prosecdef security_definer,
+        procedure.provolatile volatility,
+        procedure.proconfig config,
+        has_function_privilege(
+          'service_role', procedure.oid, 'EXECUTE'
+        ) service_role_execute,
+        has_function_privilege(
+          'authenticated', procedure.oid, 'EXECUTE'
+        ) authenticated_execute,
+        has_function_privilege(
+          'anon', procedure.oid, 'EXECUTE'
+        ) anon_execute
+      from pg_catalog.pg_proc procedure
+      where procedure.oid =
+        'public.sellerpilot_service_adopt_exact_qoo10_already_live(uuid,text,jsonb)'::regprocedure
+    `);
+    assert.deepEqual(lineagePostimage.rows[0], {
+      prosrc_sha256:
+        "ee52ff84cb0346b38a4c6d5de690f42e7cf8933c4cfa214111359512b0352fa6",
+      security_definer: true,
+      volatility: "v",
+      config: ['search_path=""'],
+      service_role_execute: true,
+      authenticated_execute: false,
+      anon_execute: false,
+    });
     await db.exec(`
       insert into sellerpilot_private.products values(
         '${productId}','${ownerId}','QA-20260823-CC-001',1,false,'active'
@@ -354,6 +422,18 @@ test("already-live RPC atomically adopts the exact tuple without creating a prov
         (select count(*)::integer
            from sellerpilot_private.channel_operation_attempts) attempt_count
     `);
+
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_adopt_exact_qoo10_already_live($1,$2,$3::jsonb)",
+        [sourceJobId, release, JSON.stringify(observation)],
+      ),
+      /already-live tuple drifted/u,
+    );
+    await db.query(
+      "update sellerpilot_private.channel_credentials set created_by=$2 where id=$1",
+      [credentialId, creatorId],
+    );
 
     const first = await db.query(
       "select public.sellerpilot_service_adopt_exact_qoo10_already_live($1,$2,$3::jsonb) value",
