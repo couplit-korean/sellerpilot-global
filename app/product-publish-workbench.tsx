@@ -187,7 +187,7 @@ function qoo10ExactLocalizationListingCandidate(
   channel: ActiveChannelKey,
   listing: Listing | null | undefined,
 ) {
-  return qoo10ExactLocalizationLedgerCandidate({
+  const unresolvedPartialEffect = qoo10ExactLocalizationLedgerCandidate({
     channel,
     productId,
     listingId: listing?.id,
@@ -199,6 +199,9 @@ function qoo10ExactLocalizationListingCandidate(
     requestedPublicationIntent: listing?.requestedPublicationIntent,
     remoteVisibility: listing?.remoteVisibility,
   });
+  return Boolean(unresolvedPartialEffect
+    && listing?.failureClass !== "external_action"
+    && listing?.remoteVisibility !== "unknown");
 }
 
 function qoo10ExactLocalizationWriteCandidate(
@@ -207,7 +210,7 @@ function qoo10ExactLocalizationWriteCandidate(
   channel: ActiveChannelKey,
   listing: Listing | null | undefined,
 ) {
-  return qoo10ExactLocalizationRequestCandidate({
+  const unresolvedPartialEffect = qoo10ExactLocalizationRequestCandidate({
     credentialId,
     channel,
     productId,
@@ -220,6 +223,9 @@ function qoo10ExactLocalizationWriteCandidate(
     requestedPublicationIntent: listing?.requestedPublicationIntent,
     remoteVisibility: listing?.remoteVisibility,
   });
+  return Boolean(unresolvedPartialEffect
+    && listing?.failureClass !== "external_action"
+    && listing?.remoteVisibility !== "unknown");
 }
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };

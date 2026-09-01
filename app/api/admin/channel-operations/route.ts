@@ -38,7 +38,6 @@ import {
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
   bindQoo10ExactLocalizationUpdateArguments,
-  qoo10ExactLocalizationCentralSkuVerified,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationRequestCandidate,
   qoo10ExactLocalizationUpdateArgument,
@@ -917,16 +916,10 @@ export async function POST(request: NextRequest) {
         listing: exactListing,
       });
     if (exactQoo10LocalizationTarget) {
-      const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
-      if (!qoo10ExactLocalizationCentralSkuVerified(contextRecord)
-          || boundListingCurrency !== exactIdentity.currency
-          || boundListingPrice !== exactIdentity.priceJpy) {
-        return NextResponse.json({
-          message: "Qoo10 exact 상품의 중앙 SKU·JPY 1,871 결속이 일치하지 않아 일본어 현지화 수정을 시작하지 않았습니다.",
-          mode: "qoo10_exact_localization_central_contract_required",
-        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-      }
-      boundQoo10ExactLocalizationUpdate = true;
+      return NextResponse.json({
+        message: "Qoo10 기존 작업의 원격 반영 여부가 아직 확정되지 않았습니다. 판매자센터 readback과 부분 반영 reconciliation을 완료하기 전에는 같은 상품 수정을 다시 전송하지 않습니다.",
+        mode: "qoo10_exact_partial_manual_reconciliation_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (operation === "listing.update"
         && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {

@@ -2,48 +2,28 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-test("workbench routes only the exact Qoo10 v2 tuple around the generic remote-edit proxy", () => {
+test("workbench does not expose the unresolved Qoo10 partial-effect tuple as writable", () => {
   const workbench = readFileSync(
     new URL("../app/product-publish-workbench.tsx", import.meta.url),
     "utf8",
   );
-  const exactCandidate = workbench.indexOf(
-    "const exactQoo10LocalizationUpdate = qoo10ExactLocalizationWriteCandidate(",
-  );
-  const externalActionFence = workbench.indexOf(
-    'listing?.failureClass === "external_action"',
-    exactCandidate,
-  );
-  const remoteEditFetch = workbench.indexOf(
-    "fetch(`/api/admin/products/${requestedProductId}/remote-edit`",
-    externalActionFence,
-  );
-  const channelOperationFetch = workbench.indexOf(
-    'fetch("/api/admin/channel-operations"',
-    remoteEditFetch,
-  );
-  assert.ok(exactCandidate >= 0);
-  assert.ok(externalActionFence > exactCandidate);
   assert.match(
-    workbench.slice(externalActionFence, remoteEditFetch),
-    /&& !exactQoo10LocalizationUpdate/u,
-  );
-  assert.match(
-    workbench.slice(remoteEditFetch - 120, channelOperationFetch),
-    /&& !exactQoo10LocalizationUpdate/u,
-  );
-  assert.ok(channelOperationFetch > remoteEditFetch);
-  assert.match(
-    workbench.slice(channelOperationFetch, channelOperationFetch + 1_500),
-    /resourceListingId: listing\.id/u,
+    workbench,
+    /const unresolvedPartialEffect = qoo10ExactLocalizationLedgerCandidate\(/u,
   );
   assert.match(
     workbench,
-    /qoo10ExactLocalizationProductId: productId/u,
+    /const unresolvedPartialEffect = qoo10ExactLocalizationRequestCandidate\(/u,
   );
+  assert.match(
+    workbench,
+    /return Boolean\(unresolvedPartialEffect[\s\S]{0,180}failureClass !== "external_action"[\s\S]{0,180}remoteVisibility !== "unknown"\)/u,
+  );
+  assert.doesNotMatch(workbench, /return qoo10ExactLocalizationLedgerCandidate\(/u);
+  assert.doesNotMatch(workbench, /return qoo10ExactLocalizationRequestCandidate\(/u);
 });
 
-test("channel operation rechecks the exact tuple and arms its permit before claim or provider handoff", () => {
+test("channel operation stops the unresolved Qoo10 tuple before permit or provider handoff", () => {
   const route = readFileSync(
     new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
     "utf8",
@@ -51,8 +31,8 @@ test("channel operation rechecks the exact tuple and arms its permit before clai
   const exactListingSelection = route.indexOf(
     "qoo10ExactLocalizationRequestCandidateFromLedger({",
   );
-  const centralContract = route.indexOf(
-    'mode: "qoo10_exact_localization_central_contract_required"',
+  const reconciliationFence = route.indexOf(
+    'mode: "qoo10_exact_partial_manual_reconciliation_required"',
   );
   const serverBinding = route.indexOf(
     "effectiveArguments = bindQoo10ExactLocalizationUpdateArguments(",
@@ -64,8 +44,8 @@ test("channel operation rechecks the exact tuple and arms its permit before clai
     'userClient.rpc("sellerpilot_claim_channel_operation"',
   );
   assert.ok(exactListingSelection >= 0);
-  assert.ok(centralContract > exactListingSelection);
-  assert.ok(serverBinding > centralContract);
+  assert.ok(reconciliationFence > exactListingSelection);
+  assert.ok(serverBinding > reconciliationFence);
   assert.ok(permitArm > serverBinding);
   assert.ok(claim > permitArm);
   assert.match(
