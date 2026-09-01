@@ -11,6 +11,10 @@ const representativeFilenameMigrationUrl = new URL(
   "../supabase/migrations/20260901070000_correct_smartstore_representative_filename.sql",
   import.meta.url,
 );
+const exactStockMigrationUrl = new URL(
+  "../supabase/migrations/20260901174000_require_exact_smartstore_stock_one.sql",
+  import.meta.url,
+);
 const listingId = "7babb554-48dc-4869-81b1-cd4d435d7b96";
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const credentialId = "2aa76829-3d63-4842-9c3e-622acd3d0d2f";
@@ -111,9 +115,10 @@ function exactArguments(representativeFilename = "thumbnail-square.png") {
 }
 
 test("Smartstore exact closed-gate permit is five-minute, one-use, and provider-bound", async () => {
-  const [migration, filenameMigration] = await Promise.all([
+  const [migration, filenameMigration, exactStockMigration] = await Promise.all([
     readFile(migrationUrl, "utf8"),
     readFile(representativeFilenameMigrationUrl, "utf8"),
+    readFile(exactStockMigrationUrl, "utf8"),
   ]);
   assert.match(migration, /expires_at <= armed_at \+ interval '5 minutes'/u);
   assert.match(migration, /create unique index smartstore_exact_qa_one_active_update_per_listing/u);
@@ -142,12 +147,27 @@ test("Smartstore exact closed-gate permit is five-minute, one-use, and provider-
     /update\s+sellerpilot_private\.listing_mutation_release_gate/iu,
     "the filename correction must not modify the generic release gate",
   );
+  assert.match(
+    exactStockMigration,
+    /v_origin->>''stockQuantity'' is not distinct from ''1''/u,
+  );
+  assert.match(
+    exactStockMigration,
+    /requires no active exact update job/u,
+  );
+  assert.match(exactStockMigration, /requires no active permit/u);
+  assert.doesNotMatch(
+    exactStockMigration,
+    /update\s+sellerpilot_private\.listing_mutation_release_gate/iu,
+    "the exact-stock correction must not modify the generic release gate",
+  );
 });
 
-test("Smartstore exact SQL payload fence accepts only Korean copy and one plus eight approved assets", async () => {
-  const [migration, filenameMigration] = await Promise.all([
+test("Smartstore exact SQL payload fence accepts only Korean copy, stock one, and one plus eight approved assets", async () => {
+  const [migration, filenameMigration, exactStockMigration] = await Promise.all([
     readFile(migrationUrl, "utf8"),
     readFile(representativeFilenameMigrationUrl, "utf8"),
+    readFile(exactStockMigrationUrl, "utf8"),
   ]);
   const db = new PGlite();
   try {
@@ -181,9 +201,35 @@ test("Smartstore exact SQL payload fence accepts only Korean copy and one plus e
     assert.equal(await allowed(valid), true, "the forward patch must allow the canonical asset");
     assert.equal(await allowed(legacy), false, "the legacy filename must remain closed");
 
+    const stockAboveExact = structuredClone(valid);
+    stockAboveExact.body.originProduct.stockQuantity = 2;
+    assert.equal(
+      await allowed(stockAboveExact),
+      true,
+      "the historical validator accepted any positive stock before the exact-stock patch",
+    );
+    await db.exec(`
+      create table sellerpilot_private.channel_gateway_jobs (
+        channel text not null,
+        operation text not null,
+        status text not null,
+        request_payload jsonb not null
+      );
+      create table sellerpilot_private.smartstore_exact_qa_update_permits (
+        listing_id uuid not null,
+        invalidated_at timestamptz,
+        consumed_at timestamptz,
+        expires_at timestamptz not null
+      );
+    `);
+    await db.exec(exactStockMigration);
+    assert.equal(await allowed(valid), true, "the exact one-unit stock must remain allowed");
+    assert.equal(await allowed(stockAboveExact), false, "stock above one must be rejected");
+
     const nearMisses = [
       (value) => { value.sellerpilotSmartstoreExactQaRecovery.listingId = crypto.randomUUID(); },
       (value) => { value.body.originProduct.name = "Cable organizer clips"; },
+      (value) => { value.body.originProduct.stockQuantity = 2; },
       (value) => { value.imageUrls.push(value.imageUrls[0]); },
       (value) => {
         value.sellerpilotPublicationAssetBinding.providerTransportImages.reverse();

@@ -179,6 +179,8 @@ const LAZADA_EXACT_EXISTING_UPDATE_MIGRATION =
   "20260901173980_allow_exact_lazada_my_live_update.sql";
 const COUPANG_EXACT_REPRESENTATIVE_MIGRATION =
   "20260901173990_bind_coupang_exact_representative.sql";
+const SMARTSTORE_EXACT_STOCK_ONE_MIGRATION =
+  "20260901174000_require_exact_smartstore_stock_one.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -906,6 +908,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SHOPEE_SG_EXACT_UPDATE_MIGRATION,
       LAZADA_EXACT_EXISTING_UPDATE_MIGRATION,
       COUPANG_EXACT_REPRESENTATIVE_MIGRATION,
+      SMARTSTORE_EXACT_STOCK_ONE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1106,6 +1109,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
         < migrationNames.indexOf(TEMU_EXACT_EXISTING_UPDATE_MIGRATION),
       "the exact Temu content update fence must replay after the adopted ACTIVE listing and final preceding channel migrations",
+    );
+    assert.ok(
+      migrationNames.indexOf(TEMU_EXACT_EXISTING_UPDATE_MIGRATION)
+        < migrationNames.indexOf(SMARTSTORE_EXACT_STOCK_ONE_MIGRATION),
+      "the exact Smartstore stock-one correction must replay after the current deployed Temu fence",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
@@ -1556,6 +1564,24 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
             authenticated_closed: true,
             service_closed: true,
           }],
+        );
+      }
+      if (name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION) {
+        const definition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure
+          )`,
+        );
+        assert.match(
+          definition,
+          /v_origin->>'stockQuantity' IS NOT DISTINCT FROM '1'/iu,
+          "the chronological replay must require exactly one Smartstore stock unit",
+        );
+        assert.doesNotMatch(
+          definition,
+          /coalesce\(v_origin->>'stockQuantity', ''\) ~ '\^\[1-9\]\[0-9\]\{0,7\}\$'/iu,
+          "the broad positive-stock predecessor must not survive",
         );
       }
       if (name === QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION) {
@@ -15573,6 +15599,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         && name !== SHOPEE_SG_EXACT_UPDATE_MIGRATION
+        && name !== SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17313,6 +17340,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         || name === SHOPEE_SG_EXACT_UPDATE_MIGRATION
+        || name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

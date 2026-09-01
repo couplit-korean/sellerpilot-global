@@ -244,6 +244,10 @@ test("Smartstore exact QA final gateway payload requires Korean copy and one plu
       const body = value.body as Record<string, Record<string, unknown>>;
       body.originProduct.name = "Cable organizer clips";
     }],
+    ["stock above the exact one-unit recovery", (value) => {
+      const body = value.body as Record<string, Record<string, unknown>>;
+      body.originProduct.stockQuantity = 2;
+    }],
     ["extra representative", (value) => {
       (value.imageUrls as string[]).push(normalizedAsset(30).publicUrl);
     }],

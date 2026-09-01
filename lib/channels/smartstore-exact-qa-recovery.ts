@@ -12,6 +12,7 @@ export const smartstoreExactQaRecoveryIdentity = Object.freeze({
   channelProductNo: "13732202182",
   centralSku: "QA-20260823-CC-001",
   priceKrw: 5_000,
+  stock: 1,
 });
 
 export type SmartstoreExactQaRecoveryBinding = {
@@ -118,8 +119,7 @@ export function smartstoreExactQaUpdateArgumentsValid(
       || sellerCodeInfo?.sellerManagementCode !== smartstoreExactQaRecoveryIdentity.centralSku
       || Number(originProduct?.salePrice) !== smartstoreExactQaRecoveryIdentity.priceKrw
       || !Number.isSafeInteger(Number(originProduct?.stockQuantity))
-      || Number(originProduct?.stockQuantity) < 1
-      || Number(originProduct?.stockQuantity) > 99_999_999
+      || Number(originProduct?.stockQuantity) !== smartstoreExactQaRecoveryIdentity.stock
       || title.length < 2 || title.length > 100 || !/[가-힣]/u.test(title)
       || channelTitle.length < 2 || channelTitle.length > 100
       || !/[가-힣]/u.test(channelTitle)
