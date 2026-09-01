@@ -1097,6 +1097,65 @@ export async function POST(request: NextRequest) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  const providerMutationStaticEgressChannel = writeChannelOperations.has(operation)
+    && (channel === "coupang" || channel === "elevenst")
+    ? channel
+    : null;
+  if (providerMutationStaticEgressChannel) {
+    const [staticEgressStatus, runtimeStatus] = await Promise.all([
+      serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+      serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+    ]);
+    const databasePolicy = staticEgressStatus.data
+      && typeof staticEgressStatus.data === "object"
+      && !Array.isArray(staticEgressStatus.data)
+      ? staticEgressStatus.data as Record<string, unknown>
+      : {};
+    const runtimeState = runtimeStatus.data
+      && typeof runtimeStatus.data === "object"
+      && !Array.isArray(runtimeStatus.data)
+      ? runtimeStatus.data as Record<string, unknown>
+      : {};
+    const environmentReady = hasServerlessStaticEgressFor(
+      configuredServerlessStaticEgressChannels(),
+      [providerMutationStaticEgressChannel],
+    );
+    const channelName = providerMutationStaticEgressChannel === "coupang"
+      ? "쿠팡"
+      : "11번가";
+    if (!environmentReady
+        || staticEgressStatus.error
+        || databasePolicy[providerMutationStaticEgressChannel] !== true) {
+      return NextResponse.json({
+        ok: false,
+        manualRequired: true,
+        externalActionRequired: true,
+        staticEgressReady: false,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        mode: "static_egress_required",
+        message: `${channelName}에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 외부 변경 작업을 다시 시도해 주세요.`,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
+    const activeRuntimeRelease = typeof runtimeState.activeRelease === "string"
+      ? runtimeState.activeRelease.trim().toLowerCase()
+      : "";
+    if (runtimeStatus.error
+        || runtimeState.configured !== true
+        || runtimeState.active !== true
+        || runtimeRelease.status !== "valid"
+        || activeRuntimeRelease !== runtimeRelease.release) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "SERVERLESS_WORKER_REQUIRED",
+        mode: "serverless_worker_required",
+        message: `${channelName} 외부 변경 작업자가 현재 배포 릴리스에서 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.`,
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
   if (channel === "smartstore") {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),

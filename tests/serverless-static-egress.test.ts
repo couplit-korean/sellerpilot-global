@@ -111,6 +111,47 @@ test("Smartstore replies and channel writes fail before enqueue without both run
   assert.match(operationRoute, /mode: "serverless_worker_required"/);
 });
 
+test("Coupang and 11st provider mutations fail before permit or queue creation without exact static egress runtime attestation", async () => {
+  const operationRoute = await readFile(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  const preflightStart = operationRoute.indexOf(
+    "const providerMutationStaticEgressChannel",
+  );
+  const preflightEnd = operationRoute.indexOf(
+    'if (channel === "smartstore")',
+    preflightStart,
+  );
+  const preflight = operationRoute.slice(preflightStart, preflightEnd);
+  const permitIndex = operationRoute.indexOf(
+    '"sellerpilot_service_arm_exact_existing_update"',
+  );
+  const attemptIndex = operationRoute.indexOf(
+    '"sellerpilot_claim_channel_operation"',
+  );
+
+  assert.ok(preflightStart >= 0, "the Korean provider-mutation preflight must exist");
+  assert.ok(preflightEnd > preflightStart, "the preflight must be independently bounded");
+  assert.ok(preflightStart < permitIndex, "static egress must fail before an exact permit is armed");
+  assert.ok(preflightStart < attemptIndex, "static egress must fail before an attempt or job is created");
+  assert.match(
+    preflight,
+    /writeChannelOperations\.has\(operation\)[\s\S]*channel === "coupang" \|\| channel === "elevenst"/,
+  );
+  assert.match(preflight, /configuredServerlessStaticEgressChannels\(\)/);
+  assert.match(preflight, /sellerpilot_service_serverless_static_egress_status/);
+  assert.match(preflight, /databasePolicy\[providerMutationStaticEgressChannel\] !== true/);
+  assert.match(preflight, /sellerpilot_service_serverless_cs_wakeup_status/);
+  assert.match(preflight, /runtimeState\.configured !== true/);
+  assert.match(preflight, /runtimeState\.active !== true/);
+  assert.match(preflight, /activeRuntimeRelease !== runtimeRelease\.release/);
+  assert.match(preflight, /blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED/);
+  assert.match(preflight, /mode: "static_egress_required"/);
+  assert.match(preflight, /status: 409/);
+  assert.doesNotMatch(preflight, /competitor\.search|orders\.list|inquiries\.list/);
+});
+
 test("Shopee static egress migration preserves prior flags and closes both claim paths", async () => {
   const migration = await readFile(
     new URL(
