@@ -135,6 +135,26 @@ export function bindQoo10ExactAdoptedLocalizationArguments(
   };
 }
 
+/**
+ * Rebind the immutable commerce carriers for the already-live Qoo10 cleanup.
+ * The browser draft is not authoritative for these values, and the adopted
+ * content-only operation must never upload a replacement representative image.
+ */
+export function bindQoo10ExactAdoptedCommerceArguments(
+  argumentsValue: UnknownRecord,
+) {
+  const params: UnknownRecord = {
+    ...recordValue(argumentsValue.params),
+    ItemPrice: String(qoo10ExactLocalizationRecoveryIdentity.priceJpy),
+    ItemQty: String(qoo10ExactLocalizationRecoveryIdentity.quantity),
+  };
+  delete params.StandardImage;
+  return {
+    ...argumentsValue,
+    params,
+  };
+}
+
 const qoo10ExactForbiddenRomanizedTokens = Object.freeze([
   "buchakhyeong",
   "keibeul",

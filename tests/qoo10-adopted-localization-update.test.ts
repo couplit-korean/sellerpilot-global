@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
+  bindQoo10ExactAdoptedCommerceArguments,
   qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactAdoptedLocalizationArgument,
   qoo10ExactAdoptedLocalizationContract,
@@ -87,6 +88,27 @@ function argumentsValue() {
     },
   };
 }
+
+test("server-owned adopted commerce rebinding preserves price and stock while removing the representative image", () => {
+  const bound = bindQoo10ExactAdoptedCommerceArguments({
+    untouched: "preserved",
+    params: {
+      ItemCode: identity.remoteId,
+      ItemPrice: "999999",
+      ItemQty: "999",
+      StandardImage: "https://attacker.example/replace.jpg",
+      ItemDescription: cleanDetail,
+    },
+  });
+  const params = bound.params as Record<string, unknown>;
+
+  assert.equal(bound.untouched, "preserved");
+  assert.equal(params.ItemCode, identity.remoteId);
+  assert.equal(params.ItemDescription, cleanDetail);
+  assert.equal(params.ItemPrice, String(identity.priceJpy));
+  assert.equal(params.ItemQty, String(identity.quantity));
+  assert.equal(Object.hasOwn(params, "StandardImage"), false);
+});
 
 test("already-live candidate is the exact adopted published S2 tuple only", () => {
   const candidate = {

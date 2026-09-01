@@ -868,7 +868,10 @@ export function prepareListingUpdateArguments(
     if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
         && sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku) {
       params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
-      if (qoo10ExactLocalizationCandidate
+      if (qoo10ExactAdoptedLocalizationCandidate) {
+        params.ItemPrice = String(qoo10ExactLocalizationRecoveryIdentity.priceJpy);
+        params.ItemQty = String(qoo10ExactLocalizationRecoveryIdentity.quantity);
+      } else if (qoo10ExactLocalizationCandidate
           || Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
         params.ItemPrice = sourceParams.ItemPrice;
         params.ItemQty = sourceParams.ItemQty;

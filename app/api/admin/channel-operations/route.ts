@@ -41,6 +41,7 @@ import {
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
   bindQoo10ExactAdoptedLocalizationArguments,
+  bindQoo10ExactAdoptedCommerceArguments,
   bindQoo10ExactLocalizationUpdateArguments,
   qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactAdoptedLocalizationArgument,
@@ -1465,6 +1466,9 @@ export async function POST(request: NextRequest) {
         message: "Qoo10 exact 현지화 요청을 현재 서버 릴리스에 결속하지 못해 시작하지 않았습니다.",
         mode: "qoo10_exact_localization_release_required",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (boundQoo10AdoptedLocalizationIdentity) {
+      effectiveArguments = bindQoo10ExactAdoptedCommerceArguments(effectiveArguments);
     }
     effectiveArguments = bindQoo10ExactLocalizationUpdateArguments(
       effectiveArguments,

@@ -15,6 +15,7 @@ import {
 import { elevenstExactExistingPublicationIdentity } from "../lib/channels/elevenst-exact-existing-identity";
 import { lazadaExactExistingPublicationIdentity } from "../lib/channels/lazada-exact-existing-identity";
 import { prepareListingUpdateArguments } from "../lib/channels/listing-update";
+import { qoo10ExactLocalizationRecoveryIdentity } from "../lib/channels/qoo10-exact-localization-recovery";
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 type WorkbenchListing = PublishContext["listings"][number];
@@ -146,6 +147,63 @@ function exactEbayContext(): PublishContext {
       })),
     }],
   };
+}
+
+function exactQoo10AdoptedContext(): PublishContext {
+  const context = exactEbayContext();
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  context.product = {
+    ...context.product,
+    id: identity.productId,
+    externalCode: identity.sellerSku,
+    sku: identity.sellerSku,
+  };
+  context.manualFields = {
+    ...context.manualFields,
+    sellerSku: identity.sellerSku,
+  };
+  context.assignments = [{
+    channel: "qoo10",
+    market: identity.market,
+    categoryId: identity.categoryCode,
+    categoryPath: ["生活用品", "ケーブル整理"],
+    providedAttributes: { ManufactureNo: "", BrandNo: "" },
+    status: "confirmed",
+    confirmedAt: "2026-09-01T10:45:00.000Z",
+  }];
+  context.listings = [exactListing("qoo10", identity, {
+    market: identity.market,
+    targetId: identity.targetId,
+    marketplaceSku: identity.sellerSku,
+    status: "published",
+    lastError: null,
+    failureClass: null,
+    publishedAt: "2026-09-01T10:45:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+    providerStatus: "S2",
+  })];
+  context.localizedListings = [{
+    channel: "qoo10",
+    market: identity.market,
+    locale: identity.locale,
+    title: identity.title,
+    shortDescription: "貼り付け式ケーブル整理クリップの6個セットです。",
+    description: "ケーブルをすっきり整理できる貼り付け式クリップです。",
+    keywords: [identity.title],
+    thumbnailAltText: identity.title,
+    classification: context.classification,
+    detailSections: detailSections.map(([type, imageAsset], index) => ({
+      type,
+      buyerQuestion: `商品確認 ${index + 1}`,
+      evidence: `販売者確認情報 ${index + 1}`,
+      heading: `商品詳細 ${index + 1}`,
+      body: `販売者が確認した商品情報 ${index + 1}。`,
+      imageAsset,
+      imageAltText: `商品詳細画像 ${index + 1}`,
+    })),
+  }];
+  return context;
 }
 
 function nonEbayExactContext(
@@ -296,6 +354,40 @@ test("exact eBay workbench draft transports only images and commerce values befo
     {},
     "browser image URLs are removed before the server-owned exact binding is added",
   );
+});
+
+test("published S2 Qoo10 draft keeps exact commerce carriers and removes only the representative image on update", () => {
+  const context = exactQoo10AdoptedContext();
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  const listing = context.listings[0]!;
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.1, length: 10, width: 8, height: 2 },
+    12.9,
+  ) as Record<string, unknown>;
+  const draftParams = draft.params as Record<string, unknown>;
+  assert.equal(draftParams.ItemPrice, String(identity.priceJpy));
+  assert.equal(draftParams.ItemQty, String(identity.quantity));
+  assert.equal(typeof draftParams.StandardImage, "string");
+  draftParams.ItemPrice = "999999";
+  draftParams.ItemQty = "999";
+  const prepared = prepareListingUpdateArguments(
+    "qoo10",
+    draft,
+    { ...listing, listingId: listing.id },
+    { qoo10ExactLocalizationProductId: identity.productId },
+  );
+  const preparedParams = prepared.params as Record<string, unknown>;
+
+  assert.equal(preparedParams.ItemPrice, String(identity.priceJpy));
+  assert.equal(preparedParams.ItemQty, String(identity.quantity));
+  assert.equal(Object.hasOwn(preparedParams, "StandardImage"), false);
+  assert.equal(preparedParams.ItemCode, identity.remoteId);
+  assert.equal(preparedParams.SellerCode, identity.sellerSku);
 });
 
 test("near-match eBay rows keep normal localized buyer copy and never enter provider-copy mode", () => {

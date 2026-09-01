@@ -106,6 +106,41 @@ test("the API resolves the immutable adoption snapshot and arms its permit befor
   assert.ok(claimIndex > armIndex, "the provider job claim must follow the one-shot permit");
 });
 
+test("the adopted route rebuilds server-owned commerce and markers before the exact enqueue payload", async () => {
+  const route = await readFile(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  const stripExactMarker = route.indexOf(
+    "delete effectiveArguments[qoo10ExactLocalizationUpdateArgument]",
+  );
+  const stripAdoptedMarker = route.indexOf(
+    "delete effectiveArguments[qoo10ExactAdoptedLocalizationArgument]",
+  );
+  const bindCommerce = route.indexOf(
+    "effectiveArguments = bindQoo10ExactAdoptedCommerceArguments(effectiveArguments)",
+  );
+  const bindExactMarker = route.indexOf(
+    "effectiveArguments = bindQoo10ExactLocalizationUpdateArguments(",
+  );
+  const fingerprint = route.indexOf("const manifestFingerprintArguments =");
+  const armPermit = route.indexOf(
+    '"sellerpilot_service_arm_qoo10_adopted_localization_update"',
+  );
+  const bindAdoptedMarker = route.indexOf(
+    "effectiveArguments = bindQoo10ExactAdoptedLocalizationArguments(",
+  );
+  const enqueue = route.indexOf("const gatewayExecution = await executeViaChannelGateway({");
+
+  assert.ok(stripExactMarker >= 0 && stripAdoptedMarker > stripExactMarker);
+  assert.ok(bindCommerce > stripAdoptedMarker);
+  assert.ok(bindExactMarker > bindCommerce);
+  assert.ok(fingerprint > bindExactMarker);
+  assert.ok(armPermit > fingerprint);
+  assert.ok(bindAdoptedMarker > armPermit);
+  assert.ok(enqueue > bindAdoptedMarker);
+});
+
 test("the adopted-localization RPCs use exact PostgREST-safe names and fail closed by cause", async () => {
   const migration = await readFile(shortRpcMigrationUrl, "utf8");
   const route = await readFile(
