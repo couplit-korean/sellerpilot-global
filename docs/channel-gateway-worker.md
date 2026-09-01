@@ -62,12 +62,15 @@ worker로 우회하지 않는다. Shopee는 OAuth 토큰 교환부터 같은 게
 1. 정확한 운영 Supabase host와 Vercel 프로젝트를 각각 다시 확인한다.
 2. 전체 테스트와 Vercel production build를 통과시켜 후보 배포를 만든다. 후보에는
    비밀값이 아닌 정확한 커밋 SHA를 `SELLERPILOT_RELEASE_SHA`로 넣는다.
-3. 정확한 후보 URL과 같은 SHA를 지정한 no-work canary로 그 후보 자체를 검증한다.
+3. 정확한 후보 URL에 대해 `vercel curl`로 보호된 no-work canary를 호출해 그 후보
+   자체를 검증한다. Vercel CLI가 Deployment Protection을 통과시키며,
+   `CRON_SECRET`은 후보 함수 안에서만 사용한다.
 
 ```sh
-SELLERPILOT_RUNTIME_ORIGIN=https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
-SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
-pnpm gateway:serverless:configure --candidate-canary
+pnpm dlx vercel@59.10.0 curl /api/admin/serverless-runtime-release \
+  --deployment https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
+  -X POST -H 'content-type: application/json' \
+  --data '{"action":"candidate_canary"}'
 ```
 
 4. **migration 전에** 현재 운영 gateway cron과 다섯 internal schedule을 명시적으로

@@ -21,6 +21,11 @@ const {
 
 const release = "8be84a57633f5d83647309c33814033337069e41";
 const receipt = "a3dcf2d1-e79d-4e23-a1f2-a7f438220cde";
+const candidateRuntimeIdentity = {
+  vercelProjectId: "prj_9fRYsoTT4fD6XVEMe4NX9mpPlljA",
+  vercelEnvironment: "production",
+  vercelTargetEnvironment: "production",
+};
 
 function response(payload: unknown, status = 200) {
   return new Response(JSON.stringify(payload), {
@@ -192,16 +197,20 @@ test("a candidate canary checks only the exact deployment origin without any run
   const result = await runCandidateServerlessRuntimeCanary({
     origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
     vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+    ...candidateRuntimeIdentity,
     release: release.toUpperCase(),
     cronSecret: "server-runtime-secret-for-tests",
     fetchImpl: fetchImpl as typeof fetch,
     oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
   });
 
-  assert.equal(result.ok, true);
   assert.equal(result.release, release);
-  assert.equal(result.canaries.gateway, 200);
-  assert.equal(result.canaries.schedules.length, 5);
+  assert.deepEqual(result, {
+    release,
+    claimed: 0,
+    processed: 0,
+    executed: false,
+  });
   assert.equal(requests.length, 6);
   assert.equal(requests.filter((request) => request.method === "POST").length, 1);
   assert.equal(requests.every((request) => request.url.startsWith("https://sellerpilot-global-candidate1-project-e59d.vercel.app/api/internal/")), true);
@@ -227,6 +236,7 @@ test("a candidate canary rejects custom domains and malformed deployment origins
       runCandidateServerlessRuntimeCanary({
         origin,
         vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+        ...candidateRuntimeIdentity,
         release,
         cronSecret: "server-runtime-secret-for-tests",
         fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
@@ -244,6 +254,7 @@ test("a candidate canary requires request origin to match the exact Vercel deplo
     runCandidateServerlessRuntimeCanary({
       origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
       vercelUrl: "sellerpilot-global-candidate2-project-e59d.vercel.app",
+      ...candidateRuntimeIdentity,
       release,
       cronSecret: "server-runtime-secret-for-tests",
       fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
@@ -260,6 +271,7 @@ test("a candidate canary rejects an unavailable runtime secret before fetch", as
     runCandidateServerlessRuntimeCanary({
       origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
       vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+      ...candidateRuntimeIdentity,
       release,
       cronSecret: "",
       fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
@@ -269,6 +281,29 @@ test("a candidate canary rejects an unavailable runtime secret before fetch", as
       && error.safeCode === "runtime_secret_unavailable"
       && error.status === 503,
   );
+});
+
+test("a candidate canary requires the exact Vercel project and production target", async () => {
+  for (const identity of [
+    { ...candidateRuntimeIdentity, vercelProjectId: "prj_other" },
+    { ...candidateRuntimeIdentity, vercelEnvironment: "preview" },
+    { ...candidateRuntimeIdentity, vercelTargetEnvironment: "staging" },
+  ]) {
+    await assert.rejects(
+      runCandidateServerlessRuntimeCanary({
+        origin: "https://sellerpilot-global-candidate1-project-e59d.vercel.app",
+        vercelUrl: "sellerpilot-global-candidate1-project-e59d.vercel.app",
+        ...identity,
+        release,
+        cronSecret: "server-runtime-secret-for-tests",
+        fetchImpl: (() => { throw new Error("must not fetch"); }) as typeof fetch,
+        oidcTokenProvider: async () => "short-lived-vercel-oidc-token",
+      }),
+      (error: unknown) => error instanceof ServerlessRuntimeReleaseError
+        && error.safeCode === "runtime_candidate_project_required"
+        && error.status === 409,
+    );
+  }
 });
 
 test("candidate automation bypass requires the exact runtime protection secret", () => {
@@ -284,16 +319,24 @@ test("the admin release route is authenticated and does not expose server secret
   assert.match(route, /authenticateAdminRequest\(request/);
   assert.match(route, /candidateAutomationBypassAuthorized/);
   assert.match(route, /VERCEL_AUTOMATION_BYPASS_SECRET/);
-  assert.match(route, /candidateAutomationAuthorized[\s\S]*\? null[\s\S]*authenticateAdminRequest/);
+  assert.match(route, /if \(!candidateAutomationAuthorized\)[\s\S]{0,320}status: 401/);
+  assert.match(route, /runtime_candidate_automation_auth_required/);
   assert.match(route, /body\?\.action !== "candidate_canary" && body\?\.action !== "canary_activate"/);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /if \(body\.action === "candidate_canary"\)[\s\S]*runCandidateServerlessRuntimeCanary/);
   assert.match(route, /vercelUrl: process\.env\.VERCEL_URL/);
-  assert.match(route, /후보 배포의 무작업 점검 6개를 통과했습니다\. 운영 일정은 변경하지 않았습니다/);
-  const candidateBranch = route.match(
-    /if \(body\.action === "candidate_canary"\) \{[\s\S]*?\n[ ]{2}\}\n[ ]{2}try \{/,
-  )?.[0];
-  assert.ok(candidateBranch);
+  assert.match(route, /vercelProjectId: process\.env\.VERCEL_PROJECT_ID/);
+  assert.match(route, /vercelEnvironment: process\.env\.VERCEL_ENV/);
+  assert.match(route, /vercelTargetEnvironment: process\.env\.VERCEL_TARGET_ENV/);
+  const candidateBranchStart = route.indexOf('if (body.action === "candidate_canary") {');
+  const candidateBranchEnd = route.indexOf("const admin = await authenticateAdminRequest", candidateBranchStart);
+  assert.ok(candidateBranchStart >= 0 && candidateBranchEnd > candidateBranchStart);
+  const candidateBranch = route.slice(candidateBranchStart, candidateBranchEnd);
+  assert.ok(
+    candidateBranch.indexOf("if (!candidateAutomationAuthorized)")
+      < candidateBranch.indexOf("const identity = resolveRuntimeReleaseIdentity()"),
+  );
+  assert.doesNotMatch(candidateBranch, /authenticateAdminRequest/);
   assert.doesNotMatch(candidateBranch, /admin\.serviceClient/);
   assert.doesNotMatch(candidateBranch, /activateServerlessRuntimeRelease/);
   assert.doesNotMatch(candidateBranch, /readServerlessRuntimeReleaseStatus/);

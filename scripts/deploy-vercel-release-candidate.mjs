@@ -36,6 +36,39 @@ export function candidateDeployArguments(release) {
   ];
 }
 
+export function candidateCanaryArguments(origin) {
+  let parsed;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    fail("candidate canary origin is invalid");
+  }
+  if (parsed.protocol !== "https:"
+      || !/^sellerpilot-global-[a-z0-9]+-project-e59d\.vercel\.app$/u.test(parsed.hostname)
+      || parsed.host !== parsed.hostname
+      || parsed.username
+      || parsed.password
+      || parsed.pathname !== "/"
+      || parsed.search
+      || parsed.hash) {
+    fail("candidate canary origin must be the exact generated SellerPilot deployment URL");
+  }
+  return [
+    "dlx",
+    `vercel@${VERCEL_VERSION}`,
+    "curl",
+    "/api/admin/serverless-runtime-release",
+    "--deployment",
+    parsed.origin,
+    "-X",
+    "POST",
+    "-H",
+    "content-type: application/json",
+    "--data",
+    '{"action":"candidate_canary"}',
+  ];
+}
+
 export function assertLinkedProject(project) {
   for (const [key, expected] of Object.entries(EXPECTED_PROJECT)) {
     if (project?.[key] !== expected) fail(`linked Vercel ${key} does not identify SellerPilot production`);
@@ -123,6 +156,7 @@ async function main() {
   const deploymentId = deployCandidate(release);
   const deployment = inspectCandidate(deploymentId);
   const origin = assertCandidateDeployment(deployment, release);
+  const canaryArguments = candidateCanaryArguments(origin);
   process.stdout.write(`${JSON.stringify({
     deploymentId,
     origin,
@@ -130,7 +164,7 @@ async function main() {
     sourceProof: "accepted",
     runtimeProof: "required",
     productionPromotionPerformed: false,
-    canaryCommand: `SELLERPILOT_RUNTIME_ORIGIN=${origin} SELLERPILOT_EXPECTED_RELEASE=${release} pnpm gateway:serverless:configure --candidate-canary`,
+    canaryCommand: ["pnpm", ...canaryArguments],
   })}\n`);
 }
 
