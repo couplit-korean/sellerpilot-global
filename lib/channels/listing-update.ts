@@ -867,13 +867,15 @@ export function prepareListingUpdateArguments(
       ItemCode: remoteId,
     };
     if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
-        && sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku) {
+        && (sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku
+          || qoo10ExactLocalizationCandidate
+          || qoo10ExactAdoptedLocalizationCandidate)) {
       params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
-      if (qoo10ExactAdoptedLocalizationCandidate) {
+      if (qoo10ExactLocalizationCandidate
+          || qoo10ExactAdoptedLocalizationCandidate) {
         params.ItemPrice = String(qoo10ExactLocalizationRecoveryIdentity.priceJpy);
         params.ItemQty = String(qoo10ExactLocalizationRecoveryIdentity.quantity);
-      } else if (qoo10ExactLocalizationCandidate
-          || Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
+      } else if (Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
         params.ItemPrice = sourceParams.ItemPrice;
         params.ItemQty = sourceParams.ItemQty;
       }
