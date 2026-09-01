@@ -139,6 +139,13 @@ import {
   temuExactGoodsListArguments,
   temuPublicationExpectedSkus,
 } from "./provider-temu-publication-readback";
+import {
+  normalizeTemuCredentialIdentityObservation,
+  normalizeTemuExistingAdoptionObservation,
+  temuCredentialCertificationBinding,
+  temuExistingAdoptionBinding,
+  temuExistingAdoptionExternalGoodsId,
+} from "./temu-existing-adoption";
 
 export const channelOperationNames = [
   "categories.list",
@@ -4976,6 +4983,102 @@ function temuStringArray(value: unknown) {
 
 async function executeTemu(input: ExecuteInput) {
   if (input.operation === "listing.publication.verify") {
+    const certification = temuCredentialCertificationBinding(input.arguments);
+    if (certification) {
+      const accountRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.open.accesstoken.info.get",
+        arguments: {},
+      });
+      const accountTransport = step("temu-credential-certification-account", accountRemote);
+      const identity = accountTransport.ok
+        ? normalizeTemuCredentialIdentityObservation(accountRemote.data)
+        : null;
+      const accountStep: ChannelOperationStep = {
+        name: "temu-credential-certification-account",
+        ok: Boolean(identity),
+        status: identity ? 200 : accountTransport.status,
+        ...(accountTransport.requestId ? { requestId: accountTransport.requestId } : {}),
+        data: {
+          sellerpilotVerification: identity
+            ? "TEMU_CREDENTIAL_PROVIDER_IDENTITY_VERIFIED"
+            : "TEMU_CREDENTIAL_PROVIDER_IDENTITY_UNVERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotNoSecretStored: true,
+          ...(identity ? { sellerpilotTemuCredentialIdentity: identity } : {}),
+        },
+      };
+      return result(input, [accountStep]);
+    }
+    const adoption = temuExistingAdoptionBinding(input.arguments);
+    if (adoption) {
+      const [detailRemote, statusRemote, stockRemote] = await Promise.all([
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.detail.query",
+          arguments: { goodsId: temuExactLong(adoption.goodsId), versionQueryType: 1, language: "ko" },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.publish.status.get",
+          arguments: { goodsIdList: [temuExactLong(adoption.goodsId)] },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(adoption.goodsId) },
+        }),
+      ]);
+      const detailStep = step("temu-existing-adoption-detail", detailRemote);
+      const statusStep = step("temu-existing-adoption-status", statusRemote);
+      const stockStep = step("temu-existing-adoption-stock", stockRemote);
+      const externalGoodsId = detailStep.ok
+        ? temuExistingAdoptionExternalGoodsId(detailRemote.data)
+        : null;
+      if (!detailStep.ok || !statusStep.ok || !stockStep.ok || !externalGoodsId) {
+        return result(input, [detailStep, statusStep, stockStep, {
+          name: "temu-existing-adoption-identity-fence",
+          ok: false,
+          status: 422,
+          data: {
+            sellerpilotVerification: "TEMU_EXISTING_ADOPTION_REMOTE_IDENTITY_UNVERIFIED",
+            sellerpilotNoWriteConfirmed: true,
+          },
+        }], adoption.goodsId);
+      }
+      const listRemote = await temuRequest({
+        payload: input.payload,
+        type: "temu.local.goods.list.retrieve",
+        arguments: temuExactGoodsListArguments(externalGoodsId),
+      });
+      const listStep = step("temu-existing-adoption-list", listRemote);
+      const observation = listStep.ok
+        ? normalizeTemuExistingAdoptionObservation({
+            binding: adoption,
+            listData: listRemote.data,
+            publishStatusData: statusRemote.data,
+            detailData: detailRemote.data,
+            stockData: stockRemote.data,
+          })
+        : null;
+      const verificationStep: ChannelOperationStep = {
+        name: "temu-existing-adoption-observation",
+        ok: Boolean(observation),
+        status: observation ? 200 : 422,
+        data: {
+          sellerpilotVerification: observation
+            ? "TEMU_EXISTING_ACTIVE_OBSERVATION_VERIFIED"
+            : "TEMU_EXISTING_ACTIVE_OBSERVATION_MISMATCH",
+          sellerpilotNoWriteConfirmed: true,
+          ...(observation ? { sellerpilotTemuExistingAdoptionObservation: observation } : {}),
+        },
+      };
+      return result(
+        input,
+        [detailStep, statusStep, stockStep, listStep, verificationStep],
+        adoption.goodsId,
+      );
+    }
     const discovery = temuContainmentDiscoveryBinding(input.arguments);
     if (!discovery || input.arguments.sellerpilotReadOnly !== true) {
       return result(input, [{
@@ -6659,7 +6762,9 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
   }
   if (input.operation === "listing.publication.verify"
       && input.channel === "temu"
-      && temuContainmentDiscoveryBinding(input.arguments)) {
+      && (temuCredentialCertificationBinding(input.arguments)
+        || temuExistingAdoptionBinding(input.arguments)
+        || temuContainmentDiscoveryBinding(input.arguments))) {
     return executeTemu(input);
   }
   if (input.operation === "listing.publication.verify") {

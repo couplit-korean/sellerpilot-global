@@ -17,6 +17,10 @@ const LAZADA_ADOPTION_MIGRATION =
   "20260901173000_adopt_exact_lazada_live_listing.sql";
 const ADOPTION_COMPLETION_MERGE_MIGRATION =
   "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
+const TEMU_EXISTING_ADOPTION_MIGRATION =
+  "20260901173200_exact_temu_existing_active_adoption.sql";
+const TEMU_CREDENTIAL_CERTIFICATION_MIGRATION =
+  "20260901173300_certify_exact_temu_existing_adoption_credential.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -238,13 +242,20 @@ async function createDatabaseInProductionAdoptionOrder() {
   const deferred = new Set([
     SHOPEE_ADOPTION_MIGRATION,
     ADOPTION_COMPLETION_MERGE_MIGRATION,
+    TEMU_EXISTING_ADOPTION_MIGRATION,
+    TEMU_CREDENTIAL_CERTIFICATION_MIGRATION,
   ]);
   for (const name of names) {
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name) || deferred.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
   }
-  for (const name of [SHOPEE_ADOPTION_MIGRATION, ADOPTION_COMPLETION_MERGE_MIGRATION]) {
+  for (const name of [
+    SHOPEE_ADOPTION_MIGRATION,
+    ADOPTION_COMPLETION_MERGE_MIGRATION,
+    TEMU_EXISTING_ADOPTION_MIGRATION,
+    TEMU_CREDENTIAL_CERTIFICATION_MIGRATION,
+  ]) {
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
   }

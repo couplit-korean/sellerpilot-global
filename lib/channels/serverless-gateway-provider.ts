@@ -73,6 +73,10 @@ import {
   temuContainmentDiscoveryBinding,
 } from "./provider-temu-publication-readback";
 import {
+  temuCredentialCertificationBinding,
+  temuExistingAdoptionBinding,
+} from "./temu-existing-adoption";
+import {
   assertElevenstExactExistingUpdate,
   elevenstExactExistingCreateForbidden,
   elevenstExactExistingPublicationArgument,
@@ -704,8 +708,16 @@ export async function executeServerlessGatewayProviderJob(
       const containmentDiscovery = input.job.channel === "temu"
         ? temuContainmentDiscoveryBinding(rawArguments)
         : null;
+      const existingAdoption = input.job.channel === "temu"
+        ? temuExistingAdoptionBinding(rawArguments)
+        : null;
+      const credentialCertification = input.job.channel === "temu"
+        ? temuCredentialCertificationBinding(rawArguments)
+        : null;
       if (rawArguments.sellerpilotReadOnly !== true
           || (!containmentDiscovery
+            && !existingAdoption
+            && !credentialCertification
             && (!source.success || source.data.verificationJobId !== input.job.id))) {
         throw new Error("LISTING_PUBLICATION_VERIFY_READ_ONLY_CONTEXT_REQUIRED");
       }

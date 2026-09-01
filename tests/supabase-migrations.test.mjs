@@ -149,6 +149,10 @@ const LAZADA_EXACT_LIVE_ADOPTION_MIGRATION =
   "20260901173000_adopt_exact_lazada_live_listing.sql";
 const EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION =
   "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
+const TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION =
+  "20260901173200_exact_temu_existing_active_adoption.sql";
+const TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION =
+  "20260901173300_certify_exact_temu_existing_adoption_credential.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -861,6 +865,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SHOPEE_SG_EXISTING_ADOPTION_MIGRATION,
       LAZADA_EXACT_LIVE_ADOPTION_MIGRATION,
       EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION,
+      TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION,
+      TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1029,8 +1035,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
         < migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
         && migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
-          < migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION),
-      "the forward merger must preserve Shopee and Lazada exact adoption after either production or clean-replay order",
+          < migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION)
+        && migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION)
+          < migrationNames.indexOf(TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION),
+      "the forward completion merger and Temu exact adoption pair must replay after the already-applied Lazada migration",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
@@ -11621,6 +11631,354 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ),
       true,
     );
+
+    // The exact Temu existing-item path may enqueue only after a certified
+    // credential, approved 8-image manifest, and runtime static-egress proof.
+    await setClaims(db);
+    const temuAdoptionCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'temu', 'production',
+        '{"app_key":"temu-adoption","app_secret":"secret","access_token":"token"}'::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+    );
+    const adoptionManifestDigest = "9".repeat(64);
+    // This shared fixture intentionally replayed the older 301145 manifest
+    // migration above. Restore the chronological 301210 v2 constraint before
+    // exercising the later exact-adoption migration.
+    await db.exec(`
+      alter table sellerpilot_private.products
+        drop constraint products_detail_page_approval_check;
+      alter table sellerpilot_private.products
+        add constraint products_detail_page_approval_check check (
+          (detail_page_approved_version = 0 and detail_page_image_manifest is null)
+          or (
+            detail_page_data is not null
+            and detail_page_version > 0
+            and detail_page_approved_version = detail_page_version
+            and jsonb_typeof(detail_page_image_manifest) = 'object'
+            and detail_page_image_manifest->>'contract' in (
+              'sellerpilot_detail_image_manifest_v1',
+              'sellerpilot_detail_image_manifest_v2'
+            )
+            and detail_page_image_manifest->>'algorithm' = 'sha256'
+            and detail_page_image_manifest->>'digest' ~ '^[a-f0-9]{64}$'
+            and jsonb_typeof(detail_page_image_manifest->'images') = 'array'
+            and jsonb_array_length(detail_page_image_manifest->'images') = 8
+          )
+        );
+    `);
+    await db.query(
+      `insert into sellerpilot_private.products (
+         id,owner_id,external_code,sku,name,description,status,on_hand,reserved,
+         reorder_point,cost_krw,demo,detail_page_version,detail_page_data,
+         detail_page_updated_at,detail_page_approved_version,
+         detail_page_image_manifest
+       ) values (
+         'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,
+         'TEMU-EXISTING-ACTIVE-QA','QA-20260823-CC-001',
+         '테무 기존 활성 상품','테무 기존 활성 상품 결속 테스트','active',1,0,
+         0,1000,false,1,'{}'::jsonb,clock_timestamp(),1,$2::jsonb
+       )`,
+      [ADMIN_ID, JSON.stringify({
+        contract: "sellerpilot_detail_image_manifest_v2",
+        algorithm: "sha256",
+        digest: adoptionManifestDigest,
+        images: Array.from({ length: 8 }, (_, index) => ({
+          role: `detail-${index + 1}`,
+          path: `results/temu-adoption/detail-${index + 1}.png`,
+          sha256: String(index + 1).repeat(64).slice(0, 64),
+        })),
+      })],
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='temu'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers','{"x-sellerpilot-static-egress-channels":"temu"}',false
+      )`,
+    );
+    await setClaims(db, "service_role");
+    const credentialBeforeCertification = (await db.query(
+      `select status,version,vault_secret_id,seller_account_key,
+              seller_account_key_source
+         from sellerpilot_private.channel_credentials
+        where id=$1`,
+      [temuAdoptionCredentialId],
+    )).rows[0];
+    assert.equal(credentialBeforeCertification.seller_account_key_source, "credential_incarnation_v1");
+    const certificationQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_temu_exact_credential_certification(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+      )`,
+      [temuAdoptionCredentialId, ADMIN_ID],
+    );
+    assert.equal(certificationQueued.status, "queued");
+    assert.equal(certificationQueued.credentialRotated, false);
+    const adoptionWorkerTokenId = await scalar(
+      db,
+      "select id from sellerpilot_private.ai_cli_worker_tokens order by created_at,id limit 1",
+    );
+    assert.equal(typeof adoptionWorkerTokenId, "string");
+    const providerMallId = "1024";
+    const certifiedTemuSellerAccountKey = createHash("sha256")
+      .update(`temu\u001fproduction\u001ftemu:mall:${providerMallId}`, "utf8")
+      .digest("hex");
+    const certificationObservedAt = new Date().toISOString();
+    const certificationObservation = {
+      contract: "temu_exact_credential_identity_observation_v1",
+      verified: true,
+      mallId: providerMallId,
+      sellerSubject: `temu:mall:${providerMallId}`,
+      sellerAccountKey: certifiedTemuSellerAccountKey,
+      apiScopeDigest: "c".repeat(64),
+      apiScopeCount: 2,
+      observedAt: certificationObservedAt,
+      digest: "d".repeat(64),
+    };
+    const certificationResponse = {
+      ok: true,
+      channel: "temu",
+      operation: "listing.publication.verify",
+      steps: [{
+        name: "temu-credential-certification-account",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotVerification: "TEMU_CREDENTIAL_PROVIDER_IDENTITY_VERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotNoSecretStored: true,
+          sellerpilotTemuCredentialIdentity: certificationObservation,
+        },
+      }],
+    };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',attempt_count=1,worker_token_id=$2,
+              claim_token='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              started_at=clock_timestamp()-interval '1 second',
+              completed_at=clock_timestamp(),response_payload=$3::jsonb,
+              updated_at=clock_timestamp()
+        where id=$1`,
+      [certificationQueued.jobId, adoptionWorkerTokenId, JSON.stringify(certificationResponse)],
+    );
+    await db.query(
+      `insert into sellerpilot_private.gateway_completion_receipts (
+         job_id,claim_token,worker_token_id,completion_fingerprint
+       ) values (
+         $1,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',$2,$3
+       )`,
+      [certificationQueued.jobId, adoptionWorkerTokenId, "e".repeat(64)],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs set status=status where id=$1`,
+      [certificationQueued.jobId],
+    );
+    const certificationReady = await scalar(
+      db,
+      `select public.sellerpilot_service_temu_exact_credential_certification_status(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1
+      )`,
+      [ADMIN_ID],
+    );
+    assert.equal(certificationReady.status, "ready");
+    assert.match(certificationReady.observationDigest, /^[a-f0-9]{64}$/);
+    assert.notEqual(certificationReady.observationDigest, certificationObservation.digest);
+    const certificationCommitted = await scalar(
+      db,
+      `select public.sellerpilot_service_commit_temu_exact_credential_certification(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+      )`,
+      [certificationQueued.reviewId, certificationReady.observationDigest, ADMIN_ID],
+    );
+    assert.equal(certificationCommitted.status, "committed");
+    assert.equal(certificationCommitted.providerWritePerformed, false);
+    assert.equal(certificationCommitted.credentialRotated, false);
+    assert.deepEqual(
+      (await db.query(
+        `select status,version,vault_secret_id,seller_account_key,
+                seller_account_key_source
+           from sellerpilot_private.channel_credentials
+          where id=$1`,
+        [temuAdoptionCredentialId],
+      )).rows,
+      [{
+        status: credentialBeforeCertification.status,
+        version: credentialBeforeCertification.version,
+        vault_secret_id: credentialBeforeCertification.vault_secret_id,
+        seller_account_key: certifiedTemuSellerAccountKey,
+        seller_account_key_source: "provider_certified_v1",
+      }],
+    );
+    const adoptionQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_temu_exact_existing_adoption(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+      )`,
+      [temuAdoptionCredentialId, ADMIN_ID],
+    );
+    assert.equal(adoptionQueued.status, "queued");
+    assert.equal(adoptionQueued.reused, false);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_exact_existing_adoption(
+          'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+        )`,
+        [temuAdoptionCredentialId, ADMIN_ID],
+      )).jobId,
+      adoptionQueued.jobId,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select channel,operation,status,listing_id,attempt_id,
+                request_payload#>'{arguments,sellerpilotReadOnly}' as read_only,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id=$1`,
+        [adoptionQueued.jobId],
+      )).rows,
+      [{
+        channel: "temu",
+        operation: "listing.publication.verify",
+        status: "queued",
+        listing_id: null,
+        attempt_id: null,
+        read_only: true,
+        provider_mutation_started_at: null,
+      }],
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_commit_temu_exact_existing_adoption(
+          'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+        )`,
+        [adoptionQueued.reviewId, "a".repeat(64), ADMIN_ID],
+      ),
+      /FRESH_DIGEST_CONFIRMATION_REQUIRED/,
+    );
+    const adoptionObservedAt = new Date().toISOString();
+    const adoptionObservation = {
+      contract: "temu_exact_existing_active_observation_v1",
+      verified: true,
+      goodsId: "608570473054515",
+      skuId: "123896921649274",
+      externalGoodsId: "QA-TEMU-EXISTING-001",
+      externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+      providerStatus: "statusName=ACTIVE",
+      visibility: "live",
+      locale: "ko-KR",
+      currency: "KRW",
+      price: "5000",
+      stock: 1,
+      goodsName: "케이블 정리 클립 테스트 상품",
+      goodsDesc: "케이블을 깔끔하게 정리하는 한국어 상세 설명입니다.",
+      bulletPoints: ["책상과 차량에서 사용할 수 있습니다."],
+      representativeImages: ["https://assets.example.test/temu-adoption/hero.jpg"],
+      detailImages: Array.from(
+        { length: 8 },
+        (_, index) => `https://assets.example.test/temu-adoption/detail-${index + 1}.jpg`,
+      ),
+      observedAt: adoptionObservedAt,
+      digest: "a".repeat(64),
+    };
+    const adoptionResponse = {
+      ok: true,
+      channel: "temu",
+      operation: "listing.publication.verify",
+      remoteId: "608570473054515",
+      steps: [
+        { name: "temu-existing-adoption-detail", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-status", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-stock", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-list", ok: true, status: 200, data: {} },
+        {
+          name: "temu-existing-adoption-observation",
+          ok: true,
+          status: 200,
+          data: {
+            sellerpilotVerification: "TEMU_EXISTING_ACTIVE_OBSERVATION_VERIFIED",
+            sellerpilotNoWriteConfirmed: true,
+            sellerpilotTemuExistingAdoptionObservation: adoptionObservation,
+          },
+        },
+      ],
+    };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',attempt_count=1,worker_token_id=$2,
+              claim_token='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              started_at=clock_timestamp()-interval '1 second',
+              completed_at=clock_timestamp(),response_payload=$3::jsonb,
+              updated_at=clock_timestamp()
+        where id=$1`,
+      [adoptionQueued.jobId, adoptionWorkerTokenId, JSON.stringify(adoptionResponse)],
+    );
+    await db.query(
+      `insert into sellerpilot_private.gateway_completion_receipts (
+         job_id,claim_token,worker_token_id,completion_fingerprint
+       ) values (
+         $1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',$2,$3
+       )`,
+      [adoptionQueued.jobId, adoptionWorkerTokenId, "b".repeat(64)],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status=status
+        where id=$1`,
+      [adoptionQueued.jobId],
+    );
+    const adoptionReady = await scalar(
+      db,
+      `select public.sellerpilot_service_temu_exact_existing_adoption_status(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1
+      )`,
+      [ADMIN_ID],
+    );
+    assert.equal(adoptionReady.status, "ready");
+    assert.match(adoptionReady.observationDigest, /^[a-f0-9]{64}$/);
+    assert.notEqual(adoptionReady.observationDigest, adoptionObservation.digest);
+    const adoptionCommitted = await scalar(
+      db,
+      `select public.sellerpilot_service_commit_temu_exact_existing_adoption(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+      )`,
+      [adoptionQueued.reviewId, adoptionReady.observationDigest, ADMIN_ID],
+    );
+    assert.equal(adoptionCommitted.status, "committed");
+    assert.equal(adoptionCommitted.providerWritePerformed, false);
+    assert.deepEqual(
+      (await db.query(
+        `select remote_id,marketplace_sku,status,currency,price::text,
+                requested_publication_intent,remote_visibility,
+                seller_account_key,
+                remote_resources#>>'{verification,observationDigest}' as digest
+           from sellerpilot_private.product_listings
+          where id=$1`,
+        [adoptionCommitted.listingId],
+      )).rows,
+      [{
+        remote_id: "608570473054515",
+        marketplace_sku: "QA-TEMU-EXISTING-001-SKU",
+        status: "published",
+        currency: "KRW",
+        price: "5000.00",
+        requested_publication_intent: "live",
+        remote_visibility: "live",
+        seller_account_key: certifiedTemuSellerAccountKey,
+        digest: adoptionReady.observationDigest,
+      }],
+    );
   } finally {
     await db.close();
   }
@@ -12161,6 +12519,8 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
         && name !== EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
         && name !== EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
+        && name !== TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
+        && name !== TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -13888,6 +14248,8 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
         || name === EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
         || name === EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
+        || name === TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
+        || name === TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
