@@ -243,6 +243,7 @@ export function assertEbayExactExistingQaUpdateArguments(
   options: {
     requirePreparedImages?: boolean;
     expectedDetailImageUrls?: readonly string[];
+    inventoryDescriptionMode?: "detail_images" | "compact_text";
   } = {},
 ) {
   const binding = ebayExactExistingQaRecoveryBinding(argumentsValue);
@@ -261,6 +262,8 @@ export function assertEbayExactExistingQaUpdateArguments(
   const listingDescription = exactText(offer?.listingDescription);
   const urls = uniqueHttpsUrls(product?.imageUrls);
   const expectedDetailImageUrls = options.expectedDetailImageUrls ?? [];
+  const compactInventoryDescription =
+    options.inventoryDescriptionMode === "compact_text";
   const descriptionImages = htmlImageUrls(description);
   const listingDescriptionImages = htmlImageUrls(listingDescription);
   if (!binding
@@ -284,13 +287,18 @@ export function assertEbayExactExistingQaUpdateArguments(
       || !exactEnglishText(title)
       || description.length < 20
       || !exactEnglishText(description)
+      || (compactInventoryDescription && description.length > 1_000)
       || listingDescription.length < 20
       || !exactEnglishText(listingDescription)
       || urls.length !== 1
-      || (options.requirePreparedImages !== false && imageCount(description) !== 8)
+      || (compactInventoryDescription && imageCount(description) !== 0)
+      || (!compactInventoryDescription
+        && options.requirePreparedImages !== false
+        && imageCount(description) !== 8)
       || (options.requirePreparedImages !== false && imageCount(listingDescription) !== 8)
       || (expectedDetailImageUrls.length > 0
-        && (!exactOrderedValues(descriptionImages, expectedDetailImageUrls)
+        && ((!compactInventoryDescription
+            && !exactOrderedValues(descriptionImages, expectedDetailImageUrls))
           || !exactOrderedValues(listingDescriptionImages, expectedDetailImageUrls)))
       || argumentsValue.publish === true) {
     throw new Error("EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED");

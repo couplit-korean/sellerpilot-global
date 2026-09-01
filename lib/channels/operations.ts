@@ -6029,6 +6029,26 @@ function ebayProviderDescriptionWithoutImages(value: unknown) {
     .trim();
 }
 
+function ebayCompactInventoryDescription(value: unknown) {
+  const compact = ebayProviderDescriptionWithoutImages(value)
+    .replace(/<!--[\s\S]*?-->/gu, " ")
+    .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
+    .replace(/<[^>]*>/gu, " ")
+    .replace(/&nbsp;|&#160;/giu, " ")
+    .replace(/&amp;/giu, "&")
+    .replace(/&lt;/giu, "<")
+    .replace(/&gt;/giu, ">")
+    .replace(/&quot;|&#34;/giu, '"')
+    .replace(/&#39;|&apos;/giu, "'")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (compact.length <= 1_000) return compact;
+  const bounded = compact.slice(0, 1_000);
+  const lastSpace = bounded.lastIndexOf(" ");
+  return (lastSpace >= 800 ? bounded.slice(0, lastSpace) : bounded).trim();
+}
+
 function ebayExactProviderCopyArguments(input: {
   sourceArguments: Record<string, unknown>;
   currentOffer: Record<string, unknown>;
@@ -6052,12 +6072,7 @@ function ebayExactProviderCopyArguments(input: {
   const representativeImageUrls = Array.isArray(requestedProduct.imageUrls)
     ? requestedProduct.imageUrls
     : [];
-  const description = upsertMarketplaceDetailImages(
-    ebayProviderDescriptionWithoutImages(currentProduct.description),
-    detailUrls,
-    detailAltTexts,
-    detailRoles,
-  );
+  const description = ebayCompactInventoryDescription(currentProduct.description);
   const listingDescription = upsertMarketplaceDetailImages(
     ebayProviderDescriptionWithoutImages(input.currentOffer.listingDescription),
     detailUrls,
@@ -6097,6 +6112,7 @@ function ebayExactProviderCopyArguments(input: {
   };
   assertEbayExactExistingQaUpdateArguments(readbackArguments, {
     expectedDetailImageUrls: detailUrls,
+    inventoryDescriptionMode: "compact_text",
   });
   return { inventoryBody, offerBody, readbackArguments };
 }

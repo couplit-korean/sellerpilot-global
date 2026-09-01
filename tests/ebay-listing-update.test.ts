@@ -318,6 +318,9 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
     { length: 4 },
     (_, index) => `<img src="https://i.ebayimg.com/legacy-${index + 1}.jpg">`,
   ).join("");
+  const oversizedProviderInventoryDescription =
+    `<section><p>${providerInventoryText}</p><p>${"Use the clip on a clean dry surface and route one cable securely. ".repeat(90)}</p></section>${legacyImages}`;
+  assert.equal(oversizedProviderInventoryDescription.length > 4_000, true);
   let writtenInventory: Record<string, unknown> | null = null;
   let writtenOffer: Record<string, unknown> | null = null;
   const providerOffer = () => ({
@@ -331,7 +334,7 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
   const providerInventory = () => writtenInventory ?? currentInventory({
     product: {
       title: providerTitle,
-      description: `<p>${providerInventoryText}</p>${legacyImages}`,
+      description: oversizedProviderInventoryDescription,
       imageUrls: ["https://i.ebayimg.com/provider-main.jpg"],
       aspects: { Type: ["Cable Clip"] },
       brand: "Unbranded",
@@ -358,6 +361,12 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
     }
     if (method === "PUT" && url.endsWith(`/inventory_item/${exactSku}`)) {
       events.push("PUT:inventory");
+      const description = String(
+        ((body?.product as Record<string, unknown> | undefined)?.description) ?? "",
+      );
+      if (description.length < 1 || description.length > 4_000) {
+        return Response.json({ errors: [{ errorId: 25718 }] }, { status: 400 });
+      }
       writtenInventory = body;
       return new Response(null, { status: 204 });
     }
@@ -402,11 +411,9 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
     const writtenProduct = writtenInventory.product as Record<string, unknown>;
     assert.equal(writtenProduct.title, providerTitle);
     assert.match(String(writtenProduct.description), new RegExp(providerInventoryText));
-    assert.equal((String(writtenProduct.description).match(/<img\b/giu) ?? []).length, 8);
-    assert.deepEqual(
-      [...String(writtenProduct.description).matchAll(/<img\b[^>]*\bsrc="([^"]+)"/giu)].map((match) => match[1]),
-      exactDetailUrls,
-    );
+    assert.equal(String(writtenProduct.description).length <= 1_000, true);
+    assert.equal((String(writtenProduct.description).match(/<img\b/giu) ?? []).length, 0);
+    assert.doesNotMatch(String(writtenProduct.description), /<[^>]+>/u);
     assert.deepEqual(writtenProduct.imageUrls, [exactRepresentativeUrl]);
     assert.deepEqual(writtenProduct.aspects, { Type: ["Cable Clip"] });
     assert.equal(writtenOffer.categoryId, "175673");

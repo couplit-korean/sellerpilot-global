@@ -172,6 +172,41 @@ test("exact eBay recovery requires one representative image and genuinely Englis
   );
 });
 
+test("provider-prepared inventory copy is compact text while offer detail keeps eight images", () => {
+  const compact = exactArguments();
+  const product = (compact.inventoryItem as Record<string, unknown>)
+    .product as Record<string, unknown>;
+  product.description =
+    "Adhesive cable organizer clips keep charging cords tidy on clean dry surfaces.";
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(compact),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/u,
+  );
+  assert.doesNotThrow(() => assertEbayExactExistingQaUpdateArguments(compact, {
+    inventoryDescriptionMode: "compact_text",
+  }));
+
+  const tooLong = structuredClone(compact);
+  ((tooLong.inventoryItem as Record<string, unknown>).product as Record<string, unknown>)
+    .description = `Safe English cable organizer description ${"detail ".repeat(170)}`;
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(tooLong, {
+      inventoryDescriptionMode: "compact_text",
+    }),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/u,
+  );
+
+  const inventoryImage = structuredClone(compact);
+  ((inventoryImage.inventoryItem as Record<string, unknown>).product as Record<string, unknown>)
+    .description += '<img src="https://cdn.example.com/not-allowed.jpg">';
+  assert.throws(
+    () => assertEbayExactExistingQaUpdateArguments(inventoryImage, {
+      inventoryDescriptionMode: "compact_text",
+    }),
+    /EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED/u,
+  );
+});
+
 test("exact eBay provider-copy request permits only image transport and rejects buyer text", () => {
   const imageOnly = html().replace(
     "<p>This durable cable organizer keeps charging cords tidy and easy to reach.</p>",
