@@ -152,6 +152,40 @@ export function bindCoupangExactQaRecoveryArguments(
   };
 }
 
+/**
+ * Rebinds the exact update's mutable item patch to the provider-owned
+ * vendorItemId after the service identity RPC has succeeded. The browser draft
+ * identifies the item by seller SKU, but that value must never cross the exact
+ * closed-gate permit as if it were a verified Coupang item identity.
+ */
+export function bindCoupangExactQaUpdateItemIdentity(
+  argumentsValue: Record<string, unknown>,
+) {
+  if (!coupangExactQaRecoveryBinding(argumentsValue, "listing.update")) {
+    throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
+  const body = recordValue(argumentsValue.body);
+  const items = Array.isArray(body?.items) ? body.items.map(recordValue) : [];
+  if (items.length !== 1 || !items[0]) {
+    throw new Error("COUPANG_EXACT_QA_PATCH_IDENTITY_MISMATCH");
+  }
+  const mutableItem = structuredClone(items[0]);
+  delete mutableItem.externalVendorSku;
+  delete mutableItem.originalPrice;
+  delete mutableItem.salePrice;
+  delete mutableItem.maximumBuyCount;
+  return {
+    ...argumentsValue,
+    body: {
+      ...body,
+      items: [{
+        ...mutableItem,
+        sellerpilotItemMatchId: coupangExactQaRecoveryIdentity.vendorItemId,
+      }],
+    },
+  };
+}
+
 export function assertCoupangExactQaProviderContract(
   argumentsValue: Record<string, unknown>,
   phase: CoupangExactQaRecoveryPhase,

@@ -62,6 +62,7 @@ import {
 } from "../../../../lib/channels/elevenst-exact-existing-publication";
 import {
   bindCoupangExactQaRecoveryArguments,
+  bindCoupangExactQaUpdateItemIdentity,
   coupangExactQaCentralSkuVerified,
   coupangExactQaCreateForbidden,
   coupangExactQaRecoveryArgument,
@@ -1237,6 +1238,9 @@ export async function POST(request: NextRequest) {
       effectiveArguments,
       boundCoupangExactQaRecoveryPhase,
     );
+    if (boundCoupangExactQaRecoveryPhase === "listing.update") {
+      effectiveArguments = bindCoupangExactQaUpdateItemIdentity(effectiveArguments);
+    }
     if (boundCoupangExactQaRecoveryPhase === "listing.stop") {
       effectiveArguments = {
         ...effectiveArguments,

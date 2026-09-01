@@ -819,6 +819,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
       QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
       "20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
+      "20260901110000_fix_coupang_exact_item_match_binding.sql",
       SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION,
       ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION,
     ]);
