@@ -666,7 +666,6 @@ export async function POST(request: NextRequest) {
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
-  let boundLazadaExactLiveUpdate = false;
   let boundShopeeSgExistingUpdate: ShopeeSgExistingUpdateIdentity | null = null;
   let shopeeSgExistingUpdatePermitArmed = false;
   if (listingBoundOperation) {
