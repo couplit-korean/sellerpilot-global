@@ -23,7 +23,9 @@ import { channelOperationRelease } from "../../../../lib/channels/operation-avai
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
 import {
   assertEbayExactExistingQaProviderCopyRequest,
+  bindEbayExactNoEffectRetryArguments,
   bindEbayExactExistingQaRecoveryArguments,
+  ebayExactNoEffectRetryArgument,
   ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCentralProductVerified,
   ebayExactExistingQaCreateForbidden,
@@ -588,6 +590,7 @@ export async function POST(request: NextRequest) {
   let boundListingPublicationIntent: "safe_test" | "live" | undefined;
   let boundEbayListingIdentity: Record<string, string> | null = null;
   let boundEbayExactExistingQaRecovery: EbayExactExistingQaRecoveryBinding | null = null;
+  let boundEbayExactNoEffectRetry = false;
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundQoo10ExactLocalizationUpdate = false;
@@ -1052,6 +1055,7 @@ export async function POST(request: NextRequest) {
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
         boundEbayExactExistingQaRecovery = binding;
+        boundEbayExactNoEffectRetry = exactListing.failureClass === "retryable";
         boundExactExistingClosedGateUpdateChannel = "ebay";
       } else {
         const { data: identityData, error: identityError } = await serviceClient.rpc(
@@ -1279,6 +1283,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
   delete effectiveArguments[ebayExactExistingQaRecoveryArgument];
+  delete effectiveArguments[ebayExactNoEffectRetryArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -1329,6 +1334,11 @@ export async function POST(request: NextRequest) {
         effectiveArguments,
         boundEbayExactExistingQaRecovery,
       );
+      if (boundEbayExactNoEffectRetry) {
+        effectiveArguments = bindEbayExactNoEffectRetryArguments(
+          effectiveArguments,
+        );
+      }
     } else if (boundEbayListingIdentity) {
       effectiveArguments = {
         ...effectiveArguments,
@@ -1736,7 +1746,9 @@ export async function POST(request: NextRequest) {
         }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
       const { data: permitData, error: permitError } = await serviceClient.rpc(
-        "sellerpilot_service_arm_exact_existing_update",
+        boundEbayExactNoEffectRetry
+          ? "sellerpilot_service_arm_ebay_no_effect_retry"
+          : "sellerpilot_service_arm_exact_existing_update",
         {
           p_channel: boundExactExistingClosedGateUpdateChannel,
           p_listing_id: parsed.data.resourceListingId,

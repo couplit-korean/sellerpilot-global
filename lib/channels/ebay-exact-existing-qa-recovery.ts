@@ -4,6 +4,19 @@ export const ebayExactExistingQaRecoveryContract =
 export const ebayExactExistingQaRecoveryArgument =
   "sellerpilotEbayExactExistingQaRecovery" as const;
 
+export const ebayExactNoEffectRetryArgument =
+  "sellerpilotEbayExactNoEffectRetry" as const;
+
+export const ebayExactNoEffectRetryMarker = Object.freeze({
+  contract: "ebay_exact_no_effect_retry_v1",
+  sourceJobId: "08e8cff9-5d7c-4992-b668-6d932aa5ff10",
+  sourceAttemptId: "22457f2e-51d8-43c5-bb03-d2c1bb7fe697",
+  sourcePermitId: "c2e9f199-f6a7-425f-8668-7eebd5b08bb4",
+  sourceRequestFingerprint: "79507d23bb865f17b7d91a148f564fef1519e36ce3b5d4219200c5b7d786a3dc",
+  providerErrorId: 25_718,
+  providerEffect: "deterministic_rejection_no_effect",
+});
+
 export const ebayExactExistingQaRecoveryIdentity = Object.freeze({
   productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
   listingId: "8b2cbfaf-3854-437d-b381-abfd70291354",
@@ -166,7 +179,17 @@ export function ebayExactExistingQaRecoveryCandidate(input: {
     && input.remoteVisibility === "unknown"
     && !input.providerStatus
     && !input.publishedAt
-    && input.failureClass === "external_action";
+    && (input.failureClass === "external_action"
+      || input.failureClass === "retryable");
+}
+
+export function bindEbayExactNoEffectRetryArguments(
+  argumentsValue: Record<string, unknown>,
+) {
+  return {
+    ...argumentsValue,
+    [ebayExactNoEffectRetryArgument]: ebayExactNoEffectRetryMarker,
+  };
 }
 
 export function ebayExactExistingQaCentralProductVerified(

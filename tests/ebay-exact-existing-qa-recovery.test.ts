@@ -3,12 +3,15 @@ import test from "node:test";
 import {
   assertEbayExactExistingQaProviderCopyRequest,
   assertEbayExactExistingQaUpdateArguments,
+  bindEbayExactNoEffectRetryArguments,
   bindEbayExactExistingQaRecoveryArguments,
   ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCreateForbidden,
   ebayExactExistingQaRecoveryBindingValue,
   ebayExactExistingQaRecoveryCandidate,
   ebayExactExistingQaRecoveryIdentity,
+  ebayExactNoEffectRetryArgument,
+  ebayExactNoEffectRetryMarker,
 } from "../lib/channels/ebay-exact-existing-qa-recovery";
 import { prepareListingUpdateArguments } from "../lib/channels/listing-update";
 
@@ -85,6 +88,18 @@ test("exact eBay recovery accepts only the fixed failed/live tuple and strips a 
     channel: "ebay",
     listingId: ebayExactExistingQaRecoveryIdentity.listingId,
     remoteId: ebayExactExistingQaRecoveryIdentity.publicListingId,
+    marketplaceSku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
+    status: "failed",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "unknown",
+    providerStatus: null,
+    publishedAt: null,
+    failureClass: "retryable",
+  }), true);
+  assert.equal(ebayExactExistingQaRecoveryCandidate({
+    channel: "ebay",
+    listingId: ebayExactExistingQaRecoveryIdentity.listingId,
+    remoteId: ebayExactExistingQaRecoveryIdentity.publicListingId,
     marketplaceSku: "wrong-sku",
     status: "failed",
     requestedPublicationIntent: "live",
@@ -99,6 +114,15 @@ test("exact eBay recovery accepts only the fixed failed/live tuple and strips a 
   assert.equal(argumentsValue.listingId, ebayExactExistingQaRecoveryIdentity.publicListingId);
   assert.equal(argumentsValue.sku, ebayExactExistingQaRecoveryIdentity.marketplaceSku);
   assert.doesNotThrow(() => assertEbayExactExistingQaUpdateArguments(argumentsValue));
+});
+
+test("exact eBay no-effect retry marker is server-owned and changes the canonical request", () => {
+  const marked = bindEbayExactNoEffectRetryArguments(exactArguments());
+  assert.deepEqual(marked[ebayExactNoEffectRetryArgument], ebayExactNoEffectRetryMarker);
+  assert.equal(
+    (marked[ebayExactNoEffectRetryArgument] as Record<string, unknown>).providerErrorId,
+    25_718,
+  );
 });
 
 test("exact eBay recovery rejects duplicate create identities and forged price, stock, or marker", () => {

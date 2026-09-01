@@ -6029,24 +6029,28 @@ function ebayProviderDescriptionWithoutImages(value: unknown) {
     .trim();
 }
 
-function ebayCompactInventoryDescription(value: unknown) {
-  const compact = ebayProviderDescriptionWithoutImages(value)
-    .replace(/<!--[\s\S]*?-->/gu, " ")
-    .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
-    .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
-    .replace(/<[^>]*>/gu, " ")
-    .replace(/&nbsp;|&#160;/giu, " ")
-    .replace(/&amp;/giu, "&")
-    .replace(/&lt;/giu, "<")
-    .replace(/&gt;/giu, ">")
-    .replace(/&quot;|&#34;/giu, '"')
-    .replace(/&#39;|&apos;/giu, "'")
-    .replace(/\s+/gu, " ")
-    .trim();
-  if (compact.length <= 1_000) return compact;
-  const bounded = compact.slice(0, 1_000);
-  const lastSpace = bounded.lastIndexOf(" ");
-  return (lastSpace >= 800 ? bounded.slice(0, lastSpace) : bounded).trim();
+function ebayCompactInventoryDescription(...providerValues: unknown[]) {
+  for (const providerValue of providerValues) {
+    const compact = ebayProviderDescriptionWithoutImages(providerValue)
+      .replace(/<!--[\s\S]*?-->/gu, " ")
+      .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
+      .replace(/<[^>]*>/gu, " ")
+      .replace(/&nbsp;|&#160;/giu, " ")
+      .replace(/&amp;/giu, "&")
+      .replace(/&lt;/giu, "<")
+      .replace(/&gt;/giu, ">")
+      .replace(/&quot;|&#34;/giu, '"')
+      .replace(/&#39;|&apos;/giu, "'")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (!compact) continue;
+    if (compact.length <= 1_000) return compact;
+    const bounded = compact.slice(0, 1_000);
+    const lastSpace = bounded.lastIndexOf(" ");
+    return (lastSpace >= 800 ? bounded.slice(0, lastSpace) : bounded).trim();
+  }
+  throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_DESCRIPTION_REQUIRED");
 }
 
 function ebayExactProviderCopyArguments(input: {
@@ -6072,7 +6076,14 @@ function ebayExactProviderCopyArguments(input: {
   const representativeImageUrls = Array.isArray(requestedProduct.imageUrls)
     ? requestedProduct.imageUrls
     : [];
-  const description = ebayCompactInventoryDescription(currentProduct.description);
+  // The Inventory API limits product.description to 1-4000 characters. Detail
+  // image HTML belongs to the offer surface. Keep a conservative 1000-character
+  // inventory copy derived only from immutable provider GET values.
+  const description = ebayCompactInventoryDescription(
+    currentProduct.description,
+    input.currentOffer.listingDescription,
+    currentProduct.title,
+  );
   const listingDescription = upsertMarketplaceDetailImages(
     ebayProviderDescriptionWithoutImages(input.currentOffer.listingDescription),
     detailUrls,
