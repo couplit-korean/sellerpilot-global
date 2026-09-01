@@ -14452,7 +14452,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         }],
       },
     };
-    const exactCoupangPermit = await scalar(
+    let exactCoupangPermit = await scalar(
       db,
       `select public.sellerpilot_service_arm_coupang_exact_rep(
         'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
@@ -14491,6 +14491,56 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         exactCoupangFingerprint,
       ],
     );
+    // Exercise expiry through the real arm -> owner claim -> service enqueue
+    // path. The trigger bypass only advances this isolated fixture's wall
+    // clock; the public enqueue RPC must still reject the expired permit.
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.exact_existing_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [exactCoupangPermit.permitId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+          '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+          'coupang','listing.update',$3::jsonb
+        )`,
+        [
+          exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+          JSON.stringify({ arguments: exactCoupangArguments }),
+        ],
+      ),
+      /query returned no rows|expired|permit|release_gate_closed/i,
+      "an expired Coupang exact representative permit must not enqueue",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where attempt_id=$1 and channel='coupang' and operation='listing.update'`,
+        [exactCoupangAttempt.attempt_id],
+      ),
+      0,
+    );
+    exactCoupangPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_coupang_exact_rep(
+        'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+        $4,$5,$6,$7
+      )`,
+      [
+        exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,exactCoupangFingerprint,
+        exactCoupangSourcePath,exactCoupangSourceSha,
+        exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+      ],
+    );
+    assert.equal(exactCoupangPermit.bound,false);
     const tamperedCoupangRequest = {
       arguments: structuredClone(exactCoupangArguments),
     };
@@ -14791,10 +14841,18 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     tamperedRepresentative.steps[1].data
       .sellerpilotCoupangExactRepresentativeReadback.postwriteImages[0]
       .vendorPath = "old-representative.jpg";
+    const vendorPathOnlyRepresentative = structuredClone(exactCoupangResponse);
+    const vendorPathOnlyEvidence = vendorPathOnlyRepresentative.steps[1].data
+      .sellerpilotCoupangExactRepresentativeReadback;
+    vendorPathOnlyEvidence.postwriteImages[0].cdnPath =
+      vendorPathOnlyEvidence.prewriteImages[0].cdnPath;
+    vendorPathOnlyEvidence.providerReadbackSnapshotSha256 =
+      coupangSnapshotDigest(vendorPathOnlyEvidence.postwriteImages);
     const tamperedCommerce = structuredClone(exactCoupangResponse);
     tamperedCommerce.steps[0].data.data.amountInStock = 2;
     for (const [label,tamperedCompletion] of [
       ["representative",tamperedRepresentative],
+      ["representative-transition",vendorPathOnlyRepresentative],
       ["commerce",tamperedCommerce],
     ]) {
       await db.exec("begin");
@@ -14813,6 +14871,31 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       } catch (error) {
         if (error instanceof assert.AssertionError) throw error;
         assert.match(String(error),/invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    const wrongCoupangClaim = "aaaaaaaa-0000-4000-8000-000000000098";
+    for (const [label,workerHash,claimToken] of [
+      ["worker", "1".repeat(64), exactCoupangClaim.claim_token],
+      ["claim", exactTemuWorkerHash, wrongCoupangClaim],
+    ]) {
+      await db.exec("begin");
+      try {
+        await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            workerHash,exactCoupangClaim.id,claimToken,
+            JSON.stringify(exactCoupangResponse),
+          ],
+        );
+        assert.fail(`forged Coupang ${label} completion succeeded`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error),/claim|token|completion|owned|invalid/i);
       } finally {
         await db.exec("rollback");
       }
@@ -14836,6 +14919,36 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ],
     );
     assert.equal(exactCoupangCompletion.status,"completed");
+    for (const [label,workerHash,claimToken] of [
+      ["worker", "1".repeat(64), exactCoupangClaim.claim_token],
+      ["claim", exactTemuWorkerHash, wrongCoupangClaim],
+    ]) {
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            workerHash,exactCoupangClaim.id,claimToken,
+            JSON.stringify(exactCoupangResponse),
+          ],
+        ),
+        /claim|token|completion|owned|invalid/i,
+        `forged Coupang ${label} completion replay must fail`,
+      );
+    }
+    const exactCoupangReplay = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+        $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangResponse),
+      ],
+    );
+    assert.equal(exactCoupangReplay.status,"completed");
+    assert.equal(exactCoupangReplay.replayed,true);
     const persistedCoupangDiagnostic = await scalar(
       db,
       `select jsonb_build_object(

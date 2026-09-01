@@ -129,9 +129,16 @@ export function verifyCoupangExactRepresentativeReadback(input: {
   }
   const expectedRepresentativeBasename = `${expectedDigests[0]}.jpg`;
   const representativeAlreadyExpected =
-    imageBasename(prewriteImages[0].vendorPath) === expectedRepresentativeBasename;
-  const representativeChanged = prewriteImages[0].cdnPath !== postwriteImages[0].cdnPath
-    || prewriteImages[0].vendorPath !== postwriteImages[0].vendorPath;
+    imageBasename(prewriteImages[0].vendorPath) === expectedRepresentativeBasename
+    && prewriteImages[0].cdnPath.length > 0
+    && prewriteImages[0].cdnPath === postwriteImages[0].cdnPath;
+  // Coupang documents cdnPath as its authoritative CDN identity, while
+  // vendorPath is only the vendor source path that Coupang downloads. A
+  // vendorPath-only transition therefore cannot prove that the representative
+  // stored by Coupang actually changed.
+  const representativeChanged = prewriteImages[0].cdnPath.length > 0
+    && postwriteImages[0].cdnPath.length > 0
+    && prewriteImages[0].cdnPath !== postwriteImages[0].cdnPath;
   if (!representativeAlreadyExpected && !representativeChanged) {
     throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_NOT_CHANGED");
   }

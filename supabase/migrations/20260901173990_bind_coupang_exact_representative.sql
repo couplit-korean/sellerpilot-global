@@ -971,14 +971,23 @@ begin
        where v_evidence->'prewriteImages'->position is distinct from
              v_evidence->'postwriteImages'->position
     )
+    and v_evidence->>'providerRepresentativeChanged' = case when
+      nullif(v_evidence#>>'{prewriteImages,0,cdnPath}','') is not null
+      and nullif(v_evidence#>>'{postwriteImages,0,cdnPath}','') is not null
+      and v_evidence#>>'{prewriteImages,0,cdnPath}' is distinct from
+            v_evidence#>>'{postwriteImages,0,cdnPath}'
+      then 'true' else 'false' end
+    and v_evidence->>'providerRepresentativeAlreadyExpected' = case when
+      pg_catalog.regexp_replace(
+        v_evidence#>>'{prewriteImages,0,vendorPath}','^.*/',''
+      ) = (v_evidence->'expectedContentSha256s'->>0) || '.jpg'
+      and nullif(v_evidence#>>'{prewriteImages,0,cdnPath}','') is not null
+      and v_evidence#>>'{prewriteImages,0,cdnPath}' =
+            v_evidence#>>'{postwriteImages,0,cdnPath}'
+      then 'true' else 'false' end
     and (
       v_evidence->>'providerRepresentativeChanged' = 'true'
-      or (
-        v_evidence->>'providerRepresentativeAlreadyExpected' = 'true'
-        and pg_catalog.regexp_replace(
-          v_evidence#>>'{prewriteImages,0,vendorPath}','^.*/',''
-        ) = (v_evidence->'expectedContentSha256s'->>0) || '.jpg'
-      )
+      or v_evidence->>'providerRepresentativeAlreadyExpected' = 'true'
     ), false);
 exception when others then
   return false;
@@ -1205,6 +1214,10 @@ begin
    where permit.update_job_id = p_job_id and permit.channel = 'coupang'
   ) into v_exact;
   if p_status = 'succeeded' and v_exact
+     and exists (
+       select 1 from sellerpilot_private.channel_gateway_jobs job
+        where job.id = p_job_id and job.status = 'running'
+     )
      and not sellerpilot_private.coupang_exact_rep_response_valid(
        p_job_id,p_response_payload
      )

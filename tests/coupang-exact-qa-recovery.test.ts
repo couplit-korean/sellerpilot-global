@@ -985,6 +985,17 @@ test("exact representative provider identity fails closed on every ambiguous gal
     /COUPANG_EXACT_QA_REPRESENTATIVE_PROVIDER_IDENTITY_UNRESOLVED/,
   );
 
+  const vendorPathOnlyTransition = providerReadbackGalleryImages(argumentsValue);
+  vendorPathOnlyTransition[0].cdnPath = prewriteImages[0].cdnPath;
+  assert.throws(
+    () => verifyCoupangExactRepresentativeReadback({
+      currentValue: productWithImages(vendorPathOnlyTransition),
+      prewriteImages,
+      argumentsValue,
+    }),
+    /COUPANG_EXACT_QA_REPRESENTATIVE_NOT_CHANGED/,
+  );
+
   const missingVendorIdentity = providerReadbackGalleryImages(argumentsValue);
   missingVendorIdentity[0].vendorPath = "";
   assert.throws(
