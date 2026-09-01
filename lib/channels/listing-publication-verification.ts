@@ -242,6 +242,47 @@ function sourceContext(input: VerificationInput) {
     : null;
   const sourceResponse = source.data.sourceResponsePayload;
   const sourceSteps = responseSteps(sourceResponse);
+  const qoo10NoEffectMarker = exactText(
+    input.arguments.sellerpilotQoo10NoEffectReconciliation,
+  );
+  const qoo10LocalizationMarker = recordValue(
+    sourceArguments.sellerpilotQoo10ExactLocalization,
+  );
+  const qoo10SourceParams = recordValue(sourceArguments.params);
+  const qoo10PrewriteStep = sourceSteps[0] ?? {};
+  const qoo10PrewriteData = recordValue(qoo10PrewriteStep.data);
+  const exactQoo10NoEffectReconciliation = input.channel === "qoo10"
+    && qoo10NoEffectMarker === "qoo10_exact_no_remote_effect_verifier_v1"
+    && source.data.sourceOperation === "listing.update"
+    && (source.data.sourceJobId === "fac9c5c4-940d-4600-88f3-8f97a069dfbf"
+      || (qoo10LocalizationMarker.status === "allowed"
+        && qoo10LocalizationMarker.contract === "qoo10_exact_localization_update_v2"
+        && qoo10LocalizationMarker.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220"
+        && qoo10LocalizationMarker.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
+        && qoo10LocalizationMarker.credentialId === "2b49d081-5188-4a75-9555-e0a6438e8a2b"
+        && qoo10LocalizationMarker.remoteId === "1217336970"
+        && qoo10LocalizationMarker.sellerSku === "QA-20260823-CC-001"
+        && /^[a-f0-9]{40}$/u.test(exactText(qoo10LocalizationMarker.releaseSha))))
+    && exactText(qoo10SourceParams.ItemCode) === "1217336970"
+    && exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001"
+    && exactText(qoo10SourceParams.RetailPrice) === "1871"
+    && exactText(qoo10SourceParams.ItemPrice) === "1871"
+    && exactText(qoo10SourceParams.ItemQty) === "1"
+    && sourceResponse.channel === "qoo10"
+    && sourceResponse.operation === "listing.update"
+    && exactText(sourceResponse.remoteId) === "1217336970"
+    && exactText(qoo10PrewriteStep.name) === "qoo10-exact-current-s1-prewrite-readback"
+    && qoo10PrewriteStep.ok === true
+    && Number(qoo10PrewriteStep.status) >= 200
+    && Number(qoo10PrewriteStep.status) < 300
+    && exactText(qoo10PrewriteData.ResultCode) === "0"
+    && qoo10PrewriteData.ResultObject !== null
+    && qoo10PrewriteData.ResultObject !== undefined
+    && sourceArguments.publicationIntent === "live"
+    && sourceArguments.publicationStateContract === "verified_remote_state_v1"
+    && sourceArguments.publicationExpectedLocale === expectedLocale
+    && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
+    && sourceArguments.publicationExpectedImageCount === 8;
   const exactQoo10S1Recovery = input.channel === "qoo10"
     && input.arguments.sellerpilotQoo10ExactS1Recovery === "qoo10_exact_s1_verifier_v1"
     && source.data.sourceOperation === "listing.update"
@@ -261,7 +302,10 @@ function sourceContext(input: VerificationInput) {
     && sourceArguments.publicationExpectedLocale === expectedLocale
     && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
     && sourceArguments.publicationExpectedImageCount === 8;
-  if (!validLegacyElevenstSnapshot && !exactQoo10S1Recovery && (sourceArguments.publicationIntent !== "live"
+  if (!validLegacyElevenstSnapshot
+      && !exactQoo10S1Recovery
+      && !exactQoo10NoEffectReconciliation
+      && (sourceArguments.publicationIntent !== "live"
       || sourceArguments.publicationStateContract !== "verified_remote_state_v1"
       || sourceArguments.publicationExpectedLocale !== expectedLocale
       || sourceArguments.publicationExpectedFingerprint !== expectedFingerprint
@@ -278,6 +322,7 @@ function sourceContext(input: VerificationInput) {
     remoteId,
     legacyElevenstSnapshot: validLegacyElevenstSnapshot,
     exactQoo10S1Recovery,
+    exactQoo10NoEffectReconciliation,
     expected: {
       locale: expectedLocale,
       fingerprint: expectedFingerprint,
@@ -556,7 +601,14 @@ function verifiedExecution(input: {
 export async function executeListingPublicationVerification(
   input: VerificationInput,
 ): Promise<ListingPublicationVerificationExecution> {
-  const { source, remoteId, expected, legacyElevenstSnapshot, exactQoo10S1Recovery } = sourceContext(input);
+  const {
+    source,
+    remoteId,
+    expected,
+    legacyElevenstSnapshot,
+    exactQoo10S1Recovery,
+    exactQoo10NoEffectReconciliation,
+  } = sourceContext(input);
   const sourceOperation = source.sourceOperation as SourceOperation;
   const mutationSourceOperation = (): "listing.create" | "listing.update" => {
     if (sourceOperation === "listing.activate") {
@@ -642,6 +694,21 @@ export async function executeListingPublicationVerification(
     });
     const remoteState = strictIdentityVerified ? verifiedReadbackState : null;
     const readbackStep = providerStep("GetItemDetailInfo-publication-reverification", remote);
+    if (exactQoo10NoEffectReconciliation) {
+      const exactProviderSuccess = remote.response.ok && qoo10ExactSuccessResultCode(remote.data);
+      readbackStep.ok = exactProviderSuccess;
+      readbackStep.data = {
+        ...readbackStep.data,
+        sellerpilotVerification: exactProviderSuccess
+          ? "QOO10_EXACT_NO_EFFECT_CURRENT_READBACK_CAPTURED"
+          : "QOO10_EXACT_NO_EFFECT_CURRENT_READBACK_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      };
+      return {
+        remoteId,
+        steps: [readbackStep],
+      };
+    }
     if (exactQoo10S1Recovery) {
       const recovery = qoo10RollbackUpdateRecoveryBinding(sourceArguments)!;
       const params = recordValue(sourceArguments.params);
