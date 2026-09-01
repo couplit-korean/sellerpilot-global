@@ -139,9 +139,19 @@ function strictAttributes(value: unknown) {
 export function prepareCoupangExactQaRecoveryArguments(
   argumentsValue: Record<string, unknown>,
 ): Record<string, unknown> {
+  const sourceBody = recordValue(argumentsValue.body);
+  const sourceItems = Array.isArray(sourceBody.items)
+    ? sourceBody.items.map(recordValue)
+    : [];
+  const sourceItem = sourceItems.length === 1 ? sourceItems[0] : {};
+  const sanitizedUpdate = exactText(sourceItem.sellerpilotItemMatchId)
+      === coupangExactQaRecoveryIdentity.vendorItemId
+    && !["externalVendorSku", "originalPrice", "salePrice", "maximumBuyCount"]
+      .some((field) => Object.hasOwn(sourceItem, field));
   const binding = assertCoupangExactQaProviderContract(
     argumentsValue,
     "listing.update",
+    { sanitizedUpdate },
   );
   const body = structuredClone(recordValue(argumentsValue.body));
   const items = Array.isArray(body.items) ? body.items.map(recordValue) : [];

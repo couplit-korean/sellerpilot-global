@@ -11,6 +11,10 @@ const currentCredentialFenceMigrationUrl = new URL(
   "../supabase/migrations/20260901082000_bind_ebay_exact_update_to_current_active_credential.sql",
   import.meta.url,
 );
+const coupangSanitizedContractMigrationUrl = new URL(
+  "../supabase/migrations/20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
+  import.meta.url,
+);
 const routeUrl = new URL(
   "../app/api/admin/channel-operations/route.ts",
   import.meta.url,
@@ -64,11 +68,8 @@ function coupangArguments() {
     body: {
       sellerProductId: "16356981734",
       items: [{
-        externalVendorSku: "QA-20260823-CC-001",
+        sellerpilotItemMatchId: "95962393877",
         modelNo: "QA-20260823-CC-001",
-        originalPrice: 5000,
-        salePrice: 5000,
-        maximumBuyCount: 1,
       }],
     },
     sellerpilotCoupangExactQaRecovery: {
@@ -196,12 +197,20 @@ test("channel-specific SQL payload validators reject every near miss and Lazada"
     currentCredentialFenceMigrationUrl,
     "utf8",
   );
+  const coupangSanitizedContractMigration = await readFile(
+    coupangSanitizedContractMigrationUrl,
+    "utf8",
+  );
   const db = new PGlite();
   try {
     await db.exec("create schema sellerpilot_private");
     await db.exec(extractFunction(
       migration,
       "create function sellerpilot_private.exact_existing_update_arguments_valid(",
+    ));
+    await db.exec(extractTaggedDo(
+      coupangSanitizedContractMigration,
+      "patch_coupang_exact_sanitized_enqueue_contract",
     ));
     await db.exec(extractTaggedDo(
       currentCredentialFenceMigration,
@@ -232,6 +241,9 @@ test("channel-specific SQL payload validators reject every near miss and Lazada"
     const wrongCoupang = coupangArguments();
     wrongCoupang.sellerpilotCoupangExactQaRecovery.phase = "listing.stop";
     assert.equal(await allowed("coupang", wrongCoupang, 1), false);
+    const browserCommerceCoupang = coupangArguments();
+    browserCommerceCoupang.body.items[0].salePrice = 5000;
+    assert.equal(await allowed("coupang", browserCommerceCoupang, 1), false);
     const wrongElevenst = elevenstArguments();
     wrongElevenst.sellerpilotElevenstExactExistingPublication.remoteId = "9573255805";
     assert.equal(await allowed("elevenst", wrongElevenst, 1), false);

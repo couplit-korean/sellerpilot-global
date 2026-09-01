@@ -814,6 +814,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION,
       QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
       QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
+      "20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

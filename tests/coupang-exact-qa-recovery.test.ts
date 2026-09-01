@@ -158,6 +158,17 @@ function baseRecoveryArguments() {
   }, "listing.update");
 }
 
+function sanitizedRecoveryArguments() {
+  const value = structuredClone(baseRecoveryArguments());
+  const item = (value.body as { items: Array<Record<string, unknown>> }).items[0];
+  item.sellerpilotItemMatchId = coupangExactQaRecoveryIdentity.vendorItemId;
+  delete item.externalVendorSku;
+  delete item.originalPrice;
+  delete item.salePrice;
+  delete item.maximumBuyCount;
+  return value;
+}
+
 function baseStopRecoveryArguments() {
   return bindCoupangExactQaRecoveryArguments({
     sellerProductId: coupangExactQaRecoveryIdentity.sellerProductId,
@@ -338,6 +349,20 @@ test("exact recovery prepares current category, active shipping metadata, strict
   assert.deepEqual(item.notices, exactNotices());
   assert.ok((item.attributes as Array<Record<string, unknown>>).some((attribute) =>
     attribute.attributeTypeName === "색상" && attribute.attributeValueName === "검정색"));
+});
+
+test("exact recovery accepts the server-sanitized content patch and restores immutable commerce values", () => {
+  const prepared = prepareCoupangExactQaRecoveryArguments(
+    sanitizedRecoveryArguments(),
+  );
+  const item = (prepared.body as { items: Array<Record<string, unknown>> }).items[0];
+  assert.equal(
+    item.sellerpilotItemMatchId,
+    coupangExactQaRecoveryIdentity.vendorItemId,
+  );
+  assert.equal(item.originalPrice, coupangExactQaRecoveryIdentity.priceKrw);
+  assert.equal(item.salePrice, coupangExactQaRecoveryIdentity.priceKrw);
+  assert.equal(item.maximumBuyCount, coupangExactQaRecoveryIdentity.stock);
 });
 
 test("exact recovery fails before PUT when Coupang metadata does not expose the approved notice category", async () => {
