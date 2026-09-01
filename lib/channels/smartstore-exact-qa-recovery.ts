@@ -7,6 +7,7 @@ export const smartstoreExactQaRecoveryArgument =
 export const smartstoreExactQaRecoveryIdentity = Object.freeze({
   productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
   listingId: "7babb554-48dc-4869-81b1-cd4d435d7b96",
+  credentialId: "2aa76829-3d63-4842-9c3e-622acd3d0d2f",
   originProductNo: "13671684696",
   channelProductNo: "13732202182",
   centralSku: "QA-20260823-CC-001",
@@ -23,6 +24,14 @@ export type SmartstoreExactQaRecoveryBinding = {
   centralSku: string;
   sellerManagementCodeSource: "provider_readback_required";
   sellerAccountLineage: "validated_by_service_rpc";
+};
+
+export type SmartstoreExactQaReadinessBlock = {
+  mode:
+    | "smartstore_exact_qa_credential_required"
+    | "smartstore_exact_qa_atomic_identity_required"
+    | "static_egress_required";
+  reason: string;
 };
 
 function recordValue(value: unknown) {
@@ -201,6 +210,42 @@ export function smartstoreExactQaRecoveryBindingValue(
     return null;
   }
   return binding as SmartstoreExactQaRecoveryBinding;
+}
+
+/**
+ * Mirrors the exact read-only gates that run before a Smartstore update can be
+ * admitted. This never opens the generic listing-update release gate.
+ */
+export function smartstoreExactQaReadinessBlock(input: {
+  credentialId?: string | null;
+  identity?: unknown;
+  identityError?: boolean;
+  environmentStaticEgressReady?: boolean;
+  databaseStaticEgressReady?: boolean;
+  staticEgressError?: boolean;
+}): SmartstoreExactQaReadinessBlock | null {
+  if (input.credentialId !== smartstoreExactQaRecoveryIdentity.credentialId) {
+    return {
+      mode: "smartstore_exact_qa_credential_required",
+      reason: "이 스마트스토어 기존상품에 결속된 운영 인증정보를 확인하지 못해 원격 반영을 차단했습니다.",
+    };
+  }
+  if (input.identityError === true
+      || !smartstoreExactQaRecoveryBindingValue(input.identity)) {
+    return {
+      mode: "smartstore_exact_qa_atomic_identity_required",
+      reason: "스마트스토어 원상품·채널상품·활성 중앙상품·운영 인증정보의 exact 결속을 확인하지 못해 원격 반영을 차단했습니다.",
+    };
+  }
+  if (input.staticEgressError === true
+      || input.environmentStaticEgressReady !== true
+      || input.databaseStaticEgressReady !== true) {
+    return {
+      mode: "static_egress_required",
+      reason: "네이버 커머스API에 등록된 고정 egress IP와 서버 정책이 모두 확인될 때까지 스마트스토어 원격 반영을 차단합니다.",
+    };
+  }
+  return null;
 }
 
 export function smartstoreExactQaRecoveryBinding(

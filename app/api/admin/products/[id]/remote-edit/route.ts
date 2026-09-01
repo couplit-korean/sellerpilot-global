@@ -28,7 +28,15 @@ import { elevenstExactExistingPublicationCandidate } from "../../../../../../lib
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
 import { lazadaExactExistingPublicationCandidate } from "../../../../../../lib/channels/lazada-exact-existing-identity";
-import { smartstoreExactQaRecoveryCandidate } from "../../../../../../lib/channels/smartstore-exact-qa-recovery";
+import {
+  smartstoreExactQaReadinessBlock,
+  smartstoreExactQaRecoveryCandidate,
+  smartstoreExactQaRecoveryIdentity,
+} from "../../../../../../lib/channels/smartstore-exact-qa-recovery";
+import {
+  configuredServerlessStaticEgressChannels,
+  hasServerlessStaticEgressFor,
+} from "../../../../../../lib/channels/serverless-static-egress";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -70,6 +78,11 @@ const qoo10RollbackIdentitySchema = z.object({
 type ListingRecord = Record<string, unknown> & {
   id: string;
   channel: ActiveChannelKey;
+};
+
+type ListingAvailabilityBlock = {
+  mode: string;
+  reason: string;
 };
 
 function recordValue(value: unknown) {
@@ -212,7 +225,11 @@ function listingExecutionBlock(
   return null;
 }
 
-function listingAvailability(listing: ListingRecord, productId: string) {
+function listingAvailability(
+  listing: ListingRecord,
+  productId: string,
+  readinessBlock: ListingAvailabilityBlock | null = null,
+) {
   const release = channelOperationRelease(listing.channel, "listing.update");
   const reference = listingReference(listing);
   const allowExactEbayUpdate = productId === ebayExactExistingQaRecoveryIdentity.productId
@@ -237,9 +254,13 @@ function listingAvailability(listing: ListingRecord, productId: string) {
     targetId: typeof listing.targetId === "string" ? listing.targetId : "",
     status: typeof listing.status === "string" ? listing.status : "",
     remoteIdPresent: Boolean(listingReference(listing).remoteId?.trim()),
-    runnable: release.available && executionBlock === null,
-    mode: release.available ? executionBlock?.mode ?? release.mode : release.mode,
-    reason: release.available ? executionBlock?.message ?? release.reason : release.reason,
+    runnable: release.available && executionBlock === null && readinessBlock === null,
+    mode: release.available
+      ? readinessBlock?.mode ?? executionBlock?.mode ?? release.mode
+      : release.mode,
+    reason: release.available
+      ? readinessBlock?.reason ?? executionBlock?.message ?? release.reason
+      : release.reason,
     fields: channelProductEditFieldSupport(listing.channel),
     remotePlan,
   };
@@ -264,11 +285,73 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!productId.success) return NextResponse.json({ message: "상품 ID 형식이 올바르지 않습니다." }, { status: 400 });
   const loaded = await productContext(request, productId.data);
   if ("response" in loaded) return loaded.response;
+  const listings = listingRecords(loaded.context.listings);
+  const exactSmartstoreListing = listings.find((listing) => (
+    productId.data === smartstoreExactQaRecoveryIdentity.productId
+      && smartstoreExactQaRecoveryCandidate({
+        channel: listing.channel,
+        listingId: listing.id,
+        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+        status: typeof listing.status === "string" ? listing.status : null,
+        requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+          ? listing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof listing.remoteVisibility === "string"
+          ? listing.remoteVisibility
+          : null,
+        providerStatus: typeof listing.providerStatus === "string"
+          ? listing.providerStatus
+          : null,
+        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+        failureClass: typeof listing.failureClass === "string" ? listing.failureClass : null,
+      })
+  ));
+  let exactSmartstoreReadinessBlock: ListingAvailabilityBlock | null = null;
+  if (exactSmartstoreListing) {
+    const credentialId = new URL(request.url).searchParams.get("credentialId");
+    if (credentialId !== smartstoreExactQaRecoveryIdentity.credentialId) {
+      exactSmartstoreReadinessBlock = smartstoreExactQaReadinessBlock({ credentialId });
+    } else {
+      const [identityResult, staticEgressResult] = await Promise.all([
+        loaded.admin.serviceClient.rpc(
+          "sellerpilot_service_get_smartstore_exact_qa_recovery_identity",
+          {
+            p_listing_id: exactSmartstoreListing.id,
+            p_credential_id: credentialId,
+            p_product_id: productId.data,
+            p_market: typeof exactSmartstoreListing.market === "string"
+              ? exactSmartstoreListing.market
+              : "",
+            p_target_id: typeof exactSmartstoreListing.targetId === "string"
+              ? exactSmartstoreListing.targetId
+              : "",
+          },
+        ),
+        loaded.admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+      ]);
+      const staticEgressStatus = recordValue(staticEgressResult.data);
+      exactSmartstoreReadinessBlock = smartstoreExactQaReadinessBlock({
+        credentialId,
+        identity: identityResult.data,
+        identityError: Boolean(identityResult.error),
+        environmentStaticEgressReady: hasServerlessStaticEgressFor(
+          configuredServerlessStaticEgressChannels(),
+          ["smartstore"],
+        ),
+        databaseStaticEgressReady: staticEgressStatus.smartstore === true,
+        staticEgressError: Boolean(staticEgressResult.error),
+      });
+    }
+  }
   return NextResponse.json({
     productId: productId.data,
     centralFields: centralProductEditFieldSupport(),
-    listings: listingRecords(loaded.context.listings).map((listing) => (
-      listingAvailability(listing, productId.data)
+    listings: listings.map((listing) => (
+      listingAvailability(
+        listing,
+        productId.data,
+        listing.id === exactSmartstoreListing?.id ? exactSmartstoreReadinessBlock : null,
+      )
     )),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }

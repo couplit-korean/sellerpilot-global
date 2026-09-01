@@ -9,6 +9,7 @@ import {
   smartstoreExactQaApprovedContentRequired,
   smartstoreExactQaCentralSkuVerified,
   smartstoreExactQaCreateForbidden,
+  smartstoreExactQaReadinessBlock,
   smartstoreExactQaRecoveryArgument,
   smartstoreExactQaRecoveryBinding,
   smartstoreExactQaRecoveryCandidate,
@@ -112,6 +113,38 @@ test("Smartstore exact QA recovery binding is server-owned and preserves null ma
     },
   };
   assert.equal(smartstoreExactQaRecoveryBinding(forged), null);
+});
+
+test("Smartstore exact readiness fails closed on credential, identity, and static egress", () => {
+  const identity = smartstoreExactQaRecoveryBinding(exactPreparedArguments());
+  assert.ok(identity);
+  assert.deepEqual(smartstoreExactQaReadinessBlock({
+    credentialId: crypto.randomUUID(),
+    identity,
+    environmentStaticEgressReady: true,
+    databaseStaticEgressReady: true,
+  }), {
+    mode: "smartstore_exact_qa_credential_required",
+    reason: "이 스마트스토어 기존상품에 결속된 운영 인증정보를 확인하지 못해 원격 반영을 차단했습니다.",
+  });
+  assert.equal(smartstoreExactQaReadinessBlock({
+    credentialId: smartstoreExactQaRecoveryIdentity.credentialId,
+    identity: null,
+    environmentStaticEgressReady: true,
+    databaseStaticEgressReady: true,
+  })?.mode, "smartstore_exact_qa_atomic_identity_required");
+  assert.equal(smartstoreExactQaReadinessBlock({
+    credentialId: smartstoreExactQaRecoveryIdentity.credentialId,
+    identity,
+    environmentStaticEgressReady: true,
+    databaseStaticEgressReady: false,
+  })?.mode, "static_egress_required");
+  assert.equal(smartstoreExactQaReadinessBlock({
+    credentialId: smartstoreExactQaRecoveryIdentity.credentialId,
+    identity,
+    environmentStaticEgressReady: true,
+    databaseStaticEgressReady: true,
+  }), null);
 });
 
 test("Smartstore exact QA product is update-only and requires the observed failed ledger state", () => {
@@ -333,6 +366,12 @@ test("Smartstore exact recovery is exposed only through the exact UI and proxy f
   assert.match(workbench, /productId === smartstoreExactQaRecoveryIdentity\.productId/);
   assert.match(workbench, /recoverableSmartstoreUpdate/);
   assert.match(remoteEdit, /allowExactSmartstoreRecovery = smartstoreExactQaRecoveryCandidate/);
+  assert.match(remoteEdit, /sellerpilot_service_get_smartstore_exact_qa_recovery_identity/);
+  assert.match(remoteEdit, /sellerpilot_service_serverless_static_egress_status/);
+  assert.match(remoteEdit, /smartstoreExactQaReadinessBlock/);
+  assert.match(workbench, /nextRemoteEditAvailability/);
+  assert.match(workbench, /exactSmartstoreReadiness\?\.runnable === true/);
+  assert.match(workbench, /safe mode \$\{exactSmartstoreReadiness\?\.mode/);
   assert.match(
     remoteEdit,
     /&& !allowExactLazadaRecovery[\s\S]{0,160}&& !allowExactSmartstoreRecovery/,

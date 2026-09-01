@@ -100,6 +100,14 @@ type CredentialRow = {
   status: string;
 };
 
+type RemoteEditListingAvailability = {
+  listingId: string;
+  channel: ActiveChannelKey;
+  runnable: boolean;
+  mode: string;
+  reason: string;
+};
+
 type Assignment = {
   channel: ActiveChannelKey;
   market: string;
@@ -1291,6 +1299,9 @@ export function ProductPublishWorkbench(props: ProductPublishWorkbenchProps) {
 function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVersion, notify, onChanged }: ProductPublishWorkbenchProps) {
   const [context, setContext] = useState<PublishContext | null>(null);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
+  const [remoteEditAvailability, setRemoteEditAvailability] = useState<
+    Record<string, RemoteEditListingAvailability>
+  >({});
   const [drafts, setDrafts] = useState<Partial<Record<ActiveChannelKey, string>>>({});
   const [results, setResults] = useState<Partial<Record<ActiveChannelKey, ChannelResult>>>({});
   const [availableTargets, setAvailableTargets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", ChannelTarget[]>>>({});
@@ -1404,6 +1415,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     if (!productId) {
       loadRequestRef.current = null;
       setContext(null);
+      setRemoteEditAvailability({});
       setLoading(false);
       return;
     }
@@ -1459,6 +1471,71 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const nextLazadaMyrRate = exchangeRatesResponse.ok
         ? lazadaMyrRateFromSnapshot(exchangeRatesPayload)
         : null;
+      const credentialRows = Array.isArray(credentialsResponse.data)
+        ? credentialsResponse.data as CredentialRow[]
+        : [];
+      const nextRemoteEditAvailability: Record<string, RemoteEditListingAvailability> = {};
+      const exactSmartstoreListing = nextPayload.listings.find((listing) => (
+        smartstoreExactQaWorkbenchRecoveryCandidate(
+          requestedProductId,
+          "smartstore",
+          listing,
+        )
+      ));
+      if (exactSmartstoreListing) {
+        const exactCredential = credentialRows.find((credential) => (
+          credential.id === smartstoreExactQaRecoveryIdentity.credentialId
+            && credential.channel === "smartstore"
+            && credential.environment === "production"
+            && credential.status === "active"
+        ));
+        try {
+          const readinessUrl = new URL(
+            `/api/admin/products/${requestedProductId}/remote-edit`,
+            window.location.origin,
+          );
+          if (exactCredential) {
+            readinessUrl.searchParams.set("credentialId", exactCredential.id);
+          }
+          const readinessResponse = await waitForAbortablePromise(fetch(readinessUrl, {
+            headers: { authorization: `Bearer ${accessToken}` },
+            cache: "no-store",
+            signal: bounded.signal,
+          }), bounded.signal);
+          const readinessPayload = await waitForAbortablePromise(
+            readinessResponse.json().catch(() => ({ listings: [] })),
+            bounded.signal,
+          ) as { listings?: RemoteEditListingAvailability[] };
+          const exactReadiness = Array.isArray(readinessPayload.listings)
+            ? readinessPayload.listings.find((item) => (
+              item.listingId === exactSmartstoreListing.id
+                && item.channel === "smartstore"
+                && typeof item.runnable === "boolean"
+                && typeof item.mode === "string"
+                && typeof item.reason === "string"
+            ))
+            : null;
+          nextRemoteEditAvailability[exactSmartstoreListing.id] = readinessResponse.ok
+              && exactReadiness
+            ? exactReadiness
+            : {
+                listingId: exactSmartstoreListing.id,
+                channel: "smartstore",
+                runnable: false,
+                mode: "smartstore_exact_qa_readiness_unavailable",
+                reason: "스마트스토어 exact 실행 준비 상태를 서버에서 확인하지 못해 원격 반영을 차단했습니다.",
+              };
+        } catch (error) {
+          if (bounded.signal.aborted) throw error;
+          nextRemoteEditAvailability[exactSmartstoreListing.id] = {
+            listingId: exactSmartstoreListing.id,
+            channel: "smartstore",
+            runnable: false,
+            mode: "smartstore_exact_qa_readiness_unavailable",
+            reason: "스마트스토어 exact 실행 준비 상태 조회가 실패해 원격 반영을 차단했습니다.",
+          };
+        }
+      }
       const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0], ebay: ebayMarketplaceTargets[0] };
       const manual = nextPayload.manualFields;
       const initialPrice = manual.sellingPrice;
@@ -1479,7 +1556,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         setGlobalBaseUsdPrice(initialPrice);
       }
       setContext(nextPayload);
-      setCredentials(Array.isArray(credentialsResponse.data) ? credentialsResponse.data as CredentialRow[] : []);
+      setCredentials(credentialRows);
+      setRemoteEditAvailability(nextRemoteEditAvailability);
       setAvailableTargets({ shopee: shopeeTargets, lazada: lazadaTargets, ebay: ebayMarketplaceTargets });
       setSelectedTargets(initialTargets);
       setDrafts(buildDraftMap(nextPayload, initialPrice, initialQuantity, initialTargets, initialPackage, manual.currency === "USD" ? initialPrice : globalBaseUsdPriceRef.current, nextLazadaMyrRate));
@@ -1571,11 +1649,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     };
   }, [fetchQueuedListings, productId, queuedResultSignature]);
 
-  const activeCredentials = useMemo(() => new Map(
-    credentials
-      .filter((item) => item.status === "active" && item.environment === "production")
-      .map((item) => [item.channel, item]),
-  ), [credentials]);
+  const activeCredentials = useMemo(() => {
+    const active = credentials.filter((item) => (
+      item.status === "active" && item.environment === "production"
+    ));
+    const byChannel = new Map(active.map((item) => [item.channel, item]));
+    const exactSmartstoreCredential = active.find((item) => (
+      item.channel === "smartstore"
+        && item.id === smartstoreExactQaRecoveryIdentity.credentialId
+    ));
+    if (exactSmartstoreCredential) {
+      byChannel.set("smartstore", exactSmartstoreCredential);
+    }
+    return byChannel;
+  }, [credentials]);
   const visibleChannels = useMemo(
     () => publicationSelectableChannelKeys.filter((channel) => selectedChannels.includes(channel)),
     [selectedChannels],
@@ -2369,7 +2456,18 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const operation = listingWriteOperation(listing);
       const remoteUpdate = operation === "listing.update";
       const operationRelease = channelOperationRelease(channel, operation);
-      const operationAvailable = operationRelease.available;
+      const exactSmartstoreReadiness = recoverableSmartstoreUpdate && listing
+        ? remoteEditAvailability[listing.id]
+        : null;
+      const operationAvailable = operationRelease.available
+        && (!recoverableSmartstoreUpdate || exactSmartstoreReadiness?.runnable === true);
+      const exactSmartstoreBlockedLabel = exactSmartstoreReadiness?.mode === "static_egress_required"
+        ? "스마트스토어 고정 egress 확인 필요"
+        : exactSmartstoreReadiness?.mode === "smartstore_exact_qa_atomic_identity_required"
+          ? "스마트스토어 exact 원장 결속 확인 필요"
+          : exactSmartstoreReadiness?.mode === "smartstore_exact_qa_credential_required"
+            ? "스마트스토어 운영 인증정보 확인 필요"
+            : "스마트스토어 실행 준비 상태 확인 필요";
       const capability = remoteUpdate ? definition.capabilities.listingUpdate : definition.capabilities.listingCreate;
       const editFieldSupport = remoteUpdate ? channelProductEditFieldSupport(channel) : null;
       const remotePlan = remoteUpdate ? productEditRemotePlan(channel, operationAvailable) : null;
@@ -2426,16 +2524,16 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const temuActivationLocked = result.operation === "listing.activate"
         && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : recoverableSmartstoreUpdate ? "실행 준비 확인 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, nextTargets); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
+        {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{recoverableSmartstoreUpdate ? exactSmartstoreBlockedLabel : remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{recoverableSmartstoreUpdate ? `${exactSmartstoreReadiness?.reason ?? "실행 준비 상태를 아직 확인하지 못했습니다."} · safe mode ${exactSmartstoreReadiness?.mode ?? "smartstore_exact_qa_readiness_unavailable"}` : remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
         {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
           <header className="product-edit-support-header"><div><b>이 채널의 원격 수정 범위</b><small>중앙 저장과 원격 반영은 분리되며, 일부 지원 필드는 원격 반영 후 수동 확인도 필요합니다.</small></div><span>콘텐츠 완전 {remoteListingSupportedFieldLabels.length} · 일부 {remoteListingPartialFieldLabels.length} · 수동 {remoteManualFieldLabels.length}</span></header>
           <div className="product-edit-support-grid"><div className="remote-edit-support">{productEditFieldKeys.map((field) => { const support = editFieldSupport[field]; const operationLabel = support.operation === "inventory.update" ? "별도 재고 동기화" : support.operation === "price.update" ? "별도 가격 작업" : support.operation === "listing.update" ? "상품 콘텐츠 반영" : "중앙 저장"; return <span className={support.state} title={support.reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(support.state, centralEditFieldSupport[field].state)} · {operationLabel}</small><small className="remote-edit-support-reason product-edit-support-reason">{support.reason}</small></span>; })}</div></div>
           {remoteInventorySupport && <p className={`product-edit-inventory-scope ${remoteInventorySupport.state}`}><PackageCheck size={14} /><span><b>{remoteCommerceUpdate ? `가격·재고는 이 버튼에 포함: ${lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW → ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR` : "최신 환율 확인 필요"}` : `재고는 이 버튼과 별도: ${remoteInventorySupport.state === "supported" ? "재고 동기화 지원" : "판매자센터 수동 확인"}`}</b><small>{remoteInventorySupport.reason} {remoteCommerceUpdate ? "원격 단일 SKU·카테고리·할인 미적용·단일 창고와 현재 환율을 확인하지 못하면 쓰기 전에 차단합니다." : "아래 상품 콘텐츠 반영 버튼은 재고를 변경하지 않습니다."}</small></span></p>}
           {remoteManualFieldLabels.length > 0 && <p className="product-edit-manual-scope"><AlertTriangle size={14} /><span><b>별도 수동 확인·반영: {remoteManualFieldLabels.join(" · ")}</b><small>일부 지원 필드도 채널 정책 보존 범위를 확인해야 합니다. 이 화면은 수동 확인이 필요한 값을 완전 반영 성공으로 표시하지 않습니다.</small></span></p>}
         </section>}
-        {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />원격 반영 차단 · 판매자센터 수동 수정</button>}
+        {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />{recoverableSmartstoreUpdate ? "원격 반영 차단 · 준비 조건 확인 필요" : "원격 반영 차단 · 판매자센터 수동 수정"}</button>}
         {operationAvailable && <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
