@@ -16,6 +16,7 @@
     "gateway:worker": "node --import tsx scripts/ai-cli-worker.mjs --gateway-only",
     "gateway:worker:once": "node --import tsx scripts/ai-cli-worker.mjs --gateway-only --once",
     "gateway:serverless:configure": "node scripts/bootstrap-serverless-cs-runtime.mjs",
+    "deploy:vercel:candidate": "node scripts/deploy-vercel-release-candidate.mjs",
     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",
     "build:vercel": "next build --webpack",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",
