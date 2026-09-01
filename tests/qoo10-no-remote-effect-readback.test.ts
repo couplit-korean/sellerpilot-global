@@ -3,6 +3,7 @@ import test from "node:test";
 import { executeListingPublicationVerification } from "../lib/channels/listing-publication-verification";
 
 const SOURCE_JOB_ID = "71000000-0000-4000-8000-000000000001";
+const LEGACY_SOURCE_JOB_ID = "fac9c5c4-940d-4600-88f3-8f97a069dfbf";
 const VERIFIER_JOB_ID = "72000000-0000-4000-8000-000000000001";
 const PRODUCT_ID = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const LISTING_ID = "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc";
@@ -99,6 +100,41 @@ function argumentsValue() {
   };
 }
 
+function legacyArgumentsValue() {
+  const value = argumentsValue();
+  const source = value.sellerpilotPublicationSource;
+  source.sourceJobId = LEGACY_SOURCE_JOB_ID;
+  value.publicationReviewSourceJobId = LEGACY_SOURCE_JOB_ID;
+  delete source.sourceArguments.sellerpilotQoo10ExactLocalization;
+  delete source.sourceArguments.params.SellerCode;
+  delete source.sourceArguments.params.ItemPrice;
+  delete source.sourceArguments.params.ItemQty;
+  Object.assign(source.sourceArguments.params, {
+    SecondSubCat: "320000542",
+    ProductionPlaceType: "2",
+    ProductionPlace: "CN",
+    ShippingNo: "806971",
+    AdultYN: "N",
+  });
+  source.sourceArguments.sellerpilotQoo10RollbackUpdateRecovery = {
+    status: "allowed",
+    contract: "qoo10_create_rollback_confirmation_v1",
+    listingId: LISTING_ID,
+    remoteId: REMOTE_ID,
+    providerStatus: "S1",
+    sourceJobId: "73000000-0000-4000-8000-000000000001",
+    expectedState: {
+      categoryCode: "320000542",
+      retailPriceJpy: 1871,
+      sellPriceJpy: 1871,
+      quantity: 1,
+      shippingNo: "806971",
+      biContentsNo: 8461402963,
+    },
+  };
+  return value;
+}
+
 function qooMethod(input: RequestInfo | URL) {
   return decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
 }
@@ -155,6 +191,68 @@ test("invalid no-effect source binding fails before provider access", async () =
       }),
       /LISTING_PUBLICATION_VERIFY_SOURCE_BINDING_INVALID/,
     );
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("legacy fac9 no-effect verifier accepts only its pre-v2 omitted price and quantity shape", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(qooMethod(input));
+    return Response.json({ ResultCode: 0, ResultObject: readback() });
+  };
+  try {
+    const result = await executeListingPublicationVerification({
+      channel: "qoo10",
+      operation: "listing.publication.verify",
+      payload: { api_key: "test-only" },
+      arguments: legacyArgumentsValue(),
+      environment: "production",
+    });
+    assert.deepEqual(calls, ["ItemsLookup.GetItemDetailInfo"]);
+    assert.equal(result.steps[0]?.data.sellerpilotNoWriteConfirmed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("legacy fac9 no-effect binding rejects v2-only fields or rollback expectation drift before provider access", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("provider call forbidden");
+  };
+  try {
+    const invalidValues = [
+      (() => {
+        const value = legacyArgumentsValue();
+        value.sellerpilotPublicationSource.sourceArguments.params.ItemQty = "1";
+        return value;
+      })(),
+      (() => {
+        const value = legacyArgumentsValue();
+        const marker = value.sellerpilotPublicationSource.sourceArguments
+          .sellerpilotQoo10RollbackUpdateRecovery;
+        marker.expectedState.quantity = 2;
+        return value;
+      })(),
+    ];
+    for (const invalid of invalidValues) {
+      await assert.rejects(
+        executeListingPublicationVerification({
+          channel: "qoo10",
+          operation: "listing.publication.verify",
+          payload: { api_key: "test-only" },
+          arguments: invalid,
+          environment: "production",
+        }),
+        /LISTING_PUBLICATION_VERIFY_SOURCE_BINDING_INVALID/,
+      );
+    }
     assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;

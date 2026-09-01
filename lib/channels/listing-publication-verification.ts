@@ -251,23 +251,44 @@ function sourceContext(input: VerificationInput) {
   const qoo10SourceParams = recordValue(sourceArguments.params);
   const qoo10PrewriteStep = sourceSteps[0] ?? {};
   const qoo10PrewriteData = recordValue(qoo10PrewriteStep.data);
+  const exactQoo10LegacyNoEffectSource =
+    source.data.sourceJobId === "fac9c5c4-940d-4600-88f3-8f97a069dfbf"
+    && qoo10RecoveryBinding !== null
+    && qoo10RecoveryBinding.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
+    && qoo10RecoveryBinding.remoteId === "1217336970"
+    && qoo10RecoveryBinding.providerStatus === "S1"
+    && qoo10RecoveryBinding.expectedState.categoryCode === "320000542"
+    && qoo10RecoveryBinding.expectedState.retailPriceJpy === 1871
+    && qoo10RecoveryBinding.expectedState.sellPriceJpy === 1871
+    && qoo10RecoveryBinding.expectedState.quantity === 1
+    && qoo10RecoveryBinding.expectedState.shippingNo === "806971"
+    && qoo10RecoveryBinding.expectedState.biContentsNo === 8461402963
+    && exactText(qoo10SourceParams.SecondSubCat) === "320000542"
+    && exactText(qoo10SourceParams.ProductionPlaceType) === "2"
+    && exactText(qoo10SourceParams.ProductionPlace) === "CN"
+    && exactText(qoo10SourceParams.ShippingNo) === "806971"
+    && exactText(qoo10SourceParams.AdultYN) === "N"
+    && !Object.hasOwn(qoo10SourceParams, "ItemPrice")
+    && !Object.hasOwn(qoo10SourceParams, "ItemQty")
+    && (!Object.hasOwn(qoo10SourceParams, "SellerCode")
+      || exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001");
+  const exactQoo10V2NoEffectSource = qoo10LocalizationMarker.status === "allowed"
+    && qoo10LocalizationMarker.contract === "qoo10_exact_localization_update_v2"
+    && qoo10LocalizationMarker.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220"
+    && qoo10LocalizationMarker.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
+    && qoo10LocalizationMarker.credentialId === "2b49d081-5188-4a75-9555-e0a6438e8a2b"
+    && qoo10LocalizationMarker.remoteId === "1217336970"
+    && qoo10LocalizationMarker.sellerSku === "QA-20260823-CC-001"
+    && /^[a-f0-9]{40}$/u.test(exactText(qoo10LocalizationMarker.releaseSha))
+    && exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001"
+    && exactText(qoo10SourceParams.ItemPrice) === "1871"
+    && exactText(qoo10SourceParams.ItemQty) === "1";
   const exactQoo10NoEffectReconciliation = input.channel === "qoo10"
     && qoo10NoEffectMarker === "qoo10_exact_no_remote_effect_verifier_v1"
     && source.data.sourceOperation === "listing.update"
-    && (source.data.sourceJobId === "fac9c5c4-940d-4600-88f3-8f97a069dfbf"
-      || (qoo10LocalizationMarker.status === "allowed"
-        && qoo10LocalizationMarker.contract === "qoo10_exact_localization_update_v2"
-        && qoo10LocalizationMarker.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220"
-        && qoo10LocalizationMarker.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
-        && qoo10LocalizationMarker.credentialId === "2b49d081-5188-4a75-9555-e0a6438e8a2b"
-        && qoo10LocalizationMarker.remoteId === "1217336970"
-        && qoo10LocalizationMarker.sellerSku === "QA-20260823-CC-001"
-        && /^[a-f0-9]{40}$/u.test(exactText(qoo10LocalizationMarker.releaseSha))))
+    && (exactQoo10LegacyNoEffectSource || exactQoo10V2NoEffectSource)
     && exactText(qoo10SourceParams.ItemCode) === "1217336970"
-    && exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001"
     && exactText(qoo10SourceParams.RetailPrice) === "1871"
-    && exactText(qoo10SourceParams.ItemPrice) === "1871"
-    && exactText(qoo10SourceParams.ItemQty) === "1"
     && sourceResponse.channel === "qoo10"
     && sourceResponse.operation === "listing.update"
     && exactText(sourceResponse.remoteId) === "1217336970"

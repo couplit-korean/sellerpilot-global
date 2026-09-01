@@ -7,6 +7,11 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901083000_reconcile_exact_qoo10_uncertain_no_remote_effect.sql",
   import.meta.url,
 );
+const legacyPayloadMigrationUrl = new URL(
+  "../supabase/migrations/20260901084000_bind_qoo10_no_effect_legacy_fac9_payload.sql",
+  import.meta.url,
+);
+const LEGACY_SOURCE_JOB_ID = "fac9c5c4-940d-4600-88f3-8f97a069dfbf";
 const REMOTE_ID = "1217336970";
 const SELLER_SKU = "QA-20260823-CC-001";
 const TITLE = "貼り付け式ケーブル整理クリップ6個セット";
@@ -48,6 +53,41 @@ function fixture() {
   };
 }
 
+function legacyArguments() {
+  return {
+    params: {
+      ItemCode: REMOTE_ID,
+      SecondSubCat: "320000542",
+      ProductionPlaceType: "2",
+      ProductionPlace: "CN",
+      RetailPrice: "1871",
+      ShippingNo: "806971",
+      AdultYN: "N",
+    },
+    sellerpilotQoo10RollbackUpdateRecovery: {
+      status: "allowed",
+      contract: "qoo10_create_rollback_confirmation_v1",
+      listingId: "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc",
+      remoteId: REMOTE_ID,
+      providerStatus: "S1",
+      sourceJobId: "73000000-0000-4000-8000-000000000001",
+      expectedState: {
+        categoryCode: "320000542",
+        retailPriceJpy: 1871,
+        sellPriceJpy: 1871,
+        quantity: 1,
+        shippingNo: "806971",
+        biContentsNo: 8461402963,
+      },
+    },
+    publicationIntent: "live",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationExpectedLocale: "ja-JP",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 8,
+  };
+}
+
 async function scalar(db, sql, params = []) {
   return (await db.query(sql, params)).rows[0]?.value;
 }
@@ -83,6 +123,11 @@ async function snapshotDatabase() {
     "create function sellerpilot_private.qoo10_exact_no_effect_snapshot(",
     "create function sellerpilot_private.qoo10_exact_no_effect_snapshots_identical(",
   ]) await db.exec(extractFunction(migration, signature));
+  const legacyPayloadMigration = await readFile(legacyPayloadMigrationUrl, "utf8");
+  for (const signature of [
+    "create or replace function sellerpilot_private.qoo10_exact_no_effect_alias_value(",
+    "create or replace function sellerpilot_private.qoo10_exact_no_effect_snapshot(",
+  ]) await db.exec(extractFunction(legacyPayloadMigration, signature));
   return db;
 }
 
@@ -140,6 +185,45 @@ test("partial changes in title, SKU, status, price, stock, representative, HTML,
           db,
           "select sellerpilot_private.qoo10_exact_no_effect_snapshots_identical($1::jsonb,$2::jsonb) value",
           [JSON.stringify(prewrite), JSON.stringify(current)],
+        ),
+        false,
+        name,
+      );
+    }
+  } finally {
+    await db.close();
+  }
+});
+
+test("legacy prewrite content is accepted only when current raw title and HTML are byte-identical", async () => {
+  const db = await snapshotDatabase();
+  try {
+    const prewrite = fixture();
+    prewrite.ItemTitle = "buchakhyeong keibeul jeongri keullip 6gaeset";
+    const identical = structuredClone(prewrite);
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.qoo10_exact_no_effect_snapshots_identical($1::jsonb,$2::jsonb) value",
+        [JSON.stringify(prewrite), JSON.stringify(identical)],
+      ),
+      true,
+    );
+
+    for (const [name, mutate] of [
+      ["title trailing whitespace", (item) => { item.ItemTitle += " "; }],
+      ["detail HTML trailing whitespace", (item) => {
+        item.ItemDetail += " ";
+        item.Description = item.ItemDetail;
+      }],
+    ]) {
+      const changed = structuredClone(prewrite);
+      mutate(changed);
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.qoo10_exact_no_effect_snapshots_identical($1::jsonb,$2::jsonb) value",
+          [JSON.stringify(prewrite), JSON.stringify(changed)],
         ),
         false,
         name,
@@ -236,4 +320,81 @@ test("reconciliation mutates no ledger state before exact snapshot equality and 
   assert.match(sql, /sellerpilot_service_enqueue_exact_qoo10_localization_activation[\s\S]*qoo10_exact_no_effect_reconciliations/u);
   assert.match(sql, /activationStillRequiresFreshS1Verifier',true/u);
   assert.doesNotMatch(reconcile, /insert into sellerpilot_private\.channel_gateway_jobs/u);
+});
+
+test("legacy fac9 SQL validator binds the known pre-v2 payload while v2-only fields fail closed", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(String.raw`
+      create schema sellerpilot_private;
+      create schema extensions;
+      create function extensions.digest(value text, algorithm text)
+      returns bytea language sql immutable as $$
+        select decode(
+          case when value::jsonb ? 'arguments'
+            then 'c6baf120f58bdfd3cd10adcb85a1f6a5820b9a003ca5c3160959ecdb1fb7d26d'
+            else 'b2c09c6388fa048f789a8a272bf21cd3d68cf8a8caa4fc02a4e1ca1be6a6b768'
+          end,
+          'hex'
+        )
+      $$;
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,
+        request_payload jsonb not null,
+        response_payload jsonb not null
+      );
+    `);
+    const migration = await readFile(legacyPayloadMigrationUrl, "utf8");
+    await db.exec(extractFunction(
+      migration,
+      "create or replace function\nsellerpilot_private.qoo10_exact_no_effect_source_arguments_valid(",
+    ));
+    const insertSource = async (argumentsValue) => {
+      await db.query(String.raw`
+        insert into sellerpilot_private.channel_gateway_jobs (
+          id,request_payload,response_payload
+        ) values (
+          $1,
+          jsonb_build_object(
+            'arguments',$2::jsonb,
+            'padding',repeat('x',23555-pg_catalog.octet_length(
+              jsonb_build_object('arguments',$2::jsonb,'padding','')::text
+            ))
+          ),
+          jsonb_build_object(
+            'padding',repeat('x',16669-pg_catalog.octet_length(
+              jsonb_build_object('padding','')::text
+            ))
+          )
+        )
+        on conflict (id) do update set
+          request_payload=excluded.request_payload,
+          response_payload=excluded.response_payload
+      `, [LEGACY_SOURCE_JOB_ID, JSON.stringify(argumentsValue)]);
+    };
+    const valid = legacyArguments();
+    await insertSource(valid);
+    assert.equal(await scalar(
+      db,
+      "select sellerpilot_private.qoo10_exact_no_effect_source_arguments_valid($1,$2::jsonb,$3) value",
+      [LEGACY_SOURCE_JOB_ID, JSON.stringify(valid), "b".repeat(40)],
+    ), true);
+
+    for (const mutate of [
+      (value) => { value.params.ItemPrice = "1871"; },
+      (value) => { value.params.ItemQty = "1"; },
+      (value) => { value.sellerpilotQoo10RollbackUpdateRecovery.expectedState.quantity = 2; },
+    ]) {
+      const invalid = structuredClone(valid);
+      mutate(invalid);
+      await insertSource(invalid);
+      assert.equal(await scalar(
+        db,
+        "select sellerpilot_private.qoo10_exact_no_effect_source_arguments_valid($1,$2::jsonb,$3) value",
+        [LEGACY_SOURCE_JOB_ID, JSON.stringify(invalid), "b".repeat(40)],
+      ), false);
+    }
+  } finally {
+    await db.close();
+  }
 });
