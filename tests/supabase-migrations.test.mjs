@@ -121,6 +121,8 @@ const QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION =
   "20260901085000_reconcile_qoo10_partial_manual_activation.sql";
 const SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION =
   "20260901120000_restore_smartstore_static_egress_fence.sql";
+const ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION =
+  "20260901130000_reconcile_exact_elevenst_manual_live_readback.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -818,6 +820,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
       "20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
       SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION,
+      ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
