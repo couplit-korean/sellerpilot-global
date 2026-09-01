@@ -117,6 +117,8 @@ const QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION =
   "20260901083000_reconcile_exact_qoo10_uncertain_no_remote_effect.sql";
 const QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION =
   "20260901084000_bind_qoo10_no_effect_legacy_fac9_payload.sql";
+const QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION =
+  "20260901085000_reconcile_qoo10_partial_manual_activation.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -811,6 +813,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION,
       QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION,
       QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
+      QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -955,6 +958,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION)
         < migrationNames.indexOf(QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION),
       "Qoo10 legacy no-effect payload repair must replay after the base no-effect contract",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION)
+        < migrationNames.indexOf(QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION),
+      "Qoo10 partial/manual reconciliation must supersede the rejected no-effect path",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -12014,6 +12022,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION
         && name !== QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
         && name !== QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
+        && name !== QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
@@ -13736,6 +13745,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION
         || name === QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
         || name === QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
+        || name === QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
