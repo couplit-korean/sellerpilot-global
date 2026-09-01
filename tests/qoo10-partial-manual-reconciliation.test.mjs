@@ -373,6 +373,10 @@ test("partial and final reconciliation are append-only, ordered, and never enque
     sql,
     "create function public.sellerpilot_service_finalize_exact_qoo10_manual_activation(",
   );
+  const atomic = extractFunction(
+    sql,
+    "create function public.sellerpilot_service_reconcile_exact_qoo10_post_activation(",
+  );
   assert.ok(
     reconcile.indexOf("insert into sellerpilot_private.qoo10_exact_partial_manual_reconciliations")
       < reconcile.indexOf("update sellerpilot_private.channel_gateway_jobs source"),
@@ -390,5 +394,193 @@ test("partial and final reconciliation are append-only, ordered, and never enque
   assert.match(sql, /before update or delete[\s\S]*qoo10_exact_manual_activation_outcomes/u);
   assert.doesNotMatch(reconcile, /insert into sellerpilot_private\.channel_gateway_jobs/u);
   assert.doesNotMatch(finalize, /insert into sellerpilot_private\.channel_gateway_jobs/u);
+  assert.ok(
+    atomic.indexOf("sellerpilot_service_reconcile_exact_qoo10_partial_manual")
+      < atomic.indexOf("sellerpilot_service_finalize_exact_qoo10_manual_activation"),
+  );
+  assert.match(atomic, /v_manual_activated_at<v_partial_observed_at/u);
+  assert.match(atomic, /externalWriteCount',0/u);
+  assert.doesNotMatch(atomic, /insert into sellerpilot_private\.channel_gateway_jobs/u);
+  const grantBlock = sql.slice(
+    sql.indexOf("grant execute on function"),
+    sql.indexOf("do $qoo10_partial_manual_postimage$"),
+  );
+  assert.match(grantBlock, /sellerpilot_service_reconcile_exact_qoo10_post_activation/u);
+  assert.doesNotMatch(grantBlock, /sellerpilot_service_reconcile_exact_qoo10_partial_manual/u);
+  assert.doesNotMatch(grantBlock, /sellerpilot_service_finalize_exact_qoo10_manual_activation/u);
   assert.doesNotMatch(sql, /ItemsBasic\.UpdateGoods|ItemsOrder\.SetNewGoods|fetch\(/u);
+});
+
+test("post-activation reconciliation records both phases atomically and rolls back either phase on failure", async () => {
+  const db = await validatorDatabase();
+  try {
+    const migration = await readFile(migrationUrl, "utf8");
+    await db.exec(`
+      create table public.reconciliation_phases (
+        sequence_id bigint generated always as identity primary key,
+        phase text not null
+      );
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key,
+        status text not null
+      );
+      create table sellerpilot_private.channel_operation_attempts (
+        id uuid primary key,
+        status text not null
+      );
+      create table sellerpilot_private.product_listings (
+        id uuid primary key,
+        status text not null,
+        failure_class text,
+        remote_visibility text not null,
+        provider_status text,
+        remote_id text not null
+      );
+      create table sellerpilot_private.qoo10_exact_partial_manual_reconciliations (
+        source_job_id uuid primary key,
+        source_attempt_id uuid not null,
+        listing_id uuid not null,
+        partial_observation jsonb not null,
+        provider_call_replayed boolean not null
+      );
+      create table sellerpilot_private.qoo10_exact_manual_activation_outcomes (
+        source_job_id uuid primary key,
+        final_observation jsonb not null,
+        provider_call_replayed boolean not null
+      );
+      insert into sellerpilot_private.channel_gateway_jobs values
+        ('fac9c5c4-940d-4600-88f3-8f97a069dfbf','reconciliation_required');
+      insert into sellerpilot_private.channel_operation_attempts values
+        ('4402cc76-295b-4e17-8c07-d5d0e9967ce9','manual_required');
+      insert into sellerpilot_private.product_listings values
+        ('4e5b97be-3fe5-4537-9e26-d36fb36ec1fc','failed',
+         'external_action','unknown',null,'1217336970');
+      create function sellerpilot_private.qoo10_exact_s1_release_is_current(text)
+      returns boolean language sql stable as $$ select true $$;
+      create function public.sellerpilot_service_reconcile_exact_qoo10_partial_manual(
+        p_source_job_id uuid,p_release_sha text,p_observation jsonb
+      ) returns jsonb language plpgsql as $$
+      begin
+        insert into public.reconciliation_phases(phase) values ('partial');
+        insert into sellerpilot_private.qoo10_exact_partial_manual_reconciliations
+          values (
+            p_source_job_id,'4402cc76-295b-4e17-8c07-d5d0e9967ce9',
+            '4e5b97be-3fe5-4537-9e26-d36fb36ec1fc',p_observation,false
+          );
+        return jsonb_build_object('phase','partial');
+      end;
+      $$;
+      create function public.sellerpilot_service_finalize_exact_qoo10_manual_activation(
+        p_source_job_id uuid,p_release_sha text,p_observation jsonb
+      ) returns jsonb language plpgsql as $$
+      begin
+        insert into public.reconciliation_phases(phase) values ('final');
+        insert into sellerpilot_private.qoo10_exact_manual_activation_outcomes
+          values (p_source_job_id,p_observation,false);
+        update sellerpilot_private.channel_gateway_jobs set status='failed';
+        update sellerpilot_private.channel_operation_attempts set status='failed';
+        update sellerpilot_private.product_listings
+           set status='published',failure_class=null,remote_visibility='live',
+               provider_status='S2';
+        return jsonb_build_object('phase','final');
+      end;
+      $$;
+    `);
+    await db.exec(extractFunction(
+      migration,
+      "create function public.sellerpilot_service_reconcile_exact_qoo10_post_activation(",
+    ));
+
+    const args = [
+      "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+      "a".repeat(40),
+      JSON.stringify(partialObservation()),
+      JSON.stringify(finalObservation()),
+    ];
+    const result = (await db.query(
+      `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+        $1,$2,$3::jsonb,$4::jsonb
+      ) value`,
+      args,
+    )).rows[0].value;
+    assert.equal(result.contract, "qoo10_post_activation_atomic_reconciliation_v1");
+    assert.equal(result.providerCallReplayed, false);
+    assert.equal(result.externalWriteCount, 0);
+    assert.equal(result.reused, false);
+    assert.deepEqual(
+      (await db.query("select phase from public.reconciliation_phases order by sequence_id")).rows,
+      [{ phase: "partial" }, { phase: "final" }],
+    );
+
+    const replay = (await db.query(
+      `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+        $1,$2,$3::jsonb,$4::jsonb
+      ) value`,
+      args,
+    )).rows[0].value;
+    assert.equal(replay.reused, true);
+    assert.equal(replay.externalWriteCount, 0);
+    assert.equal((await db.query("select count(*)::int count from public.reconciliation_phases")).rows[0].count, 2);
+
+    const conflictingFinal = finalObservation();
+    conflictingFinal.observedAt = "2026-09-01T02:52:00Z";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+          $1,$2,$3::jsonb,$4::jsonb
+        )`,
+        [args[0], args[1], args[2], JSON.stringify(conflictingFinal)],
+      ),
+      /replay conflict/u,
+    );
+    assert.equal((await db.query("select count(*)::int count from public.reconciliation_phases")).rows[0].count, 2);
+
+    await db.exec(`
+      truncate public.reconciliation_phases restart identity;
+      truncate sellerpilot_private.qoo10_exact_manual_activation_outcomes;
+      truncate sellerpilot_private.qoo10_exact_partial_manual_reconciliations;
+      update sellerpilot_private.channel_gateway_jobs
+         set status='reconciliation_required';
+      update sellerpilot_private.channel_operation_attempts
+         set status='manual_required';
+      update sellerpilot_private.product_listings
+         set status='failed',failure_class='external_action',
+             remote_visibility='unknown',provider_status=null;
+    `);
+    const invalidFinal = finalObservation();
+    invalidFinal.manualActivatedAt = "2026-09-01T02:39:59Z";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+          $1,$2,$3::jsonb,$4::jsonb
+        )`,
+        [args[0], args[1], args[2], JSON.stringify(invalidFinal)],
+      ),
+      /evidence order invalid/u,
+    );
+    assert.equal((await db.query("select count(*)::int count from public.reconciliation_phases")).rows[0].count, 0);
+
+    await db.exec(`
+      create or replace function public.sellerpilot_service_finalize_exact_qoo10_manual_activation(
+        p_source_job_id uuid,p_release_sha text,p_observation jsonb
+      ) returns jsonb language plpgsql as $$
+      begin
+        insert into public.reconciliation_phases(phase) values ('final');
+        raise exception 'synthetic final failure';
+      end;
+      $$;
+    `);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+          $1,$2,$3::jsonb,$4::jsonb
+        )`,
+        args,
+      ),
+      /synthetic final failure/u,
+    );
+    assert.equal((await db.query("select count(*)::int count from public.reconciliation_phases")).rows[0].count, 0);
+  } finally {
+    await db.close();
+  }
 });

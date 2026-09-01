@@ -1,8 +1,11 @@
 -- The exact fac9 localization call has no durable prewrite readback, while an
 -- independent CHANGHEE seller-center inspection proves a partial remote effect.
--- Retire the uncertain source as manual-required without replaying it, bind the
--- observed S1/non-public state, and expose a separate one-shot finalizer that
--- requires exact seller-center plus public S2 evidence after one manual action.
+-- The single manual activation happened after that S1 observation but before
+-- this migration could be installed. Retire the uncertain source without a
+-- provider replay and atomically bind both the historical S1 evidence and the
+-- later seller-center/public S2 evidence. The two phase functions remain
+-- private implementation details so production cannot be left at S1 merely
+-- because the second operator call was delayed or failed.
 
 begin;
 
@@ -972,6 +975,123 @@ begin
 end;
 $$;
 
+create function public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+  p_source_job_id uuid,
+  p_release_sha text,
+  p_partial_observation jsonb,
+  p_final_observation jsonb
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path=''
+as $$
+declare
+  v_existing_partial sellerpilot_private.qoo10_exact_partial_manual_reconciliations%rowtype;
+  v_existing_final sellerpilot_private.qoo10_exact_manual_activation_outcomes%rowtype;
+  v_partial_observed_at timestamptz;
+  v_manual_activated_at timestamptz;
+  v_final_observed_at timestamptz;
+  v_partial_result jsonb;
+  v_final_result jsonb;
+begin
+  perform pg_catalog.pg_advisory_xact_lock(193674993,901085000);
+  if p_source_job_id is distinct from
+       'fac9c5c4-940d-4600-88f3-8f97a069dfbf'::uuid
+     or p_release_sha is null
+     or p_release_sha !~ '^[a-f0-9]{40}$'
+     or not sellerpilot_private.qoo10_exact_s1_release_is_current(p_release_sha)
+     or not sellerpilot_private.qoo10_exact_partial_manual_observation_valid(
+          p_partial_observation
+        )
+     or not sellerpilot_private.qoo10_exact_manual_activation_observation_valid(
+          p_final_observation
+        )
+  then
+    raise exception 'exact Qoo10 post-activation identity invalid'
+      using errcode='55000';
+  end if;
+  begin
+    v_partial_observed_at:=
+      (p_partial_observation->>'observedAt')::timestamptz;
+    v_manual_activated_at:=
+      (p_final_observation->>'manualActivatedAt')::timestamptz;
+    v_final_observed_at:=(p_final_observation->>'observedAt')::timestamptz;
+  exception when others then
+    raise exception 'exact Qoo10 post-activation timestamp invalid'
+      using errcode='55000';
+  end;
+  if v_manual_activated_at<v_partial_observed_at
+     or v_final_observed_at<v_manual_activated_at
+     or v_final_observed_at>clock_timestamp()+interval '1 minute'
+  then
+    raise exception 'exact Qoo10 post-activation evidence order invalid'
+      using errcode='55000';
+  end if;
+
+  select * into v_existing_final
+    from sellerpilot_private.qoo10_exact_manual_activation_outcomes outcome
+   where outcome.source_job_id=p_source_job_id;
+  if found then
+    select * into strict v_existing_partial
+      from sellerpilot_private.qoo10_exact_partial_manual_reconciliations evidence
+     where evidence.source_job_id=p_source_job_id;
+    if v_existing_partial.partial_observation is distinct from
+         p_partial_observation
+       or v_existing_final.final_observation is distinct from p_final_observation
+       or v_existing_partial.provider_call_replayed
+       or v_existing_final.provider_call_replayed
+       or not exists (
+         select 1 from sellerpilot_private.channel_gateway_jobs source
+          where source.id=p_source_job_id and source.status='failed'
+       )
+       or not exists (
+         select 1 from sellerpilot_private.channel_operation_attempts attempt
+          where attempt.id=v_existing_partial.source_attempt_id
+            and attempt.status='failed'
+       )
+       or not exists (
+         select 1 from sellerpilot_private.product_listings listing
+          where listing.id=v_existing_partial.listing_id
+            and listing.status='published'
+            and listing.failure_class is null
+            and listing.remote_visibility='live'
+            and listing.provider_status='S2'
+            and listing.remote_id='1217336970'
+       )
+    then
+      raise exception 'exact Qoo10 post-activation replay conflict'
+        using errcode='55000';
+    end if;
+    return jsonb_build_object(
+      'contract','qoo10_post_activation_atomic_reconciliation_v1',
+      'sourceJobId',p_source_job_id,
+      'partialEvidenceReused',true,'finalEvidenceReused',true,
+      'providerStatus','S2','remoteVisibility','live',
+      'purchaseAvailable',true,'manualActivationCount',1,
+      'providerCallReplayed',false,'externalWriteCount',0,'reused',true
+    );
+  end if;
+
+  select public.sellerpilot_service_reconcile_exact_qoo10_partial_manual(
+    p_source_job_id,p_release_sha,p_partial_observation
+  ) into v_partial_result;
+  select public.sellerpilot_service_finalize_exact_qoo10_manual_activation(
+    p_source_job_id,p_release_sha,p_final_observation
+  ) into v_final_result;
+
+  return jsonb_build_object(
+    'contract','qoo10_post_activation_atomic_reconciliation_v1',
+    'sourceJobId',p_source_job_id,
+    'partialEvidenceReused',v_partial_result->'reused',
+    'finalEvidenceReused',v_final_result->'reused',
+    'providerStatus','S2','remoteVisibility','live',
+    'purchaseAvailable',true,'manualActivationCount',1,
+    'providerCallReplayed',false,'externalWriteCount',0,'reused',false
+  );
+end;
+$$;
+
 revoke all on function
   sellerpilot_private.qoo10_exact_partial_manual_observation_valid(jsonb),
   sellerpilot_private.qoo10_exact_manual_activation_observation_valid(jsonb),
@@ -979,11 +1099,15 @@ revoke all on function
   sellerpilot_private.qoo10_exact_partial_manual_later_jobs_valid(uuid,jsonb),
   sellerpilot_private.qoo10_partial_manual_listing_update_allowed(jsonb,jsonb,text),
   public.sellerpilot_service_reconcile_exact_qoo10_partial_manual(uuid,text,jsonb),
-  public.sellerpilot_service_finalize_exact_qoo10_manual_activation(uuid,text,jsonb)
+  public.sellerpilot_service_finalize_exact_qoo10_manual_activation(uuid,text,jsonb),
+  public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+    uuid,text,jsonb,jsonb
+  )
   from public,anon,authenticated,service_role;
 grant execute on function
-  public.sellerpilot_service_reconcile_exact_qoo10_partial_manual(uuid,text,jsonb),
-  public.sellerpilot_service_finalize_exact_qoo10_manual_activation(uuid,text,jsonb)
+  public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+    uuid,text,jsonb,jsonb
+  )
   to service_role;
 
 do $qoo10_partial_manual_postimage$
@@ -994,21 +1118,23 @@ declare
   v_finalize regprocedure:=pg_catalog.to_regprocedure(
     'public.sellerpilot_service_finalize_exact_qoo10_manual_activation(uuid,text,jsonb)'
   );
+  v_atomic regprocedure:=pg_catalog.to_regprocedure(
+    'public.sellerpilot_service_reconcile_exact_qoo10_post_activation(uuid,text,jsonb,jsonb)'
+  );
   v_guard regprocedure:=pg_catalog.to_regprocedure(
     'sellerpilot_private.guard_product_listing_seller_lineage()'
   );
 begin
-  if v_reconcile is null or v_finalize is null or v_guard is null
+  if v_reconcile is null or v_finalize is null or v_atomic is null
+     or v_guard is null
      or pg_catalog.strpos(pg_catalog.pg_get_functiondef(v_guard),
           'sellerpilot.qoo10_partial_manual_apply')=0
-     or not pg_catalog.has_function_privilege(
-          'service_role',v_reconcile,'EXECUTE'
-        )
-     or not pg_catalog.has_function_privilege(
-          'service_role',v_finalize,'EXECUTE'
-        )
+     or pg_catalog.has_function_privilege('service_role',v_reconcile,'EXECUTE')
+     or pg_catalog.has_function_privilege('service_role',v_finalize,'EXECUTE')
+     or not pg_catalog.has_function_privilege('service_role',v_atomic,'EXECUTE')
      or pg_catalog.has_function_privilege('authenticated',v_reconcile,'EXECUTE')
      or pg_catalog.has_function_privilege('authenticated',v_finalize,'EXECUTE')
+     or pg_catalog.has_function_privilege('authenticated',v_atomic,'EXECUTE')
   then
     raise exception 'exact Qoo10 partial manual postimage drifted'
       using errcode='55000';
@@ -1022,5 +1148,10 @@ comment on table
 comment on table
   sellerpilot_private.qoo10_exact_manual_activation_outcomes is
   'One exact append-only S2/live outcome requiring seller-center and public purchase readback after the single manual activation.';
+comment on function
+  public.sellerpilot_service_reconcile_exact_qoo10_post_activation(
+    uuid,text,jsonb,jsonb
+  ) is
+  'Atomically records historical S1 plus already completed one-shot manual S2 activation evidence; it performs no provider write and rolls back both ledger phases on any mismatch.';
 
 commit;
