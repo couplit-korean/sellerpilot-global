@@ -987,12 +987,17 @@ export function prepareListingUpdateArguments(
       publishedAt: listing.publishedAt,
       failureClass: listing.failureClass,
     });
-    if (exactExistingPublication
-        && (identityValue(suppliedProduct.sellerPrdCd) !== elevenstExactExistingPublicationIdentity.sellerSku
-          || identityValue(suppliedProduct.dispCtgrNo) !== elevenstExactExistingPublicationIdentity.categoryId
-          || identityValue(suppliedProduct.selPrc) !== String(elevenstExactExistingPublicationIdentity.priceKrw)
-          || identityValue(suppliedProduct.prdSelQty) !== String(elevenstExactExistingPublicationIdentity.stock))) {
-      throw new Error("ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED");
+    if (exactExistingPublication) {
+      const exactCommerceValuesVerified = hasSuppliedPatch
+        ? identityValue(suppliedPatch.selPrc) === String(elevenstExactExistingPublicationIdentity.priceKrw)
+          && identityValue(suppliedPatch.prdSelQty) === String(elevenstExactExistingPublicationIdentity.stock)
+        : identityValue(suppliedProduct.sellerPrdCd) === elevenstExactExistingPublicationIdentity.sellerSku
+          && identityValue(suppliedProduct.dispCtgrNo) === elevenstExactExistingPublicationIdentity.categoryId
+          && identityValue(suppliedProduct.selPrc) === String(elevenstExactExistingPublicationIdentity.priceKrw)
+          && identityValue(suppliedProduct.prdSelQty) === String(elevenstExactExistingPublicationIdentity.stock);
+      if (!exactCommerceValuesVerified) {
+        throw new Error("ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED");
+      }
     }
     const basePatch = hasSuppliedPatch
       ? structuredClone(suppliedPatch)

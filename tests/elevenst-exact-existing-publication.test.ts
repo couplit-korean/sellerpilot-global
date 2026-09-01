@@ -163,6 +163,17 @@ test("11st exact update mapper pins price 5000 and stock 1 without broadening ge
   const exact = prepareListingUpdateArguments("elevenst", { product: completeProduct() }, listing);
   assert.equal((exact.productPatch as Record<string, unknown>).selPrc, "5000");
   assert.equal((exact.productPatch as Record<string, unknown>).prdSelQty, "1");
+  const rebound = prepareListingUpdateArguments("elevenst", exact, listing);
+  assert.equal(rebound.productNo, identity.remoteId);
+  assert.equal((rebound.productPatch as Record<string, unknown>).selPrc, "5000");
+  assert.equal((rebound.productPatch as Record<string, unknown>).prdSelQty, "1");
+  assert.throws(
+    () => prepareListingUpdateArguments("elevenst", {
+      ...exact,
+      productPatch: { ...(exact.productPatch as Record<string, unknown>), selPrc: "5010" },
+    }, listing),
+    /ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED/u,
+  );
   const generic = prepareListingUpdateArguments("elevenst", { product: completeProduct({ sellerPrdCd: "OTHER" }) }, {
     status: "published",
     remoteId: "123456789",
