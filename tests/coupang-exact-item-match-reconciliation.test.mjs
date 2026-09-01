@@ -4,7 +4,7 @@ import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
 const migrationUrl = new URL(
-  "../supabase/migrations/20260901110000_fix_coupang_exact_item_match_binding.sql",
+  "../supabase/migrations/20260901125000_fix_coupang_exact_item_match_binding.sql",
   import.meta.url,
 );
 const migration = await readFile(migrationUrl, "utf8");

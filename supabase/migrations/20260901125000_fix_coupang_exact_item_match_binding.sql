@@ -1,3 +1,5 @@
+-- Ordered after the applied Smartstore 20260901120000 migration and before the
+-- pending 11st 20260901130000 migration.
 -- The exact Coupang update reached the idempotency attempt but rolled back
 -- before a durable gateway job because the server carried the seller SKU as
 -- sellerpilotItemMatchId while the closed-gate permit correctly required the
