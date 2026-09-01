@@ -181,6 +181,8 @@ const COUPANG_EXACT_REPRESENTATIVE_MIGRATION =
   "20260901173990_bind_coupang_exact_representative.sql";
 const SMARTSTORE_EXACT_STOCK_ONE_MIGRATION =
   "20260901174000_require_exact_smartstore_stock_one.sql";
+const EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION =
+  "20260901194336_rebind_ebay_exact_current_credential_lineage.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -909,6 +911,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LAZADA_EXACT_EXISTING_UPDATE_MIGRATION,
       COUPANG_EXACT_REPRESENTATIVE_MIGRATION,
       SMARTSTORE_EXACT_STOCK_ONE_MIGRATION,
+      EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1114,6 +1117,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(TEMU_EXACT_EXISTING_UPDATE_MIGRATION)
         < migrationNames.indexOf(SMARTSTORE_EXACT_STOCK_ONE_MIGRATION),
       "the exact Smartstore stock-one correction must replay after the current deployed Temu fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(SMARTSTORE_EXACT_STOCK_ONE_MIGRATION)
+        < migrationNames.indexOf(
+          EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
+        ),
+      "the dynamic eBay current-credential lineage must replay after the deployed exact-channel chain",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
@@ -15600,6 +15610,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         && name !== SHOPEE_SG_EXACT_UPDATE_MIGRATION
         && name !== SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
+        && name !== EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17341,6 +17352,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         || name === SHOPEE_SG_EXACT_UPDATE_MIGRATION
         || name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
+        || name === EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
