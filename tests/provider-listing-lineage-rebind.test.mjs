@@ -15,12 +15,10 @@ const SHOPEE_ADOPTION_MIGRATION =
   "20260901171500_adopt_exact_shopee_sg_existing_item.sql";
 const LAZADA_ADOPTION_MIGRATION =
   "20260901173000_adopt_exact_lazada_live_listing.sql";
+const LAZADA_BLANK_TARGET_ADOPTION_MIGRATION =
+  "20260901173900_adopt_exact_lazada_blank_target_after_verified_readback.sql";
 const ADOPTION_COMPLETION_MERGE_MIGRATION =
   "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
-const TEMU_EXISTING_ADOPTION_MIGRATION =
-  "20260901173200_exact_temu_existing_active_adoption.sql";
-const TEMU_CREDENTIAL_CERTIFICATION_MIGRATION =
-  "20260901173300_certify_exact_temu_existing_adoption_credential.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -224,6 +222,7 @@ async function createDatabase() {
     .filter((name) => name.endsWith(".sql"))
     .sort();
   assert.ok(names.includes(LAZADA_ADOPTION_MIGRATION));
+  assert.ok(names.includes(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION));
   for (const name of names) {
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
@@ -239,11 +238,12 @@ async function createDatabaseInProductionAdoptionOrder() {
   const names = (await readdir(migrationUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  const afterLazadaProductionMigrations = names.filter(
+    (name) => name >= ADOPTION_COMPLETION_MERGE_MIGRATION,
+  );
   const deferred = new Set([
     SHOPEE_ADOPTION_MIGRATION,
-    ADOPTION_COMPLETION_MERGE_MIGRATION,
-    TEMU_EXISTING_ADOPTION_MIGRATION,
-    TEMU_CREDENTIAL_CERTIFICATION_MIGRATION,
+    ...afterLazadaProductionMigrations,
   ]);
   for (const name of names) {
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name) || deferred.has(name)) continue;
@@ -252,9 +252,7 @@ async function createDatabaseInProductionAdoptionOrder() {
   }
   for (const name of [
     SHOPEE_ADOPTION_MIGRATION,
-    ADOPTION_COMPLETION_MERGE_MIGRATION,
-    TEMU_EXISTING_ADOPTION_MIGRATION,
-    TEMU_CREDENTIAL_CERTIFICATION_MIGRATION,
+    ...afterLazadaProductionMigrations,
   ]) {
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
@@ -586,6 +584,19 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
         false,
         `${role} must not call the private exact Lazada adoption predicate directly`,
       );
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,
+            'public.sellerpilot_09011739_complete_lineage_pre_lazada_target(text,uuid,uuid,text,jsonb,text)',
+            'EXECUTE'
+          )`,
+          [role],
+        ),
+        false,
+        `${role} must not bypass the blank-target completion wrapper`,
+      );
     }
     assert.equal(
       await scalar(
@@ -785,15 +796,55 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       targetLocale: "ms-MY",
       targetLanguage: "Bahasa Melayu",
       targetCurrency: "MYR",
+      includeTarget: false,
     });
     await db.query(
       `update sellerpilot_private.product_listings
           set status='failed', failure_class='external_action',
               requested_publication_intent='live',
               remote_visibility='unknown', provider_status=null,
-              published_at=null
+              published_at=null, target_id=''
         where id=$1`,
       [exactLazada.listingId],
+    );
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_prepare_exact_lazada_live_adoption($1)",
+        [exactLazada.listingId],
+      )).reason,
+      "fresh_exact_lazada_credential_target_required",
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_market_targets(
+         owner_id, credential_id, channel, environment, target_id,
+         display_name, market_code, locale, language, currency, remote_status
+       ) values ($1,$2,'lazada','production',$3,'Verified target',
+         'MY','ms-MY','Bahasa Melayu','MYR','ACTIVE')`,
+      [ADMIN_ID, exactLazada.currentCredentialId, exactLazada.targetId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_market_targets(
+         owner_id, credential_id, channel, environment, target_id,
+         display_name, market_code, locale, language, currency, remote_status
+       ) values ($1,$2,'lazada','production','200100301','Other MY target',
+         'MY','ms-MY','Bahasa Melayu','MYR','ACTIVE')`,
+      [ADMIN_ID, exactLazada.currentCredentialId],
+    );
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_prepare_exact_lazada_live_adoption($1)",
+        [exactLazada.listingId],
+      )).reason,
+      "fresh_exact_lazada_credential_target_required",
+      "multiple certified MY targets must remain manual",
+    );
+    await db.query(
+      `delete from sellerpilot_private.channel_market_targets
+        where owner_id=$1 and credential_id=$2 and channel='lazada'
+          and environment='production' and target_id='200100301'`,
+      [ADMIN_ID, exactLazada.currentCredentialId],
     );
     const exactPreparation = await scalar(
       db,
@@ -814,6 +865,15 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       [exactLazada.listingId, exactLazada.currentCredentialId],
     );
     assert.equal(exactEnqueued.status, "queued");
+    assert.equal(
+      await scalar(
+        db,
+        "select target_id from sellerpilot_private.product_listings where id=$1",
+        [exactLazada.listingId],
+      ),
+      "",
+      "enqueue must not persist an inferred target before provider readback",
+    );
     const exactLazadaClaim = await claim(db);
     assert.equal(
       exactLazadaClaim.request.sellerpilotExactLazadaLiveAdoption,
@@ -826,9 +886,22 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       country: "my",
       marketplaceSku: "QA-20260823-CC-001-MY",
     });
+    const exactRetry = await complete(db, exactLazadaClaim, "retryable");
+    assert.equal(exactRetry.status, "queued");
+    assert.equal(
+      await scalar(
+        db,
+        "select target_id from sellerpilot_private.product_listings where id=$1",
+        [exactLazada.listingId],
+      ),
+      "",
+      "an unverified derived target must be rolled back",
+    );
+    const exactLazadaRetryClaim = await claim(db);
+    assert.equal(exactLazadaRetryClaim.id, exactLazadaClaim.id);
     const exactBound = await complete(
       db,
-      exactLazadaClaim,
+      exactLazadaRetryClaim,
       "succeeded",
       successEvidence(exactLazada),
     );
@@ -836,7 +909,7 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     const exactPostAdoption = (await db.query(
       `select status, failure_class, requested_publication_intent,
               remote_visibility, provider_status, published_at,
-              seller_account_key
+              seller_account_key, target_id
          from sellerpilot_private.product_listings
         where id=$1`,
       [exactLazada.listingId],
@@ -848,6 +921,11 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     assert.equal(exactPostAdoption.provider_status, null);
     assert.equal(exactPostAdoption.published_at, null);
     assert.equal(exactPostAdoption.seller_account_key, exactLazada.sellerAccountKey);
+    assert.equal(
+      exactPostAdoption.target_id,
+      exactLazada.targetId,
+      "the certified target must persist only after bound provider readback",
+    );
     assert.equal(
       await scalar(
         db,
@@ -1326,6 +1404,12 @@ test("production Lazada-then-Shopee order converges without replacing the indepe
         'public.sellerpilot_complete_listing_lineage_verification(text,uuid,uuid,text,jsonb,text)'::regprocedure
       )`,
     );
+    const blankTargetPredecessor = await scalar(
+      db,
+      `select pg_catalog.pg_get_functiondef(
+        'public.sellerpilot_09011739_complete_lineage_pre_lazada_target(text,uuid,uuid,text,jsonb,text)'::regprocedure
+      )`,
+    );
     const predecessorCompletion = await scalar(
       db,
       `select pg_catalog.pg_get_functiondef(
@@ -1339,10 +1423,15 @@ test("production Lazada-then-Shopee order converges without replacing the indepe
       ),
       "utf8",
     );
-    assert.match(publicCompletion, /sellerpilot_shopee_sg_existing_adoption_v1/u);
-    assert.match(publicCompletion, /53717126190/u);
+    assert.match(publicCompletion, /exact Lazada blank-target completion snapshot mismatch/u);
     assert.match(
       publicCompletion,
+      /sellerpilot_09011739_complete_lineage_pre_lazada_target/u,
+    );
+    assert.match(blankTargetPredecessor, /sellerpilot_shopee_sg_existing_adoption_v1/u);
+    assert.match(blankTargetPredecessor, /53717126190/u);
+    assert.match(
+      blankTargetPredecessor,
       /sellerpilot_09011715_complete_lineage_before_shopee_adoption/u,
     );
     assert.match(

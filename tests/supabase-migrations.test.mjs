@@ -167,6 +167,8 @@ const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
   "20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql";
 const QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION =
   "20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql";
+const LAZADA_BLANK_TARGET_ADOPTION_MIGRATION =
+  "20260901173900_adopt_exact_lazada_blank_target_after_verified_readback.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -888,6 +890,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
       QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION,
       EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
+      LAZADA_BLANK_TARGET_ADOPTION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1069,6 +1072,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
       "the Qoo10 source compile and short-RPC fixes must replay after adoption lineage and before the independent eBay v101 rotation",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+          < migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION),
+      "the Lazada blank-target recovery must replay only after the Qoo10 short-RPC and eBay v101 postimages",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
