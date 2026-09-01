@@ -129,6 +129,8 @@ const EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION =
   "20260901150000_fix_exact_update_deferred_job_lineage.sql";
 const LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION =
   "20260901151000_idempotent_lazada_target_sync.sql";
+const COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION =
+  "20260901160000_reconcile_exact_coupang_unclaimed_static_egress_job.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -831,6 +833,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION,
       EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION,
       LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION,
+      COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -12088,6 +12091,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
+        && name !== COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -13809,6 +13813,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
         || name === QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
+        || name === COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
