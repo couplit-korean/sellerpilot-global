@@ -449,8 +449,10 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelOperationsRoute, /sellerpilot_claim_channel_operation/);
   assert.match(channelOperationsRoute, /executeViaChannelGateway/);
   assert.doesNotMatch(channelOperationsRoute, /ensureEbayAccessToken/);
-  assert.match(channelTargetClient, /cached\.status === 401/);
+  assert.match(channelTargetClient, /cached\.status !== 409/);
+  assert.match(channelTargetClient, /isLazadaTargetSyncRequiredPayload/);
   assert.match(channelTargetClient, /request\("POST"\)/);
+  assert.doesNotMatch(channelTargetClient, /cached\.status === (?:404|500|503)/);
   assert.match(channelTargetClient, /pendingTargetRequests/);
   assert.match(connectorMigration, /channel_operation_attempts/);
   assert.match(connectorMigration, /sellerpilot_claim_channel_operation/);

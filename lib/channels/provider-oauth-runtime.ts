@@ -6,6 +6,7 @@ import {
   withoutProviderAccountIdentity,
   withoutShopeeOAuthAccountState,
 } from "./provider-account-identity";
+import { lazadaTargetCountry } from "./lazada-my-contract";
 import {
   exchangeEbayOAuthToken,
   exchangeLazadaOAuthToken,
@@ -400,6 +401,11 @@ async function exchangeLazadaOAuth(
   const appSecret = textValue(job.credential, "app_secret");
   const code = String(job.request.code ?? "").trim();
   if (!appKey || !appSecret || !code) throw new Error("LAZADA_OAUTH_INPUT_MISSING");
+  const requestedCountry = String(job.request.country ?? "").trim().toLowerCase();
+  const credentialCountry = textValue(job.credential, "country").toLowerCase();
+  if (requestedCountry !== lazadaTargetCountry || credentialCountry !== lazadaTargetCountry) {
+    throw new Error("LAZADA_OAUTH_TARGET_COUNTRY_INVALID");
+  }
 
   await beginCredentialMutation(hooks);
   await beginLazadaOAuthProviderCall(hooks);
@@ -417,19 +423,12 @@ async function exchangeLazadaOAuth(
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
   const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
   const providerAccount = withLazadaProviderAccountIdentity({}, remote.data);
-  const requestedCountry = String(job.request.country ?? "").trim().toLowerCase();
-  const providerCountry = textValue(remote.data, "country").toLowerCase();
-  const authorizedCountries = new Set(providerAccount.countryUserInfo.map((item) => item.country));
-  const country = authorizedCountries.has(providerCountry)
-    ? providerCountry
-    : authorizedCountries.has(requestedCountry)
-      ? requestedCountry
-      : providerAccount.countryUserInfo[0]?.country;
-  if (!country) throw new Error("LAZADA_ACCOUNT_IDENTITY_INVALID");
+  const mySeller = providerAccount.countryUserInfo.find((item) => item.country === lazadaTargetCountry);
+  if (!mySeller?.seller_id) throw new Error("LAZADA_MY_SELLER_IDENTITY_MISSING");
 
   const credentialPayload = withProviderAccountIdentity({
     ...job.credential,
-    country,
+    country: lazadaTargetCountry,
     account_platform: providerAccount.accountPlatform,
     country_user_info: providerAccount.countryUserInfo,
     access_token: accessToken,

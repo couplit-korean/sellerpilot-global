@@ -6,8 +6,14 @@ import {
   activeLazadaSellerIdForMarket,
   activeProductionLazadaCredentialEnvelope,
   activeProductionLazadaCredentialId,
-  lineageBoundLazadaTargets,
+  lineageBoundLazadaTargetForMarket,
 } from "../../../../lib/channels/lazada-target-lineage";
+import {
+  lazadaMyTargetMismatchCode,
+  lazadaTargetCountry,
+  lazadaTargetMarketCode,
+  lazadaTargetSyncRequiredCode,
+} from "../../../../lib/channels/lazada-my-contract";
 import { channelMarket, shopeeMarkets } from "../../../../lib/channels/markets";
 import {
   activeProductionShopeeCredentialEnvelope,
@@ -131,7 +137,22 @@ export async function GET(request: Request) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     activeLazadaSecret = lazadaEnvelope.secretPayload;
-    const lineageBoundTargets = lineageBoundLazadaTargets(normalizedCachedTargets, activeLazadaSecret);
+    const configuredCountry = textValue(activeLazadaSecret.country).toLowerCase();
+    const expectedMySellerId = activeLazadaSellerIdForMarket(activeLazadaSecret, lazadaTargetMarketCode);
+    if (configuredCountry !== lazadaTargetCountry || !expectedMySellerId) {
+      return NextResponse.json({
+        code: lazadaMyTargetMismatchCode,
+        message: "현재 운영 Lazada 키에서 Malaysia(MY) 판매자 계보를 확인하지 못했습니다. OAuth를 다시 연결해 주세요.",
+        channel: "lazada",
+        credentialId: lazadaEnvelope.credentialId,
+        targets: [],
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const lineageBoundTargets = lineageBoundLazadaTargetForMarket(
+      normalizedCachedTargets,
+      activeLazadaSecret,
+      lazadaTargetMarketCode,
+    );
     if (lineageBoundTargets.length) {
       return NextResponse.json({
         channel: channel.data,
@@ -139,6 +160,13 @@ export async function GET(request: Request) {
         targets: lineageBoundTargets,
       }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
+    return NextResponse.json({
+      code: lazadaTargetSyncRequiredCode,
+      message: "검증된 Malaysia(MY) 판매자 대상을 한 번 동기화해야 합니다.",
+      channel: "lazada",
+      credentialId: lazadaEnvelope.credentialId,
+      targets: [],
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   let secret = activeShopeeSecret ?? activeLazadaSecret;
@@ -277,6 +305,16 @@ export async function POST(request: Request) {
       }, { status: activeCredentialError ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     secret = lazadaEnvelope.secretPayload;
+    if (textValue(secret.country).toLowerCase() !== lazadaTargetCountry
+        || !activeLazadaSellerIdForMarket(secret, lazadaTargetMarketCode)) {
+      return NextResponse.json({
+        code: lazadaMyTargetMismatchCode,
+        message: "현재 운영 Lazada 키에서 Malaysia(MY) 판매자 계보를 확인하지 못했습니다. OAuth를 다시 연결해 주세요.",
+        channel: "lazada",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
 
   try {
@@ -320,7 +358,7 @@ export async function POST(request: Request) {
 
     const activeLazadaCredentialId = credential.id;
     const profiles = [];
-    const configuredMarket = channelMarket("lazada", textValue(secret.country).toUpperCase());
+    const configuredMarket = channelMarket("lazada", lazadaTargetMarketCode);
     if (!configuredMarket) throw new Error("ACTIVE_LAZADA_MARKET_MISSING");
     for (const market of [configuredMarket]) {
       const expectedSellerId = activeLazadaSellerIdForMarket(secret, market.code);

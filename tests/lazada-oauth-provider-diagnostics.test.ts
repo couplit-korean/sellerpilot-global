@@ -38,6 +38,7 @@ function lazadaOAuthClaim(): ProviderOAuthClaim {
     credential: {
       app_key: "137451",
       app_secret: "private-app-secret-value",
+      country: "my",
     },
     attempt_count: 1,
   });
