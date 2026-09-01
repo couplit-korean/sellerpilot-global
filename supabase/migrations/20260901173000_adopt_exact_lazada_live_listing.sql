@@ -356,6 +356,8 @@ $$;
 do $patch_exact_lazada_live_adoption_completion$
 declare
   v_definition text;
+  v_target regprocedure :=
+    'public.sellerpilot_complete_listing_lineage_verification(text,uuid,uuid,text,jsonb,text)'::regprocedure;
   v_before text := $before$
          and sellerpilot_private.failed_ebay_lineage_discovery_allowed(
            v_listing.id
@@ -379,8 +381,24 @@ $before$;
 $after$;
 begin
   select pg_catalog.pg_get_functiondef(
-    'public.sellerpilot_complete_listing_lineage_verification(text,uuid,uuid,text,jsonb,text)'::regprocedure
+    v_target
   ) into v_definition;
+  -- A clean replay applies the Shopee 171500 wrapper before this migration,
+  -- while production applied this Lazada migration before the pending Shopee
+  -- wrapper. Patch the exact predecessor in the former order; the forward
+  -- 173100 merger verifies both orders after they converge.
+  if pg_catalog.strpos(v_definition, v_before) = 0
+     and pg_catalog.strpos(
+       v_definition,
+       'sellerpilot_09011715_complete_lineage_before_shopee_adoption'
+     ) > 0 then
+    v_target :=
+      'public.sellerpilot_09011715_complete_lineage_before_shopee_adoption(text,uuid,uuid,text,jsonb,text)'::regprocedure;
+    select pg_catalog.pg_get_functiondef(v_target) into v_definition;
+  end if;
+  if pg_catalog.strpos(v_definition, v_after) > 0 then
+    return;
+  end if;
   if pg_catalog.strpos(v_definition, v_before) = 0 then
     raise exception 'exact Lazada lineage completion status gate not found';
   end if;

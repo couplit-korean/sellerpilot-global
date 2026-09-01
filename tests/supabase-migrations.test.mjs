@@ -147,6 +147,8 @@ const SHOPEE_SG_EXISTING_ADOPTION_MIGRATION =
   "20260901171500_adopt_exact_shopee_sg_existing_item.sql";
 const LAZADA_EXACT_LIVE_ADOPTION_MIGRATION =
   "20260901173000_adopt_exact_lazada_live_listing.sql";
+const EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION =
+  "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -858,6 +860,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION,
       SHOPEE_SG_EXISTING_ADOPTION_MIGRATION,
       LAZADA_EXACT_LIVE_ADOPTION_MIGRATION,
+      EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1021,6 +1024,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION)
         < migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION),
       "Shopee SG existing-item adoption must wrap the final deployed lineage completion chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
+        < migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION),
+      "the forward merger must preserve Shopee and Lazada exact adoption after either production or clean-replay order",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)

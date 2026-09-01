@@ -11,6 +11,12 @@ const OUT_OF_SCOPE_COMPETITOR_MIGRATIONS = new Set([
 const ADMIN_ID = "60000000-0000-4000-8000-000000000001";
 const TOKEN_ID = "60000000-0000-4000-8000-000000000002";
 const TOKEN_HASH = "7".repeat(64);
+const SHOPEE_ADOPTION_MIGRATION =
+  "20260901171500_adopt_exact_shopee_sg_existing_item.sql";
+const LAZADA_ADOPTION_MIGRATION =
+  "20260901173000_adopt_exact_lazada_live_listing.sql";
+const ADOPTION_COMPLETION_MERGE_MIGRATION =
+  "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -213,8 +219,32 @@ async function createDatabase() {
   const names = (await readdir(migrationUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  assert.ok(names.includes(LAZADA_ADOPTION_MIGRATION));
   for (const name of names) {
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
+    const sql = await readFile(new URL(name, migrationUrl), "utf8");
+    await db.exec(withoutUnavailableExtensions(sql));
+  }
+  return db;
+}
+
+async function createDatabaseInProductionAdoptionOrder() {
+  const db = new PGlite();
+  await db.exec(supabaseCompatibilityLayer);
+  const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+  const names = (await readdir(migrationUrl))
+    .filter((name) => name.endsWith(".sql"))
+    .sort();
+  const deferred = new Set([
+    SHOPEE_ADOPTION_MIGRATION,
+    ADOPTION_COMPLETION_MERGE_MIGRATION,
+  ]);
+  for (const name of names) {
+    if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name) || deferred.has(name)) continue;
+    const sql = await readFile(new URL(name, migrationUrl), "utf8");
+    await db.exec(withoutUnavailableExtensions(sql));
+  }
+  for (const name of [SHOPEE_ADOPTION_MIGRATION, ADOPTION_COMPLETION_MERGE_MIGRATION]) {
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
   }
@@ -1271,6 +1301,63 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
       reason: "verification_job_conflict",
     });
     assert.equal((await enqueue(db, lazadaRefreshUnknown)).status, "manual_required");
+  } finally {
+    await db.close();
+  }
+});
+
+test("production Lazada-then-Shopee order converges without replacing the independent credential guard", async () => {
+  const db = await createDatabaseInProductionAdoptionOrder();
+  try {
+    const publicCompletion = await scalar(
+      db,
+      `select pg_catalog.pg_get_functiondef(
+        'public.sellerpilot_complete_listing_lineage_verification(text,uuid,uuid,text,jsonb,text)'::regprocedure
+      )`,
+    );
+    const predecessorCompletion = await scalar(
+      db,
+      `select pg_catalog.pg_get_functiondef(
+        'public.sellerpilot_09011715_complete_lineage_before_shopee_adoption(text,uuid,uuid,text,jsonb,text)'::regprocedure
+      )`,
+    );
+    const mergeMigration = await readFile(
+      new URL(
+        `../supabase/migrations/${ADOPTION_COMPLETION_MERGE_MIGRATION}`,
+        import.meta.url,
+      ),
+      "utf8",
+    );
+    assert.match(publicCompletion, /sellerpilot_shopee_sg_existing_adoption_v1/u);
+    assert.match(publicCompletion, /53717126190/u);
+    assert.match(
+      publicCompletion,
+      /sellerpilot_09011715_complete_lineage_before_shopee_adoption/u,
+    );
+    assert.match(
+      predecessorCompletion,
+      /exact_lazada_live_adoption_allowed/u,
+    );
+    assert.equal(
+      (predecessorCompletion.match(/exact_lazada_live_adoption_allowed/g) ?? []).length,
+      1,
+    );
+    assert.doesNotMatch(
+      mergeMigration,
+      /(?:create|replace)\s+function\s+sellerpilot_private\.guard_credential_seller_lineage/iu,
+      "the completion merger must not replace the independent Temu credential guard",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.exact_lazada_live_adoption_allowed(
+          gen_random_uuid(), 'lazada',
+          '{"sellerpilotExactLazadaLiveAdoption":"exact_lazada_live_adoption_v1","sellerpilotLineageVersion":"provider_listing_readback_v1","arguments":{"expectedRemoteId":"14976038919","market":"MY","country":"my","marketplaceSku":"QA-20260823-CC-001-MY","targetId":"200100300"}}'::jsonb
+        )`,
+      ),
+      false,
+      "the exact marker alone must never admit an unrelated listing",
+    );
   } finally {
     await db.close();
   }
