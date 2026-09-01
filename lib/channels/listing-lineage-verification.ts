@@ -1,5 +1,10 @@
 import { assertShopeeShopProfileTarget } from "./provider-account-identity";
 import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
+import {
+  shopeeSgExistingAdoptionBinding,
+  verifyShopeeSgExistingAdoptionReadback,
+  type ShopeeSgExistingAdoptionEvidence,
+} from "./shopee-sg-existing-adoption";
 import { ebayAsqMarketplaceIdFromSiteCode } from "./ebay-asq";
 import {
   ebayRequest,
@@ -38,6 +43,7 @@ export type ProviderListingLineageEvidence = {
   evidenceVersion: typeof providerListingReadbackEvidenceVersion;
   marketplaceSku?: string;
   providerResourceId?: string;
+  shopeeAdoption?: ShopeeSgExistingAdoptionEvidence;
   reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
 };
 
@@ -266,12 +272,29 @@ async function verifyShopee(
     throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:shopee");
   }
 
+  const adoptionBinding = shopeeSgExistingAdoptionBinding(input.arguments);
+  const adoptionEvidence = adoptionBinding
+    ? verifyShopeeSgExistingAdoptionReadback({
+        argumentsValue: input.arguments,
+        credentialPayload: input.payload,
+        shopRemoteData: shopRemote.data,
+        itemRemoteData: itemRemote.data,
+      })
+    : null;
+  if (adoptionBinding && !adoptionEvidence) {
+    throw new Error("SHOPEE_SG_EXISTING_ADOPTION_READBACK_MISMATCH");
+  }
+
   return {
     ok: true,
     channel: "shopee",
     operation: "listing.lineage.verify",
     verificationStatus: "verified",
-    evidence: { ...baseEvidence(argumentsValue), verifiedRemoteId: argumentsValue.expectedRemoteId },
+    evidence: {
+      ...baseEvidence(argumentsValue),
+      verifiedRemoteId: argumentsValue.expectedRemoteId,
+      ...(adoptionEvidence ? { shopeeAdoption: adoptionEvidence } : {}),
+    },
     steps: [
       safeStep("seller-account-readback", shopRemote, true, "SHOPEE_SHOP_ID_VERIFIED", { targetId: argumentsValue.targetId }),
       safeStep("listing-lineage-readback", itemRemote, true, "SHOPEE_ITEM_ID_VERIFIED", { verifiedRemoteId: argumentsValue.expectedRemoteId }),

@@ -647,6 +647,10 @@ function listingLineageSuccessPayload(result: ListingLineageResult) {
         providerResourceId: evidence.providerResourceId,
       }
       : {}),
+    ...(result.channel === "shopee" && "shopeeAdoption" in evidence
+        && evidence.shopeeAdoption
+      ? { shopeeAdoption: evidence.shopeeAdoption }
+      : {}),
   };
 }
 

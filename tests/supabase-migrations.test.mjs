@@ -143,6 +143,8 @@ const EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION =
   "20260901165800_recover_ebay_exact_pre_gateway_retry.sql";
 const EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION =
   "20260901165900_recover_ebay_exact_credential_rotation.sql";
+const SHOPEE_SG_EXISTING_ADOPTION_MIGRATION =
+  "20260901171500_adopt_exact_shopee_sg_existing_item.sql";
 const LAZADA_EXACT_LIVE_ADOPTION_MIGRATION =
   "20260901173000_adopt_exact_lazada_live_listing.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
@@ -854,6 +856,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
       EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION,
       EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION,
+      SHOPEE_SG_EXISTING_ADOPTION_MIGRATION,
       LAZADA_EXACT_LIVE_ADOPTION_MIGRATION,
     ]);
     assert.ok(
@@ -1013,6 +1016,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION),
       "the one-shot eBay retry, terminal proof correction, exact pre-gateway recovery, and current-credential rotation must replay after the source job can execute",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION),
+      "Shopee SG existing-item adoption must wrap the final deployed lineage completion chain",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)

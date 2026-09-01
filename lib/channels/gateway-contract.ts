@@ -302,6 +302,25 @@ const listingLineageEvidenceBaseSchema = z.object({
   evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
   marketplaceSku: z.string().min(1).max(160).optional(),
   providerResourceId: z.string().min(1).max(240).optional(),
+  shopeeAdoption: z.object({
+    contract: z.literal("sellerpilot_shopee_sg_existing_adoption_readback_v1"),
+    itemId: z.literal("53717126190"),
+    sku: z.literal("QA-20260823-CC-001"),
+    merchantId: z.literal("5511564"),
+    shopId: z.literal("1719148844"),
+    market: z.literal("SG"),
+    locale: z.literal("en-SG"),
+    currency: z.literal("SGD"),
+    price: z.number().positive().max(999_999_999),
+    providerStatus: z.literal("UNLIST"),
+    galleryImageCount: z.number().int().min(1).max(9),
+    detailImageCount: z.literal(8),
+    representativeImageVerified: z.literal(true),
+    titleLanguageVerified: z.literal(true),
+    descriptionLanguageVerified: z.literal(true),
+    titleDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+    descriptionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
+  }).strict().optional(),
 });
 
 const listingLineageStepDataSchema = z.object({
@@ -381,8 +400,17 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
   if (value.channel !== "ebay" && (value.evidence.marketplaceSku || value.evidence.providerResourceId)) {
     context.addIssue({ code: "custom", message: "non-ebay lineage cannot carry ebay resource evidence" });
   }
+  if (value.channel !== "shopee" && value.evidence.shopeeAdoption) {
+    context.addIssue({ code: "custom", message: "non-shopee lineage cannot carry adoption evidence" });
+  }
   if (value.channel === "shopee" && !/^\d+$/.test(value.evidence.targetId)) {
     context.addIssue({ code: "custom", message: "verified shopee lineage requires a numeric shop id" });
+  }
+  if (value.evidence.shopeeAdoption
+      && (value.evidence.expectedRemoteId !== value.evidence.shopeeAdoption.itemId
+        || value.evidence.targetId !== value.evidence.shopeeAdoption.shopId
+        || market !== value.evidence.shopeeAdoption.market)) {
+    context.addIssue({ code: "custom", message: "shopee adoption evidence identity mismatch" });
   }
 });
 

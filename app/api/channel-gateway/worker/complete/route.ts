@@ -42,6 +42,25 @@ type ListingLineageWorkerResult = {
     evidenceVersion: "provider_listing_readback_rebind_v1";
     marketplaceSku?: string;
     providerResourceId?: string;
+    shopeeAdoption?: {
+      contract: "sellerpilot_shopee_sg_existing_adoption_readback_v1";
+      itemId: "53717126190";
+      sku: "QA-20260823-CC-001";
+      merchantId: "5511564";
+      shopId: "1719148844";
+      market: "SG";
+      locale: "en-SG";
+      currency: "SGD";
+      price: number;
+      providerStatus: "UNLIST";
+      galleryImageCount: number;
+      detailImageCount: 8;
+      representativeImageVerified: true;
+      titleLanguageVerified: true;
+      descriptionLanguageVerified: true;
+      titleDigest: string;
+      descriptionDigest: string;
+    };
     reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
   };
 };
@@ -86,6 +105,9 @@ function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
         marketplaceSku: evidence.marketplaceSku,
         providerResourceId: evidence.providerResourceId,
       }
+      : {}),
+    ...(result.channel === "shopee" && evidence.shopeeAdoption
+      ? { shopeeAdoption: evidence.shopeeAdoption }
       : {}),
   };
 }
