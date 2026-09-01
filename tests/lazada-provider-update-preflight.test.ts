@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   prepareLazadaListing,
@@ -6,6 +7,9 @@ import {
   type PrepareProviderListingInput,
 } from "../lib/channels/provider-listing-runtime";
 import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
+import {
+  normalizeLazadaListingPublicationReadback,
+} from "../lib/channels/provider-lazada-publication-readback";
 
 const ITEM_ID = "14976038919";
 const CATEGORY_ID = "10100205";
@@ -287,6 +291,46 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     providerStatus: "ACTIVE",
     updateSkuStatus: "active",
   });
+
+  const providerGallery = (product.Images as { Image: string[] }).Image;
+  const providerSku = (product.Skus as { Sku: Array<Record<string, unknown>> }).Sku[0];
+  const normalized = normalizeLazadaListingPublicationReadback({
+    operation: "listing.update",
+    remoteId: ITEM_ID,
+    remoteData: {
+      code: "0",
+      data: {
+        item_id: ITEM_ID,
+        primary_category: CATEGORY_ID,
+        status: "active",
+        images: providerGallery,
+        attributes,
+        skus: [{
+          ...providerSku,
+          SkuId: "170000000001",
+          price: TARGET_PRICE_MYR,
+          quantity: 1,
+          special_price: 0,
+          Status: "active",
+        }],
+      },
+    },
+    mutationArguments: prepared,
+    market: "MY",
+    expectedLocale: "ms-MY",
+    expectedFingerprint: "b".repeat(64),
+    expectedImageCount: 8,
+    verifiedAt: "2026-09-02T00:00:00.000Z",
+  });
+  assert.ok(normalized.remoteState, "the provider-prepared exact path must produce terminal evidence");
+  assert.equal(
+    normalized.remoteState.evidence.titleDigest,
+    createHash("sha256").update(String(attributes.name).trim(), "utf8").digest("hex"),
+  );
+  assert.equal(
+    normalized.remoteState.evidence.descriptionDigest,
+    createHash("sha256").update(description.trim(), "utf8").digest("hex"),
+  );
 });
 
 test("Lazada MY blocks absent or duplicate GetProducts SellerSku identity before every mutation", async () => {

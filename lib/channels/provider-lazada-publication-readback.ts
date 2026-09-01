@@ -65,6 +65,10 @@ function sha256(value: unknown) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
+function sha256Text(value: string) {
+  return createHash("sha256").update(value.trim(), "utf8").digest("hex");
+}
+
 function lazadaProduct(remoteData: UnknownRecord) {
   const data = recordValue(remoteData.data);
   const item = recordValue(data.item);
@@ -428,8 +432,8 @@ export function normalizeLazadaListingPublicationReadback(input: {
           observedDetailImageCount: 8,
           representativeImageDigest: sha256([providerRepresentative]),
           orderedDetailImageDigest: sha256(providerDetails),
-          titleDigest: sha256(title),
-          descriptionDigest: sha256(description),
+          titleDigest: sha256Text(title),
+          descriptionDigest: sha256Text(description),
         } : {}),
         mutableContentMismatchPaths: contentVerification.mismatches.slice(0, 40),
       },
