@@ -672,11 +672,11 @@ test("route arms the exact permit after the final fingerprint and before claim",
   assert.ok(fingerprint >= 0 && arm > fingerprint && claim > arm);
   assert.match(
     route,
-    /"coupang" \| "elevenst" \| "ebay" \| "temu" \| null/u,
+    /"coupang" \| "elevenst" \| "ebay" \| "lazada" \| "temu" \| null/u,
   );
-  assert.doesNotMatch(
+  assert.match(
     route,
-    /boundExactExistingClosedGateUpdateChannel:\s*[\s\S]{0,80}"lazada"/u,
+    /boundLazadaExactExistingUpdate = binding;\s*boundExactExistingClosedGateUpdateChannel = "lazada";/u,
   );
   assert.match(
     route,

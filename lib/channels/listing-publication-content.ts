@@ -729,7 +729,8 @@ export function listingPublicationProviderAssetEvidence(input: {
   const buyerVisibleShopee = input.channel === "shopee" && binding.providerImageSurface === "buyer_visible";
   const representativeBound = buyerVisibleShopee
     || input.channel === "lazada"
-    || (binding.providerTransportImages.length === 9
+    || (input.channel !== "coupang"
+      && binding.providerTransportImages.length === 9
       && binding.providerTransportImages[0]?.role === "gallery-representative");
   const sourceRepresentativeImage = sourceProjection.representativeImageIdentity ?? "";
   const providerRepresentativeImage = projection.representativeImageIdentity ?? "";
@@ -940,7 +941,8 @@ export function verifyListingPublicationContent(input: {
       : "unknown";
   const representativeRequired = binding?.providerImageSurface === "buyer_visible"
     || input.channel === "lazada"
-    || (binding?.providerTransportImages.length === 9
+    || (input.channel !== "coupang"
+      && binding?.providerTransportImages.length === 9
       && binding.providerTransportImages[0]?.role === "gallery-representative");
   const representativeImageVerified = !representativeRequired
     || Boolean(providerEvidence
