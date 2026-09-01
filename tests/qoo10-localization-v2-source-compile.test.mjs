@@ -8,7 +8,7 @@ const sourceMigrationUrl = new URL(
   import.meta.url,
 );
 const fixMigrationUrl = new URL(
-  "../supabase/migrations/20260901173800_fix_qoo10_exact_localization_v2_source_compile.sql",
+  "../supabase/migrations/20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql",
   import.meta.url,
 );
 

@@ -1,4 +1,5 @@
--- Compile the existing exact Qoo10 localization v2 source predicate by
+-- Compile the existing exact Qoo10 localization v2 source predicate before
+-- the independent eBay v101 credential-rotation migration by
 -- declaring the two JSON projections it already validates. The full function
 -- body, security boundary, owner and ACL are fingerprinted before and after;
 -- every other predicate remains byte-for-byte unchanged.

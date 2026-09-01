@@ -164,7 +164,7 @@ const QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION =
 const EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION =
   "20260901173700_recover_ebay_exact_v101_credential_rotation.sql";
 const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
-  "20260901173800_fix_qoo10_exact_localization_v2_source_compile.sql";
+  "20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -883,8 +883,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ALREADY_LIVE_ADOPTION_MIGRATION,
       QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION,
       QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION,
-      EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
       QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
+      EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1057,11 +1057,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "the eBay v101 forward rotation must replay after the historical v100 transition and the currently deployed adoption chain",
     );
     assert.ok(
-      migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+      migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
         < migrationNames.indexOf(
           QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
-        ),
-      "the Qoo10 source compile fix must remain the final forward-only postimage patch",
+        )
+        && migrationNames.indexOf(QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
+      "the Qoo10 source compile fix must replay after its adoption lineage and before the independent eBay v101 rotation",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
