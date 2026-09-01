@@ -971,7 +971,7 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
       const { data: identityData, error: identityError } = await serviceClient.rpc(
-        "sellerpilot_service_get_exact_qoo10_adopted_localization_identity",
+        "sellerpilot_service_get_qoo10_adopted_localization_identity",
         {
           p_listing_id: resourceListingId,
           p_credential_id: parsed.data.credentialId,
@@ -981,7 +981,13 @@ export async function POST(request: NextRequest) {
         },
       );
       const identity = qoo10AdoptedLocalizationIdentitySchema.safeParse(identityData);
-      if (identityError || !identity.success) {
+      if (identityError) {
+        return NextResponse.json({
+          message: "Qoo10 채택 원장 확인 API에 일시적인 오류가 발생해 상세 오염 제거를 시작하지 않았습니다.",
+          mode: "qoo10_exact_adopted_localization_identity_unavailable",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      if (!identity.success) {
         return NextResponse.json({
           message: "Qoo10 CHANGHEE live 채택 증거와 현재 게시 원장 snapshot이 일치하지 않아 상세 오염 제거를 시작하지 않았습니다.",
           mode: "qoo10_exact_adopted_localization_identity_required",
@@ -1759,7 +1765,7 @@ export async function POST(request: NextRequest) {
       }
       const { data: permitData, error: permitError } = boundQoo10AdoptedLocalizationIdentity
         ? await serviceClient.rpc(
-            "sellerpilot_service_arm_exact_qoo10_adopted_localization_update",
+            "sellerpilot_service_arm_qoo10_adopted_localization_update",
             {
               p_listing_id: parsed.data.resourceListingId,
               p_credential_id: parsed.data.credentialId,

@@ -8,6 +8,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901173500_fence_exact_qoo10_adopted_localization_update.sql",
   import.meta.url,
 );
+const shortRpcMigrationUrl = new URL(
+  "../supabase/migrations/20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql",
+  import.meta.url,
+);
 
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);
@@ -89,10 +93,10 @@ test("the API resolves the immutable adoption snapshot and arms its permit befor
     "utf8",
   );
   const identityIndex = route.indexOf(
-    '"sellerpilot_service_get_exact_qoo10_adopted_localization_identity"',
+    '"sellerpilot_service_get_qoo10_adopted_localization_identity"',
   );
   const armIndex = route.indexOf(
-    '"sellerpilot_service_arm_exact_qoo10_adopted_localization_update"',
+    '"sellerpilot_service_arm_qoo10_adopted_localization_update"',
   );
   const claimIndex = route.indexOf(
     '"sellerpilot_claim_channel_operation"',
@@ -100,4 +104,58 @@ test("the API resolves the immutable adoption snapshot and arms its permit befor
   assert.ok(identityIndex >= 0, "adoption identity RPC must be called");
   assert.ok(armIndex > identityIndex, "permit must follow the immutable identity read");
   assert.ok(claimIndex > armIndex, "the provider job claim must follow the one-shot permit");
+});
+
+test("the adopted-localization RPCs use exact PostgREST-safe names and fail closed by cause", async () => {
+  const migration = await readFile(shortRpcMigrationUrl, "utf8");
+  const route = await readFile(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  const identityRpc =
+    "sellerpilot_service_get_qoo10_adopted_localization_identity";
+  const armRpc =
+    "sellerpilot_service_arm_qoo10_adopted_localization_update";
+  assert.equal(Buffer.byteLength(identityRpc, "utf8"), 59);
+  assert.equal(Buffer.byteLength(armRpc, "utf8"), 57);
+  for (const value of [
+    identityRpc,
+    armRpc,
+    "sellerpilot_service_get_exact_qoo10_adopted_localization_identi",
+    "sellerpilot_service_arm_exact_qoo10_adopted_localization_update",
+    "68aabb874e63e8ebf690b86f9f8fe324d33729edbb7dd26678d5a02fa8486f86",
+    "194611a4d9a74a4797644bbc66c1793b6614a2a3edd33500656de4011d579aad",
+    "from public, anon, authenticated, service_role",
+    "notify pgrst, 'reload schema'",
+  ]) assert.ok(migration.includes(value), value);
+  assert.match(
+    migration,
+    /alter function[\s\S]*sellerpilot_service_get_exact_qoo10_adopted_localization_identi[\s\S]*rename to sellerpilot_service_get_qoo10_adopted_localization_identity/u,
+  );
+  assert.match(
+    migration,
+    /alter function[\s\S]*sellerpilot_service_arm_exact_qoo10_adopted_localization_update[\s\S]*rename to sellerpilot_service_arm_qoo10_adopted_localization_update/u,
+  );
+  assert.match(route, new RegExp(`serviceClient\\.rpc\\(\\s*"${identityRpc}"`, "u"));
+  assert.match(route, new RegExp(`serviceClient\\.rpc\\(\\s*"${armRpc}"`, "u"));
+  assert.doesNotMatch(
+    route,
+    /serviceClient\.rpc\(\s*"sellerpilot_service_(?:get|arm)_exact_qoo10_adopted_localization/u,
+  );
+  const unavailable = route.indexOf(
+    'mode: "qoo10_exact_adopted_localization_identity_unavailable"',
+  );
+  const identityRequired = route.indexOf(
+    'mode: "qoo10_exact_adopted_localization_identity_required"',
+  );
+  assert.ok(unavailable >= 0);
+  assert.ok(identityRequired > unavailable);
+  assert.match(
+    route.slice(unavailable - 320, unavailable + 240),
+    /if \(identityError\)[\s\S]*status: 503/u,
+  );
+  assert.match(
+    route.slice(identityRequired - 320, identityRequired + 240),
+    /if \(!identity\.success\)[\s\S]*status: 409/u,
+  );
 });

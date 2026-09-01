@@ -165,6 +165,8 @@ const EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION =
   "20260901173700_recover_ebay_exact_v101_credential_rotation.sql";
 const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
   "20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql";
+const QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION =
+  "20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -884,6 +886,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION,
       QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION,
       QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
+      QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION,
       EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
     ]);
     assert.ok(
@@ -1062,8 +1065,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
         )
         && migrationNames.indexOf(QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION)
+          < migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
+        && migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
-      "the Qoo10 source compile fix must replay after its adoption lineage and before the independent eBay v101 rotation",
+      "the Qoo10 source compile and short-RPC fixes must replay after adoption lineage and before the independent eBay v101 rotation",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
@@ -1399,6 +1404,80 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
              version, statements, name
            ) values ($1, '{}'::text[], $2)`,
           [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+      if (name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION) {
+        assert.deepEqual(
+          (await db.query(`
+            select proc.proname,
+                   pg_catalog.octet_length(proc.proname) bytes,
+                   pg_catalog.pg_get_userbyid(proc.proowner) owner,
+                   language.lanname language,
+                   proc.provolatile volatility,
+                   proc.prosecdef security_definer,
+                   proc.proconfig = array['search_path=""']::text[] empty_path,
+                   not pg_catalog.has_function_privilege(
+                     'anon', proc.oid, 'EXECUTE'
+                   ) anon_closed,
+                   not pg_catalog.has_function_privilege(
+                     'authenticated', proc.oid, 'EXECUTE'
+                   ) authenticated_closed,
+                   pg_catalog.has_function_privilege(
+                     'service_role', proc.oid, 'EXECUTE'
+                   ) service_open
+              from pg_catalog.pg_proc proc
+              join pg_catalog.pg_namespace namespace
+                on namespace.oid = proc.pronamespace
+              join pg_catalog.pg_language language
+                on language.oid = proc.prolang
+             where namespace.nspname = 'public'
+               and proc.proname in (
+                 'sellerpilot_service_get_qoo10_adopted_localization_identity',
+                 'sellerpilot_service_arm_qoo10_adopted_localization_update'
+               )
+             order by proc.proname
+          `)).rows,
+          [
+            {
+              proname: "sellerpilot_service_arm_qoo10_adopted_localization_update",
+              bytes: 57,
+              owner: "postgres",
+              language: "plpgsql",
+              volatility: "v",
+              security_definer: true,
+              empty_path: true,
+              anon_closed: true,
+              authenticated_closed: true,
+              service_open: true,
+            },
+            {
+              proname: "sellerpilot_service_get_qoo10_adopted_localization_identity",
+              bytes: 59,
+              owner: "postgres",
+              language: "plpgsql",
+              volatility: "v",
+              security_definer: true,
+              empty_path: true,
+              anon_closed: true,
+              authenticated_closed: true,
+              service_open: true,
+            },
+          ],
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from pg_catalog.pg_proc proc
+              join pg_catalog.pg_namespace namespace
+                on namespace.oid = proc.pronamespace
+             where namespace.nspname = 'public'
+               and proc.proname in (
+                 'sellerpilot_service_get_exact_qoo10_adopted_localization_identi',
+                 'sellerpilot_service_arm_exact_qoo10_adopted_localization_update'
+               )`,
+          ),
+          0,
+          "the truncated and 63-byte predecessor RPC names must not remain exposed",
         );
       }
       if (name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION) {
@@ -12575,6 +12654,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         && name !== EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
         && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
+        && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -14309,6 +14389,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         || name === EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
         || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
+        || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
