@@ -163,6 +163,8 @@ const QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION =
   "20260901173600_align_exact_qoo10_adoption_credential_lineage.sql";
 const EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION =
   "20260901173700_recover_ebay_exact_v101_credential_rotation.sql";
+const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
+  "20260901173800_fix_qoo10_exact_localization_v2_source_compile.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -882,6 +884,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION,
       QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION,
       EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
+      QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1052,6 +1055,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
       "the eBay v101 forward rotation must replay after the historical v100 transition and the currently deployed adoption chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(
+          QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
+        ),
+      "the Qoo10 source compile fix must remain the final forward-only postimage patch",
     );
     assert.ok(
       migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
@@ -12562,6 +12572,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         && name !== EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -14295,6 +14306,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         || name === EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
