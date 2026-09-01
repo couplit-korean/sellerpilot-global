@@ -63,7 +63,7 @@ export function csReplySavePlan(
   };
 }
 
-type CsInquirySyncStatus = "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
+export type CsInquirySyncStatus = "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
 
 const channelReadCapabilities: Record<ActiveChannelKey, { subject: string; integrated: boolean; replyLabel: string }> = {
   qoo10: { subject: "상품 문의", integrated: true, replyLabel: "답변: 보안 게이트웨이 원격 전송" },
@@ -125,4 +125,19 @@ export function csChannelVerification(
     badge: "검증 전",
     tone: "unsupported",
   };
+}
+
+export function csChannelAttentionCount(states: readonly {
+  channelKey: ActiveChannelKey;
+  status: CsInquirySyncStatus | null | undefined;
+  importedCount?: number;
+  lastError?: string | null;
+  needsAttention?: boolean;
+}[]) {
+  return new Set(states.filter((state) => state.needsAttention || csChannelVerification(
+    state.channelKey,
+    state.status,
+    state.importedCount,
+    state.lastError,
+  ).tone !== "passed").map((state) => state.channelKey)).size;
 }

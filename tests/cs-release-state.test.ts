@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  csChannelAttentionCount,
   csChannelVerification,
   csReplyDraftValue,
   csReplySavePlan,
@@ -82,4 +83,14 @@ test("channel verification separates inquiry receiving from remote reply capabil
     badge: "권한 필요",
     tone: "failed",
   });
+});
+
+test("CS attention count deduplicates channels and includes blocked or unverified outcomes", () => {
+  assert.equal(csChannelAttentionCount([
+    { channelKey: "qoo10", status: "passed" },
+    { channelKey: "qoo10", status: "failed" },
+    { channelKey: "lazada", status: "unsupported" },
+    { channelKey: "coupang", status: "passed", needsAttention: true },
+    { channelKey: "temu", status: null },
+  ]), 4);
 });
