@@ -133,6 +133,8 @@ const COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION =
   "20260901160000_reconcile_exact_coupang_unclaimed_static_egress_job.sql";
 const EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION =
   "20260901163000_expose_ebay_exact_qa_recovery_rpc.sql";
+const EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION =
+  "20260901164500_expose_ebay_serverless_listing_update.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -837,6 +839,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION,
       COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION,
       EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION,
+      EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -976,6 +979,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION)
         < migrationNames.indexOf(EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION),
       "the short eBay PostgREST RPC must replay after the latest committed exact-job reconciliation",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION)
+        < migrationNames.indexOf(EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION),
+      "the eBay serverless update pair must replay only after the exact identity RPC and provider fences",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
@@ -2628,6 +2636,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "ebay:inventory.update",
       "ebay:listing.create",
       "ebay:listing.lineage.verify",
+      "ebay:listing.update",
       "ebay:oauth.exchange",
       "ebay:orders.get",
       "ebay:orders.list",
@@ -12100,6 +12109,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
         && name !== COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
+        && name !== EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -13822,6 +13832,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
         || name === TEMU_EXACT_CABLE_MIGRATION
         || name === COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
+        || name === EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
