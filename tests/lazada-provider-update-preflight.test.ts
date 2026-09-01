@@ -14,6 +14,9 @@ const SOURCE_PRICE_KRW = 5_000;
 const KRW_PER_MYR = 350;
 const TARGET_PRICE_MYR = 14.29;
 const SELLER_ID = "200100300";
+const LISTING_ID = "42021335-9793-4834-8cd5-b73169fd1f48";
+const PRODUCT_ID = "ddccde35-9c58-4856-b673-d7aa27ce4220";
+const CREDENTIAL_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 const REPRESENTATIVE = "https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/ff/representative.jpg";
 const DETAILS = Array.from(
   { length: 8 },
@@ -27,6 +30,20 @@ function argumentsValue() {
     publicationStateContract: "verified_remote_state_v1",
     publicationIntent: "live",
     sellerpilotExpectedSellerId: SELLER_ID,
+    sellerpilotLazadaExactExistingUpdate: {
+      contract: "lazada_exact_existing_my_live_update_v1",
+      productId: PRODUCT_ID,
+      listingId: LISTING_ID,
+      credentialId: CREDENTIAL_ID,
+      itemId: ITEM_ID,
+      sellerSku: SELLER_SKU,
+      sellerAccountKey: "a".repeat(64),
+      targetId: SELLER_ID,
+      lineageAttestationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      lineageEvidenceDigest: "c".repeat(64),
+      approvedManifestDigest: "d".repeat(64),
+      releaseSha: "e".repeat(40),
+    },
     publicationExpectedLocale: "ms-MY",
     publicationExpectedFingerprint: "b".repeat(64),
     publicationExpectedImageCount: 8,
@@ -35,6 +52,7 @@ function argumentsValue() {
     sellerpilotPublicationAssetBinding: {
       contract: "sellerpilot_publication_asset_binding_v1",
       providerImageSurface: "detail_content",
+      approvedManifestDigest: "d".repeat(64),
       providerTransportImages: DETAILS.map((publicUrl, index) => ({
         role: `detail-role-${index + 1}`,
         publicUrl,

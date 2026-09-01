@@ -16,6 +16,27 @@ export const lazadaExactExistingPublicationIdentity = Object.freeze({
 export const lazadaExactExistingSellerSku =
   `${lazadaExactExistingPublicationIdentity.centralSku}-${lazadaExactExistingPublicationIdentity.market}` as const;
 
+export const lazadaExactExistingUpdateArgument =
+  "sellerpilotLazadaExactExistingUpdate" as const;
+
+export const lazadaExactExistingUpdateContract =
+  "lazada_exact_existing_my_live_update_v1" as const;
+
+export type LazadaExactExistingUpdateBinding = {
+  contract: typeof lazadaExactExistingUpdateContract;
+  productId: string;
+  listingId: string;
+  credentialId: string;
+  itemId: string;
+  sellerSku: typeof lazadaExactExistingSellerSku;
+  sellerAccountKey: string;
+  targetId: string;
+  lineageAttestationId: string;
+  lineageEvidenceDigest: string;
+  approvedManifestDigest: string;
+  releaseSha: string;
+};
+
 type UnknownRecord = Record<string, unknown>;
 
 function recordValue(value: unknown): UnknownRecord {
@@ -56,6 +77,67 @@ function uniqueHttpsUrls(value: unknown) {
     }
   });
   return urls.length === new Set(urls).size ? urls : [];
+}
+
+function uuid(value: unknown) {
+  const normalized = text(value).toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u
+    .test(normalized)
+    ? normalized
+    : "";
+}
+
+export function lazadaExactExistingUpdateBindingValue(
+  value: unknown,
+): LazadaExactExistingUpdateBinding | null {
+  const source = recordValue(value);
+  const binding: LazadaExactExistingUpdateBinding = {
+    contract: lazadaExactExistingUpdateContract,
+    productId: uuid(source.productId),
+    listingId: uuid(source.listingId),
+    credentialId: uuid(source.credentialId),
+    itemId: text(source.itemId),
+    sellerSku: lazadaExactExistingSellerSku,
+    sellerAccountKey: text(source.sellerAccountKey).toLowerCase(),
+    targetId: text(source.targetId),
+    lineageAttestationId: uuid(source.lineageAttestationId),
+    lineageEvidenceDigest: text(source.lineageEvidenceDigest).toLowerCase(),
+    approvedManifestDigest: text(source.approvedManifestDigest).toLowerCase(),
+    releaseSha: text(source.releaseSha).toLowerCase(),
+  };
+  const identity = lazadaExactExistingPublicationIdentity;
+  return source.contract === lazadaExactExistingUpdateContract
+    && binding.productId === identity.productId
+    && binding.listingId === identity.listingId
+    && Boolean(binding.credentialId)
+    && binding.itemId === identity.remoteId
+    && source.sellerSku === lazadaExactExistingSellerSku
+    && /^[a-f0-9]{64}$/u.test(binding.sellerAccountKey)
+    && /^\d+$/u.test(binding.targetId)
+    && Boolean(binding.lineageAttestationId)
+    && /^[a-f0-9]{64}$/u.test(binding.lineageEvidenceDigest)
+    && /^[a-f0-9]{64}$/u.test(binding.approvedManifestDigest)
+    && /^[a-f0-9]{40}$/u.test(binding.releaseSha)
+    ? binding
+    : null;
+}
+
+export function lazadaExactExistingUpdateRequest(value: unknown) {
+  const argumentsValue = recordValue(value);
+  return lazadaExactExistingUpdateBindingValue(
+    argumentsValue[lazadaExactExistingUpdateArgument],
+  );
+}
+
+export function bindLazadaExactExistingUpdateArguments(
+  argumentsValue: UnknownRecord,
+  binding: LazadaExactExistingUpdateBinding,
+) {
+  const normalized = structuredClone(argumentsValue);
+  delete normalized[lazadaExactExistingUpdateArgument];
+  normalized[lazadaExactExistingUpdateArgument] = structuredClone(binding);
+  assertLazadaExactExistingUpdateArguments(normalized);
+  return normalized;
 }
 
 export function lazadaExactExistingUpdateTarget(argumentsValue: UnknownRecord) {
@@ -99,10 +181,19 @@ export function assertLazadaExactExistingUpdateArguments(
   const representative = galleryUrls[0] ?? "";
   const requestedPrice = exactNumber(sku.price ?? sku.Price);
   const policyPrice = exactNumber(policy.targetPriceMyr);
+  const exactBinding = lazadaExactExistingUpdateRequest(argumentsValue);
 
-  if (text(argumentsValue.country).toLowerCase() !== identity.country
+  if (!exactBinding
+      || exactBinding.productId !== identity.productId
+      || exactBinding.listingId !== identity.listingId
+      || exactBinding.itemId !== identity.remoteId
+      || exactBinding.sellerSku !== lazadaExactExistingSellerSku
+      || exactBinding.targetId !== text(argumentsValue.sellerpilotExpectedSellerId)
+      || text(argumentsValue.country).toLowerCase() !== identity.country
       || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
       || argumentsValue.publicationIntent !== "live"
+      || text(argumentsValue.publicationExpectedFingerprint) === ""
+      || !/^[a-f0-9]{64}$/u.test(text(argumentsValue.publicationExpectedFingerprint).toLowerCase())
       || !/^\d+$/u.test(text(argumentsValue.sellerpilotExpectedSellerId))
       || argumentsValue.publicationExpectedLocale !== identity.locale
       || Number(argumentsValue.publicationExpectedImageCount) !== identity.detailImageCount
@@ -120,6 +211,8 @@ export function assertLazadaExactExistingUpdateArguments(
       || !/^\d+$/u.test(text(product.PrimaryCategory ?? product.primary_category))
       || binding.contract !== "sellerpilot_publication_asset_binding_v1"
       || binding.providerImageSurface !== "detail_content"
+      || text(binding.approvedManifestDigest).toLowerCase()
+        !== exactBinding.approvedManifestDigest
       || detailUrls.length !== identity.detailImageCount
       || new Set(detailUrls).size !== identity.detailImageCount
       || !representative

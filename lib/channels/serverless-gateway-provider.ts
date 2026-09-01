@@ -93,7 +93,13 @@ import {
   elevenstExactExistingPublicationBinding,
   elevenstExactExistingUpdateTarget,
 } from "./elevenst-exact-existing-publication";
-import { lazadaExactExistingCreateForbidden } from "./lazada-exact-existing-identity";
+import {
+  assertLazadaExactExistingUpdateArguments,
+  lazadaExactExistingCreateForbidden,
+  lazadaExactExistingUpdateArgument,
+  lazadaExactExistingUpdateRequest,
+  lazadaExactExistingUpdateTarget,
+} from "./lazada-exact-existing-identity";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
@@ -629,6 +635,23 @@ export async function executeServerlessGatewayProviderJob(
         && input.job.operation === "listing.create"
         && lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
       throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const lazadaExactUpdateMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      lazadaExactExistingUpdateArgument,
+    );
+    const lazadaExactUpdateTarget = input.job.channel === "lazada"
+      && input.job.operation === "listing.update"
+      && lazadaExactExistingUpdateTarget(rawArguments);
+    if (lazadaExactUpdateMarkerSupplied || lazadaExactUpdateTarget) {
+      const exactBinding = lazadaExactExistingUpdateRequest(rawArguments);
+      if (!lazadaExactUpdateTarget || !exactBinding) {
+        throw new Error("LAZADA_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+      }
+      if (input.job.credential_id !== exactBinding.credentialId) {
+        throw new Error("LAZADA_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
+      }
+      assertLazadaExactExistingUpdateArguments(rawArguments);
     }
     if (input.job.channel === "ebay"
         && input.job.operation === "listing.create"

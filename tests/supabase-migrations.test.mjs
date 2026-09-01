@@ -175,6 +175,8 @@ const TEMU_EXACT_EXISTING_UPDATE_MIGRATION =
   "20260901173960_allow_exact_temu_existing_content_update.sql";
 const SHOPEE_SG_EXACT_UPDATE_MIGRATION =
   "20260901173970_allow_exact_shopee_sg_existing_updates.sql";
+const LAZADA_EXACT_EXISTING_UPDATE_MIGRATION =
+  "20260901173980_allow_exact_lazada_my_live_update.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -900,6 +902,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION,
       TEMU_EXACT_EXISTING_UPDATE_MIGRATION,
       SHOPEE_SG_EXACT_UPDATE_MIGRATION,
+      LAZADA_EXACT_EXISTING_UPDATE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -13690,6 +13693,654 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           set enabled=false,updated_at=clock_timestamp()
         where channel='shopee'`,
     );
+    // The exact Lazada MY path reuses one immutable, provider-certified
+    // lineage attestation, then binds the closed-gate exception to one
+    // request, one queue job, one worker claim, and one provider boundary.
+    const lazadaExactListingId = "42021335-9793-4834-8cd5-b73169fd1f48";
+    const lazadaExactTargetId = "200100300";
+    const lazadaExactSellerKey = createHash("sha256")
+      .update(`lazada\u001fproduction\u001flazada:my:${lazadaExactTargetId}`, "utf8")
+      .digest("hex");
+    const lazadaExactFingerprint = "7".repeat(64);
+    const lazadaManifestDigest = adoptionManifestDigest;
+    const lazadaLineageDigest = "6".repeat(64);
+    const lazadaTargetPrice = 14.29;
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const lazadaExactCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'lazada','production',
+        '{"app_key":"lazada-exact","app_secret":"secret","access_token":"token","refresh_token":"refresh"}'::jsonb,
+        now() + interval '30 days',90,30,7
+      )`,
+    );
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,
+              seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp(),
+              last_checked_at=clock_timestamp(),last_check_status='passed'
+        where id=$1`,
+      [lazadaExactCredentialId, lazadaExactSellerKey],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_market_targets (
+         owner_id,credential_id,channel,environment,target_id,display_name,
+         market_code,locale,language,currency,remote_status,verified_at,updated_at
+       ) values (
+         $1,$2,'lazada','production',$3,'Exact Lazada MY seller',
+         'MY','ms-MY','Malay','MYR','active',clock_timestamp(),clock_timestamp()
+       )`,
+      [temuExactOwnerId, lazadaExactCredentialId, lazadaExactTargetId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_listings (
+         id,owner_id,product_id,channel_key,market,target_id,remote_id,status,
+         currency,price,seller_account_key,failure_class,last_error,
+         requested_publication_intent,remote_visibility,provider_status,
+         published_at,last_verified_at
+       ) values (
+         $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','lazada','MY',$3,
+         '14976038919','failed','MYR',$4,$5,'external_action',
+         'Exact adopted listing awaits content correction.','live','unknown',
+         null,null,clock_timestamp()
+       )`,
+      [
+        lazadaExactListingId,
+        temuExactOwnerId,
+        lazadaExactTargetId,
+        lazadaTargetPrice,
+        lazadaExactSellerKey,
+      ],
+    );
+    const lazadaLineageJobId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id,listing_id,channel,operation,environment,request_payload,
+         response_payload,status,seller_account_key,request_fingerprint,
+         created_by,attempt_count,started_at,completed_at,updated_at
+       ) values (
+         $1,$2,'lazada','listing.lineage.verify','production',
+         jsonb_build_object('arguments',jsonb_build_object(
+           'expectedRemoteId','14976038919','market','MY','country','my',
+           'targetId',$3::text,'marketplaceSku','QA-20260823-CC-001-MY'
+         )),
+         '{"ok":true,"remoteId":"14976038919"}'::jsonb,'succeeded',$4,$5,$6,
+         1,clock_timestamp()-interval '2 seconds',clock_timestamp(),clock_timestamp()
+       ) returning id`,
+      [
+        lazadaExactCredentialId,
+        lazadaExactListingId,
+        lazadaExactTargetId,
+        lazadaExactSellerKey,
+        "5".repeat(64),
+        temuExactOwnerId,
+      ],
+    );
+    const lazadaLineageAttestationId = await scalar(
+      db,
+      `insert into sellerpilot_private.provider_listing_lineage_attestations (
+         listing_id,credential_id,gateway_job_id,seller_account_key,channel,
+         environment,expected_remote_id,verified_remote_id,market,target_id,
+         marketplace_sku,provider_resource_id,evidence_version,evidence_digest,
+         completion_claim_token_hash,verified_at
+       ) values (
+         $1,$2,$3,$4,'lazada','production','14976038919','14976038919',
+         'MY',$5,null,null,'provider_listing_readback_v1',$6,$7,clock_timestamp()
+       ) returning id`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        lazadaLineageJobId,
+        lazadaExactSellerKey,
+        lazadaExactTargetId,
+        lazadaLineageDigest,
+        "4".repeat(64),
+      ],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='lazada'`,
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await scalar(db, "select set_config('request.headers','{}',false)");
+    const lazadaExactIdentity = await scalar(
+      db,
+      `select public.sellerpilot_service_get_lazada_exact_update_id(
+         $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','MY',$3
+       )`,
+      [lazadaExactListingId, lazadaExactCredentialId, lazadaExactTargetId],
+    );
+    assert.deepEqual(lazadaExactIdentity, {
+      contract: "lazada_exact_existing_my_live_update_v1",
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      listingId: lazadaExactListingId,
+      credentialId: lazadaExactCredentialId,
+      itemId: "14976038919",
+      sellerSku: "QA-20260823-CC-001-MY",
+      sellerAccountKey: lazadaExactSellerKey,
+      targetId: lazadaExactTargetId,
+      lineageAttestationId: lazadaLineageAttestationId,
+      lineageEvidenceDigest: lazadaLineageDigest,
+    });
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_lazada_exact_update_id(
+           $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','MY','999999999'
+         )`,
+        [lazadaExactListingId, lazadaExactCredentialId],
+      ),
+      null,
+      "a different Lazada seller target must not resolve the exact identity",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_lazada_exact_update_id(
+           '42021335-9793-4834-8cd5-b73169fd1f49',$1,
+           'ddccde35-9c58-4856-b673-d7aa27ce4220','MY',$2
+         )`,
+        [lazadaExactCredentialId, lazadaExactTargetId],
+      ),
+      null,
+      "a different listing must not resolve the exact identity",
+    );
+
+    const lazadaExactPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_lazada_exact_update(
+         'lazada',$1,$2,$3,$4,$5
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        lazadaExactFingerprint,
+        lazadaTargetPrice,
+      ],
+    );
+    assert.equal(lazadaExactPermit.bound, false);
+    assert.equal(lazadaExactPermit.reused, false);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      )).reused,
+      true,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "8".repeat(64),
+          lazadaTargetPrice,
+        ],
+      ),
+      /different active permit/i,
+    );
+
+    const lazadaRepresentative =
+      "https://assets.example.test/lazada-exact/representative.jpg";
+    const lazadaDetails = Array.from(
+      { length: 8 },
+      (_, index) => `https://assets.example.test/lazada-exact/detail-${index + 1}.jpg`,
+    );
+    const lazadaTitle = "Klip pengurusan kabel pelekat, set 6 unit";
+    const lazadaDescription =
+      `<section><p>Klip kabel yang tahan lama untuk meja kemas dan mudah digunakan.</p>${lazadaDetails.map((url) => `<img src="${url}">`).join("")}</section>`;
+    const lazadaArguments = {
+      itemId: "14976038919",
+      country: "my",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      publicationExpectedLocale: "ms-MY",
+      publicationExpectedFingerprint: lazadaExactFingerprint,
+      publicationExpectedImageCount: 8,
+      sellerpilotExpectedSellerId: lazadaExactTargetId,
+      sellerpilotLazadaExactExistingUpdate: {
+        ...lazadaExactIdentity,
+        approvedManifestDigest: lazadaManifestDigest,
+        releaseSha: PUBLICATION_RELEASE_SHA,
+      },
+      sellerpilotLazadaPricePolicy: {
+        contract: "lazada_krw_myr_reference_price_v1",
+        sourceCurrency: "KRW",
+        sourcePriceKrw: 5000,
+        targetCurrency: "MYR",
+        targetPriceMyr: lazadaTargetPrice,
+        rate: {
+          krwPerMyr: 350,
+          sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+          frequency: "minute-market",
+        },
+      },
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "detail_content",
+        approvedManifestDigest: lazadaManifestDigest,
+        providerTransportImages: lazadaDetails.map((publicUrl, index) => ({
+          role: `detail-${index + 1}`,
+          publicUrl,
+        })),
+      },
+      sellerpilotAssets: { galleryImageUrls: [lazadaRepresentative] },
+      imageUrls: [lazadaRepresentative, ...lazadaDetails],
+      request: {
+        Request: {
+          Product: {
+            PrimaryCategory: "10100205",
+            Attributes: {
+              name: lazadaTitle,
+              description: lazadaDescription,
+            },
+            Skus: {
+              Sku: [{
+                SellerSku: "QA-20260823-CC-001-MY",
+                price: String(lazadaTargetPrice),
+                quantity: "1",
+                Status: "active",
+              }],
+            },
+          },
+        },
+      },
+    };
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.lazada_exact_update_arguments_valid(
+           $1::jsonb,$2,$3,$4,1
+         )`,
+        [
+          JSON.stringify(lazadaArguments),
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      ),
+      true,
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const lazadaExactAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'lazada','listing.update',$2,$3
+       )`,
+      [
+        lazadaExactCredentialId,
+        `lazada-exact-existing-update:${lazadaExactFingerprint}`,
+        lazadaExactFingerprint,
+      ],
+    );
+    assert.equal(lazadaExactAttempt.status, "running");
+    const lazadaExactRequest = { arguments: lazadaArguments };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.exact_existing_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [lazadaExactPermit.permitId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'lazada','listing.update',$4::jsonb
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          lazadaExactAttempt.attempt_id,
+          JSON.stringify(lazadaExactRequest),
+        ],
+      ),
+      /query returned no rows|exact|permit|gate/i,
+      "an expired Lazada one-shot permit must not enqueue",
+    );
+    const renewedLazadaPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_lazada_exact_update(
+         'lazada',$1,$2,$3,$4,$5
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        lazadaExactFingerprint,
+        lazadaTargetPrice,
+      ],
+    );
+    assert.notEqual(renewedLazadaPermit.permitId, lazadaExactPermit.permitId);
+    const tamperedLazadaRequest = structuredClone(lazadaExactRequest);
+    tamperedLazadaRequest.arguments.sellerpilotLazadaExactExistingUpdate.itemId =
+      "14976038920";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'lazada','listing.update',$4::jsonb
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          lazadaExactAttempt.attempt_id,
+          JSON.stringify(tamperedLazadaRequest),
+        ],
+      ),
+      /query returned no rows|exact|permit|gate/i,
+      "a tampered remote item must not enqueue",
+    );
+    const lazadaExactEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+         $1,$2,$3,'lazada','listing.update',$4::jsonb
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        lazadaExactAttempt.attempt_id,
+        JSON.stringify(lazadaExactRequest),
+      ],
+    );
+    assert.equal(lazadaExactEnqueue.status, "queued");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      ),
+      /identity|lineage|active|queued|required/i,
+      "an active exact Lazada job must prevent a second permit",
+    );
+
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"lazada"}',false
+       )`,
+    );
+    const lazadaExactClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/lazada-exact-update')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(lazadaExactClaim.id, lazadaExactEnqueue.job_id);
+    assert.equal(lazadaExactClaim.operation, "listing.update");
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,'aaaaaaaa-0000-4000-8000-000000000002'
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id],
+      ),
+      false,
+      "a different Lazada claim token must not consume the permit",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id, lazadaExactClaim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select job.provider_mutation_started_at is not null as provider_started,
+                permit.bound_at is not null as bound,
+                permit.consumed_at is not null as consumed
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [lazadaExactClaim.id],
+      )).rows,
+      [{ provider_started: true, bound: true, consumed: true }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id, lazadaExactClaim.claim_token],
+      ),
+      false,
+      "a consumed Lazada permit must not begin a second mutation",
+    );
+
+    const lazadaProviderRepresentative =
+      "https://my-live.slatic.net/p/lazada-exact-representative.jpg";
+    const lazadaProviderDetails = Array.from(
+      { length: 8 },
+      (_, index) => `https://my-live.slatic.net/p/lazada-exact-detail-${index + 1}.jpg`,
+    );
+    const lazadaExactSuccess = {
+      ok: true,
+      channel: "lazada",
+      operation: "listing.update",
+      publicationIntent: "live",
+      publicationFulfilled: true,
+      publicationStateContract: "verified_remote_state_v1",
+      remoteId: "14976038919",
+      steps: [{ name: "lazada-update-product", ok: true, status: 200, data: {} }],
+      remoteState: {
+        verified: true,
+        visibility: "live",
+        providerStatus: "ACTIVE",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          version: "lazada_exact_my_update_readback_v1",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+          categoryVerified: true,
+          commerceVerified: true,
+          contentVerified: true,
+          sellerSkuVerified: true,
+          skuIdVerified: true,
+          preflightSkuId: "170000000001",
+          priceVerified: true,
+          stockVerified: true,
+          activeStatusVerified: true,
+          titleLanguageVerified: true,
+          descriptionLanguageVerified: true,
+          representativeImageVerified: true,
+          detailImagesVerified: true,
+          categoryAttributesVerified: true,
+          observedRepresentativeImageCount: 1,
+          observedDetailImageCount: 8,
+          representativeImageDigest: createHash("sha256")
+            .update(JSON.stringify([lazadaProviderRepresentative]), "utf8")
+            .digest("hex"),
+          orderedDetailImageDigest: createHash("sha256")
+            .update(JSON.stringify(lazadaProviderDetails), "utf8")
+            .digest("hex"),
+          titleDigest: createHash("sha256").update(lazadaTitle, "utf8").digest("hex"),
+          descriptionDigest: createHash("sha256")
+            .update(lazadaDescription, "utf8").digest("hex"),
+        },
+        resources: {
+          itemId: "14976038919",
+          skuId: "170000000001",
+          sellerSku: "QA-20260823-CC-001-MY",
+          country: "my",
+          currency: "MYR",
+          price: lazadaTargetPrice,
+          stock: 1,
+          categoryId: "10100205",
+          representativeImageUrl: lazadaProviderRepresentative,
+          detailImageUrls: lazadaProviderDetails,
+        },
+        locale: "ms-MY",
+        fingerprint: lazadaExactFingerprint,
+        imageCount: 8,
+      },
+      safeMessage: "Lazada exact existing MY update verified.",
+    };
+    for (const [label, tamperedResponse] of [
+      ["sku identity", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          resources: { ...lazadaExactSuccess.remoteState.resources, skuId: "170000000002" },
+        },
+      }],
+      ["status", {
+        ...lazadaExactSuccess,
+        remoteState: { ...lazadaExactSuccess.remoteState, providerStatus: "INACTIVE" },
+      }],
+      ["price", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          resources: { ...lazadaExactSuccess.remoteState.resources, price: 14.30 },
+        },
+      }],
+      ["title digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: { ...lazadaExactSuccess.remoteState.evidence, titleDigest: "f".repeat(64) },
+        },
+      }],
+      ["description digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            descriptionDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["representative digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            representativeImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["detail order", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            orderedDetailImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+    ]) {
+      await db.exec("begin");
+      try {
+        const tamperedCompletion = await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+             $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+           )`,
+          [
+            exactTemuWorkerHash,
+            lazadaExactClaim.id,
+            lazadaExactClaim.claim_token,
+            JSON.stringify(tamperedResponse),
+          ],
+        );
+        assert.fail(`tampered Lazada ${label} completed: ${JSON.stringify(tamperedCompletion)}`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error), /invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    const lazadaExactCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        lazadaExactClaim.id,
+        lazadaExactClaim.claim_token,
+        JSON.stringify(lazadaExactSuccess),
+      ],
+    );
+    assert.equal(lazadaExactCompletion.status, "completed");
+    assert.deepEqual(
+      (await db.query(
+        `select job.status,attempt.status as attempt_status,
+                listing.status as listing_status,listing.remote_visibility,
+                listing.provider_status,
+                listing.remote_resources#>>'{resources,itemId}' as item_id,
+                listing.remote_resources#>>'{resources,skuId}' as sku_id,
+                listing.remote_resources#>>'{resources,sellerSku}' as seller_sku,
+                listing.remote_resources#>>'{resources,currency}' as currency,
+                listing.remote_resources#>>'{resources,price}' as price,
+                listing.remote_resources#>>'{resources,stock}' as stock,
+                permit.consumed_at is not null as consumed,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id=job.attempt_id
+           join sellerpilot_private.product_listings listing on listing.id=job.listing_id
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [lazadaExactClaim.id],
+      )).rows,
+      [{
+        status: "succeeded",
+        attempt_status: "succeeded",
+        listing_status: "published",
+        remote_visibility: "live",
+        provider_status: "ACTIVE",
+        item_id: "14976038919",
+        sku_id: "170000000001",
+        seller_sku: "QA-20260823-CC-001-MY",
+        currency: "MYR",
+        price: String(lazadaTargetPrice),
+        stock: "1",
+        consumed: true,
+        receipt_count: 1,
+      }],
+    );
   } finally {
     await db.close();
   }
@@ -14233,6 +14884,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
         && name !== TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         && name !== TEMU_EXACT_EXISTING_UPDATE_MIGRATION
+        && name !== LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
         && name !== QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
         && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
@@ -15971,6 +16623,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
         || name === TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         || name === TEMU_EXACT_EXISTING_UPDATE_MIGRATION
+        || name === LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
         || name === QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
         || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION

@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  bindLazadaExactExistingUpdateArguments,
   lazadaExactExistingCentralSkuVerified,
   lazadaExactExistingCreateForbidden,
   lazadaExactExistingPublicationCandidate,
   lazadaExactExistingPublicationIdentity as identity,
+  lazadaExactExistingUpdateBindingValue,
 } from "../lib/channels/lazada-exact-existing-identity";
 import { listingUpdateServerCandidate } from "../lib/channels/listing-update";
 import {
@@ -14,6 +16,7 @@ import {
   type PrepareProviderListingInput,
 } from "../lib/channels/provider-listing-runtime";
 import { SERVERLESS_STATIC_EGRESS_CHANNELS } from "../lib/channels/serverless-static-egress";
+import { executeServerlessGatewayProviderJob } from "../lib/channels/serverless-gateway-provider";
 
 const listing = {
   listingId: identity.listingId,
@@ -96,6 +99,87 @@ test("admin route injects the Lazada seller target only after immutable lineage 
   assert.match(route.slice(lineage, binding), /lineageStatus !== "allowed"/u);
 });
 
+test("admin route strips client Lazada authority and arms only the short exact server RPC", () => {
+  const route = readFileSync(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  const strip = route.indexOf("delete effectiveArguments[lazadaExactExistingUpdateArgument]");
+  const identityRpc = route.indexOf('"sellerpilot_service_get_lazada_exact_update_id"');
+  const bind = route.indexOf("bindLazadaExactExistingUpdateArguments({");
+  const arm = route.indexOf('"sellerpilot_service_arm_lazada_exact_update"');
+  const claim = route.indexOf("sellerpilot_claim_channel_operation", bind);
+  assert.equal(strip > 0 && identityRpc > 0 && bind > identityRpc, true);
+  assert.equal(arm > bind && arm < claim, true);
+  assert.doesNotMatch(
+    route.slice(strip, bind),
+    /parsed\.data\.arguments\.sellerpilotLazadaExactExistingUpdate/u,
+  );
+});
+
+test("Lazada exact binding accepts only server-owned immutable lineage fields", () => {
+  const binding = lazadaExactExistingUpdateBindingValue({
+    contract: "lazada_exact_existing_my_live_update_v1",
+    productId: identity.productId,
+    listingId: identity.listingId,
+    credentialId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    itemId: identity.remoteId,
+    sellerSku: `${identity.centralSku}-${identity.market}`,
+    sellerAccountKey: "b".repeat(64),
+    targetId: "200100300",
+    lineageAttestationId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    lineageEvidenceDigest: "c".repeat(64),
+    approvedManifestDigest: "d".repeat(64),
+    releaseSha: "e".repeat(40),
+  });
+  assert.ok(binding);
+  assert.equal(lazadaExactExistingUpdateBindingValue({
+    ...binding,
+    itemId: "14976038920",
+  }), null);
+  const rebound = bindLazadaExactExistingUpdateArguments({
+    sellerpilotLazadaExactExistingUpdate: { itemId: "attacker-item" },
+    itemId: identity.remoteId,
+    country: "my",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "live",
+    publicationExpectedLocale: "ms-MY",
+    publicationExpectedFingerprint: "f".repeat(64),
+    publicationExpectedImageCount: 8,
+    sellerpilotExpectedSellerId: binding.targetId,
+    imageUrls: [
+      "https://assets.example.test/hero.jpg",
+      ...Array.from({ length: 8 }, (_, index) => `https://assets.example.test/detail-${index}.jpg`),
+    ],
+    sellerpilotAssets: { galleryImageUrls: ["https://assets.example.test/hero.jpg"] },
+    sellerpilotPublicationAssetBinding: {
+      contract: "sellerpilot_publication_asset_binding_v1",
+      providerImageSurface: "detail_content",
+      approvedManifestDigest: binding.approvedManifestDigest,
+      providerTransportImages: Array.from({ length: 8 }, (_, index) => ({
+        publicUrl: `https://assets.example.test/detail-${index}.jpg`,
+      })),
+    },
+    sellerpilotLazadaPricePolicy: {
+      contract: "lazada_krw_myr_reference_price_v1",
+      sourceCurrency: "KRW",
+      sourcePriceKrw: 5000,
+      targetCurrency: "MYR",
+      targetPriceMyr: 14.29,
+    },
+    request: { Request: { Product: {
+      PrimaryCategory: "10100205",
+      Skus: { Sku: [{
+        SellerSku: `${identity.centralSku}-${identity.market}`,
+        price: "14.29",
+        quantity: "1",
+        Status: "active",
+      }] },
+    } } },
+  }, binding);
+  assert.deepEqual(rebound.sellerpilotLazadaExactExistingUpdate, binding);
+});
+
 test("serverless gateway rejects a stale exact create before OAuth preparation", () => {
   const source = readFileSync(
     new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url),
@@ -104,6 +188,53 @@ test("serverless gateway rejects a stale exact create before OAuth preparation",
   const fence = source.indexOf("lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })");
   assert.equal(fence > source.indexOf("const rawArguments = requestArguments"), true);
   assert.equal(fence < source.indexOf("const preparedCredential = await prepareCredential"), true);
+});
+
+test("serverless rejects malformed exact Lazada update authority before OAuth or provider work", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetches = 0;
+  let mutationBegins = 0;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    return Response.json({ code: "0", data: {} });
+  };
+  try {
+    await assert.rejects(
+      executeServerlessGatewayProviderJob({
+        job: {
+          id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          claim_token: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+          credential_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          channel: "lazada",
+          operation: "listing.update",
+          environment: "production",
+          request: { arguments: {
+            itemId: identity.remoteId,
+            sellerpilotLazadaExactExistingUpdate: { itemId: identity.remoteId },
+          } },
+          credential: {
+            app_key: "app",
+            app_secret: "secret",
+            access_token: "token",
+            refresh_token: "refresh",
+          },
+          attempt_count: 1,
+        },
+        signal: new AbortController().signal,
+        hooks: {
+          assertLeaseHealthy: async () => undefined,
+          beginProviderMutation: async () => { mutationBegins += 1; },
+          beginCredentialMutation: async () => { mutationBegins += 1; },
+          stageCredentialRefresh: async () => { mutationBegins += 1; },
+        },
+      }),
+      /LAZADA_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED/u,
+    );
+    assert.equal(fetches, 0);
+    assert.equal(mutationBegins, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Lazada exact duplicate create fails before image validation or a provider request", async () => {

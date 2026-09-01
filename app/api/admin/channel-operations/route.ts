@@ -123,10 +123,14 @@ import {
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
 import {
+  bindLazadaExactExistingUpdateArguments,
   lazadaExactExistingCentralSkuVerified,
   lazadaExactExistingCreateForbidden,
   lazadaExactExistingPublicationCandidate,
   lazadaExactExistingPublicationIdentity,
+  lazadaExactExistingUpdateArgument,
+  lazadaExactExistingUpdateBindingValue,
+  type LazadaExactExistingUpdateBinding,
 } from "../../../../lib/channels/lazada-exact-existing-identity";
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import {
@@ -649,6 +653,7 @@ export async function POST(request: NextRequest) {
   let boundEbayExactNoEffectRetry = false;
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundTemuExactExistingUpdate: TemuExactExistingUpdateBinding | null = null;
+  let boundLazadaExactExistingUpdate: LazadaExactExistingUpdateBinding | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundQoo10ExactLocalizationUpdate = false;
   let boundQoo10AdoptedLocalizationIdentity:
@@ -657,7 +662,7 @@ export async function POST(request: NextRequest) {
   let smartstoreExactQaUpdatePermitArmed = false;
   let exactExistingUpdatePermitArmed = false;
   let boundExactExistingClosedGateUpdateChannel:
-    "coupang" | "elevenst" | "ebay" | "temu" | null = null;
+    "coupang" | "elevenst" | "ebay" | "lazada" | "temu" | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
@@ -888,7 +893,42 @@ export async function POST(request: NextRequest) {
             mode: "lazada_exact_existing_central_contract_required",
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
-        if (exactLazada) boundLazadaExactLiveUpdate = true;
+        if (exactLazada) {
+          const runtimeRelease = resolveRuntimeReleaseIdentity();
+          if (runtimeRelease.status !== "valid" || !approvedDetailBinding) {
+            return NextResponse.json({
+              message: "Lazada exact 상품 수정을 현재 릴리스와 승인 이미지 원장에 결속하지 못했습니다.",
+              mode: "lazada_exact_existing_release_required",
+            }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+          }
+          const { data: identityData, error: identityError } = await serviceClient.rpc(
+            "sellerpilot_service_get_lazada_exact_update_id",
+            {
+              p_listing_id: resourceListingId,
+              p_credential_id: parsed.data.credentialId,
+              p_product_id: productId,
+              p_market: parsed.data.market,
+              p_target_id: parsed.data.targetId,
+            },
+          );
+          const binding = lazadaExactExistingUpdateBindingValue({
+            ...(isRecord(identityData) ? identityData : {}),
+            approvedManifestDigest: approvedDetailBinding.manifest.digest,
+            releaseSha: runtimeRelease.release,
+          });
+          if (identityError
+              || !binding
+              || binding.listingId !== resourceListingId
+              || binding.credentialId !== parsed.data.credentialId
+              || binding.targetId !== parsed.data.targetId) {
+            return NextResponse.json({
+              message: "Lazada exact item·SellerSku·판매자 OAuth 계보를 원장에서 확정하지 못해 수정하지 않았습니다.",
+              mode: "lazada_exact_existing_atomic_identity_required",
+            }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+          }
+          boundLazadaExactExistingUpdate = binding;
+          boundExactExistingClosedGateUpdateChannel = "lazada";
+        }
         boundListingCurrency = policy.targetCurrency;
         boundListingPrice = policy.targetPriceMyr;
       }
@@ -1338,7 +1378,9 @@ export async function POST(request: NextRequest) {
 
   const environment = "environment" in credentialMetadata && credentialMetadata.environment === "sandbox" ? "sandbox" : "production";
   const operationRelease = channelOperationRelease(channel, operation, environment);
-  if (!operationRelease.available && !boundTemuExactExistingUpdate) {
+  if (!operationRelease.available
+      && !boundTemuExactExistingUpdate
+      && !boundLazadaExactExistingUpdate) {
     return NextResponse.json({
       message: operationRelease.reason,
       mode: operationRelease.mode,
@@ -1547,6 +1589,7 @@ export async function POST(request: NextRequest) {
       releaseSha: runtimeRelease.release,
     });
   }
+  delete effectiveArguments[lazadaExactExistingUpdateArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -1594,11 +1637,18 @@ export async function POST(request: NextRequest) {
       effectiveArguments,
     );
   }
-  if (boundLazadaExactLiveUpdate) {
-    effectiveArguments = {
-      ...effectiveArguments,
-      sellerpilotExpectedSellerId: parsed.data.targetId,
-    };
+  if (boundLazadaExactExistingUpdate) {
+    try {
+      effectiveArguments = bindLazadaExactExistingUpdateArguments({
+        ...effectiveArguments,
+        sellerpilotExpectedSellerId: parsed.data.targetId,
+      }, boundLazadaExactExistingUpdate);
+    } catch {
+      return NextResponse.json({
+        message: "Lazada exact 상품의 ms-MY 콘텐츠·MYR 가격·재고 1·대표 1장·상세 8장 계약이 일치하지 않습니다.",
+        mode: "lazada_exact_existing_update_contract_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
   if (channel === "ebay" && operation === "listing.update") {
     if (boundEbayExactExistingQaRecovery) {
@@ -2117,6 +2167,8 @@ export async function POST(request: NextRequest) {
       const { data: permitData, error: permitError } = await serviceClient.rpc(
         boundExactExistingClosedGateUpdateChannel === "temu"
           ? "sellerpilot_service_arm_temu_exact_update"
+          : boundExactExistingClosedGateUpdateChannel === "lazada"
+          ? "sellerpilot_service_arm_lazada_exact_update"
           : boundEbayExactNoEffectRetry
           ? "sellerpilot_service_arm_ebay_no_effect_retry"
           : "sellerpilot_service_arm_exact_existing_update",
@@ -2126,6 +2178,9 @@ export async function POST(request: NextRequest) {
           p_credential_id: parsed.data.credentialId,
           p_release_sha: runtimeRelease.release,
           p_request_fingerprint: requestFingerprint,
+          ...(boundExactExistingClosedGateUpdateChannel === "lazada"
+            ? { p_target_price_myr: boundListingPrice }
+            : {}),
         },
       );
       exactExistingUpdatePermitArmed = !permitError
@@ -2462,6 +2517,12 @@ export async function POST(request: NextRequest) {
       }
       if (boundShopeeSgExistingUpdate?.phase === "inventory") {
         assertShopeeSgExistingInventorySource(gatewayArguments);
+      }
+      if (boundLazadaExactExistingUpdate
+          && !lazadaExactExistingUpdateBindingValue(
+            gatewayArguments[lazadaExactExistingUpdateArgument],
+          )) {
+        throw new Error("LAZADA_EXACT_EXISTING_UPDATE_PREPARED_ARGUMENTS_INVALID");
       }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {

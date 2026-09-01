@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import {
   listingExpectedPublicationLocale,
   type ListingPublicationIntent,
@@ -8,6 +10,11 @@ import {
   lazadaPrimaryCategory,
   lazadaUpdateCommerceReadbackVerified,
 } from "./lazada-listing-update";
+import {
+  lazadaExactExistingSellerSku,
+  lazadaExactExistingUpdateRequest,
+} from "./lazada-exact-existing-identity";
+import { listingPublicationLanguageVerified } from "./listing-publication-content";
 import {
   lazadaRequest,
   textValue,
@@ -52,6 +59,10 @@ function uniqueTexts(value: unknown) {
   return Array.isArray(value)
     ? [...new Set(value.map(exactText).filter(Boolean))]
     : [];
+}
+
+function sha256(value: unknown) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
 }
 
 function lazadaProduct(remoteData: UnknownRecord) {
@@ -316,6 +327,52 @@ export function normalizeLazadaListingPublicationReadback(input: {
         : { ok: false, mismatches: ["immutableRemoteAssets"] }
     : verifyListingUpdateReadback("lazada", input.mutationArguments, input.remoteData);
   const contentVerified = contentVerification.ok;
+  const exactBinding = input.operation === "listing.update"
+    ? lazadaExactExistingUpdateRequest(input.mutationArguments)
+    : null;
+  const exactPreflight = recordValue(input.mutationArguments.sellerpilotLazadaUpdatePreflight);
+  const remoteSku = skus.length === 1 ? skus[0] : {};
+  const remoteSkuId = exactText(remoteSku.SkuId ?? remoteSku.SkuID ?? remoteSku.sku_id);
+  const remoteSellerSku = exactText(remoteSku.SellerSku ?? remoteSku.seller_sku);
+  const remotePrice = Number(remoteSku.price ?? remoteSku.Price);
+  const remoteStock = Number(remoteSku.quantity ?? remoteSku.Quantity);
+  const attributes = recordValue(product.Attributes ?? product.attributes);
+  const title = exactText(attributes.name ?? attributes.Name ?? product.name);
+  const description = exactText(
+    attributes.description ?? attributes.Description ?? product.description,
+  );
+  const providerRepresentative = exactText(
+    input.mutationArguments.sellerpilotProviderRepresentativeImageUrl,
+  );
+  const providerDetails = uniqueTexts(
+    input.mutationArguments.sellerpilotProviderDetailImageUrls,
+  );
+  const exactStatusesVerified = statuses.length > 0
+    && statuses.every((status) => ["ACTIVE", "LIVE", "ONLINE"].includes(status))
+    && skuStatuses.length === 1
+    && ["ACTIVE", "LIVE", "ONLINE"].includes(skuStatuses[0] ?? "");
+  const exactReadbackVerified = !exactBinding || Boolean(
+    exactBinding.itemId === remoteId
+    && remoteSellerSku === lazadaExactExistingSellerSku
+    && /^\d+$/u.test(remoteSkuId)
+    && remoteSkuId === exactText(exactPreflight.skuId)
+    && exactText(exactPreflight.itemId) === remoteId
+    && exactText(exactPreflight.sellerSku) === lazadaExactExistingSellerSku
+    && exactText(exactPreflight.country) === "my"
+    && exactText(exactPreflight.providerStatus)
+    && exactStatusesVerified
+    && Number.isFinite(remotePrice)
+    && Number(remotePrice.toFixed(2)) === Number(Number(exactPreflight.price).toFixed(2))
+    && remoteStock === 1
+    && providerRepresentative
+    && providerDetails.length === 8
+    && new Set([providerRepresentative, ...providerDetails]).size === 9
+    && images.length === 8
+    && images[0] === providerRepresentative
+    && providerDetails.every((url) => description.includes(url))
+    && listingPublicationLanguageVerified("ms-MY", title, "title")
+    && listingPublicationLanguageVerified("ms-MY", description, "description")
+  );
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expectedFingerprint)
     && identityVerified
     && statusVerified
@@ -323,7 +380,8 @@ export function normalizeLazadaListingPublicationReadback(input: {
     && imageCountVerified
     && categoryVerified
     && commerceVerified
-    && contentVerified;
+    && contentVerified
+    && exactReadbackVerified;
   const checks = {
     identityVerified,
     statusVerified,
@@ -349,14 +407,44 @@ export function normalizeLazadaListingPublicationReadback(input: {
       providerStatus,
       verifiedAt: input.verifiedAt ?? new Date().toISOString(),
       evidence: {
-        version: "lazada_get_product_item_v1",
+        version: exactBinding
+          ? "lazada_exact_my_update_readback_v1"
+          : "lazada_get_product_item_v1",
         contentVerificationMode: input.contentVerificationMode ?? "mutation_arguments",
         ...checks,
+        ...(exactBinding ? {
+          sellerSkuVerified: true,
+          skuIdVerified: true,
+          preflightSkuId: exactText(exactPreflight.skuId),
+          priceVerified: true,
+          stockVerified: true,
+          activeStatusVerified: true,
+          titleLanguageVerified: true,
+          descriptionLanguageVerified: true,
+          representativeImageVerified: true,
+          detailImagesVerified: true,
+          categoryAttributesVerified: true,
+          observedRepresentativeImageCount: 1,
+          observedDetailImageCount: 8,
+          representativeImageDigest: sha256([providerRepresentative]),
+          orderedDetailImageDigest: sha256(providerDetails),
+          titleDigest: sha256(title),
+          descriptionDigest: sha256(description),
+        } : {}),
         mutableContentMismatchPaths: contentVerification.mismatches.slice(0, 40),
       },
       resources: {
         itemId: remoteId,
         country: market.toLowerCase(),
+        ...(exactBinding ? {
+          skuId: remoteSkuId,
+          sellerSku: remoteSellerSku,
+          currency: "MYR",
+          price: Number(remotePrice.toFixed(2)),
+          stock: remoteStock,
+          representativeImageUrl: providerRepresentative,
+          detailImageUrls: providerDetails,
+        } : {}),
         ...(remoteCategory ? { categoryId: remoteCategory } : {}),
         ...(remoteSkuIds.length ? { skuIds: remoteSkuIds } : {}),
         ...(remoteSellerSkus.length ? { sellerSkus: remoteSellerSkus } : {}),
