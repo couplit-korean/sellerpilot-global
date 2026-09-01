@@ -398,14 +398,16 @@ test("Coupang, 11st, and Lazada exact drafts preserve their reviewed localized c
   assert.match(lazada.request.Request.Product.Attributes.description, /kabel di meja sentiasa kemas/u);
 });
 
-test("workbench recovery recognition does not weaken Lazada OAuth or non-public provider fences", async () => {
+test("workbench recovery recognition preserves Lazada OAuth seller lineage and live-state fences", async () => {
   const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const providerRuntime = await readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8");
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
 
   assert.match(route, /lazadaExactExistingPublicationCandidate/);
   assert.match(route, /lazada_exact_existing_central_contract_required/);
-  assert.match(providerRuntime, /requiredVisibility:[\s\S]{0,120}\?\s*"non_public"/);
+  assert.match(route, /sellerpilotExpectedSellerId: parsed\.data\.targetId/);
+  assert.match(providerRuntime, /path: "\/seller\/get"/);
+  assert.match(providerRuntime, /requiredVisibility: "live"/);
   assert.match(providerRuntime, /assertLazadaExactExistingUpdateArguments\(input\.arguments\)/);
   assert.equal(
     (workbench.match(/exactExternalActionWorkbenchRecoveryCandidate\(/gu) ?? []).length,

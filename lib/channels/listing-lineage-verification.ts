@@ -1,4 +1,5 @@
 import { assertShopeeShopProfileTarget } from "./provider-account-identity";
+import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
 import { ebayAsqMarketplaceIdFromSiteCode } from "./ebay-asq";
 import {
   ebayRequest,
@@ -168,15 +169,22 @@ function throwIfTransientProviderReadback(remote: RemoteResponse, step: string) 
   }
 }
 
-function baseEvidence(argumentsValue: ReturnType<typeof parseArguments>): ProviderListingLineageEvidence {
+function baseEvidence(
+  argumentsValue: ReturnType<typeof parseArguments>,
+  includeEbayResources = false,
+): ProviderListingLineageEvidence {
   return {
     expectedRemoteId: argumentsValue.expectedRemoteId,
     verifiedRemoteId: null,
     market: argumentsValue.market,
     targetId: argumentsValue.targetId,
     evidenceVersion: providerListingReadbackEvidenceVersion,
-    ...(argumentsValue.marketplaceSku ? { marketplaceSku: argumentsValue.marketplaceSku } : {}),
-    ...(argumentsValue.providerResourceId ? { providerResourceId: argumentsValue.providerResourceId } : {}),
+    ...(includeEbayResources && argumentsValue.marketplaceSku
+      ? { marketplaceSku: argumentsValue.marketplaceSku }
+      : {}),
+    ...(includeEbayResources && argumentsValue.providerResourceId
+      ? { providerResourceId: argumentsValue.providerResourceId }
+      : {}),
   };
 }
 
@@ -206,7 +214,7 @@ function manualResult(
     channel: input.channel,
     operation: "listing.lineage.verify",
     verificationStatus: "manual_required",
-    evidence: { ...baseEvidence(argumentsValue), reasonCode },
+    evidence: { ...baseEvidence(argumentsValue, input.channel === "ebay"), reasonCode },
     steps,
     safeMessage: "원격 상품 계정을 자동으로 확정할 증거가 부족해 기존 상품 쓰기를 계속 차단했습니다.",
   };
@@ -353,6 +361,20 @@ async function verifyLazada(
   if ((textValue(ensured.payload, "country") || "my").toLowerCase() !== argumentsValue.market.toLowerCase()) {
     throw new Error("LISTING_LINEAGE_MARKET_MISMATCH:lazada");
   }
+  const sellerRemote = await dependencies.lazadaRequest({
+    payload: ensured.payload,
+    path: "/seller/get",
+  });
+  throwIfTransientProviderReadback(sellerRemote, "lazadaSeller");
+  if (!successfulRemote(sellerRemote)) {
+    throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:lazadaSeller");
+  }
+  const sellerLineage = assertLazadaActiveSellerLineage({
+    credential: ensured.payload,
+    remoteData: sellerRemote.data,
+    country: argumentsValue.market,
+    expectedSellerId: argumentsValue.targetId,
+  });
   const itemRemote = await dependencies.lazadaRequest({
     payload: ensured.payload,
     path: "/product/item/get",
@@ -367,16 +389,41 @@ async function verifyLazada(
   }
   const verifiedRemoteId = argumentsValue.expectedRemoteId;
 
+  if (argumentsValue.marketplaceSku) {
+    const data = objectValue(itemRemote.data.data);
+    const nested = objectValue(data.item);
+    const product = Object.keys(nested).length ? nested : data;
+    const skuContainer = objectValue(product.Skus);
+    const skus = objectArray(product.skus ?? skuContainer.Sku);
+    const exactSkus = skus.filter((sku) =>
+      String(sku.SellerSku ?? sku.seller_sku ?? "").trim() === argumentsValue.marketplaceSku);
+    const activeStatuses = exactSkus.map((sku) =>
+      String(sku.Status ?? sku.status ?? product.Status ?? product.status ?? "")
+        .trim()
+        .toUpperCase());
+    if (skus.length !== 1
+        || exactSkus.length !== 1
+        || activeStatuses.some((status) => !["ACTIVE", "LIVE", "ONLINE"].includes(status))) {
+      throw new Error("LISTING_LINEAGE_REMOTE_LIVE_SKU_MISMATCH:lazada");
+    }
+  }
+
   return {
     ok: true,
     channel: "lazada",
     operation: "listing.lineage.verify",
     verificationStatus: "verified",
     evidence: { ...baseEvidence(argumentsValue), verifiedRemoteId },
-    steps: [safeStep("listing-lineage-readback", itemRemote, true, "LAZADA_COUNTRY_ITEM_ID_VERIFIED", {
-      market: argumentsValue.market.toLowerCase(),
-      verifiedRemoteId,
-    })],
+    steps: [
+      safeStep("seller-account-readback", sellerRemote, true, "LAZADA_ACTIVE_SELLER_ID_VERIFIED", {
+        market: argumentsValue.market.toLowerCase(),
+        targetId: sellerLineage.sellerId,
+      }),
+      safeStep("listing-lineage-readback", itemRemote, true, "LAZADA_COUNTRY_ITEM_ID_VERIFIED", {
+        market: argumentsValue.market.toLowerCase(),
+        verifiedRemoteId,
+      }),
+    ],
     safeMessage: "Lazada 국가와 원격 상품 식별값을 정확히 재확인했습니다.",
   };
 }

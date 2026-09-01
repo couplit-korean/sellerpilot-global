@@ -143,6 +143,8 @@ const EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION =
   "20260901165800_recover_ebay_exact_pre_gateway_retry.sql";
 const EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION =
   "20260901165900_recover_ebay_exact_credential_rotation.sql";
+const LAZADA_EXACT_LIVE_ADOPTION_MIGRATION =
+  "20260901173000_adopt_exact_lazada_live_listing.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -852,6 +854,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
       EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION,
       EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION,
+      LAZADA_EXACT_LIVE_ADOPTION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

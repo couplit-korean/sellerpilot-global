@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
+import { lazadaExactExistingPublicationIdentity } from "../../../../../../lib/channels/lazada-exact-existing-identity";
 
 export const runtime = "nodejs";
 
@@ -69,9 +70,14 @@ export async function POST(request: Request) {
   if (!parsed.success) {
     return response({ message: "상품 게시 원장 검증 요청 형식이 올바르지 않습니다." }, 400);
   }
+  const exactLazadaLiveAdoption = parsed.data.listingId
+    === lazadaExactExistingPublicationIdentity.listingId;
+  const prepareRpc = exactLazadaLiveAdoption
+    ? "sellerpilot_service_prepare_exact_lazada_live_adoption"
+    : "sellerpilot_service_prepare_listing_lineage_verification";
 
   const { data: prepareData, error: prepareError } = await admin.serviceClient.rpc(
-    "sellerpilot_service_prepare_listing_lineage_verification",
+    prepareRpc,
     { p_listing_id: parsed.data.listingId },
   );
   const prepared = prepareResultSchema.safeParse(prepareData);
@@ -118,7 +124,9 @@ export async function POST(request: Request) {
   }
 
   const { data: enqueueData, error: enqueueError } = await admin.serviceClient.rpc(
-    "sellerpilot_service_enqueue_listing_lineage_verification",
+    exactLazadaLiveAdoption
+      ? "sellerpilot_service_enqueue_exact_lazada_live_adoption"
+      : "sellerpilot_service_enqueue_listing_lineage_verification",
     {
       p_listing_id: parsed.data.listingId,
       p_credential_id: preparation.credential_id,

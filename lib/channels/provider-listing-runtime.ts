@@ -25,6 +25,7 @@ import {
   loadAuthoritativeKrwPerMyr,
   type LazadaKrwMyrRateEvidence,
 } from "./lazada-price-policy";
+import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
 import { downloadMarketplaceImage } from "./marketplace-images";
 import {
   buildShopeeSignature,
@@ -981,6 +982,7 @@ export async function prepareLazadaListing(
   }
   let preparedArguments = input.arguments;
   if (input.operation === "listing.update") {
+    const exactExistingTarget = lazadaExactExistingUpdateTarget(input.arguments);
     const request = recordValue(recordValue(recordValue(input.arguments.request)?.Request)?.Product);
     const primaryCategory = lazadaPrimaryCategory(request ?? {});
     const itemId = String(input.arguments.itemId ?? "").trim();
@@ -989,6 +991,7 @@ export async function prepareLazadaListing(
       .trim()
       .toLowerCase();
     const languageCode = lazadaLanguageCode(country);
+    const expectedSellerId = String(input.arguments.sellerpilotExpectedSellerId ?? "").trim();
     if (!/^\d+$/u.test(itemId)
         || !/^\d+$/u.test(primaryCategory)
         || !sellerSku
@@ -996,7 +999,13 @@ export async function prepareLazadaListing(
       throw new Error("LAZADA_UPDATE_PREFLIGHT_ARGUMENTS_INVALID");
     }
     await input.hooks.assertLeaseHealthy();
-    const [productsRemote, itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+    const [sellerRemote, productsRemote, itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+      exactExistingTarget
+        ? dependencies.lazadaRequest({
+            payload: input.credential,
+            path: "/seller/get",
+          })
+        : Promise.resolve(null),
       dependencies.lazadaRequest({
         payload: input.credential,
         path: "/products/get",
@@ -1025,6 +1034,17 @@ export async function prepareLazadaListing(
       }),
       dependencies.loadKrwPerMyr(input.signal),
     ]);
+    if (exactExistingTarget) {
+      if (!sellerRemote || !lazadaAccepted(sellerRemote)) {
+        throw new Error("LAZADA_UPDATE_SELLER_PREFLIGHT_FAILED");
+      }
+      assertLazadaActiveSellerLineage({
+        credential: input.credential,
+        remoteData: sellerRemote.data,
+        country,
+        expectedSellerId,
+      });
+    }
     if (!lazadaAccepted(productsRemote)) {
       throw new Error("LAZADA_UPDATE_PRODUCTS_PREFLIGHT_FAILED");
     }
@@ -1045,14 +1065,15 @@ export async function prepareLazadaListing(
       argumentsValue: input.arguments,
       remoteData: productsRemote.data,
     });
-    const preflight = assertLazadaExistingListingUpdatePreflight({
+    const remotePreflight = assertLazadaExistingListingUpdatePreflight({
       argumentsValue: input.arguments,
       remoteData: itemRemote.data,
       country,
-      requiredVisibility: lazadaExactExistingUpdateTarget(input.arguments)
-        ? "non_public"
-        : "live",
+      requiredVisibility: "live",
     });
+    const preflight = exactExistingTarget
+      ? { ...remotePreflight, updateSkuStatus: "active" as const }
+      : remotePreflight;
     if (productsPreflight.skuId !== preflight.skuId) {
       throw new Error("LAZADA_UPDATE_PRODUCTS_ITEM_SKU_ID_MISMATCH");
     }

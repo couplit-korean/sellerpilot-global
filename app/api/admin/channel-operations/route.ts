@@ -602,6 +602,7 @@ export async function POST(request: NextRequest) {
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
+  let boundLazadaExactLiveUpdate = false;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -760,6 +761,7 @@ export async function POST(request: NextRequest) {
             mode: "lazada_exact_existing_central_contract_required",
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
+        if (exactLazada) boundLazadaExactLiveUpdate = true;
         boundListingCurrency = policy.targetCurrency;
         boundListingPrice = policy.targetPriceMyr;
       }
@@ -1327,6 +1329,12 @@ export async function POST(request: NextRequest) {
     effectiveArguments = bindSmartstoreExactQaRecoveryArguments(
       effectiveArguments,
     );
+  }
+  if (boundLazadaExactLiveUpdate) {
+    effectiveArguments = {
+      ...effectiveArguments,
+      sellerpilotExpectedSellerId: parsed.data.targetId,
+    };
   }
   if (channel === "ebay" && operation === "listing.update") {
     if (boundEbayExactExistingQaRecovery) {

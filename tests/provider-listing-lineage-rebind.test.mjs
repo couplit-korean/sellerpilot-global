@@ -302,13 +302,18 @@ async function seedListing(db, {
   includeTarget = true,
   currentSubject,
   listingId: requestedListingId,
+  productId: requestedProductId,
+  productSku,
   remoteId: requestedRemoteId,
   attemptRemoteId: requestedAttemptRemoteId,
+  targetLocale = "en-US",
+  targetLanguage = "English",
+  targetCurrency = "USD",
 }) {
   const historicalCredentialId = uuid(1000 + (index * 10));
   const currentCredentialId = uuid(1001 + (index * 10));
   const attemptId = uuid(2000 + index);
-  const productId = uuid(3000 + index);
+  const productId = requestedProductId ?? uuid(3000 + index);
   const listingId = requestedListingId ?? uuid(4000 + index);
   const remoteId = requestedRemoteId ?? `REMOTE-${channel.toUpperCase()}-${index}`;
 
@@ -333,7 +338,7 @@ async function seedListing(db, {
     `insert into sellerpilot_private.products(
        id, owner_id, external_code, sku, name, status, demo
      ) values ($1,$2,$3,$4,$5,'active',false)`,
-    [productId, ADMIN_ID, `EXT-${index}`, `SKU-${index}`, `Lineage product ${index}`],
+    [productId, ADMIN_ID, `EXT-${index}`, productSku ?? `SKU-${index}`, `Lineage product ${index}`],
   );
   await db.query(
     `insert into sellerpilot_private.channel_operation_attempts(
@@ -364,8 +369,17 @@ async function seedListing(db, {
       `insert into sellerpilot_private.channel_market_targets(
          owner_id, credential_id, channel, environment, target_id,
          display_name, market_code, locale, language, currency, remote_status
-       ) values ($1,$2,$3,'production',$4,'Verified target',$5,'en-US','English','USD','ACTIVE')`,
-      [ADMIN_ID, currentCredentialId, channel, targetId, market],
+       ) values ($1,$2,$3,'production',$4,'Verified target',$5,$6,$7,$8,'ACTIVE')`,
+      [
+        ADMIN_ID,
+        currentCredentialId,
+        channel,
+        targetId,
+        market,
+        targetLocale,
+        targetLanguage,
+        targetCurrency,
+      ],
     );
   }
 
@@ -385,6 +399,7 @@ async function seedListing(db, {
     targetId,
     remoteId,
     marketplaceSku,
+    productId,
   };
 }
 
@@ -479,6 +494,8 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     for (const signature of [
       "public.sellerpilot_service_prepare_listing_lineage_verification(uuid)",
       "public.sellerpilot_service_enqueue_listing_lineage_verification(uuid,uuid)",
+      "public.sellerpilot_service_prepare_exact_lazada_live_adoption(uuid)",
+      "public.sellerpilot_service_enqueue_exact_lazada_live_adoption(uuid,uuid)",
       "public.sellerpilot_complete_listing_lineage_verification(text,uuid,uuid,text,jsonb,text)",
     ]) {
       assert.equal(
@@ -514,6 +531,19 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
         ),
         false,
         `${role} must not call the private failed-listing exception directly`,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          `select has_function_privilege(
+            $1,
+            'sellerpilot_private.exact_lazada_live_adoption_allowed(uuid,text,jsonb)',
+            'EXECUTE'
+          )`,
+          [role],
+        ),
+        false,
+        `${role} must not call the private exact Lazada adoption predicate directly`,
       );
     }
     assert.equal(
@@ -700,6 +730,101 @@ test("provider readback rebind is exact, immutable, atomic, and serialized", asy
     await db.query(
       "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
       [lazada.currentCredentialId],
+    );
+
+    const exactLazada = await seedListing(db, {
+      index: 20,
+      channel: "lazada",
+      market: "MY",
+      targetId: "200100300",
+      listingId: "42021335-9793-4834-8cd5-b73169fd1f48",
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      productSku: "QA-20260823-CC-001",
+      remoteId: "14976038919",
+      targetLocale: "ms-MY",
+      targetLanguage: "Bahasa Melayu",
+      targetCurrency: "MYR",
+    });
+    await db.query(
+      `update sellerpilot_private.product_listings
+          set status='failed', failure_class='external_action',
+              requested_publication_intent='live',
+              remote_visibility='unknown', provider_status=null,
+              published_at=null
+        where id=$1`,
+      [exactLazada.listingId],
+    );
+    const exactPreparation = await scalar(
+      db,
+      "select public.sellerpilot_service_prepare_exact_lazada_live_adoption($1)",
+      [exactLazada.listingId],
+    );
+    assert.deepEqual(exactPreparation, {
+      status: "ready",
+      listing_id: exactLazada.listingId,
+      credential_id: exactLazada.currentCredentialId,
+      channel: "lazada",
+      market: "MY",
+      target_id: exactLazada.targetId,
+    });
+    const exactEnqueued = await scalar(
+      db,
+      "select public.sellerpilot_service_enqueue_exact_lazada_live_adoption($1,$2)",
+      [exactLazada.listingId, exactLazada.currentCredentialId],
+    );
+    assert.equal(exactEnqueued.status, "queued");
+    const exactLazadaClaim = await claim(db);
+    assert.equal(
+      exactLazadaClaim.request.sellerpilotExactLazadaLiveAdoption,
+      "exact_lazada_live_adoption_v1",
+    );
+    assert.deepEqual(exactLazadaClaim.request.arguments, {
+      expectedRemoteId: "14976038919",
+      market: "MY",
+      targetId: exactLazada.targetId,
+      country: "my",
+      marketplaceSku: "QA-20260823-CC-001-MY",
+    });
+    const exactBound = await complete(
+      db,
+      exactLazadaClaim,
+      "succeeded",
+      successEvidence(exactLazada),
+    );
+    assert.equal(exactBound.status, "bound");
+    const exactPostAdoption = (await db.query(
+      `select status, failure_class, requested_publication_intent,
+              remote_visibility, provider_status, published_at,
+              seller_account_key
+         from sellerpilot_private.product_listings
+        where id=$1`,
+      [exactLazada.listingId],
+    )).rows[0];
+    assert.equal(exactPostAdoption.status, "failed");
+    assert.equal(exactPostAdoption.failure_class, "external_action");
+    assert.equal(exactPostAdoption.requested_publication_intent, "live");
+    assert.equal(exactPostAdoption.remote_visibility, "unknown");
+    assert.equal(exactPostAdoption.provider_status, null);
+    assert.equal(exactPostAdoption.published_at, null);
+    assert.equal(exactPostAdoption.seller_account_key, exactLazada.sellerAccountKey);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_validate_listing_write_lineage(
+          $1,$2,$3,'lazada','listing.update','MY',$4
+        )`,
+        [
+          exactLazada.listingId,
+          exactLazada.currentCredentialId,
+          exactLazada.productId,
+          exactLazada.targetId,
+        ],
+      ),
+      "allowed",
+    );
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='grace' where id=$1",
+      [exactLazada.currentCredentialId],
     );
 
     const ebay = await seedListing(db, {

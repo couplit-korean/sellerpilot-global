@@ -83,6 +83,19 @@ test("admin route rejects the exact Lazada duplicate before credential or gatewa
     /lazada_exact_existing_duplicate_create_forbidden/u);
 });
 
+test("admin route injects the Lazada seller target only after immutable lineage succeeds", () => {
+  const route = readFileSync(
+    new URL("../app/api/admin/channel-operations/route.ts", import.meta.url),
+    "utf8",
+  );
+  const lineage = route.indexOf("sellerpilot_service_validate_listing_write_lineage");
+  const binding = route.indexOf("sellerpilotExpectedSellerId: parsed.data.targetId");
+  const claim = route.indexOf("sellerpilot_claim_channel_operation", binding);
+  assert.equal(lineage > 0 && lineage < binding, true);
+  assert.equal(binding > 0 && binding < claim, true);
+  assert.match(route.slice(lineage, binding), /lineageStatus !== "allowed"/u);
+});
+
 test("serverless gateway rejects a stale exact create before OAuth preparation", () => {
   const source = readFileSync(
     new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url),

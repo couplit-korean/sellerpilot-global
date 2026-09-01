@@ -102,7 +102,8 @@ export function assertLazadaExactExistingUpdateArguments(
 
   if (text(argumentsValue.country).toLowerCase() !== identity.country
       || argumentsValue.publicationStateContract !== "verified_remote_state_v1"
-      || argumentsValue.publicationIntent !== "safe_test"
+      || argumentsValue.publicationIntent !== "live"
+      || !/^\d+$/u.test(text(argumentsValue.sellerpilotExpectedSellerId))
       || argumentsValue.publicationExpectedLocale !== identity.locale
       || Number(argumentsValue.publicationExpectedImageCount) !== identity.detailImageCount
       || policy.contract !== "lazada_krw_myr_reference_price_v1"
@@ -115,7 +116,7 @@ export function assertLazadaExactExistingUpdateArguments(
       || skus.length !== 1
       || text(sku.SellerSku ?? sku.seller_sku) !== lazadaExactExistingSellerSku
       || exactNumber(sku.quantity ?? sku.Quantity) !== identity.stock
-      || text(sku.Status ?? sku.status).toLowerCase() !== "inactive"
+      || text(sku.Status ?? sku.status).toLowerCase() !== "active"
       || !/^\d+$/u.test(text(product.PrimaryCategory ?? product.primary_category))
       || binding.contract !== "sellerpilot_publication_asset_binding_v1"
       || binding.providerImageSurface !== "detail_content"

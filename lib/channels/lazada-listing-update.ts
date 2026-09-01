@@ -13,7 +13,7 @@ export type LazadaExistingListingUpdatePreflight = {
   price: string;
   quantity: number;
   providerStatus: string;
-  updateSkuStatus?: "inactive";
+  updateSkuStatus?: "inactive" | "active";
 };
 
 function recordValue(value: unknown): UnknownRecord {

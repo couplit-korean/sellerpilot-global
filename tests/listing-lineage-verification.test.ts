@@ -10,10 +10,27 @@ import {
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
 import type { RemoteResponse, SecretPayload } from "../lib/channels/protocols";
+import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
 
 const JOB_ID = "00000000-0000-4000-8000-000000000002";
 const CLAIM_TOKEN = "00000000-0000-4000-8000-000000000003";
 const CREDENTIAL_ID = "00000000-0000-4000-8000-000000000004";
+const LAZADA_SELLER_ID = "200100300";
+const LAZADA_SELLER_SKU = "QA-20260823-CC-001-MY";
+
+function lazadaCredential(country = "my") {
+  return withLazadaProviderAccountIdentity({
+    country,
+    access_token: "secret-token",
+  }, {
+    account_platform: "seller_center",
+    country_user_info: [{
+      country: "my",
+      seller_id: LAZADA_SELLER_ID,
+      user_id: "300100200",
+    }],
+  }).payload;
+}
 
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   return {
@@ -185,12 +202,13 @@ test("Lazada lineage verification binds the requested country endpoint to the ex
   let observedCountry = "";
   const result = await executeProviderListingLineageVerification({
     channel: "lazada",
-    payload: { country: "sg", access_token: "secret-token" },
+    payload: lazadaCredential("sg"),
     environment: "production",
     arguments: {
       expectedRemoteId: "400050006",
       market: "my",
-      targetId: "lazada-my-shop",
+      targetId: LAZADA_SELLER_ID,
+      marketplaceSku: LAZADA_SELLER_SKU,
     },
   }, dependencies({
     ensureLazadaAccessToken: async (payload) => {
@@ -198,37 +216,116 @@ test("Lazada lineage verification binds the requested country endpoint to the ex
       return { payload, refreshed: false as const, credentialExpiresAt: null };
     },
     lazadaRequest: async ({ payload, path, params }) => {
+      assert.equal(payload.country, "my");
+      if (path === "/seller/get") {
+        assert.equal(params, undefined);
+        return remote({
+          code: "0",
+          data: { seller_id: LAZADA_SELLER_ID, is_active: true, seller_name: "private seller" },
+        });
+      }
       assert.equal(path, "/product/item/get");
       assert.equal(params?.item_id, "400050006");
-      assert.equal(payload.country, "my");
-      return remote({ code: "0", data: { item: { item_id: "400050006", name: "private product" } } });
+      return remote({
+        code: "0",
+        data: {
+          item: {
+            item_id: "400050006",
+            name: "private product",
+            status: "active",
+            skus: [{ SellerSku: LAZADA_SELLER_SKU, Status: "active" }],
+          },
+        },
+      });
     },
   }));
 
   assert.equal(observedCountry, "my");
   assert.equal(result.verificationStatus, "verified");
   assert.equal(result.evidence.market, "MY");
-  assert.doesNotMatch(JSON.stringify(result), /private product|secret-token/);
+  assert.equal(result.evidence.marketplaceSku, undefined);
+  assert.deepEqual(result.steps.map((step) => step.name), [
+    "seller-account-readback",
+    "listing-lineage-readback",
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /private seller|private product|secret-token/);
 });
 
 test("Lazada lineage verification rejects a country-item readback mismatch", async () => {
   await assert.rejects(
     executeProviderListingLineageVerification({
       channel: "lazada",
-      payload: { country: "my" },
+      payload: lazadaCredential(),
       environment: "production",
       arguments: {
         expectedRemoteId: "400050006",
         market: "MY",
-        targetId: "lazada-my-shop",
+        targetId: LAZADA_SELLER_ID,
       },
     }, dependencies({
-      lazadaRequest: async () => remote({
-        code: "0",
-        data: { item: { item_id: "400050006" }, item_id: "different" },
-      }),
+      lazadaRequest: async ({ path }) => path === "/seller/get"
+        ? remote({ code: "0", data: { seller_id: LAZADA_SELLER_ID, is_active: true } })
+        : remote({
+            code: "0",
+            data: { item: { item_id: "400050006" }, item_id: "different" },
+          }),
     })),
     /LISTING_LINEAGE_REMOTE_ID_MISMATCH:lazada/,
+  );
+});
+
+test("Lazada exact adoption rejects seller lineage or inactive SKU before binding", async () => {
+  let itemReads = 0;
+  await assert.rejects(
+    executeProviderListingLineageVerification({
+      channel: "lazada",
+      payload: lazadaCredential(),
+      environment: "production",
+      arguments: {
+        expectedRemoteId: "400050006",
+        market: "MY",
+        targetId: LAZADA_SELLER_ID,
+        marketplaceSku: LAZADA_SELLER_SKU,
+      },
+    }, dependencies({
+      lazadaRequest: async ({ path }) => {
+        if (path === "/seller/get") {
+          return remote({ code: "0", data: { seller_id: "999999999", is_active: true } });
+        }
+        itemReads += 1;
+        return remote({ code: "0" });
+      },
+    })),
+    /LAZADA_SELLER_READBACK_MISMATCH/u,
+  );
+  assert.equal(itemReads, 0);
+
+  await assert.rejects(
+    executeProviderListingLineageVerification({
+      channel: "lazada",
+      payload: lazadaCredential(),
+      environment: "production",
+      arguments: {
+        expectedRemoteId: "400050006",
+        market: "MY",
+        targetId: LAZADA_SELLER_ID,
+        marketplaceSku: LAZADA_SELLER_SKU,
+      },
+    }, dependencies({
+      lazadaRequest: async ({ path }) => path === "/seller/get"
+        ? remote({ code: "0", data: { seller_id: LAZADA_SELLER_ID, is_active: true } })
+        : remote({
+            code: "0",
+            data: {
+              item: {
+                item_id: "400050006",
+                status: "inactive",
+                skus: [{ SellerSku: LAZADA_SELLER_SKU, Status: "inactive" }],
+              },
+            },
+          }),
+    })),
+    /LISTING_LINEAGE_REMOTE_LIVE_SKU_MISMATCH:lazada/u,
   );
 });
 

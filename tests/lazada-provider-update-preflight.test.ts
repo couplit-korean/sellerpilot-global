@@ -5,6 +5,7 @@ import {
   type LazadaListingRuntimeDependencies,
   type PrepareProviderListingInput,
 } from "../lib/channels/provider-listing-runtime";
+import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
 
 const ITEM_ID = "14976038919";
 const CATEGORY_ID = "10100205";
@@ -12,6 +13,7 @@ const SELLER_SKU = "QA-20260823-CC-001-MY";
 const SOURCE_PRICE_KRW = 5_000;
 const KRW_PER_MYR = 350;
 const TARGET_PRICE_MYR = 14.29;
+const SELLER_ID = "200100300";
 const REPRESENTATIVE = "https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/ff/representative.jpg";
 const DETAILS = Array.from(
   { length: 8 },
@@ -23,7 +25,8 @@ function argumentsValue() {
     itemId: ITEM_ID,
     country: "my",
     publicationStateContract: "verified_remote_state_v1",
-    publicationIntent: "safe_test",
+    publicationIntent: "live",
+    sellerpilotExpectedSellerId: SELLER_ID,
     publicationExpectedLocale: "ms-MY",
     publicationExpectedFingerprint: "b".repeat(64),
     publicationExpectedImageCount: 8,
@@ -68,7 +71,7 @@ function argumentsValue() {
               SellerSku: SELLER_SKU,
               price: String(TARGET_PRICE_MYR),
               quantity: "1",
-              Status: "inactive",
+              Status: "active",
             }],
           },
         },
@@ -83,14 +86,14 @@ function remoteProduct(category = CATEGORY_ID) {
     data: {
       item_id: ITEM_ID,
       primary_category: category,
-      status: "inactive",
+      status: "active",
       skus: [{
         SkuId: "170000000001",
         SellerSku: SELLER_SKU,
         price: 40,
         quantity: 3,
         special_price: 0,
-        Status: "inactive",
+        Status: "active",
         multiWarehouseInventories: [],
         fblWarehouseInventories: [],
       }],
@@ -121,12 +124,19 @@ function input(events: string[]): PrepareProviderListingInput {
   return {
     channel: "lazada",
     operation: "listing.update",
-    credential: {
+    credential: withLazadaProviderAccountIdentity({
       app_key: "app",
       app_secret: "secret",
       access_token: "token",
       country: "my",
-    },
+    }, {
+      account_platform: "seller_center",
+      country_user_info: [{
+        country: "my",
+        seller_id: SELLER_ID,
+        user_id: "300100200",
+      }],
+    }).payload,
     arguments: argumentsValue(),
     environment: "production",
     signal: new AbortController().signal,
@@ -163,6 +173,12 @@ function dependencies(events: string[], options: {
     },
     lazadaRequest: async ({ path, params }) => {
       events.push(`request:${path}`);
+      if (path === "/seller/get") {
+        return remote({
+          code: "0",
+          data: { seller_id: SELLER_ID, is_active: true, status: "active" },
+        });
+      }
       if (path === "/products/get") {
         assert.deepEqual(params, {
           filter: "all",
@@ -204,6 +220,7 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
   const prepared = await prepareLazadaListing(input(events), dependencies(events));
   const firstMutation = events.indexOf("mutation");
   assert.equal(firstMutation > events.indexOf("request:/products/get"), true);
+  assert.equal(firstMutation > events.indexOf("request:/seller/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/product/item/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/category/tree/get"), true);
   assert.equal(firstMutation > events.indexOf("request:/category/attributes/get"), true);
@@ -225,7 +242,7 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
       SellerSku: SELLER_SKU,
       price: String(TARGET_PRICE_MYR),
       quantity: "1",
-      Status: "inactive",
+      Status: "active",
       Images: {
         Image: Array.from({ length: 8 }, (_, index) => `https://my-live.slatic.net/p/provider-${index + 1}.jpg`),
       },
@@ -249,8 +266,8 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     skuId: "170000000001",
     price: String(TARGET_PRICE_MYR),
     quantity: 1,
-    providerStatus: "INACTIVE",
-    updateSkuStatus: "inactive",
+    providerStatus: "ACTIVE",
+    updateSkuStatus: "active",
   });
 });
 
@@ -339,7 +356,8 @@ test("Lazada MY validates all nine public image URLs before the first image migr
 
 test("Lazada exact MY content contract fails before every provider read or mutation", async () => {
   const invalidArguments = [
-    (value: Record<string, unknown>) => { value.publicationIntent = "live"; },
+    (value: Record<string, unknown>) => { value.publicationIntent = "safe_test"; },
+    (value: Record<string, unknown>) => { value.sellerpilotExpectedSellerId = ""; },
     (value: Record<string, unknown>) => { value.publicationExpectedLocale = "en-MY"; },
     (value: Record<string, unknown>) => {
       const policy = value.sellerpilotLazadaPricePolicy as Record<string, unknown>;
@@ -359,7 +377,7 @@ test("Lazada exact MY content contract fails before every provider read or mutat
       const request = value.request as {
         Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } };
       };
-      request.Request.Product.Skus.Sku[0].Status = "active";
+      request.Request.Product.Skus.Sku[0].Status = "inactive";
     },
     (value: Record<string, unknown>) => {
       const binding = value.sellerpilotPublicationAssetBinding as {
@@ -381,18 +399,18 @@ test("Lazada exact MY content contract fails before every provider read or mutat
   }
 });
 
-test("Lazada exact MY requires an already non-public provider item before image migration", async () => {
+test("Lazada exact MY requires an already live provider item before image migration", async () => {
   const events: string[] = [];
-  const active = structuredClone(remoteProduct().data) as Record<string, unknown>;
-  active.status = "active";
-  const skus = active.skus as Array<Record<string, unknown>>;
-  skus[0].Status = "active";
+  const inactive = structuredClone(remoteProduct().data) as Record<string, unknown>;
+  inactive.status = "inactive";
+  const skus = inactive.skus as Array<Record<string, unknown>>;
+  skus[0].Status = "inactive";
   await assert.rejects(
     prepareLazadaListing(input(events), dependencies(events, {
-      products: [active],
-      itemStatus: "active",
+      products: [inactive],
+      itemStatus: "inactive",
     })),
-    /LAZADA_UPDATE_REMOTE_SKU_NOT_NON_PUBLIC/u,
+    /LAZADA_UPDATE_REMOTE_SKU_NOT_LIVE/u,
   );
   assert.equal(events.includes("request:/products/get"), true);
   assert.equal(events.includes("request:/product/item/get"), true);
