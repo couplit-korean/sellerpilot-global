@@ -412,7 +412,7 @@ test("migration is ordered after the deferred-job and Lazada target migrations",
   assert.ok(predecessor >= 0);
   assert.ok(lazadaTargetSync > predecessor);
   assert.ok(current > lazadaTargetSync);
-  assert.equal(current, migrations.length - 1);
+  // Unrelated forward migrations may follow this reconciliation migration.
 });
 
 test("migration source pins the exact production tuple and hashes", () => {
