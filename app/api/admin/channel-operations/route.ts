@@ -1153,12 +1153,17 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (channel === "temu" && [
-    "listing.create",
-    "listing.stop",
-    "listing.activate",
-    "listing.publication.verify",
-  ].includes(operation)) {
+  const staticEgressChannel = channel === "shopee"
+    ? "shopee"
+    : channel === "temu" && [
+        "listing.create",
+        "listing.stop",
+        "listing.activate",
+        "listing.publication.verify",
+      ].includes(operation)
+      ? "temu"
+      : null;
+  if (staticEgressChannel) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -1175,9 +1180,12 @@ export async function POST(request: NextRequest) {
       : {};
     const environmentReady = hasServerlessStaticEgressFor(
       configuredServerlessStaticEgressChannels(),
-      ["temu"],
+      [staticEgressChannel],
     );
-    if (!environmentReady || staticEgressStatus.error || databasePolicy.temu !== true) {
+    if (!environmentReady
+        || staticEgressStatus.error
+        || databasePolicy[staticEgressChannel] !== true) {
+      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         manualRequired: true,
@@ -1185,17 +1193,18 @@ export async function POST(request: NextRequest) {
         staticEgressReady: false,
         blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
         mode: "static_egress_required",
-        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 게시 작업을 다시 시도해 주세요.",
+        message: `${channelName}에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 작업을 다시 시도해 주세요.`,
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
+      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         operatorActionRequired: true,
         workerReady: false,
         blockedReason: "SERVERLESS_WORKER_REQUIRED",
         mode: "serverless_worker_required",
-        message: "Temu 상품 게시 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
+        message: `${channelName} 상품 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.`,
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }

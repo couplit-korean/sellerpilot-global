@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
@@ -11,6 +11,12 @@ import {
   ChannelGatewayReconciliationRequiredError,
   exchangeOAuthViaChannelGateway,
 } from "../../../../../../lib/channels/gateway";
+import {
+  configuredServerlessStaticEgressChannels,
+  databaseServerlessStaticEgressAllows,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "../../../../../../lib/channels/serverless-static-egress";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -43,6 +49,27 @@ function canonicalTimestamp(value: string | null, fallback: string) {
   if (!value) return fallback;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : fallback;
+}
+
+async function shopeeStaticEgressReady(serviceClient: SupabaseClient) {
+  const { data, error } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_static_egress_status",
+  );
+  return !error
+    && hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"])
+    && databaseServerlessStaticEgressAllows(data, "shopee");
+}
+
+function shopeeStaticEgressBlocked(message: string) {
+  return NextResponse.json({
+    ok: false,
+    manualRequired: true,
+    externalActionRequired: true,
+    staticEgressReady: false,
+    blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+    mode: "static_egress_required",
+    message,
+  }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
 }
 
 function oauthStartResponse(
@@ -113,6 +140,11 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (oauthCode && !await shopeeStaticEgressReady(serviceClient)) {
+    return shopeeStaticEgressBlocked(
+      "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 다시 시작해 주세요.",
+    );
+  }
   const metadata = credentialId && Array.isArray(credentialRows)
     ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
     : null;
@@ -174,6 +206,11 @@ export async function POST(request: NextRequest) {
   const partnerKey = textValue(incoming, "partner_key") || textValue(previousSecret, "partner_key");
   if (!partnerId || !partnerKey) {
     return NextResponse.json({ message: "Live Partner ID와 Live Partner Key가 필요합니다." }, { status: 400 });
+  }
+  if (parsed.data.startOAuth && !await shopeeStaticEgressReady(serviceClient)) {
+    return shopeeStaticEgressBlocked(
+      "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 시작해 주세요.",
+    );
   }
   const nextSecret: Record<string, unknown> = {
     ...previousSecret,

@@ -133,6 +133,32 @@ test("Shopee static egress migration preserves prior flags and closes both claim
   assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy[\s\S]*shopee/i);
 });
 
+test("Shopee OAuth and channel operations fail before enqueue when static egress is unavailable", async () => {
+  const [oauthRoute, channelOperationsRoute] = await Promise.all([
+    readFile(
+      new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url),
+      "utf8",
+    ),
+    readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(oauthRoute, /async function shopeeStaticEgressReady[\s\S]*sellerpilot_service_serverless_static_egress_status/);
+  assert.match(oauthRoute, /hasServerlessStaticEgressFor\(configuredServerlessStaticEgressChannels\(\), \["shopee"\]\)/);
+  assert.match(oauthRoute, /databaseServerlessStaticEgressAllows\(data, "shopee"\)/);
+  assert.match(oauthRoute, /if \(oauthCode && !await shopeeStaticEgressReady\(serviceClient\)\)/);
+  assert.match(oauthRoute, /if \(parsed\.data\.startOAuth && !await shopeeStaticEgressReady\(serviceClient\)\)/);
+  assert.match(oauthRoute, /blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED/);
+  assert.ok(
+    oauthRoute.indexOf("blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED")
+      < oauthRoute.indexOf("exchangeOAuthViaChannelGateway({"),
+  );
+  assert.match(channelOperationsRoute, /const staticEgressChannel = channel === "shopee"/);
+  assert.match(channelOperationsRoute, /databasePolicy\[staticEgressChannel\] !== true/);
+  assert.ok(
+    channelOperationsRoute.indexOf("const staticEgressChannel")
+      < channelOperationsRoute.indexOf("executeViaChannelGateway({"),
+  );
+});
+
 test("Temu periodic inquiry gate composes after the eBay wrapper with closed predecessor ACL", async () => {
   const migration = await readFile(
     new URL(
