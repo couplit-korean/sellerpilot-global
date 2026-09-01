@@ -386,6 +386,11 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.ok(executionBlock > immutableIdentityRpc, "the external_action fence may open only after the server-owned immutable identity RPC");
   assert.match(source, /productId\.data === ebayExactExistingQaRecoveryIdentity\.productId/);
   assert.match(source, /identity = ebayExactExistingQaRecoveryBindingValue\(identityData\)/);
+  assert.match(source, /mode: "ebay_exact_existing_identity_rpc_failed"/);
+  assert.match(source, /mode: "ebay_exact_existing_identity_contract_required"/);
+  assert.match(source, /mode: "ebay_exact_existing_credential_stale"/);
+  assert.match(source, /typeof identityError\.code === "string"/);
+  assert.doesNotMatch(source, /identityError\.(?:message|details|hint)/);
   assert.match(source, /identity\.credentialId !== body\.data\.credentialId/);
   assert.match(source, /!exactEbayCandidate && legacyEbayListingUpdateCandidate/);
   assert.match(source, /&& !allowExactEbayUpdate/);

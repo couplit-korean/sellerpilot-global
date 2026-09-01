@@ -367,12 +367,31 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       },
     );
     const identity = ebayExactExistingQaRecoveryBindingValue(identityData);
-    if (identityError || !identity || identity.credentialId !== body.data.credentialId) {
+    if (identityError) {
+      console.error("ebay_exact_existing_identity_rpc_failed", {
+        code: typeof identityError.code === "string" ? identityError.code : "unknown",
+      });
       return NextResponse.json({
         ok: false,
         status: "blocked",
-        mode: "ebay_exact_existing_atomic_identity_required",
-        message: "eBay exact QA 상품·offer·SKU·운영 인증정보 결속을 원장에서 확정하지 못했습니다.",
+        mode: "ebay_exact_existing_identity_rpc_failed",
+        message: "eBay exact QA 운영 결속 조회가 실패해 원격 수정을 실행하지 않았습니다.",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!identity) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_identity_contract_required",
+        message: "eBay exact QA 상품·offer·SKU·운영 인증정보 결속값이 현재 원장과 일치하지 않아 원격 수정을 실행하지 않았습니다.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (identity.credentialId !== body.data.credentialId) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_credential_stale",
+        message: "eBay 운영 인증정보가 갱신되었습니다. 상품 화면을 새로고침한 뒤 다시 확인해 주세요.",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     verifiedExactEbayUpdate = true;
