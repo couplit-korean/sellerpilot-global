@@ -5,11 +5,12 @@ import {
   assertCandidateDeployment,
   assertLinkedProject,
   candidateDeployArguments,
+  deploymentIdFromPayload,
 } from "../scripts/deploy-vercel-release-candidate.mjs";
 
 const release = "d".repeat(40);
 
-test("candidate deployment pins the checkout SHA without assigning production aliases", () => {
+test("candidate deployment pins the checkout SHA without promoting the public production alias", () => {
   const args = candidateDeployArguments(release);
   assert.deepEqual(args.slice(0, 3), ["dlx", "vercel@59.10.0", "deploy"]);
   assert.ok(args.includes("--prod"));
@@ -19,6 +20,15 @@ test("candidate deployment pins the checkout SHA without assigning production al
   assert.equal(args.filter((argument) => argument === `SELLERPILOT_RELEASE_SHA=${release}`).length, 2);
   assert.ok(args.includes(`sellerpilotReleaseSha=${release}`));
   assert.throws(() => candidateDeployArguments("729d62a"), /exactly 40 lowercase hex/);
+});
+
+test("candidate deployment accepts Vercel agent JSON output", () => {
+  assert.equal(
+    deploymentIdFromPayload({ status: "ok", deployment: { id: "dpl_Abc123" } }),
+    "dpl_Abc123",
+  );
+  assert.equal(deploymentIdFromPayload({ id: "dpl_Def456" }), "dpl_Def456");
+  assert.throws(() => deploymentIdFromPayload({}), /did not return a deployment ID/);
 });
 
 test("candidate source proof requires the exact SellerPilot project and identical Git metadata", () => {

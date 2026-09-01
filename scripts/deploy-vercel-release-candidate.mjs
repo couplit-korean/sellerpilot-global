@@ -54,6 +54,14 @@ export function assertCandidateDeployment(deployment, release) {
   return `https://${deployment.url}`;
 }
 
+export function deploymentIdFromPayload(payload) {
+  const deploymentId = payload?.deployment?.id ?? payload?.id ?? payload?.deploymentId;
+  if (typeof deploymentId !== "string" || !/^dpl_[A-Za-z0-9]+$/u.test(deploymentId)) {
+    fail("Vercel candidate deployment did not return a deployment ID");
+  }
+  return deploymentId;
+}
+
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
     cwd: process.cwd(),
@@ -87,11 +95,7 @@ function deployCandidate(release) {
   if (result.error) throw result.error;
   if (result.status !== 0) fail(`Vercel candidate deployment failed (${result.status ?? "unknown"})`);
   const payload = JSON.parse(result.stdout);
-  const deploymentId = payload.id ?? payload.deploymentId;
-  if (typeof deploymentId !== "string" || !/^dpl_[A-Za-z0-9]+$/u.test(deploymentId)) {
-    fail("Vercel candidate deployment did not return a deployment ID");
-  }
-  return deploymentId;
+  return deploymentIdFromPayload(payload);
 }
 
 function inspectCandidate(deploymentId) {
@@ -112,7 +116,7 @@ async function main() {
   const release = exactHead();
   const args = candidateDeployArguments(release);
   if (process.argv.includes("--dry-run")) {
-    process.stdout.write(`${JSON.stringify({ release, command: ["pnpm", ...args], aliasesChanged: false })}\n`);
+    process.stdout.write(`${JSON.stringify({ release, command: ["pnpm", ...args], productionPromotionPerformed: false })}\n`);
     return;
   }
 
@@ -125,7 +129,7 @@ async function main() {
     release,
     sourceProof: "accepted",
     runtimeProof: "required",
-    aliasesChanged: false,
+    productionPromotionPerformed: false,
     canaryCommand: `SELLERPILOT_RUNTIME_ORIGIN=${origin} SELLERPILOT_EXPECTED_RELEASE=${release} pnpm gateway:serverless:configure --candidate-canary`,
   })}\n`);
 }
