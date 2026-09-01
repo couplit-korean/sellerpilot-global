@@ -155,6 +155,8 @@ const TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION =
   "20260901173300_certify_exact_temu_existing_adoption_credential.sql";
 const QOO10_ALREADY_LIVE_ADOPTION_MIGRATION =
   "20260901173400_adopt_exact_qoo10_already_live_readback.sql";
+const QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION =
+  "20260901173500_fence_exact_qoo10_adopted_localization_update.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -870,6 +872,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION,
       TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION,
       QOO10_ALREADY_LIVE_ADOPTION_MIGRATION,
+      QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1069,6 +1072,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION)
         < migrationNames.indexOf(QOO10_ALREADY_LIVE_ADOPTION_MIGRATION),
       "the exact Qoo10 already-live adoption must replay after the Temu credential certification",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ALREADY_LIVE_ADOPTION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION),
+      "the exact Qoo10 content-only localization permit must replay after the immutable already-live adoption",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -12530,6 +12538,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
         && name !== TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         && name !== QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
+        && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -14260,6 +14269,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
         || name === TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         || name === QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
+        || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

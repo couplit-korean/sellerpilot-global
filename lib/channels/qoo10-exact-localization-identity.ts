@@ -26,6 +26,10 @@ export const qoo10ExactLocalizationUpdateArgument =
   "sellerpilotQoo10ExactLocalization" as const;
 export const qoo10ExactLocalizationUpdateContract =
   "qoo10_exact_localization_update_v2" as const;
+export const qoo10ExactAdoptedLocalizationArgument =
+  "sellerpilotQoo10AdoptedLocalization" as const;
+export const qoo10ExactAdoptedLocalizationContract =
+  "qoo10_exact_adopted_live_localization_v1" as const;
 
 export type Qoo10ExactLocalizationUpdateBinding = {
   status: "allowed";
@@ -49,6 +53,16 @@ export type Qoo10ExactLocalizationLedgerCandidate = {
   failureClass?: string | null;
   requestedPublicationIntent?: string | null;
   remoteVisibility?: string | null;
+  providerStatus?: string | null;
+  publishedAt?: string | null;
+};
+
+export type Qoo10ExactAdoptedLocalizationBinding = {
+  status: "allowed";
+  contract: typeof qoo10ExactAdoptedLocalizationContract;
+  sourceJobId: string;
+  observationSha256: string;
+  prewriteSnapshotSha256: string;
 };
 
 /**
@@ -80,6 +94,53 @@ export function qoo10ExactLocalizationRequestCandidate(
 ) {
   return input.credentialId === qoo10ExactLocalizationRecoveryIdentity.credentialId
     && qoo10ExactLocalizationLedgerCandidate(input);
+}
+
+export function qoo10ExactAdoptedLiveListingCandidate(
+  input: Qoo10ExactLocalizationLedgerCandidate & {
+    credentialId?: string | null;
+  },
+) {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  return input.channel === "qoo10"
+    && input.productId === identity.productId
+    && input.listingId === identity.listingId
+    && input.remoteId === identity.remoteId
+    && input.market === identity.market
+    && input.targetId === identity.targetId
+    && input.credentialId === identity.credentialId
+    && input.status === "published"
+    && input.failureClass == null
+    && input.requestedPublicationIntent === "live"
+    && input.remoteVisibility === "live"
+    && input.providerStatus === "S2"
+    && Boolean(input.publishedAt?.trim());
+}
+
+export function qoo10ExactAdoptedLocalizationBinding(
+  argumentsValue: Record<string, unknown>,
+): Qoo10ExactAdoptedLocalizationBinding | null {
+  const rawMarker = argumentsValue[qoo10ExactAdoptedLocalizationArgument];
+  const marker = rawMarker && typeof rawMarker === "object" && !Array.isArray(rawMarker)
+    ? rawMarker as Record<string, unknown>
+    : {};
+  const expectedKeys = new Set([
+    "status",
+    "contract",
+    "sourceJobId",
+    "observationSha256",
+    "prewriteSnapshotSha256",
+  ]);
+  if (Object.keys(marker).length !== expectedKeys.size
+      || !Object.keys(marker).every((key) => expectedKeys.has(key))
+      || marker.status !== "allowed"
+      || marker.contract !== qoo10ExactAdoptedLocalizationContract
+      || marker.sourceJobId !== "fac9c5c4-940d-4600-88f3-8f97a069dfbf"
+      || typeof marker.observationSha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(marker.observationSha256)
+      || typeof marker.prewriteSnapshotSha256 !== "string"
+      || !/^[a-f0-9]{64}$/u.test(marker.prewriteSnapshotSha256)) return null;
+  return structuredClone(marker) as Qoo10ExactAdoptedLocalizationBinding;
 }
 
 export function qoo10ExactLocalizationCentralSkuVerified(value: unknown) {

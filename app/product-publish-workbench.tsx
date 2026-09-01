@@ -6,6 +6,7 @@ import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib
 import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
 import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
+  qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationRequestCandidate,
@@ -187,6 +188,21 @@ function qoo10ExactLocalizationListingCandidate(
   channel: ActiveChannelKey,
   listing: Listing | null | undefined,
 ) {
+  if (qoo10ExactAdoptedLiveListingCandidate({
+    credentialId: qoo10ExactLocalizationRecoveryIdentity.credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+    providerStatus: listing?.providerStatus,
+    publishedAt: listing?.publishedAt,
+  })) return true;
   const unresolvedPartialEffect = qoo10ExactLocalizationLedgerCandidate({
     channel,
     productId,
@@ -210,6 +226,21 @@ function qoo10ExactLocalizationWriteCandidate(
   channel: ActiveChannelKey,
   listing: Listing | null | undefined,
 ) {
+  if (qoo10ExactAdoptedLiveListingCandidate({
+    credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+    providerStatus: listing?.providerStatus,
+    publishedAt: listing?.publishedAt,
+  })) return true;
   const unresolvedPartialEffect = qoo10ExactLocalizationRequestCandidate({
     credentialId,
     channel,

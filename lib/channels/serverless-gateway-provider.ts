@@ -63,6 +63,8 @@ import {
   qoo10S1ActivationArgumentsValid,
 } from "./qoo10-listing-activation";
 import {
+  qoo10ExactAdoptedLocalizationArgument,
+  qoo10ExactAdoptedLocalizationBinding,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateBinding,
@@ -676,6 +678,15 @@ export async function executeServerlessGatewayProviderJob(
         && (!qoo10ExactLocalizationTarget
           || !qoo10ExactLocalizationUpdateBinding(rawArguments))) {
       throw new Error("QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
+    }
+    const qoo10ExactAdoptedMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      qoo10ExactAdoptedLocalizationArgument,
+    );
+    if (qoo10ExactAdoptedMarkerSupplied
+        && (!qoo10ExactLocalizationTarget
+          || !qoo10ExactAdoptedLocalizationBinding(rawArguments))) {
+      throw new Error("QOO10_EXACT_ADOPTED_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
     }
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"

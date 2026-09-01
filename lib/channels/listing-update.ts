@@ -15,6 +15,8 @@ import {
 } from "./elevenst-exact-existing-identity";
 import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
 import {
+  qoo10ExactAdoptedLiveListingCandidate,
+  qoo10ExactAdoptedLocalizationArgument,
   qoo10ExactLocalizationLedgerCandidate,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationUpdateBinding,
@@ -822,8 +824,24 @@ export function prepareListingUpdateArguments(
     requestedPublicationIntent: listing.requestedPublicationIntent,
     remoteVisibility: listing.remoteVisibility,
   });
+  const qoo10ExactAdoptedLocalizationCandidate = qoo10ExactAdoptedLiveListingCandidate({
+    channel,
+    credentialId: qoo10ExactLocalizationRecoveryIdentity.credentialId,
+    productId: options.qoo10ExactLocalizationProductId,
+    listingId: listing.listingId,
+    remoteId: listing.remoteId,
+    market: listing.market,
+    targetId: listing.targetId,
+    status: listing.status,
+    failureClass: listing.failureClass,
+    requestedPublicationIntent: listing.requestedPublicationIntent,
+    remoteVisibility: listing.remoteVisibility,
+    providerStatus: listing.providerStatus,
+    publishedAt: listing.publishedAt,
+  });
   if ((!verifiedServerCandidate
       && !qoo10ExactLocalizationCandidate
+      && !qoo10ExactAdoptedLocalizationCandidate
       && !authorizedProviderReference)
       || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
@@ -850,13 +868,17 @@ export function prepareListingUpdateArguments(
     // Qoo10 rehosts representative images. A rollback recovery must preserve
     // the already confirmed remote CDN image instead of triggering another
     // upload/content-id and a false literal-URL readback mismatch.
-    if (qoo10RollbackCandidate || qoo10ExactLocalizationCandidate) {
+    if (qoo10RollbackCandidate
+        || qoo10ExactLocalizationCandidate
+        || qoo10ExactAdoptedLocalizationCandidate
+        || Object.hasOwn(createArguments, qoo10ExactAdoptedLocalizationArgument)) {
       delete params.StandardImage;
     }
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, qoo10RollbackUpdateRecoveryArgument),
       ...optionalArgument(createArguments, qoo10ExactLocalizationUpdateArgument),
+      ...optionalArgument(createArguments, qoo10ExactAdoptedLocalizationArgument),
       params,
     };
   }

@@ -436,6 +436,7 @@ test("already-live migration stays forward of the deployed adoption chain", asyn
     "20260901173200_exact_temu_existing_active_adoption.sql",
     "20260901173300_certify_exact_temu_existing_adoption_credential.sql",
     "20260901173400_adopt_exact_qoo10_already_live_readback.sql",
+    "20260901173500_fence_exact_qoo10_adopted_localization_update.sql",
   ];
   assert.deepEqual(
     expectedOrder.map((name) => migrationNames.indexOf(name)),

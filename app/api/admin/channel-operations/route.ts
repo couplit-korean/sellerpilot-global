@@ -37,7 +37,11 @@ import {
 } from "../../../../lib/channels/ebay-exact-existing-qa-recovery";
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 import {
+  bindQoo10ExactAdoptedLocalizationArguments,
   bindQoo10ExactLocalizationUpdateArguments,
+  qoo10ExactAdoptedLiveListingCandidate,
+  qoo10ExactAdoptedLocalizationArgument,
+  qoo10ExactLocalizationCentralSkuVerified,
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationRequestCandidate,
   qoo10ExactLocalizationUpdateArgument,
@@ -212,6 +216,16 @@ const qoo10RollbackIdentitySchema = z.object({
     (value) => value.retailPriceJpy >= value.sellPriceJpy,
     "Qoo10 retail price must not be below its sell price",
   ),
+}).strict();
+
+const qoo10AdoptedLocalizationIdentitySchema = z.object({
+  status: z.literal("allowed"),
+  contract: z.literal("qoo10_exact_adopted_live_localization_identity_v1"),
+  sourceJobId: z.literal("fac9c5c4-940d-4600-88f3-8f97a069dfbf"),
+  listingId: z.literal("4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"),
+  remoteId: z.literal("1217336970"),
+  observationSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+  prewriteSnapshotSha256: z.string().regex(/^[a-f0-9]{64}$/u),
 }).strict();
 
 function canonicalJson(value: unknown): string {
@@ -593,6 +607,8 @@ export async function POST(request: NextRequest) {
   let boundTemuListingIdentity: { goodsId: string; externalGoodsId: string } | null = null;
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   let boundQoo10ExactLocalizationUpdate = false;
+  let boundQoo10AdoptedLocalizationIdentity:
+    z.infer<typeof qoo10AdoptedLocalizationIdentitySchema> | null = null;
   let qoo10ExactLocalizationUpdatePermitArmed = false;
   let smartstoreExactQaUpdatePermitArmed = false;
   let exactExistingUpdatePermitArmed = false;
@@ -920,6 +936,59 @@ export async function POST(request: NextRequest) {
         message: "Qoo10 기존 작업의 원격 반영 여부가 아직 확정되지 않았습니다. 판매자센터 readback과 부분 반영 reconciliation을 완료하기 전에는 같은 상품 수정을 다시 전송하지 않습니다.",
         mode: "qoo10_exact_partial_manual_reconciliation_required",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const exactQoo10AdoptedLocalizationTarget = operation === "listing.update"
+      && qoo10ExactAdoptedLiveListingCandidate({
+        channel,
+        productId,
+        credentialId: parsed.data.credentialId,
+        listingId: String(exactListing.id ?? ""),
+        remoteId: typeof exactListing.remoteId === "string" ? exactListing.remoteId : null,
+        market: typeof exactListing.market === "string" ? exactListing.market : null,
+        targetId: typeof exactListing.targetId === "string" ? exactListing.targetId : null,
+        status: String(exactListing.status ?? ""),
+        failureClass: typeof exactListing.failureClass === "string" ? exactListing.failureClass : null,
+        requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+          ? exactListing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof exactListing.remoteVisibility === "string"
+          ? exactListing.remoteVisibility
+          : null,
+        providerStatus: typeof exactListing.providerStatus === "string"
+          ? exactListing.providerStatus
+          : null,
+        publishedAt: typeof exactListing.publishedAt === "string"
+          ? exactListing.publishedAt
+          : null,
+      });
+    if (exactQoo10AdoptedLocalizationTarget) {
+      if (!qoo10ExactLocalizationCentralSkuVerified(contextRecord)
+          || boundListingCurrency !== qoo10ExactLocalizationRecoveryIdentity.currency
+          || boundListingPrice !== qoo10ExactLocalizationRecoveryIdentity.priceJpy) {
+        return NextResponse.json({
+          message: "Qoo10 exact live 상품의 SKU·JPY 1,871 결속을 확인하지 못해 상세 오염 제거를 시작하지 않았습니다.",
+          mode: "qoo10_exact_adopted_localization_commerce_contract_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: identityData, error: identityError } = await serviceClient.rpc(
+        "sellerpilot_service_get_exact_qoo10_adopted_localization_identity",
+        {
+          p_listing_id: resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_product_id: productId,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
+        },
+      );
+      const identity = qoo10AdoptedLocalizationIdentitySchema.safeParse(identityData);
+      if (identityError || !identity.success) {
+        return NextResponse.json({
+          message: "Qoo10 CHANGHEE live 채택 증거와 현재 게시 원장 snapshot이 일치하지 않아 상세 오염 제거를 시작하지 않았습니다.",
+          mode: "qoo10_exact_adopted_localization_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundQoo10AdoptedLocalizationIdentity = identity.data;
+      boundQoo10ExactLocalizationUpdate = true;
     }
     if (operation === "listing.update"
         && qoo10RollbackListingUpdateCandidate(channel, listingUpdateReferenceFromLedger(exactListing))) {
@@ -1274,6 +1343,7 @@ export async function POST(request: NextRequest) {
   );
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
   delete effectiveArguments[qoo10ExactLocalizationUpdateArgument];
+  delete effectiveArguments[qoo10ExactAdoptedLocalizationArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
@@ -1679,25 +1749,41 @@ export async function POST(request: NextRequest) {
         mode: "listing_mutation_release_gate_unavailable",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (boundQoo10ExactLocalizationUpdate && closedReleaseGateIsExact) {
+    if (boundQoo10ExactLocalizationUpdate
+        && (closedReleaseGateIsExact || boundQoo10AdoptedLocalizationIdentity)) {
       if (runtimeRelease.status !== "valid") {
         return NextResponse.json({
           message: "Qoo10 exact 현지화 갱신을 현재 서버 릴리스에 결속하지 못했습니다.",
           mode: "qoo10_exact_localization_release_required",
         }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
-      const { data: permitData, error: permitError } = await serviceClient.rpc(
-        "sellerpilot_service_arm_exact_qoo10_localization_update",
-        {
-          p_listing_id: parsed.data.resourceListingId,
-          p_credential_id: parsed.data.credentialId,
-          p_release_sha: runtimeRelease.release,
-          p_request_fingerprint: requestFingerprint,
-        },
-      );
+      const { data: permitData, error: permitError } = boundQoo10AdoptedLocalizationIdentity
+        ? await serviceClient.rpc(
+            "sellerpilot_service_arm_exact_qoo10_adopted_localization_update",
+            {
+              p_listing_id: parsed.data.resourceListingId,
+              p_credential_id: parsed.data.credentialId,
+              p_release_sha: runtimeRelease.release,
+              p_request_fingerprint: requestFingerprint,
+              p_observation_sha256: boundQoo10AdoptedLocalizationIdentity.observationSha256,
+              p_prewrite_snapshot_sha256: boundQoo10AdoptedLocalizationIdentity.prewriteSnapshotSha256,
+            },
+          )
+        : await serviceClient.rpc(
+            "sellerpilot_service_arm_exact_qoo10_localization_update",
+            {
+              p_listing_id: parsed.data.resourceListingId,
+              p_credential_id: parsed.data.credentialId,
+              p_release_sha: runtimeRelease.release,
+              p_request_fingerprint: requestFingerprint,
+            },
+          );
+      const expectedPermitContract = boundQoo10AdoptedLocalizationIdentity
+        ? "qoo10_adopted_localization_update_permit_v1"
+        : "qoo10_exact_localization_update_permit_v2";
       qoo10ExactLocalizationUpdatePermitArmed = !permitError
         && isRecord(permitData)
-        && permitData.contract === "qoo10_exact_localization_update_permit_v2"
+        && permitData.contract === expectedPermitContract
         && permitData.listingId === parsed.data.resourceListingId
         && permitData.releaseSha === runtimeRelease.release
         && permitData.requestFingerprint === requestFingerprint
@@ -1707,6 +1793,23 @@ export async function POST(request: NextRequest) {
           message: "Qoo10 exact 일본어 갱신의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
           mode: "qoo10_exact_localization_update_permit_required",
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      if (boundQoo10AdoptedLocalizationIdentity) {
+        if (!isRecord(permitData)
+            || permitData.observationSha256 !== boundQoo10AdoptedLocalizationIdentity.observationSha256
+            || permitData.prewriteSnapshotSha256 !== boundQoo10AdoptedLocalizationIdentity.prewriteSnapshotSha256) {
+          return NextResponse.json({
+            message: "Qoo10 exact live snapshot이 허가 발급 중 변경되어 원격 호출을 시작하지 않았습니다.",
+            mode: "qoo10_exact_adopted_localization_snapshot_changed",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
+        effectiveArguments = bindQoo10ExactAdoptedLocalizationArguments(
+          effectiveArguments,
+          {
+            observationSha256: boundQoo10AdoptedLocalizationIdentity.observationSha256,
+            prewriteSnapshotSha256: boundQoo10AdoptedLocalizationIdentity.prewriteSnapshotSha256,
+          },
+        );
       }
     }
     if (boundSmartstoreExactQaRecovery && closedReleaseGateIsExact) {
