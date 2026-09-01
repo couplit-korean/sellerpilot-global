@@ -410,7 +410,8 @@ test("migration source pins the exact production tuple and hashes", () => {
   assert.match(migration, /for update of listing, product, attempt, job, credential, permit,\s+egress_policy/u);
   assert.match(migration, /not egress_policy\.enabled/u);
   assert.match(migration, /pg_advisory_xact_lock\(193674993, 821065060\)/u);
-  assert.match(migration, /lock table cron\.job\s+in share row exclusive mode/u);
+  assert.doesNotMatch(migration, /lock table cron\.job/u);
+  assert.match(migration, /from cron\.job job[\s\S]+for update/u);
   assert.match(migration, /count\(distinct schedule\.jobname\)/u);
   assert.match(migration, /lock table sellerpilot_private\.channel_gateway_jobs\s+in share row exclusive mode/u);
   assert.match(migration, /not sellerpilot_private\.serverless_static_egress_allowed\('coupang'\)/u);

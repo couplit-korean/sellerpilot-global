@@ -20,8 +20,11 @@ lock table sellerpilot_private.channel_gateway_jobs
   in share row exclusive mode;
 lock table sellerpilot_private.operation_audit
   in share row exclusive mode;
-lock table cron.job
-  in share row exclusive mode;
+
+-- Supabase reserves table-level writes on cron.job for pg_cron. The runtime
+-- activation RPC is serialized by the advisory lock above; lock the six
+-- visible schedule rows in the preflight query instead of requesting a table
+-- lock that the production SQL Editor role cannot acquire.
 
 -- The original permit state machine allowed expiration only before a job was
 -- attached. Add one terminal state for this exact, already-attached permit.
