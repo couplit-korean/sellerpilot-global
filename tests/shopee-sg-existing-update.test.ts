@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -38,6 +39,12 @@ const sourceSha256s = Array.from({ length: 9 }, (_, index) =>
 const detailRoles = Array.from({ length: 8 }, (_, index) => `detail-role-${index + 1}`);
 const normalizedImageUrls = contentSha256s.map((digest) =>
   `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+const exactTitle = "Reusable Cable Organizer Clips for Home and Office";
+const exactDescription = "Keep charging cables neatly organized with durable reusable clips designed for desks, kitchens, offices, and travel.";
+const exactTitleDigest = createHash("sha256").update(exactTitle, "utf8").digest("hex");
+const exactDescriptionDigest = createHash("sha256")
+  .update(exactDescription, "utf8")
+  .digest("hex");
 
 const approvedAssetBinding = (() => {
   const binding = buildListingPublicationAssetBinding({
@@ -108,8 +115,8 @@ function contentSource() {
       sellerpilotAssets: { detailAssetMode: "dedicated" },
       imageUrls: normalizedImageUrls,
       body: {
-        item_name: "Reusable Cable Organizer Clips for Home and Office",
-        description: "Keep charging cables neatly organized with durable reusable clips designed for desks, kitchens, offices, and travel.",
+        item_name: exactTitle,
+        description: exactDescription,
         item_status: "NORMAL",
         item_sku: "attacker-sku",
         original_price: 1,
@@ -156,8 +163,8 @@ function remoteItem(stock = 1) {
         item_status: "UNLIST",
         currency: "SGD",
         current_price: 16.77,
-        item_name: "Reusable Cable Organizer Clips for Home and Office",
-        description: "Keep charging cables neatly organized with durable reusable clips designed for desks, kitchens, offices, and travel.",
+        item_name: exactTitle,
+        description: exactDescription,
         image: { image_id_list: providerImageIds },
         stock_info_v2: { summary_info: { total_available_stock: stock } },
       }],
@@ -304,6 +311,8 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
     providerStatus: "UNLIST",
     visibility: "non_public",
     providerImageIdentityDigest: "c314598136d395f8f2efad08ece1f72f8005048d4ff47aa335d7e6a5ed66247c",
+    titleDigest: exactTitleDigest,
+    descriptionDigest: exactDescriptionDigest,
     representativeImageCount: 1,
     detailImageCount: 8,
     titleLanguageVerified: true,
@@ -392,6 +401,8 @@ test("inventory phase is a separate minimal stock-one contract with authoritativ
     providerStatus: "UNLIST",
     visibility: "non_public",
     providerImageIdentityDigest: "c314598136d395f8f2efad08ece1f72f8005048d4ff47aa335d7e6a5ed66247c",
+    titleDigest: exactTitleDigest,
+    descriptionDigest: exactDescriptionDigest,
     representativeImageCount: 1,
     detailImageCount: 8,
     titleLanguageVerified: true,

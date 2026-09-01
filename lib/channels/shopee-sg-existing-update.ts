@@ -160,6 +160,23 @@ function providerImageIdentityDigest(imageIds: string[]) {
     .digest("hex");
 }
 
+function providerTextIdentityDigest(value: string) {
+  return createHash("sha256")
+    .update(value.trim(), "utf8")
+    .digest("hex");
+}
+
+export function shopeeSgExistingContentDigests(argumentsValue: unknown) {
+  const body = recordValue(recordValue(argumentsValue).body);
+  const title = exactText(body.item_name);
+  const description = exactText(body.description);
+  if (!title || !description) return null;
+  return {
+    titleDigest: providerTextIdentityDigest(title),
+    descriptionDigest: providerTextIdentityDigest(description),
+  };
+}
+
 export function shopeeSgExistingApprovedAssetEvidence(
   argumentsValue: unknown,
 ): ShopeeSgExistingApprovedAssetEvidence | null {
@@ -507,6 +524,7 @@ export function verifyShopeeSgExistingContentReadback(input: {
   const body = recordValue(input.argumentsValue.body);
   const title = exactText(body.item_name);
   const description = exactText(body.description);
+  const contentDigests = shopeeSgExistingContentDigests(input.argumentsValue);
   const expectedImageIds = uniqueTexts(recordValue(body.image).image_id_list);
   const providerDetailIds = uniqueTexts(
     input.argumentsValue.sellerpilotProviderDetailImageIds,
@@ -521,6 +539,7 @@ export function verifyShopeeSgExistingContentReadback(input: {
       || exactText(item.description) !== description
       || !listingPublicationLanguageVerified("en-SG", title, "title")
       || !listingPublicationLanguageVerified("en-SG", description)
+      || !contentDigests
       || expectedImageIds.length !== 9
       || providerDetailIds.length !== 8
       || expectedImageIds.slice(1).some((id, index) => id !== providerDetailIds[index])
@@ -540,6 +559,8 @@ export function verifyShopeeSgExistingContentReadback(input: {
     providerStatus: "UNLIST" as const,
     visibility: "non_public" as const,
     providerImageIdentityDigest: providerImageIdentityDigest(actualImageIds),
+    titleDigest: contentDigests.titleDigest,
+    descriptionDigest: contentDigests.descriptionDigest,
     representativeImageCount: 1 as const,
     detailImageCount: 8 as const,
     titleLanguageVerified: true as const,
@@ -556,6 +577,8 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
   const item = binding ? exactItemCore(binding, input.remoteData) : null;
   const title = exactText(item?.item_name);
   const description = exactText(item?.description);
+  const titleDigest = providerTextIdentityDigest(title);
+  const descriptionDigest = providerTextIdentityDigest(description);
   const images = item ? itemImageIds(item) : [];
   const approvedAssetEvidence = binding
     ? exactApprovedAssetEvidence(binding.approvedAssetEvidence)
@@ -581,6 +604,8 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
     providerStatus: "UNLIST" as const,
     visibility: "non_public" as const,
     providerImageIdentityDigest: providerImageIdentityDigest(images),
+    titleDigest,
+    descriptionDigest,
     representativeImageCount: 1 as const,
     detailImageCount: 8 as const,
     titleLanguageVerified: true as const,

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
@@ -32,6 +33,12 @@ const releaseSha = "c".repeat(40);
 const requestFingerprint = "d".repeat(64);
 const inventoryRequestFingerprint = "e".repeat(64);
 const providerImageDigest = "f".repeat(64);
+const exactTitle = "Reusable Cable Organizer Clips for Home and Office";
+const exactDescription = "Keep charging cables neatly organized with durable reusable clips for desks, offices, and travel.";
+const exactTitleDigest = createHash("sha256").update(exactTitle, "utf8").digest("hex");
+const exactDescriptionDigest = createHash("sha256")
+  .update(exactDescription, "utf8")
+  .digest("hex");
 const sourceDigests = Array.from({ length: 9 }, (_, index) =>
   (index + 17).toString(16).padStart(64, "0"));
 const contentDigests = Array.from({ length: 9 }, (_, index) =>
@@ -80,6 +87,7 @@ async function installLifecycleFunctions(db) {
     "create function sellerpilot_private.shopee_sg_exact_update_lineage_is_current(",
     "create function sellerpilot_private.shopee_sg_exact_update_enqueued_lineage_is_current(",
     "create function sellerpilot_private.bind_shopee_sg_exact_update_claim(",
+    "create function sellerpilot_private.bind_shopee_sg_exact_inventory_claim()",
     "create function sellerpilot_private.shopee_sg_exact_update_provider_allowed(",
     "create function sellerpilot_private.consume_shopee_sg_exact_update_provider(",
     "create function sellerpilot_private.guard_shopee_sg_exact_update_job(",
@@ -91,6 +99,10 @@ async function installLifecycleFunctions(db) {
     after insert or update on sellerpilot_private.channel_gateway_jobs
     deferrable initially deferred
     for each row execute function sellerpilot_private.guard_shopee_sg_exact_update_job();
+    create trigger bind_shopee_sg_exact_inventory_claim
+    before update on sellerpilot_private.channel_gateway_jobs
+    for each row execute function
+      sellerpilot_private.bind_shopee_sg_exact_inventory_claim();
   `);
 }
 
@@ -195,7 +207,8 @@ async function installPublicLifecycleRpcHarness(db) {
         'claim_token',v_claim,'lease_expires_at',statement_timestamp()+interval '5 minutes',
         'started_at',statement_timestamp(),'updated_at',statement_timestamp()
       );
-      if not sellerpilot_private.bind_shopee_sg_exact_update_claim(to_jsonb(v_job),v_new)
+      if v_job.operation='listing.update'
+         and not sellerpilot_private.bind_shopee_sg_exact_update_claim(to_jsonb(v_job),v_new)
       then raise exception 'public claim rejected' using errcode='55000'; end if;
       update sellerpilot_private.channel_gateway_jobs set status='running',attempt_count=1,
         worker_token_id='${workerTokenId}'::uuid,claim_token=v_claim,
@@ -219,6 +232,7 @@ async function installPublicLifecycleRpcHarness(db) {
       if not found or p_status <> 'succeeded' then return null; end if;
       update sellerpilot_private.channel_gateway_jobs set status='succeeded',
         response_payload=p_response_payload,completed_at=statement_timestamp(),
+        worker_token_id=null,claim_token=null,lease_expires_at=null,
         updated_at=statement_timestamp() where id=p_job_id;
       insert into sellerpilot_private.gateway_completion_receipts(
         job_id,claim_token,worker_token_id,completion_fingerprint
@@ -278,8 +292,8 @@ function contentArguments() {
     country: "sg",
     body: {
       item_id: 53717126190,
-      item_name: "Reusable Cable Organizer Clips for Home and Office",
-      description: "Keep charging cables neatly organized with durable reusable clips for desks, offices, and travel.",
+      item_name: exactTitle,
+      description: exactDescription,
     },
     publicationStateContract: "verified_remote_state_v1",
     publicationIntent: "safe_test",
@@ -339,6 +353,8 @@ function contentResponse() {
           providerStatus: "UNLIST",
           visibility: "non_public",
           providerImageIdentityDigest: providerImageDigest,
+          titleDigest: exactTitleDigest,
+          descriptionDigest: exactDescriptionDigest,
           representativeImageCount: 1,
           detailImageCount: 8,
           titleLanguageVerified: true,
@@ -366,6 +382,8 @@ function inventoryResponse() {
           providerStatus: "UNLIST",
           visibility: "non_public",
           providerImageIdentityDigest: providerImageDigest,
+          titleDigest: exactTitleDigest,
+          descriptionDigest: exactDescriptionDigest,
           representativeImageCount: 1,
           detailImageCount: 8,
           titleLanguageVerified: true,
@@ -451,7 +469,8 @@ async function database() {
       currency text,price numeric,stock integer,provider_status text,release_sha text,
       request_fingerprint text,armed_at timestamptz,expires_at timestamptz,
       update_job_id uuid,update_attempt_id uuid,arguments_sha256 text,
-      request_payload_sha256 text,approved_asset_evidence jsonb,
+      request_payload_sha256 text,title_sha256 text,description_sha256 text,
+      approved_asset_evidence jsonb,
       approved_asset_evidence_sha256 text,bound_at timestamptz,bound_worker_token_id uuid,
       bound_claim_token uuid,consumed_at timestamptz,invalidated_at timestamptz,
       invalidation_reason text
@@ -550,6 +569,9 @@ test("Shopee SG exact update migration is ordered after adoption and never opens
   assert.match(migration, /price numeric\(14,2\) not null check \(price = 16\.77\)/u);
   assert.match(migration, /shopee_sg_exact_content_receipt_valid/u);
   assert.match(migration, /shopee_sg_exact_inventory_receipt_valid/u);
+  assert.match(migration, /bind_shopee_sg_exact_inventory_claim/u);
+  assert.match(migration, /Shopee SG closed-gate enqueue owner not found/u);
+  assert.match(migration, /procedure\.pronargs = 6/u);
   assert.match(migration, /listing_mutation_release_gate_is_effective\('shopee'\)/u);
   assert.doesNotMatch(migration, /set_listing_mutation_release_gate/u);
   assert.doesNotMatch(migration, /grant execute[\s\S]*to authenticated/u);
@@ -605,6 +627,7 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
         item_id,marketplace_sku,merchant_id,shop_id,market,locale,currency,price,
         stock,provider_status,release_sha,request_fingerprint,armed_at,expires_at,
         update_job_id,update_attempt_id,arguments_sha256,request_payload_sha256,
+        title_sha256,description_sha256,
         approved_asset_evidence,approved_asset_evidence_sha256
       ) select
         'content',$1,$2,$3,$4,$5,101,'ABCDEF123456',credential.seller_account_verified_at,
@@ -613,6 +636,7 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
         job.id,job.attempt_id,
         encode(extensions.digest((job.request_payload->'arguments')::text,'sha256'),'hex'),
         encode(extensions.digest(job.request_payload::text,'sha256'),'hex'),
+        '${exactTitleDigest}','${exactDescriptionDigest}',
         job.request_payload#>'{arguments,sellerpilotShopeeSgExistingUpdate,approvedAssetEvidence}',
         encode(extensions.digest((job.request_payload#>'{arguments,sellerpilotShopeeSgExistingUpdate,approvedAssetEvidence}')::text,'sha256'),'hex')
       from sellerpilot_private.channel_gateway_jobs job
@@ -707,7 +731,8 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
     await db.exec("begin");
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
-          set status='succeeded',response_payload=$2::jsonb,completed_at=now(),updated_at=now()
+          set status='succeeded',response_payload=$2::jsonb,completed_at=now(),
+              worker_token_id=null,claim_token=null,lease_expires_at=null,updated_at=now()
         where id=$1`,
       [lifecycleJobId, JSON.stringify(contentResponse())],
     );
@@ -778,6 +803,7 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
         item_id,marketplace_sku,merchant_id,shop_id,market,locale,currency,price,
         stock,provider_status,release_sha,request_fingerprint,armed_at,expires_at,
         update_job_id,update_attempt_id,arguments_sha256,request_payload_sha256,
+        title_sha256,description_sha256,
         approved_asset_evidence,approved_asset_evidence_sha256
       ) select
         'inventory',$1,$2,$3,$4,$5,101,'ABCDEF123456',credential.seller_account_verified_at,
@@ -786,6 +812,7 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
         job.id,job.attempt_id,
         encode(extensions.digest((job.request_payload->'arguments')::text,'sha256'),'hex'),
         encode(extensions.digest(job.request_payload::text,'sha256'),'hex'),
+        '${exactTitleDigest}','${exactDescriptionDigest}',
         job.request_payload#>'{arguments,sellerpilotShopeeSgExistingUpdate,approvedAssetEvidence}',
         encode(extensions.digest((job.request_payload#>'{arguments,sellerpilotShopeeSgExistingUpdate,approvedAssetEvidence}')::text,'sha256'),'hex')
       from sellerpilot_private.channel_gateway_jobs job
@@ -812,27 +839,6 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
       "select operation_attempt_id=$2 from sellerpilot_private.product_listings where id=$1",
       [listingId, lifecycleAttemptId],
     ), true, "resource enqueue must not pretend it replaced the listing attempt");
-
-    const inventoryQueued = await scalar(
-      db,
-      "select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job where id=$1",
-      [inventoryLifecycleJobId],
-    );
-    const inventoryRunning = {
-      ...inventoryQueued,
-      status: "running",
-      attempt_count: 1,
-      worker_token_id: workerTokenId,
-      claim_token: inventoryClaimToken,
-      lease_expires_at: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
-      started_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-    assert.equal(await scalar(
-      db,
-      "select sellerpilot_private.bind_shopee_sg_exact_update_claim($1::jsonb,$2::jsonb)",
-      [JSON.stringify(inventoryQueued), JSON.stringify(inventoryRunning)],
-    ), true, "the inventory claim must bind without a listing queued transition");
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
           set status='running',attempt_count=1,worker_token_id=$2,claim_token=$3,
@@ -840,6 +846,13 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
         where id=$1`,
       [inventoryLifecycleJobId, workerTokenId, inventoryClaimToken],
     );
+    assert.equal(await scalar(
+      db,
+      `select bound_claim_token=$2 and bound_worker_token_id=$3
+         from sellerpilot_private.shopee_sg_exact_update_permits
+        where update_job_id=$1`,
+      [inventoryLifecycleJobId, inventoryClaimToken, workerTokenId],
+    ), true, "the inventory claim trigger must bind without a listing queued transition");
     assert.equal(await scalar(
       db,
       "select sellerpilot_private.shopee_sg_exact_update_provider_allowed($1,$2)",
@@ -859,7 +872,8 @@ test("PGlite preserves exact Shopee lineage across enqueue, claim, and provider 
     await db.exec("begin");
     await db.query(
       `update sellerpilot_private.channel_gateway_jobs
-          set status='succeeded',response_payload=$2::jsonb,completed_at=now(),updated_at=now()
+          set status='succeeded',response_payload=$2::jsonb,completed_at=now(),
+              worker_token_id=null,claim_token=null,lease_expires_at=null,updated_at=now()
         where id=$1`,
       [inventoryLifecycleJobId, JSON.stringify(inventoryResponse())],
     );
@@ -996,11 +1010,11 @@ test("PGlite allows content only for fresh already-bound lineage and inventory o
         worker_token_id,claim_token
       ) values(
         $1,$2,$3,$4,'shopee','listing.update','production','succeeded',1,
-        now(),$5::jsonb,$6,$7,$8
+        now(),$5::jsonb,$6,null,null
       )`,
       [
         contentJobId, contentAttemptId, listingId, credentialId,
-        JSON.stringify(response), sellerKey, workerTokenId, claimToken,
+        JSON.stringify(response), sellerKey,
       ],
     );
     await db.query(
@@ -1011,13 +1025,14 @@ test("PGlite allows content only for fresh already-bound lineage and inventory o
         item_id,marketplace_sku,merchant_id,shop_id,market,locale,currency,price,
         stock,provider_status,release_sha,request_fingerprint,armed_at,expires_at,
         update_job_id,update_attempt_id,arguments_sha256,request_payload_sha256,
+        title_sha256,description_sha256,
         approved_asset_evidence,approved_asset_evidence_sha256,
         bound_at,bound_worker_token_id,bound_claim_token,consumed_at
       ) values(
         'content',$1,$2,$3,$4,$5,101,'ABCDEF123456',now(),$6,$7,$8,
         '53717126190','QA-20260823-CC-001','5511564','1719148844','SG','en-SG',
         'SGD',16.77,1,'UNLIST',$9,$10,now()-interval '1 minute',now()+interval '4 minutes',
-        $11,$12,$13,$14,$15::jsonb,$16,
+        $11,$12,$13,$14,'${exactTitleDigest}','${exactDescriptionDigest}',$15::jsonb,$16,
         now()-interval '30 seconds',$17,$18,now()-interval '20 seconds'
       )`,
       [
@@ -1096,9 +1111,12 @@ test("public Shopee RPC lifecycle binds content receipt before inventory receipt
     const contentPermit = await scalar(
       db,
       `select public.sellerpilot_service_arm_shopee_sg_exact_update(
-        'content',$1,$2,$3,$4
+        'content',$1,$2,$3,$4,$5,$6
       )`,
-      [listingId, credentialId, releaseSha, requestFingerprint],
+      [
+        listingId, credentialId, releaseSha, requestFingerprint,
+        exactTitleDigest, exactDescriptionDigest,
+      ],
     );
     assert.equal(contentPermit.status, "armed");
     const contentQueued = await scalar(
@@ -1190,6 +1208,13 @@ test("public Shopee RPC lifecycle binds content receipt before inventory receipt
       "select public.sellerpilot_claim_channel_gateway_job('worker-token-hash','test-worker')",
     );
     assert.equal(inventoryClaim.status, "running");
+    assert.equal(await scalar(
+      db,
+      `select bound_claim_token=$2 and bound_worker_token_id=$3
+         from sellerpilot_private.shopee_sg_exact_update_permits
+        where update_job_id=$1`,
+      [inventoryClaim.id, inventoryClaim.claim_token, workerTokenId],
+    ), true, "the public inventory claim must be receipt-bound by the dedicated trigger");
     assert.equal(await scalar(
       db,
       `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(

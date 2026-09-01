@@ -60,6 +60,7 @@ import {
   assertShopeeSgExistingContentSource,
   assertShopeeSgExistingInventorySource,
   bindShopeeSgExistingUpdateArguments,
+  shopeeSgExistingContentDigests,
   shopeeSgExistingCentralProductVerified,
   shopeeSgExistingUpdateArgument,
   shopeeSgExistingUpdateCandidate,
@@ -2149,6 +2150,13 @@ export async function POST(request: NextRequest) {
           mode: "shopee_sg_existing_update_release_required",
         }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
+      const contentDigests = shopeeSgExistingContentDigests(effectiveArguments);
+      if (!contentDigests) {
+        return NextResponse.json({
+          message: "Shopee SG exact 콘텐츠 제목·설명 결속값을 만들지 못해 수정하지 않았습니다.",
+          mode: "shopee_sg_existing_content_digest_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
       const { data: permitData, error: permitError } = await serviceClient.rpc(
         "sellerpilot_service_arm_shopee_sg_exact_update",
         {
@@ -2157,6 +2165,8 @@ export async function POST(request: NextRequest) {
           p_credential_id: parsed.data.credentialId,
           p_release_sha: runtimeRelease.release,
           p_request_fingerprint: requestFingerprint,
+          p_title_sha256: contentDigests.titleDigest,
+          p_description_sha256: contentDigests.descriptionDigest,
         },
       );
       shopeeSgExistingUpdatePermitArmed = !permitError

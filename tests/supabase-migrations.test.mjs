@@ -12948,6 +12948,748 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         receipt_count: 1,
       }],
     );
+
+    // Exercise the exact Shopee path against the chronological full migration
+    // image. Both the read-only existing-item adoption and the two write phases
+    // use their real public enqueue/claim/completion RPC chains.
+    let shopeeExactListingId;
+    let shopeeLineageJobId;
+    let shopeeAdoptionId;
+    let shopeeSellerKey;
+    let shopeeEvidenceDigest;
+    const shopeeContentFingerprint = "6".repeat(64);
+    const shopeeInventoryFingerprint = "5".repeat(64);
+    const shopeeTitle = "Reusable Cable Organizer Clips for Home and Office";
+    const shopeeDescription =
+      "Keep charging cables neatly organized with durable reusable clips for desks, offices, and travel.";
+    const shopeeTitleDigest = createHash("sha256")
+      .update(shopeeTitle, "utf8")
+      .digest("hex");
+    const shopeeDescriptionDigest = createHash("sha256")
+      .update(shopeeDescription, "utf8")
+      .digest("hex");
+    const shopeeSourceDigests = Array.from({ length: 9 }, (_, index) =>
+      (index + 33).toString(16).padStart(64, "0"));
+    const shopeeContentDigests = Array.from({ length: 9 }, (_, index) =>
+      (index + 49).toString(16).padStart(64, "0"));
+    const shopeeDetailRoles = Array.from(
+      { length: 8 },
+      (_, index) => `detail-role-${index + 1}`,
+    );
+    const shopeeImageUrls = shopeeContentDigests.map((digest) =>
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+    const shopeeApprovedDetails = shopeeDetailRoles.map((role, index) => ({
+      role,
+      approvedObjectPath:
+        `results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/63000000-0000-4000-8000-000000000005/${role}.png`,
+      approvedSourceSha256: shopeeSourceDigests[index + 1],
+      publicUrl: shopeeImageUrls[index + 1],
+      objectPath:
+        `normalized/${shopeeContentDigests[index + 1].slice(0, 2)}/${shopeeContentDigests[index + 1]}.jpg`,
+      contentSha256: shopeeContentDigests[index + 1],
+    }));
+    const shopeeApprovedEvidence = {
+      contract: "sellerpilot_shopee_sg_exact_assets_v1",
+      representativeImage: {
+        role: "gallery-representative",
+        sourceSha256: shopeeSourceDigests[0],
+        contentSha256: shopeeContentDigests[0],
+      },
+      detailImages: shopeeDetailRoles.map((role, index) => ({
+        role,
+        sourceSha256: shopeeSourceDigests[index + 1],
+        contentSha256: shopeeContentDigests[index + 1],
+      })),
+    };
+
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeExactCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+         'shopee','production',$1::jsonb,now()+interval '30 days',90,30,7
+       )`,
+      [JSON.stringify({
+        partner_id: "2031489",
+        partner_key: "full-replay-shopee-secret",
+        provider_account_identity_version: "v1",
+        provider_account_subject: "shopee:main:5511564",
+        authorization_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        merchant_id: "5511564",
+        merchant_ids: ["5511564"],
+        shop_id: "1719148844",
+        shopee_targets: [{
+          type: "shop",
+          id: "1719148844",
+          access_token: "full-replay-shopee-access",
+          refresh_token: "full-replay-shopee-refresh",
+          access_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }, {
+          type: "merchant",
+          id: "5511564",
+        }],
+      })],
+    );
+    shopeeSellerKey = await scalar(
+      db,
+      `select seller_account_key
+         from sellerpilot_private.channel_credentials
+        where id=$1
+          and seller_account_key_source='provider_certified_v1'
+          and seller_account_verified_at is not null`,
+      [shopeeExactCredentialId],
+    );
+    assert.match(shopeeSellerKey, /^[a-f0-9]{64}$/u);
+    await scalar(
+      db,
+      `select public.sellerpilot_service_upsert_channel_market_target(
+         $1,$2,'shopee','1719148844','Shopee SG','SG','en-SG','English',
+         'SGD','active'
+       )`,
+      [temuExactOwnerId, shopeeExactCredentialId],
+    );
+    const shopeeAdoptionQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_shopee_sg_existing_adoption(
+         $1,'ddccde35-9c58-4856-b673-d7aa27ce4220',$2
+       )`,
+      [temuExactOwnerId, shopeeExactCredentialId],
+    );
+    assert.equal(shopeeAdoptionQueued.status, "queued");
+    assert.equal(shopeeAdoptionQueued.reused, false);
+    shopeeExactListingId = shopeeAdoptionQueued.listing_id;
+    shopeeLineageJobId = shopeeAdoptionQueued.job_id;
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"shopee"}',false
+       )`,
+    );
+    let shopeeAdoptionClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-adoption')",
+      [exactTemuWorkerHash],
+    );
+    if (shopeeAdoptionClaim.id !== shopeeLineageJobId) {
+      assert.equal(shopeeAdoptionClaim.channel, "qoo10");
+      assert.equal(shopeeAdoptionClaim.operation, "orders.list");
+      assert.equal(
+        await scalar(
+          db,
+          "select provider_mutation_started_at is null from sellerpilot_private.channel_gateway_jobs where id=$1",
+          [shopeeAdoptionClaim.id],
+        ),
+        true,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          `select public.sellerpilot_complete_channel_gateway_job(
+             $1,$2,$3,'failed',null,'full replay expected read drain'
+           )`,
+          [
+            exactTemuWorkerHash,
+            shopeeAdoptionClaim.id,
+            shopeeAdoptionClaim.claim_token,
+          ],
+        ),
+        true,
+      );
+      shopeeAdoptionClaim = await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-adoption')",
+        [exactTemuWorkerHash],
+      );
+    }
+    assert.equal(shopeeAdoptionClaim.id, shopeeLineageJobId);
+    assert.equal(shopeeAdoptionClaim.operation, "listing.lineage.verify");
+    const shopeeAdoptionResult = await scalar(
+      db,
+      `select public.sellerpilot_complete_listing_lineage_verification(
+         $1,$2,$3,'succeeded',$4::jsonb,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeLineageJobId,
+        shopeeAdoptionClaim.claim_token,
+        JSON.stringify({
+          ok: true,
+          channel: "shopee",
+          operation: "listing.lineage.verify",
+          evidenceVersion: "provider_listing_readback_v1",
+          expectedRemoteId: "53717126190",
+          verifiedRemoteId: "53717126190",
+          market: "SG",
+          targetId: "1719148844",
+          verification: "exact_provider_readback",
+          shopeeAdoption: {
+            contract: "sellerpilot_shopee_sg_existing_adoption_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            merchantId: "5511564",
+            shopId: "1719148844",
+            market: "SG",
+            locale: "en-SG",
+            currency: "SGD",
+            price: 16.77,
+            providerStatus: "UNLIST",
+            galleryImageCount: 9,
+            detailImageCount: 8,
+            representativeImageVerified: true,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+          },
+        }),
+      ],
+    );
+    assert.equal(shopeeAdoptionResult.status, "bound");
+    const shopeeAdoptionRow = (await db.query(
+      `select adoption.id,adoption.evidence_digest,
+              lineage.evidence_digest as lineage_evidence_digest
+         from sellerpilot_private.shopee_existing_adoption_attestations adoption
+         join sellerpilot_private.provider_listing_lineage_attestations lineage
+           on lineage.gateway_job_id=adoption.gateway_job_id
+          and lineage.listing_id=adoption.listing_id
+          and lineage.credential_id=adoption.credential_id
+          and lineage.seller_account_key=adoption.seller_account_key
+        where adoption.gateway_job_id=$1`,
+      [shopeeLineageJobId],
+    )).rows[0];
+    shopeeAdoptionId = shopeeAdoptionRow.id;
+    shopeeEvidenceDigest = shopeeAdoptionRow.evidence_digest;
+    assert.match(shopeeEvidenceDigest, /^[a-f0-9]{64}$/u);
+    assert.match(shopeeAdoptionRow.lineage_evidence_digest, /^[a-f0-9]{64}$/u);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_get_shopee_sg_existing_adoption_status(
+           $1,'ddccde35-9c58-4856-b673-d7aa27ce4220'
+         )`,
+        [temuExactOwnerId],
+      )).status,
+      "already_bound",
+    );
+
+    const shopeeMarker = (phase) => ({
+      contract: "sellerpilot_shopee_sg_existing_update_v1",
+      phase,
+      listingId: shopeeExactListingId,
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      credentialId: shopeeExactCredentialId,
+      sellerAccountKey: shopeeSellerKey,
+      itemId: "53717126190",
+      sku: "QA-20260823-CC-001",
+      merchantId: "5511564",
+      shopId: "1719148844",
+      market: "SG",
+      locale: "en-SG",
+      currency: "SGD",
+      priceSgd: 16.77,
+      stock: 1,
+      providerStatus: "UNLIST",
+      adoptionAttestationId: shopeeAdoptionId,
+      adoptionGatewayJobId: shopeeLineageJobId,
+      adoptionEvidenceDigest: shopeeEvidenceDigest,
+      approvedAssetEvidence: shopeeApprovedEvidence,
+      releaseSha: PUBLICATION_RELEASE_SHA,
+    });
+    const shopeeContentArguments = {
+      sellerpilotShopeeSgExistingUpdate: shopeeMarker("content"),
+      localItemId: "53717126190",
+      shopId: "1719148844",
+      country: "sg",
+      body: {
+        item_id: 53717126190,
+        item_name: shopeeTitle,
+        description: shopeeDescription,
+      },
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "safe_test",
+      publicationExpectedLocale: "en-SG",
+      publicationExpectedImageCount: 8,
+      publicationExpectedFingerprint: shopeeContentFingerprint,
+      imageUrls: shopeeImageUrls,
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        approvedDetailPageVersion: 1,
+        approvedManifestDigest: adoptionManifestDigest,
+        approvedDetailImages: shopeeApprovedDetails,
+        providerImageSurface: "gallery",
+        providerTransportImages: [{
+          role: "gallery-representative",
+          approvedObjectPath:
+            "results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/63000000-0000-4000-8000-000000000005/square.png",
+          approvedSourceSha256: shopeeSourceDigests[0],
+          publicUrl: shopeeImageUrls[0],
+          objectPath:
+            `normalized/${shopeeContentDigests[0].slice(0, 2)}/${shopeeContentDigests[0]}.jpg`,
+          contentSha256: shopeeContentDigests[0],
+        }, ...shopeeApprovedDetails.map((detail) => ({
+          role: detail.role,
+          publicUrl: detail.publicUrl,
+          objectPath: detail.objectPath,
+          contentSha256: detail.contentSha256,
+        }))],
+      },
+    };
+    const shopeeContentRequest = { arguments: shopeeContentArguments };
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'inventory',$1,$2,$3,$4
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeInventoryFingerprint,
+        ],
+      ),
+      /content|required|lineage/u,
+      "inventory cannot arm before receipt-bound content succeeds",
+    );
+    const expiredShopeePermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'content',$1,$2,$3,$4,$5,$6
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeContentFingerprint,
+        "2".repeat(64),
+        shopeeDescriptionDigest,
+      ],
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const shopeeContentAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'shopee','listing.update','shopee-sg-exact-content-full-replay',$2
+       )`,
+      [shopeeExactCredentialId, shopeeContentFingerprint],
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'shopee','listing.update',$4::jsonb
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          shopeeContentAttempt.attempt_id,
+          JSON.stringify(shopeeContentRequest),
+        ],
+      ),
+      /digest|permit|required|RELEASE_GATE_CLOSED/iu,
+      "the permit title digest must match the exact request body",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "4".repeat(64),
+          "2".repeat(64),
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /already used/u,
+      "a second active permit with a different request must fail closed",
+    );
+    await db.exec("set session_replication_role=replica");
+    await db.query(
+      `update sellerpilot_private.shopee_sg_exact_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [expiredShopeePermit.permitId],
+    );
+    await db.exec("set session_replication_role=origin");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'shopee','listing.update',$4::jsonb
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          shopeeContentAttempt.attempt_id,
+          JSON.stringify(shopeeContentRequest),
+        ],
+      ),
+      /permit|required|RELEASE_GATE_CLOSED/iu,
+      "an expired permit must not enqueue a provider write",
+    );
+    const shopeeContentPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'content',$1,$2,$3,$4,$5,$6
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeContentFingerprint,
+        shopeeTitleDigest,
+        shopeeDescriptionDigest,
+      ],
+    );
+    assert.notEqual(shopeeContentPermit.permitId, expiredShopeePermit.permitId);
+    const shopeeContentQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+         $1,$2,$3,'shopee','listing.update',$4::jsonb
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        shopeeContentAttempt.attempt_id,
+        JSON.stringify(shopeeContentRequest),
+      ],
+    );
+    assert.equal(shopeeContentQueued.status, "queued");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeContentFingerprint,
+          shopeeTitleDigest,
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /lineage|required|active|queued/u,
+      "an active exact job must prevent a second permit or job",
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"shopee"}',false
+       )`,
+    );
+    const shopeeContentClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-content')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(shopeeContentClaim.id, shopeeContentQueued.job_id);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeContentClaim.id, shopeeContentClaim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeContentClaim.id, shopeeContentClaim.claim_token],
+      ),
+      false,
+      "a consumed content permit must never begin another provider mutation",
+    );
+    const shopeeProviderImageDigest = "3".repeat(64);
+    const shopeeContentSuccess = {
+      ok: true,
+      channel: "shopee",
+      operation: "listing.update",
+      publicationIntent: "safe_test",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationFulfilled: true,
+      remoteId: "53717126190",
+      steps: [{
+        name: "listing-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotShopeeSgExistingReadback: {
+            contract: "sellerpilot_shopee_sg_existing_content_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            currency: "SGD",
+            priceSgd: 16.77,
+            providerStatus: "UNLIST",
+            visibility: "non_public",
+            providerImageIdentityDigest: shopeeProviderImageDigest,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            approvedAssetEvidence: shopeeApprovedEvidence,
+          },
+        },
+      }],
+      remoteState: {
+        verified: true,
+        visibility: "non_public",
+        providerStatus: "UNLIST",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          version: "shopee_sg_exact_existing_update_v1",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+        },
+        resources: {
+          itemId: "53717126190",
+          sku: "QA-20260823-CC-001",
+        },
+        locale: "en-SG",
+        fingerprint: shopeeContentFingerprint,
+        imageCount: 8,
+      },
+      safeMessage: "Shopee SG exact content update verified.",
+    };
+    const tamperedContent = structuredClone(shopeeContentSuccess);
+    tamperedContent.steps[0].data.sellerpilotShopeeSgExistingReadback.titleDigest =
+      "2".repeat(64);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_gateway_transaction(
+           $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+         )`,
+        [
+          exactTemuWorkerHash,
+          shopeeContentClaim.id,
+          shopeeContentClaim.claim_token,
+          JSON.stringify(tamperedContent),
+        ],
+      ),
+      /Shopee SG exact success readback invalid|completion/u,
+    );
+    const shopeeContentCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeContentClaim.id,
+        shopeeContentClaim.claim_token,
+        JSON.stringify(shopeeContentSuccess),
+      ],
+    );
+    assert.equal(shopeeContentCompletion.status, "completed");
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [shopeeContentClaim.id],
+      ),
+      1,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeContentFingerprint,
+          shopeeTitleDigest,
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /already used|active|lineage|required/u,
+      "a consumed content phase can never be armed again",
+    );
+
+    const shopeeInventoryArguments = {
+      sellerpilotShopeeSgExistingUpdate: shopeeMarker("inventory"),
+      shopId: "1719148844",
+      country: "sg",
+      itemId: "53717126190",
+      quantity: 1,
+    };
+    const shopeeInventoryResourceKey = createHash("sha256")
+      .update(`shopee\0listing_mutation\0${shopeeExactListingId}`, "utf8")
+      .digest("hex");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeInventoryPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'inventory',$1,$2,$3,$4
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeInventoryFingerprint,
+      ],
+    );
+    assert.equal(shopeeInventoryPermit.status, "armed");
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const shopeeInventoryAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'shopee','inventory.update','shopee-sg-exact-inventory-full-replay',$2
+       )`,
+      [shopeeExactCredentialId, shopeeInventoryFingerprint],
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeInventoryQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_resource_gateway_job(
+         $1,$2,'shopee','inventory.update',$3::jsonb,'listing_mutation',$4,$5,
+         $6,null,null,null,null
+       )`,
+      [
+        shopeeExactCredentialId,
+        shopeeInventoryAttempt.attempt_id,
+        JSON.stringify({ arguments: shopeeInventoryArguments }),
+        shopeeInventoryResourceKey,
+        shopeeInventoryFingerprint,
+        shopeeExactListingId,
+      ],
+    );
+    assert.equal(shopeeInventoryQueued.status, "queued");
+    const shopeeInventoryClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-inventory')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(shopeeInventoryClaim.id, shopeeInventoryQueued.job_id);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeInventoryClaim.id, shopeeInventoryClaim.claim_token],
+      ),
+      true,
+    );
+    const shopeeInventorySuccess = {
+      ok: true,
+      channel: "shopee",
+      operation: "inventory.update",
+      remoteId: "53717126190",
+      steps: [{
+        name: "inventory-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotShopeeSgExistingReadback: {
+            contract: "sellerpilot_shopee_sg_existing_inventory_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            currency: "SGD",
+            priceSgd: 16.77,
+            stock: 1,
+            providerStatus: "UNLIST",
+            visibility: "non_public",
+            providerImageIdentityDigest: shopeeProviderImageDigest,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            approvedAssetEvidence: shopeeApprovedEvidence,
+          },
+        },
+      }],
+      safeMessage: "Shopee SG exact inventory update verified.",
+    };
+    const tamperedInventory = structuredClone(shopeeInventorySuccess);
+    tamperedInventory.steps[0].data
+      .sellerpilotShopeeSgExistingReadback.descriptionDigest = "1".repeat(64);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_gateway_transaction(
+           $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+         )`,
+        [
+          exactTemuWorkerHash,
+          shopeeInventoryClaim.id,
+          shopeeInventoryClaim.claim_token,
+          JSON.stringify(tamperedInventory),
+        ],
+      ),
+      /Shopee SG exact success readback invalid|completion/u,
+    );
+    const shopeeInventoryCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeInventoryClaim.id,
+        shopeeInventoryClaim.claim_token,
+        JSON.stringify(shopeeInventorySuccess),
+      ],
+    );
+    assert.equal(shopeeInventoryCompletion.status, "completed");
+    assert.deepEqual(
+      (await db.query(
+        `select permit.phase,permit.title_sha256,permit.description_sha256,
+                job.status,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.shopee_sg_exact_update_permits permit
+           join sellerpilot_private.channel_gateway_jobs job
+             on job.id=permit.update_job_id
+          where permit.listing_id=$1
+          order by permit.phase`,
+        [shopeeExactListingId],
+      )).rows,
+      [{
+        phase: "content",
+        title_sha256: shopeeTitleDigest,
+        description_sha256: shopeeDescriptionDigest,
+        status: "succeeded",
+        receipt_count: 1,
+      }, {
+        phase: "inventory",
+        title_sha256: shopeeTitleDigest,
+        description_sha256: shopeeDescriptionDigest,
+        status: "succeeded",
+        receipt_count: 1,
+      }],
+      "content and inventory must share the exact receipt-bound copy digests",
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=false,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
   } finally {
     await db.close();
   }
