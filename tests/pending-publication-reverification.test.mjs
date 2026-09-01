@@ -1076,8 +1076,8 @@ test("Qoo10 can open alone while the other seven stay closed, then the global ga
         db,
         "select sellerpilot_private.serverless_gateway_job_allowed('temu','listing.update')",
       ),
-      false,
-      "Temu listing.update stays outside the released adapter contract",
+      true,
+      "the exact Temu existing-content update adapter must be dispatchable",
     );
   } finally {
     await db.close();
