@@ -21,6 +21,24 @@ import { prepareMarketplaceListingArguments } from "../lib/channels/provider-lis
 const fingerprint = "c".repeat(64);
 const missingFixtureField = Symbol("missing-fixture-field");
 const representativeImageUrl = "https://cdn.example.com/coupang-exact-representative.jpg";
+const representativeSourcePath =
+  "results/10000000-0000-4000-8000-000000000001/claims/10000000-0000-4000-8000-000000000002/thumbnail-square.png";
+const representativeSourceSha = "a".repeat(64);
+const representativeContentSha = "b".repeat(64);
+const representativeObjectPath =
+  `normalized/${representativeContentSha.slice(0, 2)}/${representativeContentSha}.jpg`;
+
+function exactRepresentativeBinding() {
+  return {
+    contract: "coupang_exact_qa_representative_v1",
+    role: "gallery-representative",
+    sourceBucket: "sellerpilot-ai",
+    sourceObjectPath: representativeSourcePath,
+    sourceSha256: representativeSourceSha,
+    normalizedObjectPath: representativeObjectPath,
+    contentSha256: representativeContentSha,
+  };
+}
 
 function setFixtureField(
   root: Record<string, unknown>,
@@ -75,13 +93,26 @@ function providerReadbackGalleryImages() {
 }
 
 function exactPublicationAssetBinding() {
+  const approved = detailImageUrls().map((publicUrl, index) => ({
+    role: `detail-role-${index + 1}`,
+    approvedObjectPath: `results/detail-${index + 1}.png`,
+    approvedSourceSha256: String(index + 1).repeat(64).slice(0, 64),
+    publicUrl,
+    objectPath: `normalized/${index + 1}/detail-${index + 1}.jpg`,
+    contentSha256: String(8 - index).repeat(64).slice(0, 64),
+  }));
   return {
     contract: "sellerpilot_publication_asset_binding_v1",
-    providerImageSurface: "detail_content",
-    providerTransportImages: detailImageUrls().map((publicUrl, index) => ({
-      role: `detail-role-${index + 1}`,
-      publicUrl,
-    })),
+    providerImageSurface: "gallery",
+    approvedDetailImages: approved,
+    providerTransportImages: [{
+      role: "gallery-representative",
+      approvedObjectPath: representativeSourcePath,
+      approvedSourceSha256: representativeSourceSha,
+      publicUrl: representativeImageUrl,
+      objectPath: representativeObjectPath,
+      contentSha256: representativeContentSha,
+    }, ...approved],
   };
 }
 
@@ -133,6 +164,7 @@ function baseRecoveryArguments() {
     publicationExpectedLocale: "ko-KR",
     publicationExpectedFingerprint: fingerprint,
     publicationExpectedImageCount: 8,
+    sellerpilotCoupangExactQaRepresentative: exactRepresentativeBinding(),
     sellerpilotPublicationAssetBinding: exactPublicationAssetBinding(),
     body: {
       sellerProductId: Number(coupangExactQaRecoveryIdentity.sellerProductId),
@@ -569,6 +601,19 @@ test("exact update proves signed GET before PUT and verifies the strict readback
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.remoteState?.visibility, "live");
+    assert.deepEqual(
+      result.steps.find((step) => step.name === "listing-readback")?.data
+        .sellerpilotCoupangExactRepresentativeReadback,
+      {
+        ...exactRepresentativeBinding(),
+        contract: "coupang_exact_qa_representative_readback_v1",
+        sellerProductId: coupangExactQaRecoveryIdentity.sellerProductId,
+        vendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
+        representativeImageCount: 1,
+        detailImageCount: 8,
+        remoteGalleryVerified: true,
+      },
+    );
     assert.equal(sellerReads, 3);
     assert.deepEqual(calls.slice(0, 4).map((call) => call.method), ["GET", "GET", "PUT", "GET"]);
     const transmitted = JSON.parse(calls.find((call) => call.method === "PUT")!.body);

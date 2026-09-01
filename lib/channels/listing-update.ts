@@ -1,6 +1,7 @@
 import type { ActiveChannelKey } from "./catalog";
 import {
   coupangExactQaRecoveryArgument,
+  coupangExactQaRepresentativeArgument,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryCandidate,
 } from "./coupang-exact-qa-recovery";
@@ -933,6 +934,8 @@ export function prepareListingUpdateArguments(
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, coupangExactQaRecoveryArgument),
+      ...optionalArgument(createArguments, coupangExactQaRepresentativeArgument),
+      ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       body: {
         ...definedEntries(sourceBody, coupangMutableProductFields),
         sellerProductId: remoteNumberOrText(remoteId),

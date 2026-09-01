@@ -82,6 +82,9 @@ import {
 } from "../../../../lib/channels/elevenst-exact-existing-publication";
 import {
   bindCoupangExactQaRecoveryArguments,
+  coupangExactQaArgumentsForFingerprint,
+  coupangExactQaRepresentativeArgument,
+  coupangExactQaRepresentativeBinding,
   bindCoupangExactQaUpdateItemIdentity,
   coupangExactQaCentralSkuVerified,
   coupangExactQaCreateForbidden,
@@ -108,6 +111,9 @@ import {
 import {
   bindShopeeSgExactRepresentativeFromStorage,
 } from "../../../../lib/server-shopee-sg-exact-representative";
+import {
+  bindCoupangExactRepresentativeFromStorage,
+} from "../../../../lib/server-coupang-exact-representative";
 import {
   elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
@@ -1567,6 +1573,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[qoo10ExactLocalizationUpdateArgument];
   delete effectiveArguments[qoo10ExactAdoptedLocalizationArgument];
   delete effectiveArguments[coupangExactQaRecoveryArgument];
+  delete effectiveArguments[coupangExactQaRepresentativeArgument];
   delete effectiveArguments[elevenstExactExistingPublicationArgument];
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
   delete effectiveArguments[ebayExactExistingQaRecoveryArgument];
@@ -1827,6 +1834,25 @@ export async function POST(request: NextRequest) {
     }
     effectiveArguments = representative.argumentsValue;
   }
+  if (boundCoupangExactQaRecoveryPhase === "listing.update") {
+    const bucket = serviceClient.storage.from("sellerpilot-ai");
+    const representative = await bindCoupangExactRepresentativeFromStorage({
+      argumentsValue: effectiveArguments,
+      generatedImagePaths: verifiedPublishContext?.generatedImagePaths,
+      storage: {
+        download: (path) => bucket.download(path),
+        createSignedUrl: (path, expiresIn) => bucket.createSignedUrl(path, expiresIn),
+      },
+    });
+    if (!representative.ok) {
+      return NextResponse.json({
+        message: "쿠팡 대표 이미지 1장을 현재 상품 원장의 승인된 square 원본과 결속하지 못해 전송을 시작하지 않았습니다.",
+        mode: "coupang_exact_qa_representative_required",
+        reasonCode: representative.code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = representative.argumentsValue;
+  }
   if (channel === "temu" && operation === "listing.create") {
     const product = isRecord(verifiedPublishContext?.product)
       ? verifiedPublishContext.product
@@ -1965,9 +1991,12 @@ export async function POST(request: NextRequest) {
   const manifestFingerprintArguments = approvedDetailBinding
     ? marketplaceArgumentsForApprovedDetailFingerprint(effectiveArguments, approvedDetailBinding)
     : effectiveArguments;
-  const fingerprintArguments = strictShopeeSgCreate
-    ? shopeeSgArgumentsForFingerprint(manifestFingerprintArguments)
+  const contentFingerprintArguments = boundCoupangExactQaRecoveryPhase === "listing.update"
+    ? coupangExactQaArgumentsForFingerprint(manifestFingerprintArguments)
     : manifestFingerprintArguments;
+  const fingerprintArguments = strictShopeeSgCreate
+    ? shopeeSgArgumentsForFingerprint(contentFingerprintArguments)
+    : contentFingerprintArguments;
   const baseFingerprintArguments = structuredClone(fingerprintArguments);
   if (boundEbayExactExistingQaRecovery) {
     delete baseFingerprintArguments[ebayExactV101ContentContractArgument];
@@ -2163,8 +2192,13 @@ export async function POST(request: NextRequest) {
           mode: "exact_existing_update_release_required",
         }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
       }
+      const coupangRepresentative = boundExactExistingClosedGateUpdateChannel === "coupang"
+        ? coupangExactQaRepresentativeBinding(effectiveArguments)
+        : null;
       const { data: permitData, error: permitError } = await serviceClient.rpc(
-        boundExactExistingClosedGateUpdateChannel === "temu"
+        boundExactExistingClosedGateUpdateChannel === "coupang"
+          ? "sellerpilot_service_arm_coupang_exact_rep"
+          : boundExactExistingClosedGateUpdateChannel === "temu"
           ? "sellerpilot_service_arm_temu_exact_update"
           : boundExactExistingClosedGateUpdateChannel === "lazada"
           ? "sellerpilot_service_arm_lazada_exact_update"
@@ -2180,6 +2214,12 @@ export async function POST(request: NextRequest) {
           ...(boundExactExistingClosedGateUpdateChannel === "lazada"
             ? { p_target_price_myr: boundListingPrice }
             : {}),
+          ...(coupangRepresentative ? {
+            p_source_object_path: coupangRepresentative.sourceObjectPath,
+            p_source_sha256: coupangRepresentative.sourceSha256,
+            p_normalized_object_path: coupangRepresentative.normalizedObjectPath,
+            p_content_sha256: coupangRepresentative.contentSha256,
+          } : {}),
         },
       );
       exactExistingUpdatePermitArmed = !permitError
@@ -2189,7 +2229,12 @@ export async function POST(request: NextRequest) {
         && permitData.listingId === parsed.data.resourceListingId
         && permitData.releaseSha === runtimeRelease.release
         && permitData.requestFingerprint === requestFingerprint
-        && permitData.bound === false;
+        && permitData.bound === false
+        && (boundExactExistingClosedGateUpdateChannel !== "coupang"
+          || (coupangRepresentative !== null
+            && permitData.representativeContract === "coupang_exact_qa_representative_v1"
+            && permitData.sourceSha256 === coupangRepresentative.sourceSha256
+            && permitData.contentSha256 === coupangRepresentative.contentSha256));
       if (!exactExistingUpdatePermitArmed) {
         return NextResponse.json({
           message: "기존 exact 상품 수정의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",

@@ -76,7 +76,9 @@ function exactBoundDetailImageUrls(argumentsValue: Record<string, unknown>) {
   const transport = Array.isArray(binding.providerTransportImages)
     ? binding.providerTransportImages.map(recordValue)
     : [];
-  return uniqueHttpsUrls(transport.map((image) => image.publicUrl));
+  return uniqueHttpsUrls((binding.providerImageSurface === "gallery"
+    ? transport.slice(1)
+    : transport).map((image) => image.publicUrl));
 }
 
 function exactGalleryImageProjection(

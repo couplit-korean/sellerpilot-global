@@ -666,13 +666,13 @@ test("one permit binds one enqueue, first claim, and provider boundary while sto
 
 test("route arms the exact permit after the final fingerprint and before claim", async () => {
   const route = await readFile(routeUrl, "utf8");
-  const fingerprint = route.indexOf('const requestFingerprint = createHash("sha256")');
-  const arm = route.indexOf('"sellerpilot_service_arm_exact_existing_update"');
+  const fingerprint = route.indexOf('const baseRequestFingerprint = createHash("sha256")');
+  const arm = route.indexOf('"sellerpilot_service_arm_coupang_exact_rep"');
   const claim = route.indexOf('"sellerpilot_claim_channel_operation"');
   assert.ok(fingerprint >= 0 && arm > fingerprint && claim > arm);
   assert.match(
     route,
-    /"coupang" \| "elevenst" \| "ebay" \| null/u,
+    /"coupang" \| "elevenst" \| "ebay" \| "temu" \| null/u,
   );
   assert.doesNotMatch(
     route,

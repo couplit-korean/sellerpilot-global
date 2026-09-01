@@ -1008,6 +1008,13 @@ export async function prepareMarketplaceImages(
         const combined = exactImages
           ? exactImages.map((image) => image.vendorPath)
           : uniqueStrings([...gallery, ...details]).slice(0, 10);
+        if (exactImages) {
+          bindPublicationAssets(
+            "gallery",
+            combined,
+            ["gallery-representative", ...detailImageRoles],
+          );
+        }
         item.images = exactImages ?? combined.map((url, index) => ({
           imageOrder: index,
           imageType: index === 0 ? "REPRESENTATION" : "DETAIL",

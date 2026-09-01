@@ -88,6 +88,7 @@ import {
 } from "./coupang-listing-update";
 import {
   assertCoupangExactQaProviderContract,
+  coupangExactQaRepresentativeBinding,
   coupangExactQaRecoveryArgument,
   coupangExactQaRecoveryBinding,
   coupangExactQaRecoveryIdentity,
@@ -4396,6 +4397,25 @@ async function executeCoupang(input: ExecuteInput) {
         assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery, {
           providerReadback: true,
         });
+        const representative = coupangExactQaRepresentativeBinding(input.arguments);
+        if (!representative) throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+        readbackStep.data = {
+          ...readbackStep.data,
+          sellerpilotCoupangExactRepresentativeReadback: {
+            contract: "coupang_exact_qa_representative_readback_v1",
+            sellerProductId: exactRecovery.sellerProductId,
+            vendorItemId: exactRecovery.vendorItemId,
+            role: representative.role,
+            sourceBucket: representative.sourceBucket,
+            sourceObjectPath: representative.sourceObjectPath,
+            sourceSha256: representative.sourceSha256,
+            normalizedObjectPath: representative.normalizedObjectPath,
+            contentSha256: representative.contentSha256,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            remoteGalleryVerified: true,
+          },
+        };
       } catch {
         readbackStep.ok = false;
         readbackStep.data = {

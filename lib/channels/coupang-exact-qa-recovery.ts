@@ -4,6 +4,12 @@ export const coupangExactQaRecoveryContract =
 export const coupangExactQaRecoveryArgument =
   "sellerpilotCoupangExactQaRecovery" as const;
 
+export const coupangExactQaRepresentativeContract =
+  "coupang_exact_qa_representative_v1" as const;
+
+export const coupangExactQaRepresentativeArgument =
+  "sellerpilotCoupangExactQaRepresentative" as const;
+
 export const coupangExactQaRecoveryIdentity = Object.freeze({
   productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
   listingId: "7ffc6e46-3173-4695-9889-5fa1529765f1",
@@ -38,6 +44,16 @@ export type CoupangExactQaRecoveryBinding = {
   vendorItemId: string;
   sellerSku: string;
   sellerAccountLineage: "validated_by_service_rpc";
+};
+
+export type CoupangExactQaRepresentativeBinding = {
+  contract: typeof coupangExactQaRepresentativeContract;
+  role: "gallery-representative";
+  sourceBucket: "sellerpilot-ai";
+  sourceObjectPath: string;
+  sourceSha256: string;
+  normalizedObjectPath: string;
+  contentSha256: string;
 };
 
 function recordValue(value: unknown) {
@@ -94,12 +110,119 @@ function exactBoundDetailUrls(argumentsValue: Record<string, unknown>) {
     ? binding.providerTransportImages.map(recordValue)
     : [];
   if (binding?.contract !== "sellerpilot_publication_asset_binding_v1"
-      || binding.providerImageSurface !== "detail_content"
       || transport.some((image) => !image)
-      || transport.length !== coupangExactQaRecoveryIdentity.detailImageCount) {
+      || (binding.providerImageSurface === "gallery"
+        ? transport.length !== coupangExactQaRecoveryIdentity.detailImageCount + 1
+        : binding.providerImageSurface !== "detail_content"
+          || transport.length !== coupangExactQaRecoveryIdentity.detailImageCount)) {
     return [];
   }
-  return uniqueHttpsUrls(transport.map((image) => image?.publicUrl));
+  return uniqueHttpsUrls((binding.providerImageSurface === "gallery"
+    ? transport.slice(1)
+    : transport).map((image) => image?.publicUrl));
+}
+
+function approvedRepresentativeSourcePath(value: unknown) {
+  const path = exactText(value);
+  return /^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/thumbnail-square\.png$/iu.test(path)
+    ? path
+    : "";
+}
+
+export function coupangExactQaRepresentativeBindingValue(
+  value: unknown,
+): CoupangExactQaRepresentativeBinding | null {
+  const binding = recordValue(value);
+  const contentSha256 = exactText(binding?.contentSha256);
+  if (!binding
+      || binding.contract !== coupangExactQaRepresentativeContract
+      || binding.role !== "gallery-representative"
+      || binding.sourceBucket !== "sellerpilot-ai"
+      || !approvedRepresentativeSourcePath(binding.sourceObjectPath)
+      || !/^[a-f0-9]{64}$/u.test(exactText(binding.sourceSha256))
+      || !/^[a-f0-9]{64}$/u.test(contentSha256)
+      || binding.normalizedObjectPath
+        !== `normalized/${contentSha256.slice(0, 2)}/${contentSha256}.jpg`) {
+    return null;
+  }
+  return binding as CoupangExactQaRepresentativeBinding;
+}
+
+export function coupangExactQaRepresentativeBinding(
+  argumentsValue: Record<string, unknown>,
+) {
+  return coupangExactQaRepresentativeBindingValue(
+    argumentsValue[coupangExactQaRepresentativeArgument],
+  );
+}
+
+/**
+ * Replaces every browser gallery candidate with the one current, server-owned
+ * generated source. Both source bytes and the deterministic normalized JPEG
+ * are bound so the permit can attest the same representative end to end.
+ */
+export function bindCoupangExactQaApprovedRepresentative(
+  argumentsValue: Record<string, unknown>,
+  input: {
+    signedUrl: string;
+    sourceObjectPath: string;
+    sourceSha256: string;
+    normalizedObjectPath: string;
+    contentSha256: string;
+  },
+) {
+  const recovery = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
+  const assets = recordValue(argumentsValue.sellerpilotAssets);
+  const binding = coupangExactQaRepresentativeBindingValue({
+    contract: coupangExactQaRepresentativeContract,
+    role: "gallery-representative",
+    sourceBucket: "sellerpilot-ai",
+    sourceObjectPath: input.sourceObjectPath,
+    sourceSha256: input.sourceSha256,
+    normalizedObjectPath: input.normalizedObjectPath,
+    contentSha256: input.contentSha256,
+  });
+  if (!recovery || !assets || !binding) {
+    throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+  }
+  try {
+    const url = new URL(input.signedUrl);
+    if (url.protocol !== "https:"
+        || !/^[a-z0-9-]+\.supabase\.(?:co|in)$/u.test(url.hostname)
+        || url.port || url.username || url.password || url.hash
+        || decodeURIComponent(url.pathname)
+          !== `/storage/v1/object/sign/sellerpilot-ai/${binding.sourceObjectPath}`
+        || !url.searchParams.get("token")) {
+      throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+    }
+  } catch {
+    throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+  }
+  return {
+    ...argumentsValue,
+    sellerpilotAssets: {
+      ...assets,
+      galleryImageUrls: [input.signedUrl],
+      approvedGalleryImagePaths: [binding.sourceObjectPath],
+      approvedGalleryImageSha256s: [binding.sourceSha256],
+    },
+    [coupangExactQaRepresentativeArgument]: binding,
+  };
+}
+
+export function coupangExactQaArgumentsForFingerprint(
+  argumentsValue: Record<string, unknown>,
+) {
+  const binding = coupangExactQaRepresentativeBinding(argumentsValue);
+  if (!binding) throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+  const next = structuredClone(argumentsValue);
+  const assets = recordValue(next.sellerpilotAssets);
+  if (!assets) throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+  next.sellerpilotAssets = {
+    ...assets,
+    galleryImageUrls: [`sellerpilot-storage://${binding.sourceObjectPath}`],
+  };
+  return next;
 }
 
 export function coupangExactQaRecoveryBindingValue(
@@ -201,6 +324,12 @@ export function assertCoupangExactQaProviderContract(
     const items = Array.isArray(body?.items) ? body.items.map(recordValue) : [];
     const item = items.length === 1 ? items[0] : null;
     const boundDetails = exactBoundDetailUrls(argumentsValue);
+    const representative = coupangExactQaRepresentativeBinding(argumentsValue);
+    const publicationBinding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+    const transport = Array.isArray(publicationBinding?.providerTransportImages)
+      ? publicationBinding.providerTransportImages.map(recordValue)
+      : [];
+    const representativeTransport = transport[0];
     const mismatches = [
       ...(String(body?.sellerProductId ?? "") === binding.sellerProductId ? [] : ["sellerProductId"]),
       ...(argumentsValue.publicationIntent === "live" ? [] : ["publicationIntent"]),
@@ -216,7 +345,16 @@ export function assertCoupangExactQaProviderContract(
       ...(options.sanitizedUpdate || (item && Number(item.originalPrice) === coupangExactQaRecoveryIdentity.priceKrw) ? [] : ["originalPrice"]),
       ...(options.sanitizedUpdate || (item && Number(item.salePrice) === coupangExactQaRecoveryIdentity.priceKrw) ? [] : ["salePrice"]),
       ...(options.sanitizedUpdate || (item && Number(item.maximumBuyCount) === coupangExactQaRecoveryIdentity.stock) ? [] : ["maximumBuyCount"]),
-      ...(options.sanitizedUpdate || boundDetails.length === coupangExactQaRecoveryIdentity.detailImageCount ? [] : ["sellerpilotPublicationAssetBinding"]),
+      ...(representative ? [] : [coupangExactQaRepresentativeArgument]),
+      ...((boundDetails.length === coupangExactQaRecoveryIdentity.detailImageCount
+        && publicationBinding?.providerImageSurface === "gallery"
+        && transport.length === 9
+        && representativeTransport?.role === "gallery-representative"
+        && representativeTransport.approvedObjectPath === representative?.sourceObjectPath
+        && representativeTransport.approvedSourceSha256 === representative?.sourceSha256
+        && representativeTransport.objectPath === representative?.normalizedObjectPath
+        && representativeTransport.contentSha256 === representative?.contentSha256)
+        ? [] : ["sellerpilotPublicationAssetBinding"]),
     ];
     if (mismatches.length) {
       throw new Error(`COUPANG_EXACT_QA_PROVIDER_CONTRACT_MISMATCH:${mismatches.join(",")}`);

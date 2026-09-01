@@ -165,7 +165,7 @@ test("Workbench draft reaches the exact DB enqueue only after server vendorItemI
     "bindCoupangExactQaUpdateItemIdentity(effectiveArguments)",
   );
   const requestFingerprintBinding = route.indexOf(
-    'const requestFingerprint = createHash("sha256")',
+    'const baseRequestFingerprint = createHash("sha256")',
   );
   assert.ok(identityRpc >= 0 && identityRpc < serverBinding);
   assert.ok(serverBinding < requestFingerprintBinding);

@@ -177,6 +177,8 @@ const SHOPEE_SG_EXACT_UPDATE_MIGRATION =
   "20260901173970_allow_exact_shopee_sg_existing_updates.sql";
 const LAZADA_EXACT_EXISTING_UPDATE_MIGRATION =
   "20260901173980_allow_exact_lazada_my_live_update.sql";
+const COUPANG_EXACT_REPRESENTATIVE_MIGRATION =
+  "20260901173990_bind_coupang_exact_representative.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -903,6 +905,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       TEMU_EXACT_EXISTING_UPDATE_MIGRATION,
       SHOPEE_SG_EXACT_UPDATE_MIGRATION,
       LAZADA_EXACT_EXISTING_UPDATE_MIGRATION,
+      COUPANG_EXACT_REPRESENTATIVE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -14885,6 +14888,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         && name !== TEMU_EXACT_EXISTING_UPDATE_MIGRATION
         && name !== LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
+        && name !== COUPANG_EXACT_REPRESENTATIVE_MIGRATION
         && name !== QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
         && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
@@ -16624,6 +16628,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
         || name === TEMU_EXACT_EXISTING_UPDATE_MIGRATION
         || name === LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
+        || name === COUPANG_EXACT_REPRESENTATIVE_MIGRATION
         || name === QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
         || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
