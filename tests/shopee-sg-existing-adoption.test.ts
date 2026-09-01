@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -39,14 +40,30 @@ function marker() {
 }
 
 function credential(): SecretPayload {
+  const accessTokenExpiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+  const refreshTokenExpiresAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
   return {
     partner_id: "2031489",
+    partner_key: "private-partner-key",
+    main_account_id: "4940266",
     merchant_id: shopeeSgExistingAdoptionIdentity.merchantId,
     shop_id: shopeeSgExistingAdoptionIdentity.shopId,
     access_token: "private-access-token",
+    refresh_token: "private-refresh-token",
+    access_token_expires_at: accessTokenExpiresAt,
+    refresh_token_expires_at: refreshTokenExpiresAt,
+    provider_account_identity_version: "v1",
+    provider_account_subject: "shopee:main:4940266",
     shopee_targets: [
       { type: "merchant", id: shopeeSgExistingAdoptionIdentity.merchantId },
-      { type: "shop", id: shopeeSgExistingAdoptionIdentity.shopId },
+      {
+        type: "shop",
+        id: shopeeSgExistingAdoptionIdentity.shopId,
+        access_token: "private-access-token",
+        refresh_token: "private-refresh-token",
+        access_token_expires_at: accessTokenExpiresAt,
+        refresh_token_expires_at: refreshTokenExpiresAt,
+      },
     ],
   };
 }
@@ -204,4 +221,48 @@ test("listing.lineage.verify rejects the approved item when one adoption proof c
     ? remote({ response: { shop_id: 1719148844 } })
     : remote(remoteItem({ item_status: "NORMAL" })))),
   /SHOPEE_SG_EXISTING_ADOPTION_READBACK_MISMATCH/u);
+});
+
+test("Shopee SG adoption refuses stale OAuth instead of refreshing or calling the provider", async () => {
+  const staleCredential = credential();
+  staleCredential.access_token_expires_at = new Date(Date.now() - 60_000).toISOString();
+  staleCredential.shopee_targets = [{
+    type: "shop",
+    id: shopeeSgExistingAdoptionIdentity.shopId,
+    access_token: "stale-access-token",
+    refresh_token: "private-refresh-token",
+    access_token_expires_at: new Date(Date.now() - 60_000).toISOString(),
+    refresh_token_expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString(),
+  }];
+  let ensureCalls = 0;
+  let providerCalls = 0;
+  const injected = dependencies(async () => {
+    providerCalls += 1;
+    return remote({});
+  });
+  injected.ensureShopeeAccessToken = async () => {
+    ensureCalls += 1;
+    throw new Error("must not refresh");
+  };
+  await assert.rejects(executeProviderListingLineageVerification({
+    channel: "shopee",
+    payload: staleCredential,
+    environment: "production",
+    arguments: marker(),
+  }, injected), /SHOPEE_SG_EXISTING_ADOPTION_FRESH_OAUTH_REQUIRED/u);
+  assert.equal(ensureCalls, 0);
+  assert.equal(providerCalls, 0);
+});
+
+test("Shopee SG adoption API checks static egress and worker readiness before enqueue", async () => {
+  const route = await readFile(new URL("../app/api/admin/products/[id]/shopee-existing-adoption/route.ts", import.meta.url), "utf8");
+  const staticEgressIndex = route.indexOf("sellerpilot_service_serverless_static_egress_status");
+  const runtimeIndex = route.indexOf("sellerpilot_service_serverless_cs_wakeup_status");
+  const enqueueIndex = route.indexOf("sellerpilot_service_enqueue_shopee_sg_existing_adoption");
+  assert.ok(staticEgressIndex >= 0);
+  assert.ok(runtimeIndex >= 0);
+  assert.ok(enqueueIndex > staticEgressIndex);
+  assert.ok(enqueueIndex > runtimeIndex);
+  assert.match(route, /STATIC_EGRESS_REQUIRED|SERVERLESS_STATIC_EGRESS_REQUIRED/u);
+  assert.match(route, /serverless_worker_required/u);
 });

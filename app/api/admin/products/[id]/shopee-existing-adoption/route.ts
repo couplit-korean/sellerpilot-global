@@ -3,6 +3,12 @@ import { z } from "zod";
 
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
 import { shopeeSgExistingAdoptionIdentity } from "../../../../../../lib/channels/shopee-sg-existing-adoption";
+import {
+  configuredServerlessStaticEgressChannels,
+  databaseServerlessStaticEgressAllows,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "../../../../../../lib/channels/serverless-static-egress";
 
 export const runtime = "nodejs";
 
@@ -81,6 +87,39 @@ export async function POST(
   const body = requestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
     return response({ message: "Shopee 기존상품 결속 요청 형식이 올바르지 않습니다." }, 400);
+  }
+
+  const [staticEgressStatus, runtimeStatus] = await Promise.all([
+    admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+    admin.serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+  ]);
+  const runtimeState = runtimeStatus.data
+    && typeof runtimeStatus.data === "object"
+    && !Array.isArray(runtimeStatus.data)
+    ? runtimeStatus.data as Record<string, unknown>
+    : {};
+  if (staticEgressStatus.error
+      || !hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"])
+      || !databaseServerlessStaticEgressAllows(staticEgressStatus.data, "shopee")) {
+    return response({
+      ok: false,
+      manualRequired: true,
+      externalActionRequired: true,
+      staticEgressReady: false,
+      blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+      mode: "static_egress_required",
+      message: "Shopee에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 기존상품 결속을 다시 시도해 주세요.",
+    }, 409);
+  }
+  if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
+    return response({
+      ok: false,
+      operatorActionRequired: true,
+      workerReady: false,
+      blockedReason: "SERVERLESS_WORKER_REQUIRED",
+      mode: "serverless_worker_required",
+      message: "Shopee 기존상품 읽기 전용 검증 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
+    }, 503);
   }
 
   const { data, error } = await admin.serviceClient.rpc(

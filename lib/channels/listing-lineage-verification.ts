@@ -15,6 +15,7 @@ import {
   ensureShopeeAccessToken,
   lazadaRequest,
   qoo10Request,
+  readStoredShopeeShopAccessToken,
   shopeeRequest,
   textValue,
   type CredentialRefreshSnapshot,
@@ -231,15 +232,24 @@ async function verifyShopee(
   argumentsValue: ReturnType<typeof parseArguments>,
   dependencies: VerificationDependencies,
 ): Promise<ProviderListingLineageVerificationResult> {
-  const ensured = await dependencies.ensureShopeeAccessToken(
-    input.payload,
-    input.environment,
-    10 * 60 * 1000,
-    argumentsValue.targetId,
-    input.onExternalMutationStart,
-    input.onCredentialRefresh,
-    true,
-  );
+  const adoptionBinding = shopeeSgExistingAdoptionBinding(input.arguments);
+  const adoptionPayload = adoptionBinding
+    ? readStoredShopeeShopAccessToken(input.payload, argumentsValue.targetId)
+    : null;
+  if (adoptionBinding && !adoptionPayload) {
+    throw new Error("SHOPEE_SG_EXISTING_ADOPTION_FRESH_OAUTH_REQUIRED");
+  }
+  const ensured = adoptionPayload
+    ? { payload: adoptionPayload, refreshed: false as const, credentialExpiresAt: textValue(input.payload, "authorization_expires_at") || null }
+    : await dependencies.ensureShopeeAccessToken(
+        input.payload,
+        input.environment,
+        10 * 60 * 1000,
+        argumentsValue.targetId,
+        input.onExternalMutationStart,
+        input.onCredentialRefresh,
+        true,
+      );
   const shopRemote = await dependencies.shopeeRequest({
     payload: ensured.payload,
     environment: input.environment,
@@ -272,7 +282,6 @@ async function verifyShopee(
     throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:shopee");
   }
 
-  const adoptionBinding = shopeeSgExistingAdoptionBinding(input.arguments);
   const adoptionEvidence = adoptionBinding
     ? verifyShopeeSgExistingAdoptionReadback({
         argumentsValue: input.arguments,

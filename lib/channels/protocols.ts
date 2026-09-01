@@ -522,6 +522,52 @@ function projectShopeeTarget(payload: SecretPayload, target: ShopeeStoredTarget)
   };
 }
 
+export function readStoredShopeeShopAccessToken(
+  payload: SecretPayload,
+  requestedShopId: string,
+  bufferMs = 10 * 60 * 1000,
+  nowMs = Date.now(),
+) {
+  const shopId = requestedShopId.trim();
+  if (!/^[1-9][0-9]{0,31}$/.test(shopId)) return null;
+
+  try {
+    const storedIdentity = readProviderAccountIdentity(payload, "shopee");
+    if (!storedIdentity) return null;
+    assertProviderAccountIdentity(payload, shopeeProviderAccountIdentityFromPayload(payload));
+    if (storedIdentity.subject.startsWith("shopee:shop:")
+        && storedIdentity.subject !== `shopee:shop:${shopId}`) {
+      return null;
+    }
+  } catch {
+    return null;
+  }
+
+  const target = shopeeStoredTargets(payload)
+    .find((candidate) => candidate.type === "shop" && candidate.id === shopId);
+  const selectedPayload = target
+    ? projectShopeeTarget(payload, target)
+    : textValue(payload, "shop_id") === shopId
+      ? payload
+      : null;
+  if (!selectedPayload) return null;
+
+  const accessToken = textValue(selectedPayload, "access_token");
+  const accessExpiresAt = Date.parse(textValue(selectedPayload, "access_token_expires_at"));
+  const authorizationExpiresAtText = textValue(payload, "authorization_expires_at");
+  const authorizationExpiresAt = authorizationExpiresAtText
+    ? Date.parse(authorizationExpiresAtText)
+    : null;
+  if (!accessToken
+      || !Number.isFinite(accessExpiresAt)
+      || accessExpiresAt <= nowMs + Math.max(0, bufferMs)
+      || (authorizationExpiresAt !== null
+        && (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt <= nowMs))) {
+    return null;
+  }
+  return selectedPayload;
+}
+
 async function ensureShopeeTargetAccessToken(
   payload: SecretPayload,
   environment: "sandbox" | "production",
