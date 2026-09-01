@@ -62,7 +62,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /환율 새로고침/);
   assert.match(page, /const dashboardExchangeRateRefreshMs = 60_000/);
   assert.doesNotMatch(page, /Math\.random/);
-  assert.doesNotMatch(page, /beforeunload|onbeforeunload/);
+  assert.match(page, /window\.addEventListener\("beforeunload", warnBeforeUnload\)/);
+  assert.match(page, /window\.removeEventListener\("beforeunload", warnBeforeUnload\)/);
   assert.doesNotMatch(page, /sellerpilot-operation-sync-requested-at/);
   assert.doesNotMatch(page, /window\.setInterval\(run, 5 \* 60_000\)/);
   assert.equal((page.match(/window\.setInterval\(refreshWhenVisible, 10_000\)/g) ?? []).length, 1);

@@ -19,12 +19,13 @@ test("기존 상품의 채널 수정은 신규상품 0% 입력 대신 저장 원
   const newProductGuard = publishing.indexOf("{!existingProductEdit && <>");
   const newProductIntake = publishing.indexOf('<section className="publishing-layout">', newProductGuard);
   const aiStudio = publishing.indexOf("<AiProductStudio", newProductIntake);
-  const guardEnd = publishing.indexOf("</>}\n      <CategoryClassificationWorkbench", aiStudio);
+  const guardEnd = publishing.indexOf("</>}\n      <section className=\"publishing-stage-panel\" aria-label=\"3단계 카테고리와 채널 등록\"", aiStudio);
   const publishWorkbench = publishing.indexOf("<ProductPublishWorkbench", guardEnd);
   assert.ok(newProductGuard >= 0, "existing product guard exists");
   assert.ok(newProductIntake > newProductGuard, "new-product intake is guarded");
   assert.ok(aiStudio > newProductIntake && aiStudio < guardEnd, "AI generation is guarded with the new-product intake");
   assert.ok(publishWorkbench > guardEnd, "channel workbench remains reachable for existing products");
+  assert.match(publishing.slice(guardEnd, publishWorkbench), /hidden=\{!existingProductEdit && activeStage !== 3\}/);
   assert.match(publishing.slice(publishWorkbench, publishWorkbench + 260), /productId=\{resolvedProductId\}/);
   assert.match(publishing, /id="channel-product-edit-workbench"/);
 });

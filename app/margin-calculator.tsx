@@ -2,6 +2,7 @@
 
 import {
   AlertCircle,
+  AlertTriangle,
   ArrowRight,
   Calculator,
   CheckCircle2,
@@ -18,6 +19,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
 import { channels, type ChannelKey } from "./channel-config";
+import { useModalInteraction } from "./use-modal-interaction";
 import type { OperationMarginScenario, OperationProduct } from "./use-operations-snapshot";
 
 type MarginForm = {
@@ -338,11 +340,21 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey>("qoo10");
   const [localScenarios, setLocalScenarios] = useState<SavedScenario[]>([]);
   const [deletedScenarioIds, setDeletedScenarioIds] = useState<Set<string>>(() => new Set());
+  const [pendingDeleteScenario, setPendingDeleteScenario] = useState<SavedScenario | null>(null);
+  const [deletingScenarioId, setDeletingScenarioId] = useState<string | null>(null);
   const [savingScenario, setSavingScenario] = useState(false);
   const [referenceRates, setReferenceRates] = useState<Record<string, number>>({});
   const [rateBasis, setRateBasis] = useState("실시간 환율 수신 전 · 해외 채널 계산 잠김");
   const rateRequestRef = useRef<AbortController | null>(null);
   const rateReceivedRef = useRef(false);
+  const deleteConfirmationRef = useRef<HTMLDivElement>(null);
+  const closeDeleteConfirmation = () => {
+    if (deletingScenarioId) return;
+    setPendingDeleteScenario(null);
+  };
+  useModalInteraction(Boolean(pendingDeleteScenario), deleteConfirmationRef, closeDeleteConfirmation, {
+    dismissible: !deletingScenarioId,
+  });
   useEffect(() => {
     let active = true;
     const loadRates = async () => {
@@ -495,6 +507,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const deleteScenario = async (scenario: SavedScenario) => {
+    if (deletingScenarioId) return;
+    setDeletingScenarioId(scenario.id);
     try {
       const { data } = await createClient().auth.getSession();
       const accessToken = data.session?.access_token;
@@ -507,10 +521,13 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       if (!response.ok) throw new Error("저장된 마진 계산을 삭제하지 못했습니다.");
       setLocalScenarios((current) => current.filter((item) => item.id !== scenario.id));
       setDeletedScenarioIds((current) => new Set(current).add(scenario.id));
+      setPendingDeleteScenario(null);
       onChanged?.();
       notify("저장된 마진 계산을 운영 DB에서 삭제했습니다.");
     } catch (error) {
       notify(error instanceof Error ? error.message : "저장된 마진 계산을 삭제하지 못했습니다.");
+    } finally {
+      setDeletingScenarioId(null);
     }
   };
 
@@ -607,7 +624,25 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 
       <section className="panel saved-margin-panel">
         <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{scenarioState === "unavailable" ? <div className="live-empty-state" role="alert"><AlertCircle size={25} /><b>저장된 계산 이력을 불러오지 못했습니다.</b><small>{scenarioMessage ?? "잠시 후 다시 확인해 주세요."}</small></div> : scenarioState === "checking" && savedScenarios.length === 0 ? <div className="live-empty-state" role="status"><RefreshCw size={25} /><b>저장된 계산 이력을 확인하고 있습니다.</b><small>상품·주문 원장은 먼저 사용할 수 있습니다.</small></div> : <>{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}{scenario.productId ? " · 상품 연결됨" : " · 기존 미연결 계산"}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제`} onClick={() => void deleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</>}</div>
+        <div className="saved-margin-list">{scenarioState === "unavailable" ? <div className="live-empty-state" role="alert"><AlertCircle size={25} /><b>저장된 계산 이력을 불러오지 못했습니다.</b><small>{scenarioMessage ?? "잠시 후 다시 확인해 주세요."}</small></div> : scenarioState === "checking" && savedScenarios.length === 0 ? <div className="live-empty-state" role="status"><RefreshCw size={25} /><b>저장된 계산 이력을 확인하고 있습니다.</b><small>상품·주문 원장은 먼저 사용할 수 있습니다.</small></div> : <>{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}{scenario.productId ? " · 상품 연결됨" : " · 기존 미연결 계산"}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제 확인`} aria-haspopup="dialog" aria-expanded={pendingDeleteScenario?.id === scenario.id} onClick={() => setPendingDeleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</>}</div>
+        {pendingDeleteScenario ? <div
+          ref={deleteConfirmationRef}
+          className="publish-write-confirmation channel"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="margin-delete-confirmation-title"
+          aria-describedby="margin-delete-confirmation-description"
+          aria-busy={deletingScenarioId === pendingDeleteScenario.id}
+          tabIndex={-1}
+        >
+          <AlertTriangle size={18} />
+          <div>
+            <b id="margin-delete-confirmation-title">저장된 마진 계산을 삭제할까요?</b>
+            <small id="margin-delete-confirmation-description">{pendingDeleteScenario.product} · {channels[pendingDeleteScenario.channelKey].name} 계산을 운영 DB에서 삭제합니다. 삭제 후에는 이 화면에서 복구할 수 없습니다.</small>
+          </div>
+          <button type="button" className="credential-secondary" disabled={deletingScenarioId === pendingDeleteScenario.id} onClick={closeDeleteConfirmation}>취소</button>
+          <button type="button" className="publish-confirm-execute" disabled={deletingScenarioId === pendingDeleteScenario.id} onClick={() => void deleteScenario(pendingDeleteScenario)}>{deletingScenarioId === pendingDeleteScenario.id ? "삭제 중" : "확인 후 삭제"}</button>
+        </div> : null}
         <div className="margin-disclaimer"><AlertCircle size={15} /><span><b>입력값 기반 예상 계산입니다.</b> 채널 수수료는 카테고리·판매자 등급·프로모션 기간에 따라 달라질 수 있으므로 등록 직전 채널 API 메타정보와 대조해야 합니다.</span></div>
       </section>
     </div>

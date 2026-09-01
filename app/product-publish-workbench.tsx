@@ -1067,6 +1067,178 @@ export function buildDraftMap(context: PublishContext, price: number, quantity: 
   }));
 }
 
+export function buildSynchronizedDraftMap(
+  context: PublishContext,
+  currentDrafts: Partial<Record<ActiveChannelKey, string>>,
+  price: number,
+  quantity: number,
+  targets: Partial<Record<ActiveChannelKey, ChannelTarget>>,
+  packageFields: PackageFields,
+  globalBaseUsdPrice: number,
+  lazadaMyrRate?: LazadaKrwMyrRateEvidence | null,
+) {
+  return Object.fromEntries(activeChannelKeys.map((channel) => {
+    const currentText = currentDrafts[channel];
+    const currentDraft = parseDraft(currentText);
+    if (currentText && !currentDraft) return [channel, currentText];
+    try {
+      const target = targets[channel];
+      const listing = context.listings.find((item) => item.channel === channel
+        && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const operation = listingWriteOperation(listing);
+      let nextDraft: Record<string, unknown> = buildChannelArguments(
+        channel,
+        context,
+        price,
+        quantity,
+        target,
+        packageFields,
+        globalBaseUsdPrice,
+        lazadaMyrRate,
+      );
+      if (currentDraft) {
+        for (const requirement of inspectWorkbenchListingDraft(
+          channel,
+          nextDraft,
+          operation,
+          { productId: context.product.id, listing },
+        )) {
+          if (!requirement.manualPath) continue;
+          nextDraft = setListingDraftValue(
+            nextDraft,
+            requirement.manualPath,
+            listingDraftValue(currentDraft, requirement.manualPath),
+          );
+        }
+      }
+      return [channel, JSON.stringify(nextDraft, null, 2)];
+    } catch {
+      // Keep a hand-edited or previously valid channel draft intact when one
+      // provider's localization/contract build fails. The normal validation
+      // fence will continue to block that channel without losing user input.
+      return [channel, currentText ?? "{}"];
+    }
+  }));
+}
+
+type ChannelConfirmationDetails = {
+  currency: string;
+  market: string;
+  price: number;
+  sku: string;
+  stock: number;
+};
+
+const fallbackChannelMarkets: Record<ActiveChannelKey, string> = {
+  qoo10: "JP",
+  coupang: "KR",
+  elevenst: "KR",
+  smartstore: "KR",
+  ebay: "US",
+  temu: "KR",
+  shopee: "SG",
+  lazada: "MY",
+};
+
+function draftValueAt(value: unknown, path: Array<string | number>) {
+  return path.reduce<unknown>((current, part) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string | number, unknown>)[part];
+  }, value);
+}
+
+function confirmationDetails(
+  channel: ActiveChannelKey,
+  context: PublishContext,
+  draft: Record<string, unknown> | null,
+  target: ChannelTarget | undefined,
+  listing: Listing | null | undefined,
+  sourcePrice: number,
+  sourceStock: number,
+  globalBaseUsdPrice: number,
+): ChannelConfirmationDetails {
+  const market = target?.marketCode ?? listing?.market ?? fallbackChannelMarkets[channel];
+  const baseSku = context.manualFields.sellerSku || context.product.sku;
+  const fallbackSku = target ? `${baseSku}-${target.marketCode}`.slice(0, 100) : baseSku;
+  const fallbackCurrency = marketplaceListingCurrency(channel, target?.currency);
+  const fallbackPrice = marketplaceListingPrice(channel, sourcePrice, {
+    globalBaseUsdPrice,
+    targetCurrency: target?.currency,
+  });
+  const numeric = (path: Array<string | number>, fallback: number) => {
+    const value = Number(draftValueAt(draft, path));
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const text = (path: Array<string | number>, fallback: string) => {
+    const value = String(draftValueAt(draft, path) ?? "").trim();
+    return value || fallback;
+  };
+  if (channel === "qoo10") return {
+    market,
+    currency: "JPY",
+    price: numeric(["params", "ItemPrice"], fallbackPrice),
+    stock: numeric(["params", "ItemQty"], sourceStock),
+    sku: text(["params", "SellerCode"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "shopee") return {
+    market,
+    currency: target?.currency ?? fallbackCurrency,
+    price: numeric(["publish", "item", "original_price"], fallbackPrice),
+    stock: numeric(["publish", "item", "normal_stock"], sourceStock),
+    sku: text(["publish", "item", "item_sku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "lazada") return {
+    market,
+    currency: target?.currency ?? fallbackCurrency,
+    price: numeric(["request", "Request", "Product", "Skus", "Sku", 0, "price"], fallbackPrice),
+    stock: numeric(["request", "Request", "Product", "Skus", "Sku", 0, "quantity"], sourceStock),
+    sku: text(["request", "Request", "Product", "Skus", "Sku", 0, "SellerSku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "coupang") return {
+    market,
+    currency: "KRW",
+    price: numeric(["body", "items", 0, "salePrice"], fallbackPrice),
+    stock: numeric(["body", "items", 0, "maximumBuyCount"], sourceStock),
+    sku: text(["body", "items", 0, "externalVendorSku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "elevenst") return {
+    market,
+    currency: "KRW",
+    price: numeric(["product", "selPrc"], fallbackPrice),
+    stock: numeric(["product", "prdSelQty"], sourceStock),
+    sku: text(["product", "sellerPrdCd"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "smartstore") return {
+    market,
+    currency: "KRW",
+    price: numeric(["body", "originProduct", "salePrice"], fallbackPrice),
+    stock: numeric(["body", "originProduct", "stockQuantity"], sourceStock),
+    sku: text(["body", "originProduct", "detailAttribute", "sellerCodeInfo", "sellerManagementCode"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "temu") return {
+    market,
+    currency: text(["body", "skuList", 0, "price", "basePrice", "currency"], fallbackCurrency),
+    price: numeric(["body", "skuList", 0, "price", "basePrice", "amount"], fallbackPrice),
+    stock: numeric(["body", "skuList", 0, "quantity"], sourceStock),
+    sku: text(["body", "skuList", 0, "externalSkuId"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  return {
+    market,
+    currency: text(["offer", "pricingSummary", "price", "currency"], fallbackCurrency),
+    price: numeric(["offer", "pricingSummary", "price", "value"], fallbackPrice),
+    stock: numeric(["offer", "availableQuantity"], sourceStock),
+    sku: text(["sku"], text(["offer", "sku"], listing?.marketplaceSku ?? fallbackSku)),
+  };
+}
+
+function formattedMarketplacePrice(value: number, currency: string) {
+  const decimalDigits = ["KRW", "JPY", "VND", "IDR"].includes(currency.toUpperCase()) ? 0 : 2;
+  return `${value.toLocaleString("en-US", {
+    minimumFractionDigits: decimalDigits,
+    maximumFractionDigits: decimalDigits,
+  })} ${currency}`;
+}
+
 type ProductPublishWorkbenchProps = {
   productId: string | null;
   selectedChannels: string[];
@@ -1372,11 +1544,31 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     [selectedChannels],
   );
 
+  const synchronizeCommonDrafts = (
+    nextContext: PublishContext,
+    nextPrice = priceRef.current,
+    nextQuantity = quantityRef.current,
+    nextTargets = selectedTargets,
+    nextPackageFields = packageFieldsRef.current,
+    nextGlobalBaseUsdPrice = globalBaseUsdPriceRef.current,
+  ) => {
+    setDrafts((current) => buildSynchronizedDraftMap(
+      nextContext,
+      current,
+      nextPrice,
+      nextQuantity,
+      nextTargets,
+      nextPackageFields,
+      nextGlobalBaseUsdPrice,
+      lazadaMyrRateRef.current,
+    ));
+  };
+
   const updateProductFact = (key: "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents", value: string) => {
     if (!context) return;
     const nextContext = { ...context, manualFields: { ...context.manualFields, [key]: value } };
     setContext(nextContext);
-    setDrafts(buildDraftMap(nextContext, priceRef.current, quantityRef.current, selectedTargets, packageFieldsRef.current, globalBaseUsdPriceRef.current, lazadaMyrRateRef.current));
+    synchronizeCommonDrafts(nextContext);
   };
 
   const updateManualDraftField = (channel: ActiveChannelKey, path: string[], value: string) => {
@@ -1686,18 +1878,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
   };
 
-  const executeReadyChannels = async (confirmed = false) => {
-    if (bulkRunning) return;
-    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
-      notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
-      return;
-    }
-    if (!imagePackageReady) {
-      notify(imagePackageBlockedMessage);
-      return;
-    }
-    const requestedProductId = productId;
-    const readyChannels = visibleChannels.filter((channel) => {
+  const getReadyChannels = () => {
+    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) return [];
+    return visibleChannels.filter((channel) => {
       const credential = activeCredentials.get(channel);
       const target = selectedTargets[channel];
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -1739,6 +1922,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           || recoverableExactExternalActionUpdate
           || recoverableSmartstoreUpdate));
     }).slice(0, publicationSelectableChannelKeys.length);
+  };
+
+  const executeReadyChannels = async (confirmed = false) => {
+    if (bulkRunning) return;
+    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
+      notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
+      return;
+    }
+    if (!imagePackageReady) {
+      notify(imagePackageBlockedMessage);
+      return;
+    }
+    const requestedProductId = productId;
+    const readyChannels = getReadyChannels();
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
       openConfirmation({ kind: "bulk" });
@@ -2041,10 +2238,21 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       && (!target || item.market === target.marketCode && item.targetId === target.targetId));
     return listingWriteOperation(listing) === "listing.update";
   }).length;
+  const bulkReadyChannels = bulkConfirming ? getReadyChannels() : [];
 
   return <section className="panel product-publish-workbench">
     <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하되, 다중 채널 QA의 Temu 신규 상품은 생성 직후 판매 중지와 readback까지 검증합니다. 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 순차 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
-    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 순차 실행</button></div>}
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><ul className="publish-bulk-confirm-list">{bulkReadyChannels.map((channel) => {
+      const target = selectedTargets[channel];
+      const listing = context.listings.find((item) => item.channel === channel
+        && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const details = confirmationDetails(channel, context, parseDraft(drafts[channel]), target, listing, price, quantity, globalBaseUsdPrice);
+      const operation = listingWriteOperation(listing);
+      const lazadaPolicy = channel === "lazada" && operation === "listing.update"
+        ? lazadaKrwMyrPricePolicyFromArguments(parseDraft(drafts[channel]) ?? {})
+        : null;
+      return <li key={channel}><b>{channelCatalog[channel].name} · {details.market}</b><small>{formattedMarketplacePrice(details.price, details.currency)} · 재고 {details.stock}개 · SKU {details.sku}</small>{operation === "listing.update" && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"}만 수정</small>}{lazadaPolicy && <small>Lazada 환율 검증 {lazadaPolicy.sourcePriceKrw.toLocaleString()} KRW → {lazadaPolicy.targetPriceMyr.toFixed(2)} MYR · 단일 SKU 사전조회·수정 후 재조회</small>}</li>;
+    })}</ul><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || bulkReadyChannels.length === 0} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 순차 실행</button></div>}
     {remoteUpdateChannelCount > 0 && <section className="product-edit-handoff" aria-label="중앙 저장과 채널별 원격 반영 순서">
       <header><span><ShieldCheck size={17} /><b>중앙 저장 후 채널별로 따로 반영합니다.</b></span><em>수정 대상 {remoteUpdateChannelCount}개 채널</em></header>
       <ol>
@@ -2056,20 +2264,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     </section>}
     <div className="product-edit-draft-scope" role="note"><div><b>채널 전송용 공통 초안</b><small>아래 값을 바꾸면 채널 payload 초안만 갱신됩니다. 중앙 상품을 다시 저장하는 입력란이 아닙니다.</small></div><span>중앙 재저장 아님</span></div>
     <div className="publish-common-fields">
-      <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
-      <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
-      <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
-      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
-      <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>높이 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.height} onChange={(event) => { const next = { ...packageFields, height: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
+      <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); synchronizeCommonDrafts(context, value); }} /></label>
+      <label><span>기준 판매 통화</span><input value={currency} maxLength={3} readOnly aria-readonly="true" title="중앙 상품에 저장된 기준 통화이며, 채널별 판매 통화는 선택한 마켓에 따라 자동 계산됩니다." /></label>
+      <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, packageFieldsRef.current, value); }} /></label>
+      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); synchronizeCommonDrafts(context, priceRef.current, value); }} /></label>
+      <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>높이 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.height} onChange={(event) => { const next = { ...packageFields, height: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
       <label><span>브랜드 <i>필수</i></span><input required value={context.manualFields.brandName} onChange={(event) => updateProductFact("brandName", event.target.value)} placeholder="브랜드명 또는 No Brand" /></label>
       <label><span>제조사·공급처 <i>필수</i></span><input required value={context.manualFields.manufacturer} onChange={(event) => updateProductFact("manufacturer", event.target.value)} placeholder="실제 제조사 또는 공급처" /></label>
       <label><span>원산지 <i>필수</i></span><input required value={context.manualFields.countryOfOrigin} onChange={(event) => updateProductFact("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" /></label>
       <label><span>재질·성분 <i>필수</i></span><input required value={context.manualFields.material} onChange={(event) => updateProductFact("material", event.target.value)} placeholder="실물·공식 상품정보 기준" /></label>
       <label><span>판매 구성 <i>필수</i></span><select required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
-      <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice, lazadaMyrRate))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
+      <span className="publish-common-sync-status" role="status"><RefreshCw size={14} />공통값 변경 즉시 채널 초안에 자동 반영</span>
     </div>
     <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
     {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "승인된 상세페이지 이미지 8장이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 승인 상세 ${approvedDetailManifest?.images.length ?? 0}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "상세페이지 8장 운영 원장이 없는 직접등록 상품은 단일·일괄 채널 전송을 모두 차단합니다." : `마스터 ${marketplaceGeneratedAssetCount}종 이미지 원장은 보존하고, 상세페이지에 선택·저장된 서로 다른 8장만 게시 원장으로 승인해야 합니다.`}</small></div></div>}
@@ -2148,6 +2356,16 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && editFieldSupport?.price.operation === "listing.update"
         && editFieldSupport.inventory.operation === "listing.update";
       const draftObject = parseDraft(drafts[channel]);
+      const confirmation = confirmationDetails(
+        channel,
+        context,
+        draftObject,
+        target,
+        listing,
+        price,
+        quantity,
+        globalBaseUsdPrice,
+      );
       const lazadaFinalPricePolicy = remoteCommerceUpdate && draftObject
         ? lazadaKrwMyrPricePolicyFromArguments(draftObject)
         : null;
@@ -2172,7 +2390,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
         <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
-        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
+        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, nextTargets); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
         {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
         {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
           <header className="product-edit-support-header"><div><b>이 채널의 원격 수정 범위</b><small>중앙 저장과 원격 반영은 분리되며, 일부 지원 필드는 원격 반영 후 수동 확인도 필요합니다.</small></div><span>콘텐츠 완전 {remoteListingSupportedFieldLabels.length} · 일부 {remoteListingPartialFieldLabels.length} · 수동 {remoteManualFieldLabels.length}</span></header>
@@ -2202,7 +2420,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{remoteUpdate ? remoteCommerceUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · ${lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR` : "MYR 환율 확인 필요"} · 재고 ${quantity}개 · 단일 SKU 사전조회 후 함께 반영` : `원격 ID ${listing?.remoteId ?? "확인 필요"} · 가격·재고·옵션·판매 구성은 변경하지 않음` : `가격 ${price.toLocaleString()} ${target?.currency || currency} · 재고 ${quantity}개`}</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
+          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
           {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
           {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
           <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || !credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>

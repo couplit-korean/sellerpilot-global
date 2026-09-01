@@ -3977,3 +3977,588 @@
     padding: 24px 16px;
   }
 }
+
+/* 2026-09 responsive seller-workflow reconciliation.
+ * These rules intentionally live last so the staged publishing flow and
+ * mobile operation cards override the older overflow-first table contract. */
+
+.publishing-stage-panel[hidden] {
+  display: none !important;
+}
+
+.publishing-stage-panel {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.publishing-steps li {
+  padding: 0;
+}
+
+.publishing-steps li > button {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 72px;
+  grid-column: 1 / -1;
+  grid-row: 1 / -1;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-content: center;
+  align-items: center;
+  column-gap: 10px;
+  border: 0;
+  padding: 10px 12px;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+}
+
+.publishing-steps li > button > span {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  grid-row: 1 / 3;
+  place-items: center;
+  align-self: center;
+  border-radius: 8px;
+  color: #657080;
+  background: #e9ecef;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.publishing-steps li > button > b,
+.publishing-steps li > button > small {
+  min-width: 0;
+}
+
+.publishing-steps li > button:disabled {
+  cursor: not-allowed;
+  opacity: .48;
+}
+
+.publishing-steps li.active > button > span {
+  color: #fff;
+  background: var(--primary);
+}
+
+.publish-auto-sync-status {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid #b9dacb;
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: #17634f;
+  background: #eff9f4;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.publish-bulk-confirmation ul {
+  display: grid;
+  gap: 6px;
+  margin: 7px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.publish-bulk-confirmation li {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid rgb(129 87 24 / 14%);
+  padding-top: 6px;
+}
+
+.publish-bulk-confirmation li strong,
+.publish-bulk-confirmation li span {
+  overflow-wrap: anywhere;
+}
+
+.studio-detail-assets-disclosure {
+  overflow: hidden;
+  margin-top: 12px;
+  border: 1px solid #dfe5e2;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.studio-detail-assets-disclosure > summary {
+  display: flex;
+  min-height: 50px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.studio-detail-assets-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.studio-detail-assets-disclosure > summary span,
+.studio-detail-assets-disclosure > summary b,
+.studio-detail-assets-disclosure > summary small {
+  display: block;
+  min-width: 0;
+}
+
+.studio-detail-assets-disclosure > summary small {
+  margin-top: 3px;
+  color: #7b8883;
+  line-height: 1.45;
+}
+
+.studio-detail-assets-disclosure > summary svg,
+.product-detail-assets-toggle svg {
+  flex: 0 0 auto;
+  transition: transform .18s ease;
+}
+
+.studio-detail-assets-disclosure[open] > summary svg,
+.product-detail-assets-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.studio-detail-assets-disclosure > .detail-assets {
+  border-top: 1px solid #edf0ef;
+  padding: 12px;
+}
+
+.product-detail-assets-toggle {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 12px auto 0;
+  border: 1px solid #cad6d1;
+  border-radius: 8px;
+  padding: 0 16px;
+  color: #365c4e;
+  background: #f7faf9;
+  font-weight: 800;
+}
+
+.settings-load-error,
+.inline-destructive-confirm {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #edc9c3;
+  border-radius: 10px;
+  padding: 14px;
+  color: #8a352c;
+  background: #fff6f4;
+}
+
+.settings-load-error > div,
+.inline-destructive-confirm > span {
+  min-width: 0;
+  flex: 1;
+}
+
+.inline-destructive-confirm > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+}
+
+.settings-load-error b,
+.settings-load-error small,
+.inline-destructive-confirm b,
+.inline-destructive-confirm small {
+  display: block;
+}
+
+.settings-load-error small,
+.inline-destructive-confirm small,
+.settings-load-error p {
+  margin: 4px 0 0;
+  line-height: 1.55;
+}
+
+.settings-load-error.compact {
+  margin: 12px;
+}
+
+.inline-destructive-confirm {
+  position: sticky;
+  z-index: 4;
+  bottom: 12px;
+  margin-top: 12px;
+  box-shadow: 0 14px 34px rgb(48 20 16 / 16%);
+}
+
+.destructive-button {
+  min-height: 44px;
+  border-radius: 8px;
+  padding: 0 16px;
+  color: #fff;
+  background: #a43d32;
+  font-weight: 800;
+}
+
+.pdp-visual-cta {
+  cursor: default;
+  border: 1px dashed currentColor;
+  color: inherit;
+  background: transparent;
+  box-shadow: none;
+}
+
+@media (max-width: 1340px) and (min-width: 901px) {
+  .overview-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .exchange-widget {
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .exchange-title {
+    min-width: 138px;
+    flex-basis: 138px;
+  }
+
+  .exchange-rate {
+    min-width: 0;
+    padding-inline: 10px;
+  }
+
+  .overview-date-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .publishing-layout,
+  .studio-workspace,
+  .product-detail-grid,
+  .channel-detail-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .publishing-settings {
+    position: static;
+  }
+
+  .product-detail-actions button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 720px) {
+  .commerce-service-rail {
+    display: grid;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: visible;
+    padding: 0;
+    white-space: normal;
+  }
+
+  .commerce-service-rail strong,
+  .commerce-service-rail span,
+  .commerce-service-rail em,
+  .commerce-service-rail span:nth-of-type(n) {
+    display: flex !important;
+    min-width: 0;
+    min-height: 34px;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    border-right: 1px solid #dfe5e2;
+    border-bottom: 1px solid #dfe5e2;
+    padding: 7px 10px;
+    overflow-wrap: anywhere;
+    font-size: 9px;
+    white-space: normal;
+  }
+
+  .commerce-service-rail strong,
+  .commerce-service-rail em {
+    grid-column: 1 / -1;
+  }
+
+  .commerce-service-rail strong {
+    color: #fff;
+    background: #25352d;
+  }
+
+  .commerce-service-rail em {
+    border-bottom: 0;
+  }
+
+  .publishing-steps {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 6px;
+  }
+
+  .publishing-steps li,
+  .publishing-steps li > button {
+    min-height: 58px;
+  }
+
+  .product-table,
+  .product-table tbody,
+  .product-table tr,
+  .product-table td,
+  .order-table,
+  .order-table tbody,
+  .order-table tr,
+  .order-table td,
+  .margin-table,
+  .margin-table tbody,
+  .margin-table tr,
+  .margin-table td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none;
+  }
+
+  .product-table thead,
+  .order-table thead,
+  .margin-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .product-table tbody,
+  .order-table tbody,
+  .margin-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .product-table tr,
+  .order-table tr,
+  .margin-table tr {
+    position: relative;
+    display: grid;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(30 48 41 / 5%);
+  }
+
+  .product-table td,
+  .order-table td,
+  .margin-table td {
+    position: static;
+    inset: auto;
+    display: flex;
+    width: 100%;
+    min-height: 50px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 9px 11px;
+    background: #fff;
+    box-shadow: none;
+    white-space: normal;
+  }
+
+  .product-table td:first-child,
+  .order-table td:first-child,
+  .order-table td:nth-child(2),
+  .order-table td:last-child,
+  .margin-table td:first-child,
+  .margin-table td:last-child {
+    position: static;
+    inset: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .product-table td::before,
+  .order-table td::before,
+  .margin-table td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  .product-table td:first-child,
+  .product-table td:nth-child(2),
+  .order-table td:nth-child(2),
+  .order-table td:nth-child(5),
+  .margin-table td:first-child,
+  .margin-table td:nth-child(7),
+  .margin-table td:nth-child(8),
+  .margin-table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .product-table td:first-child,
+  .order-table td:nth-child(2),
+  .margin-table td:first-child {
+    border-top: 0;
+  }
+
+  .product-table td:nth-child(2)::before { content: "채널 · 판매수"; }
+  .product-table td:nth-child(3)::before { content: "재고"; }
+  .product-table td:nth-child(4)::before { content: "기간 판매"; }
+  .product-table td:nth-child(5)::before { content: "기간 매출"; }
+  .product-table td:nth-child(6)::before { content: "상태"; }
+
+  .order-table td:first-child {
+    position: absolute;
+    z-index: 1;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    border: 0;
+    padding: 0;
+  }
+
+  .order-table td:nth-child(2)::before { content: "주문번호"; }
+  .order-table td:nth-child(3)::before { content: "채널"; }
+  .order-table td:nth-child(4)::before { content: "구매자"; }
+  .order-table td:nth-child(5)::before { content: "상품"; }
+  .order-table td:nth-child(6)::before { content: "결제금액"; }
+  .order-table td:nth-child(7)::before { content: "주문 · 배송"; }
+  .order-table td:nth-child(8)::before { content: "정산"; }
+  .order-table td:nth-child(9)::before { content: "주문시간"; }
+  .order-table td:last-child { grid-column: 1 / -1; padding: 6px; }
+  .order-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .margin-table td:nth-child(2)::before { content: "계획 판매가"; }
+  .margin-table td:nth-child(3)::before { content: "수수료"; }
+  .margin-table td:nth-child(4)::before { content: "변동비율"; }
+  .margin-table td:nth-child(5)::before { content: "순이익"; }
+  .margin-table td:nth-child(6)::before { content: "마진율"; }
+  .margin-table td:nth-child(7)::before { content: "권장 판매가"; }
+  .margin-table td:nth-child(8)::before { content: "등록 판정"; }
+  .margin-table td:last-child { padding: 6px; }
+  .margin-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .product-table .product-cell,
+  .product-table .product-cell-button,
+  .order-table .order-product-button,
+  .order-table .order-detail-link,
+  .margin-table .margin-channel-cell {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+  }
+
+  .product-table .channel-sales-stack {
+    justify-content: flex-end;
+  }
+
+  .order-table input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .photo-source-actions > label,
+  .photo-source-actions.compact > label,
+  .remove-photo-button,
+  .extra-photo-list button,
+  .category-empty button,
+  .category-confirm,
+  .category-suggestions button,
+  .template-card-grid article > div > button,
+  .saved-margin-list > article > button,
+  .publish-write-confirmation > button,
+  .publish-write-confirmation.channel > button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .publish-write-confirmation,
+  .publish-write-confirmation.channel,
+  .inline-destructive-confirm,
+  .settings-load-error {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .publish-write-confirmation > svg,
+  .inline-destructive-confirm > svg,
+  .settings-load-error > svg {
+    display: none;
+  }
+
+  .publish-write-confirmation > button,
+  .publish-write-confirmation.channel > button,
+  .inline-destructive-confirm > button,
+  .settings-load-error > button {
+    width: 100%;
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .inline-destructive-confirm > div {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .inline-destructive-confirm > div > button {
+    min-height: 44px;
+  }
+
+  .publish-bulk-confirmation li {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+  }
+}
+
+@media (max-width: 360px) {
+  .product-table tr,
+  .order-table tr,
+  .margin-table tr {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-table td,
+  .product-table td:nth-child(n),
+  .order-table td,
+  .order-table td:nth-child(n),
+  .margin-table td,
+  .margin-table td:nth-child(n) {
+    grid-column: 1;
+  }
+
+  .order-table td:first-child {
+    position: absolute;
+    grid-column: auto;
+  }
+}

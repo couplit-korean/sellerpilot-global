@@ -22,5 +22,6 @@ test("single and bulk publication paths include Temu", async () => {
   assert.match(source, /publicationSelectableChannelKeys = activeChannelKeys;/);
   assert.match(source, /publicationSelectableChannelKeys\.filter\(\(channel\) => selectedChannels\.includes\(channel\)\)/);
   assert.doesNotMatch(source, /Temu 상품 게시 상태를 독립적으로 재조회할 수 있을 때까지 자동 등록을 차단합니다/);
-  assert.match(source, /const readyChannels = visibleChannels\.filter[\s\S]*?\.slice\(0, publicationSelectableChannelKeys\.length\)/);
+  assert.match(source, /const getReadyChannels = \(\) => \{[\s\S]*?visibleChannels\.filter[\s\S]*?\.slice\(0, publicationSelectableChannelKeys\.length\)/);
+  assert.match(source, /const readyChannels = getReadyChannels\(\)/);
 });

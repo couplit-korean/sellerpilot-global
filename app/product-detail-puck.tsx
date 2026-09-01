@@ -196,7 +196,7 @@ const detailConfig: Config<DetailComponents> = {
       defaultProps: { eyebrow: "NEW PRODUCT", title: "제품의 핵심 가치를 한 문장으로", description: "짧고 명확한 제품 설명", cta: "상품 확인하기", imageUrl: "", imageAlt: "상품 대표 이미지", primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9", layout: "split" },
       render: ({ eyebrow, title, description, cta, imageUrl, imageAlt, primary, accent, surface, layout }) => (
         <section className={`pdp-hero-block ${layout}`} data-motion="reveal" style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
-          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><span className="pdp-visual-cta">{cta}</span></div>
+          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><span className="pdp-visual-cta" aria-label={`마켓 버튼 문구 미리보기: ${cta}`}>버튼 문구 · {cta}</span></div>
           <div className="pdp-hero-visual">{imageUrl ? <img src={imageUrl} alt={imageAlt || "상품 대표 이미지"} /> : <span>PRODUCT IMAGE</span>}<i /></div>
         </section>
       ),
@@ -314,7 +314,7 @@ const detailConfig: Config<DetailComponents> = {
       fields: { audience: { type: "text", label: "추천 대상" }, title: { type: "text", label: "제목" }, description: { type: "textarea", label: "설명" }, checklist: { type: "textarea", label: "마지막 확인사항" }, button: { type: "text", label: "버튼" }, primary: { type: "text", label: "주 색상" }, accent: { type: "text", label: "강조 색상" } },
       defaultProps: { audience: "이 상품의 핵심 정보를 비교한 고객", title: "확인한 기준으로 선택하세요", description: "상품 정보를 확인하고 나에게 맞는 옵션을 선택하세요.", checklist: "분류 · 구성 · 규격 · 주의사항을 마지막으로 확인하세요.", button: "상품 정보 확인하기", primary: "#25352d", accent: "#d9eeae" },
       render: ({ audience, title, description, checklist, button, primary, accent }) => (
-        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>FOR {audience}</span><h2>{title}</h2><p>{description}</p><p className="pdp-cta-checklist">{checklist}</p><span className="pdp-visual-cta">{button}</span></section>
+        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>FOR {audience}</span><h2>{title}</h2><p>{description}</p><p className="pdp-cta-checklist">{checklist}</p><span className="pdp-visual-cta" aria-label={`마켓 버튼 문구 미리보기: ${button}`}>버튼 문구 · {button}</span></section>
       ),
     },
   },
