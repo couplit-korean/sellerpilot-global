@@ -19,6 +19,11 @@ import {
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
 import { coupangExactQaRecoveryCandidate } from "../../../../../../lib/channels/coupang-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryBindingValue,
+  ebayExactExistingQaRecoveryCandidate,
+  ebayExactExistingQaRecoveryIdentity,
+} from "../../../../../../lib/channels/ebay-exact-existing-qa-recovery";
 import { elevenstExactExistingPublicationCandidate } from "../../../../../../lib/channels/elevenst-exact-existing-publication";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
@@ -110,7 +115,11 @@ function listingReference(listing: ListingRecord): ListingUpdateReference {
   };
 }
 
-function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUpdate = false) {
+function listingExecutionBlock(
+  listing: ListingRecord,
+  allowVerifiedLegacyEbayUpdate = false,
+  allowExactEbayUpdate = false,
+) {
   const status = typeof listing.status === "string" ? listing.status : "";
   const failureClass = typeof listing.failureClass === "string" ? listing.failureClass : "";
   if (status === "queued" || status === "publishing") {
@@ -175,6 +184,7 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
   });
   if (failureClass === "external_action"
       && !allowVerifiedLegacyEbayUpdate
+      && !allowExactEbayUpdate
       && !allowExactCoupangRecovery
       && !allowExactElevenstRecovery
       && !allowExactLazadaRecovery
@@ -202,9 +212,23 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
   return null;
 }
 
-function listingAvailability(listing: ListingRecord) {
+function listingAvailability(listing: ListingRecord, productId: string) {
   const release = channelOperationRelease(listing.channel, "listing.update");
-  const executionBlock = listingExecutionBlock(listing);
+  const reference = listingReference(listing);
+  const allowExactEbayUpdate = productId === ebayExactExistingQaRecoveryIdentity.productId
+    && ebayExactExistingQaRecoveryCandidate({
+      channel: listing.channel,
+      listingId: listing.id,
+      remoteId: reference.remoteId,
+      marketplaceSku: reference.marketplaceSku,
+      status: reference.status,
+      requestedPublicationIntent: reference.requestedPublicationIntent,
+      remoteVisibility: reference.remoteVisibility,
+      providerStatus: reference.providerStatus,
+      publishedAt: reference.publishedAt,
+      failureClass: reference.failureClass,
+    });
+  const executionBlock = listingExecutionBlock(listing, false, allowExactEbayUpdate);
   const remotePlan = productEditRemotePlan(listing.channel, release.available);
   return {
     listingId: listing.id,
@@ -243,7 +267,9 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   return NextResponse.json({
     productId: productId.data,
     centralFields: centralProductEditFieldSupport(),
-    listings: listingRecords(loaded.context.listings).map(listingAvailability),
+    listings: listingRecords(loaded.context.listings).map((listing) => (
+      listingAvailability(listing, productId.data)
+    )),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
 
@@ -289,6 +315,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const reference = listingReference(listing);
+  const exactEbayCandidate = productId.data === ebayExactExistingQaRecoveryIdentity.productId
+    && ebayExactExistingQaRecoveryCandidate({
+      channel: listing.channel,
+      listingId: listing.id,
+      remoteId: reference.remoteId,
+      marketplaceSku: reference.marketplaceSku,
+      status: reference.status,
+      requestedPublicationIntent: reference.requestedPublicationIntent,
+      remoteVisibility: reference.remoteVisibility,
+      providerStatus: reference.providerStatus,
+      publishedAt: reference.publishedAt,
+      failureClass: reference.failureClass,
+    });
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   if (qoo10RollbackListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
@@ -315,8 +354,31 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     boundQoo10RollbackUpdateRecovery = identity.data;
   }
+  let verifiedExactEbayUpdate = false;
+  if (exactEbayCandidate) {
+    const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity",
+      {
+        p_listing_id: listing.id,
+        p_credential_id: body.data.credentialId,
+        p_product_id: productId.data,
+        p_market: typeof listing.market === "string" ? listing.market : "",
+        p_target_id: typeof listing.targetId === "string" ? listing.targetId : "",
+      },
+    );
+    const identity = ebayExactExistingQaRecoveryBindingValue(identityData);
+    if (identityError || !identity || identity.credentialId !== body.data.credentialId) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_atomic_identity_required",
+        message: "eBay exact QA 상품·offer·SKU·운영 인증정보 결속을 원장에서 확정하지 못했습니다.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    verifiedExactEbayUpdate = true;
+  }
   let verifiedLegacyEbayUpdate = false;
-  if (legacyEbayListingUpdateCandidate(listing.channel, reference)) {
+  if (!exactEbayCandidate && legacyEbayListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
       "sellerpilot_service_get_ebay_listing_update_identity",
       {
@@ -338,7 +400,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       && identity.offerId.trim().length > 0;
   }
 
-  const executionBlock = listingExecutionBlock(listing, verifiedLegacyEbayUpdate);
+  const executionBlock = listingExecutionBlock(
+    listing,
+    verifiedLegacyEbayUpdate,
+    verifiedExactEbayUpdate,
+  );
   if (executionBlock) {
     return NextResponse.json({
       ok: false,
