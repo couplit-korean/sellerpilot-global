@@ -513,13 +513,18 @@ export async function executeChannelTargetDiscovery(input: {
   request: Record<string, unknown>;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
-    p_credential_id: input.credentialId,
-    p_attempt_id: null,
-    p_channel: input.channel,
-    p_operation: "shops.get",
-    p_request_payload: input.request,
-  });
+  const { data: jobId, error: enqueueError } = input.channel === "lazada"
+    ? await input.serviceClient.rpc("sellerpilot_enqueue_lazada_target_sync", {
+        p_credential_id: input.credentialId,
+        p_country: input.request.country,
+      })
+    : await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+        p_credential_id: input.credentialId,
+        p_attempt_id: null,
+        p_channel: input.channel,
+        p_operation: "shops.get",
+        p_request_payload: input.request,
+      });
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
   return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000);
 }

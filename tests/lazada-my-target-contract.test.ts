@@ -6,8 +6,10 @@ import {
   lazadaAuthorizationUrl,
   lazadaCountryFromOAuthState,
   lazadaOAuthState,
+  resolveLazadaCredentialCountry,
   lazadaTargetCountry,
   lazadaTargetMarketCode,
+  lazadaTargetSyncRequiredPayload,
   lazadaTargetSyncRequiredCode,
 } from "../lib/channels/lazada-my-contract";
 import {
@@ -40,14 +42,17 @@ function oauthClaim(input: { requestedCountry?: string; credentialCountry?: stri
   }) as ProviderOAuthClaim;
 }
 
-function providerToken(countryUserInfo: Array<Record<string, unknown>>) {
+function providerToken(
+  countryUserInfo: Array<Record<string, unknown>>,
+  country: unknown = lazadaTargetCountry,
+) {
   return {
     code: "0",
     access_token: "fresh-access-token",
     refresh_token: "fresh-refresh-token",
     expires_in: 2_592_000,
     refresh_expires_in: 15_552_000,
-    country: "my",
+    ...(country === null ? {} : { country }),
     account_platform: "seller_center",
     country_user_info: countryUserInfo,
   };
@@ -76,6 +81,23 @@ test("Lazada OAuth state, authorize URL, callback and gateway request are fixed 
   assert.match(source, /lazadaCountryFromOAuthState\(parsed\.data\.oauthState\)/u);
   assert.match(source, /request: \{ code: oauthCode, country: oauthStateCountry \}/u);
   assert.doesNotMatch(source, /request: \{ code: oauthCode, .*submittedCountry/u);
+  assert.ok(
+    source.indexOf("const submittedCountry")
+      < source.indexOf('sellerpilot_service_claim_channel_oauth_state'),
+    "callback country mismatch must be rejected before consuming one-time state",
+  );
+  assert.equal(resolveLazadaCredentialCountry({
+    startOAuth: true,
+    hasOAuthCode: false,
+    incomingCountry: "",
+    previousCountry: "sg",
+  }), lazadaTargetCountry);
+  assert.equal(resolveLazadaCredentialCountry({
+    startOAuth: false,
+    hasOAuthCode: false,
+    incomingCountry: "",
+    previousCountry: "sg",
+  }), "sg");
 });
 
 test("Lazada OAuth stages only a provider-attested MY seller identity", async () => {
@@ -117,6 +139,30 @@ test("Lazada OAuth fails closed before staging when token identity has no MY sel
       /LAZADA_MY_SELLER_IDENTITY_MISSING/,
     );
     assert.equal(stageCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada OAuth rejects a missing or non-MY provider-attested country before staging", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const providerCountry of [null, "sg", "cb"]) {
+      let stageCalls = 0;
+      globalThis.fetch = async () => Response.json(providerToken([
+        { country: "my", seller_id: "2001", user_id: "3001" },
+      ], providerCountry));
+      await assert.rejects(
+        executeProviderOAuthExchange(oauthClaim(), {
+          assertLeaseHealthy: async () => undefined,
+          beginCredentialMutation: async () => undefined,
+          beginOAuthProviderCall: async () => undefined,
+          stageCredentialRefresh: async () => { stageCalls += 1; },
+        }),
+        /LAZADA_OAUTH_PROVIDER_COUNTRY_MISMATCH/,
+      );
+      assert.equal(stageCalls, 0);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -191,4 +237,22 @@ test("Lazada target route exposes a typed sync-only 409 and blocks MY lineage mi
   assert.match(source, /lineageBoundLazadaTargetForMarket/u);
   assert.match(source, /lazadaTargetMarketCode/u);
   assert.equal(lazadaTargetSyncRequiredCode, "LAZADA_TARGET_SYNC_REQUIRED");
+  assert.deepEqual(lazadaTargetSyncRequiredPayload({
+    code: lazadaTargetSyncRequiredCode,
+    channel: "lazada",
+    credentialId,
+    targets: [],
+  }), { credentialId });
+  assert.equal(lazadaTargetSyncRequiredPayload({
+    code: lazadaTargetSyncRequiredCode,
+    channel: "shopee",
+    credentialId,
+    targets: [],
+  }), null);
+  assert.equal(lazadaTargetSyncRequiredPayload({
+    code: lazadaTargetSyncRequiredCode,
+    channel: "lazada",
+    credentialId: "not-a-uuid",
+    targets: [],
+  }), null);
 });

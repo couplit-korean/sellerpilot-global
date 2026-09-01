@@ -127,6 +127,8 @@ const EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION =
   "20260901140000_fix_exact_update_enqueued_lineage_phase.sql";
 const EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION =
   "20260901150000_fix_exact_update_deferred_job_lineage.sql";
+const LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION =
+  "20260901151000_idempotent_lazada_target_sync.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -828,6 +830,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION,
       EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION,
       EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION,
+      LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -3519,6 +3522,61 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",
     );
     assert.equal(refreshedSecret.secret_payload.access_token, "new-access-token");
+    const firstLazadaTargetSyncJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_lazada_target_sync($1, 'my')",
+      [refreshedCredentialId],
+    );
+    const reusedLazadaTargetSyncJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_lazada_target_sync($1, 'MY')",
+      [refreshedCredentialId],
+    );
+    assert.equal(reusedLazadaTargetSyncJobId, firstLazadaTargetSyncJobId);
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where credential_id = $1
+            and channel = 'lazada'
+            and operation = 'shops.get'
+            and status in ('queued', 'running')`,
+        [refreshedCredentialId],
+      ),
+      1,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_enqueue_lazada_target_sync($1, 'sg')",
+        [refreshedCredentialId],
+      ),
+      /invalid Lazada target sync/,
+    );
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'public.sellerpilot_enqueue_lazada_target_sync(uuid,text)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_enqueue_lazada_target_sync(uuid,text)', 'EXECUTE')",
+      ),
+      true,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = now(), updated_at = now()
+        where id = $1`,
+      [firstLazadaTargetSyncJobId],
+    );
     assert.equal(
       await scalar(db, "select public.sellerpilot_service_consume_lazada_im_bootstrap($1)", [refreshedCredentialId]),
       true,

@@ -1,5 +1,5 @@
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
-import { isLazadaTargetSyncRequiredPayload } from "../lib/channels/lazada-my-contract";
+import { lazadaTargetSyncRequiredPayload } from "../lib/channels/lazada-my-contract";
 
 type TargetChannel = "shopee" | "lazada";
 type TargetRequestOptions = { signal?: AbortSignal; timeoutMs?: number };
@@ -37,14 +37,16 @@ function createPendingTargetRequest(
     settled: false,
     promise: Promise.resolve(new Response(null, { status: 503 })),
   };
-  const request = (method: "GET" | "POST") => waitForAbortablePromise(
+  const request = (method: "GET" | "POST", credentialId = "") => waitForAbortablePromise(
     fetch(`/api/admin/channel-targets?channel=${channel}`, {
       method,
       headers: {
         authorization: `Bearer ${accessToken}`,
         ...(method === "POST" ? { "content-type": "application/json" } : {}),
       },
-      ...(method === "POST" ? { body: JSON.stringify({ channel }) } : {}),
+      ...(method === "POST" ? {
+        body: JSON.stringify({ channel, ...(credentialId ? { credentialId } : {}) }),
+      } : {}),
       cache: "no-store",
       signal: bounded.signal,
     }),
@@ -55,8 +57,9 @@ function createPendingTargetRequest(
       const cached = await request("GET");
       if (cached.ok || cached.status !== 409 || channel !== "lazada") return cached;
       const payload = await cached.clone().json().catch(() => null) as unknown;
-      if (!isLazadaTargetSyncRequiredPayload(payload)) return cached;
-      return await request("POST");
+      const syncRequired = lazadaTargetSyncRequiredPayload(payload);
+      if (!syncRequired) return cached;
+      return await request("POST", syncRequired.credentialId);
     } finally {
       entry.settled = true;
       bounded.dispose();

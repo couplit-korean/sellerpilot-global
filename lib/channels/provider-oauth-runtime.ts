@@ -422,6 +422,10 @@ async function exchangeLazadaOAuth(
 
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
   const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
+  const providerCountry = textValue(remote.data, "country").toLowerCase();
+  if (providerCountry !== lazadaTargetCountry) {
+    throw new Error("LAZADA_OAUTH_PROVIDER_COUNTRY_MISMATCH");
+  }
   const providerAccount = withLazadaProviderAccountIdentity({}, remote.data);
   const mySeller = providerAccount.countryUserInfo.find((item) => item.country === lazadaTargetCountry);
   if (!mySeller?.seller_id) throw new Error("LAZADA_MY_SELLER_IDENTITY_MISSING");

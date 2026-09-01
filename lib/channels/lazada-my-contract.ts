@@ -3,6 +3,7 @@ export const lazadaTargetMarketCode = "MY" as const;
 
 export const lazadaTargetSyncRequiredCode = "LAZADA_TARGET_SYNC_REQUIRED" as const;
 export const lazadaMyTargetMismatchCode = "LAZADA_MY_TARGET_MISMATCH" as const;
+export const lazadaTargetCredentialChangedCode = "LAZADA_TARGET_CREDENTIAL_CHANGED" as const;
 
 const lazadaOAuthStatePrefix = `sellerpilot-lazada-${lazadaTargetCountry}-`;
 const oauthNoncePattern = /^[A-Za-z0-9_-]{32}$/u;
@@ -39,7 +40,30 @@ export function lazadaAuthorizationUrl(input: {
   return authorizationUrl;
 }
 
+export function resolveLazadaCredentialCountry(input: {
+  startOAuth: boolean;
+  hasOAuthCode: boolean;
+  incomingCountry: string;
+  previousCountry: string;
+}) {
+  if (input.startOAuth && !input.hasOAuthCode) return lazadaTargetCountry;
+  return (input.incomingCountry || input.previousCountry || lazadaTargetCountry).trim().toLowerCase();
+}
+
+export function lazadaTargetSyncRequiredPayload(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const payload = value as Record<string, unknown>;
+  const credentialId = typeof payload.credentialId === "string"
+    ? payload.credentialId.trim()
+    : "";
+  if (payload.code !== lazadaTargetSyncRequiredCode
+      || payload.channel !== "lazada"
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(credentialId)
+      || !Array.isArray(payload.targets)
+      || payload.targets.length !== 0) return null;
+  return { credentialId };
+}
+
 export function isLazadaTargetSyncRequiredPayload(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
-  return (value as Record<string, unknown>).code === lazadaTargetSyncRequiredCode;
+  return lazadaTargetSyncRequiredPayload(value) !== null;
 }

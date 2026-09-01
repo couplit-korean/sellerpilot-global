@@ -10,6 +10,7 @@ import {
 } from "../../../../lib/channels/lazada-target-lineage";
 import {
   lazadaMyTargetMismatchCode,
+  lazadaTargetCredentialChangedCode,
   lazadaTargetCountry,
   lazadaTargetMarketCode,
   lazadaTargetSyncRequiredCode,
@@ -237,7 +238,10 @@ export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  const parsed = z.object({ channel: z.enum(["shopee", "lazada"]) }).safeParse(await request.json().catch(() => null));
+  const parsed = z.object({
+    channel: z.enum(["shopee", "lazada"]),
+    credentialId: z.string().uuid().optional(),
+  }).safeParse(await request.json().catch(() => null));
   if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
   if (!parsed.success) return NextResponse.json({ message: "지원하지 않는 채널입니다." }, { status: 400 });
   if (!supabaseUrl || !supabasePublishableKey || !secretKey) return NextResponse.json({ message: "서버 보안 연결이 완료되지 않았습니다." }, { status: 503 });
@@ -262,6 +266,15 @@ export async function POST(request: Request) {
       && "id" in row && row.id === productionCredentialId)
     : null;
   if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 운영 채널 키가 없습니다." }, { status: 404 });
+  if (parsed.data.channel === "lazada" && parsed.data.credentialId !== credential.id) {
+    return NextResponse.json({
+      code: lazadaTargetCredentialChangedCode,
+      message: "Lazada 운영 키가 대상 조회 사이에 변경됐습니다. 최신 키로 다시 확인해 주세요.",
+      channel: "lazada",
+      credentialId: credential.id,
+      targets: [],
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const activeCredentialId = async () => {
