@@ -9,6 +9,7 @@ const migrationUrl = new URL(`../supabase/migrations/${migrationName}`, import.m
 const migration = await readFile(migrationUrl, "utf8");
 
 const ownerId = "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
+const jobCreatedBy = "21eb1892-0894-4f9f-b414-4c9464182dd6";
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const listingId = "7ffc6e46-3173-4695-9889-5fa1529765f1";
 const credentialId = "32de2968-d4b7-4fda-a84b-16a7ce0257cc";
@@ -27,7 +28,13 @@ const sellerAccountKey =
 const manualMessage =
   "쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.";
 
-async function createDatabase({ insertExactRows = true, staticEgress = false } = {}) {
+async function createDatabase({
+  insertExactRows = true,
+  partiallyActiveRuntime = false,
+  runtimeActive = false,
+  staticEgress = false,
+  policyEnabled = staticEgress,
+} = {}) {
   const db = new PGlite();
   await db.exec(`
     create schema extensions;
@@ -40,6 +47,7 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
       return sha256(convert_to(input, 'UTF8'));
     end $$;
     create schema sellerpilot_private;
+    create schema cron;
     create role anon;
     create role authenticated;
     create role service_role;
@@ -53,7 +61,7 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
       status text not null, version integer not null, fingerprint text not null,
       seller_account_key text, seller_account_key_source text,
       seller_account_verified_at timestamptz, last_checked_at timestamptz,
-      last_check_status text, expires_at timestamptz
+      last_check_status text, expires_at timestamptz, created_by uuid not null
     );
     create table sellerpilot_private.channel_operation_attempts (
       id uuid primary key, owner_id uuid not null, credential_id uuid not null,
@@ -141,14 +149,72 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
       entity_id text, safe_detail jsonb not null default '{}'::jsonb,
       occurred_at timestamptz not null default now()
     );
+    create table cron.job (
+      jobid bigint generated always as identity primary key,
+      jobname text not null,
+      active boolean not null
+    );
+    insert into cron.job (jobname,active) values
+      ('sellerpilot-serverless-cs-wake-v1',${runtimeActive || partiallyActiveRuntime}),
+      ('sellerpilot-product-research-v1',${runtimeActive}),
+      ('sellerpilot-channel-sync-v1',${runtimeActive}),
+      ('sellerpilot-competitor-prices-v1',${runtimeActive}),
+      ('sellerpilot-kakao-notifications-v1',${runtimeActive}),
+      ('sellerpilot-maintenance-v1',${runtimeActive});
+    create table sellerpilot_private.serverless_static_egress_policy (
+      channel text primary key,
+      enabled boolean not null
+    );
+    insert into sellerpilot_private.serverless_static_egress_policy
+      (channel,enabled) values ('coupang',${policyEnabled});
 
     create function sellerpilot_private.active_serverless_runtime_release_sha()
     returns text language sql stable set search_path='' as $$
-      select '${releaseSha}'::text
+      select ${runtimeActive ? `'${releaseSha}'::text` : "null::text"}
     $$;
     create function sellerpilot_private.serverless_static_egress_allowed(text)
     returns boolean language sql stable set search_path='' as $$
       select ${staticEgress ? "true" : "false"}
+    $$;
+    create function public.sellerpilot_service_serverless_static_egress_status()
+    returns jsonb language sql stable set search_path='' as $$
+      select jsonb_build_object(
+        'coupang', coalesce((
+          select policy.enabled
+            from sellerpilot_private.serverless_static_egress_policy policy
+           where policy.channel='coupang'
+        ), false)
+      )
+    $$;
+    create function public.sellerpilot_service_serverless_cs_wakeup_status()
+    returns jsonb language sql stable set search_path='' as $$
+      select jsonb_build_object(
+        'configured', (select count(*)=6 from cron.job),
+        'version', 'serverless_runtime_v2',
+        'active', (select count(*) filter (where active)=6 from cron.job),
+        'scheduleCount', (select count(*)::integer from cron.job),
+        'activeRelease', sellerpilot_private.active_serverless_runtime_release_sha(),
+        'unsafePendingMutations', (
+          select count(*)::integer
+            from sellerpilot_private.channel_gateway_jobs job
+           where job.status in ('queued','running')
+             and job.operation in (
+               'listing.create','listing.update','listing.stop','price.update',
+               'inventory.update','shipment.acknowledge','shipment.confirm',
+               'inquiries.reply','oauth.exchange'
+             )
+        ),
+        'reconciliationRequiredMutations', (
+          select count(*)::integer
+            from sellerpilot_private.channel_gateway_jobs job
+           where job.status='reconciliation_required'
+             and job.operation in (
+               'listing.create','listing.update','listing.stop','price.update',
+               'inventory.update','shipment.acknowledge','shipment.confirm',
+               'inquiries.reply','oauth.exchange'
+             )
+        )
+      )
     $$;
     create function sellerpilot_private.exact_existing_update_arguments_valid(
       text,jsonb,text,text,integer
@@ -192,13 +258,14 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
     `insert into sellerpilot_private.channel_credentials (
        id,channel,environment,status,version,fingerprint,
        seller_account_key,seller_account_key_source,
-       seller_account_verified_at,last_checked_at,last_check_status,expires_at
+       seller_account_verified_at,last_checked_at,last_check_status,expires_at,
+       created_by
      ) values (
        $1,'coupang','production','active',1,'F95F4754AFAE',$2,
        'credential_incarnation_v1','2026-08-25 11:40:32.606508+00',
-       '2026-08-19 20:23:27.905445+00','passed',null
+       '2026-08-19 20:23:27.905445+00','passed',null,$3
      )`,
-    [credentialId, sellerAccountKey],
+    [credentialId, sellerAccountKey, jobCreatedBy],
   );
   await db.query(
     `insert into sellerpilot_private.channel_operation_attempts (
@@ -241,9 +308,28 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
        '2026-09-01 05:10:35.344034+00',null,null,$7,$8,false
      )`,
     [
-      jobId, credentialId, attemptId, listingId, requestPayload, ownerId,
+      jobId, credentialId, attemptId, listingId, requestPayload, jobCreatedBy,
       sellerAccountKey, requestFingerprint,
     ],
+  );
+  await db.query(
+    `insert into sellerpilot_private.channel_gateway_jobs (
+       id,credential_id,channel,operation,environment,request_payload,status,
+       attempt_count,created_by,created_at,updated_at
+     ) values
+       ('10000000-0000-4000-8000-000000000011',$1,'qoo10','listing.update',
+        'production','{}'::jsonb,'reconciliation_required',1,$2,
+        '2026-09-01 04:00:00+00','2026-09-01 04:00:00+00'),
+       ('10000000-0000-4000-8000-000000000012',$1,'lazada','listing.update',
+        'production','{}'::jsonb,'reconciliation_required',1,$2,
+        '2026-09-01 04:00:00+00','2026-09-01 04:00:00+00'),
+       ('10000000-0000-4000-8000-000000000013',$1,'ebay','listing.update',
+        'production','{}'::jsonb,'reconciliation_required',1,$2,
+        '2026-09-01 04:00:00+00','2026-09-01 04:00:00+00'),
+       ('10000000-0000-4000-8000-000000000014',$1,'shopee','listing.update',
+        'production','{}'::jsonb,'reconciliation_required',1,$2,
+        '2026-09-01 04:00:00+00','2026-09-01 04:00:00+00')`,
+    [credentialId, jobCreatedBy],
   );
   const fingerprint = (await db.query(
     `select
@@ -290,27 +376,28 @@ async function createDatabase({ insertExactRows = true, staticEgress = false } =
   return { db, migration: fixtureMigration };
 }
 
-test("migration is ordered after the exact deferred-job and Lazada migrations", async () => {
+test("migration is ordered after the deferred-job and Lazada target migrations", async () => {
   const migrations = (await readdir(new URL("../supabase/migrations", import.meta.url)))
     .filter((name) => name.endsWith(".sql"))
     .sort();
   const predecessor = migrations.indexOf(
     "20260901150000_fix_exact_update_deferred_job_lineage.sql",
   );
-  const current = migrations.indexOf(migrationName);
-  assert.ok(predecessor >= 0);
-  assert.ok(current > predecessor);
-  assert.equal(
-    migrations[current - 1],
+  const lazadaTargetSync = migrations.indexOf(
     "20260901151000_idempotent_lazada_target_sync.sql",
   );
+  const current = migrations.indexOf(migrationName);
+  assert.ok(predecessor >= 0);
+  assert.ok(lazadaTargetSync > predecessor);
+  assert.ok(current > lazadaTargetSync);
+  assert.equal(current, migrations.length - 1);
 });
 
 test("migration source pins the exact production tuple and hashes", () => {
   for (const value of [
     productId, listingId, credentialId, attemptId, jobId, permitId, releaseSha,
     requestFingerprint, productionArgumentsSha, productionPayloadSha,
-    sellerAccountKey,
+    sellerAccountKey, jobCreatedBy,
   ]) {
     assert.match(migration, new RegExp(value));
   }
@@ -319,6 +406,13 @@ test("migration source pins the exact production tuple and hashes", () => {
   assert.match(migration, /claim_token is null/u);
   assert.match(migration, /lease_expires_at is null/u);
   assert.match(migration, /provider_mutation_started_at is null/u);
+  assert.match(migration, /active_serverless_runtime_release_sha\(\) is null/u);
+  assert.match(migration, /for update of listing, product, attempt, job, credential, permit,\s+egress_policy/u);
+  assert.match(migration, /not egress_policy\.enabled/u);
+  assert.match(migration, /pg_advisory_xact_lock\(193674993, 821065060\)/u);
+  assert.match(migration, /lock table cron\.job\s+in share row exclusive mode/u);
+  assert.match(migration, /count\(distinct schedule\.jobname\)/u);
+  assert.match(migration, /lock table sellerpilot_private\.channel_gateway_jobs\s+in share row exclusive mode/u);
   assert.match(migration, /not sellerpilot_private\.serverless_static_egress_allowed\('coupang'\)/u);
 });
 
@@ -401,7 +495,46 @@ test("the exact unclaimed job becomes a fully audited manual WING handoff", asyn
     assert.equal(audit.safe_detail.contract, "coupang_unclaimed_static_egress_retirement_v1");
     assert.equal(audit.safe_detail.providerCallReplayed, false);
     assert.equal(audit.safe_detail.providerMutationStarted, false);
+    assert.equal(audit.safe_detail.jobCreatedBy, jobCreatedBy);
+    assert.equal(audit.safe_detail.credentialCreatedBy, jobCreatedBy);
+    assert.equal(audit.safe_detail.credentialVersion, 1);
+    assert.equal(audit.safe_detail.credentialFingerprint, "F95F4754AFAE");
+    assert.equal(audit.safe_detail.credentialAccountSource, "credential_incarnation_v1");
+    assert.equal(
+      audit.safe_detail.credentialVerifiedAt,
+      "2026-08-25T11:40:32.606508Z",
+    );
+    assert.equal(
+      audit.safe_detail.credentialLastCheckedAt,
+      "2026-08-19T20:23:27.905445Z",
+    );
+    assert.equal(audit.safe_detail.credentialLastCheckStatus, "passed");
+    assert.equal(audit.safe_detail.credentialExpiresAt, null);
+    assert.equal(audit.safe_detail.runtimeActiveRelease, null);
+    assert.equal(audit.safe_detail.runtimeSchedulesActive, false);
+    assert.equal(audit.safe_detail.runtimeScheduleCount, 6);
+    assert.equal(audit.safe_detail.runtimeDistinctScheduleCount, 6);
+    assert.deepEqual(audit.safe_detail.runtimePreimage, {
+      active: false,
+      activeRelease: null,
+      configured: true,
+      distinctScheduleCount: 6,
+      reconciliationRequiredMutations: 4,
+      scheduleCount: 6,
+      unsafePendingMutations: 1,
+      version: "serverless_runtime_v2",
+    });
+    assert.equal(audit.safe_detail.auditPreimageCount, 0);
+    assert.equal(audit.safe_detail.auditInsertExpectedCount, 1);
     assert.equal(audit.safe_detail.operatorAction, "manual_coupang_wing_update");
+    const runtimePostimage = (await db.query(
+      "select public.sellerpilot_service_serverless_cs_wakeup_status() as status",
+    )).rows[0].status;
+    assert.equal(runtimePostimage.configured, true);
+    assert.equal(runtimePostimage.active, false);
+    assert.equal(runtimePostimage.activeRelease, null);
+    assert.equal(runtimePostimage.unsafePendingMutations, 0);
+    assert.equal(runtimePostimage.reconciliationRequiredMutations, 4);
   } finally {
     await db.close();
   }
@@ -413,11 +546,31 @@ for (const drift of [
   ["claim token", "update sellerpilot_private.channel_gateway_jobs set claim_token='10000000-0000-4000-8000-000000000001' where id=$1", [jobId]],
   ["lease", "update sellerpilot_private.channel_gateway_jobs set lease_expires_at='2026-09-01 05:20:24+00' where id=$1", [jobId]],
   ["provider boundary", "update sellerpilot_private.channel_gateway_jobs set provider_mutation_started_at=clock_timestamp() where id=$1", [jobId]],
+  ["job creator", "update sellerpilot_private.channel_gateway_jobs set created_by=$2 where id=$1", [jobId, ownerId]],
+  ["job created time", "update sellerpilot_private.channel_gateway_jobs set created_at=created_at + interval '1 second' where id=$1", [jobId]],
+  ["credential refresh claim", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=true,credential_refresh_started_at=clock_timestamp() where id=$1", [jobId]],
+  ["prepared credential", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_prepared_at=clock_timestamp(),prepared_credential_id=$2 where id=$1", [jobId, credentialId]],
+  ["credential recovery vault", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_recovery_vault_id='10000000-0000-4000-8000-000000000001' where id=$1", [jobId]],
+  ["OAuth provider call", "update sellerpilot_private.channel_gateway_jobs set oauth_provider_call_started_at=clock_timestamp() where id=$1", [jobId]],
   ["request fingerprint", "update sellerpilot_private.channel_gateway_jobs set request_fingerprint=$2 where id=$1", [jobId, "f".repeat(64)]],
   ["request payload", "update sellerpilot_private.channel_gateway_jobs set request_payload=jsonb_set(request_payload,'{arguments,sellerProductId}','\"different\"'::jsonb) where id=$1", [jobId]],
   ["listing identity", "update sellerpilot_private.product_listings set remote_id='different' where id=$1", [listingId]],
   ["product identity", "update sellerpilot_private.products set sku='different' where id=$1", [productId]],
   ["credential fingerprint", "update sellerpilot_private.channel_credentials set fingerprint='different' where id=$1", [credentialId]],
+  ["credential version", "update sellerpilot_private.channel_credentials set version=2 where id=$1", [credentialId]],
+  ["credential account source", "update sellerpilot_private.channel_credentials set seller_account_key_source='different' where id=$1", [credentialId]],
+  ["credential verified time", "update sellerpilot_private.channel_credentials set seller_account_verified_at=seller_account_verified_at + interval '1 second' where id=$1", [credentialId]],
+  ["credential last checked time", "update sellerpilot_private.channel_credentials set last_checked_at=last_checked_at + interval '1 second' where id=$1", [credentialId]],
+  ["credential last check status", "update sellerpilot_private.channel_credentials set last_check_status='failed' where id=$1", [credentialId]],
+  ["credential expiry", "update sellerpilot_private.channel_credentials set expires_at='2099-09-01 05:15:24+00' where id=$1", [credentialId]],
+  ["credential creator", "update sellerpilot_private.channel_credentials set created_by=$2 where id=$1", [credentialId, ownerId]],
+  ["permit credential version", "update sellerpilot_private.exact_existing_update_permits set credential_version=2 where permit_id=$1", [permitId]],
+  ["permit credential fingerprint", "update sellerpilot_private.exact_existing_update_permits set credential_fingerprint='different' where permit_id=$1", [permitId]],
+  ["permit credential account source", "update sellerpilot_private.exact_existing_update_permits set credential_account_source='different' where permit_id=$1", [permitId]],
+  ["permit credential verified time", "update sellerpilot_private.exact_existing_update_permits set credential_verified_at=credential_verified_at + interval '1 second' where permit_id=$1", [permitId]],
+  ["permit credential last checked time", "update sellerpilot_private.exact_existing_update_permits set credential_last_checked_at=credential_last_checked_at + interval '1 second' where permit_id=$1", [permitId]],
+  ["permit credential last check status", "update sellerpilot_private.exact_existing_update_permits set credential_last_check_status='failed' where permit_id=$1", [permitId]],
+  ["permit credential expiry", "update sellerpilot_private.exact_existing_update_permits set credential_expires_at='2099-09-01 05:15:24+00' where permit_id=$1", [permitId]],
   ["release fingerprint", "update sellerpilot_private.exact_existing_update_permits set release_sha=$2 where permit_id=$1", [permitId, "f".repeat(40)]],
   ["unexpired permit", "update sellerpilot_private.exact_existing_update_permits set expires_at='2099-09-01 05:15:24+00' where permit_id=$1", [permitId]],
 ]) {
@@ -490,6 +643,103 @@ test("enabled Coupang static egress fails closed", async () => {
     await db.close();
   }
 });
+
+test("enabled Coupang policy fails closed even when the request-context helper is false", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase({
+    policyEnabled: true,
+    staticEgress: false,
+  });
+  try {
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("one active runtime schedule fails closed even though active release is null", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase({
+    partiallyActiveRuntime: true,
+  });
+  try {
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("an incomplete inactive runtime schedule set fails closed", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase();
+  try {
+    await db.query(
+      "delete from cron.job where jobname='sellerpilot-maintenance-v1'",
+    );
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("six inactive rows with one missing and one duplicated schedule fail closed", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase();
+  try {
+    await db.exec(`
+      delete from cron.job where jobname='sellerpilot-maintenance-v1';
+      insert into cron.job (jobname,active)
+      values ('sellerpilot-product-research-v1',false);
+    `);
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("a fully active runtime fails closed", async () => {
+  const { db, migration: fixtureMigration } = await createDatabase({
+    runtimeActive: true,
+  });
+  try {
+    await assert.rejects(
+      db.exec(fixtureMigration),
+      /COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH/u,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+for (const [label, statement, parameters] of [
+  ["creator", "update sellerpilot_private.channel_gateway_jobs set created_by=$2 where id=$1", [jobId, ownerId]],
+  ["created time", "update sellerpilot_private.channel_gateway_jobs set created_at=created_at + interval '1 second' where id=$1", [jobId]],
+  ["refresh claim", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_in_flight=true,credential_refresh_started_at=clock_timestamp() where id=$1", [jobId]],
+  ["prepared credential", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_prepared_at=clock_timestamp(),prepared_credential_id=$2 where id=$1", [jobId, credentialId]],
+  ["recovery vault", "update sellerpilot_private.channel_gateway_jobs set credential_refresh_recovery_vault_id='10000000-0000-4000-8000-000000000001' where id=$1", [jobId]],
+  ["OAuth provider call", "update sellerpilot_private.channel_gateway_jobs set oauth_provider_call_started_at=clock_timestamp() where id=$1", [jobId]],
+]) {
+  test(`terminal job rejects privileged ${label} drift`, async () => {
+    const { db, migration: fixtureMigration } = await createDatabase();
+    try {
+      await db.exec(fixtureMigration);
+      await assert.rejects(
+        db.query(statement, parameters),
+        /exact existing update job lineage invalid/u,
+      );
+    } finally {
+      await db.close();
+    }
+  });
+}
 
 test("clean replay patches the state machine without manufacturing production rows", async () => {
   const { db, migration: fixtureMigration } = await createDatabase({ insertExactRows: false });

@@ -10,7 +10,18 @@ set local lock_timeout = '5s';
 set local statement_timeout = '30s';
 set local timezone = 'UTC';
 
+-- Serialize with runtime canary/schedule activation before inspecting cron.
+select pg_catalog.pg_advisory_xact_lock(193674993, 821065060);
 select pg_catalog.pg_advisory_xact_lock(193674993, 911600001);
+
+-- Freeze every gateway mutation while the global unsafe-pending count and the
+-- exact target row are proved. This does not block readers.
+lock table sellerpilot_private.channel_gateway_jobs
+  in share row exclusive mode;
+lock table sellerpilot_private.operation_audit
+  in share row exclusive mode;
+lock table cron.job
+  in share row exclusive mode;
 
 -- The original permit state machine allowed expiration only before a job was
 -- attached. Add one terminal state for this exact, already-attached permit.
@@ -276,11 +287,23 @@ begin
      and v_job.provider_mutation_started_at is null
      and v_job.response_payload is null
      and v_job.completed_at is not null
+     and v_job.created_by =
+           '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+     and v_job.created_at =
+           '2026-09-01 05:10:35.344034+00'::timestamptz
+     and not v_job.credential_refresh_in_flight
+     and v_job.credential_refresh_started_at is null
+     and v_job.credential_refresh_prepared_at is null
+     and v_job.prepared_credential_id is null
+     and v_job.credential_refresh_recovery_vault_id is null
+     and v_job.oauth_provider_call_started_at is null
      and v_job.error_message =
            '쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.'
      and exists (
        select 1
          from sellerpilot_private.exact_existing_update_permits permit
+         join sellerpilot_private.channel_credentials credential
+           on credential.id = permit.credential_id
         where permit.permit_id =
                 '0c07232d-4084-42ce-af09-b6da16235465'::uuid
           and permit.update_job_id = v_job.id
@@ -303,6 +326,36 @@ begin
           and permit.consumed_at is null
           and permit.invalidated_at is not null
           and permit.invalidation_reason = 'unclaimed_static_egress'
+          and credential.id =
+                '32de2968-d4b7-4fda-a84b-16a7ce0257cc'::uuid
+          and credential.environment = 'production'
+          and credential.status = 'active'
+          and credential.version = 1
+          and credential.fingerprint = 'F95F4754AFAE'
+          and credential.seller_account_key =
+                'e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd'
+          and credential.seller_account_key_source =
+                'credential_incarnation_v1'
+          and credential.seller_account_verified_at =
+                '2026-08-25 11:40:32.606508+00'::timestamptz
+          and credential.last_checked_at =
+                '2026-08-19 20:23:27.905445+00'::timestamptz
+          and credential.last_check_status = 'passed'
+          and credential.expires_at is null
+          and credential.created_by =
+                '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+          and permit.credential_version = credential.version
+          and permit.credential_fingerprint = credential.fingerprint
+          and permit.credential_account_source =
+                credential.seller_account_key_source
+          and permit.credential_verified_at =
+                credential.seller_account_verified_at
+          and permit.credential_expires_at is not distinct from
+                credential.expires_at
+          and permit.credential_last_checked_at is not distinct from
+                credential.last_checked_at
+          and permit.credential_last_check_status is not distinct from
+                credential.last_check_status
      )
   then return new; end if;
 
@@ -377,6 +430,8 @@ do $reconcile_exact_coupang_unclaimed_static_egress_job$
 declare
   v_owner_id constant uuid :=
     '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c'::uuid;
+  v_job_created_by constant uuid :=
+    '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid;
   v_product_id constant uuid :=
     'ddccde35-9c58-4856-b673-d7aa27ce4220'::uuid;
   v_listing_id constant uuid :=
@@ -401,6 +456,11 @@ declare
     'e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd';
   v_manual_message constant text :=
     '쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.';
+  v_runtime_status jsonb;
+  v_schedule_count integer;
+  v_distinct_schedule_count integer;
+  v_active_schedule_count integer;
+  v_audit_preimage_count integer;
   v_present_rows integer;
   v_updated_rows integer;
 begin
@@ -427,6 +487,54 @@ begin
       using errcode = '55000';
   end if;
 
+  -- The activation RPC uses the advisory lock acquired above. Lock the exact
+  -- six schedule rows as well, then prove that none is active.
+  select count(*)::integer,
+         count(distinct schedule.jobname)::integer,
+         count(*) filter (where schedule.active)::integer
+    into v_schedule_count, v_distinct_schedule_count, v_active_schedule_count
+    from (
+      select job.jobname, job.active
+        from cron.job job
+       where job.jobname in (
+         'sellerpilot-serverless-cs-wake-v1',
+         'sellerpilot-product-research-v1',
+         'sellerpilot-channel-sync-v1',
+         'sellerpilot-competitor-prices-v1',
+         'sellerpilot-kakao-notifications-v1',
+         'sellerpilot-maintenance-v1'
+       )
+       for update
+    ) schedule;
+
+  select public.sellerpilot_service_serverless_cs_wakeup_status()
+    into v_runtime_status;
+  if v_schedule_count <> 6
+     or v_distinct_schedule_count <> 6
+     or v_active_schedule_count <> 0
+     or v_runtime_status->>'configured' <> 'true'
+     or v_runtime_status->>'version' <> 'serverless_runtime_v2'
+     or v_runtime_status->>'scheduleCount' <> '6'
+     or v_runtime_status->>'active' <> 'false'
+     or v_runtime_status->'activeRelease' <> 'null'::jsonb
+     or v_runtime_status->>'unsafePendingMutations' <> '1'
+     or v_runtime_status->>'reconciliationRequiredMutations' <> '4'
+  then
+    raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_PREFLIGHT_MISMATCH'
+      using errcode = '55000';
+  end if;
+
+  select count(*)::integer
+    into v_audit_preimage_count
+    from sellerpilot_private.operation_audit audit
+   where audit.action = 'coupang_unclaimed_static_egress_job_retired'
+     and audit.entity_type = 'channel_gateway_job'
+     and audit.entity_id = v_job_id::text;
+  if v_audit_preimage_count <> 0 then
+    raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_AUDIT_PREIMAGE_MISMATCH'
+      using errcode = '55000';
+  end if;
+
   perform 1
     from sellerpilot_private.product_listings listing
     join sellerpilot_private.products product
@@ -448,6 +556,8 @@ begin
       on credential.id = attempt.credential_id
      and credential.channel = listing.channel_key
      and credential.seller_account_key = listing.seller_account_key
+    join sellerpilot_private.serverless_static_egress_policy egress_policy
+      on egress_policy.channel = listing.channel_key
     join sellerpilot_private.exact_existing_update_permits permit
       on permit.permit_id = v_permit_id
      and permit.update_job_id = job.id
@@ -510,7 +620,7 @@ begin
      and job.provider_mutation_started_at is null
      and job.response_payload is null
      and job.error_message is null
-     and job.created_by = v_owner_id
+     and job.created_by = v_job_created_by
      and job.created_at =
            '2026-09-01 05:10:35.344034+00'::timestamptz
      and job.request_fingerprint = v_request_fingerprint
@@ -534,11 +644,25 @@ begin
      and credential.fingerprint = 'F95F4754AFAE'
      and credential.seller_account_key = v_seller_account_key
      and credential.seller_account_key_source = 'credential_incarnation_v1'
-     and credential.seller_account_verified_at is not null
-     and credential.last_checked_at is not null
+     and credential.seller_account_verified_at =
+           '2026-08-25 11:40:32.606508+00'::timestamptz
+     and credential.last_checked_at =
+           '2026-08-19 20:23:27.905445+00'::timestamptz
      and credential.last_check_status = 'passed'
      and credential.expires_at is null
+     and credential.created_by = v_job_created_by
      and permit.channel = 'coupang'
+     and permit.credential_version = credential.version
+     and permit.credential_fingerprint = credential.fingerprint
+     and permit.credential_account_source =
+           credential.seller_account_key_source
+     and permit.credential_verified_at =
+           credential.seller_account_verified_at
+     and permit.credential_expires_at is not distinct from credential.expires_at
+     and permit.credential_last_checked_at is not distinct from
+           credential.last_checked_at
+     and permit.credential_last_check_status is not distinct from
+           credential.last_check_status
      and permit.release_sha = v_release_sha
      and permit.request_fingerprint = v_request_fingerprint
      and permit.arguments_sha256 = v_arguments_sha256
@@ -556,8 +680,34 @@ begin
      and permit.consumed_at is null
      and permit.invalidated_at is null
      and permit.invalidation_reason is null
-     and sellerpilot_private.active_serverless_runtime_release_sha() =
-           v_release_sha
+     and not egress_policy.enabled
+     and public.sellerpilot_service_serverless_static_egress_status()
+           ->> 'coupang' = 'false'
+     and sellerpilot_private.active_serverless_runtime_release_sha() is null
+     and (
+       select count(*)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) = 6
+     and (
+       select count(*) filter (where schedule.active)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+     ) = 0
      and not sellerpilot_private.serverless_static_egress_allowed('coupang')
      and not exists (
        select 1
@@ -578,7 +728,8 @@ begin
             'queued', 'running', 'reconciliation_required'
           )
      )
-   for update of listing, product, attempt, job, credential, permit;
+   for update of listing, product, attempt, job, credential, permit,
+     egress_policy;
 
   if not found then
     raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_PREFLIGHT_MISMATCH'
@@ -591,12 +742,39 @@ begin
          completed_at = clock_timestamp(),
          updated_at = clock_timestamp()
    where job.id = v_job_id
+     and job.credential_id = v_credential_id
+     and job.attempt_id = v_attempt_id
+     and job.listing_id = v_listing_id
+     and job.channel = 'coupang'
+     and job.operation = 'listing.update'
+     and job.environment = 'production'
      and job.status = 'queued'
      and job.attempt_count = 0
      and job.worker_token_id is null
      and job.claim_token is null
      and job.lease_expires_at is null
-     and job.provider_mutation_started_at is null;
+     and job.started_at is null
+     and job.completed_at is null
+     and job.provider_mutation_started_at is null
+     and job.response_payload is null
+     and job.error_message is null
+     and job.created_by = v_job_created_by
+     and job.created_at =
+           '2026-09-01 05:10:35.344034+00'::timestamptz
+     and not job.credential_refresh_in_flight
+     and job.credential_refresh_started_at is null
+     and job.credential_refresh_prepared_at is null
+     and job.prepared_credential_id is null
+     and job.credential_refresh_recovery_vault_id is null
+     and job.oauth_provider_call_started_at is null
+     and job.request_fingerprint = v_request_fingerprint
+     and encode(extensions.digest(
+           (job.request_payload->'arguments')::text, 'sha256'
+         ), 'hex') = v_arguments_sha256
+     and octet_length((job.request_payload->'arguments')::text) = 20011
+     and encode(extensions.digest(job.request_payload::text, 'sha256'), 'hex') =
+           v_request_payload_sha256
+     and octet_length(job.request_payload::text) = 20026;
   get diagnostics v_updated_rows = row_count;
   if v_updated_rows <> 1 then
     raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_JOB_RETIRE_FAILED'
@@ -669,8 +847,17 @@ begin
       'remoteId', '16356981734',
       'providerResourceId', '95962393877',
       'credentialId', v_credential_id,
+      'credentialCreatedBy', v_job_created_by,
+      'credentialVersion', 1,
+      'credentialFingerprint', 'F95F4754AFAE',
+      'credentialAccountSource', 'credential_incarnation_v1',
+      'credentialVerifiedAt', '2026-08-25T11:40:32.606508Z',
+      'credentialLastCheckedAt', '2026-08-19T20:23:27.905445Z',
+      'credentialLastCheckStatus', 'passed',
+      'credentialExpiresAt', null,
       'attemptId', v_attempt_id,
       'jobId', v_job_id,
+      'jobCreatedBy', v_job_created_by,
       'permitId', v_permit_id,
       'releaseSha', v_release_sha,
       'requestFingerprint', v_request_fingerprint,
@@ -687,10 +874,33 @@ begin
       'providerMutationStarted', false,
       'providerCallReplayed', false,
       'staticEgressAllowed', false,
+      'runtimeActiveRelease', null,
+      'runtimeSchedulesActive', false,
+      'runtimeScheduleCount', 6,
+      'runtimeDistinctScheduleCount', 6,
+      'runtimePreimage', jsonb_build_object(
+        'configured', (v_runtime_status->>'configured')::boolean,
+        'version', v_runtime_status->>'version',
+        'scheduleCount', (v_runtime_status->>'scheduleCount')::integer,
+        'distinctScheduleCount', v_distinct_schedule_count,
+        'active', (v_runtime_status->>'active')::boolean,
+        'activeRelease', v_runtime_status->'activeRelease',
+        'unsafePendingMutations',
+          (v_runtime_status->>'unsafePendingMutations')::integer,
+        'reconciliationRequiredMutations',
+          (v_runtime_status->>'reconciliationRequiredMutations')::integer
+      ),
+      'auditPreimageCount', v_audit_preimage_count,
+      'auditInsertExpectedCount', 1,
       'operatorAction', 'manual_coupang_wing_update'
     ),
     clock_timestamp()
   );
+  get diagnostics v_updated_rows = row_count;
+  if v_updated_rows <> 1 then
+    raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_AUDIT_INSERT_FAILED'
+      using errcode = '55000';
+  end if;
 end;
 $reconcile_exact_coupang_unclaimed_static_egress_job$;
 
@@ -698,7 +908,50 @@ do $exact_coupang_unclaimed_static_egress_postimage$
 declare
   v_manual_message constant text :=
     '쿠팡 API는 승인된 고정 egress가 없어 실행하지 않았습니다. 판매자 WING에서 기존 상품을 수동 수정하고 판매 상태를 확인해 주세요.';
+  v_runtime_status jsonb;
 begin
+  if exists (
+    select 1
+      from sellerpilot_private.channel_gateway_jobs job
+     where job.id = 'f22d0a45-c887-4e3a-b1f8-60f02627e133'::uuid
+  ) then
+    select public.sellerpilot_service_serverless_cs_wakeup_status()
+      into v_runtime_status;
+    if v_runtime_status->>'configured' <> 'true'
+     or v_runtime_status->>'version' <> 'serverless_runtime_v2'
+     or v_runtime_status->>'scheduleCount' <> '6'
+     or v_runtime_status->>'active' <> 'false'
+     or v_runtime_status->'activeRelease' <> 'null'::jsonb
+     or v_runtime_status->>'unsafePendingMutations' <> '0'
+     or v_runtime_status->>'reconciliationRequiredMutations' <> '4'
+     or sellerpilot_private.active_serverless_runtime_release_sha() is not null
+     or public.sellerpilot_service_serverless_static_egress_status()
+          ->> 'coupang' <> 'false'
+     or (
+       select count(*)::integer
+         from sellerpilot_private.serverless_static_egress_policy policy
+        where policy.channel = 'coupang'
+          and not policy.enabled
+     ) <> 1
+     or (
+       select count(distinct schedule.jobname)::integer
+         from cron.job schedule
+        where schedule.jobname in (
+          'sellerpilot-serverless-cs-wake-v1',
+          'sellerpilot-product-research-v1',
+          'sellerpilot-channel-sync-v1',
+          'sellerpilot-competitor-prices-v1',
+          'sellerpilot-kakao-notifications-v1',
+          'sellerpilot-maintenance-v1'
+        )
+          and not schedule.active
+     ) <> 6
+    then
+      raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_RUNTIME_POSTIMAGE_INVALID'
+        using errcode = '55000';
+    end if;
+  end if;
+
   if exists (
        select 1
          from sellerpilot_private.channel_gateway_jobs job
@@ -713,15 +966,40 @@ begin
          join sellerpilot_private.exact_existing_update_permits permit
            on permit.update_job_id = job.id
           and permit.update_attempt_id = attempt.id
+         join sellerpilot_private.channel_credentials credential
+           on credential.id = job.credential_id
         where job.id = 'f22d0a45-c887-4e3a-b1f8-60f02627e133'::uuid
           and job.status = 'cancelled'
           and job.attempt_count = 0
           and job.worker_token_id is null
           and job.claim_token is null
           and job.lease_expires_at is null
+          and job.started_at is null
           and job.provider_mutation_started_at is null
           and job.response_payload is null
           and job.completed_at is not null
+          and job.created_by =
+                '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+          and job.created_at =
+                '2026-09-01 05:10:35.344034+00'::timestamptz
+          and not job.credential_refresh_in_flight
+          and job.credential_refresh_started_at is null
+          and job.credential_refresh_prepared_at is null
+          and job.prepared_credential_id is null
+          and job.credential_refresh_recovery_vault_id is null
+          and job.oauth_provider_call_started_at is null
+          and job.request_fingerprint =
+                '5f4e3bca5d2a82c111fa86b2838de44353fe4d11bedb34435f9912c41f71c4fb'
+          and encode(extensions.digest(
+                (job.request_payload->'arguments')::text, 'sha256'
+              ), 'hex') =
+                '1054c64d400b65fc4214b15407a013c9b9a434fa4ac32374fb8203236954bf7b'
+          and octet_length((job.request_payload->'arguments')::text) = 20011
+          and encode(extensions.digest(
+                job.request_payload::text, 'sha256'
+              ), 'hex') =
+                '7872552ce349e9101f94c80b669f6fe66aad596c92934482ad731b6080704a94'
+          and octet_length(job.request_payload::text) = 20026
           and job.error_message = v_manual_message
           and attempt.id = '84afed0d-cc13-413d-b839-c35346f9b09f'::uuid
           and attempt.status = 'manual_required'
@@ -738,14 +1016,40 @@ begin
           and listing.published_at is null
           and permit.permit_id =
                 '0c07232d-4084-42ce-af09-b6da16235465'::uuid
+          and credential.id =
+                '32de2968-d4b7-4fda-a84b-16a7ce0257cc'::uuid
+          and credential.version = 1
+          and credential.fingerprint = 'F95F4754AFAE'
+          and credential.seller_account_key_source =
+                'credential_incarnation_v1'
+          and credential.seller_account_verified_at =
+                '2026-08-25 11:40:32.606508+00'::timestamptz
+          and credential.last_checked_at =
+                '2026-08-19 20:23:27.905445+00'::timestamptz
+          and credential.last_check_status = 'passed'
+          and credential.expires_at is null
+          and credential.created_by =
+                '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+          and permit.credential_version = credential.version
+          and permit.credential_fingerprint = credential.fingerprint
+          and permit.credential_account_source =
+                credential.seller_account_key_source
+          and permit.credential_verified_at =
+                credential.seller_account_verified_at
+          and permit.credential_expires_at is not distinct from
+                credential.expires_at
+          and permit.credential_last_checked_at is not distinct from
+                credential.last_checked_at
+          and permit.credential_last_check_status is not distinct from
+                credential.last_check_status
           and permit.invalidated_at is not null
           and permit.invalidation_reason = 'unclaimed_static_egress'
           and permit.bound_at is null
           and permit.bound_worker_token_id is null
           and permit.bound_claim_token is null
           and permit.consumed_at is null
-          and exists (
-            select 1
+          and (
+            select count(*)::integer
               from sellerpilot_private.operation_audit audit
              where audit.action =
                      'coupang_unclaimed_static_egress_job_retired'
@@ -755,7 +1059,49 @@ begin
                      'coupang_unclaimed_static_egress_retirement_v1'
                and audit.safe_detail->>'providerCallReplayed' = 'false'
                and audit.safe_detail->>'providerMutationStarted' = 'false'
-          )
+               and audit.safe_detail->>'jobCreatedBy' =
+                     '21eb1892-0894-4f9f-b414-4c9464182dd6'
+               and audit.safe_detail->>'credentialVersion' = '1'
+               and audit.safe_detail->>'credentialCreatedBy' =
+                     '21eb1892-0894-4f9f-b414-4c9464182dd6'
+               and audit.safe_detail->>'credentialFingerprint' =
+                     'F95F4754AFAE'
+               and audit.safe_detail->>'credentialAccountSource' =
+                     'credential_incarnation_v1'
+               and audit.safe_detail->>'credentialVerifiedAt' =
+                     '2026-08-25T11:40:32.606508Z'
+               and audit.safe_detail->>'credentialLastCheckedAt' =
+                     '2026-08-19T20:23:27.905445Z'
+               and audit.safe_detail->>'credentialLastCheckStatus' = 'passed'
+               and audit.safe_detail->'credentialExpiresAt' = 'null'::jsonb
+               and audit.safe_detail->'runtimeActiveRelease' = 'null'::jsonb
+               and audit.safe_detail->>'runtimeSchedulesActive' = 'false'
+               and audit.safe_detail->>'runtimeScheduleCount' = '6'
+               and audit.safe_detail->>'runtimeDistinctScheduleCount' = '6'
+               and audit.safe_detail->'runtimePreimage'->>'configured' = 'true'
+               and audit.safe_detail->'runtimePreimage'->>'version' =
+                     'serverless_runtime_v2'
+               and audit.safe_detail->'runtimePreimage'->>'scheduleCount' = '6'
+               and audit.safe_detail->'runtimePreimage'
+                     ->>'distinctScheduleCount' = '6'
+               and audit.safe_detail->'runtimePreimage'->>'active' = 'false'
+               and audit.safe_detail->'runtimePreimage'->'activeRelease' =
+                     'null'::jsonb
+               and audit.safe_detail->'runtimePreimage'
+                     ->>'unsafePendingMutations' = '1'
+               and audit.safe_detail->'runtimePreimage'
+                     ->>'reconciliationRequiredMutations' = '4'
+               and audit.safe_detail->>'auditPreimageCount' = '0'
+               and audit.safe_detail->>'auditInsertExpectedCount' = '1'
+          ) = 1
+          and (
+            select count(*)::integer
+              from sellerpilot_private.operation_audit audit
+             where audit.action =
+                     'coupang_unclaimed_static_egress_job_retired'
+               and audit.entity_type = 'channel_gateway_job'
+               and audit.entity_id = job.id::text
+          ) = 1
      )
   then
     raise exception 'COUPANG_UNCLAIMED_STATIC_EGRESS_POSTIMAGE_INVALID'
