@@ -144,7 +144,6 @@ begin
        or
        (v_elevenst_listing.market = 'KR' and v_elevenst_listing.target_id = 'KR')
      )
-     or v_coupang_credential.created_by is distinct from v_owner_id
      or v_coupang_credential.channel is distinct from 'coupang'
      or v_coupang_credential.environment is distinct from 'production'
      or v_coupang_credential.status is distinct from 'active'

@@ -85,7 +85,7 @@ async function createDatabase({ withExactRows = true } = {}) {
        expires_at,seller_account_key,seller_account_key_source,
        seller_account_verified_at,last_checked_at,last_check_status
      ) values
-       ($1,$2,'coupang','production',7,'ABCDEF123456','active',null,$3,
+       ($1,$6,'coupang','production',7,'ABCDEF123456','active',null,$3,
         'credential_incarnation_v1',clock_timestamp(),clock_timestamp(),'passed'),
        ($4,$2,'elevenst','production',2,'654321FEDCBA','active',null,$5,
         'credential_incarnation_v1',clock_timestamp(),clock_timestamp(),'passed')`,
@@ -95,6 +95,7 @@ async function createDatabase({ withExactRows = true } = {}) {
       coupangSellerKey,
       elevenstCredentialId,
       elevenstSellerKey,
+      otherOwnerId,
     ],
   );
   await db.query(
@@ -148,6 +149,16 @@ test("exact domestic market-target backfill is tuple-scoped and does not loosen 
   assert.match(migration, /currency is distinct from 'KRW'/u);
   assert.match(migration, /price is distinct from 5000/u);
   assert.match(migration, /seller_account_key is distinct from/u);
+  assert.doesNotMatch(
+    migration,
+    /v_coupang_credential\.created_by is distinct from v_owner_id/u,
+    "Coupang static credentials are shared across approved workspace admins",
+  );
+  assert.match(
+    migration,
+    /v_elevenst_credential\.created_by is distinct from v_owner_id/u,
+    "11st keeps its already-matching exact owner condition",
+  );
   assert.match(migration, /market = '' and v_coupang_listing\.target_id = ''/u);
   assert.match(migration, /market = 'KR' and v_coupang_listing\.target_id = 'KR'/u);
   assert.doesNotMatch(
@@ -164,6 +175,11 @@ test("only the two exact blank identities become KR/KR and replay is idempotent"
   const db = await createDatabase();
   try {
     const before = await listings(db);
+    const coupangCredentialBefore = (await db.query(
+      "select created_by from sellerpilot_private.channel_credentials where id=$1",
+      [coupangCredentialId],
+    )).rows[0];
+    assert.equal(coupangCredentialBefore.created_by, otherOwnerId);
     await db.exec(migration);
     const after = await listings(db);
     assert.equal(after.length, before.length);
@@ -211,7 +227,8 @@ const nearMisses = [
   ["price", `update sellerpilot_private.product_listings set price=5001 where id='${coupangListingId}'`],
   ["stock", `update sellerpilot_private.products set on_hand=2 where id='${productId}'`],
   ["listing lineage", `update sellerpilot_private.product_listings set seller_account_key='${"f".repeat(64)}' where id='${coupangListingId}'`],
-  ["credential owner", `update sellerpilot_private.channel_credentials set created_by='${otherOwnerId}' where id='${coupangCredentialId}'`],
+  ["credential channel", `update sellerpilot_private.channel_credentials set channel='smartstore' where id='${coupangCredentialId}'`],
+  ["credential status", `update sellerpilot_private.channel_credentials set status='revoked' where id='${coupangCredentialId}'`],
   ["credential lineage", `update sellerpilot_private.channel_credentials set seller_account_key='${"a".repeat(64)}' where id='${coupangCredentialId}'`],
   ["credential lineage source", `update sellerpilot_private.channel_credentials set seller_account_key_source='provider_certified_v1' where id='${coupangCredentialId}'`],
   ["half-filled market", `update sellerpilot_private.product_listings set market='KR',target_id='' where id='${coupangListingId}'`],
