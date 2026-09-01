@@ -173,6 +173,8 @@ const QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION =
   "20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql";
 const TEMU_EXACT_EXISTING_UPDATE_MIGRATION =
   "20260901173960_allow_exact_temu_existing_content_update.sql";
+const SHOPEE_SG_EXACT_UPDATE_MIGRATION =
+  "20260901173970_allow_exact_shopee_sg_existing_updates.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -897,6 +899,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LAZADA_BLANK_TARGET_ADOPTION_MIGRATION,
       EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION,
       TEMU_EXACT_EXISTING_UPDATE_MIGRATION,
+      SHOPEE_SG_EXACT_UPDATE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -13495,6 +13498,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
         && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
+        && name !== SHOPEE_SG_EXACT_UPDATE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -15232,6 +15236,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
         || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
+        || name === SHOPEE_SG_EXACT_UPDATE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

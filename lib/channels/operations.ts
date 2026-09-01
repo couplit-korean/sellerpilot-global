@@ -121,6 +121,14 @@ import {
 } from "./provider-shopee-publication-readback";
 import { shopeeExactGlobalCategoryPath } from "./shopee-category-tree";
 import {
+  assertShopeeSgExistingContentSource,
+  assertShopeeSgExistingInventorySource,
+  shopeeSgExistingUpdateBinding,
+  verifyShopeeSgExistingContentReadback,
+  verifyShopeeSgExistingInventoryReadback,
+  verifyShopeeSgExistingUpdatePrewrite,
+} from "./shopee-sg-existing-update";
+import {
   lazadaListingArgumentsForPublicationIntent,
   lazadaListingArgumentsForRemoteItem,
   lazadaListingRemoteIdFromArguments,
@@ -3422,6 +3430,9 @@ async function executeShopee(input: ExecuteInput) {
     return result(input, [step("category-attributes-compatibility", legacyRemote)], categoryId);
   }
   if (input.operation === "inventory.update") {
+    const exactExisting = shopeeSgExistingUpdateBinding(input.arguments, "inventory")
+      ? assertShopeeSgExistingInventorySource(input.arguments)
+      : null;
     const suppliedBody = input.arguments.body ? objectValue(input.arguments, "body") : null;
     const itemId = suppliedBody
       ? String(suppliedBody.item_id ?? suppliedBody.itemId ?? "").trim()
@@ -3438,6 +3449,53 @@ async function executeShopee(input: ExecuteInput) {
       ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
       : Number(suppliedQuantity);
     const steps: ChannelOperationStep[] = [];
+    if (exactExisting) {
+      const [shopRemote, itemRemote] = await Promise.all([
+        shopeeRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/api/v2/shop/get_shop_info",
+        }),
+        shopeeRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/api/v2/product/get_item_base_info",
+          query: new URLSearchParams({ item_id_list: exactExisting.itemId }),
+        }),
+      ]);
+      const exactPreflightStep = step("shopee-sg-existing-inventory-prewrite", itemRemote);
+      exactPreflightStep.ok = exactPreflightStep.ok
+        && shopRemote.response.ok
+        && !shopRemote.data.error
+        && verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.payload,
+          shopRemoteData: shopRemote.data,
+          itemRemoteData: itemRemote.data,
+          phase: "inventory",
+        });
+      exactPreflightStep.data = {
+        ...exactPreflightStep.data,
+        sellerpilotVerification: exactPreflightStep.ok
+          ? "SHOPEE_SG_EXISTING_INVENTORY_PREWRITE_VERIFIED"
+          : "SHOPEE_SG_EXISTING_INVENTORY_PREWRITE_MISMATCH",
+      };
+      steps.push(exactPreflightStep);
+      if (!exactPreflightStep.ok) return result(input, steps, itemId);
+      if (!input.providerMutationHooks) {
+        return result(input, [...steps, {
+          name: "shopee-sg-existing-inventory-provider-boundary",
+          ok: false,
+          status: 409,
+          data: {
+            sellerpilotNoWriteConfirmed: true,
+            sellerpilotVerification: "SHOPEE_SG_EXISTING_INVENTORY_PROVIDER_BOUNDARY_REQUIRED",
+          },
+        }], itemId);
+      }
+    }
     let writeBody = suppliedBody;
     if (!writeBody) {
       const modelsRemote = await shopeeRequest({
@@ -3456,6 +3514,11 @@ async function executeShopee(input: ExecuteInput) {
         ? modelList.map((model) => ({ model_id: Number(model.model_id), seller_stock: [{ stock: quantity }] }))
         : [{ model_id: 0, seller_stock: [{ stock: quantity }] }];
       writeBody = { item_id: Number(itemId), stock_list: stockList };
+    }
+    if (exactExisting) {
+      await input.providerMutationHooks!.assertLeaseHealthy();
+      await input.providerMutationHooks!.begin();
+      await input.providerMutationHooks!.assertLeaseHealthy();
     }
     const writeRemote = await shopeeRequest({
       payload: input.payload,
@@ -3479,10 +3542,30 @@ async function executeShopee(input: ExecuteInput) {
     const item = itemList.find((candidate) => String(candidate.item_id ?? "") === itemId) ?? itemList[0] ?? {};
     const stockInfo = objectValue(item, "stock_info_v2", false);
     const summaryInfo = objectValue(stockInfo, "summary_info", false);
-    steps.push(inventoryQuantityVerificationStep("inventory-readback", readback, quantity, summaryInfo.total_available_stock));
+    const readbackStep = inventoryQuantityVerificationStep(
+      "inventory-readback",
+      readback,
+      quantity,
+      summaryInfo.total_available_stock,
+    );
+    if (exactExisting) {
+      const exactEvidence = verifyShopeeSgExistingInventoryReadback({
+        argumentsValue: input.arguments,
+        remoteData: readback.data,
+      });
+      readbackStep.ok = readbackStep.ok && Boolean(exactEvidence);
+      readbackStep.data = {
+        ...readbackStep.data,
+        ...(exactEvidence ? { sellerpilotShopeeSgExistingReadback: exactEvidence } : {}),
+      };
+    }
+    steps.push(readbackStep);
     return result(input, steps, itemId);
   }
   if (input.operation === "listing.update") {
+    const exactExisting = shopeeSgExistingUpdateBinding(input.arguments, "content")
+      ? assertShopeeSgExistingContentSource(input.arguments)
+      : null;
     const localItemId = stringArgument(input.arguments, "localItemId");
     const body = objectValue(input.arguments, "body");
     if (String(body.item_id ?? "") !== localItemId) throw new Error("SHOPEE_LOCAL_ITEM_ID_MISMATCH");
@@ -3493,7 +3576,17 @@ async function executeShopee(input: ExecuteInput) {
       path: "/api/v2/product/get_item_base_info",
       query: new URLSearchParams({ item_id_list: localItemId }),
     });
-    const preflightRemote = await readLocalItem();
+    const [preflightRemote, shopRemote] = exactExisting
+      ? await Promise.all([
+          readLocalItem(),
+          shopeeRequest({
+            payload: input.payload,
+            environment: input.environment,
+            method: "GET",
+            path: "/api/v2/shop/get_shop_info",
+          }),
+        ])
+      : [await readLocalItem(), null];
     const preflightStep = step("local-item-preflight", preflightRemote);
     const preflightResponse = objectValue(preflightRemote.data, "response", false);
     const preflightItems = Array.isArray(preflightResponse.item_list)
@@ -3501,6 +3594,18 @@ async function executeShopee(input: ExecuteInput) {
       : [];
     const localIdentityVerified = preflightItems.some((item) => String(item.item_id ?? "") === localItemId);
     preflightStep.ok = preflightStep.ok && localIdentityVerified;
+    if (exactExisting) {
+      preflightStep.ok = preflightStep.ok
+        && Boolean(shopRemote?.response.ok)
+        && !shopRemote?.data.error
+        && verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.payload,
+          shopRemoteData: shopRemote?.data ?? {},
+          itemRemoteData: preflightRemote.data,
+          phase: "content",
+        });
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok ? "SHOPEE_LOCAL_ITEM_ID_VERIFIED" : "SHOPEE_LOCAL_ITEM_ID_NOT_FOUND",
@@ -3529,6 +3634,17 @@ async function executeShopee(input: ExecuteInput) {
         listingUpdateReadbackStep("listing-readback", verification.remote, input.channel, input.arguments),
         verification,
       );
+      if (exactExisting) {
+        const exactEvidence = verifyShopeeSgExistingContentReadback({
+          argumentsValue: input.arguments,
+          remoteData: verification.remote.data,
+        });
+        readbackStep.ok = readbackStep.ok && Boolean(exactEvidence);
+        readbackStep.data = {
+          ...readbackStep.data,
+          ...(exactEvidence ? { sellerpilotShopeeSgExistingReadback: exactEvidence } : {}),
+        };
+      }
       return result(input, [preflightStep, writeStep, readbackStep], localItemId, undefined, verification.remoteState);
     }
     const readbackRemote = await readLocalItem();

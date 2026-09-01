@@ -38,6 +38,7 @@ import {
   fetchNaverAccessToken,
   lazadaRequest,
   readStoredNaverAccessToken,
+  readStoredShopeeShopAccessToken,
   runWithProviderReadOnlyTransport,
   runWithChannelRequestSignal,
   shopeeRequest,
@@ -45,6 +46,12 @@ import {
   type CredentialRefreshSnapshot,
   type SecretPayload,
 } from "./protocols";
+import {
+  assertShopeeSgExistingContentSource,
+  assertShopeeSgExistingInventorySource,
+  shopeeSgExistingUpdateArgument,
+  shopeeSgExistingUpdateBinding,
+} from "./shopee-sg-existing-update";
 import {
   executeProviderOAuthExchange,
   type ProviderOAuthClaim,
@@ -274,6 +281,19 @@ async function prepareCredential(
   if (input.job.channel === "shopee") {
     if (publicationReadOnly && !readProviderAccountIdentity(credential, "shopee")) {
       throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
+    }
+    const exactExistingUpdate = shopeeSgExistingUpdateBinding(arguments_);
+    if (exactExistingUpdate) {
+      const stored = readStoredShopeeShopAccessToken(
+        credential,
+        exactExistingUpdate.shopId,
+        10 * 60 * 1_000,
+      );
+      if (!stored) {
+        throw new Error("SHOPEE_SG_EXISTING_UPDATE_FRESH_OAUTH_REQUIRED");
+      }
+      credential = stored;
+      return { credential, arguments_, shopeeShopCredential: stored };
     }
     const sourceRemoteState = publicationSource?.success
       ? recordValue(publicationSource.data.sourceResponsePayload.remoteState)
@@ -689,6 +709,32 @@ export async function executeServerlessGatewayProviderJob(
           || !qoo10ExactAdoptedLocalizationBinding(rawArguments))) {
       throw new Error("QOO10_EXACT_ADOPTED_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
     }
+    const shopeeExactUpdateMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      shopeeSgExistingUpdateArgument,
+    );
+    const shopeeExactUpdatePhase = input.job.operation === "listing.update"
+      ? "content" as const
+      : input.job.operation === "inventory.update"
+        ? "inventory" as const
+        : null;
+    const shopeeExactUpdate = shopeeExactUpdatePhase
+      ? shopeeSgExistingUpdateBinding(rawArguments, shopeeExactUpdatePhase)
+      : null;
+    if (shopeeExactUpdateMarkerSupplied && (!shopeeExactUpdatePhase || !shopeeExactUpdate)) {
+      throw new Error("SHOPEE_SG_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+    }
+    if (shopeeExactUpdatePhase && shopeeExactUpdate) {
+      if (input.job.channel !== "shopee"
+          || input.job.credential_id !== shopeeExactUpdate.credentialId) {
+        throw new Error("SHOPEE_SG_EXISTING_UPDATE_LINEAGE_MISMATCH");
+      }
+      if (shopeeExactUpdatePhase === "content") {
+        assertShopeeSgExistingContentSource(rawArguments);
+      } else {
+        assertShopeeSgExistingInventorySource(rawArguments);
+      }
+    }
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"
       || input.job.operation === "listing.update"
@@ -696,7 +742,8 @@ export async function executeServerlessGatewayProviderJob(
     )
       && rawArguments.publicationStateContract === "verified_remote_state_v1"
       && (rawArguments.publicationIntent === "live"
-        || (input.job.channel === "temu" && rawArguments.publicationIntent === "safe_test"));
+        || ((input.job.channel === "temu" || Boolean(shopeeExactUpdate))
+          && rawArguments.publicationIntent === "safe_test"));
     const qoo10ActivationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
     const temuActivationMarkerSupplied = Object.hasOwn(rawArguments, "sellerpilotTemuActivation");
     const exactActivationContext = input.job.operation === "listing.activate"
@@ -787,10 +834,14 @@ export async function executeServerlessGatewayProviderJob(
     const delayedEbayExactUpdateBoundary = input.job.channel === "ebay"
       && input.job.operation === "listing.update"
       && Boolean(ebayExactRecovery);
+    const delayedShopeeExactInventoryBoundary = input.job.channel === "shopee"
+      && input.job.operation === "inventory.update"
+      && shopeeExactUpdate?.phase === "inventory";
     if (writeChannelOperations.has(input.job.operation)
         && !delayedTemuActivationBoundary
         && !delayedTemuExactUpdateBoundary
-        && !delayedEbayExactUpdateBoundary) {
+        && !delayedEbayExactUpdateBoundary
+        && !delayedShopeeExactInventoryBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -804,6 +855,7 @@ export async function executeServerlessGatewayProviderJob(
       ...(delayedTemuActivationBoundary
           || delayedTemuExactUpdateBoundary
           || delayedEbayExactUpdateBoundary
+          || delayedShopeeExactInventoryBoundary
         ? {
             providerMutationHooks: {
               begin: input.hooks.beginProviderMutation,

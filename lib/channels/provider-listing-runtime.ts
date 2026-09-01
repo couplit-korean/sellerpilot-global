@@ -41,6 +41,11 @@ import {
   type SecretPayload,
 } from "./protocols";
 import {
+  assertShopeeSgExistingContentSource,
+  shopeeSgExistingUpdateBinding,
+  verifyShopeeSgExistingUpdatePrewrite,
+} from "./shopee-sg-existing-update";
+import {
   bindSmartstoreUploadedProductImages,
   finalizeSmartstoreListingBody,
   smartstoreImageUploadPlan,
@@ -661,6 +666,43 @@ async function prepareShopeeListing(
 ): Promise<UnknownRecord> {
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 9);
   if (!imageUrls.length) throw new Error("SHOPEE_LISTING_IMAGES_MISSING");
+  const exactExisting = input.operation === "listing.update"
+      && shopeeSgExistingUpdateBinding(input.arguments, "content")
+    ? assertShopeeSgExistingContentSource(input.arguments)
+    : null;
+  if (exactExisting && imageUrls.length !== 9) {
+    throw new Error("SHOPEE_SG_EXISTING_UPDATE_EXACT_IMAGES_REQUIRED");
+  }
+  if (exactExisting) {
+    const [shopRemote, itemRemote] = await Promise.all([
+      shopeeRequest({
+        payload: input.credential,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/shop/get_shop_info",
+      }),
+      shopeeRequest({
+        payload: input.credential,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/product/get_item_base_info",
+        query: new URLSearchParams({ item_id_list: exactExisting.itemId }),
+      }),
+    ]);
+    if (!shopRemote.response.ok
+        || !itemRemote.response.ok
+        || shopRemote.data.error
+        || itemRemote.data.error
+        || !verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.credential,
+          shopRemoteData: shopRemote.data,
+          itemRemoteData: itemRemote.data,
+          phase: "content",
+        })) {
+      throw new Error("SHOPEE_SG_EXISTING_UPDATE_PREWRITE_MISMATCH");
+    }
+  }
   const logistics = await activeShopeeLogistics(
     input.credential,
     input.environment,
@@ -679,6 +721,9 @@ async function prepareShopeeListing(
   }
   return {
     ...input.arguments,
+    ...(exactExisting
+      ? { sellerpilotProviderDetailImageIds: imageIds.slice(1) }
+      : {}),
     body: {
       ...(recordValue(input.arguments.body) ?? {}),
       image: { image_id_list: imageIds },

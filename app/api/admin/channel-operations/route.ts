@@ -57,6 +57,16 @@ import {
   shopeeSgArgumentsForFingerprint,
 } from "../../../../lib/channels/shopee-sg-listing-create";
 import {
+  assertShopeeSgExistingContentSource,
+  assertShopeeSgExistingInventorySource,
+  bindShopeeSgExistingUpdateArguments,
+  shopeeSgExistingCentralProductVerified,
+  shopeeSgExistingUpdateArgument,
+  shopeeSgExistingUpdateCandidate,
+  shopeeSgExistingUpdateIdentity,
+  type ShopeeSgExistingUpdateIdentity,
+} from "../../../../lib/channels/shopee-sg-existing-update";
+import {
   mergeElevenstListingUpdateProduct,
   validateElevenstListingProduct,
 } from "../../../../lib/channels/elevenst-listing";
@@ -484,10 +494,14 @@ export async function POST(request: NextRequest) {
     productId: parsed.data.productId,
     listingId: parsed.data.resourceListingId,
   });
+  const exactShopeeSgContentUpdate = channel === "shopee"
+    && operation === "listing.update"
+    && parsed.data.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220";
   const contentBoundListingOperation = operation === "listing.create"
     || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
     || exactSmartstoreContentUpdate
     || exactTemuExistingContentUpdateRequest
+    || exactShopeeSgContentUpdate
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
@@ -644,6 +658,8 @@ export async function POST(request: NextRequest) {
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
   let boundLazadaExactLiveUpdate = false;
+  let boundShopeeSgExistingUpdate: ShopeeSgExistingUpdateIdentity | null = null;
+  let shopeeSgExistingUpdatePermitArmed = false;
   if (listingBoundOperation) {
     const productId = parsed.data.productId!;
     const resourceListingId = parsed.data.resourceListingId!;
@@ -907,6 +923,68 @@ export async function POST(request: NextRequest) {
         status: 409,
         headers: { "cache-control": "no-store, max-age=0" },
       });
+    }
+    const shopeeSgExistingPhase = operation === "listing.update"
+      ? "content" as const
+      : operation === "inventory.update"
+        ? "inventory" as const
+        : null;
+    const exactShopeeSgListing = shopeeSgExistingPhase
+      && shopeeSgExistingUpdateCandidate({
+        channel,
+        operation,
+        productId,
+        remoteId: typeof exactListing.remoteId === "string" ? exactListing.remoteId : null,
+        marketplaceSku: typeof exactListing.marketplaceSku === "string"
+          ? exactListing.marketplaceSku
+          : null,
+        market: typeof exactListing.market === "string" ? exactListing.market : null,
+        targetId: typeof exactListing.targetId === "string" ? exactListing.targetId : null,
+        status: typeof exactListing.status === "string" ? exactListing.status : null,
+        requestedPublicationIntent: typeof exactListing.requestedPublicationIntent === "string"
+          ? exactListing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof exactListing.remoteVisibility === "string"
+          ? exactListing.remoteVisibility
+          : null,
+        providerStatus: typeof exactListing.providerStatus === "string"
+          ? exactListing.providerStatus
+          : null,
+        publishedAt: typeof exactListing.publishedAt === "string"
+          ? exactListing.publishedAt
+          : null,
+      });
+    if (exactShopeeSgListing) {
+      if (!shopeeSgExistingCentralProductVerified(contextRecord)) {
+        return NextResponse.json({
+          message: "Shopee SG 기존 상품의 중앙 SKU·재고 1 결속을 확인하지 못해 수정하지 않았습니다.",
+          mode: "shopee_sg_existing_central_contract_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: exactIdentityData, error: exactIdentityError } = await serviceClient.rpc(
+        "sellerpilot_service_get_shopee_sg_exact_update_identity",
+        {
+          p_listing_id: resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_product_id: productId,
+          p_market: parsed.data.market,
+          p_target_id: parsed.data.targetId,
+          p_phase: shopeeSgExistingPhase,
+        },
+      );
+      const exactIdentity = shopeeSgExistingUpdateIdentity(
+        exactIdentityData,
+        shopeeSgExistingPhase,
+      );
+      if (exactIdentityError || !exactIdentity) {
+        return NextResponse.json({
+          message: "Shopee SG 채택 원장·현재 OAuth·기존 item 결속을 확인하지 못해 수정하지 않았습니다.",
+          mode: "shopee_sg_existing_atomic_identity_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      boundShopeeSgExistingUpdate = exactIdentity;
+      boundListingCurrency = exactIdentity.currency;
+      boundListingPrice = exactIdentity.priceSgd;
     }
     const exactCoupangQaListing = channel === "coupang"
       && productId === coupangExactQaRecoveryIdentity.productId
@@ -1450,6 +1528,21 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[ebayExactNoEffectRetryArgument];
   delete effectiveArguments[ebayExactV101ContentContractArgument];
   delete effectiveArguments[temuExactExistingUpdateArgument];
+  delete effectiveArguments[shopeeSgExistingUpdateArgument];
+  if (boundShopeeSgExistingUpdate) {
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
+    if (runtimeRelease.status !== "valid") {
+      return NextResponse.json({
+        message: "Shopee SG exact 갱신을 현재 서버 릴리스에 결속하지 못했습니다.",
+        mode: "shopee_sg_existing_update_release_required",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = bindShopeeSgExistingUpdateArguments({
+      argumentsValue: effectiveArguments,
+      identity: boundShopeeSgExistingUpdate,
+      releaseSha: runtimeRelease.release,
+    });
+  }
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -2027,6 +2120,38 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
     }
+    if (boundShopeeSgExistingUpdate?.phase === "content" && closedReleaseGateIsExact) {
+      if (runtimeRelease.status !== "valid") {
+        return NextResponse.json({
+          message: "Shopee SG exact 상품 수정을 현재 서버 릴리스에 결속하지 못했습니다.",
+          mode: "shopee_sg_existing_update_release_required",
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      const { data: permitData, error: permitError } = await serviceClient.rpc(
+        "sellerpilot_service_arm_shopee_sg_exact_update",
+        {
+          p_phase: "content",
+          p_listing_id: parsed.data.resourceListingId,
+          p_credential_id: parsed.data.credentialId,
+          p_release_sha: runtimeRelease.release,
+          p_request_fingerprint: requestFingerprint,
+        },
+      );
+      shopeeSgExistingUpdatePermitArmed = !permitError
+        && isRecord(permitData)
+        && permitData.contract === "shopee_sg_exact_update_permit_v1"
+        && permitData.phase === "content"
+        && permitData.listingId === parsed.data.resourceListingId
+        && permitData.releaseSha === runtimeRelease.release
+        && permitData.requestFingerprint === requestFingerprint
+        && permitData.bound === false;
+      if (!shopeeSgExistingUpdatePermitArmed) {
+        return NextResponse.json({
+          message: "Shopee SG exact 콘텐츠 수정의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
+          mode: "shopee_sg_existing_update_permit_required",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
     const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
       && (globalReleaseGateIsExact
         ? releaseGateStatus.effectiveOpen === true
@@ -2036,11 +2161,68 @@ export async function POST(request: NextRequest) {
     if (!channelReleaseGateIsEffective
         && !qoo10ExactLocalizationUpdatePermitArmed
         && !smartstoreExactQaUpdatePermitArmed
-        && !exactExistingUpdatePermitArmed) {
+        && !exactExistingUpdatePermitArmed
+        && !shopeeSgExistingUpdatePermitArmed) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
         mode: "listing_mutation_release_gate_closed",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  if (boundShopeeSgExistingUpdate?.phase === "inventory") {
+    try {
+      assertShopeeSgExistingInventorySource(effectiveArguments);
+    } catch {
+      return NextResponse.json({
+        message: "Shopee SG exact 재고 수정은 기존 item의 재고 1만 별도 요청할 수 있습니다.",
+        mode: "shopee_sg_existing_inventory_contract_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const [gateResult, runtimeResult] = await Promise.all([
+      serviceClient.rpc("sellerpilot_service_listing_mutation_release_gate_status"),
+      serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+    ]);
+    const gate = isRecord(gateResult.data) ? gateResult.data : null;
+    const runtime = isRecord(runtimeResult.data) ? runtimeResult.data : null;
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
+    if (gateResult.error
+        || runtimeResult.error
+        || gate?.contract !== "verified_publication_release_gate_v1"
+        || gate.open !== false
+        || gate.state !== "closed"
+        || gate.openedChannel !== null
+        || runtimeRelease.status !== "valid"
+        || runtime?.configured !== true
+        || runtime.active !== true
+        || String(runtime.activeRelease ?? "").trim().toLowerCase() !== runtimeRelease.release) {
+      return NextResponse.json({
+        message: "Shopee SG exact 재고 수정을 현재 닫힌 게이트·활성 서버 릴리스에 결속하지 못했습니다.",
+        mode: "shopee_sg_existing_inventory_release_required",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const { data: permitData, error: permitError } = await serviceClient.rpc(
+      "sellerpilot_service_arm_shopee_sg_exact_update",
+      {
+        p_phase: "inventory",
+        p_listing_id: parsed.data.resourceListingId,
+        p_credential_id: parsed.data.credentialId,
+        p_release_sha: runtimeRelease.release,
+        p_request_fingerprint: requestFingerprint,
+      },
+    );
+    shopeeSgExistingUpdatePermitArmed = !permitError
+      && isRecord(permitData)
+      && permitData.contract === "shopee_sg_exact_update_permit_v1"
+      && permitData.phase === "inventory"
+      && permitData.listingId === parsed.data.resourceListingId
+      && permitData.releaseSha === runtimeRelease.release
+      && permitData.requestFingerprint === requestFingerprint
+      && permitData.bound === false;
+    if (!shopeeSgExistingUpdatePermitArmed) {
+      return NextResponse.json({
+        message: "Shopee SG exact 재고 1 수정의 순차 일회성 허가를 만들지 못했습니다.",
+        mode: "shopee_sg_existing_inventory_permit_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
@@ -2242,6 +2424,12 @@ export async function POST(request: NextRequest) {
       }
       if (boundTemuExactExistingUpdate && !temuExactExistingUpdateRequest(gatewayArguments)) {
         throw new Error("TEMU_EXACT_EXISTING_UPDATE_PREPARED_ARGUMENTS_INVALID");
+      }
+      if (boundShopeeSgExistingUpdate?.phase === "content") {
+        assertShopeeSgExistingContentSource(gatewayArguments);
+      }
+      if (boundShopeeSgExistingUpdate?.phase === "inventory") {
+        assertShopeeSgExistingInventorySource(gatewayArguments);
       }
       const writeResource = !listingGatewayOperation && writeChannelOperations.has(operation)
         ? {
