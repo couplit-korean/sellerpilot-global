@@ -7,21 +7,31 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901165800_recover_ebay_exact_pre_gateway_retry.sql",
   import.meta.url,
 );
+const credentialRotationMigrationUrl = new URL(
+  "../supabase/migrations/20260901165900_recover_ebay_exact_credential_rotation.sql",
+  import.meta.url,
+);
+const closedGateMigrationUrl = new URL(
+  "../supabase/migrations/20260901080000_allow_exact_existing_updates_through_closed_gate.sql",
+  import.meta.url,
+);
 
 const ids = {
   owner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
   product: "ddccde35-9c58-4856-b673-d7aa27ce4220",
   listing: "8b2cbfaf-3854-437d-b381-abfd70291354",
-  credential: "9e7de791-e6e6-4255-8d61-5a1f9576d797",
+  historicalCredential: "9e7de791-e6e6-4255-8d61-5a1f9576d797",
+  currentCredential: "75853087-d2a8-4f56-9c05-e66fcc65e372",
   sourceJob: "08e8cff9-5d7c-4992-b668-6d932aa5ff10",
   sourceAttempt: "22457f2e-51d8-43c5-bb03-d2c1bb7fe697",
   sourcePermit: "c2e9f199-f6a7-425f-8668-7eebd5b08bb4",
   retryAttempt: "c9d5b739-4ae7-4596-acbc-06f900a21ba3",
   retryPermit: "7ae83178-d335-4b7e-8e35-2f55e905bbde",
   retryJob: "d7f2843d-3a6a-4d33-98ca-67e4620b67f3",
+  nextAttempt: "123edaa4-1681-4cf0-9e46-1030f3a5bcd8",
 };
 
-const releaseSha = "031d45077aa55ed0ca1eb3f85ccb4abbe52b7c9b";
+const releaseSha = "f51d5147f28949b2ef9d07d1d13ecb404259b260";
 const sourceFingerprint =
   "79507d23bb865f17b7d91a148f564fef1519e36ce3b5d4219200c5b7d786a3dc";
 const retryFingerprint =
@@ -80,8 +90,40 @@ test("pre-gateway recovery remains exact and removes the unsupported JSON helper
   );
 });
 
-test("PGlite rearms the exact expired permit and enqueues one c9 job", async () => {
+test("credential rotation migration is one exact permit transition with no provider retry", async () => {
+  const migration = await readFile(credentialRotationMigrationUrl, "utf8");
+  for (const exactValue of [
+    ids.listing,
+    ids.retryAttempt,
+    ids.retryPermit,
+    ids.historicalCredential,
+    ids.currentCredential,
+    retryFingerprint,
+  ]) {
+    assert.match(migration, new RegExp(exactValue, "u"));
+  }
+  assert.match(migration, /current_credential\.version = 100/u);
+  assert.match(
+    migration,
+    /'ebay_exact_pre_gateway_credential_rotated'/u,
+  );
+  assert.match(migration, /'providerMutationCount', 0/u);
+  assert.match(migration, /'autoRetry', false/u);
+  assert.doesNotMatch(migration, /delete\s+from/iu);
+  assert.doesNotMatch(
+    migration,
+    /insert\s+into\s+sellerpilot_private\.channel_gateway_jobs/iu,
+  );
+  assert.doesNotMatch(
+    migration,
+    /update\s+sellerpilot_private\.channel_operation_attempts/iu,
+  );
+});
+
+test("PGlite rotates only the expired permit to current v100 and enqueues one new job", async () => {
   const migration = await readFile(migrationUrl, "utf8");
+  const rotationMigration = await readFile(credentialRotationMigrationUrl, "utf8");
+  const closedGateMigration = await readFile(closedGateMigrationUrl, "utf8");
   const proof = extractFunction(
     migration,
     "create function\n  sellerpilot_private.ebay_exact_pre_gateway_failure_is_proved(",
@@ -110,6 +152,30 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
     migration,
     "patch_ebay_retry_marker_key_count",
   );
+  const permitTransition = extractTaggedDo(
+    migration,
+    "patch_ebay_pre_gateway_permit_transition",
+  );
+  const rotatedProof = extractFunction(
+    rotationMigration,
+    "create or replace function\n  sellerpilot_private.ebay_exact_pre_gateway_failure_is_proved(",
+  );
+  const rotatedAvailability = extractTaggedDo(
+    rotationMigration,
+    "patch_ebay_rotated_retry_availability",
+  );
+  const rotatedPermitTransition = extractTaggedDo(
+    rotationMigration,
+    "patch_ebay_rotated_permit_transition",
+  );
+  const rotatedArm = extractTaggedDo(
+    rotationMigration,
+    "patch_ebay_retry_arm_credential_rotation",
+  );
+  const basePermitGuard = extractFunction(
+    closedGateMigration,
+    "create function sellerpilot_private.guard_exact_existing_update_permit_transition()",
+  );
   const db = new PGlite();
   try {
     await db.exec(`
@@ -128,7 +194,8 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
         seller_account_key text not null, version integer not null,
         fingerprint text not null, seller_account_key_source text,
         seller_account_verified_at timestamptz, expires_at timestamptz,
-        last_checked_at timestamptz, last_check_status text
+        last_checked_at timestamptz, last_check_status text,
+        environment text not null, status text not null
       );
       create table sellerpilot_private.channel_operation_attempts (
         id uuid primary key, owner_id uuid not null, credential_id uuid,
@@ -200,11 +267,48 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
       create function sellerpilot_private.ebay_exact_current_credential_is_valid(
         p_credential_id uuid, p_seller_account_key text
       ) returns boolean language sql stable as $$
-        select p_credential_id = '${ids.credential}'::uuid
+        select p_credential_id = '${ids.currentCredential}'::uuid
           and p_seller_account_key = '${sellerAccountKey}'
       $$;
       create function sellerpilot_private.ebay_exact_no_effect_source_is_proved()
       returns boolean language sql stable as $$ select true $$;
+
+      create function sellerpilot_private.guard_exact_existing_update_permit_transition()
+      returns trigger language plpgsql security definer set search_path = '' as $$
+      declare
+        v_mutable_fields constant text[] := array[
+          'update_job_id', 'update_attempt_id', 'arguments_sha256',
+          'arguments_bytes', 'request_payload_sha256', 'request_payload_bytes',
+          'bound_at', 'bound_worker_token_id', 'bound_claim_token', 'consumed_at',
+          'invalidated_at', 'invalidation_reason'
+        ];
+      begin
+        if tg_op = 'DELETE' then
+          raise exception 'exact existing update permits cannot be deleted';
+        end if;
+        if to_jsonb(new) - v_mutable_fields is distinct from
+             to_jsonb(old) - v_mutable_fields
+        then
+          raise exception 'exact existing update permit identity is immutable';
+        end if;
+        if old.update_job_id is null
+           and old.update_attempt_id is null
+           and old.arguments_sha256 is null
+           and old.request_payload_sha256 is null
+           and old.bound_at is null
+           and old.consumed_at is null
+           and old.invalidated_at is null
+           and new.update_job_id is not null
+           and new.update_attempt_id is not null
+        then return new; end if;
+        raise exception 'exact existing update permit transition invalid';
+      end;
+      $$;
+      create trigger guard_exact_existing_update_permit_transition
+      before update or delete
+      on sellerpilot_private.exact_existing_update_permits
+      for each row execute function
+        sellerpilot_private.guard_exact_existing_update_permit_transition();
 
       create function public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(
         p_listing_id uuid, p_credential_id uuid, p_product_id uuid,
@@ -253,7 +357,12 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
           p_request_payload
         ) on conflict (attempt_id) do nothing;
         update sellerpilot_private.exact_existing_update_permits
-           set update_job_id = v_job_id, update_attempt_id = p_attempt_id
+           set update_job_id = v_job_id,
+               update_attempt_id = p_attempt_id,
+               arguments_sha256 = repeat('d', 64),
+               arguments_bytes = 200,
+               request_payload_sha256 = repeat('e', 64),
+               request_payload_bytes = 300
          where permit_id = '${ids.retryPermit}'::uuid
            and update_job_id is null and update_attempt_id is null;
         return jsonb_build_object(
@@ -305,20 +414,32 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
         '${ids.product}', '${ids.owner}', 'QA-20260823-CC-001',
         7, false, 'active'
       );
-      insert into sellerpilot_private.channel_credentials values (
-        '${ids.credential}', 'ebay', '${sellerAccountKey}', 99,
-        repeat('b', 64), 'provider', clock_timestamp() - interval '1 hour',
-        clock_timestamp() + interval '1 day', clock_timestamp(), 'valid'
+      insert into sellerpilot_private.channel_credentials values
+      (
+        '${ids.historicalCredential}', 'ebay', '${sellerAccountKey}', 99,
+        'B99B99B99B99', 'provider_certified_v1',
+        '2026-09-01 07:00:00+00',
+        '2026-09-01 09:00:00+00',
+        '2026-09-01 08:00:00+00', 'passed',
+        'production', 'revoked'
+      ),
+      (
+        '${ids.currentCredential}', 'ebay', '${sellerAccountKey}', 100,
+        'C100C100C100', 'provider_certified_v1',
+        clock_timestamp() - interval '30 minutes',
+        clock_timestamp() + interval '1 day',
+        clock_timestamp() - interval '1 minute', 'passed',
+        'production', 'active'
       );
       insert into sellerpilot_private.channel_operation_attempts values
       (
-        '${ids.sourceAttempt}', '${ids.owner}', '${ids.credential}', 'ebay',
+        '${ids.sourceAttempt}', '${ids.owner}', '${ids.historicalCredential}', 'ebay',
         'listing.update', 'failed', 400, '800551945442',
         '2026-09-01 08:16:15.994005+00', true, false,
         '${sourceFingerprint}', '${sellerAccountKey}'
       ),
       (
-        '${ids.retryAttempt}', '${ids.owner}', '${ids.credential}', 'ebay',
+        '${ids.retryAttempt}', '${ids.owner}', '${ids.historicalCredential}', 'ebay',
         'listing.update', 'failed', 422, null,
         '2026-09-01 09:03:06.5+00', true, true,
         '${retryFingerprint}', '${sellerAccountKey}'
@@ -335,7 +456,7 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
         request_payload
       ) values (
         '${ids.sourceJob}', '${ids.sourceAttempt}', '${ids.listing}',
-        '${ids.credential}', 'ebay', 'listing.update', 'production',
+        '${ids.historicalCredential}', 'ebay', 'listing.update', 'production',
         'succeeded', jsonb_build_object(
           'ok', false, 'steps', jsonb_build_array(
             jsonb_build_object('name', 'offer-update-discovery-readback'),
@@ -356,7 +477,7 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
         invalidated_at, invalidation_reason
       ) values (
         '${ids.sourcePermit}', 'ebay', '${ids.listing}', '${ids.product}',
-        '${ids.credential}', '${ids.owner}', '${releaseSha}',
+        '${ids.historicalCredential}', '${ids.owner}', '${releaseSha}',
         '${sourceFingerprint}', '${ids.sourceJob}', '${ids.sourceAttempt}',
         '2026-09-01 08:16:10+00', '11111111-1111-4111-8111-111111111111',
         '22222222-2222-4222-8222-222222222222',
@@ -366,15 +487,24 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
       insert into sellerpilot_private.exact_existing_update_permits (
         permit_id, channel, listing_id, product_id, credential_id, owner_id,
         market, target_id, remote_id, seller_sku, provider_resource_id,
-        currency, price, stock, seller_account_key, release_sha,
-        request_fingerprint, armed_at, expires_at, retry_source_job_id,
+        currency, price, stock, seller_account_key, credential_version,
+        credential_fingerprint, credential_account_source,
+        credential_verified_at, credential_expires_at,
+        credential_last_checked_at, credential_last_check_status,
+        snapshot_revision, snapshot_payload_sha256, snapshot_source_job_id,
+        release_sha, request_fingerprint, armed_at, expires_at,
+        retry_source_job_id,
         retry_source_attempt_id, retry_source_permit_id,
         retry_source_response_sha256
       ) values (
         '${ids.retryPermit}', 'ebay', '${ids.listing}', '${ids.product}',
-        '${ids.credential}', '${ids.owner}', 'US', 'EBAY_US', '800551945442',
+        '${ids.historicalCredential}', '${ids.owner}', 'US', 'EBAY_US', '800551945442',
         'QA-20260823-CC-001-US', '244042196011', 'USD', 12.90, 7,
-        '${sellerAccountKey}', '${releaseSha}', '${retryFingerprint}',
+        '${sellerAccountKey}', 99, 'B99B99B99B99',
+        'provider_certified_v1', '2026-09-01 07:00:00+00',
+        '2026-09-01 09:00:00+00',
+        '2026-09-01 08:00:00+00', 'passed',
+        null, null, null, '${releaseSha}', '${retryFingerprint}',
         '2026-09-01 08:58:00+00', '2026-09-01 09:03:00+00',
         '${ids.sourceJob}', '${ids.sourceAttempt}', '${ids.sourcePermit}',
         repeat('a', 64)
@@ -402,18 +532,70 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
     await db.exec(permitCurrent);
     await db.exec(patchLineage);
     await db.exec(patchKeyCount);
+    await db.exec(`
+      drop trigger guard_exact_existing_update_permit_transition
+        on sellerpilot_private.exact_existing_update_permits;
+      drop function sellerpilot_private.guard_exact_existing_update_permit_transition();
+    `);
+    await db.exec(basePermitGuard);
+    await db.exec(`
+      create trigger guard_exact_existing_update_permit_transition
+      before update or delete
+      on sellerpilot_private.exact_existing_update_permits
+      for each row execute function
+        sellerpilot_private.guard_exact_existing_update_permit_transition()
+    `);
+    await db.exec(permitTransition);
     await db.exec(arm);
+    await db.exec(rotatedProof);
+    await db.exec(rotatedAvailability);
+    await db.exec(rotatedPermitTransition);
+    await db.exec(rotatedArm);
     await db.exec("set request.jwt.claim.role = 'service_role'");
 
     const armed = (await db.query(
       `select public.sellerpilot_service_arm_ebay_no_effect_retry(
          'ebay', $1, $2, $3, $4
        ) value`,
-      [ids.listing, ids.credential, releaseSha, retryFingerprint],
+      [ids.listing, ids.currentCredential, releaseSha, retryFingerprint],
     )).rows[0].value;
     assert.equal(armed.rearmed, true);
     assert.equal(armed.reused, true);
     assert.equal(armed.permitId, ids.retryPermit);
+    assert.equal(armed.credentialRotated, true);
+
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, credential_version,
+                credential_fingerprint, update_job_id
+           from sellerpilot_private.exact_existing_update_permits
+          where permit_id = $1`,
+        [ids.retryPermit],
+      )).rows[0],
+      {
+        credential_id: ids.currentCredential,
+        credential_version: 100,
+        credential_fingerprint: "C100C100C100",
+        update_job_id: null,
+      },
+    );
+    assert.equal(
+      (await db.query(
+        `select count(*)::integer count
+           from sellerpilot_private.channel_operation_attempts
+          where id = $1 and credential_id = $2`,
+        [ids.retryAttempt, ids.historicalCredential],
+      )).rows[0].count,
+      1,
+    );
+
+    await db.exec(`
+      insert into sellerpilot_private.channel_operation_attempts values (
+        '${ids.nextAttempt}', '${ids.owner}', '${ids.currentCredential}',
+        'ebay', 'listing.update', 'running', null, null, null,
+        true, false, '${retryFingerprint}', '${sellerAccountKey}'
+      )
+    `);
 
     const finalWrapper = (await db.query(
       `select pg_get_functiondef(
@@ -442,8 +624,8 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
       ) value`,
       [
         ids.listing,
-        ids.credential,
-        ids.retryAttempt,
+        ids.currentCredential,
+        ids.nextAttempt,
         JSON.stringify(requestPayload),
       ],
     )).rows[0].value;
@@ -452,7 +634,7 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
     assert.equal(
       (await db.query(
         "select count(*)::integer count from sellerpilot_private.channel_gateway_jobs where attempt_id = $1",
-        [ids.retryAttempt],
+        [ids.nextAttempt],
       )).rows[0].count,
       1,
     );
@@ -463,13 +645,21 @@ test("PGlite rearms the exact expired permit and enqueues one c9 job", async () 
           where permit_id = $1`,
         [ids.retryPermit],
       )).rows[0],
-      { update_job_id: ids.retryJob, update_attempt_id: ids.retryAttempt },
+      { update_job_id: ids.retryJob, update_attempt_id: ids.nextAttempt },
     );
     assert.equal(
       (await db.query(
         `select count(*)::integer count
            from sellerpilot_private.operation_audit
           where action = 'ebay_exact_pre_gateway_retry_rearmed'`,
+      )).rows[0].count,
+      1,
+    );
+    assert.equal(
+      (await db.query(
+        `select count(*)::integer count
+           from sellerpilot_private.operation_audit
+          where action = 'ebay_exact_pre_gateway_credential_rotated'`,
       )).rows[0].count,
       1,
     );

@@ -141,6 +141,8 @@ const EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION =
   "20260901165700_correct_ebay_no_effect_terminal_source_proof.sql";
 const EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION =
   "20260901165800_recover_ebay_exact_pre_gateway_retry.sql";
+const EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION =
+  "20260901165900_recover_ebay_exact_credential_rotation.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -849,6 +851,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION,
       EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
       EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION,
+      EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1003,8 +1006,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           )
         && migrationNames.indexOf(
           EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
-        ) < migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION),
-      "the one-shot eBay retry, terminal proof correction, and exact pre-gateway recovery must replay after the source job can execute",
+        ) < migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION),
+      "the one-shot eBay retry, terminal proof correction, exact pre-gateway recovery, and current-credential rotation must replay after the source job can execute",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
@@ -12134,6 +12139,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION
         && name !== EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
         && name !== EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
+        && name !== EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -13860,6 +13866,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION
         || name === EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
         || name === EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
+        || name === EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
