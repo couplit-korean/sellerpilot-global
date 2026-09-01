@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { registerHooks } from "node:module";
 import test from "node:test";
+import type { GatewayClaim } from "../lib/channels/gateway-contract";
 import {
   bindCoupangExactQaRecoveryArguments,
   buildCoupangExactQaGalleryImages,
@@ -16,7 +18,25 @@ import {
 } from "../lib/channels/coupang-listing-update";
 import { listingUpdateServerCandidate } from "../lib/channels/listing-update";
 import { executeChannelOperation } from "../lib/channels/operations";
+import {
+  coupangProviderImageSnapshotSha256,
+  type CoupangProviderImageIdentity,
+  verifyCoupangExactRepresentativeReadback,
+} from "../lib/channels/coupang-representative-readback";
 import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime";
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "server-only") {
+      return { shortCircuit: true, url: "data:text/javascript,export default {}" };
+    }
+    return nextResolve(specifier, context);
+  },
+});
+
+const { executeServerlessGatewayProviderJob } = await import(
+  "../lib/channels/serverless-gateway-provider"
+);
 
 const fingerprint = "c".repeat(64);
 const missingFixtureField = Symbol("missing-fixture-field");
@@ -82,14 +102,24 @@ function exactGalleryImages() {
   }));
 }
 
-function providerReadbackGalleryImages() {
-  return ["representative", ...detailImageUrls().map((_, index) => `detail-${index + 1}`)]
-    .map((name, imageOrder) => ({
+function providerReadbackGalleryImages(
+  argumentsValue: Record<string, unknown>,
+  representative: "old" | "expected" = "expected",
+) {
+  const assets = argumentsValue.sellerpilotPublicationAssetBinding as {
+    providerTransportImages: Array<{ contentSha256: string }>;
+  };
+  return assets.providerTransportImages.map((asset, imageOrder) => {
+    const basename = imageOrder === 0 && representative === "old"
+      ? "old-representative.jpg"
+      : `${asset.contentSha256}.jpg`;
+    return {
       imageOrder,
       imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
-      cdnPath: `vendor_inventory/images/2026/09/01/${name}.jpg`,
-      vendorPath: `${name}.jpg`,
-    }));
+      cdnPath: `vendor_inventory/images/2026/09/01/${basename}`,
+      vendorPath: basename,
+    };
+  });
 }
 
 function exactPublicationAssetBinding() {
@@ -555,6 +585,12 @@ test("exact update proves signed GET before PUT and verifies the strict readback
   const calls: Array<{ method: string; pathname: string; body: string }> = [];
   let sellerReads = 0;
   let transmittedBody: Record<string, unknown> | null = null;
+  const prewriteProduct = exactRemoteProduct();
+  prewriteProduct.items[0].images = providerReadbackGalleryImages(
+    prepared.arguments,
+    "old",
+  );
+  let boundPrewrite: CoupangProviderImageIdentity[] | null = null;
   globalThis.fetch = async (input, init) => {
     const pathname = new URL(String(input)).pathname;
     const method = init?.method ?? "GET";
@@ -584,11 +620,11 @@ test("exact update proves signed GET before PUT and verifies the strict readback
       providerReadback.requested = true;
       providerReadback.statusName = "승인완료";
       const providerItems = providerReadback.items as Array<Record<string, unknown>>;
-      providerItems[0].images = providerReadbackGalleryImages();
+      providerItems[0].images = providerReadbackGalleryImages(prepared.arguments);
     }
     return Response.json({
       code: "SUCCESS",
-      data: providerReadback ?? exactRemoteProduct(),
+      data: providerReadback ?? prewriteProduct,
     });
   };
   try {
@@ -598,6 +634,16 @@ test("exact update proves signed GET before PUT and verifies the strict readback
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
       arguments: prepared.arguments,
       environment: "production",
+      providerMutationHooks: {
+        assertLeaseHealthy: async () => {},
+        bindCoupangRepresentativePrewrite: async (images) => {
+          boundPrewrite = images;
+          return {
+            prewriteSnapshotSha256: coupangProviderImageSnapshotSha256(images),
+          };
+        },
+        begin: async () => {},
+      },
     });
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.equal(result.remoteState?.visibility, "live");
@@ -612,6 +658,21 @@ test("exact update proves signed GET before PUT and verifies the strict readback
         representativeImageCount: 1,
         detailImageCount: 8,
         remoteGalleryVerified: true,
+        providerPrewriteSnapshotSha256:
+          coupangProviderImageSnapshotSha256(boundPrewrite!),
+        prewriteImages: boundPrewrite,
+        postwriteImages: providerReadbackGalleryImages(prepared.arguments),
+        expectedContentSha256s: (prepared.arguments
+          .sellerpilotPublicationAssetBinding as {
+            providerTransportImages: Array<{ contentSha256: string }>;
+          }).providerTransportImages.map((asset) => asset.contentSha256),
+        providerReadbackSnapshotSha256: coupangProviderImageSnapshotSha256(
+          providerReadbackGalleryImages(prepared.arguments),
+        ),
+        providerVendorBasenamesVerified: true,
+        providerRepresentativeAlreadyExpected: false,
+        providerRepresentativeChanged: true,
+        providerDetailImagesPreserved: true,
       },
     );
     assert.equal(sellerReads, 3);
@@ -623,6 +684,172 @@ test("exact update proves signed GET before PUT and verifies the strict readback
     const binding = coupangExactQaRecoveryBinding(prepared.arguments, "listing.update");
     assert.ok(binding);
     assertCoupangExactQaUpdateReadback(transmitted, binding);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("serverless exact update binds fresh provider images before one mutation fence", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  let transmittedBody: Record<string, unknown> | null = null;
+  const serverlessArguments = structuredClone(baseRecoveryArguments());
+  const approvedDetailImages = Array.from({ length: 8 }, (_, index) => {
+    const contentSha256 = (index + 1).toString(16).repeat(64).slice(0, 64);
+    const objectPath =
+      `normalized/${contentSha256.slice(0, 2)}/${contentSha256}.jpg`;
+    return {
+      role: `detail-${index + 1}`,
+      approvedObjectPath:
+        `results/11000000-0000-4000-8000-000000000001/claims/12000000-0000-4000-8000-000000000001/detail-${index + 1}.png`,
+      approvedSourceSha256: (index + 9).toString(16).repeat(64).slice(0, 64),
+      publicUrl:
+        `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${objectPath}`,
+      objectPath,
+      contentSha256,
+    };
+  });
+  const representativeAsset = {
+    role: "gallery-representative",
+    approvedObjectPath: representativeSourcePath,
+    approvedSourceSha256: representativeSourceSha,
+    publicUrl:
+      `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${representativeObjectPath}`,
+    objectPath: representativeObjectPath,
+    contentSha256: representativeContentSha,
+  };
+  serverlessArguments.sellerpilotPublicationAssetBinding = {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: "e".repeat(64),
+    providerImageSurface: "gallery",
+    approvedDetailImages,
+    providerTransportImages: [representativeAsset, ...approvedDetailImages],
+  };
+  const serverlessItem = (serverlessArguments.body as {
+    items: Array<Record<string, unknown>>;
+  }).items[0];
+  serverlessItem.images = [representativeAsset, ...approvedDetailImages].map(
+    (image, imageOrder) => ({
+      imageOrder,
+      imageType: imageOrder === 0 ? "REPRESENTATION" : "DETAIL",
+      vendorPath: image.publicUrl,
+    }),
+  );
+  serverlessItem.contents = [...approvedDetailImages.map((image) => ({
+    contentsType: "IMAGE",
+    contentDetails: [{ detailType: "IMAGE", content: image.publicUrl }],
+  })), {
+    contentsType: "TEXT",
+    contentDetails: [{
+      detailType: "TEXT",
+      content: "부착형 케이블 정리 클립의 재질과 구성, 설치 방법 및 사용 시 주의사항을 확인하세요.",
+    }],
+  }];
+  const prewriteProduct = exactRemoteProduct();
+  prewriteProduct.items[0].images = providerReadbackGalleryImages(
+    serverlessArguments,
+    "old",
+  );
+  globalThis.fetch = async (input, init) => {
+    const pathname = new URL(String(input)).pathname;
+    const method = init?.method ?? "GET";
+    events.push(`fetch:${method}:${pathname}`);
+    if (pathname.endsWith("/shipping-place/outbound")) {
+      return Response.json(outboundResponse());
+    }
+    if (pathname.includes("/returnShippingCenters")) {
+      return Response.json(returnCenterResponse());
+    }
+    if (pathname.endsWith("/status")) {
+      return Response.json({ code: "SUCCESS", data: true });
+    }
+    if (pathname.includes("/category-related-metas/")) {
+      return Response.json(categoryMetadataResponse());
+    }
+    if (pathname.includes(`/vendor-items/${coupangExactQaRecoveryIdentity.vendorItemId}/inventories`)) {
+      return Response.json({
+        code: "SUCCESS",
+        data: {
+          sellerItemId: 123456789,
+          amountInStock: coupangExactQaRecoveryIdentity.stock,
+          salePrice: coupangExactQaRecoveryIdentity.priceKrw,
+          onSale: true,
+        },
+      });
+    }
+    if (method === "PUT") {
+      transmittedBody = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      return Response.json({ code: "SUCCESS", data: null });
+    }
+    if (pathname.includes(`/seller-products/${coupangExactQaRecoveryIdentity.sellerProductId}`)) {
+      if (!transmittedBody) {
+        return Response.json({ code: "SUCCESS", data: prewriteProduct });
+      }
+      const postwriteProduct = structuredClone(transmittedBody);
+      postwriteProduct.requested = true;
+      postwriteProduct.statusName = "승인완료";
+      const items = postwriteProduct.items as Array<Record<string, unknown>>;
+      items[0].images = providerReadbackGalleryImages(serverlessArguments);
+      return Response.json({ code: "SUCCESS", data: postwriteProduct });
+    }
+    throw new Error(`unexpected Coupang request: ${method} ${pathname}`);
+  };
+  const job: GatewayClaim = {
+    id: "51000000-0000-4000-8000-000000000991",
+    claim_token: "52000000-0000-4000-8000-000000000991",
+    credential_id: "53000000-0000-4000-8000-000000000991",
+    channel: "coupang",
+    operation: "listing.update",
+    environment: "production",
+    request: { arguments: serverlessArguments },
+    credential: {
+      vendor_id: "A00012345",
+      access_key: "access",
+      secret_key: "secret",
+      requested_by: "wing-user",
+    },
+    attempt_count: 1,
+  };
+  try {
+    const result = await executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("begin"); },
+        bindCoupangRepresentativePrewrite: async (images) => {
+          events.push("bind-prewrite");
+          return {
+            prewriteSnapshotSha256: coupangProviderImageSnapshotSha256(images),
+          };
+        },
+        beginCredentialMutation: async () => assert.fail("unexpected credential mutation"),
+        stageCredentialRefresh: async () => assert.fail("unexpected credential refresh"),
+      },
+    });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.publicationFulfilled, true, JSON.stringify(result));
+    assert.equal(
+      (result.remoteState?.evidence.publicationAssetBinding as {
+        providerTransportRoles?: unknown[];
+      } | undefined)?.providerTransportRoles?.length,
+      9,
+    );
+    assert.equal(events.filter((event) => event === "bind-prewrite").length, 1);
+    assert.equal(events.filter((event) => event === "begin").length, 1);
+    const bindIndex = events.indexOf("bind-prewrite");
+    const beginIndex = events.indexOf("begin");
+    const putIndex = events.findIndex((event) => event.startsWith("fetch:PUT:"));
+    const preSellerIndex = events.findIndex((event) =>
+      event.includes(`/seller-products/${coupangExactQaRecoveryIdentity.sellerProductId}`));
+    const preInventoryIndex = events.findIndex((event) =>
+      event.includes(`/vendor-items/${coupangExactQaRecoveryIdentity.vendorItemId}/inventories`));
+    assert.ok(preSellerIndex >= 0 && preSellerIndex < bindIndex);
+    assert.ok(preInventoryIndex >= 0 && preInventoryIndex < bindIndex);
+    assert.ok(bindIndex < beginIndex && beginIndex < putIndex);
+    assert.ok(events.findIndex((event, index) => index > putIndex
+      && event.includes(`/seller-products/${coupangExactQaRecoveryIdentity.sellerProductId}`)) > putIndex);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -697,7 +924,7 @@ test("exact readback accepts Coupang CDN paths without treating sellerItemId as 
   const binding = coupangExactQaRecoveryBinding(argumentsValue, "listing.update");
   assert.ok(binding);
   const providerProduct = exactRemoteProduct();
-  providerProduct.items[0].images = providerReadbackGalleryImages();
+  providerProduct.items[0].images = providerReadbackGalleryImages(argumentsValue);
   assert.doesNotThrow(() => assertCoupangExactQaUpdateReadback(
     providerProduct,
     binding,
@@ -721,6 +948,64 @@ test("exact readback accepts Coupang CDN paths without treating sellerItemId as 
     requestedVendorItemId: "95962393878",
     authoritativeVendorItemId: coupangExactQaRecoveryIdentity.vendorItemId,
   }), /COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH/);
+});
+
+test("exact representative provider identity fails closed on every ambiguous gallery shape", () => {
+  const argumentsValue = baseRecoveryArguments();
+  const prewriteImages = providerReadbackGalleryImages(argumentsValue, "old");
+  const productWithImages = (images: CoupangProviderImageIdentity[]) => {
+    const product = exactRemoteProduct();
+    product.items[0].images = images;
+    return product;
+  };
+  assert.doesNotThrow(() => verifyCoupangExactRepresentativeReadback({
+    currentValue: productWithImages(providerReadbackGalleryImages(argumentsValue)),
+    prewriteImages,
+    argumentsValue,
+  }));
+
+  const wrongRepresentative = providerReadbackGalleryImages(argumentsValue);
+  wrongRepresentative[0].vendorPath = "wrong-representative.jpg";
+  assert.throws(
+    () => verifyCoupangExactRepresentativeReadback({
+      currentValue: productWithImages(wrongRepresentative),
+      prewriteImages,
+      argumentsValue,
+    }),
+    /COUPANG_EXACT_QA_REPRESENTATIVE_PROVIDER_IDENTITY_UNRESOLVED/,
+  );
+
+  const unchangedRepresentative = providerReadbackGalleryImages(argumentsValue, "old");
+  assert.throws(
+    () => verifyCoupangExactRepresentativeReadback({
+      currentValue: productWithImages(unchangedRepresentative),
+      prewriteImages,
+      argumentsValue,
+    }),
+    /COUPANG_EXACT_QA_REPRESENTATIVE_PROVIDER_IDENTITY_UNRESOLVED/,
+  );
+
+  const missingVendorIdentity = providerReadbackGalleryImages(argumentsValue);
+  missingVendorIdentity[0].vendorPath = "";
+  assert.throws(
+    () => verifyCoupangExactRepresentativeReadback({
+      currentValue: productWithImages(missingVendorIdentity),
+      prewriteImages,
+      argumentsValue,
+    }),
+    /COUPANG_EXACT_QA_REPRESENTATIVE_PROVIDER_IDENTITY_UNRESOLVED/,
+  );
+
+  const detailDrift = providerReadbackGalleryImages(argumentsValue);
+  detailDrift[4].cdnPath = `vendor_inventory/images/drift/${detailDrift[4].vendorPath}`;
+  assert.throws(
+    () => verifyCoupangExactRepresentativeReadback({
+      currentValue: productWithImages(detailDrift),
+      prewriteImages,
+      argumentsValue,
+    }),
+    /COUPANG_EXACT_QA_DETAIL_IDENTITY_DRIFT/,
+  );
 });
 
 test("exact current-product preflight rejects status names that merely contain APPROVED", () => {

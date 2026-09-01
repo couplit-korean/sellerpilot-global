@@ -671,6 +671,9 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
   const sourceRepresentativeImageDigest = exactText(row.sourceRepresentativeImageDigest);
   const providerRepresentativeImageIdentity = exactText(row.providerRepresentativeImageIdentity);
   const providerRepresentativeImageDigest = exactText(row.providerRepresentativeImageDigest);
+  const transportRoleCountValid = surface === "gallery"
+    ? transportRoles.length === 8 || transportRoles.length === 9
+    : transportRoles.length === 8;
   const representativeEvidenceValid = !sourceRepresentativeImageDigest
     && !providerRepresentativeImageIdentity
     && !providerRepresentativeImageDigest
@@ -682,8 +685,7 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
       || !/^[a-f0-9]{64}$/u.test(exactText(row.approvedManifestDigest))
       || !Number.isSafeInteger(Number(row.approvedDetailPageVersion)) || Number(row.approvedDetailPageVersion) < 1
       || approvedRoles.length !== 8 || new Set(approvedRoles).size !== 8
-      || ![8, 9].includes(transportRoles.length)
-      || new Set(transportRoles).size !== transportRoles.length
+      || !transportRoleCountValid || new Set(transportRoles).size !== transportRoles.length
       || identities.length !== 8 || new Set(identities).size !== 8
       || (surface !== "detail_content" && surface !== "gallery")
       || !representativeEvidenceValid
@@ -932,7 +934,7 @@ export function verifyListingPublicationContent(input: {
     : verifiedProviderImageSurface === "gallery"
       ? binding?.providerImageSurface === "buyer_visible"
         ? "representative_plus_approved_detail_8_exact_gallery_9"
-        : binding?.providerTransportImages.length === 9
+        : binding?.providerTransportImages.length === marketplaceChannelDetailImageCount + 1
           ? "representative_plus_approved_detail_8_exact_gallery_9"
           : "representative_plus_approved_detail_7_exact_gallery_8"
       : "unknown";

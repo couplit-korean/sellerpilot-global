@@ -70,6 +70,8 @@ const PREPARE_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_prepare_serverless_c
 const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
   "sellerpilot_service_mark_lazada_oauth_provider_call_started";
 const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
+const BIND_COUPANG_REP_PREWRITE_RPC =
+  "sellerpilot_service_bind_coupang_rep_prewrite";
 const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
 const COMPLETE_TRANSACTION_RPC = "sellerpilot_service_complete_serverless_cs_transaction";
@@ -537,6 +539,35 @@ async function beginProviderMutation(
     }
     throw new GatewayProviderMutationDeniedError();
   }
+}
+
+async function bindCoupangRepresentativePrewrite(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  images: Array<{
+    imageOrder: number;
+    imageType: "REPRESENTATION" | "DETAIL";
+    cdnPath: string;
+    vendorPath: string;
+  }>,
+) {
+  const bound = await callRpc(dependencies, BIND_COUPANG_REP_PREWRITE_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_images: images,
+  });
+  if (bound.error) throw new Error("gateway_coupang_prewrite_fence_unavailable");
+  const value = recordValue(bound.data);
+  const digest = typeof value?.prewriteSnapshotSha256 === "string"
+    ? value.prewriteSnapshotSha256
+    : "";
+  if (value?.contract !== "coupang_exact_rep_prewrite_v1"
+      || !/^[a-f0-9]{64}$/u.test(digest)) {
+    throw new GatewayOwnershipLostError();
+  }
+  return { prewriteSnapshotSha256: digest };
 }
 
 async function beginLazadaOAuthProviderCall(
@@ -1029,6 +1060,17 @@ export async function runOneServerlessCsGatewayJob(
       }
       await assertLeaseHealthy();
       externalMutationStarted = true;
+    },
+    bindCoupangRepresentativePrewrite: async (images) => {
+      await assertLeaseHealthy();
+      const result = await bindCoupangRepresentativePrewrite(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        images,
+      );
+      await assertLeaseHealthy();
+      return result;
     },
   };
 

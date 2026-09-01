@@ -94,6 +94,12 @@ import {
   coupangExactQaRecoveryIdentity,
   type CoupangExactQaRecoveryBinding,
 } from "./coupang-exact-qa-recovery";
+import {
+  coupangExactRepresentativePrewriteSnapshot,
+  coupangProviderImageSnapshotSha256,
+  verifyCoupangExactRepresentativeReadback,
+  type CoupangProviderImageIdentity,
+} from "./coupang-representative-readback";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
   elevenstExactExistingUpdateProjectionDigestInput,
@@ -254,6 +260,9 @@ type ExecuteInput = {
   providerMutationHooks?: {
     begin: () => Promise<void>;
     assertLeaseHealthy: () => Promise<void>;
+    bindCoupangRepresentativePrewrite?: (
+      images: CoupangProviderImageIdentity[],
+    ) => Promise<{ prewriteSnapshotSha256: string }>;
   };
 };
 
@@ -4377,6 +4386,27 @@ async function executeCoupang(input: ExecuteInput) {
       preflightSteps.push(documentStep);
       if (!documentStep.ok) return result(input, preflightSteps, remoteId);
     }
+    let exactPrewriteImages: CoupangProviderImageIdentity[] | null = null;
+    let exactPrewriteSnapshotSha256 = "";
+    if (exactRecovery) {
+      const hooks = input.providerMutationHooks;
+      if (!hooks?.bindCoupangRepresentativePrewrite) {
+        throw new Error("COUPANG_EXACT_QA_PROVIDER_BOUNDARY_REQUIRED");
+      }
+      exactPrewriteImages = coupangExactRepresentativePrewriteSnapshot(currentBody);
+      await hooks.assertLeaseHealthy();
+      const boundPrewrite = await hooks.bindCoupangRepresentativePrewrite(
+        exactPrewriteImages,
+      );
+      exactPrewriteSnapshotSha256 = boundPrewrite.prewriteSnapshotSha256;
+      if (exactPrewriteSnapshotSha256 !==
+          coupangProviderImageSnapshotSha256(exactPrewriteImages)) {
+        throw new Error("COUPANG_EXACT_QA_PREWRITE_BINDING_FAILED");
+      }
+      await hooks.assertLeaseHealthy();
+      await hooks.begin();
+      await hooks.assertLeaseHealthy();
+    }
     const writeRemote = await coupangRequest({
       payload: input.payload,
       method: "PUT",
@@ -4398,7 +4428,14 @@ async function executeCoupang(input: ExecuteInput) {
           providerReadback: true,
         });
         const representative = coupangExactQaRepresentativeBinding(input.arguments);
-        if (!representative) throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+        if (!representative || !exactPrewriteImages) {
+          throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+        }
+        const providerIdentity = verifyCoupangExactRepresentativeReadback({
+          currentValue: readbackBody,
+          prewriteImages: exactPrewriteImages,
+          argumentsValue: input.arguments,
+        });
         readbackStep.data = {
           ...readbackStep.data,
           sellerpilotCoupangExactRepresentativeReadback: {
@@ -4414,6 +4451,8 @@ async function executeCoupang(input: ExecuteInput) {
             representativeImageCount: 1,
             detailImageCount: 8,
             remoteGalleryVerified: true,
+            providerPrewriteSnapshotSha256: exactPrewriteSnapshotSha256,
+            ...providerIdentity,
           },
         };
       } catch {

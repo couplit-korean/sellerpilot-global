@@ -14344,6 +14344,549 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         receipt_count: 1,
       }],
     );
+    // The exact Coupang representative update crosses the full public RPC
+    // lifecycle. A fresh provider GET snapshot is bound after claim but before
+    // the mutation fence; completion must attest the content-addressed
+    // representative plus eight unchanged detail identities.
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const exactCoupangCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'coupang','production',
+        '{"vendor_id":"A00012345","access_key":"access","secret_key":"secret"}'::jsonb,
+        now()+interval '30 days',90,30,7
+      )`,
+    );
+    const exactCoupangSellerAccountKey = await scalar(
+      db,
+      "select seller_account_key from sellerpilot_private.channel_credentials where id=$1",
+      [exactCoupangCredentialId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_listings (
+         id,owner_id,product_id,channel_key,market,target_id,remote_id,
+         marketplace_sku,status,currency,price,
+         requested_publication_intent,remote_visibility,provider_status,
+         published_at,failure_class,last_error,seller_account_key
+       ) values (
+         '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,
+         'ddccde35-9c58-4856-b673-d7aa27ce4220','coupang','KR','KR',
+         '16356981734','QA-20260823-CC-001','failed',
+         'KRW',5000,'live','unknown',null,null,'external_action',
+         'pre-gateway exact QA fixture',$2
+       )`,
+      [temuExactOwnerId, exactCoupangSellerAccountKey],
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='coupang'`,
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await scalar(db, "select set_config('request.headers','{}',false)");
+    const exactCoupangFingerprint = "6".repeat(64);
+    const exactCoupangSourceSha = "7".repeat(64);
+    const exactCoupangRepresentativeSha = "a".repeat(64);
+    const exactCoupangSourcePath =
+      "results/61000000-0000-4000-8000-000000000001/claims/62000000-0000-4000-8000-000000000001/thumbnail-square.png";
+    const exactCoupangRepresentativePath =
+      `normalized/aa/${exactCoupangRepresentativeSha}.jpg`;
+    const exactCoupangRepresentativeUrl =
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${exactCoupangRepresentativePath}`;
+    const exactCoupangApprovedDetails = exactTemuApprovedDetails;
+    const exactCoupangTransport = [{
+      role: "gallery-representative",
+      approvedObjectPath: exactCoupangSourcePath,
+      approvedSourceSha256: exactCoupangSourceSha,
+      publicUrl: exactCoupangRepresentativeUrl,
+      objectPath: exactCoupangRepresentativePath,
+      contentSha256: exactCoupangRepresentativeSha,
+    }, ...exactCoupangApprovedDetails];
+    const exactCoupangArguments = {
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationExpectedLocale: "ko-KR",
+      publicationExpectedImageCount: 8,
+      publicationExpectedFingerprint: exactCoupangFingerprint,
+      sellerpilotCoupangExactQaRecovery: {
+        contract: "coupang_exact_qa_recovery_v1",
+        phase: "listing.update",
+        productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+        listingId: "7ffc6e46-3173-4695-9889-5fa1529765f1",
+        sellerProductId: "16356981734",
+        vendorItemId: "95962393877",
+        sellerSku: "QA-20260823-CC-001",
+        sellerAccountLineage: "validated_by_service_rpc",
+      },
+      sellerpilotCoupangExactQaRepresentative: {
+        contract: "coupang_exact_qa_representative_v1",
+        role: "gallery-representative",
+        sourceBucket: "sellerpilot-ai",
+        sourceObjectPath: exactCoupangSourcePath,
+        sourceSha256: exactCoupangSourceSha,
+        normalizedObjectPath: exactCoupangRepresentativePath,
+        contentSha256: exactCoupangRepresentativeSha,
+      },
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "gallery",
+        approvedManifestDigest: adoptionManifestDigest,
+        approvedDetailPageVersion: 1,
+        approvedDetailImages: exactCoupangApprovedDetails,
+        providerTransportImages: exactCoupangTransport,
+      },
+      body: {
+        sellerProductId: "16356981734",
+        items: [{
+          sellerpilotItemMatchId: "95962393877",
+          modelNo: "QA-20260823-CC-001",
+          images: exactCoupangTransport.map((image,index) => ({
+            imageOrder: index,
+            imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
+            vendorPath: image.publicUrl,
+          })),
+          contents: exactCoupangApprovedDetails.map((image) => ({
+            contentsType: "IMAGE",
+            contentDetails: [{ detailType: "IMAGE", content: image.publicUrl }],
+          })),
+        }],
+      },
+    };
+    const exactCoupangPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_coupang_exact_rep(
+        'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+        $4,$5,$6,$7
+      )`,
+      [
+        exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,exactCoupangFingerprint,
+        exactCoupangSourcePath,exactCoupangSourceSha,
+        exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+      ],
+    );
+    assert.equal(exactCoupangPermit.bound,false);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_coupang_exact_rep(
+          'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+          $4,$5,$6,$7
+        )`,
+        [
+          exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,"8".repeat(64),
+          exactCoupangSourcePath,exactCoupangSourceSha,
+          exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+        ],
+      ),
+      /conflict|different active permit/i,
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const exactCoupangAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1,'coupang','listing.update',$2,$3
+      )`,
+      [
+        exactCoupangCredentialId,
+        `coupang-exact-representative:${exactCoupangFingerprint}`,
+        exactCoupangFingerprint,
+      ],
+    );
+    const tamperedCoupangRequest = {
+      arguments: structuredClone(exactCoupangArguments),
+    };
+    tamperedCoupangRequest.arguments
+      .sellerpilotCoupangExactQaRepresentative.contentSha256 = "f".repeat(64);
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+          '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+          'coupang','listing.update',$3::jsonb
+        )`,
+        [
+          exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+          JSON.stringify(tamperedCoupangRequest),
+        ],
+      ),
+      /query returned no rows|mismatch|invalid|release_gate_closed/i,
+    );
+    const exactCoupangEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+        '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+        'coupang','listing.update',$3::jsonb
+      )`,
+      [
+        exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+        JSON.stringify({ arguments: exactCoupangArguments }),
+      ],
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers','{"x-sellerpilot-static-egress-channels":"coupang"}',false
+      )`,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.exact_existing_update_enqueued_lineage_is_current(
+          $1
+        )`,
+        [exactCoupangPermit.permitId],
+      ),
+      true,
+      JSON.stringify((await db.query(
+        `select listing.status,listing.remote_visibility,listing.provider_status,
+                listing.operation_attempt_id,job.status as job_status,
+                job.attempt_count,permit.update_job_id,permit.update_attempt_id,
+                permit.invalidated_at,permit.expires_at>statement_timestamp() as fresh,
+                sellerpilot_private.exact_existing_update_arguments_valid(
+                  'coupang',job.request_payload->'arguments',permit.release_sha,
+                  permit.request_fingerprint,permit.stock
+                ) as arguments_valid
+           from sellerpilot_private.exact_existing_update_permits permit
+           join sellerpilot_private.product_listings listing on listing.id=permit.listing_id
+           join sellerpilot_private.channel_gateway_jobs job on job.id=permit.update_job_id
+          where permit.permit_id=$1`,
+        [exactCoupangPermit.permitId],
+      )).rows),
+    );
+    const coupangClaimTransitionDiagnostic = await scalar(
+      db,
+      `with source as (
+         select to_jsonb(job) old_value,to_jsonb(job) || jsonb_build_object(
+           'status','running','worker_token_id',token.id,
+           'claim_token','aaaaaaaa-0000-4000-8000-000000000099'::uuid,
+           'attempt_count',job.attempt_count+1,
+           'lease_expires_at',clock_timestamp()+interval '15 minutes',
+           'started_at',coalesce(job.started_at,clock_timestamp()),
+           'error_message',null,'updated_at',clock_timestamp()
+         ) new_value
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.ai_cli_worker_tokens token on token.token_hash=$2
+          where job.id=$1
+       ) select jsonb_build_object(
+         'oldStatus',old_value->>'status','newStatus',new_value->>'status',
+         'channel',old_value->>'channel','operation',old_value->>'operation',
+         'oldAttempt',old_value->>'attempt_count','newAttempt',new_value->>'attempt_count',
+         'oldWorker',old_value->'worker_token_id','newWorker',new_value->'worker_token_id',
+         'oldClaim',old_value->'claim_token','newClaim',new_value->'claim_token',
+         'oldProvider',old_value->'provider_mutation_started_at',
+         'newProvider',new_value->'provider_mutation_started_at',
+         'completed',new_value->'completed_at','response',new_value->'response_payload',
+         'error',new_value->'error_message',
+         'stable',(new_value-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+              -'lease_expires_at'-'started_at'-'error_message'-'updated_at') =
+            (old_value-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+              -'lease_expires_at'-'started_at'-'error_message'-'updated_at')
+       ) from source`,
+      [exactCoupangEnqueue.job_id, exactTemuWorkerHash],
+    );
+    assert.equal(coupangClaimTransitionDiagnostic.stable,true,
+      JSON.stringify(coupangClaimTransitionDiagnostic));
+    const coupangPermitDiagnostic = await scalar(
+      db,
+      `select jsonb_build_object(
+        'attemptEq',permit.update_attempt_id=job.attempt_id,
+        'listingEq',permit.listing_id=job.listing_id,
+        'credentialEq',permit.credential_id=job.credential_id,
+        'sellerEq',permit.seller_account_key=job.seller_account_key,
+        'fingerprintEq',permit.request_fingerprint=job.request_fingerprint,
+        'payloadShaEq',permit.request_payload_sha256=encode(extensions.digest(
+          job.request_payload::text,'sha256'),'hex'),
+        'payloadBytesEq',permit.request_payload_bytes=octet_length(job.request_payload::text),
+        'unbound',permit.bound_at is null and permit.consumed_at is null,
+        'companion',exists(select 1 from sellerpilot_private.coupang_exact_representative_permits rep
+          where rep.permit_id=permit.permit_id and rep.request_fingerprint=permit.request_fingerprint
+            and rep.release_sha=permit.release_sha),
+        'lineage',sellerpilot_private.exact_existing_update_enqueued_lineage_is_current(permit.permit_id),
+        'arguments',sellerpilot_private.exact_existing_update_arguments_valid(
+          'coupang',job.request_payload->'arguments',permit.release_sha,
+          permit.request_fingerprint,permit.stock)
+      ) value from sellerpilot_private.exact_existing_update_permits permit
+        join sellerpilot_private.channel_gateway_jobs job on job.id=permit.update_job_id
+       where permit.permit_id=$1`,
+      [exactCoupangPermit.permitId],
+    );
+    assert.deepEqual(coupangPermitDiagnostic,{
+      attemptEq: true,
+      listingEq: true,
+      credentialEq: true,
+      sellerEq: true,
+      fingerprintEq: true,
+      payloadShaEq: true,
+      payloadBytesEq: true,
+      unbound: true,
+      companion: true,
+      lineage: true,
+      arguments: true,
+    });
+    const exactCoupangClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/coupang-exact-representative')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(exactCoupangClaim.id,exactCoupangEnqueue.job_id);
+    const exactCoupangPrewriteImages = exactCoupangTransport.map((image,index) => ({
+      imageOrder: index,
+      imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
+      cdnPath: index === 0
+        ? "vendor_inventory/images/old-representative.jpg"
+        : `vendor_inventory/images/${image.contentSha256}.jpg`,
+      vendorPath: index === 0
+        ? "old-representative.jpg"
+        : `${image.contentSha256}.jpg`,
+    }));
+    const exactCoupangPrewrite = await scalar(
+      db,
+      `select public.sellerpilot_service_bind_coupang_rep_prewrite(
+        $1,$2,$3,$4::jsonb
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangPrewriteImages),
+      ],
+    );
+    assert.equal(exactCoupangPrewrite.contract,"coupang_exact_rep_prewrite_v1");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_bind_coupang_rep_prewrite(
+          $1,$2,$3,$4::jsonb
+        )`,
+        [
+          exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+          JSON.stringify(exactCoupangPrewriteImages.map((image,index) =>
+            index === 0 ? { ...image,vendorPath: "tampered.jpg" } : image)),
+        ],
+      ),
+      /conflict/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+          $1,$2,$3
+        )`,
+        [exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+          $1,$2,$3
+        )`,
+        [exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token],
+      ),
+      false,
+    );
+    const exactCoupangPostwriteImages = exactCoupangPrewriteImages.map(
+      (image,index) => index === 0 ? {
+        ...image,
+        cdnPath: `vendor_inventory/images/${exactCoupangRepresentativeSha}.jpg`,
+        vendorPath: `${exactCoupangRepresentativeSha}.jpg`,
+      } : image,
+    );
+    const coupangSnapshotDigest = (images) => createHash("sha256").update(
+      images.map((image) => [
+        image.imageOrder,image.imageType,image.cdnPath,image.vendorPath,
+      ].join("\u001f")).join("\u001e"),
+      "utf8",
+    ).digest("hex");
+    const exactCoupangResponse = {
+      ok: true,
+      channel: "coupang",
+      operation: "listing.update",
+      remoteId: "16356981734",
+      publicationIntent: "live",
+      publicationFulfilled: true,
+      publicationStateContract: "verified_remote_state_v1",
+      remoteState: {
+        verified: true,
+        visibility: "live",
+        providerStatus: "승인완료",
+        verifiedAt: new Date().toISOString(),
+        locale: "ko-KR",
+        fingerprint: exactCoupangFingerprint,
+        imageCount: 8,
+        evidence: {
+          version: "coupang_seller_product_inventory_v2",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+          publicationAssetBinding: {
+            contract: "sellerpilot_provider_asset_binding_v1",
+            sourceAssetBindingDigest: createHash("sha256")
+              .update(JSON.stringify(exactCoupangArguments.sellerpilotPublicationAssetBinding),"utf8")
+              .digest("hex"),
+            approvedManifestDigest: adoptionManifestDigest,
+            approvedDetailPageVersion: 1,
+            approvedDetailRoles: exactCoupangApprovedDetails.map((image) => image.role),
+            providerImageSurface: "gallery",
+            providerTransportRoles: exactCoupangTransport.map((image) => image.role),
+            providerDetailImageIdentities: exactCoupangApprovedDetails.map((image) => image.publicUrl),
+            providerImageDigest: createHash("sha256")
+              .update(JSON.stringify(exactCoupangApprovedDetails.map((image) => image.publicUrl)),"utf8")
+              .digest("hex"),
+          },
+        },
+        resources: {
+          sellerProductId: "16356981734",
+          vendorItemIds: ["95962393877"],
+        },
+      },
+      steps: [{
+        name: "coupang-exact-commerce-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotVerification: "COUPANG_EXACT_QA_COMMERCE_VERIFIED",
+          data: {
+            sellerItemId: 123456789,
+            amountInStock: 1,
+            salePrice: 5000,
+            onSale: true,
+          },
+        },
+      }, {
+        name: "listing-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotCoupangExactRepresentativeReadback: {
+            contract: "coupang_exact_qa_representative_readback_v1",
+            sellerProductId: "16356981734",
+            vendorItemId: "95962393877",
+            role: "gallery-representative",
+            sourceBucket: "sellerpilot-ai",
+            sourceObjectPath: exactCoupangSourcePath,
+            sourceSha256: exactCoupangSourceSha,
+            normalizedObjectPath: exactCoupangRepresentativePath,
+            contentSha256: exactCoupangRepresentativeSha,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            remoteGalleryVerified: true,
+            providerPrewriteSnapshotSha256:
+              exactCoupangPrewrite.prewriteSnapshotSha256,
+            prewriteImages: exactCoupangPrewriteImages,
+            postwriteImages: exactCoupangPostwriteImages,
+            expectedContentSha256s:
+              exactCoupangTransport.map((image) => image.contentSha256),
+            providerReadbackSnapshotSha256:
+              coupangSnapshotDigest(exactCoupangPostwriteImages),
+            providerVendorBasenamesVerified: true,
+            providerRepresentativeAlreadyExpected: false,
+            providerRepresentativeChanged: true,
+            providerDetailImagesPreserved: true,
+          },
+        },
+      }],
+      safeMessage: "Coupang exact representative update verified.",
+    };
+    const tamperedRepresentative = structuredClone(exactCoupangResponse);
+    tamperedRepresentative.steps[1].data
+      .sellerpilotCoupangExactRepresentativeReadback.postwriteImages[0]
+      .vendorPath = "old-representative.jpg";
+    const tamperedCommerce = structuredClone(exactCoupangResponse);
+    tamperedCommerce.steps[0].data.data.amountInStock = 2;
+    for (const [label,tamperedCompletion] of [
+      ["representative",tamperedRepresentative],
+      ["commerce",tamperedCommerce],
+    ]) {
+      await db.exec("begin");
+      try {
+        await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+            JSON.stringify(tamperedCompletion),
+          ],
+        );
+        assert.fail(`tampered Coupang ${label} completion succeeded`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error),/invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [exactCoupangClaim.id],
+      ),
+      0,
+    );
+    const exactCoupangCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+        $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangResponse),
+      ],
+    );
+    assert.equal(exactCoupangCompletion.status,"completed");
+    const persistedCoupangDiagnostic = await scalar(
+      db,
+      `select jsonb_build_object(
+        'helper',sellerpilot_private.coupang_exact_rep_response_valid(
+          job.id,job.response_payload),
+        'jobStatus',job.status,'completed',job.completed_at is not null,
+        'providerStarted',job.provider_mutation_started_at is not null,
+        'consumed',permit.consumed_at is not null,
+        'boundWorker',permit.bound_worker_token_id,
+        'boundClaim',permit.bound_claim_token,
+        'receipt',to_jsonb(receipt),
+        'prewriteSha',prewrite.prewrite_snapshot_sha256
+      ) value
+        from sellerpilot_private.channel_gateway_jobs job
+        join sellerpilot_private.exact_existing_update_permits permit
+          on permit.update_job_id=job.id
+        join sellerpilot_private.coupang_exact_rep_prewrites prewrite
+          on prewrite.permit_id=permit.permit_id
+        left join sellerpilot_private.gateway_completion_receipts receipt
+          on receipt.job_id=job.id
+       where job.id=$1`,
+      [exactCoupangClaim.id],
+    );
+    assert.equal(persistedCoupangDiagnostic.helper,true,
+      JSON.stringify(persistedCoupangDiagnostic));
+    assert.deepEqual(
+      (await db.query(
+        `select job.status,attempt.status as attempt_status,
+                listing.status as listing_status,listing.remote_visibility,
+                permit.consumed_at is not null as consumed,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id=job.attempt_id
+           join sellerpilot_private.product_listings listing on listing.id=job.listing_id
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [exactCoupangClaim.id],
+      )).rows,
+      [{
+        status: "succeeded",
+        attempt_status: "succeeded",
+        listing_status: "published",
+        remote_visibility: "live",
+        consumed: true,
+        receipt_count: 1,
+      }],
+    );
   } finally {
     await db.close();
   }

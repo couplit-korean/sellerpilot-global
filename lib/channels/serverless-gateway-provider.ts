@@ -161,6 +161,14 @@ export type ServerlessGatewayExecutionHooks = {
   beginOAuthProviderCall?: () => Promise<void>;
   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
   beginProviderMutation: () => Promise<void>;
+  bindCoupangRepresentativePrewrite?: (
+    images: Array<{
+      imageOrder: number;
+      imageType: "REPRESENTATION" | "DETAIL";
+      cdnPath: string;
+      vendorPath: string;
+    }>,
+  ) => Promise<{ prewriteSnapshotSha256: string }>;
   assertLeaseHealthy: () => Promise<void>;
 };
 
@@ -860,11 +868,15 @@ export async function executeServerlessGatewayProviderJob(
     const delayedShopeeExactInventoryBoundary = input.job.channel === "shopee"
       && input.job.operation === "inventory.update"
       && shopeeExactUpdate?.phase === "inventory";
+    const delayedCoupangExactUpdateBoundary = input.job.channel === "coupang"
+      && input.job.operation === "listing.update"
+      && Boolean(coupangExactQaRecoveryBinding(operationArguments, "listing.update"));
     if (writeChannelOperations.has(input.job.operation)
         && !delayedTemuActivationBoundary
         && !delayedTemuExactUpdateBoundary
         && !delayedEbayExactUpdateBoundary
-        && !delayedShopeeExactInventoryBoundary) {
+        && !delayedShopeeExactInventoryBoundary
+        && !delayedCoupangExactUpdateBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -879,10 +891,17 @@ export async function executeServerlessGatewayProviderJob(
           || delayedTemuExactUpdateBoundary
           || delayedEbayExactUpdateBoundary
           || delayedShopeeExactInventoryBoundary
+          || delayedCoupangExactUpdateBoundary
         ? {
             providerMutationHooks: {
               begin: input.hooks.beginProviderMutation,
               assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+              ...(input.hooks.bindCoupangRepresentativePrewrite
+                ? {
+                    bindCoupangRepresentativePrewrite:
+                      input.hooks.bindCoupangRepresentativePrewrite,
+                  }
+                : {}),
             },
           }
         : {}),
