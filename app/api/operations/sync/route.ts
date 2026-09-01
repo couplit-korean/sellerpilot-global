@@ -104,7 +104,7 @@ function periodicEnqueueSummary(values: unknown[]) {
 
 function historyBackfillMessage(result: HistoryBackfillResult) {
   if (result.status === "blocked" || result.blockedReason === SERVERLESS_STATIC_EGRESS_REQUIRED) {
-    return "쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 쿠팡과 스마트스토어를 묶은 과거 문의 작업을 접수하거나 재시도하지 않습니다.";
+    return "쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 두 채널의 과거 문의 작업을 접수하거나 재시도하지 않습니다.";
   }
   if (result.status === "succeeded") {
     return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
@@ -179,14 +179,17 @@ export async function POST(request: Request) {
   }
   const staticEgressChannels = configuredServerlessStaticEgressChannels();
   if (parsed.data.historyDays !== undefined) {
-    const envReady = hasServerlessStaticEgressFor(staticEgressChannels, ["coupang"]);
+    const envReady = hasServerlessStaticEgressFor(
+      staticEgressChannels,
+      ["coupang", "smartstore"],
+    );
     const { data: databasePolicy, error: databasePolicyError } = envReady
       ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
       : { data: null, error: null };
     const policy = databasePolicy && typeof databasePolicy === "object" && !Array.isArray(databasePolicy)
       ? databasePolicy as Record<string, unknown>
       : {};
-    const databaseReady = policy.coupang === true;
+    const databaseReady = policy.coupang === true && policy.smartstore === true;
     if (!envReady || databasePolicyError || !databaseReady) {
       const blockedAt = new Date();
       const seoulDate = (daysAgo: number) => new Intl.DateTimeFormat("en-CA", {
@@ -218,7 +221,7 @@ export async function POST(request: Request) {
           updatedAt: blockedAt.toISOString(),
           completedAt: blockedAt.toISOString(),
         },
-        message: "쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 쿠팡과 스마트스토어를 묶은 30일 작업을 접수하거나 재시도하지 않습니다.",
+        message: "쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 두 채널의 30일 작업을 접수하거나 재시도하지 않습니다.",
       }, {
         status: 409,
         headers: { "cache-control": "no-store, max-age=0" },
@@ -233,6 +236,22 @@ export async function POST(request: Request) {
   }
 
   const requested = new Set<ActiveChannelKey>((parsed.data.channels ?? ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]) as ActiveChannelKey[]);
+  const smartstoreEnvironmentReady = hasServerlessStaticEgressFor(
+    staticEgressChannels,
+    ["smartstore"],
+  );
+  const { data: smartstorePolicyData, error: smartstorePolicyError } =
+    requested.has("smartstore") && smartstoreEnvironmentReady
+      ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
+      : { data: null, error: null };
+  const smartstorePolicy = smartstorePolicyData
+    && typeof smartstorePolicyData === "object"
+    && !Array.isArray(smartstorePolicyData)
+    ? smartstorePolicyData as Record<string, unknown>
+    : {};
+  const smartstoreFixedEgressReady = smartstoreEnvironmentReady
+    && !smartstorePolicyError
+    && smartstorePolicy.smartstore === true;
   const credentials = (Array.isArray(credentialRows) ? credentialRows : [])
     .filter((row): row is CredentialRow => Boolean(row) && typeof row === "object" && typeof row.id === "string" && typeof row.channel === "string")
     .filter((row) => row.status === "active" && row.environment === "production" && isActiveChannelKey(row.channel) && requested.has(row.channel))
@@ -291,6 +310,15 @@ export async function POST(request: Request) {
         p_error: "이 채널의 주문 Open API는 아직 연결되지 않았습니다.",
       });
       return { channel, status: "unsupported" as const };
+    }
+    if (channel === "smartstore" && !smartstoreFixedEgressReady) {
+      return {
+        channel,
+        status: "fixed_egress_required" as const,
+        queuedJobs: 0,
+        pendingJobs: 0,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+      };
     }
 
     try {
@@ -378,7 +406,8 @@ export async function POST(request: Request) {
       });
       return { channel, status: "unsupported" as const };
     }
-    if (channel === "temu" && !hasServerlessStaticEgressFor(staticEgressChannels, ["temu"])) {
+    if ((channel === "temu" && !hasServerlessStaticEgressFor(staticEgressChannels, ["temu"]))
+        || (channel === "smartstore" && !smartstoreFixedEgressReady)) {
       return {
         channel,
         status: "fixed_egress_required" as const,
@@ -451,7 +480,7 @@ export async function POST(request: Request) {
     inquiryResults,
     push: { configured: push.configured, sent: push.sent, failed: push.failed },
     message: [...results, ...inquiryResults].some((result) => result.status === "fixed_egress_required")
-      ? "Temu·쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 접수하거나 자동 재시도하지 않습니다."
+      ? "Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 접수하거나 자동 재시도하지 않습니다."
       : needsAttention
       ? "동기화를 요청했지만 일부 채널은 연결·재연동 또는 외부 처리 결과의 수동 확인이 필요합니다. 채널별 상태를 확인해 주세요."
       : "연결된 판매채널의 주문·고객 문의 동기화를 요청했습니다.",

@@ -41,6 +41,14 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 실제로 일치할 때만 서버리스 실행을 켠다. Static IP는 유료 기능이므로 사용자
 승인 없이 구매하거나 활성화하지 않는다.
 
+네이버 커머스API 공식 FAQ는 내 스토어 애플리케이션에 실제 호출 컴퓨터의
+Outbound IPv4를 등록해야 하며, NAT 환경에서는 NAT 공인 IP를 사용하고
+애플리케이션당 최대 3개까지 등록할 수 있다고 명시한다.
+`GW.IP_NOT_ALLOWED`는 이 등록값과 네이버가 관측한 호출 IP가 다를 때의 정상적인
+fail-closed 응답이다.
+
+- 공식 FAQ: https://github.com/commerce-api-naver/commerce-api/discussions/2291
+
 검증이 끝난 채널만 Production 환경변수
 `SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
 Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation

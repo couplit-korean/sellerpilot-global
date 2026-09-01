@@ -171,15 +171,22 @@ export async function POST(request: Request) {
     );
   }
 
-  if (channel === "coupang" && !hasServerlessStaticEgressFor(
-    configuredServerlessStaticEgressChannels(),
-    ["coupang"],
-  )) {
-    return NextResponse.json({
-      message: "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.",
-      blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
-      staticEgressReady: false,
-    }, { status: 409, headers: noStoreHeaders });
+  if (channel === "coupang" || channel === "smartstore") {
+    const environmentReady = hasServerlessStaticEgressFor(
+      configuredServerlessStaticEgressChannels(),
+      [channel],
+    );
+    const { data: staticEgressStatus, error: staticEgressError } = environmentReady
+      ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
+      : { data: null, error: null };
+    const databasePolicy = objectRecord(staticEgressStatus);
+    if (!environmentReady || staticEgressError || databasePolicy?.[channel] !== true) {
+      return NextResponse.json({
+        message: "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.",
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        staticEgressReady: false,
+      }, { status: 409, headers: noStoreHeaders });
+    }
   }
 
   try {

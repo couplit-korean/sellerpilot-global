@@ -1096,6 +1096,48 @@ export async function POST(request: NextRequest) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  if (channel === "smartstore") {
+    const [staticEgressStatus, runtimeStatus] = await Promise.all([
+      serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+      serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
+    ]);
+    const databasePolicy = staticEgressStatus.data
+      && typeof staticEgressStatus.data === "object"
+      && !Array.isArray(staticEgressStatus.data)
+      ? staticEgressStatus.data as Record<string, unknown>
+      : {};
+    const runtimeState = runtimeStatus.data
+      && typeof runtimeStatus.data === "object"
+      && !Array.isArray(runtimeStatus.data)
+      ? runtimeStatus.data as Record<string, unknown>
+      : {};
+    const environmentReady = hasServerlessStaticEgressFor(
+      configuredServerlessStaticEgressChannels(),
+      ["smartstore"],
+    );
+    if (!environmentReady || staticEgressStatus.error || databasePolicy.smartstore !== true) {
+      return NextResponse.json({
+        ok: false,
+        manualRequired: true,
+        externalActionRequired: true,
+        staticEgressReady: false,
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        mode: "static_egress_required",
+        message: "네이버 커머스API에 등록된 Vercel 고정 egress IP와 서버 정책을 확인한 뒤 스마트스토어 작업을 다시 시도해 주세요.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "SERVERLESS_WORKER_REQUIRED",
+        mode: "serverless_worker_required",
+        message: "스마트스토어 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
   if (channel === "ebay" && operation === "listing.create") {
     const missingConfiguration = missingEbayListingCreateConfiguration(parsed.data.arguments);
     if (missingConfiguration.length) {

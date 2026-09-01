@@ -23,17 +23,17 @@ test("serverless static egress is disabled by default and on unknown values", ()
 });
 
 test("serverless static egress accepts only explicit supported channels", () => {
-  const configured = parseServerlessStaticEgressChannels("temu, shopee, elevenst, coupang");
-  assert.deepEqual(configured, ["coupang", "elevenst", "temu", "shopee"]);
+  const configured = parseServerlessStaticEgressChannels("temu, shopee, elevenst, smartstore, coupang");
+  assert.deepEqual(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]);
   assert.equal(
-    hasServerlessStaticEgressFor(configured, ["coupang", "elevenst", "temu", "shopee"]),
+    hasServerlessStaticEgressFor(configured, ["coupang", "smartstore", "elevenst", "temu", "shopee"]),
     true,
   );
   assert.equal(
     serverlessStaticEgressHeaderValue(configured),
-    "coupang,elevenst,temu,shopee",
+    "coupang,smartstore,elevenst,temu,shopee",
   );
-  assert.deepEqual(parseServerlessStaticEgressChannels("smartstore"), []);
+  assert.deepEqual(parseServerlessStaticEgressChannels("smartstore"), ["smartstore"]);
 });
 
 test("Smartstore forward migration releases only Smartstore from static egress", async () => {
@@ -78,6 +78,37 @@ test("Smartstore forward migration releases only Smartstore from static egress",
     migration,
     /insert into sellerpilot_private\.serverless_static_egress_policy/i,
   );
+});
+
+test("Smartstore corrective migration restores fixed egress without enabling policy", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260901120000_restore_smartstore_static_egress_fence.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /p_channel in \('coupang', 'smartstore', 'elevenst', 'temu', 'shopee'\)/);
+  assert.match(migration, /p_channel in \('smartstore', 'temu'\)[\s\S]*status', 'fixed_egress_required'/);
+  assert.match(migration, /p_channel in \('coupang', 'smartstore'\)[\s\S]*STATIC_EGRESS_REQUIRED/);
+  assert.match(migration, /SMARTSTORE_STATIC_EGRESS_RESTORED_V1/);
+  assert.match(migration, /where job\.channel = 'smartstore'[\s\S]*job\.operation in \('inquiries\.list', 'inquiries\.reply'\)/);
+  assert.doesNotMatch(migration, /set enabled\s*=\s*true/i);
+});
+
+test("Smartstore replies and channel writes fail before enqueue without both runtime and DB attestation", async () => {
+  const [replyRoute, operationRoute] = await Promise.all([
+    readFile(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(replyRoute, /channel === "coupang" \|\| channel === "smartstore"/);
+  assert.match(replyRoute, /sellerpilot_service_serverless_static_egress_status/);
+  assert.match(replyRoute, /databasePolicy\?\.\[channel\] !== true/);
+  assert.match(operationRoute, /if \(channel === "smartstore"\)/);
+  assert.match(operationRoute, /hasServerlessStaticEgressFor\([\s\S]*?\["smartstore"\]/);
+  assert.match(operationRoute, /databasePolicy\.smartstore !== true/);
+  assert.match(operationRoute, /mode: "static_egress_required"/);
+  assert.match(operationRoute, /mode: "serverless_worker_required"/);
 });
 
 test("Shopee static egress migration preserves prior flags and closes both claim paths", async () => {
@@ -146,10 +177,10 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.ok(temuEgressGate < inquiryEnqueue);
   assert.match(inquiryFlow, /hasServerlessStaticEgressFor\(staticEgressChannels, \["temu"\]\)/);
   assert.match(inquiryFlow, /status: "fixed_egress_required" as const,[\s\S]*queuedJobs: 0,[\s\S]*pendingJobs: 0/);
-  assert.match(route, /Temu·쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다/);
+  assert.match(route, /Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다/);
   assert.match(
     route,
-    /쿠팡 문의 조회에는 Vercel 고정 egress 설정이 필요합니다[\s\S]*쿠팡과 스마트스토어를 묶은 30일 작업/,
+    /쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다[\s\S]*두 채널의 30일 작업/,
   );
   assert.match(route, /fixedEgressRequired \? \{ blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED \} : \{\}/);
   assert.match(page, /Vercel 고정 egress 설정 필요/);

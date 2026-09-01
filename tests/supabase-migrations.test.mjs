@@ -119,6 +119,8 @@ const QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION =
   "20260901084000_bind_qoo10_no_effect_legacy_fac9_payload.sql";
 const QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION =
   "20260901085000_reconcile_qoo10_partial_manual_activation.sql";
+const SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION =
+  "20260901120000_restore_smartstore_static_egress_fence.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -815,6 +817,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
       QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
       "20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
+      SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -964,6 +967,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION)
         < migrationNames.indexOf(QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION),
       "Qoo10 partial/manual reconciliation must supersede the rejected no-effect path",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION),
+      "Smartstore fixed-egress correction must replay after the current Qoo10 production chain",
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -2824,7 +2832,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, shopee: false, temu: false },
+      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
     );
     assert.doesNotMatch(
       await scalar(
@@ -3641,7 +3649,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
     );
-    for (const channel of ["coupang", "temu"]) {
+    for (const channel of ["coupang", "smartstore", "temu"]) {
       const blockedInquiry = await scalar(
         db,
         `select public.sellerpilot_service_enqueue_periodic_sync(
@@ -3654,24 +3662,15 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         )`,
         [channel],
       );
-      assert.equal(blockedInquiry.status, "fixed_egress_required");
+      assert.equal(blockedInquiry.status, "fixed_egress_required", channel);
       assert.equal(blockedInquiry.blockedReason, "STATIC_EGRESS_REQUIRED");
     }
-    const queuedSmartstoreInquiry = await scalar(
-      db,
-      `select public.sellerpilot_service_enqueue_periodic_sync(
-        'smartstore', 'inquiries.list',
-        '{"periodicKey":"inquiries:smartstore-nonstatic-egress","arguments":{"kind":"product"}}'::jsonb,
-        5
-      )`,
-    );
-    assert.equal(queuedSmartstoreInquiry.status, "queued");
     assert.equal(
       await scalar(
         db,
         "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
       ),
-      periodicJobCountBeforeStaticEgressChecks + 1,
+      periodicJobCountBeforeStaticEgressChecks,
     );
     assert.equal(
       await scalar(
@@ -3687,7 +3686,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         db,
         "select sellerpilot_private.serverless_static_egress_allowed('smartstore')",
       ),
-      true,
+      false,
     );
     for (const channel of ["coupang", "elevenst", "temu"]) {
       assert.equal(
@@ -3702,9 +3701,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
           set enabled = true, updated_at = clock_timestamp()
-        where channel in ('coupang', 'elevenst', 'temu', 'shopee')`,
+        where channel in ('coupang', 'smartstore', 'elevenst', 'temu', 'shopee')`,
     );
-    for (const channel of ["coupang", "elevenst", "temu"]) {
+    for (const channel of ["coupang", "smartstore", "elevenst", "temu"]) {
       assert.equal(
         await scalar(
           db,
@@ -3719,11 +3718,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       `select set_config(
         'request.headers',
-        '{"x-sellerpilot-static-egress-channels":"coupang,elevenst,temu,shopee"}',
+        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore,elevenst,temu,shopee"}',
         false
       )`,
     );
-    for (const channel of ["coupang", "elevenst", "temu"]) {
+    for (const channel of ["coupang", "smartstore", "elevenst", "temu"]) {
       assert.equal(
         await scalar(
           db,
@@ -3737,7 +3736,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
           set enabled = false, updated_at = clock_timestamp()
-        where channel in ('coupang', 'elevenst', 'temu', 'shopee')`,
+        where channel in ('coupang', 'smartstore', 'elevenst', 'temu', 'shopee')`,
     );
     assert.match(
       await scalar(
@@ -3778,13 +3777,6 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         expected,
       );
     }
-    await db.query(
-      `update sellerpilot_private.channel_gateway_jobs
-          set status = 'cancelled', completed_at = clock_timestamp(),
-              updated_at = clock_timestamp()
-        where id = $1`,
-      [queuedSmartstoreInquiry.jobId],
-    );
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
           set enabled = true, updated_at = clock_timestamp()
@@ -12024,6 +12016,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
         && name !== QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
         && name !== QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
+        && name !== SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
         && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
         && name !== TEMU_EXACT_CABLE_MIGRATION
@@ -15100,13 +15093,13 @@ test("bounded serverless gateway can hold five independent channel claims withou
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
           set enabled = true, updated_at = clock_timestamp()
-        where channel in ('coupang', 'shopee')`,
+        where channel in ('coupang', 'smartstore', 'shopee')`,
     );
     await scalar(
       db,
       `select set_config(
         'request.headers',
-        '{"x-sellerpilot-static-egress-channels":"coupang,shopee"}',
+        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore,shopee"}',
         false
       )`,
     );
