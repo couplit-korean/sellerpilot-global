@@ -1028,7 +1028,7 @@ export async function POST(request: NextRequest) {
           }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
         }
         const { data: identityData, error: identityError } = await serviceClient.rpc(
-          "sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity",
+          "sellerpilot_service_get_ebay_exact_qa_recovery_identity",
           {
             p_listing_id: resourceListingId,
             p_credential_id: parsed.data.credentialId,

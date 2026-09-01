@@ -19,6 +19,10 @@ const currentCredentialFenceMigrationUrl = new URL(
   "../supabase/migrations/20260901082000_bind_ebay_exact_update_to_current_active_credential.sql",
   import.meta.url,
 );
+const rpcExposureMigrationUrl = new URL(
+  "../supabase/migrations/20260901163000_expose_ebay_exact_qa_recovery_rpc.sql",
+  import.meta.url,
+);
 
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const listingId = "8b2cbfaf-3854-437d-b381-abfd70291354";
@@ -170,6 +174,7 @@ async function createDatabase() {
     currentCredentialFenceMigration,
     "patch_ebay_exact_enqueue_credential",
   ));
+  await db.exec(await readFile(rpcExposureMigrationUrl, "utf8"));
   await db.query(
     `insert into sellerpilot_private.products
        (id,owner_id,sku,on_hand,demo,status)
@@ -267,12 +272,64 @@ async function createDatabase() {
 
 async function identity(db, candidateCredentialId = credentialId) {
   return (await db.query(
-    `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity(
+    `select public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(
        $1,$2,$3,'US','EBAY_US'
      ) as value`,
     [listingId, candidateCredentialId, productId],
   )).rows[0].value;
 }
+
+test("eBay exact identity exposes one untruncated service-role-only PostgREST RPC", async () => {
+  const db = await createDatabase();
+  try {
+    const result = (await db.query(`
+      select procedure_row.proname,
+             octet_length(procedure_row.proname) as name_bytes,
+             pg_get_functiondef(procedure_row.oid) as definition,
+             has_function_privilege(
+               'public',
+               'public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(uuid,uuid,uuid,text,text)',
+               'EXECUTE'
+             ) as public_execute,
+             has_function_privilege(
+               'anon',
+               'public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(uuid,uuid,uuid,text,text)',
+               'EXECUTE'
+             ) as anon_execute,
+             has_function_privilege(
+               'authenticated',
+               'public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(uuid,uuid,uuid,text,text)',
+               'EXECUTE'
+             ) as authenticated_execute,
+             has_function_privilege(
+               'service_role',
+               'public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(uuid,uuid,uuid,text,text)',
+               'EXECUTE'
+             ) as service_execute
+        from pg_proc procedure_row
+        join pg_namespace namespace_row
+          on namespace_row.oid = procedure_row.pronamespace
+       where namespace_row.nspname = 'public'
+         and procedure_row.proname =
+           'sellerpilot_service_get_ebay_exact_qa_recovery_identity'
+    `)).rows;
+
+    assert.equal(result.length, 1);
+    assert.equal(result[0].proname, "sellerpilot_service_get_ebay_exact_qa_recovery_identity");
+    assert.equal(result[0].name_bytes, 55);
+    assert.match(
+      result[0].definition,
+      /sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit\(/,
+    );
+    assert.equal(result[0].public_execute, false);
+    assert.equal(result[0].anon_execute, false);
+    assert.equal(result[0].authenticated_execute, false);
+    assert.equal(result[0].service_execute, true);
+    assert.equal((await identity(db))?.credentialId, credentialId);
+  } finally {
+    await db.close();
+  }
+});
 
 function detailHtml() {
   return `<section data-sellerpilot-detail-images="true">${Array.from(

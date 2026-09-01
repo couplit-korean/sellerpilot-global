@@ -357,7 +357,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   let verifiedExactEbayUpdate = false;
   if (exactEbayCandidate) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
-      "sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity",
+      "sellerpilot_service_get_ebay_exact_qa_recovery_identity",
       {
         p_listing_id: listing.id,
         p_credential_id: body.data.credentialId,

@@ -131,6 +131,8 @@ const LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION =
   "20260901151000_idempotent_lazada_target_sync.sql";
 const COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION =
   "20260901160000_reconcile_exact_coupang_unclaimed_static_egress_job.sql";
+const EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION =
+  "20260901163000_expose_ebay_exact_qa_recovery_rpc.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -834,6 +836,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION,
       LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION,
       COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION,
+      EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -968,6 +971,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION)
         < migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION),
       "Coupang proved pre-gateway reconciliation must replay after the current eBay credential fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION),
+      "the short eBay PostgREST RPC must replay after the latest committed exact-job reconciliation",
     );
     assert.ok(
       migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
