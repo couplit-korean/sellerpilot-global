@@ -25,6 +25,9 @@ import {
   assertEbayExactExistingQaProviderCopyRequest,
   bindEbayExactNoEffectRetryArguments,
   bindEbayExactExistingQaRecoveryArguments,
+  ebayExactV101ContentContract,
+  ebayExactV101ContentContractArgument,
+  ebayExactV101ContentRequestFingerprintForBase,
   ebayExactNoEffectRetryArgument,
   ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCentralProductVerified,
@@ -1355,6 +1358,7 @@ export async function POST(request: NextRequest) {
   delete effectiveArguments[smartstoreExactQaRecoveryArgument];
   delete effectiveArguments[ebayExactExistingQaRecoveryArgument];
   delete effectiveArguments[ebayExactNoEffectRetryArgument];
+  delete effectiveArguments[ebayExactV101ContentContractArgument];
   if (boundQoo10RollbackUpdateRecovery) {
     effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(
       effectiveArguments,
@@ -1686,7 +1690,11 @@ export async function POST(request: NextRequest) {
   const fingerprintArguments = strictShopeeSgCreate
     ? shopeeSgArgumentsForFingerprint(manifestFingerprintArguments)
     : manifestFingerprintArguments;
-  const requestFingerprint = createHash("sha256")
+  const baseFingerprintArguments = structuredClone(fingerprintArguments);
+  if (boundEbayExactExistingQaRecovery) {
+    delete baseFingerprintArguments[ebayExactV101ContentContractArgument];
+  }
+  const baseRequestFingerprint = createHash("sha256")
     .update(canonicalJson({
       channel,
       operation,
@@ -1701,9 +1709,31 @@ export async function POST(request: NextRequest) {
       price: effectivePrice ?? null,
       market: parsed.data.market,
       targetId: parsed.data.targetId,
-      arguments: fingerprintArguments,
+      arguments: baseFingerprintArguments,
     }))
     .digest("hex");
+  let requestFingerprint = baseRequestFingerprint;
+  if (boundEbayExactExistingQaRecovery) {
+    try {
+      const expectedFingerprint = ebayExactV101ContentRequestFingerprintForBase(
+        baseRequestFingerprint,
+      );
+      requestFingerprint = createHash("sha256")
+        .update(canonicalJson({
+          baseRequestFingerprint,
+          contract: ebayExactV101ContentContract,
+        }))
+        .digest("hex");
+      if (requestFingerprint !== expectedFingerprint) {
+        throw new Error("EBAY_EXACT_V101_CONTENT_FINGERPRINT_MISMATCH");
+      }
+    } catch {
+      return NextResponse.json({
+        message: "eBay exact v101 content request가 승인된 가격·재고·정책·이미지 계약과 일치하지 않아 원격 수정을 시작하지 않았습니다.",
+        mode: "ebay_exact_v101_content_fingerprint_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   if (listingOperationRequiresVerifiedRemoteState(operation)) {
     // Bind the provider readback to the exact normalized request without
     // creating a circular hash input (the digest itself is appended after the

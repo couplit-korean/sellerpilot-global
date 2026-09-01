@@ -7,6 +7,26 @@ export const ebayExactExistingQaRecoveryArgument =
 export const ebayExactNoEffectRetryArgument =
   "sellerpilotEbayExactNoEffectRetry" as const;
 
+export const ebayExactV101ContentContractArgument =
+  "sellerpilotEbayExactV101ContentContract" as const;
+
+export const ebayExactV101ContentContract = Object.freeze({
+  contract: "ebay_exact_v101_content_contract_v1",
+  materialSource: "ABS 플라스틱",
+  materialTarget: "ABS Plastic",
+  inventoryImageCount: 9,
+  detailImageCount: 8,
+});
+
+export const ebayExactV101ContentBaseRequestFingerprint =
+  "ca16ccbee45665f513bc1a4f1a1420be57dbd9b52f065b1f53e413d7e5d81cd2";
+
+export const ebayExactV101ContentRequestFingerprint =
+  "bda8692c79751806c5a1103a955a13462522ad0adf889259d3a804ba2a4ac231";
+
+export const ebayExactV101RepresentativeObjectPath =
+  "normalized/29/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a.jpg";
+
 export const ebayExactNoEffectRetryMarker = Object.freeze({
   contract: "ebay_exact_no_effect_retry_v1",
   sourceJobId: "08e8cff9-5d7c-4992-b668-6d932aa5ff10",
@@ -66,6 +86,48 @@ function exactNumber(value: unknown) {
   if (typeof value === "number") return value;
   if (typeof value === "string" && value.trim()) return Number(value);
   return Number.NaN;
+}
+
+function exactV101ContentContractValue(value: unknown) {
+  const contract = recordValue(value);
+  return contract
+    && Object.keys(contract).length === 5
+    && contract.contract === ebayExactV101ContentContract.contract
+    && contract.materialSource === ebayExactV101ContentContract.materialSource
+    && contract.materialTarget === ebayExactV101ContentContract.materialTarget
+    && contract.inventoryImageCount === ebayExactV101ContentContract.inventoryImageCount
+    && contract.detailImageCount === ebayExactV101ContentContract.detailImageCount
+      ? contract
+      : null;
+}
+
+export function ebayExactV101ContentRequestFingerprintForBase(
+  baseRequestFingerprint: string,
+) {
+  if (baseRequestFingerprint !== ebayExactV101ContentBaseRequestFingerprint) {
+    throw new Error("EBAY_EXACT_V101_CONTENT_BASE_FINGERPRINT_REQUIRED");
+  }
+  return ebayExactV101ContentRequestFingerprint;
+}
+
+export function bindEbayExactV101ContentContractArguments(
+  argumentsValue: Record<string, unknown>,
+) {
+  if (!ebayExactExistingQaRecoveryBinding(argumentsValue)) {
+    throw new Error("EBAY_EXACT_V101_CONTENT_RECOVERY_BINDING_REQUIRED");
+  }
+  return {
+    ...argumentsValue,
+    [ebayExactV101ContentContractArgument]: ebayExactV101ContentContract,
+  };
+}
+
+export function ebayExactV101ContentContractBinding(
+  argumentsValue: Record<string, unknown>,
+) {
+  return exactV101ContentContractValue(
+    argumentsValue[ebayExactV101ContentContractArgument],
+  );
 }
 
 function canonicalUuid(value: unknown) {
@@ -131,6 +193,7 @@ export function bindEbayExactExistingQaRecoveryArguments(
     sku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
     marketplaceId: ebayExactExistingQaRecoveryIdentity.marketplaceId,
     [ebayExactExistingQaRecoveryArgument]: binding,
+    [ebayExactV101ContentContractArgument]: ebayExactV101ContentContract,
   };
 }
 
@@ -222,6 +285,19 @@ function uniqueHttpsUrls(value: unknown) {
   return new Set(urls).size === urls.length ? urls : [];
 }
 
+export function ebayExactV101RepresentativeUrl(value: unknown) {
+  const candidate = exactText(value);
+  try {
+    const parsed = new URL(candidate);
+    const prefix = "/storage/v1/object/public/sellerpilot-marketplace/";
+    return parsed.protocol === "https:"
+      && parsed.pathname.startsWith(prefix)
+      && parsed.pathname.slice(prefix.length) === ebayExactV101RepresentativeObjectPath;
+  } catch {
+    return false;
+  }
+}
+
 function imageCount(value: unknown) {
   return (exactText(value).match(/<img\b/giu) ?? []).length;
 }
@@ -238,6 +314,63 @@ function htmlImageUrls(value: unknown) {
 function exactOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length
     && left.every((value, index) => value === right[index]);
+}
+
+function providerTransportImageUrls(argumentsValue: Record<string, unknown>) {
+  const assetBinding = recordValue(argumentsValue.sellerpilotPublicationAssetBinding);
+  const images = Array.isArray(assetBinding?.providerTransportImages)
+    ? assetBinding.providerTransportImages
+    : [];
+  const representative = recordValue(images[0]);
+  const urls = images.slice(1)
+    .map((image) => exactText(recordValue(image)?.publicUrl));
+  const representativeValid = assetBinding?.providerImageSurface === "gallery"
+    && images.length === 9
+    && representative?.role === "gallery-representative"
+    && exactText(representative?.objectPath) === ebayExactV101RepresentativeObjectPath
+    && exactText(representative?.contentSha256)
+      === ebayExactV101RepresentativeObjectPath.slice("normalized/29/".length, -4)
+    && ebayExactV101RepresentativeUrl(representative?.publicUrl)
+    && /^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(
+      exactText(representative?.approvedObjectPath),
+    )
+    && /^[a-f0-9]{64}$/u.test(exactText(representative?.approvedSourceSha256));
+  return representativeValid
+    && urls.length === 8
+    && urls.every(Boolean)
+    && new Set([exactText(representative?.publicUrl), ...urls]).size === 9
+    ? urls
+    : [];
+}
+
+export function ebayExactV101EnglishAspects(value: unknown) {
+  const aspects = recordValue(value);
+  if (!aspects) {
+    throw new Error("EBAY_EXACT_V101_ASPECTS_REQUIRED");
+  }
+  const entries = Object.entries(aspects);
+  if (!entries.length || entries.some(([key, item]) =>
+    !/^[\x20-\x7E]+$/u.test(key)
+    || !Array.isArray(item)
+    || item.length === 0
+    || item.some((entry) =>
+      typeof entry !== "string"
+      || !entry.trim()
+      || (!/^[\x20-\x7E]+$/u.test(entry)
+        && !(key === "Material"
+          && entry === ebayExactV101ContentContract.materialSource))))) {
+    throw new Error("EBAY_EXACT_V101_ENGLISH_ASPECT_SHAPE_REQUIRED");
+  }
+  const material = aspects.Material;
+  if (!Array.isArray(material)
+      || material.length !== 1
+      || (material[0] !== ebayExactV101ContentContract.materialSource
+        && material[0] !== ebayExactV101ContentContract.materialTarget)) {
+    throw new Error("EBAY_EXACT_V101_MATERIAL_ASPECT_REQUIRED");
+  }
+  const translated = structuredClone(aspects);
+  translated.Material = [ebayExactV101ContentContract.materialTarget];
+  return translated;
 }
 
 function visibleHtmlText(value: unknown) {
@@ -289,6 +422,13 @@ export function assertEbayExactExistingQaUpdateArguments(
     options.inventoryDescriptionMode === "compact_text";
   const descriptionImages = htmlImageUrls(description);
   const listingDescriptionImages = htmlImageUrls(listingDescription);
+  const translatedAspects = (() => {
+    try {
+      return ebayExactV101EnglishAspects(product?.aspects);
+    } catch {
+      return null;
+    }
+  })();
   if (!binding
       || exactText(argumentsValue.listingId) !== binding.publicListingId
       || exactText(argumentsValue.sku) !== binding.marketplaceSku
@@ -313,7 +453,10 @@ export function assertEbayExactExistingQaUpdateArguments(
       || (compactInventoryDescription && description.length > 1_000)
       || listingDescription.length < 20
       || !exactEnglishText(listingDescription)
-      || urls.length !== 1
+      || !translatedAspects
+      || JSON.stringify(product?.aspects) !== JSON.stringify(translatedAspects)
+      || urls.length !== 9
+      || !ebayExactV101RepresentativeUrl(urls[0])
       || (compactInventoryDescription && imageCount(description) !== 0)
       || (!compactInventoryDescription
         && options.requirePreparedImages !== false
@@ -322,7 +465,8 @@ export function assertEbayExactExistingQaUpdateArguments(
       || (expectedDetailImageUrls.length > 0
         && ((!compactInventoryDescription
             && !exactOrderedValues(descriptionImages, expectedDetailImageUrls))
-          || !exactOrderedValues(listingDescriptionImages, expectedDetailImageUrls)))
+          || !exactOrderedValues(listingDescriptionImages, expectedDetailImageUrls)
+          || !exactOrderedValues(urls.slice(1), expectedDetailImageUrls)))
       || argumentsValue.publish === true) {
     throw new Error("EBAY_EXACT_EXISTING_QA_CONTENT_CONTRACT_REQUIRED");
   }
@@ -368,7 +512,9 @@ export function assertEbayExactExistingQaProviderCopyRequest(
   const description = exactText(product?.description);
   const listingDescription = exactText(offer?.listingDescription);
   const preparedImagesRequired = options.requirePreparedImages !== false;
+  const detailUrls = providerTransportImageUrls(argumentsValue);
   if (!binding
+      || !ebayExactV101ContentContractBinding(argumentsValue)
       || exactText(argumentsValue.listingId) !== binding.publicListingId
       || exactText(argumentsValue.sku) !== binding.marketplaceSku
       || exactText(argumentsValue.marketplaceId).toUpperCase() !== binding.marketplaceId
@@ -387,7 +533,11 @@ export function assertEbayExactExistingQaProviderCopyRequest(
       || exactText(product?.title)
       || visibleHtmlText(description)
       || visibleHtmlText(listingDescription)
-      || (preparedImagesRequired && urls.length !== 1)
+      || (preparedImagesRequired && detailUrls.length !== 8)
+      || (preparedImagesRequired && urls.length !== 9)
+      || (preparedImagesRequired && !ebayExactV101RepresentativeUrl(urls[0]))
+      || (preparedImagesRequired && !exactOrderedValues(urls.slice(1), detailUrls))
+      || (preparedImagesRequired && detailUrls.includes(urls[0] ?? ""))
       || (preparedImagesRequired && imageCount(description) !== 8)
       || (preparedImagesRequired && imageCount(listingDescription) !== 8)
       || argumentsValue.publish === true) {

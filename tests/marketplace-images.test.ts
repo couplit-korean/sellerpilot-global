@@ -19,6 +19,7 @@ import {
 } from "../lib/channels/marketplace-images";
 import {
   listingPublicationProviderAssetEvidence,
+  parseListingPublicationAssetBinding,
   verifyListingPublicationContent,
 } from "../lib/channels/listing-publication-content";
 
@@ -85,6 +86,10 @@ test("server-derived publication binding preserves approved detail lineage and S
   assert.deepEqual(
     smartstoreBinding?.providerTransportImages.slice(1).map((image) => image.publicUrl),
     detailUrls,
+  );
+  assert.equal(
+    parseListingPublicationAssetBinding(smartstoreBinding)?.providerTransportImages.length,
+    9,
   );
 
   const shopeeBuyerVisibleBinding = buildListingPublicationAssetBinding({

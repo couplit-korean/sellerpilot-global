@@ -163,12 +163,14 @@ const QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION =
   "20260901173600_align_exact_qoo10_adoption_credential_lineage.sql";
 const EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION =
   "20260901173700_recover_ebay_exact_v101_credential_rotation.sql";
+const EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION =
+  "20260901173950_rebind_ebay_v101_content_contract.sql";
+const LAZADA_BLANK_TARGET_ADOPTION_MIGRATION =
+  "20260901173900_adopt_exact_lazada_blank_target_after_verified_readback.sql";
 const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
   "20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql";
 const QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION =
   "20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql";
-const LAZADA_BLANK_TARGET_ADOPTION_MIGRATION =
-  "20260901173900_adopt_exact_lazada_blank_target_after_verified_readback.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -891,6 +893,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION,
       EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
       LAZADA_BLANK_TARGET_ADOPTION_MIGRATION,
+      EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1061,6 +1064,13 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
           < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
       "the eBay v101 forward rotation must replay after the historical v100 transition and the currently deployed adoption chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION),
+      "the exact eBay v101 content fingerprint must rebind after the deployed Lazada 173900 lineage adoption",
     );
     assert.ok(
       migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
@@ -12663,6 +12673,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         && name !== EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        && name !== EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
         && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
@@ -14398,6 +14409,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
         || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
         || name === EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        || name === EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
         || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
         || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
       ) {

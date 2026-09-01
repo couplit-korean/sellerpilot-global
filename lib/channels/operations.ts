@@ -66,6 +66,7 @@ import {
   assertEbayExactExistingQaUpdateArguments,
   assertEbayExactExistingQaProviderCopyRequest,
   ebayExactExistingQaRecoveryBinding,
+  ebayExactV101EnglishAspects,
 } from "./ebay-exact-existing-qa-recovery";
 import { upsertMarketplaceDetailImages } from "./marketplace-images";
 import { parseListingPublicationAssetBinding } from "./listing-publication-content";
@@ -6330,18 +6331,36 @@ function ebayExactProviderCopyArguments(input: {
     input.sourceArguments.sellerpilotPublicationAssetBinding,
   );
   if (!publicationBinding
-      || publicationBinding.providerImageSurface !== "detail_content") {
+      || publicationBinding.providerImageSurface !== "gallery"
+      || publicationBinding.providerTransportImages.length !== 9
+      || publicationBinding.providerTransportImages[0]?.role !== "gallery-representative") {
     throw new Error("EBAY_EXACT_EXISTING_QA_APPROVED_DETAIL_BINDING_REQUIRED");
   }
-  const detailUrls = publicationBinding.providerTransportImages.map((image) => image.publicUrl);
-  const detailRoles = publicationBinding.providerTransportImages.map((image) => image.role);
+  const detailUrls = publicationBinding.providerTransportImages
+    .slice(1)
+    .map((image) => image.publicUrl);
+  const detailRoles = publicationBinding.providerTransportImages
+    .slice(1)
+    .map((image) => image.role);
   const detailAltTexts = detailRoles.map((_, index) =>
     `Cable organizer product detail image ${index + 1}`);
   const currentProduct = objectValue(input.currentInventoryItem, "product");
   const requestedProduct = objectValue(input.requestedInventoryItem, "product");
-  const representativeImageUrls = Array.isArray(requestedProduct.imageUrls)
+  const requestedImageUrls = Array.isArray(requestedProduct.imageUrls)
     ? requestedProduct.imageUrls
     : [];
+  const representativeImageUrl = String(requestedImageUrls[0] ?? "").trim();
+  const inventoryImageUrls = [representativeImageUrl, ...detailUrls];
+  if (!representativeImageUrl
+      || inventoryImageUrls.length !== 9
+      || new Set(inventoryImageUrls).size !== 9
+      || requestedImageUrls.length !== inventoryImageUrls.length
+      || !requestedImageUrls.every(
+        (value, index) => String(value).trim() === inventoryImageUrls[index],
+      )) {
+    throw new Error("EBAY_EXACT_V101_NINE_IMAGES_REQUIRED");
+  }
+  const aspects = ebayExactV101EnglishAspects(currentProduct.aspects);
   // The Inventory API limits product.description to 1-4000 characters. Detail
   // image HTML belongs to the offer surface. Keep a conservative 1000-character
   // inventory copy derived only from immutable provider GET values.
@@ -6360,8 +6379,9 @@ function ebayExactProviderCopyArguments(input: {
     condition: input.requestedInventoryItem.condition,
     availability: input.requestedInventoryItem.availability,
     product: {
-      imageUrls: representativeImageUrls,
+      imageUrls: inventoryImageUrls,
       description,
+      aspects,
     },
   }) as Record<string, unknown>;
   const offerBody = mergeListingUpdatePatch(input.currentOffer, {
@@ -6369,23 +6389,14 @@ function ebayExactProviderCopyArguments(input: {
     pricingSummary: input.requestedOffer.pricingSummary,
     listingDescription,
   }) as Record<string, unknown>;
-  const providerProduct = objectValue(inventoryBody, "product");
   const readbackArguments = {
     ...input.sourceArguments,
-    inventoryItem: {
-      condition: inventoryBody.condition,
-      availability: inventoryBody.availability,
-      product: {
-        title: providerProduct.title,
-        description: providerProduct.description,
-        imageUrls: providerProduct.imageUrls,
-      },
-    },
-    offer: {
-      availableQuantity: offerBody.availableQuantity,
-      listingDescription: offerBody.listingDescription,
-      pricingSummary: offerBody.pricingSummary,
-    },
+    // Both eBay endpoints use full-replacement semantics. Carry every
+    // allowlisted provider GET field into the final subset readback so a 204
+    // response cannot hide a dropped policy, location, schedule, package, or
+    // inventory field.
+    inventoryItem: structuredClone(inventoryBody),
+    offer: structuredClone(offerBody),
   };
   assertEbayExactExistingQaUpdateArguments(readbackArguments, {
     expectedDetailImageUrls: detailUrls,
@@ -6664,7 +6675,7 @@ async function executeEbay(input: ExecuteInput) {
     const offerWritableFields = [
       "availableQuantity", "categoryId", "charity", "extendedProducerResponsibility",
       "format", "hideBuyerDetails", "includeCatalogProductDetails", "listingDescription",
-      "listingDuration", "listingPolicies", "lotSize", "merchantLocationKey",
+      "listingDuration", "listingPolicies", "listingStartDate", "lotSize", "merchantLocationKey",
       "pricingSummary", "quantityLimitPerBuyer", "regulatory", "secondaryCategoryId",
       "sku", "storeCategoryNames", "tax",
     ] as const;

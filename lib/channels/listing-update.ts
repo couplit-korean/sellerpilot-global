@@ -30,6 +30,8 @@ import {
   ebayExactExistingQaRecoveryArgument,
   ebayExactExistingQaRecoveryBinding,
   ebayExactExistingQaRecoveryCandidate,
+  ebayExactNoEffectRetryArgument,
+  ebayExactV101ContentContractArgument,
 } from "./ebay-exact-existing-qa-recovery";
 
 export type ListingUpdateReference = {
@@ -978,6 +980,8 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       ...optionalArgument(createArguments, ebayExactExistingQaRecoveryArgument),
+      ...optionalArgument(createArguments, ebayExactNoEffectRetryArgument),
+      ...optionalArgument(createArguments, ebayExactV101ContentContractArgument),
       listingId: remoteId,
       ...(exactRecovery || Object.keys(inventoryProduct).length
         ? {
@@ -1128,6 +1132,49 @@ function subsetMismatches(expectedValue: unknown, actualValue: unknown, path = "
   const numericEquivalent = (typeof expected === "number" && typeof actual === "string" && actual.trim() !== "" && Number(actual) === expected)
     || (typeof actual === "number" && typeof expected === "string" && expected.trim() !== "" && Number(expected) === actual);
   return Object.is(expected, actual) || numericEquivalent ? [] : [path || "value"];
+}
+
+function orderedSubsetMismatches(
+  expectedValue: unknown,
+  actualValue: unknown,
+  path = "",
+): string[] {
+  const expected = normalizedComparable(expectedValue);
+  const actual = normalizedComparable(actualValue);
+  if (Array.isArray(expected)) {
+    if (!Array.isArray(actual) || expected.length !== actual.length) {
+      return [path || "value"];
+    }
+    return expected.flatMap((expectedItem, index) =>
+      orderedSubsetMismatches(
+        expectedItem,
+        actual[index],
+        `${path}[${index}]`,
+      ));
+  }
+  if (expected && typeof expected === "object") {
+    if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
+      return [path || "value"];
+    }
+    return Object.entries(expected as Record<string, unknown>).flatMap(
+      ([key, item]) => orderedSubsetMismatches(
+        item,
+        (actual as Record<string, unknown>)[key],
+        path ? `${path}.${key}` : key,
+      ),
+    );
+  }
+  const numericEquivalent = (typeof expected === "number"
+      && typeof actual === "string"
+      && actual.trim() !== ""
+      && Number(actual) === expected)
+    || (typeof actual === "number"
+      && typeof expected === "string"
+      && expected.trim() !== ""
+      && Number(expected) === actual);
+  return Object.is(expected, actual) || numericEquivalent
+    ? []
+    : [path || "value"];
 }
 
 function firstRecursiveValue(value: unknown, aliases: readonly string[], depth = 0): unknown {
@@ -1427,7 +1474,11 @@ export function verifyListingUpdateReadback(
       && coupangExactQaRecoveryBinding(argumentsValue, "listing.update")) {
     comparableActual = coupangExactQaComparableReadback(expected, actual);
   }
-  const mismatches = subsetMismatches(expected, comparableActual).filter(Boolean);
+  const mismatches = (channel === "ebay"
+      && ebayExactExistingQaRecoveryBinding(argumentsValue)
+    ? orderedSubsetMismatches(expected, comparableActual)
+    : subsetMismatches(expected, comparableActual))
+    .filter(Boolean);
   return { ok: Object.keys(expected).length > 0 && mismatches.length === 0, mismatches };
 }
 

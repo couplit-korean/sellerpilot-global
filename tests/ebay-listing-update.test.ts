@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { verifyListingUpdateReadback } from "../lib/channels/listing-update";
 import {
   ebayExactExistingQaRecoveryArgument,
   ebayExactExistingQaRecoveryIdentity,
+  ebayExactV101ContentContract,
+  ebayExactV101ContentContractArgument,
 } from "../lib/channels/ebay-exact-existing-qa-recovery";
 
 const listingId = "800551945442";
@@ -22,9 +25,10 @@ const exactDetailDigests = Array.from(
 );
 const exactDetailUrls = exactDetailDigests.map((digest) =>
   `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
-const exactRepresentativeDigest = "f".repeat(64);
+const exactRepresentativeDigest =
+  "292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a";
 const exactRepresentativeUrl =
-  `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/ff/${exactRepresentativeDigest}.jpg`;
+  `https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/29/${exactRepresentativeDigest}.jpg`;
 
 function detailHtml(prefix = "updated") {
   return `<p>${prefix} cable clip detail</p>${Array.from(
@@ -53,13 +57,20 @@ function exactAssetBinding() {
     approvedDetailPageVersion: 1,
     approvedManifestDigest: "b".repeat(64),
     approvedDetailImages,
-    providerImageSurface: "detail_content",
-    providerTransportImages: approvedDetailImages.map((image) => ({
+    providerImageSurface: "gallery",
+    providerTransportImages: [{
+      role: "gallery-representative",
+      publicUrl: exactRepresentativeUrl,
+      objectPath: `normalized/29/${exactRepresentativeDigest}.jpg`,
+      contentSha256: exactRepresentativeDigest,
+      approvedObjectPath: "results/11111111-1111-4111-8111-111111111111/claims/22222222-2222-4222-8222-222222222222/gallery-square.png",
+      approvedSourceSha256: "e".repeat(64),
+    }, ...approvedDetailImages.map((image) => ({
       role: image.role,
       publicUrl: image.publicUrl,
       objectPath: image.objectPath,
       contentSha256: image.contentSha256,
-    })),
+    }))],
   };
 }
 
@@ -97,13 +108,14 @@ function exactProviderCopyRequest(stock = 7) {
     publicationExpectedFingerprint: fingerprint,
     publicationExpectedImageCount: 8,
     [ebayExactExistingQaRecoveryArgument]: exactMarker(stock),
+    [ebayExactV101ContentContractArgument]: ebayExactV101ContentContract,
     sellerpilotPublicationAssetBinding: exactAssetBinding(),
     inventoryItem: {
       condition: "NEW",
       availability: { shipToLocationAvailability: { quantity: stock } },
       product: {
         description: imageHtml,
-        imageUrls: [exactRepresentativeUrl],
+        imageUrls: [exactRepresentativeUrl, ...exactDetailUrls],
       },
     },
     offer: {
@@ -130,6 +142,7 @@ function currentOffer(overrides: Record<string, unknown> = {}) {
     },
     pricingSummary: { price: { currency: "USD", value: "12.99" } },
     listingDescription: detailHtml("current"),
+    listingStartDate: "2026-08-23T03:15:00.000Z",
     listing: { listingId, listingStatus: "ACTIVE" },
     ...overrides,
   };
@@ -139,11 +152,22 @@ function currentInventory(overrides: Record<string, unknown> = {}) {
   return {
     availability: { shipToLocationAvailability: { quantity: 20 } },
     condition: "NEW",
+    conditionDescription: "New and unused in original packaging.",
+    packageWeightAndSize: {
+      packageType: "MAILING_BOX",
+      weight: { unit: "KILOGRAM", value: 0.2 },
+      dimensions: { unit: "CENTIMETER", length: 10, width: 8, height: 3 },
+    },
     product: {
       title: "Current Cable Organizer Clips",
       description: "Current English description",
       imageUrls: ["https://cdn.example.com/current-main.jpg"],
-      aspects: { Type: ["Cable Clip"] },
+      aspects: {
+        Brand: ["Unbranded"],
+        Material: ["ABS 플라스틱"],
+        Type: ["Cable Clip(s)"],
+        "Country/Region of Manufacture": ["China"],
+      },
     },
     ...overrides,
   };
@@ -235,6 +259,7 @@ test("eBay UPDATE preserves the immutable tuple and full-replacement fields with
     assert.deepEqual(offerWrite?.body?.pricingSummary, { price: { currency: "USD", value: "12.99" } });
     assert.deepEqual(offerWrite?.body?.listingPolicies, currentOffer().listingPolicies);
     assert.equal(offerWrite?.body?.merchantLocationKey, "seoul-warehouse");
+    assert.equal(offerWrite?.body?.listingStartDate, "2026-08-23T03:15:00.000Z");
     assert.equal(offerWrite?.body?.sku, sku);
     assert.equal(offerWrite?.body?.marketplaceId, marketplaceId);
   } finally {
@@ -336,7 +361,12 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
       title: providerTitle,
       description: oversizedProviderInventoryDescription,
       imageUrls: ["https://i.ebayimg.com/provider-main.jpg"],
-      aspects: { Type: ["Cable Clip"] },
+      aspects: {
+        Brand: ["Unbranded"],
+        Material: ["ABS 플라스틱"],
+        Type: ["Cable Clip(s)"],
+        "Country/Region of Manufacture": ["China"],
+      },
       brand: "Unbranded",
       mpn: "QA-CC-001",
     },
@@ -414,17 +444,183 @@ test("exact eBay UPDATE discovers the offer by SKU, finishes all GET preflights,
     assert.equal(String(writtenProduct.description).length <= 1_000, true);
     assert.equal((String(writtenProduct.description).match(/<img\b/giu) ?? []).length, 0);
     assert.doesNotMatch(String(writtenProduct.description), /<[^>]+>/u);
-    assert.deepEqual(writtenProduct.imageUrls, [exactRepresentativeUrl]);
-    assert.deepEqual(writtenProduct.aspects, { Type: ["Cable Clip"] });
+    assert.deepEqual(writtenProduct.imageUrls, [
+      exactRepresentativeUrl,
+      ...exactDetailUrls,
+    ]);
+    assert.equal(new Set(writtenProduct.imageUrls as string[]).size, 9);
+    assert.deepEqual(writtenProduct.aspects, {
+      Brand: ["Unbranded"],
+      Material: ["ABS Plastic"],
+      Type: ["Cable Clip(s)"],
+      "Country/Region of Manufacture": ["China"],
+    });
+    assert.equal(
+      writtenInventory.conditionDescription,
+      "New and unused in original packaging.",
+    );
+    assert.deepEqual(
+      writtenInventory.packageWeightAndSize,
+      currentInventory().packageWeightAndSize,
+    );
     assert.equal(writtenOffer.categoryId, "175673");
     assert.match(String(writtenOffer.listingDescription), new RegExp(providerOfferText));
     assert.equal((String(writtenOffer.listingDescription).match(/<img\b/giu) ?? []).length, 8);
     assert.doesNotMatch(String(writtenOffer.listingDescription), /legacy-/u);
     assert.deepEqual(writtenOffer.pricingSummary, { price: { currency: "USD", value: 12.9 } });
     assert.equal(writtenOffer.availableQuantity, stock);
+    assert.equal(writtenOffer.categoryId, "175673");
+    assert.equal(writtenOffer.merchantLocationKey, "seoul-warehouse");
+    assert.equal(writtenOffer.listingStartDate, "2026-08-23T03:15:00.000Z");
+    assert.deepEqual(writtenOffer.listingPolicies, currentOffer().listingPolicies);
+    assert.equal(writtenOffer.sku, exactSku);
+    assert.equal(writtenOffer.marketplaceId, marketplaceId);
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("exact eBay UPDATE fails final readback when a preserved offer policy drifts", async () => {
+  const originalFetch = globalThis.fetch;
+  const exactSku = ebayExactExistingQaRecoveryIdentity.marketplaceSku;
+  const exactOfferId = ebayExactExistingQaRecoveryIdentity.offerId;
+  let writtenInventory: Record<string, unknown> | null = null;
+  let writtenOffer: Record<string, unknown> | null = null;
+  let offerReads = 0;
+  const exactProviderOffer = () => currentOffer({
+    offerId: exactOfferId,
+    sku: exactSku,
+    listingDescription: "Current English provider listing description remains authoritative.",
+  });
+  const exactProviderInventory = () => currentInventory({
+    product: {
+      title: "Adhesive Cable Clips Black ABS Plastic 6 Pack Desk Wall Cord Organizers New",
+      description: "Current English provider inventory description remains authoritative.",
+      imageUrls: ["https://i.ebayimg.com/current.jpg"],
+      aspects: {
+        Brand: ["Unbranded"],
+        Material: ["ABS 플라스틱"],
+        Type: ["Cable Clip(s)"],
+        "Country/Region of Manufacture": ["China"],
+      },
+    },
+  });
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const body = typeof init?.body === "string"
+      ? JSON.parse(init.body) as Record<string, unknown>
+      : null;
+    if (method === "GET" && url.includes("/offer?") && url.includes(`sku=${exactSku}`)) {
+      return Response.json({ offers: [exactProviderOffer()] });
+    }
+    if (method === "GET" && url.endsWith(`/offer/${exactOfferId}`)) {
+      offerReads += 1;
+      if (offerReads === 1) return Response.json(exactProviderOffer());
+      return Response.json({
+        ...exactProviderOffer(),
+        ...(writtenOffer ?? {}),
+        listingPolicies: {
+          ...(currentOffer().listingPolicies as Record<string, unknown>),
+          fulfillmentPolicyId: "unexpected-policy-drift",
+        },
+      });
+    }
+    if (method === "GET" && url.endsWith(`/inventory_item/${exactSku}`)) {
+      return Response.json(writtenInventory ?? exactProviderInventory());
+    }
+    if (method === "PUT" && url.endsWith(`/inventory_item/${exactSku}`)) {
+      writtenInventory = body;
+      return new Response(null, { status: 204 });
+    }
+    if (method === "PUT" && url.endsWith(`/offer/${exactOfferId}`)) {
+      writtenOffer = body;
+      return new Response(null, { status: 204 });
+    }
+    throw new Error(`unexpected eBay policy-drift request: ${method} ${url}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "listing.update",
+      payload: { access_token: "secret", marketplace_id: marketplaceId },
+      arguments: exactProviderCopyRequest(),
+      environment: "production",
+      providerMutationHooks: {
+        assertLeaseHealthy: async () => undefined,
+        begin: async () => undefined,
+      },
+    });
+    assert.equal(result.ok, false);
+    const readback = result.steps.find((item) =>
+      item.name === "listing-update-content-readback");
+    assert.equal(readback?.ok, false);
+    assert.equal(
+      readback?.data.sellerpilotVerification,
+      "LISTING_MUTABLE_FIELDS_MISMATCH",
+    );
+    assert.ok((readback?.data.sellerpilotMismatchPaths as string[]).includes(
+      "offer.listingPolicies.fulfillmentPolicyId",
+    ));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact eBay readback rejects reordered or duplicate gallery and detail images", () => {
+  const expected = exactProviderCopyRequest();
+  const exactReadback = {
+    inventoryItem: structuredClone(expected.inventoryItem),
+    offer: structuredClone(expected.offer),
+  };
+  assert.deepEqual(
+    verifyListingUpdateReadback("ebay", expected, exactReadback),
+    { ok: true, mismatches: [] },
+  );
+
+  const reordered = structuredClone(exactReadback);
+  const reorderedProduct = reordered.inventoryItem.product;
+  [reorderedProduct.imageUrls[1], reorderedProduct.imageUrls[2]] = [
+    reorderedProduct.imageUrls[2],
+    reorderedProduct.imageUrls[1],
+  ];
+  const reorderedResult = verifyListingUpdateReadback(
+    "ebay",
+    expected,
+    reordered,
+  );
+  assert.equal(reorderedResult.ok, false);
+  assert.ok(reorderedResult.mismatches.includes(
+    "inventoryItem.product.imageUrls[1]",
+  ));
+
+  const duplicate = structuredClone(exactReadback);
+  duplicate.inventoryItem.product.imageUrls[8] =
+    duplicate.inventoryItem.product.imageUrls[7];
+  const duplicateResult = verifyListingUpdateReadback(
+    "ebay",
+    expected,
+    duplicate,
+  );
+  assert.equal(duplicateResult.ok, false);
+  assert.ok(duplicateResult.mismatches.includes(
+    "inventoryItem.product.imageUrls[8]",
+  ));
+
+  const reversedDetailMarkup = structuredClone(exactReadback);
+  reversedDetailMarkup.offer.listingDescription =
+    `${exactDetailUrls.slice().reverse().map((url) => `<img src="${url}">`).join("")}`;
+  const detailResult = verifyListingUpdateReadback(
+    "ebay",
+    expected,
+    reversedDetailMarkup,
+  );
+  assert.equal(detailResult.ok, false);
+  assert.ok(detailResult.mismatches.includes(
+    "offer.listingDescription.text",
+  ) || detailResult.mismatches.includes(
+    "offer.listingDescription.imageUrls[0]",
+  ));
 });
 
 test("exact eBay UPDATE performs zero writes for missing, mismatched, or duplicate bound-offer discovery", async () => {
@@ -552,6 +748,12 @@ test("exact eBay UPDATE performs all identity GETs but zero writes for non-Engli
           title: "부착형 케이블 정리 클립",
           description: "Current English provider inventory description remains authoritative.",
           imageUrls: ["https://i.ebayimg.com/current.jpg"],
+          aspects: {
+            Brand: ["Unbranded"],
+            Material: ["ABS 플라스틱"],
+            Type: ["Cable Clip(s)"],
+            "Country/Region of Manufacture": ["China"],
+          },
         },
       }));
     }

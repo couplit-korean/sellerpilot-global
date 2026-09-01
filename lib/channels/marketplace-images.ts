@@ -10,7 +10,11 @@ import {
   buildCoupangExactQaGalleryImages,
   coupangExactQaRecoveryBinding,
 } from "./coupang-exact-qa-recovery";
-import { ebayExactExistingQaRecoveryBinding } from "./ebay-exact-existing-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryBinding,
+  ebayExactV101ContentContractBinding,
+  ebayExactV101RepresentativeUrl,
+} from "./ebay-exact-existing-qa-recovery";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
@@ -1085,13 +1089,39 @@ export async function prepareMarketplaceImages(
   const product = record(inventoryItem?.product);
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
   const exactEbayRecovery = ebayExactExistingQaRecoveryBinding(next);
+  if (exactEbayRecovery) {
+    if (gallery.length !== 1
+        || approvedGalleryImagePaths.length !== 1
+        || approvedGalleryImageSha256s.length !== 1
+        || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(
+          approvedGalleryImagePaths[0],
+        )
+        || !/^[a-f0-9]{64}$/u.test(approvedGalleryImageSha256s[0])) {
+      throw new Error("EBAY_EXACT_V101_ONE_REPRESENTATIVE_REQUIRED");
+    }
+    bindPublicationAssets(
+      "gallery",
+      [gallery[0], ...details],
+      ["gallery-representative", ...detailImageRoles],
+    );
+  }
+  const exactEbayV101Content = exactEbayRecovery
+    ? ebayExactV101ContentContractBinding(next)
+    : null;
   const normalized = exactEbayRecovery
-    ? gallery.slice(0, 1)
+    ? uniqueStrings([gallery[0] ?? "", ...details])
     : gallery.length
       ? uniqueStrings([...gallery, ...details]).slice(0, 12)
       : await normalizeList(product.imageUrls, 12, "gallery-square");
-  if (exactEbayRecovery && normalized.length !== 1) {
-    throw new Error("EBAY_EXACT_EXISTING_QA_REPRESENTATIVE_IMAGE_REQUIRED");
+  if (exactEbayRecovery
+      && (!exactEbayV101Content
+        || gallery.length !== 1
+        || details.length !== 8
+        || normalized.length !== 9
+        || normalized[0] !== gallery[0]
+        || !ebayExactV101RepresentativeUrl(normalized[0])
+        || !details.every((url, index) => normalized[index + 1] === url))) {
+    throw new Error("EBAY_EXACT_V101_NINE_IMAGES_REQUIRED");
   }
   product.imageUrls = normalized;
   product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);

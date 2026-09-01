@@ -567,8 +567,9 @@ function parseAssetIdentities(
   value: unknown,
   allowGalleryRole = false,
   requireApprovedObjectPath = false,
+  expectedCounts: readonly number[] = [8],
 ): AssetIdentity[] | null {
-  if (!Array.isArray(value) || value.length !== 8) return null;
+  if (!Array.isArray(value) || !expectedCounts.includes(value.length)) return null;
   const identities = value.map((item) => {
     const row = recordValue(item);
     return {
@@ -603,19 +604,24 @@ function parseAssetIdentities(
     || !/^normalized\/[0-9a-f]{2}\/[0-9a-f]{64}\.jpg$/u.test(item.objectPath)
     || !/^[0-9a-f]{64}$/u.test(item.contentSha256)
     || item.objectPath !== `normalized/${item.contentSha256.slice(0, 2)}/${item.contentSha256}.jpg`)) return null;
-  if (new Set(identities.map((item) => item.role)).size !== 8
-      || new Set(identities.map((item) => item.publicUrl)).size !== 8
-      || new Set(identities.map((item) => item.objectPath)).size !== 8
-      || new Set(identities.map((item) => item.contentSha256)).size !== 8
+  if (new Set(identities.map((item) => item.role)).size !== identities.length
+      || new Set(identities.map((item) => item.publicUrl)).size !== identities.length
+      || new Set(identities.map((item) => item.objectPath)).size !== identities.length
+      || new Set(identities.map((item) => item.contentSha256)).size !== identities.length
       || (requireApprovedObjectPath
-        && new Set(identities.map((item) => item.approvedSourceSha256)).size !== 8)) return null;
+        && new Set(identities.map((item) => item.approvedSourceSha256)).size !== identities.length)) return null;
   return identities;
 }
 
 export function parseListingPublicationAssetBinding(value: unknown): ListingPublicationAssetBinding | null {
   const row = recordValue(value);
   const approvedDetailImages = parseAssetIdentities(row.approvedDetailImages, false, true);
-  const providerTransportImages = parseAssetIdentities(row.providerTransportImages, true);
+  const providerTransportImages = parseAssetIdentities(
+    row.providerTransportImages,
+    true,
+    false,
+    row.providerImageSurface === "gallery" ? [8, 9] : [8],
+  );
   const version = Number(row.approvedDetailPageVersion);
   const surface = row.providerImageSurface;
   if (row.contract !== listingPublicationAssetBindingContract
@@ -626,7 +632,12 @@ export function parseListingPublicationAssetBinding(value: unknown): ListingPubl
   if ((surface === "detail_content" || surface === "buyer_visible")
       && !sameOrderedValues(approvedDetailImages.map((item) => item.publicUrl), providerTransportImages.map((item) => item.publicUrl))) return null;
   if (surface === "gallery" && (providerTransportImages[0]?.role !== "gallery-representative"
-      || !sameOrderedValues(approvedDetailImages.slice(0, 7).map((item) => item.publicUrl), providerTransportImages.slice(1).map((item) => item.publicUrl)))) return null;
+      || !sameOrderedValues(
+        approvedDetailImages
+          .slice(0, providerTransportImages.length - 1)
+          .map((item) => item.publicUrl),
+        providerTransportImages.slice(1).map((item) => item.publicUrl),
+      ))) return null;
   return {
     contract: listingPublicationAssetBindingContract,
     approvedDetailPageVersion: version,
