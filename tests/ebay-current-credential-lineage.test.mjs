@@ -2,9 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+import {
+  ebayExactExistingQaRecoveryBindingValue,
+  ebayExactExistingQaRecoveryIdentity,
+} from "../lib/channels/ebay-exact-existing-qa-recovery.ts";
 
 const migrationUrl = new URL(
   "../supabase/migrations/20260901194336_rebind_ebay_exact_current_credential_lineage.sql",
+  import.meta.url,
+);
+const dynamicRearmMigrationUrl = new URL(
+  "../supabase/migrations/20260902083000_rearm_ebay_exact_dynamic_credential.sql",
   import.meta.url,
 );
 const currentCredentialMigrationUrl = new URL(
@@ -30,6 +38,202 @@ function extractFunction(source, signature) {
   assert.notEqual(end, -1, `${signature} end must exist`);
   return source.slice(start, end + 3);
 }
+
+test("eBay exact identity and permit rearm follow the sole current credential after later rotations", async () => {
+  const migration = await readFile(dynamicRearmMigrationUrl, "utf8");
+
+  for (const exactValue of [
+    "8b2cbfaf-3854-437d-b381-abfd70291354",
+    "ddccde35-9c58-4856-b673-d7aa27ce4220",
+    "c9d5b739-4ae7-4596-acbc-06f900a21ba3",
+    "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77",
+    "800551945442",
+    "244042196011",
+    "QA-20260823-CC-001-US",
+    sellerAccountKey,
+  ]) {
+    assert.match(migration, new RegExp(exactValue, "u"));
+  }
+  assert.match(
+    migration,
+    /sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit[\s\S]*listing\.failure_class = 'retryable'[\s\S]*ebay_exact_current_credential_is_valid/u,
+  );
+  assert.match(
+    migration,
+    /permit\.credential_id is distinct from p_credential_id/u,
+  );
+  assert.match(
+    migration,
+    /product\.on_hand = 1/u,
+  );
+  assert.match(
+    migration,
+    /'sourceAttemptId',\s*'07b8ced8-fa77-4c22-a708-2ce1ec4e3c77'::uuid/u,
+  );
+  assert.match(
+    migration,
+    /listing\.operation_attempt_id =\s*'c9d5b739-4ae7-4596-acbc-06f900a21ba3'::uuid/u,
+  );
+  assert.doesNotMatch(migration, new RegExp(activeV103, "u"));
+  assert.doesNotMatch(migration, /credential\.version = (103|104)/u);
+  assert.doesNotMatch(migration, /insert\s+into\s+sellerpilot_private\.channel_gateway_jobs/iu);
+  assert.doesNotMatch(migration, /fetch\s*\(|api\.ebay\.com|providerMutationCount'\s*,\s*1/iu);
+  assert.match(migration, /does not arm a permit, enqueue a job, or call eBay/u);
+});
+
+test("the exact identity RPC accepts a later sole active credential and rejects duplicate active rows", async () => {
+  const [migration, currentCredentialMigration] = await Promise.all([
+    readFile(dynamicRearmMigrationUrl, "utf8"),
+    readFile(currentCredentialMigrationUrl, "utf8"),
+  ]);
+  const identity = extractFunction(
+    migration,
+    "create or replace function\n  public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(",
+  );
+  const validator = extractFunction(
+    currentCredentialMigration,
+    "create function sellerpilot_private.ebay_exact_current_credential_is_valid(",
+  );
+  const db = new PGlite();
+  try {
+    await db.exec(`
+      create role anon;
+      create role authenticated;
+      create role service_role;
+      create schema sellerpilot_private;
+      create table sellerpilot_private.channel_credentials (
+        id uuid primary key, channel text not null, environment text not null,
+        status text not null, version integer not null, fingerprint text not null,
+        seller_account_key text not null, seller_account_key_source text,
+        seller_account_verified_at timestamptz, expires_at timestamptz,
+        last_checked_at timestamptz, last_check_status text
+      );
+      create table sellerpilot_private.products (
+        id uuid primary key, owner_id uuid not null, sku text not null,
+        on_hand integer not null, demo boolean not null, status text not null
+      );
+      create table sellerpilot_private.product_listings (
+        id uuid primary key, owner_id uuid not null, product_id uuid not null,
+        channel_key text not null, remote_id text, marketplace_sku text,
+        provider_resource_id text, remote_resources jsonb, status text,
+        failure_class text, operation_attempt_id uuid,
+        requested_publication_intent text, remote_visibility text,
+        provider_status text, published_at timestamptz, currency text,
+        price numeric, market text, target_id text, seller_account_key text
+      );
+      create table sellerpilot_private.provider_listing_lineage_attestations (
+        id uuid primary key, listing_id uuid not null, credential_id uuid not null,
+        gateway_job_id uuid not null, channel text not null, environment text not null,
+        seller_account_key text not null, expected_remote_id text,
+        verified_remote_id text, market text, target_id text,
+        marketplace_sku text, provider_resource_id text, evidence_version text,
+        evidence_digest text, verified_at timestamptz
+      );
+      create table sellerpilot_private.channel_gateway_jobs (
+        id uuid primary key, listing_id uuid, credential_id uuid,
+        channel text not null, environment text not null, operation text not null,
+        status text not null, seller_account_key text
+      );
+      ${validator}
+      ${identity}
+      insert into sellerpilot_private.products values (
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',
+        '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c',
+        'QA-20260823-CC-001', 1, false, 'active'
+      );
+      insert into sellerpilot_private.product_listings values (
+        '8b2cbfaf-3854-437d-b381-abfd70291354',
+        '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c',
+        'ddccde35-9c58-4856-b673-d7aa27ce4220', 'ebay',
+        '800551945442', 'QA-20260823-CC-001-US', '244042196011',
+        '{}'::jsonb, 'failed', 'retryable',
+        'c9d5b739-4ae7-4596-acbc-06f900a21ba3', 'live', 'unknown',
+        null, null, 'USD', 12.90, 'US', 'EBAY_US', '${sellerAccountKey}'
+      );
+      insert into sellerpilot_private.channel_credentials values
+        ('a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1', 'ebay', 'production',
+         'revoked', 84, 'A48BC6BD3D4B', '${sellerAccountKey}',
+         'provider_certified_v1', now() - interval '10 days',
+         now() - interval '1 day', now() - interval '1 day', 'passed'),
+        ('${activeV103}', 'ebay', 'production', 'active', 103,
+         'A103A103A103', '${sellerAccountKey}', 'provider_certified_v1',
+         now() - interval '1 hour', now() + interval '1 day', now(), 'passed');
+      insert into sellerpilot_private.channel_gateway_jobs values (
+        'fdff6983-1f08-4f51-a751-bc61b4bf7070',
+        '8b2cbfaf-3854-437d-b381-abfd70291354',
+        'a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1', 'ebay', 'production',
+        'listing.lineage.verify', 'succeeded', '${sellerAccountKey}'
+      );
+      insert into sellerpilot_private.provider_listing_lineage_attestations values (
+        'fc54f95c-3533-4dbd-820f-cb2dfaf018e7',
+        '8b2cbfaf-3854-437d-b381-abfd70291354',
+        'a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1',
+        'fdff6983-1f08-4f51-a751-bc61b4bf7070', 'ebay', 'production',
+        '${sellerAccountKey}', '800551945442', '800551945442', 'US',
+        'EBAY_US', 'QA-20260823-CC-001-US', '244042196011',
+        'provider_listing_readback_v1',
+        '3ba3464e14408e04967534e0227f01424378fc8b5b112ea05887769fecff781a',
+        now() - interval '1 day'
+      );
+    `);
+
+    const lookup = async (credentialId) => (
+      await db.query(
+        `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(
+           '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid, $1::uuid,
+           'ddccde35-9c58-4856-b673-d7aa27ce4220'::uuid, 'US', 'EBAY_US'
+         ) identity`,
+        [credentialId],
+      )
+    ).rows[0].identity;
+
+    const v103Identity = await lookup(activeV103);
+    assert.equal(v103Identity.credentialId, activeV103);
+    assert.equal(
+      v103Identity.sourceAttemptId,
+      "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77",
+    );
+    assert.equal(
+      ebayExactExistingQaRecoveryBindingValue(v103Identity)?.credentialId,
+      activeV103,
+    );
+    assert.equal(
+      v103Identity.sourceAttemptId,
+      ebayExactExistingQaRecoveryIdentity.sourceAttemptId,
+    );
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set status = 'revoked'
+       where id = '${activeV103}'::uuid;
+      insert into sellerpilot_private.channel_credentials values (
+        '${activeV104}', 'ebay', 'production', 'active', 104,
+        'A104A104A104', '${sellerAccountKey}', 'provider_certified_v1',
+        now(), now() + interval '1 day', now(), 'passed'
+      );
+    `);
+    const v104Identity = await lookup(activeV104);
+    assert.equal(v104Identity.credentialId, activeV104);
+    assert.equal(
+      v104Identity.sourceAttemptId,
+      "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77",
+    );
+    assert.equal(
+      ebayExactExistingQaRecoveryBindingValue(v104Identity)?.credentialId,
+      activeV104,
+    );
+
+    await db.exec(`
+      insert into sellerpilot_private.channel_credentials values (
+        '3c46d19a-60b8-43fa-91df-b21769f97503', 'ebay', 'production',
+        'active', 105, 'A105A105A105', '${sellerAccountKey}',
+        'provider_certified_v1', now(), now() + interval '1 day', now(), 'passed'
+      );
+    `);
+    assert.equal(await lookup(activeV104), null);
+  } finally {
+    await db.close();
+  }
+});
 
 test("eBay exact content retry is dynamic but remains bound to the one listing and offer", async () => {
   const migration = await readFile(migrationUrl, "utf8");
