@@ -297,6 +297,45 @@ test("Smartstore exact recovery rejects a price or SKU contract mismatch before 
   }
 });
 
+test("Smartstore exact recovery rejects stock above one before provider reads", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  const mutations: string[] = [];
+  globalThis.fetch = async (input) => {
+    calls.push(String(input));
+    throw new Error(`unexpected request: ${String(input)}`);
+  };
+  const input = runtimeInput("listing.update", mutations);
+  input.arguments = bindSmartstoreExactQaRecoveryArguments({
+    ...input.arguments,
+    publicationExpectedLocale: "ko-KR",
+    publicationExpectedImageCount: 8,
+    body: {
+      ...input.arguments.body,
+      originProduct: {
+        ...input.arguments.body.originProduct,
+        salePrice: smartstoreExactQaRecoveryIdentity.priceKrw,
+        stockQuantity: smartstoreExactQaRecoveryIdentity.stock + 1,
+        detailAttribute: {
+          sellerCodeInfo: {
+            sellerManagementCode: smartstoreExactQaRecoveryIdentity.centralSku,
+          },
+        },
+      },
+    },
+  });
+  try {
+    await assert.rejects(
+      prepareMarketplaceListingArguments(input),
+      /SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH/,
+    );
+    assert.deepEqual(calls, []);
+    assert.deepEqual(mutations, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Smartstore exact recovery rejects missing or null provider fields before any request", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];

@@ -1294,8 +1294,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
           || expectedSellerManagementCode !== exactRecovery.centralSku
           || requestedPrice !== smartstoreExactQaRecoveryIdentity.priceKrw
           || !Number.isSafeInteger(requestedStock)
-          || requestedStock < 1
-          || requestedStock > 99_999_999
+          || requestedStock !== smartstoreExactQaRecoveryIdentity.stock
           || input.arguments.publicationIntent !== "live"
           || input.arguments.publicationExpectedLocale !== "ko-KR"
           || input.arguments.publicationExpectedImageCount !== 8
