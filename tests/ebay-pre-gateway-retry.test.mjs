@@ -11,6 +11,10 @@ const credentialRotationMigrationUrl = new URL(
   "../supabase/migrations/20260901165900_recover_ebay_exact_credential_rotation.sql",
   import.meta.url,
 );
+const v101CredentialRotationMigrationUrl = new URL(
+  "../supabase/migrations/20260901173700_recover_ebay_exact_v101_credential_rotation.sql",
+  import.meta.url,
+);
 const closedGateMigrationUrl = new URL(
   "../supabase/migrations/20260901080000_allow_exact_existing_updates_through_closed_gate.sql",
   import.meta.url,
@@ -22,6 +26,7 @@ const ids = {
   listing: "8b2cbfaf-3854-437d-b381-abfd70291354",
   historicalCredential: "9e7de791-e6e6-4255-8d61-5a1f9576d797",
   currentCredential: "75853087-d2a8-4f56-9c05-e66fcc65e372",
+  v101Credential: "f78397ec-c387-48ec-b562-64e754d90ac5",
   sourceJob: "08e8cff9-5d7c-4992-b668-6d932aa5ff10",
   sourceAttempt: "22457f2e-51d8-43c5-bb03-d2c1bb7fe697",
   sourcePermit: "c2e9f199-f6a7-425f-8668-7eebd5b08bb4",
@@ -32,6 +37,7 @@ const ids = {
 };
 
 const releaseSha = "f51d5147f28949b2ef9d07d1d13ecb404259b260";
+const v101ReleaseSha = "52490285b070f31bba898bed431ffc489684c001";
 const sourceFingerprint =
   "79507d23bb865f17b7d91a148f564fef1519e36ce3b5d4219200c5b7d786a3dc";
 const retryFingerprint =
@@ -120,9 +126,45 @@ test("credential rotation migration is one exact permit transition with no provi
   );
 });
 
-test("PGlite rotates only the expired permit to current v100 and enqueues one new job", async () => {
+test("v101 rotation remains one exact unbound permit transition with no provider action", async () => {
+  const migration = await readFile(v101CredentialRotationMigrationUrl, "utf8");
+  for (const exactValue of [
+    ids.listing,
+    ids.retryAttempt,
+    ids.retryPermit,
+    ids.historicalCredential,
+    ids.v101Credential,
+    retryFingerprint,
+    "BEEF134012FD",
+  ]) {
+    assert.match(migration, new RegExp(exactValue, "u"));
+  }
+  assert.match(migration, /current_credential\.version = 101/u);
+  assert.match(
+    migration,
+    /'ebay_exact_pre_gateway_v101_credential_rotated'/u,
+  );
+  assert.match(migration, /release_sha = p_release_sha/u);
+  assert.match(migration, /'providerMutationCount', 0/u);
+  assert.match(migration, /'autoRetry', false/u);
+  assert.doesNotMatch(migration, /delete\s+from/iu);
+  assert.doesNotMatch(
+    migration,
+    /insert\s+into\s+sellerpilot_private\.channel_gateway_jobs/iu,
+  );
+  assert.doesNotMatch(
+    migration,
+    /update\s+sellerpilot_private\.channel_operation_attempts/iu,
+  );
+});
+
+test("PGlite preserves v100 and rotates only the same expired permit to sole active v101", async () => {
   const migration = await readFile(migrationUrl, "utf8");
   const rotationMigration = await readFile(credentialRotationMigrationUrl, "utf8");
+  const v101RotationMigration = await readFile(
+    v101CredentialRotationMigrationUrl,
+    "utf8",
+  );
   const closedGateMigration = await readFile(closedGateMigrationUrl, "utf8");
   const proof = extractFunction(
     migration,
@@ -171,6 +213,22 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
   const rotatedArm = extractTaggedDo(
     rotationMigration,
     "patch_ebay_retry_arm_credential_rotation",
+  );
+  const v101Proof = extractFunction(
+    v101RotationMigration,
+    "create function sellerpilot_private.ebay_exact_v101_rotation_is_proved(",
+  );
+  const v101Availability = extractTaggedDo(
+    v101RotationMigration,
+    "patch_ebay_v101_retry_availability",
+  );
+  const v101PermitTransition = extractTaggedDo(
+    v101RotationMigration,
+    "patch_ebay_v101_permit_transition",
+  );
+  const v101Arm = extractTaggedDo(
+    v101RotationMigration,
+    "patch_ebay_retry_arm_v101_rotation",
   );
   const basePermitGuard = extractFunction(
     closedGateMigration,
@@ -259,16 +317,47 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
       returns bytea language sql immutable as $$
         select decode(repeat('a', 64), 'hex')
       $$;
+      create function sellerpilot_private.active_serverless_runtime_release_sha()
+      returns text language sql stable as $$ select '${releaseSha}'::text $$;
       create function sellerpilot_private.exact_existing_update_release_is_current(
         p_channel text, p_release_sha text
       ) returns boolean language sql stable as $$
-        select p_channel = 'ebay' and p_release_sha = '${releaseSha}'
+        select p_channel = 'ebay'
+          and p_release_sha = sellerpilot_private.active_serverless_runtime_release_sha()
       $$;
       create function sellerpilot_private.ebay_exact_current_credential_is_valid(
         p_credential_id uuid, p_seller_account_key text
       ) returns boolean language sql stable as $$
-        select p_credential_id = '${ids.currentCredential}'::uuid
-          and p_seller_account_key = '${sellerAccountKey}'
+        select p_seller_account_key = '${sellerAccountKey}'
+          and exists (
+            select 1
+              from sellerpilot_private.channel_credentials credential
+             where credential.id = p_credential_id
+               and credential.channel = 'ebay'
+               and credential.environment = 'production'
+               and credential.status = 'active'
+               and credential.seller_account_key = p_seller_account_key
+               and credential.seller_account_key_source = 'provider_certified_v1'
+               and credential.seller_account_verified_at is not null
+               and credential.expires_at > statement_timestamp()
+               and credential.last_checked_at is not null
+               and credential.last_check_status = 'passed'
+               and credential.version = (
+                 select max(candidate.version)
+                   from sellerpilot_private.channel_credentials candidate
+                  where candidate.channel = 'ebay'
+                    and candidate.environment = 'production'
+                    and candidate.seller_account_key = p_seller_account_key
+               )
+               and 1 = (
+                 select count(*)
+                   from sellerpilot_private.channel_credentials active_credential
+                  where active_credential.channel = 'ebay'
+                    and active_credential.environment = 'production'
+                    and active_credential.status = 'active'
+                    and active_credential.seller_account_key = p_seller_account_key
+               )
+          )
       $$;
       create function sellerpilot_private.ebay_exact_no_effect_source_is_proved()
       returns boolean language sql stable as $$ select true $$;
@@ -412,7 +501,7 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
 
       insert into sellerpilot_private.products values (
         '${ids.product}', '${ids.owner}', 'QA-20260823-CC-001',
-        7, false, 'active'
+        1, false, 'active'
       );
       insert into sellerpilot_private.channel_credentials values
       (
@@ -499,7 +588,7 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
       ) values (
         '${ids.retryPermit}', 'ebay', '${ids.listing}', '${ids.product}',
         '${ids.historicalCredential}', '${ids.owner}', 'US', 'EBAY_US', '800551945442',
-        'QA-20260823-CC-001-US', '244042196011', 'USD', 12.90, 7,
+        'QA-20260823-CC-001-US', '244042196011', 'USD', 12.90, 1,
         '${sellerAccountKey}', 99, 'B99B99B99B99',
         'provider_certified_v1', '2026-09-01 07:00:00+00',
         '2026-09-01 09:00:00+00',
@@ -551,8 +640,13 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
     await db.exec(rotatedAvailability);
     await db.exec(rotatedPermitTransition);
     await db.exec(rotatedArm);
+    await db.exec(v101Proof);
+    await db.exec(v101Availability);
+    await db.exec(v101PermitTransition);
+    await db.exec(v101Arm);
     await db.exec("set request.jwt.claim.role = 'service_role'");
 
+    await db.exec("begin");
     const armed = (await db.query(
       `select public.sellerpilot_service_arm_ebay_no_effect_retry(
          'ebay', $1, $2, $3, $4
@@ -579,6 +673,55 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
         update_job_id: null,
       },
     );
+    await db.exec("rollback");
+
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set status = 'revoked'
+       where id = '${ids.currentCredential}';
+      insert into sellerpilot_private.channel_credentials values (
+        '${ids.v101Credential}', 'ebay', '${sellerAccountKey}', 101,
+        'BEEF134012FD', 'provider_certified_v1',
+        clock_timestamp() - interval '20 minutes',
+        clock_timestamp() + interval '1 year',
+        clock_timestamp() - interval '1 minute', 'passed',
+        'production', 'active'
+      );
+      create or replace function
+        sellerpilot_private.active_serverless_runtime_release_sha()
+      returns text language sql stable as $$
+        select '${v101ReleaseSha}'::text
+      $$;
+    `);
+
+    const v101Armed = (await db.query(
+      `select public.sellerpilot_service_arm_ebay_no_effect_retry(
+         'ebay', $1, $2, $3, $4
+       ) value`,
+      [ids.listing, ids.v101Credential, v101ReleaseSha, retryFingerprint],
+    )).rows[0].value;
+    assert.equal(v101Armed.rearmed, true);
+    assert.equal(v101Armed.reused, true);
+    assert.equal(v101Armed.permitId, ids.retryPermit);
+    assert.equal(v101Armed.credentialRotated, true);
+    assert.equal(v101Armed.releaseSha, v101ReleaseSha);
+
+    assert.deepEqual(
+      (await db.query(
+        `select credential_id::text, credential_version,
+                credential_fingerprint, release_sha, update_job_id
+           from sellerpilot_private.exact_existing_update_permits
+          where permit_id = $1`,
+        [ids.retryPermit],
+      )).rows[0],
+      {
+        credential_id: ids.v101Credential,
+        credential_version: 101,
+        credential_fingerprint: "BEEF134012FD",
+        release_sha: v101ReleaseSha,
+        update_job_id: null,
+      },
+    );
     assert.equal(
       (await db.query(
         `select count(*)::integer count
@@ -591,7 +734,7 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
 
     await db.exec(`
       insert into sellerpilot_private.channel_operation_attempts values (
-        '${ids.nextAttempt}', '${ids.owner}', '${ids.currentCredential}',
+        '${ids.nextAttempt}', '${ids.owner}', '${ids.v101Credential}',
         'ebay', 'listing.update', 'running', null, null, null,
         true, false, '${retryFingerprint}', '${sellerAccountKey}'
       )
@@ -624,7 +767,7 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
       ) value`,
       [
         ids.listing,
-        ids.currentCredential,
+        ids.v101Credential,
         ids.nextAttempt,
         JSON.stringify(requestPayload),
       ],
@@ -660,6 +803,14 @@ test("PGlite rotates only the expired permit to current v100 and enqueues one ne
         `select count(*)::integer count
            from sellerpilot_private.operation_audit
           where action = 'ebay_exact_pre_gateway_credential_rotated'`,
+      )).rows[0].count,
+      0,
+    );
+    assert.equal(
+      (await db.query(
+        `select count(*)::integer count
+           from sellerpilot_private.operation_audit
+          where action = 'ebay_exact_pre_gateway_v101_credential_rotated'`,
       )).rows[0].count,
       1,
     );
