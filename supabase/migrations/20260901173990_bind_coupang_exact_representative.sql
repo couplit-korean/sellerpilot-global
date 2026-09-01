@@ -1246,6 +1246,8 @@ begin
        select 1 from sellerpilot_private.channel_gateway_jobs job
         where job.id = p_job_id and job.status = 'succeeded'
      )
+     and v_result->>'status' <> 'completed_replay'
+     and v_result->>'replayed' is distinct from 'true'
   then
     perform pg_catalog.set_config(
       'sellerpilot.coupang_exact_rep_apply',p_job_id::text,true

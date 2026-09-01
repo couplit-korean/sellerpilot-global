@@ -14919,6 +14919,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ],
     );
     assert.equal(exactCoupangCompletion.status,"completed");
+    const exactCoupangListingAfterFirstCompletion = await scalar(
+      db,
+      "select to_jsonb(listing) from sellerpilot_private.product_listings listing where id='7ffc6e46-3173-4695-9889-5fa1529765f1'",
+    );
     for (const [label,workerHash,claimToken] of [
       ["worker", "1".repeat(64), exactCoupangClaim.claim_token],
       ["claim", exactTemuWorkerHash, wrongCoupangClaim],
@@ -14949,6 +14953,22 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.equal(exactCoupangReplay.status,"completed");
     assert.equal(exactCoupangReplay.replayed,true);
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select to_jsonb(listing) from sellerpilot_private.product_listings listing where id='7ffc6e46-3173-4695-9889-5fa1529765f1'",
+      ),
+      exactCoupangListingAfterFirstCompletion,
+      "a receipt replay must not rewrite the exact Coupang listing projection",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [exactCoupangClaim.id],
+      ),
+      1,
+    );
     const persistedCoupangDiagnostic = await scalar(
       db,
       `select jsonb_build_object(

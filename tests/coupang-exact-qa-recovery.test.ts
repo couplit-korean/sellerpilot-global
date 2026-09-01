@@ -958,6 +958,14 @@ test("exact representative provider identity fails closed on every ambiguous gal
     product.items[0].images = images;
     return product;
   };
+  const alreadyExpectedImages = providerReadbackGalleryImages(argumentsValue);
+  const alreadyExpected = verifyCoupangExactRepresentativeReadback({
+    currentValue: productWithImages(alreadyExpectedImages),
+    prewriteImages: alreadyExpectedImages,
+    argumentsValue,
+  });
+  assert.equal(alreadyExpected.providerRepresentativeAlreadyExpected, true);
+  assert.equal(alreadyExpected.providerRepresentativeChanged, false);
   assert.doesNotThrow(() => verifyCoupangExactRepresentativeReadback({
     currentValue: productWithImages(providerReadbackGalleryImages(argumentsValue)),
     prewriteImages,
