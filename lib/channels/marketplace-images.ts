@@ -22,6 +22,10 @@ import {
 import { qoo10ExactAdoptedLocalizationBinding } from "./qoo10-exact-localization-identity";
 import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
 import {
+  bindShopeeSgExistingPreparedAssetEvidence,
+  shopeeSgExistingUpdateBinding,
+} from "./shopee-sg-existing-update";
+import {
   bindTemuExactPreservedAssetEvidence,
   temuExactExistingUpdateArgument,
 } from "./temu-existing-update";
@@ -942,11 +946,17 @@ export async function prepareMarketplaceImages(
       );
     }
     if (channel === "shopee" && !manualSourceMode) {
+      const exactExisting = shopeeSgExistingUpdateBinding(next, "content");
       bindPublicationAssets(
-        "buyer_visible",
-        details,
-        detailImageRoles,
+        exactExisting ? "gallery" : "buyer_visible",
+        exactExisting ? listingImages : details,
+        exactExisting
+          ? ["gallery-representative", ...detailImageRoles]
+          : detailImageRoles,
       );
+      if (exactExisting) {
+        Object.assign(next, bindShopeeSgExistingPreparedAssetEvidence(next));
+      }
     }
     // Lazada rejects any external URL left in description HTML. Keep every
     // normalized detail asset in imageUrls so the local worker migrates all of

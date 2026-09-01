@@ -682,7 +682,8 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
       || !/^[a-f0-9]{64}$/u.test(exactText(row.approvedManifestDigest))
       || !Number.isSafeInteger(Number(row.approvedDetailPageVersion)) || Number(row.approvedDetailPageVersion) < 1
       || approvedRoles.length !== 8 || new Set(approvedRoles).size !== 8
-      || transportRoles.length !== 8 || new Set(transportRoles).size !== 8
+      || ![8, 9].includes(transportRoles.length)
+      || new Set(transportRoles).size !== transportRoles.length
       || identities.length !== 8 || new Set(identities).size !== 8
       || (surface !== "detail_content" && surface !== "gallery")
       || !representativeEvidenceValid
@@ -724,7 +725,10 @@ export function listingPublicationProviderAssetEvidence(input: {
     : binding.providerImageSurface;
   if (providerImageSurface !== "gallery" && providerImageSurface !== "detail_content") return null;
   const buyerVisibleShopee = input.channel === "shopee" && binding.providerImageSurface === "buyer_visible";
-  const representativeBound = buyerVisibleShopee || input.channel === "lazada";
+  const representativeBound = buyerVisibleShopee
+    || input.channel === "lazada"
+    || (binding.providerTransportImages.length === 9
+      && binding.providerTransportImages[0]?.role === "gallery-representative");
   const sourceRepresentativeImage = sourceProjection.representativeImageIdentity ?? "";
   const providerRepresentativeImage = projection.representativeImageIdentity ?? "";
   if (representativeBound && (!sourceRepresentativeImage || !providerRepresentativeImage)) return null;
@@ -900,7 +904,13 @@ export function verifyListingPublicationContent(input: {
   const providerEvidence = parseProviderAssetEvidence(recordValue(responseState.evidence).publicationAssetBinding);
   const sourceAssetProjectionVerified = Boolean(binding
     && source.detailImageIdentities.length === 8
-    && sameOrderedValues(source.detailImageIdentities, binding.providerTransportImages.map((item) => item.publicUrl)));
+    && sameOrderedValues(
+      source.detailImageIdentities,
+      binding.providerImageSurface === "gallery"
+        && binding.providerTransportImages.length === 9
+        ? binding.providerTransportImages.slice(1).map((item) => item.publicUrl)
+        : binding.providerTransportImages.map((item) => item.publicUrl),
+    ));
   const approvedManifestDigestVerified = Boolean(binding && providerEvidence
     && providerEvidence.sourceAssetBindingDigest === digest(binding)
     && providerEvidence.approvedManifestDigest === binding.approvedManifestDigest
@@ -922,10 +932,14 @@ export function verifyListingPublicationContent(input: {
     : verifiedProviderImageSurface === "gallery"
       ? binding?.providerImageSurface === "buyer_visible"
         ? "representative_plus_approved_detail_8_exact_gallery_9"
-        : "representative_plus_approved_detail_7_exact_gallery_8"
+        : binding?.providerTransportImages.length === 9
+          ? "representative_plus_approved_detail_8_exact_gallery_9"
+          : "representative_plus_approved_detail_7_exact_gallery_8"
       : "unknown";
   const representativeRequired = binding?.providerImageSurface === "buyer_visible"
-    || input.channel === "lazada";
+    || input.channel === "lazada"
+    || (binding?.providerTransportImages.length === 9
+      && binding.providerTransportImages[0]?.role === "gallery-representative");
   const representativeImageVerified = !representativeRequired
     || Boolean(providerEvidence
       && source.representativeImageIdentity

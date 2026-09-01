@@ -105,6 +105,9 @@ import {
   bindSmartstoreExactQaRepresentativeFromStorage,
 } from "../../../../lib/server-smartstore-exact-representative";
 import {
+  bindShopeeSgExactRepresentativeFromStorage,
+} from "../../../../lib/server-shopee-sg-exact-representative";
+import {
   elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
   bindQoo10RollbackUpdateRecoveryArguments,
@@ -1750,6 +1753,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         message: "스마트스토어 대표 이미지 1장을 현재 상품 원장의 승인된 square 원본과 결속하지 못해 전송을 시작하지 않았습니다.",
         mode: "smartstore_exact_qa_representative_required",
+        reasonCode: representative.code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = representative.argumentsValue;
+  }
+  if (boundShopeeSgExistingUpdate?.phase === "content") {
+    const bucket = serviceClient.storage.from("sellerpilot-ai");
+    const representative = await bindShopeeSgExactRepresentativeFromStorage({
+      argumentsValue: effectiveArguments,
+      generatedImagePaths: verifiedPublishContext?.generatedImagePaths,
+      storage: {
+        download: (path) => bucket.download(path),
+        createSignedUrl: (path, expiresIn) => bucket.createSignedUrl(path, expiresIn),
+      },
+    });
+    if (!representative.ok) {
+      return NextResponse.json({
+        message: "Shopee SG 대표 이미지를 현재 상품 원장의 승인된 square 원본과 결속하지 못해 전송을 시작하지 않았습니다.",
+        mode: "shopee_sg_exact_representative_required",
         reasonCode: representative.code,
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }

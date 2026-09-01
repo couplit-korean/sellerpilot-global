@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { listingPublicationLanguageVerified } from "./listing-publication-content";
+import {
+  listingPublicationLanguageVerified,
+  parseListingPublicationAssetBinding,
+} from "./listing-publication-content";
 import { shopeeSgExistingAdoptionIdentity } from "./shopee-sg-existing-adoption";
 
 type UnknownRecord = Record<string, unknown>;
@@ -10,6 +13,20 @@ export const shopeeSgExistingUpdateContract =
   "sellerpilot_shopee_sg_existing_update_v1" as const;
 
 export type ShopeeSgExistingUpdatePhase = "content" | "inventory";
+
+type ShopeeSgExistingApprovedAsset = {
+  role: string;
+  sourceSha256: string;
+  contentSha256: string;
+};
+
+export type ShopeeSgExistingApprovedAssetEvidence = {
+  contract: "sellerpilot_shopee_sg_exact_assets_v1";
+  representativeImage: ShopeeSgExistingApprovedAsset & {
+    role: "gallery-representative";
+  };
+  detailImages: ShopeeSgExistingApprovedAsset[];
+};
 
 export type ShopeeSgExistingUpdateIdentity = {
   status: "allowed";
@@ -32,6 +49,7 @@ export type ShopeeSgExistingUpdateIdentity = {
   adoptionAttestationId: string;
   adoptionGatewayJobId: string;
   adoptionEvidenceDigest: string;
+  approvedAssetEvidence: ShopeeSgExistingApprovedAssetEvidence | null;
 };
 
 export type ShopeeSgExistingUpdateBinding = Omit<
@@ -52,7 +70,7 @@ const bindingKeys = [
   "sellerAccountKey", "itemId", "sku", "merchantId", "shopId", "market",
   "locale", "currency", "priceSgd", "stock", "providerStatus",
   "adoptionAttestationId", "adoptionGatewayJobId", "adoptionEvidenceDigest",
-  "releaseSha",
+  "approvedAssetEvidence", "releaseSha",
 ] as const;
 
 function recordValue(value: unknown): UnknownRecord {
@@ -142,6 +160,110 @@ function providerImageIdentityDigest(imageIds: string[]) {
     .digest("hex");
 }
 
+export function shopeeSgExistingApprovedAssetEvidence(
+  argumentsValue: unknown,
+): ShopeeSgExistingApprovedAssetEvidence | null {
+  const argumentsRecord = recordValue(argumentsValue);
+  const binding = parseListingPublicationAssetBinding(
+    argumentsRecord.sellerpilotPublicationAssetBinding,
+  );
+  if (!binding
+      || binding.providerImageSurface !== "gallery"
+      || binding.providerTransportImages.length !== 9
+      || binding.providerTransportImages[0]?.role !== "gallery-representative") {
+    return null;
+  }
+  const representative = binding.providerTransportImages[0];
+  const transportDetails = binding.providerTransportImages.slice(1);
+  if (!representative.approvedObjectPath
+      || !digestPattern.test(representative.approvedSourceSha256 ?? "")
+      || transportDetails.some((item, index) => (
+        item.role !== binding.approvedDetailImages[index]?.role
+        || item.contentSha256 !== binding.approvedDetailImages[index]?.contentSha256
+      ))) {
+    return null;
+  }
+  const evidence: ShopeeSgExistingApprovedAssetEvidence = {
+    contract: "sellerpilot_shopee_sg_exact_assets_v1",
+    representativeImage: {
+      role: "gallery-representative",
+      sourceSha256: representative.approvedSourceSha256!,
+      contentSha256: representative.contentSha256,
+    },
+    detailImages: binding.approvedDetailImages.map((item) => ({
+      role: item.role,
+      sourceSha256: item.approvedSourceSha256!,
+      contentSha256: item.contentSha256,
+    })),
+  };
+  const allSourceDigests = [
+    evidence.representativeImage.sourceSha256,
+    ...evidence.detailImages.map((item) => item.sourceSha256),
+  ];
+  const allContentDigests = [
+    evidence.representativeImage.contentSha256,
+    ...evidence.detailImages.map((item) => item.contentSha256),
+  ];
+  return evidence.detailImages.length === 8
+    && new Set(evidence.detailImages.map((item) => item.role)).size === 8
+    && allSourceDigests.every((value) => digestPattern.test(value))
+    && allContentDigests.every((value) => digestPattern.test(value))
+    && new Set(allSourceDigests).size === 9
+    && new Set(allContentDigests).size === 9
+    ? evidence
+    : null;
+}
+
+function exactApprovedAssetEvidence(value: unknown) {
+  const record = recordValue(value);
+  const representative = recordValue(record.representativeImage);
+  const details = Array.isArray(record.detailImages)
+    ? record.detailImages.map(recordValue)
+    : [];
+  const sourceDigests = [
+    exactText(representative.sourceSha256),
+    ...details.map((item) => exactText(item.sourceSha256)),
+  ];
+  const contentDigests = [
+    exactText(representative.contentSha256),
+    ...details.map((item) => exactText(item.contentSha256)),
+  ];
+  if (!exactKeys(record, ["contract", "representativeImage", "detailImages"])
+      || record.contract !== "sellerpilot_shopee_sg_exact_assets_v1"
+      || !exactKeys(representative, ["role", "sourceSha256", "contentSha256"])
+      || representative.role !== "gallery-representative"
+      || !digestPattern.test(exactText(representative.sourceSha256))
+      || !digestPattern.test(exactText(representative.contentSha256))
+      || details.length !== 8
+      || details.some((item) => !exactKeys(item, ["role", "sourceSha256", "contentSha256"])
+        || !/^detail-[a-z0-9-]+$/u.test(exactText(item.role))
+        || !digestPattern.test(exactText(item.sourceSha256))
+        || !digestPattern.test(exactText(item.contentSha256)))
+      || new Set(details.map((item) => exactText(item.role))).size !== 8
+      || new Set(sourceDigests).size !== 9
+      || new Set(contentDigests).size !== 9) {
+    return null;
+  }
+  return value as ShopeeSgExistingApprovedAssetEvidence;
+}
+
+export function bindShopeeSgExistingPreparedAssetEvidence(
+  argumentsValue: UnknownRecord,
+) {
+  const binding = shopeeSgExistingUpdateBinding(argumentsValue, "content");
+  const evidence = shopeeSgExistingApprovedAssetEvidence(argumentsValue);
+  if (!binding || !evidence) {
+    throw new Error("SHOPEE_SG_EXISTING_APPROVED_ASSET_EVIDENCE_REQUIRED");
+  }
+  return {
+    ...argumentsValue,
+    [shopeeSgExistingUpdateArgument]: {
+      ...binding,
+      approvedAssetEvidence: evidence,
+    },
+  };
+}
+
 export function shopeeSgExistingUpdateCandidate(input: {
   channel: string;
   operation: string;
@@ -202,8 +324,8 @@ export function shopeeSgExistingUpdateIdentity(
       || record.market !== identity.market
       || record.locale !== identity.locale
       || record.currency !== identity.currency
-      || !Number.isFinite(Number(record.priceSgd))
-      || Number(record.priceSgd) <= 0
+      || typeof record.priceSgd !== "number"
+      || record.priceSgd !== identity.priceSgd
       || Number(record.stock) !== 1
       || record.providerStatus !== identity.providerStatus
       || !uuidPattern.test(exactText(record.adoptionAttestationId))
@@ -247,6 +369,7 @@ export function bindShopeeSgExistingUpdateArguments(input: {
     adoptionAttestationId: identity.adoptionAttestationId,
     adoptionGatewayJobId: identity.adoptionGatewayJobId,
     adoptionEvidenceDigest: identity.adoptionEvidenceDigest,
+    approvedAssetEvidence: identity.approvedAssetEvidence,
     releaseSha: input.releaseSha,
   };
   if (identity.phase === "inventory") {
@@ -308,14 +431,16 @@ export function shopeeSgExistingUpdateBinding(
       || value.market !== identity.market
       || value.locale !== identity.locale
       || value.currency !== identity.currency
-      || !Number.isFinite(Number(value.priceSgd))
-      || Number(value.priceSgd) <= 0
+      || typeof value.priceSgd !== "number"
+      || value.priceSgd !== identity.priceSgd
       || Number(value.stock) !== 1
       || value.providerStatus !== identity.providerStatus
       || !uuidPattern.test(exactText(value.adoptionAttestationId))
       || !uuidPattern.test(exactText(value.adoptionGatewayJobId))
       || !digestPattern.test(exactText(value.adoptionEvidenceDigest))
-      || !releasePattern.test(exactText(value.releaseSha))) {
+      || !releasePattern.test(exactText(value.releaseSha))
+      || (value.approvedAssetEvidence !== null
+        && !exactApprovedAssetEvidence(value.approvedAssetEvidence))) {
     return null;
   }
   return value as ShopeeSgExistingUpdateBinding;
@@ -387,6 +512,9 @@ export function verifyShopeeSgExistingContentReadback(input: {
     input.argumentsValue.sellerpilotProviderDetailImageIds,
   );
   const actualImageIds = item ? itemImageIds(item) : [];
+  const approvedAssetEvidence = binding
+    ? exactApprovedAssetEvidence(binding.approvedAssetEvidence)
+    : null;
   if (!binding
       || !item
       || exactText(item.item_name) !== title
@@ -397,7 +525,10 @@ export function verifyShopeeSgExistingContentReadback(input: {
       || providerDetailIds.length !== 8
       || expectedImageIds.slice(1).some((id, index) => id !== providerDetailIds[index])
       || actualImageIds.length !== 9
-      || actualImageIds.some((id, index) => id !== expectedImageIds[index])) {
+      || actualImageIds.some((id, index) => id !== expectedImageIds[index])
+      || !approvedAssetEvidence
+      || JSON.stringify(approvedAssetEvidence)
+        !== JSON.stringify(shopeeSgExistingApprovedAssetEvidence(input.argumentsValue))) {
     return null;
   }
   return {
@@ -413,6 +544,7 @@ export function verifyShopeeSgExistingContentReadback(input: {
     detailImageCount: 8 as const,
     titleLanguageVerified: true as const,
     descriptionLanguageVerified: true as const,
+    approvedAssetEvidence,
   };
 }
 
@@ -425,6 +557,9 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
   const title = exactText(item?.item_name);
   const description = exactText(item?.description);
   const images = item ? itemImageIds(item) : [];
+  const approvedAssetEvidence = binding
+    ? exactApprovedAssetEvidence(binding.approvedAssetEvidence)
+    : null;
   if (!binding
       || !item
       || input.argumentsValue.itemId !== binding.itemId
@@ -432,7 +567,8 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
       || itemAvailableStock(item) !== 1
       || !listingPublicationLanguageVerified("en-SG", title, "title")
       || !listingPublicationLanguageVerified("en-SG", description)
-      || images.length !== 9) {
+      || images.length !== 9
+      || !approvedAssetEvidence) {
     return null;
   }
   return {
@@ -449,6 +585,7 @@ export function verifyShopeeSgExistingInventoryReadback(input: {
     detailImageCount: 8 as const,
     titleLanguageVerified: true as const,
     descriptionLanguageVerified: true as const,
+    approvedAssetEvidence,
   };
 }
 
@@ -462,7 +599,8 @@ export function assertShopeeSgExistingContentSource(
   const transport = Array.isArray(assets.providerTransportImages)
     ? assets.providerTransportImages.map(recordValue)
     : [];
-  const details = transport.map((row) => exactText(row.publicUrl)).filter(Boolean);
+  const transportUrls = transport.map((row) => exactText(row.publicUrl)).filter(Boolean);
+  const evidence = shopeeSgExistingApprovedAssetEvidence(argumentsValue);
   const title = exactText(body.item_name);
   const description = exactText(body.description);
   const providerDetailIds = uniqueTexts(
@@ -486,7 +624,9 @@ export function assertShopeeSgExistingContentSource(
     "publicationExpectedFingerprint",
     "imageUrls",
     "sellerpilotPublicationAssetBinding",
-    ...(providerPrepared ? ["sellerpilotProviderDetailImageIds"] : []),
+    ...(providerPrepared
+      ? ["sellerpilotProviderDetailImageIds", "sellerpilotProviderImageSurface"]
+      : []),
   ];
   const expectedBodyKeys = [
     "item_id", "item_name", "description", ...(providerPrepared ? ["image"] : []),
@@ -506,12 +646,14 @@ export function assertShopeeSgExistingContentSource(
       || !listingPublicationLanguageVerified("en-SG", description)
       || imageUrls.length !== 9
       || assets.contract !== "sellerpilot_publication_asset_binding_v1"
-      || assets.providerImageSurface !== "buyer_visible"
-      || details.length !== 8
-      || details.some((url) => !imageUrls.includes(url))
-      || imageUrls.slice(1).some((url, index) => url !== details[index])
+      || assets.providerImageSurface !== "gallery"
+      || transportUrls.length !== 9
+      || imageUrls.some((url, index) => url !== transportUrls[index])
+      || !evidence
+      || JSON.stringify(binding.approvedAssetEvidence) !== JSON.stringify(evidence)
       || (providerPrepared && (
-        providerDetailIds.length !== 8
+        argumentsValue.sellerpilotProviderImageSurface !== "gallery"
+        || providerDetailIds.length !== 8
         || providerImageIds.length !== 9
         || providerImageIds.slice(1).some((id, index) => id !== providerDetailIds[index])
       ))) {
@@ -531,7 +673,8 @@ export function assertShopeeSgExistingInventorySource(
       || argumentsValue.shopId !== binding.shopId
       || argumentsValue.country !== "sg"
       || argumentsValue.itemId !== binding.itemId
-      || argumentsValue.quantity !== 1) {
+      || argumentsValue.quantity !== 1
+      || !exactApprovedAssetEvidence(binding.approvedAssetEvidence)) {
     throw new Error("SHOPEE_SG_EXISTING_INVENTORY_CONTRACT_REQUIRED");
   }
   return binding;

@@ -726,7 +726,10 @@ async function prepareShopeeListing(
   return {
     ...input.arguments,
     ...(exactExisting
-      ? { sellerpilotProviderDetailImageIds: imageIds.slice(1) }
+      ? {
+          sellerpilotProviderDetailImageIds: imageIds.slice(1),
+          sellerpilotProviderImageSurface: "gallery",
+        }
       : {}),
     body: {
       ...(recordValue(input.arguments.body) ?? {}),

@@ -170,6 +170,14 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
 
   next.sellerpilotAssets = {
     ...assets,
+    ...(Array.isArray(assets.approvedGalleryImagePaths)
+      && assets.approvedGalleryImagePaths.length === 1
+      ? {
+          galleryImageUrls: [
+            `sellerpilot-storage://${String(assets.approvedGalleryImagePaths[0])}`,
+          ],
+        }
+      : {}),
     contentMode: "ai_generated",
     detailAssetMode: "dedicated",
     detailImageUrls: [...signedUrls],

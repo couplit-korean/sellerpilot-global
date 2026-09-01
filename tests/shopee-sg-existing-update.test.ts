@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   assertShopeeSgExistingContentSource,
   assertShopeeSgExistingInventorySource,
+  bindShopeeSgExistingPreparedAssetEvidence,
   bindShopeeSgExistingUpdateArguments,
   shopeeSgExistingUpdateArgument,
   shopeeSgExistingUpdateBinding,
@@ -16,6 +17,11 @@ import {
   verifyShopeeSgExistingInventoryReadback,
   type ShopeeSgExistingUpdatePhase,
 } from "../lib/channels/shopee-sg-existing-update";
+import { buildListingPublicationAssetBinding } from "../lib/channels/marketplace-images";
+import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets";
+import {
+  bindShopeeSgExactRepresentativeFromStorage,
+} from "../lib/server-shopee-sg-exact-representative";
 
 const LISTING_ID = "93000000-0000-4000-8000-000000000001";
 const CREDENTIAL_ID = "93000000-0000-4000-8000-000000000002";
@@ -25,10 +31,48 @@ const RELEASE_SHA = "a".repeat(40);
 const SELLER_KEY = "b".repeat(64);
 const EVIDENCE = "c".repeat(64);
 const providerImageIds = Array.from({ length: 9 }, (_, index) => `image-${index + 1}`);
-const normalizedImageUrls = Array.from(
-  { length: 9 },
-  (_, index) => `https://sellerpilot.example/normalized/${index + 1}.jpg`,
-);
+const contentSha256s = Array.from({ length: 9 }, (_, index) =>
+  (index + 1).toString(16).padStart(64, "0"));
+const sourceSha256s = Array.from({ length: 9 }, (_, index) =>
+  (index + 17).toString(16).padStart(64, "0"));
+const detailRoles = Array.from({ length: 8 }, (_, index) => `detail-role-${index + 1}`);
+const normalizedImageUrls = contentSha256s.map((digest) =>
+  `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+
+const approvedAssetBinding = (() => {
+  const binding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: "e".repeat(64),
+    approvedDetailRoles: detailRoles,
+    approvedDetailImagePaths: detailRoles.map((role) =>
+      `results/11111111-1111-4111-8111-111111111111/claims/22222222-2222-4222-8222-222222222222/${role}.png`),
+    approvedDetailImageSha256s: sourceSha256s.slice(1),
+    approvedDetailImageUrls: normalizedImageUrls.slice(1),
+    providerImageSurface: "gallery",
+    providerTransportRoles: ["gallery-representative", ...detailRoles],
+    providerTransportUrls: normalizedImageUrls,
+  });
+  assert.ok(binding);
+  Object.assign(binding.providerTransportImages[0], {
+    approvedObjectPath: "results/11111111-1111-4111-8111-111111111111/claims/22222222-2222-4222-8222-222222222222/square.png",
+    approvedSourceSha256: sourceSha256s[0],
+  });
+  return binding;
+})();
+
+const approvedAssetEvidence = {
+  contract: "sellerpilot_shopee_sg_exact_assets_v1" as const,
+  representativeImage: {
+    role: "gallery-representative" as const,
+    sourceSha256: sourceSha256s[0],
+    contentSha256: contentSha256s[0],
+  },
+  detailImages: detailRoles.map((role, index) => ({
+    role,
+    sourceSha256: sourceSha256s[index + 1],
+    contentSha256: contentSha256s[index + 1],
+  })),
+};
 
 function identity(phase: ShopeeSgExistingUpdatePhase) {
   return {
@@ -52,6 +96,7 @@ function identity(phase: ShopeeSgExistingUpdatePhase) {
     adoptionAttestationId: ADOPTION_ID,
     adoptionGatewayJobId: ADOPTION_JOB_ID,
     adoptionEvidenceDigest: EVIDENCE,
+    approvedAssetEvidence: phase === "inventory" ? approvedAssetEvidence : null,
   };
 }
 
@@ -77,7 +122,7 @@ function contentSource() {
   });
   const prepared = structuredClone(bound);
   delete prepared.sellerpilotAssets;
-  return {
+  return bindShopeeSgExistingPreparedAssetEvidence({
     ...prepared,
     imageUrls: normalizedImageUrls,
     publicationStateContract: "verified_remote_state_v1",
@@ -85,12 +130,8 @@ function contentSource() {
     publicationExpectedLocale: "en-SG",
     publicationExpectedImageCount: 8,
     publicationExpectedFingerprint: "d".repeat(64),
-    sellerpilotPublicationAssetBinding: {
-      contract: "sellerpilot_publication_asset_binding_v1",
-      providerImageSurface: "buyer_visible",
-      providerTransportImages: normalizedImageUrls.slice(1).map((publicUrl) => ({ publicUrl })),
-    },
-  };
+    sellerpilotPublicationAssetBinding: structuredClone(approvedAssetBinding),
+  });
 }
 
 function contentProviderArguments() {
@@ -98,6 +139,7 @@ function contentProviderArguments() {
   return {
     ...source,
     sellerpilotProviderDetailImageIds: providerImageIds.slice(1),
+    sellerpilotProviderImageSurface: "gallery",
     body: {
       ...(source.body as Record<string, unknown>),
       image: { image_id_list: providerImageIds },
@@ -172,6 +214,57 @@ test("server binding rebuilds an exact content-only Shopee update payload", () =
   assert.equal(body.logistic_info, undefined);
   assert.ok(shopeeSgExistingUpdateBinding(value, "content"));
   assert.equal(shopeeSgExistingUpdateIdentity(identity("content"), "content")?.priceSgd, 16.77);
+  assert.equal(shopeeSgExistingUpdateIdentity({
+    ...identity("content"),
+    priceSgd: 16.78,
+  }, "content"), null);
+  const repriced = structuredClone(value);
+  (repriced[shopeeSgExistingUpdateArgument] as Record<string, unknown>).priceSgd = 16.78;
+  assert.equal(shopeeSgExistingUpdateBinding(repriced, "content"), null);
+});
+
+test("server replaces an attacker representative with the ledger square asset", async () => {
+  const jobId = "11111111-1111-4111-8111-111111111111";
+  const claimId = "22222222-2222-4222-8222-222222222222";
+  const generatedImagePaths = Object.fromEntries(aiGeneratedAssetSpecs.map((asset) => [
+    asset.id,
+    `results/${jobId}/claims/${claimId}/${asset.file}`,
+  ]));
+  const bytes = Buffer.from("approved-square-image");
+  const result = await bindShopeeSgExactRepresentativeFromStorage({
+    argumentsValue: {
+      sellerpilotAssets: {
+        galleryImageUrls: ["https://attacker.example/representative.jpg"],
+        approvedGalleryImagePaths: ["attacker/path.png"],
+        approvedGalleryImageSha256s: ["0".repeat(64)],
+      },
+    },
+    generatedImagePaths,
+    storage: {
+      download: async () => ({
+        data: {
+          size: bytes.byteLength,
+          arrayBuffer: async () => bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength,
+          ),
+        },
+        error: null,
+      }),
+      createSignedUrl: async (path) => ({
+        data: { signedUrl: `https://storage.example/${path}?token=server` },
+        error: null,
+      }),
+    },
+  });
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  const assets = result.argumentsValue.sellerpilotAssets as Record<string, unknown>;
+  assert.deepEqual(assets.galleryImageUrls, [
+    `https://storage.example/${generatedImagePaths.square}?token=server`,
+  ]);
+  assert.deepEqual(assets.approvedGalleryImagePaths, [generatedImagePaths.square]);
+  assert.notDeepEqual(assets.approvedGalleryImageSha256s, ["0".repeat(64)]);
 });
 
 test("content source and provider readback require en-SG, SGD, UNLIST, and exact representative plus eight details", () => {
@@ -215,6 +308,7 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
     detailImageCount: 8,
     titleLanguageVerified: true,
     descriptionLanguageVerified: true,
+    approvedAssetEvidence,
   });
   assert.equal(verifyShopeeSgExistingContentReadback({
     argumentsValue: provider,
@@ -230,6 +324,13 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
   const shippingMutation = structuredClone(provider);
   (shippingMutation.body as Record<string, unknown>).logistic_info = [{ logistic_id: 1 }];
   assert.throws(() => assertShopeeSgExistingContentSource(shippingMutation));
+  const representativeMutation = structuredClone(provider);
+  const representativeBinding = representativeMutation
+    .sellerpilotPublicationAssetBinding as Record<string, unknown>;
+  const representativeTransport = representativeBinding
+    .providerTransportImages as Record<string, unknown>[];
+  representativeTransport[0].approvedSourceSha256 = "9".repeat(64);
+  assert.throws(() => assertShopeeSgExistingContentSource(representativeMutation));
   assert.equal(verifyShopeeSgExistingContentReadback({
     argumentsValue: provider,
     remoteData: {
@@ -247,6 +348,17 @@ test("content source and provider readback require en-SG, SGD, UNLIST, and exact
       },
     },
   }), null);
+  assert.equal(verifyShopeeSgExistingUpdatePrewrite({
+    argumentsValue: provider,
+    phase: "content",
+    credentialPayload: { shop_id: "1719148844", merchant_id: "5511564" },
+    shopRemoteData: { response: { shop_id: 1719148844 } },
+    itemRemoteData: {
+      response: {
+        item_list: [{ ...remoteItem().response.item_list[0], current_price: 16.78 }],
+      },
+    },
+  }), false);
 });
 
 test("inventory phase is a separate minimal stock-one contract with authoritative readback", () => {
@@ -284,6 +396,7 @@ test("inventory phase is a separate minimal stock-one contract with authoritativ
     detailImageCount: 8,
     titleLanguageVerified: true,
     descriptionLanguageVerified: true,
+    approvedAssetEvidence,
   });
   assert.equal(verifyShopeeSgExistingInventoryReadback({
     argumentsValue: inventory,

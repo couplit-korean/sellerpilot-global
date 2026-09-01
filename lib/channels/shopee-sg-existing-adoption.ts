@@ -18,6 +18,7 @@ export const shopeeSgExistingAdoptionIdentity = Object.freeze({
   market: "SG",
   locale: "en-SG",
   currency: "SGD",
+  priceSgd: 16.77,
   providerStatus: "UNLIST",
   detailImageCount: 8,
 });
@@ -222,7 +223,7 @@ export function verifyShopeeSgExistingAdoptionReadback(input: {
       || exactText(item.item_sku) !== binding.sku
       || exactText(item.item_status).toUpperCase() !== binding.providerStatus
       || itemCurrency(item) !== binding.currency
-      || price === null) {
+      || price !== shopeeSgExistingAdoptionIdentity.priceSgd) {
     return null;
   }
 
