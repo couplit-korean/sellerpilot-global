@@ -16,7 +16,6 @@ export const ebayExactExistingQaRecoveryIdentity = Object.freeze({
   centralSku: "QA-20260823-CC-001",
   currency: "USD",
   priceUsd: 12.9,
-  credentialId: "a2593ca0-c2c2-4158-a35b-88aa27b5911a",
   sellerAccountKey: "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f",
 });
 
@@ -56,6 +55,11 @@ function exactNumber(value: unknown) {
   return Number.NaN;
 }
 
+function canonicalUuid(value: unknown) {
+  return typeof value === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(value);
+}
+
 export function ebayExactExistingQaRecoveryBindingValue(
   value: unknown,
 ): EbayExactExistingQaRecoveryBinding | null {
@@ -80,7 +84,7 @@ export function ebayExactExistingQaRecoveryBindingValue(
       || !Number.isSafeInteger(stock)
       || stock < 1
       || stock > 999_999
-      || binding.credentialId !== ebayExactExistingQaRecoveryIdentity.credentialId
+      || !canonicalUuid(binding.credentialId)
       || binding.sellerAccountKey !== ebayExactExistingQaRecoveryIdentity.sellerAccountKey
       || binding.offerIdSource !== "immutable_lineage_attestation_v1"
       || binding.sellerAccountLineage !== "validated_by_service_rpc") {

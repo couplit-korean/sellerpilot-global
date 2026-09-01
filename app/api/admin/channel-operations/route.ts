@@ -1039,6 +1039,7 @@ export async function POST(request: NextRequest) {
         const binding = ebayExactExistingQaRecoveryBindingValue(identityData);
         if (identityError
             || !binding
+            || binding.credentialId !== parsed.data.credentialId
             || productId !== ebayExactExistingQaRecoveryIdentity.productId
             || requestedRemoteId !== ebayExactExistingQaRecoveryIdentity.publicListingId
             || boundListingCurrency !== ebayExactExistingQaRecoveryIdentity.currency

@@ -12,6 +12,8 @@ import {
 } from "../lib/channels/ebay-exact-existing-qa-recovery";
 import { prepareListingUpdateArguments } from "../lib/channels/listing-update";
 
+const currentCredentialId = "11111111-2222-4333-8444-555555555555";
+
 function binding(stock = 7) {
   return {
     contract: "ebay_exact_existing_qa_recovery_v2",
@@ -27,7 +29,7 @@ function binding(stock = 7) {
     currency: "USD",
     priceUsd: 12.9,
     stock,
-    credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+    credentialId: currentCredentialId,
     sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
     offerIdSource: "immutable_lineage_attestation_v1",
     sellerAccountLineage: "validated_by_service_rpc",

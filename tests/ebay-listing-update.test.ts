@@ -11,6 +11,7 @@ const offerId = "offer-immutable-1";
 const sku = "SELLERPILOT-CABLE-CLIP-1";
 const marketplaceId = "EBAY_US";
 const fingerprint = "a".repeat(64);
+const currentCredentialId = "11111111-2222-4333-8444-555555555555";
 const exactDetailRoles = [
   "detail-overview", "detail-context", "detail-package", "detail-feature",
   "detail-contents", "detail-use", "detail-care", "detail-routine",
@@ -77,7 +78,7 @@ function exactMarker(stock = 7) {
     currency: "USD",
     priceUsd: 12.9,
     stock,
-    credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+    credentialId: currentCredentialId,
     sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
     offerIdSource: "immutable_lineage_attestation_v1",
     sellerAccountLineage: "validated_by_service_rpc",

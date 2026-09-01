@@ -15,13 +15,18 @@ const providerCopyMigrationUrl = new URL(
   "../supabase/migrations/20260901050509_preserve_ebay_exact_provider_copy.sql",
   import.meta.url,
 );
+const currentCredentialFenceMigrationUrl = new URL(
+  "../supabase/migrations/20260901082000_bind_ebay_exact_update_to_current_active_credential.sql",
+  import.meta.url,
+);
 
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const listingId = "8b2cbfaf-3854-437d-b381-abfd70291354";
 const publicListingId = "800551945442";
 const offerId = "244042196011";
 const sourceAttemptId = "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77";
-const credentialId = "a2593ca0-c2c2-4158-a35b-88aa27b5911a";
+const credentialId = "11111111-2222-4333-8444-555555555555";
+const previousCredentialId = "a2593ca0-c2c2-4158-a35b-88aa27b5911a";
 const lineageCredentialId = "a05a7f65-c3a7-4ec6-91ea-ae92ed9708c1";
 const lineageJobId = "fdff6983-1f08-4f51-a751-bc61b4bf7070";
 const lineageAttestationId = "fc54f95c-3533-4dbd-820f-cb2dfaf018e7";
@@ -29,6 +34,25 @@ const lineageEvidenceDigest = "3ba3464e14408e04967534e0227f01424378fc8b5b112ea05
 const updateAttemptId = "e0000000-0000-4000-8000-000000000001";
 const ownerId = "e0000000-0000-4000-8000-000000000002";
 const sellerAccountKey = "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f";
+
+function extractFunction(source, signature) {
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `${signature} must exist`);
+  const bodyStart = source.indexOf("as $$", start);
+  assert.notEqual(bodyStart, -1, `${signature} body must exist`);
+  const end = source.indexOf("$$;", bodyStart + 5);
+  assert.notEqual(end, -1, `${signature} end must exist`);
+  return source.slice(start, end + 3);
+}
+
+function extractTaggedDo(source, tag) {
+  const marker = `$${tag}$`;
+  const start = source.indexOf(`do ${marker}`);
+  assert.notEqual(start, -1, `${tag} must exist`);
+  const end = source.indexOf(`${marker};`, start + marker.length);
+  assert.notEqual(end, -1, `${tag} end must exist`);
+  return source.slice(start, end + marker.length + 1);
+}
 
 async function createDatabase() {
   const db = new PGlite();
@@ -130,6 +154,22 @@ async function createDatabase() {
   await db.exec(await readFile(recoveryMigrationUrl, "utf8"));
   await db.exec(await readFile(contentFenceMigrationUrl, "utf8"));
   await db.exec(await readFile(providerCopyMigrationUrl, "utf8"));
+  const currentCredentialFenceMigration = await readFile(
+    currentCredentialFenceMigrationUrl,
+    "utf8",
+  );
+  await db.exec(extractFunction(
+    currentCredentialFenceMigration,
+    "create function sellerpilot_private.ebay_exact_current_credential_is_valid(",
+  ));
+  await db.exec(extractFunction(
+    currentCredentialFenceMigration,
+    "create or replace function\n  public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity(",
+  ));
+  await db.exec(extractTaggedDo(
+    currentCredentialFenceMigration,
+    "patch_ebay_exact_enqueue_credential",
+  ));
   await db.query(
     `insert into sellerpilot_private.products
        (id,owner_id,sku,on_hand,demo,status)
@@ -156,11 +196,23 @@ async function createDatabase() {
        last_checked_at,last_check_status,seller_account_key,
        seller_account_key_source,seller_account_verified_at
      ) values (
-       $1,'ebay','active','production',92,'B82F3FE28085',
-       '2028-02-17T12:00:00Z',clock_timestamp(),'passed',$2,
+       $1,'ebay','active','production',95,'C95F3FE28085',
+       '2028-03-17T12:00:00Z',clock_timestamp(),'passed',$2,
        'provider_certified_v1',clock_timestamp()
      )`,
     [credentialId, sellerAccountKey],
+  );
+  await db.query(
+    `insert into sellerpilot_private.channel_credentials (
+       id,channel,status,environment,version,fingerprint,expires_at,
+       last_checked_at,last_check_status,seller_account_key,
+       seller_account_key_source,seller_account_verified_at
+     ) values (
+       $1,'ebay','revoked','production',92,'B82F3FE28085',
+       '2028-02-17T12:00:00Z',clock_timestamp(),'passed',$2,
+       'provider_certified_v1',clock_timestamp()
+     )`,
+    [previousCredentialId, sellerAccountKey],
   );
   await db.query(
     `insert into sellerpilot_private.channel_credentials (
@@ -213,12 +265,12 @@ async function createDatabase() {
   return db;
 }
 
-async function identity(db) {
+async function identity(db, candidateCredentialId = credentialId) {
   return (await db.query(
     `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity(
        $1,$2,$3,'US','EBAY_US'
      ) as value`,
-    [listingId, credentialId, productId],
+    [listingId, candidateCredentialId, productId],
   )).rows[0].value;
 }
 
@@ -441,10 +493,160 @@ test("eBay exact existing QA identity and content update enqueue are transaction
     );
 
     await db.query(
-      `update sellerpilot_private.channel_credentials set version=93 where id=$1`,
+      `update sellerpilot_private.channel_credentials set status='revoked' where id=$1`,
       [credentialId],
     );
     assert.equal(await identity(db), null);
+  } finally {
+    await db.close();
+  }
+});
+
+test("eBay exact identity follows one latest verified credential and rejects rotation near misses", async () => {
+  const db = await createDatabase();
+  const secondActiveCredentialId = "22222222-3333-4444-8555-666666666666";
+  const newerRevokedCredentialId = "33333333-4444-4555-8666-777777777777";
+  const otherSellerCredentialId = "44444444-5555-4666-8777-888888888888";
+  const otherSellerAccountKey = "d".repeat(64);
+  try {
+    assert.equal((await identity(db))?.credentialId, credentialId);
+    assert.equal(await identity(db, previousCredentialId), null);
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set last_check_status='failed' where id=$1`,
+      [credentialId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set last_check_status='passed' where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set expires_at=clock_timestamp() - interval '1 minute' where id=$1`,
+      [credentialId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set expires_at='2028-03-17T12:00:00Z' where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key_source='credential_incarnation_v1' where id=$1`,
+      [credentialId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key_source='provider_certified_v1' where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2 where id=$1`,
+      [credentialId, otherSellerAccountKey],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2 where id=$1`,
+      [credentialId, sellerAccountKey],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set fingerprint='badfingerprt' where id=$1`,
+      [credentialId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set fingerprint='C95F3FE28085' where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_verified_at=null where id=$1`,
+      [credentialId],
+    );
+    assert.equal(await identity(db), null);
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_verified_at=clock_timestamp() where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `update sellerpilot_private.channel_credentials set version=93 where id=$1`,
+      [credentialId],
+    );
+    assert.equal((await identity(db))?.credentialId, credentialId);
+    await db.query(
+      `update sellerpilot_private.channel_credentials set version=95 where id=$1`,
+      [credentialId],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.channel_credentials (
+         id,channel,status,environment,version,fingerprint,expires_at,
+         last_checked_at,last_check_status,seller_account_key,
+         seller_account_key_source,seller_account_verified_at
+       ) values (
+         $1,'ebay','revoked','production',96,'D96F3FE28085',
+         '2028-04-17T12:00:00Z',clock_timestamp(),'passed',$2,
+         'provider_certified_v1',clock_timestamp()
+       )`,
+      [newerRevokedCredentialId, sellerAccountKey],
+    );
+    assert.equal(await identity(db), null, "a newer credential row must fail closed");
+    await db.query(
+      `delete from sellerpilot_private.channel_credentials where id=$1`,
+      [newerRevokedCredentialId],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.channel_credentials (
+         id,channel,status,environment,version,fingerprint,expires_at,
+         last_checked_at,last_check_status,seller_account_key,
+         seller_account_key_source,seller_account_verified_at
+       ) values (
+         $1,'ebay','active','production',94,'E94F3FE28085',
+         '2028-04-17T12:00:00Z',clock_timestamp(),'passed',$2,
+         'provider_certified_v1',clock_timestamp()
+       )`,
+      [secondActiveCredentialId, sellerAccountKey],
+    );
+    assert.equal(await identity(db), null, "two active credentials must fail closed");
+    await db.query(
+      `delete from sellerpilot_private.channel_credentials where id=$1`,
+      [secondActiveCredentialId],
+    );
+
+    await db.query(
+      `insert into sellerpilot_private.channel_credentials (
+         id,channel,status,environment,version,fingerprint,expires_at,
+         last_checked_at,last_check_status,seller_account_key,
+         seller_account_key_source,seller_account_verified_at
+       ) values (
+         $1,'ebay','active','production',999,'F99F3FE28085',
+         '2028-04-17T12:00:00Z',clock_timestamp(),'passed',$2,
+         'provider_certified_v1',clock_timestamp()
+       )`,
+      [otherSellerCredentialId, otherSellerAccountKey],
+    );
+    assert.equal(
+      (await identity(db))?.credentialId,
+      credentialId,
+      "another seller account must not affect the exact listing lineage",
+    );
   } finally {
     await db.close();
   }

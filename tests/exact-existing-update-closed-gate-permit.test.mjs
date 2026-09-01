@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260901080000_allow_exact_existing_updates_through_closed_gate.sql",
   import.meta.url,
 );
+const currentCredentialFenceMigrationUrl = new URL(
+  "../supabase/migrations/20260901082000_bind_ebay_exact_update_to_current_active_credential.sql",
+  import.meta.url,
+);
 const routeUrl = new URL(
   "../app/api/admin/channel-operations/route.ts",
   import.meta.url,
@@ -23,6 +27,15 @@ function extractFunction(source, signature) {
   const end = source.indexOf("$$;", bodyStart + 5);
   assert.notEqual(end, -1);
   return source.slice(start, end + 3);
+}
+
+function extractTaggedDo(source, tag) {
+  const marker = `$${tag}$`;
+  const start = source.indexOf(`do ${marker}`);
+  assert.notEqual(start, -1, `${tag} must exist`);
+  const end = source.indexOf(`${marker};`, start + marker.length);
+  assert.notEqual(end, -1, `${tag} end must exist`);
+  return source.slice(start, end + marker.length + 1);
 }
 
 function assets() {
@@ -129,7 +142,7 @@ function ebayArguments() {
       currency: "USD",
       priceUsd: 12.9,
       stock,
-      credentialId: "a2593ca0-c2c2-4158-a35b-88aa27b5911a",
+      credentialId: "11111111-2222-4333-8444-555555555555",
       sellerAccountKey:
         "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f",
       offerIdSource: "immutable_lineage_attestation_v1",
@@ -179,12 +192,20 @@ test("closed-gate permit is exact-only, frozen, and strict one-shot", async () =
 
 test("channel-specific SQL payload validators reject every near miss and Lazada", async () => {
   const migration = await readFile(migrationUrl, "utf8");
+  const currentCredentialFenceMigration = await readFile(
+    currentCredentialFenceMigrationUrl,
+    "utf8",
+  );
   const db = new PGlite();
   try {
     await db.exec("create schema sellerpilot_private");
     await db.exec(extractFunction(
       migration,
       "create function sellerpilot_private.exact_existing_update_arguments_valid(",
+    ));
+    await db.exec(extractTaggedDo(
+      currentCredentialFenceMigration,
+      "patch_ebay_exact_argument_credential",
     ));
     const allowed = async (channel, value, stock) => (await db.query(
       `select sellerpilot_private.exact_existing_update_arguments_valid(
@@ -217,10 +238,46 @@ test("channel-specific SQL payload validators reject every near miss and Lazada"
     const wrongEbay = ebayArguments();
     wrongEbay.inventoryItem.product.title = "Client supplied copy";
     assert.equal(await allowed("ebay", wrongEbay, 7), false);
+    const malformedEbayCredential = ebayArguments();
+    malformedEbayCredential.sellerpilotEbayExactExistingQaRecovery.credentialId =
+      "not-a-credential";
+    assert.equal(await allowed("ebay", malformedEbayCredential, 7), false);
     assert.equal(await allowed("lazada", coupangArguments(), 1), false);
   } finally {
     await db.close();
   }
+});
+
+test("forward eBay credential fence keeps the exact remote tuple while removing the expiring token row", async () => {
+  const [migration, route] = await Promise.all([
+    readFile(currentCredentialFenceMigrationUrl, "utf8"),
+    readFile(routeUrl, "utf8"),
+  ]);
+  assert.match(migration, /ebay_exact_current_credential_is_valid/u);
+  assert.match(migration, /status = 'active'/u);
+  assert.match(migration, /last_check_status = 'passed'/u);
+  assert.match(migration, /seller_account_key_source = 'provider_certified_v1'/u);
+  assert.match(migration, /credential\.version = \([\s\S]*?select max\(candidate\.version\)/u);
+  assert.match(migration, /and 1 = \([\s\S]*?active_credential\.status = 'active'/u);
+  for (const exactValue of [
+    "800551945442",
+    "244042196011",
+    "QA-20260823-CC-001-US",
+    "EBAY_US",
+  ]) {
+    assert.ok(migration.includes(exactValue), exactValue);
+  }
+  assert.doesNotMatch(
+    migration,
+    /insert\s+into\s+sellerpilot_private\.exact_existing_update_permits/iu,
+    "the forward migration must not arm a remote-write permit",
+  );
+  assert.doesNotMatch(migration, /qoo10/iu, "Qoo10 recovery must stay untouched");
+  assert.match(
+    route,
+    /binding\.credentialId !== parsed\.data\.credentialId/u,
+    "the server-owned RPC binding must match the credential selected by the request",
+  );
 });
 
 test("permit transition trigger forbids hash swaps, delete, and provider replay", async () => {

@@ -180,7 +180,7 @@ test("generic eBay listing update remains closed without the exact server-owned 
   assert.deepEqual(events, []);
 });
 
-test("exact eBay update rejects a job whose credential differs from the bound v92 lineage", async () => {
+test("exact eBay update rejects a job whose credential differs from the current bound lineage", async () => {
   const events: string[] = [];
   const job = genericClaim("ebay", "listing.update");
   job.environment = "production";
@@ -200,7 +200,7 @@ test("exact eBay update rejects a job whose credential differs from the bound v9
         currency: ebayExactExistingQaRecoveryIdentity.currency,
         priceUsd: ebayExactExistingQaRecoveryIdentity.priceUsd,
         stock: 1,
-        credentialId: ebayExactExistingQaRecoveryIdentity.credentialId,
+        credentialId: "11111111-2222-4333-8444-555555555555",
         sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
         offerIdSource: "immutable_lineage_attestation_v1",
         sellerAccountLineage: "validated_by_service_rpc",
