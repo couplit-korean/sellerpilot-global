@@ -3,8 +3,12 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
-const migrationUrl = new URL(
+const sourceMigrationUrl = new URL(
   "../supabase/migrations/20260901165500_recover_ebay_deterministic_no_effect_retry.sql",
+  import.meta.url,
+);
+const correctionMigrationUrl = new URL(
+  "../supabase/migrations/20260901165700_correct_ebay_no_effect_terminal_source_proof.sql",
   import.meta.url,
 );
 const routeUrl = new URL(
@@ -28,7 +32,7 @@ function extractFunction(source, signature) {
 
 test("the retry surface is one new permit and never an old-job replay", async () => {
   const [migration, route, recovery] = await Promise.all([
-    readFile(migrationUrl, "utf8"),
+    readFile(sourceMigrationUrl, "utf8"),
     readFile(routeUrl, "utf8"),
     readFile(recoveryUrl, "utf8"),
   ]);
@@ -55,10 +59,10 @@ test("the retry surface is one new permit and never an old-job replay", async ()
 });
 
 test("PGlite proves only the exact 400/25718 first-write rejection", async () => {
-  const migration = await readFile(migrationUrl, "utf8");
+  const migration = await readFile(correctionMigrationUrl, "utf8");
   const proofFunction = extractFunction(
     migration,
-    "create function sellerpilot_private.ebay_exact_no_effect_source_is_proved()",
+    "create or replace function\n  sellerpilot_private.ebay_exact_no_effect_source_is_proved()",
   );
   const db = new PGlite();
   try {
@@ -131,9 +135,8 @@ test("PGlite proves only the exact 400/25718 first-write rejection", async () =>
         '8b2cbfaf-3854-437d-b381-abfd70291354',
         '9e7de791-e6e6-4255-8d61-5a1f9576d797',
         'ebay', 'listing.update', 'production', 'succeeded', 1,
-        '11111111-1111-4111-8111-111111111111',
-        '22222222-2222-4222-8222-222222222222',
-        '2026-09-01 08:16:05+00',
+        null, null,
+        '2026-09-01 08:16:05.58709+00',
         '2026-09-01 08:16:12.740995+00',
         '2026-09-01 08:16:15.994005+00',
         '79507d23bb865f17b7d91a148f564fef1519e36ce3b5d4219200c5b7d786a3dc',
@@ -182,6 +185,41 @@ test("PGlite proves only the exact 400/25718 first-write rejection", async () =>
       "select sellerpilot_private.ebay_exact_no_effect_source_is_proved() proved",
     );
     assert.equal(proved.rows[0].proved, true);
+
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set worker_token_id = '11111111-1111-4111-8111-111111111111'
+    `);
+    const unclearedTerminalToken = await db.query(
+      "select sellerpilot_private.ebay_exact_no_effect_source_is_proved() proved",
+    );
+    assert.equal(unclearedTerminalToken.rows[0].proved, false);
+
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set worker_token_id = null,
+             started_at = '2026-09-01 08:16:05+00'
+    `);
+    const roundedStart = await db.query(
+      "select sellerpilot_private.ebay_exact_no_effect_source_is_proved() proved",
+    );
+    assert.equal(roundedStart.rows[0].proved, false);
+
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set started_at = '2026-09-01 08:16:05.58709+00';
+      update sellerpilot_private.exact_existing_update_permits
+         set bound_claim_token = null
+    `);
+    const missingPermitBinding = await db.query(
+      "select sellerpilot_private.ebay_exact_no_effect_source_is_proved() proved",
+    );
+    assert.equal(missingPermitBinding.rows[0].proved, false);
+
+    await db.exec(`
+      update sellerpilot_private.exact_existing_update_permits
+         set bound_claim_token = '22222222-2222-4222-8222-222222222222'
+    `);
 
     await db.exec(`
       update sellerpilot_private.channel_gateway_jobs
