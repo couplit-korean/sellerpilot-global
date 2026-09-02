@@ -512,11 +512,23 @@ export async function POST(request: NextRequest) {
   const exactShopeeSgContentUpdate = channel === "shopee"
     && operation === "listing.update"
     && parsed.data.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220";
+  // The adopted Qoo10 marker is server-owned and is not present in the browser
+  // request. Bind its exact immutable request tuple before loading the approved
+  // manifest so the later identity RPC can receive the same eight server-signed
+  // detail images as every other content mutation.
+  const exactQoo10AdoptedContentUpdateRequest = channel === "qoo10"
+    && operation === "listing.update"
+    && parsed.data.productId === qoo10ExactLocalizationRecoveryIdentity.productId
+    && parsed.data.resourceListingId === qoo10ExactLocalizationRecoveryIdentity.listingId
+    && parsed.data.credentialId === qoo10ExactLocalizationRecoveryIdentity.credentialId
+    && parsed.data.market === qoo10ExactLocalizationRecoveryIdentity.market
+    && parsed.data.targetId === qoo10ExactLocalizationRecoveryIdentity.targetId;
   const contentBoundListingOperation = operation === "listing.create"
     || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
     || exactSmartstoreContentUpdate
     || exactTemuExistingContentUpdateRequest
     || exactShopeeSgContentUpdate
+    || exactQoo10AdoptedContentUpdateRequest
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
@@ -574,7 +586,10 @@ export async function POST(request: NextRequest) {
         }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
       }
     }
-    const contentArguments = temuActivationSourceArguments ?? parsed.data.arguments;
+    const contentArguments = temuActivationSourceArguments
+      ?? (exactQoo10AdoptedContentUpdateRequest
+        ? bindQoo10ExactAdoptedCommerceArguments(parsed.data.arguments)
+        : parsed.data.arguments);
     if (!marketplaceContentModeMatchesProduct(contentArguments, contentMode)) {
       return NextResponse.json({
         message: "요청한 이미지 제작 방식이 상품 원장의 제작 계보와 일치하지 않습니다.",
@@ -2775,10 +2790,13 @@ export async function POST(request: NextRequest) {
         });
       }
       // A failure before the gateway made any provider request is safe to
-      // retry. Preserve the exact paused/S1 rollback-confirmed listing row so
-      // the next attempt can pass the same read-only identity RPC instead of
-      // destroying its only recovery classification.
-      if (!(boundQoo10RollbackUpdateRecovery && preGatewayRetryable)) {
+      // retry. Preserve either exact Qoo10 recovery projection so the next
+      // attempt can pass the same read-only identity RPC instead of destroying
+      // its only rollback-confirmed or already-live classification.
+      const preserveExactQoo10PreGatewayListing = preGatewayRetryable
+        && (Boolean(boundQoo10RollbackUpdateRecovery)
+          || Boolean(boundQoo10AdoptedLocalizationIdentity));
+      if (!preserveExactQoo10PreGatewayListing) {
         await completeListing({ success: false, safeMessage: message });
       }
       return NextResponse.json({ message, attemptId, preGatewayRetryable }, { status: 422 });

@@ -191,6 +191,8 @@ const EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION =
   "20260902093000_stabilize_ebay_exact_content_fingerprint.sql";
 const LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION =
   "20260902100000_recover_exact_lazada_provider_failure_three_blockers.sql";
+const QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION =
+  "20260902100500_reconcile_qoo10_adopted_image_binding_pre_gateway_failure.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -925,6 +927,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION,
       EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION,
       LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION,
+      QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

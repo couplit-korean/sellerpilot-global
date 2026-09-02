@@ -586,7 +586,7 @@ test("admin create route injects the server-owned Qoo10 product/SKU/JPY/stock co
   const source = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const contextIndex = source.indexOf("buildQoo10ListingCreateContext({");
   const bindingIndex = source.indexOf("sellerpilotQoo10CreateContext: qoo10CreateContext");
-  const fingerprintIndex = source.indexOf("const fingerprintArguments =");
+  const fingerprintIndex = source.indexOf("let fingerprintArguments =");
   assert.ok(contextIndex > 0);
   assert.ok(bindingIndex > contextIndex);
   assert.ok(fingerprintIndex > bindingIndex);
