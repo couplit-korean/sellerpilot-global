@@ -182,10 +182,11 @@ begin
         on attempt.id = '3ffaf977-3950-4a74-af02-16b4cd930ac9'::uuid
        and attempt.owner_id = listing.owner_id
        and attempt.channel = listing.channel_key
-      join sellerpilot_private.channel_credentials credential
-        on credential.id = '16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea'::uuid
-       and credential.channel = listing.channel_key
-       and credential.seller_account_key = listing.seller_account_key
+      join sellerpilot_private.channel_credentials source_credential
+        on source_credential.id =
+             '16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea'::uuid
+       and source_credential.channel = listing.channel_key
+       and source_credential.seller_account_key = listing.seller_account_key
       join sellerpilot_private.exact_existing_update_permits permit
         on permit.permit_id = '7ae83178-d335-4b7e-8e35-2f55e905bbde'::uuid
        and permit.listing_id = listing.id
@@ -210,7 +211,7 @@ begin
              'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
        and product.sku = 'QA-20260823-CC-001' and product.on_hand = 1
        and not product.demo and product.status <> 'archived'
-       and attempt.credential_id = credential.id
+       and attempt.credential_id = source_credential.id
        and attempt.operation = 'listing.update'
        and attempt.status = 'failed' and attempt.http_status = 422
        and attempt.remote_id is null and attempt.gateway_write_required
@@ -222,13 +223,24 @@ begin
              '2026-09-02 06:26:46.362671+00'::timestamptz
        and attempt.completed_at =
              '2026-09-02 06:26:54.769797+00'::timestamptz
-       and credential.environment = 'production'
-       and credential.status = 'active'
-       and credential.seller_account_key_source = 'provider_certified_v1'
-       and credential.seller_account_verified_at is not null
-       and sellerpilot_private.ebay_exact_current_credential_is_valid(
-             credential.id, listing.seller_account_key
-           )
+       and source_credential.environment = 'production'
+       and source_credential.status = 'revoked'
+       and source_credential.version = 108
+       and source_credential.seller_account_key_source = 'provider_certified_v1'
+       and source_credential.seller_account_verified_at is not null
+       and exists (
+         select 1
+           from sellerpilot_private.channel_credentials current_credential
+          where current_credential.channel = 'ebay'
+            and current_credential.environment = 'production'
+            and current_credential.status = 'active'
+            and current_credential.seller_account_key =
+                  listing.seller_account_key
+            and source_credential.version < current_credential.version
+            and sellerpilot_private.ebay_exact_current_credential_is_valid(
+                  current_credential.id, listing.seller_account_key
+                )
+       )
        and permit.channel = 'ebay' and permit.market = 'US'
        and permit.target_id = 'EBAY_US' and permit.remote_id = '800551945442'
        and permit.seller_sku = 'QA-20260823-CC-001-US'
@@ -236,7 +248,7 @@ begin
        and permit.currency = 'USD' and permit.price = 12.90
        and permit.stock = 1
        and permit.seller_account_key = listing.seller_account_key
-       and permit.credential_id = credential.id
+       and permit.credential_id = source_credential.id
        and permit.release_sha =
              '62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76'
        and permit.request_fingerprint = attempt.request_fingerprint
@@ -309,11 +321,14 @@ as $$
         on attempt.id = marker.failed_attempt_id
        and attempt.owner_id = marker.owner_id
        and attempt.channel = listing.channel_key
-      join sellerpilot_private.channel_credentials credential
-        on credential.id = p_credential_id
-       and credential.id = marker.credential_id
-       and credential.channel = listing.channel_key
-       and credential.seller_account_key = marker.seller_account_key
+      join sellerpilot_private.channel_credentials source_credential
+        on source_credential.id = marker.credential_id
+       and source_credential.channel = listing.channel_key
+       and source_credential.seller_account_key = marker.seller_account_key
+      join sellerpilot_private.channel_credentials current_credential
+        on current_credential.id = p_credential_id
+       and current_credential.channel = listing.channel_key
+       and current_credential.seller_account_key = marker.seller_account_key
       join sellerpilot_private.exact_existing_update_permits permit
         on permit.permit_id = marker.permit_id
        and permit.listing_id = marker.listing_id
@@ -339,9 +354,16 @@ as $$
        and listing.provider_resource_id = '244042196011'
        and listing.currency = 'USD' and listing.price = 12.90
        and listing.seller_account_key = marker.seller_account_key
-       and credential.environment = 'production' and credential.status = 'active'
-       and credential.seller_account_key_source = 'provider_certified_v1'
-       and credential.seller_account_verified_at is not null
+       and source_credential.environment = 'production'
+       and source_credential.status = 'revoked'
+       and source_credential.version = 108
+       and source_credential.seller_account_key_source = 'provider_certified_v1'
+       and source_credential.seller_account_verified_at is not null
+       and current_credential.environment = 'production'
+       and current_credential.status = 'active'
+       and source_credential.version < current_credential.version
+       and current_credential.seller_account_key_source = 'provider_certified_v1'
+       and current_credential.seller_account_verified_at is not null
        and attempt.credential_id = p_credential_id
        and attempt.operation = 'listing.update' and attempt.status = 'running'
        and attempt.http_status is null and attempt.remote_id is null
@@ -455,7 +477,43 @@ declare
      and old.bound_at is null and old.bound_worker_token_id is null
      and old.bound_claim_token is null and old.consumed_at is null
      and old.invalidated_at is null and old.invalidation_reason is null
-     and new.credential_id = old.credential_id
+     and new.credential_id is distinct from old.credential_id
+     and sellerpilot_private.ebay_exact_current_credential_is_valid(
+           new.credential_id, old.seller_account_key
+         )
+     and exists (
+       select 1
+         from sellerpilot_private.channel_credentials source_credential
+         join sellerpilot_private.channel_credentials current_credential
+           on current_credential.id = new.credential_id
+          and current_credential.channel = 'ebay'
+          and current_credential.environment = 'production'
+          and current_credential.status = 'active'
+          and current_credential.seller_account_key = old.seller_account_key
+          and current_credential.seller_account_key_source =
+                'provider_certified_v1'
+          and current_credential.seller_account_verified_at is not null
+        where source_credential.id = old.credential_id
+          and source_credential.channel = 'ebay'
+          and source_credential.environment = 'production'
+          and source_credential.status = 'revoked'
+          and source_credential.version < current_credential.version
+          and source_credential.seller_account_key = old.seller_account_key
+          and source_credential.seller_account_key_source =
+                'provider_certified_v1'
+          and new.credential_version = current_credential.version
+          and new.credential_fingerprint = current_credential.fingerprint
+          and new.credential_account_source =
+                current_credential.seller_account_key_source
+          and new.credential_verified_at =
+                current_credential.seller_account_verified_at
+          and new.credential_expires_at is not distinct from
+                current_credential.expires_at
+          and new.credential_last_checked_at is not distinct from
+                current_credential.last_checked_at
+          and new.credential_last_check_status is not distinct from
+                current_credential.last_check_status
+     )
      and new.request_fingerprint = old.request_fingerprint
      and sellerpilot_private.exact_existing_update_release_is_current(
            'ebay', new.release_sha
@@ -536,8 +594,6 @@ begin
 
   if p_listing_id is distinct from
        '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid
-     or p_credential_id is distinct from
-       '16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea'::uuid
      or p_attempt_id is distinct from
        '3ffaf977-3950-4a74-af02-16b4cd930ac9'::uuid
      or p_request_fingerprint is distinct from
@@ -552,47 +608,65 @@ begin
   then raise exception 'eBay exact atomic recovery request invalid'
     using errcode = '55000'; end if;
 
-  select credential.* into strict v_credential
-    from sellerpilot_private.channel_credentials credential
-   where credential.id = p_credential_id
-     and credential.channel = 'ebay' and credential.environment = 'production'
-     and credential.status = 'active'
-     and credential.seller_account_key =
-           'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
-     and credential.seller_account_key_source = 'provider_certified_v1'
-     and credential.seller_account_verified_at is not null
-     and credential.expires_at > v_now
-     and credential.last_checked_at is not null
-     and credential.last_check_status = 'passed'
-   for share;
-
   -- A response-loss or concurrent-equivalent caller must converge on the
-  -- already-bound job. This branch intentionally runs before the fresh-state
-  -- helper because that helper requires a claim-revived attempt with no job.
+  -- already-bound execution credential and job even if OAuth rotated again.
+  -- This branch intentionally runs before both the rotation lock and every
+  -- fresh-current-credential predicate. It is read-only and cannot rebind.
   select job.id
     into v_existing_job_id
     from sellerpilot_private.ebay_exact_atomic_recovery_markers marker
+    join sellerpilot_private.product_listings listing
+      on listing.id = marker.listing_id
+     and listing.owner_id = marker.owner_id
+     and listing.product_id = marker.product_id
+    join sellerpilot_private.products product
+      on product.id = marker.product_id
+     and product.owner_id = marker.owner_id
     join sellerpilot_private.channel_operation_attempts attempt
       on attempt.id = marker.failed_attempt_id
      and attempt.owner_id = marker.owner_id
+    join sellerpilot_private.channel_credentials source_credential
+      on source_credential.id = marker.credential_id
+     and source_credential.channel = 'ebay'
+     and source_credential.environment = 'production'
+     and source_credential.seller_account_key = marker.seller_account_key
     join sellerpilot_private.exact_existing_update_permits permit
       on permit.permit_id = marker.permit_id
      and permit.listing_id = marker.listing_id
      and permit.product_id = marker.product_id
      and permit.owner_id = marker.owner_id
     join sellerpilot_private.channel_gateway_jobs job
-      on job.id = permit.update_job_id
+     on job.id = permit.update_job_id
      and job.attempt_id = permit.update_attempt_id
+    join sellerpilot_private.channel_credentials execution_credential
+      on execution_credential.id = permit.credential_id
+     and execution_credential.id = attempt.credential_id
+     and execution_credential.id = job.credential_id
+     and execution_credential.channel = 'ebay'
+     and execution_credential.environment = 'production'
+     and execution_credential.seller_account_key = marker.seller_account_key
    where marker.marker_id =
            'a04ed967-a129-43d4-8ce8-af6657af5ef0'::uuid
      and marker.failed_attempt_id = p_attempt_id
      and marker.listing_id = p_listing_id
-     and marker.credential_id = p_credential_id
+     and marker.credential_id =
+           '16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea'::uuid
      and marker.request_fingerprint = p_request_fingerprint
      and marker.source_release_sha =
            '62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76'
-     and marker.seller_account_key = v_credential.seller_account_key
-     and attempt.credential_id = p_credential_id
+     and marker.seller_account_key =
+           'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
+     and listing.channel_key = 'ebay'
+     and listing.status = 'queued' and listing.failure_class is null
+     and listing.operation_attempt_id = p_attempt_id
+     and listing.remote_id = '800551945442'
+     and listing.market = 'US' and listing.target_id = 'EBAY_US'
+     and listing.marketplace_sku = 'QA-20260823-CC-001-US'
+     and listing.provider_resource_id = '244042196011'
+     and listing.currency = 'USD' and listing.price = 12.90
+     and listing.seller_account_key = marker.seller_account_key
+     and product.sku = 'QA-20260823-CC-001' and product.on_hand = 1
+     and not product.demo and product.status <> 'archived'
      and attempt.channel = 'ebay' and attempt.operation = 'listing.update'
      and attempt.status = 'running' and attempt.http_status is null
      and attempt.remote_id is null and attempt.gateway_write_required
@@ -601,14 +675,39 @@ begin
      and attempt.seller_account_key = marker.seller_account_key
      and attempt.started_at > marker.failed_completed_at
      and attempt.completed_at is null
-     and permit.credential_id = p_credential_id
      and permit.release_sha = p_release_sha
      and permit.request_fingerprint = p_request_fingerprint
      and permit.update_attempt_id = p_attempt_id
      and permit.invalidated_at is null
      and permit.expires_at > statement_timestamp()
+     and source_credential.status = 'revoked'
+     and source_credential.version = 108
+     and source_credential.seller_account_key_source = 'provider_certified_v1'
+     and source_credential.seller_account_verified_at is not null
+     and execution_credential.status in ('active', 'grace', 'revoked')
+     and execution_credential.version > source_credential.version
+     and execution_credential.seller_account_key_source =
+           'provider_certified_v1'
+     and execution_credential.seller_account_verified_at is not null
+     and permit.credential_version = execution_credential.version
+     and permit.credential_fingerprint = execution_credential.fingerprint
+     and permit.credential_account_source =
+           execution_credential.seller_account_key_source
+     and permit.credential_verified_at =
+           execution_credential.seller_account_verified_at
+     and permit.credential_expires_at is not distinct from
+           execution_credential.expires_at
+     and permit.credential_last_checked_at is not distinct from
+           execution_credential.last_checked_at
+     and permit.credential_last_check_status is not distinct from
+           execution_credential.last_check_status
+     and (
+       p_credential_id = execution_credential.id
+       or sellerpilot_private.ebay_exact_current_credential_is_valid(
+            p_credential_id, marker.seller_account_key
+          )
+     )
      and job.listing_id = p_listing_id
-     and job.credential_id = p_credential_id
      and job.channel = 'ebay' and job.operation = 'listing.update'
      and job.environment = 'production'
      and job.status in ('queued', 'running')
@@ -676,9 +775,6 @@ begin
                 pg_catalog.length(ref.object_path) + 1
               ) = '/' || ref.object_path
      )
-     and sellerpilot_private.exact_existing_update_enqueued_lineage_is_current(
-           permit.permit_id
-         )
    limit 1;
 
   if v_existing_job_id is not null then
@@ -691,6 +787,30 @@ begin
     );
   end if;
 
+  -- Serialize the fresh current-credential snapshot with the real eBay OAuth
+  -- rotation RPC. The literal lock key intentionally matches its production
+  -- `hashtext('sellerpilot:ebay:' || v_environment)` for production.
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtext('sellerpilot:ebay:production')
+  );
+
+  select credential.* into strict v_credential
+    from sellerpilot_private.channel_credentials credential
+   where credential.id = p_credential_id
+     and credential.channel = 'ebay' and credential.environment = 'production'
+     and credential.status = 'active'
+     and credential.seller_account_key =
+           'cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f'
+     and credential.seller_account_key_source = 'provider_certified_v1'
+     and credential.seller_account_verified_at is not null
+     and credential.expires_at > v_now
+     and credential.last_checked_at is not null
+     and credential.last_check_status = 'passed'
+     and sellerpilot_private.ebay_exact_current_credential_is_valid(
+           credential.id, credential.seller_account_key
+         )
+   for share;
+
   if not sellerpilot_private.ebay_exact_atomic_recovery_state_is_current(
        p_credential_id, p_release_sha, p_attempt_id
      )
@@ -702,9 +822,10 @@ begin
 
   select permit.* into strict v_permit
     from sellerpilot_private.exact_existing_update_permits permit
-   where permit.permit_id = '7ae83178-d335-4b7e-8e35-2f55e905bbde'::uuid
+     where permit.permit_id = '7ae83178-d335-4b7e-8e35-2f55e905bbde'::uuid
      and permit.listing_id = p_listing_id
-     and permit.credential_id = p_credential_id
+     and permit.credential_id =
+           '16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea'::uuid
      and permit.release_sha =
            '62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76'
      and permit.request_fingerprint = p_request_fingerprint

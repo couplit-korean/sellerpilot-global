@@ -1388,6 +1388,23 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       ebayExactFreshFailedRearmMigration,
       /3ffaf977-3950-4a74-af02-16b4cd930ac9/u,
     );
+    assert.doesNotMatch(
+      ebayExactFreshFailedRearmMigration,
+      /9d5d4f30-099d-4e55-9bea-b71cc2334850/u,
+      "the active eBay credential must remain dynamically resolved after rotation",
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /ebay_exact_current_credential_is_valid/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /pg_catalog[.]hashtext\('sellerpilot:ebay:production'\)/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /execution_credential[.]status in \('active', 'grace', 'revoked'\)/u,
+    );
     assert.match(
       ebayExactFreshFailedRearmMigration,
       /62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76/u,

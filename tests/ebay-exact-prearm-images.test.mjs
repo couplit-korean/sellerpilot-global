@@ -31,6 +31,7 @@ const id = {
   freshAttempt: "20e1c68d-b395-44b4-a71d-4d1c2e4969ca",
   productionFreshAttempt: "3ffaf977-3950-4a74-af02-16b4cd930ac9",
   productionCredential: "16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea",
+  rotatedCredential: "9d5d4f30-099d-4e55-9bea-b71cc2334850",
   historicalCredential: "66285742-5909-40db-b1f3-fa4c300b8911",
   currentCredential: "bbf7c49e-c9db-4279-adeb-b2e1b1489eb9",
   permit: "7ae83178-d335-4b7e-8e35-2f55e905bbde",
@@ -222,6 +223,21 @@ async function setupDatabase(migration) {
            and credential.environment = 'production'
            and credential.status = 'active'
            and credential.seller_account_key = p_seller_account_key
+           and credential.version = (
+             select max(candidate.version)
+               from sellerpilot_private.channel_credentials candidate
+              where candidate.channel = 'ebay'
+                and candidate.environment = 'production'
+                and candidate.seller_account_key = p_seller_account_key
+           )
+           and 1 = (
+             select count(*)
+               from sellerpilot_private.channel_credentials active_credential
+              where active_credential.channel = 'ebay'
+                and active_credential.environment = 'production'
+                and active_credential.status = 'active'
+                and active_credential.seller_account_key = p_seller_account_key
+           )
       )
     $$;
 
@@ -616,20 +632,22 @@ test("release 62bd fresh failure permits only one exact same-seller JIT rearm pr
   ];
   const proof = async () => (await db.query(`
     select sellerpilot_private.ebay_exact_v101_content_rebind_is_proved(
-      '${id.productionCredential}', '${runtimeRelease}', '${currentFingerprint}'
+      '${id.rotatedCredential}', '${runtimeRelease}', '${currentFingerprint}'
     ) value
   `)).rows[0].value;
   const helperProof = async (
     release = runtimeRelease,
-    credential = id.productionCredential,
+    credential = id.rotatedCredential,
   ) => (await db.query(`
     select sellerpilot_private.ebay_exact_atomic_recovery_state_is_current(
       '${credential}', '${release}', '${id.productionFreshAttempt}'
     ) value
   `)).rows[0].value;
-  const atomicCall = async () => (await db.query(`
+  const atomicCall = async (
+    credential = id.rotatedCredential,
+  ) => (await db.query(`
     select public.sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry(
-      '${id.listing}', '${id.productionCredential}',
+      '${id.listing}', '${credential}',
       '${id.productionFreshAttempt}', '${runtimeRelease}',
       '${currentFingerprint}', ${sqlString(exactPayloadFor(freshPaths))}::jsonb
     ) value
@@ -802,6 +820,10 @@ end;
                request_payload_sha256 = repeat('b', 64),
                request_payload_bytes = 100
          where permit_id = '${id.permit}';
+        update sellerpilot_private.product_listings
+           set status = 'queued', failure_class = null,
+               operation_attempt_id = p_attempt_id
+         where id = p_listing_id;
         return jsonb_build_object(
           'status', 'queued', 'job_id', v_job_id,
           'attempt_id', p_attempt_id, 'listing_id', p_listing_id,
@@ -815,20 +837,31 @@ end;
       ) values (
         '${id.product}', '${id.owner}', 'QA-20260823-CC-001', 1, false, 'active'
       );
+      update sellerpilot_private.channel_credentials
+         set status = 'revoked'
+       where id = '${id.currentCredential}';
       insert into sellerpilot_private.channel_credentials (
         id, channel, environment, status, version, fingerprint,
         seller_account_key, seller_account_key_source,
         seller_account_verified_at
       ) values (
-        '${id.productionCredential}', 'ebay', 'production', 'active', 108,
+        '${id.productionCredential}', 'ebay', 'production', 'revoked', 108,
         'A108A108A108', '${seller}', 'provider_certified_v1',
         '2026-09-02 06:20:00+00'
+      ), (
+        '${id.rotatedCredential}', 'ebay', 'production', 'active', 109,
+        'A109A109A109', '${seller}', 'provider_certified_v1',
+        '2026-09-02 07:26:00+00'
       );
       update sellerpilot_private.channel_credentials
          set expires_at = '2030-01-01 00:00:00+00',
-             last_checked_at = '2026-09-02 06:25:00+00',
+             last_checked_at = case
+               when id = '${id.rotatedCredential}'::uuid
+                 then '2026-09-02 07:26:00+00'::timestamptz
+               else '2026-09-02 06:25:00+00'::timestamptz
+             end,
              last_check_status = 'passed'
-       where id = '${id.productionCredential}';
+       where id in ('${id.productionCredential}', '${id.rotatedCredential}');
       insert into sellerpilot_private.channel_operation_attempts (
         id, owner_id, credential_id, channel, operation, status, http_status,
         remote_id, gateway_write_required, pre_gateway_retryable,
@@ -901,10 +934,11 @@ end;
       });
     }
 
+    const predecessorProofBefore = await proof();
     assert.equal(
-      await proof(),
-      false,
-      "the same current credential/fingerprint cannot rearm through the predecessor proof",
+      predecessorProofBefore,
+      true,
+      "the unchanged predecessor still observes the real source-to-current rotation",
     );
     await db.exec(freshFailedRearmMigration);
     assert.equal(
@@ -912,7 +946,11 @@ end;
       false,
       "the durable marker alone must not authorize the still-failed attempt",
     );
-    assert.equal(await proof(), false, "the generic predecessor proof stays unchanged");
+    assert.equal(
+      await proof(),
+      predecessorProofBefore,
+      "the generic predecessor proof stays unchanged",
+    );
     assert.deepEqual(
       (await db.query(`
         select count(*)::integer marker_count,
@@ -928,7 +966,8 @@ end;
     // clears the failed HTTP/pre-gateway/completed fields before preparation.
     await db.exec(`
       update sellerpilot_private.channel_operation_attempts
-         set status='running', http_status=null, pre_gateway_retryable=false,
+         set credential_id='${id.rotatedCredential}',
+             status='running', http_status=null, pre_gateway_retryable=false,
              started_at='2026-09-02 07:00:00+00', completed_at=null
        where id='${id.productionFreshAttempt}'
     `);
@@ -1001,6 +1040,33 @@ end;
     );
 
     await db.exec(`set "request.jwt.claim.role" = 'service_role'`);
+    await assert.rejects(
+      atomicCall(id.productionCredential),
+      /query returned no rows|atomic recovery request invalid/u,
+      "the revoked source credential cannot be reused for the new enqueue",
+    );
+    const duplicateCredential = "d0d0d0d0-d0d0-40d0-80d0-d0d0d0d0d0d0";
+    await db.exec(`
+      insert into sellerpilot_private.channel_credentials (
+        id, channel, environment, status, version, fingerprint,
+        seller_account_key, seller_account_key_source,
+        seller_account_verified_at, expires_at, last_checked_at,
+        last_check_status
+      ) values (
+        '${duplicateCredential}', 'ebay', 'production', 'active', 110,
+        'A110A110A110', '${seller}', 'provider_certified_v1',
+        statement_timestamp(), '2030-01-01 00:00:00+00',
+        statement_timestamp(), 'passed'
+      )
+    `);
+    await assert.rejects(
+      atomicCall(),
+      /query returned no rows|atomic recovery request invalid/u,
+      "two active same-seller credentials must fail closed",
+    );
+    await db.exec(`delete from sellerpilot_private.channel_credentials where id='${duplicateCredential}'`);
+    assert.equal(await helperProof(), true);
+
     await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set canonical_public_url='https://example.invalid/not-canonical.jpg' where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
     await assert.rejects(
       atomicCall(),
@@ -1066,6 +1132,60 @@ end;
       "two serialized/concurrent-equivalent calls must converge on one job",
     );
 
+    const successorCredential = "e0e0e0e0-e0e0-40e0-80e0-e0e0e0e0e0e0";
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set status='grace'
+       where id='${id.rotatedCredential}';
+      insert into sellerpilot_private.channel_credentials (
+        id, channel, environment, status, version, fingerprint,
+        seller_account_key, seller_account_key_source,
+        seller_account_verified_at, expires_at, last_checked_at,
+        last_check_status
+      ) values (
+        '${successorCredential}', 'ebay', 'production', 'active', 110,
+        'A110A110A110', '${seller}', 'provider_certified_v1',
+        statement_timestamp(), '2030-01-01 00:00:00+00',
+        statement_timestamp(), 'passed'
+      )
+    `);
+    assert.deepEqual(
+      await atomicCall(successorCredential),
+      replay,
+      "a later current credential must read-only converge on the already-bound execution job",
+    );
+    await db.exec(`update sellerpilot_private.channel_credentials set status='revoked' where id='${id.rotatedCredential}'`);
+    assert.equal((await atomicCall(successorCredential)).jobId, id.providerJob);
+    assert.deepEqual(
+      (await db.query(`
+        select permit.credential_id::text permit_credential,
+               attempt.credential_id::text attempt_credential,
+               job.credential_id::text job_credential,
+               count(*) over ()::integer job_count
+          from sellerpilot_private.exact_existing_update_permits permit
+          join sellerpilot_private.channel_operation_attempts attempt
+            on attempt.id=permit.update_attempt_id
+          join sellerpilot_private.channel_gateway_jobs job
+            on job.id=permit.update_job_id
+         where permit.permit_id='${id.permit}'
+      `)).rows[0],
+      {
+        permit_credential: id.rotatedCredential,
+        attempt_credential: id.rotatedCredential,
+        job_credential: id.rotatedCredential,
+        job_count: 1,
+      },
+      "replay after rotation must neither rebind nor enqueue",
+    );
+    await db.exec(`update sellerpilot_private.channel_credentials set version=109 where id='${id.productionCredential}'`);
+    await assert.rejects(
+      atomicCall(successorCredential),
+      /atomic fresh recovery state invalid/u,
+      "the source credential version must remain lower than the execution credential version",
+    );
+    await db.exec(`update sellerpilot_private.channel_credentials set version=108 where id='${id.productionCredential}'`);
+    assert.equal((await atomicCall(successorCredential)).jobId, id.providerJob);
+
     const workerToken = "a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0";
     const claimToken = "b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0";
     await db.exec(`
@@ -1080,7 +1200,7 @@ end;
        where id='${id.providerJob}'
     `);
     assert.deepEqual(
-      await atomicCall(),
+      await atomicCall(successorCredential),
       replay,
       "a claimed running job with exact permit tokens must remain replay-safe",
     );
@@ -1091,7 +1211,7 @@ end;
        where id='${id.providerJob}'
     `);
     await assert.rejects(
-      atomicCall(),
+      atomicCall(successorCredential),
       /atomic (?:fresh recovery state|recovery request) invalid/u,
       "provider start without permit consumption must fail closed",
     );
@@ -1103,7 +1223,7 @@ end;
        where permit_id='${id.permit}'
     `);
     assert.equal(
-      (await atomicCall()).jobId,
+      (await atomicCall(successorCredential)).jobId,
       id.providerJob,
       "a consumed provider-started job must converge on the same job",
     );
@@ -1114,7 +1234,7 @@ end;
        where id='${id.providerJob}'
     `);
     await assert.rejects(
-      atomicCall(),
+      atomicCall(successorCredential),
       /atomic (?:fresh recovery state|recovery request) invalid/u,
       "a worker claim-token mismatch must not reuse the bound job",
     );
@@ -1123,11 +1243,11 @@ end;
          set claim_token='${claimToken}'
        where id='${id.providerJob}'
     `);
-    assert.equal((await atomicCall()).jobId, id.providerJob);
+    assert.equal((await atomicCall(successorCredential)).jobId, id.providerJob);
 
     await db.exec(`delete from sellerpilot_private.marketplace_normalized_asset_refs where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
     await assert.rejects(
-      atomicCall(),
+      atomicCall(successorCredential),
       /atomic (?:fresh recovery state|recovery request) invalid/u,
       "provider-time replay must fail closed after ref drift",
     );
@@ -1141,7 +1261,7 @@ end;
       sourcePath: sourceBinding(8).path,
       sourceSha: sourceBinding(8).sha,
     });
-    assert.equal((await atomicCall()).jobId, id.providerJob);
+    assert.equal((await atomicCall(successorCredential)).jobId, id.providerJob);
 
     const metadata = (await db.query(`
       select procedure.prosecdef,
@@ -1238,10 +1358,41 @@ end;
 
     assert.match(freshFailedRearmMigration, new RegExp(id.productionFreshAttempt, "u"));
     assert.match(freshFailedRearmMigration, new RegExp(id.productionCredential, "u"));
+    assert.doesNotMatch(
+      freshFailedRearmMigration,
+      new RegExp(id.rotatedCredential, "u"),
+      "the current credential UUID must be resolved dynamically",
+    );
     assert.match(freshFailedRearmMigration, /62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76/u);
     assert.match(freshFailedRearmMigration, /2026-09-02 06:26:46[.]052592[+]00/u);
     assert.match(freshFailedRearmMigration, /2026-09-02 06:31:46[.]052592[+]00/u);
     assert.match(freshFailedRearmMigration, /jsonb_array_length\(reference_set\) = 9/u);
+    const replayReturnIndex = freshFailedRearmMigration.indexOf(
+      "'status', 'in_progress'",
+    );
+    const rotationLockIndex = freshFailedRearmMigration.indexOf(
+      "pg_catalog.hashtext('sellerpilot:ebay:production')",
+    );
+    const freshCredentialSelectIndex = freshFailedRearmMigration.indexOf(
+      "select credential.* into strict v_credential",
+    );
+    assert.ok(replayReturnIndex >= 0);
+    assert.ok(
+      rotationLockIndex > replayReturnIndex,
+      "read-only replay must return before taking the fresh rotation lock",
+    );
+    assert.ok(
+      freshCredentialSelectIndex > rotationLockIndex,
+      "fresh current selection must occur under the shared rotation lock",
+    );
+    assert.match(
+      freshFailedRearmMigration,
+      /source_credential[.]version < current_credential[.]version/u,
+    );
+    assert.match(
+      freshFailedRearmMigration,
+      /new[.]credential_version = current_credential[.]version[\s\S]*?new[.]credential_fingerprint = current_credential[.]fingerprint/u,
+    );
     assert.doesNotMatch(
       freshFailedRearmMigration,
       /(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private[.](?:channel_gateway_jobs|channel_operation_attempts|marketplace_normalized_asset_refs)/iu,
