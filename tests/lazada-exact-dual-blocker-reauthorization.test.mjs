@@ -5,8 +5,12 @@ import test from "node:test";
 
 import { PGlite } from "@electric-sql/pglite";
 
-const migrationUrl = new URL(
+const dualMigrationUrl = new URL(
   "../supabase/migrations/20260902091500_allow_exact_lazada_dual_blocker_reauthorization.sql",
+  import.meta.url,
+);
+const recoveryMigrationUrl = new URL(
+  "../supabase/migrations/20260902100000_recover_exact_lazada_provider_failure_three_blockers.sql",
   import.meta.url,
 );
 
@@ -14,6 +18,9 @@ const OWNER_ID = "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
 const SOURCE_CREDENTIAL_ID = "e54fa95d-ddfd-414f-82e9-636a0d9ab07c";
 const OAUTH_BLOCKER_ID = "faee01e1-2d68-4f99-951c-15684822fc43";
 const READ_BLOCKER_ID = "a976573f-a150-4061-a1c6-5e8e4880ba2b";
+const PROVIDER_FAILURE_BLOCKER_ID = "d917f08b-1283-456e-930a-6042ec0b24a7";
+const PROVIDER_FAILURE_FINGERPRINT =
+  "663295c1520473aa753929d06e9e791e59b2059a73c706355086e52762b81681";
 const ACTIVE_CREDENTIAL_ID = "c4ea58dc-6cbc-4d71-9caa-0303f211d54d";
 const OAUTH_JOB_ID = "1fcc053e-4aaf-4a6a-ac30-322a04819995";
 const DUPLICATE_OAUTH_JOB_ID = "88c3475c-386d-4fe0-8a8b-e0814651f371";
@@ -27,7 +34,7 @@ const COMPLETION_FINGERPRINT =
   "00d682385677bf3f888e8b565f1c3530049b58d1cf0f55d3023bfcbfbbb65fc8";
 
 test("exact dual-blocker migration is a no-provider, no-job forward guard", async () => {
-  const source = await readFile(migrationUrl, "utf8");
+  const source = await readFile(dualMigrationUrl, "utf8");
   for (const value of [
     OWNER_ID,
     SOURCE_CREDENTIAL_ID,
@@ -60,8 +67,43 @@ test("exact dual-blocker migration is a no-provider, no-job forward guard", asyn
   assert.doesNotMatch(source, /net\.http|fetch\s*\(|lazadaRequest|exchangeLazadaOAuthToken/iu);
 });
 
-test("PGlite keeps both blockers immutable until certified OAuth and active seller readback", async () => {
-  const source = await readFile(migrationUrl, "utf8");
+test("three-blocker recovery never retries the failed OAuth and requires atomic proof", async () => {
+  const source = await readFile(recoveryMigrationUrl, "utf8");
+  for (const value of [
+    OWNER_ID,
+    SOURCE_CREDENTIAL_ID,
+    OAUTH_BLOCKER_ID,
+    READ_BLOCKER_ID,
+    PROVIDER_FAILURE_BLOCKER_ID,
+    PROVIDER_FAILURE_FINGERPRINT,
+    "LAZADA_OAUTH_PROVIDER_FAILURE:ISV:UNRECOGNIZED",
+    "provider_certified_v1",
+    "account_platform",
+    "country_user_info",
+    "200100300",
+    "sellerpilot.exact_lazada_three_blocker_supersession",
+    "failed_oauth_code_replayed",
+    "provider_call_replayed",
+  ]) assert.ok(source.includes(value), value);
+
+  assert.match(source, /p_new_oauth_fingerprint is distinct from[\s\S]*d917f08b/u);
+  assert.match(source, /oauth\.created_at > clock_timestamp\(\) - interval '25 minutes'/u);
+  assert.match(source, /credential\.version > 5/u);
+  assert.match(source, /receipt\.claim_token = job\.claim_token[\s\S]*receipt\.worker_token_id = job\.worker_token_id/u);
+  assert.equal((source.match(/receipt\.claim_token = job\.claim_token/gu) ?? []).length, 2);
+  assert.match(source, /job\.operation = 'shops\.get'/u);
+  assert.match(source, /target\.target_id = '200100300'/u);
+  assert.match(source, /v_readback_seller_id <> v_my_seller_id[\s\S]*v_readback_status not in/u);
+  assert.match(source, /get diagnostics v_updated = row_count;[\s\S]*if v_updated <> 3/u);
+  assert.doesNotMatch(source, /insert into sellerpilot_private\.channel_gateway_jobs/iu);
+  assert.doesNotMatch(source, /insert into sellerpilot_private\.channel_credentials/iu);
+  assert.doesNotMatch(source, /insert into sellerpilot_private\..*(permit|publication)/iu);
+  assert.doesNotMatch(source, /net\.http|fetch\s*\(|lazadaRequest|exchangeLazadaOAuthToken/iu);
+});
+
+test("PGlite keeps all three blockers immutable until one different OAuth and claim-bound seller readback", async () => {
+  const source = await readFile(dualMigrationUrl, "utf8");
+  const recoverySource = await readFile(recoveryMigrationUrl, "utf8");
   const db = new PGlite();
   const providerSubject = `lazada:v1:${Buffer.from(JSON.stringify([
     "seller_center",
@@ -170,7 +212,9 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       create function sellerpilot_private.gateway_completion_fingerprint(
         text,jsonb,text,jsonb,jsonb,jsonb,jsonb
       ) returns text language sql immutable as $$
-        select '${COMPLETION_FINGERPRINT}'::text
+        select case when $3 = 'LAZADA_OAUTH_PROVIDER_FAILURE:ISV:UNRECOGNIZED'
+          then 'bfd9d9e768f23c0073eb656d24f1f2785a0904cdb62a98c0b465b63b0fc69198'
+          else '${COMPLETION_FINGERPRINT}'::text end
       $$;
       create table sellerpilot_private.channel_market_targets(
         id uuid primary key,
@@ -282,20 +326,56 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
         ('${READ_BLOCKER_ID}','31111111-1111-4111-8111-111111111111',
          '41111111-1111-4111-8111-111111111111','${COMPLETION_FINGERPRINT}',
          '2026-08-30 09:16:07.032446+00');
+
+      insert into sellerpilot_private.channel_gateway_jobs(
+        id,credential_id,oauth_source_credential_id,created_by,channel,
+        environment,operation,status,error_message,attempt_count,
+        request_payload,created_at,started_at,credential_refresh_started_at,
+        oauth_provider_call_started_at,completed_at,updated_at,
+        credential_refresh_in_flight,oauth_request_fingerprint
+      ) values(
+        '${PROVIDER_FAILURE_BLOCKER_ID}','${SOURCE_CREDENTIAL_ID}',
+        '${SOURCE_CREDENTIAL_ID}','${OWNER_ID}','lazada','production',
+        'oauth.exchange','reconciliation_required',
+        'LAZADA_OAUTH_PROVIDER_FAILURE:ISV:UNRECOGNIZED',1,
+        '{"vaultBacked":true}',
+        '2026-09-02 01:10:22.458355+00',
+        '2026-09-02 01:11:06.769536+00',
+        '2026-09-02 01:11:14.013743+00',
+        '2026-09-02 01:11:14.3005+00',
+        '2026-09-02 01:11:15.504797+00',
+        '2026-09-02 01:11:15.504797+00',true,
+        '${PROVIDER_FAILURE_FINGERPRINT}'
+      );
+      insert into sellerpilot_private.gateway_completion_receipts values(
+        '${PROVIDER_FAILURE_BLOCKER_ID}',
+        '51111111-1111-4111-8111-111111111111',
+        '61111111-1111-4111-8111-111111111111',
+        'bfd9d9e768f23c0073eb656d24f1f2785a0904cdb62a98c0b465b63b0fc69198',
+        '2026-09-02 01:11:15.728629+00'
+      );
     `);
 
+    await db.exec(recoverySource);
+
     const intact = await db.query(`
-      select sellerpilot_private.lazada_exact_dual_blockers_intact(
+      select sellerpilot_private.lazada_exact_three_blockers_intact(
         $1,$2,'production'
       ) value
     `, [SOURCE_CREDENTIAL_ID, OWNER_ID]);
     assert.equal(intact.rows[0].value, true);
     const blocker = await db.query(`
-      select sellerpilot_private.safe_lazada_exact_dual_oauth_exchange_blocker(
+      select sellerpilot_private.safe_lazada_exact_three_oauth_exchange_blocker(
         $1,$2,'production',$3,clock_timestamp()
       ) value
     `, [SOURCE_CREDENTIAL_ID, OWNER_ID, freshFingerprint]);
-    assert.equal(blocker.rows[0].value, OAUTH_BLOCKER_ID);
+    assert.equal(blocker.rows[0].value, PROVIDER_FAILURE_BLOCKER_ID);
+    const replayedFailedFingerprint = await db.query(`
+      select sellerpilot_private.safe_lazada_exact_three_oauth_exchange_blocker(
+        $1,$2,'production',$3,clock_timestamp()
+      ) value
+    `, [SOURCE_CREDENTIAL_ID, OWNER_ID, PROVIDER_FAILURE_FINGERPRINT]);
+    assert.equal(replayedFailedFingerprint.rows[0].value, null);
     await db.query(`
       insert into sellerpilot_private.channel_gateway_jobs(
         id,credential_id,oauth_source_credential_id,created_by,channel,
@@ -309,7 +389,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
     const queuedBlocker = await db.query(`
       select sellerpilot_private.safe_lazada_oauth_refresh_blocker($1) value
     `, [OAUTH_JOB_ID]);
-    assert.equal(queuedBlocker.rows[0].value, OAUTH_BLOCKER_ID);
+    assert.equal(queuedBlocker.rows[0].value, PROVIDER_FAILURE_BLOCKER_ID);
     await db.query(
       "delete from sellerpilot_private.channel_gateway_jobs where id=$1",
       [OAUTH_JOB_ID],
@@ -318,31 +398,33 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
     await assert.rejects(
       db.query(
         "update sellerpilot_private.channel_gateway_jobs set status='cancelled' where id=$1",
-        [OAUTH_BLOCKER_ID],
+        [PROVIDER_FAILURE_BLOCKER_ID],
       ),
-      /exact Lazada reconciliation blockers are immutable/u,
+      /exact failed Lazada OAuth blocker is immutable/u,
     );
     const beforeProof = await db.query(`
       select id,status,credential_refresh_in_flight
         from sellerpilot_private.channel_gateway_jobs
-       where id in ($1,$2) order by id
-    `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID]);
+       where id in ($1,$2,$3) order by id
+    `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID, PROVIDER_FAILURE_BLOCKER_ID]);
     assert.deepEqual(beforeProof.rows.map((row) => [
       row.id, row.status, row.credential_refresh_in_flight,
     ]), [
       [READ_BLOCKER_ID, "reconciliation_required", true],
+      [PROVIDER_FAILURE_BLOCKER_ID, "reconciliation_required", true],
       [OAUTH_BLOCKER_ID, "reconciliation_required", true],
     ]);
-    const assertBothBlockersIntact = async (message) => {
+    const assertThreeBlockersIntact = async (message) => {
       const current = await db.query(`
         select id,status,credential_refresh_in_flight
           from sellerpilot_private.channel_gateway_jobs
-         where id in ($1,$2) order by id
-      `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID]);
+         where id in ($1,$2,$3) order by id
+      `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID, PROVIDER_FAILURE_BLOCKER_ID]);
       assert.deepEqual(current.rows.map((row) => [
         row.id, row.status, row.credential_refresh_in_flight,
       ]), [
         [READ_BLOCKER_ID, "reconciliation_required", true],
+        [PROVIDER_FAILURE_BLOCKER_ID, "reconciliation_required", true],
         [OAUTH_BLOCKER_ID, "reconciliation_required", true],
       ], message);
     };
@@ -439,7 +521,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       )
     `);
 
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "a seller row without an atomic completion receipt must not supersede blockers",
     );
     await db.query(`
@@ -461,7 +543,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
       [TARGET_ROW_ID],
     );
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "a non-seller-center account platform must not supersede blockers",
     );
 
@@ -490,7 +572,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
       [TARGET_ROW_ID],
     );
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "a different numeric MY seller must not supersede the intended seller blockers",
     );
 
@@ -519,7 +601,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
       [TARGET_ROW_ID],
     );
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "an unrelated provider subject must not prove the MY seller lineage",
     );
 
@@ -570,7 +652,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
       [TARGET_ROW_ID],
     );
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "two matching successful OAuth jobs must fail the exact one-job proof",
     );
     await db.query(
@@ -590,7 +672,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
       [TARGET_ROW_ID],
     );
-    await assertBothBlockersIntact(
+    await assertThreeBlockersIntact(
       "a mismatched seller readback completion fingerprint must not supersede blockers",
     );
     await db.query(`
@@ -606,8 +688,8 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
       select id,status,error_message,credential_refresh_in_flight,
              credential_refresh_started_at
         from sellerpilot_private.channel_gateway_jobs
-       where id in ($1,$2) order by id
-    `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID]);
+       where id in ($1,$2,$3) order by id
+    `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID, PROVIDER_FAILURE_BLOCKER_ID]);
     assert.deepEqual(afterProof.rows.map((row) => [
       row.id, row.status, row.error_message,
       row.credential_refresh_in_flight, row.credential_refresh_started_at,
@@ -616,6 +698,13 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
         READ_BLOCKER_ID,
         "cancelled",
         "LAZADA_REFRESH_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH_AND_SELLER_READBACK",
+        false,
+        null,
+      ],
+      [
+        PROVIDER_FAILURE_BLOCKER_ID,
+        "cancelled",
+        "LAZADA_PROVIDER_FAILURE_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH_AND_SELLER_READBACK",
         false,
         null,
       ],
@@ -638,6 +727,11 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
         seller_id: "200100300",
       },
       {
+        action: "lazada_provider_failure_reconciliation_superseded_after_seller_readback",
+        entity_id: PROVIDER_FAILURE_BLOCKER_ID,
+        seller_id: "200100300",
+      },
+      {
         action: "lazada_oauth_reconciliation_superseded_after_seller_readback",
         entity_id: OAUTH_BLOCKER_ID,
         seller_id: "200100300",
@@ -650,7 +744,7 @@ test("PGlite keeps both blockers immutable until certified OAuth and active sell
     const auditCount = await db.query(
       "select count(*)::integer value from sellerpilot_private.operation_audit",
     );
-    assert.equal(auditCount.rows[0].value, 2);
+    assert.equal(auditCount.rows[0].value, 3);
   } finally {
     await db.close();
   }

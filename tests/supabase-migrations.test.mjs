@@ -189,6 +189,8 @@ const LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION =
   "20260902091500_allow_exact_lazada_dual_blocker_reauthorization.sql";
 const EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION =
   "20260902093000_stabilize_ebay_exact_content_fingerprint.sql";
+const LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION =
+  "20260902100000_recover_exact_lazada_provider_failure_three_blockers.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -922,6 +924,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260902090000_reconcile_qoo10_adopted_content_validation.sql",
       LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION,
       EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION,
+      LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -15629,6 +15632,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
         && name !== LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
         && name !== EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
+        && name !== LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17374,6 +17378,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
         || name === LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
         || name === EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
+        || name === LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

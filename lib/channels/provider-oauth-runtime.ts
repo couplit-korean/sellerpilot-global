@@ -81,10 +81,14 @@ const lazadaOAuthProviderFailureCategories = new Set<LazadaOAuthProviderFailureC
   "INVALID_RESPONSE",
 ]);
 
-function allowlistedLazadaOAuthProviderCode(value: unknown) {
-  if (typeof value !== "string" && typeof value !== "number") return "UNRECOGNIZED";
+function recognizedLazadaOAuthProviderCode(value: unknown) {
+  if (typeof value !== "string" && typeof value !== "number") return null;
   const normalized = String(value).trim().replace(/[\s_.-]+/gu, "").toLowerCase();
-  return lazadaOAuthProviderCodeAllowlist.get(normalized) ?? "UNRECOGNIZED";
+  return lazadaOAuthProviderCodeAllowlist.get(normalized) ?? null;
+}
+
+function allowlistedLazadaOAuthProviderCode(value: unknown) {
+  return recognizedLazadaOAuthProviderCode(value) ?? "UNRECOGNIZED";
 }
 
 function lazadaOAuthProviderFailureCategory(
@@ -123,11 +127,17 @@ function lazadaOAuthProviderFailure(
   const rawError = remote.data.error;
   const responseCode = String(remote.data.code ?? "").trim();
   const responseError = String(rawError ?? "").trim();
-  const providerCode = responseError
-    ? allowlistedLazadaOAuthProviderCode(rawError)
-    : missingTokenFields && (!responseCode || responseCode === "0")
+  const recognizedCode = responseCode && responseCode !== "0"
+    ? recognizedLazadaOAuthProviderCode(remote.data.code)
+    : null;
+  const recognizedError = responseError
+    ? recognizedLazadaOAuthProviderCode(rawError)
+    : null;
+  const providerCode = recognizedCode
+    ?? recognizedError
+    ?? (missingTokenFields && (!responseCode || responseCode === "0")
       ? "MISSING_TOKEN_FIELDS"
-      : allowlistedLazadaOAuthProviderCode(remote.data.code);
+      : "UNRECOGNIZED");
   return new LazadaOAuthProviderFailureError(
     lazadaOAuthProviderFailureCategory(remote.response, remote.data),
     providerCode,
@@ -401,6 +411,10 @@ async function exchangeLazadaOAuth(
   const appSecret = textValue(job.credential, "app_secret");
   const code = String(job.request.code ?? "").trim();
   if (!appKey || !appSecret || !code) throw new Error("LAZADA_OAUTH_INPUT_MISSING");
+  const embeddedAppKey = code.match(/^0_([0-9]+)_/u)?.[1] ?? "";
+  if (embeddedAppKey && embeddedAppKey !== appKey) {
+    throw new Error("LAZADA_OAUTH_CODE_APP_KEY_MISMATCH");
+  }
   const requestedCountry = String(job.request.country ?? "").trim().toLowerCase();
   const credentialCountry = textValue(job.credential, "country").toLowerCase();
   if (requestedCountry !== lazadaTargetCountry || credentialCountry !== lazadaTargetCountry) {
