@@ -26,6 +26,35 @@ declare
   v_job record;
   v_marker jsonb;
 begin
+  -- Preserve the exact internal-only adoption transition introduced by
+  -- 20260901173400. It retires the already-live uncertain source job without
+  -- replaying the provider call, but only after the immutable readback receipt
+  -- for that same job, attempt, listing, and credential exists.
+  if tg_op = 'UPDATE'
+     and old.status = 'reconciliation_required'
+     and new.status = 'failed'
+     and current_setting(
+           'sellerpilot.qoo10_already_live_adopt_source', true
+         ) is not distinct from old.id::text
+     and to_jsonb(new) - array['status', 'error_message', 'updated_at']
+           is not distinct from
+         to_jsonb(old) - array['status', 'error_message', 'updated_at']
+     and exists (
+       select 1
+         from sellerpilot_private.qoo10_exact_already_live_adoptions receipt
+        where receipt.source_job_id = old.id
+          and receipt.source_attempt_id = old.attempt_id
+          and receipt.listing_id = old.listing_id
+          and receipt.credential_id = old.credential_id
+          and receipt.remote_id = '1217336970'
+          and receipt.provider_status = 'S2'
+          and receipt.remote_visibility = 'live'
+          and receipt.purchase_available
+          and not receipt.provider_call_replayed
+          and receipt.external_write_count = 0
+     )
+  then return new; end if;
+
   if tg_op = 'UPDATE'
      and old.status = 'reconciliation_required'
      and new.status = 'failed'
@@ -270,6 +299,14 @@ begin
      or pg_catalog.strpos(
           v_base,
           'qoo10_exact_localization_v2_arguments_valid'
+        ) = 0
+     or pg_catalog.strpos(
+          v_base,
+          'sellerpilot.qoo10_already_live_adopt_source'
+        ) = 0
+     or pg_catalog.strpos(
+          v_base,
+          'qoo10_exact_already_live_adoptions'
         ) = 0
   then
     raise exception 'QOO10_DEFERRED_JOB_LINEAGE_BASE_POSTIMAGE_MISMATCH'

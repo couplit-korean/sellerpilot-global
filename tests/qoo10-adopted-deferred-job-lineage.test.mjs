@@ -106,6 +106,12 @@ async function createDatabase() {
       credential_id uuid, remote_id text, resolution text,
       provider_call_replayed boolean
     );
+    create table sellerpilot_private.qoo10_exact_already_live_adoptions (
+      source_job_id uuid, source_attempt_id uuid, listing_id uuid,
+      credential_id uuid, remote_id text, provider_status text,
+      remote_visibility text, purchase_available boolean,
+      provider_call_replayed boolean, external_write_count integer
+    );
 
     create function
       sellerpilot_private.qoo10_exact_localization_v2_arguments_valid(
@@ -266,6 +272,96 @@ test("Qoo10 adopted enqueue still fails closed on a final fingerprint mismatch",
   }
 });
 
+test("the deferred-row fix preserves the exact already-live source retirement", async () => {
+  const db = await createDatabase();
+  const jobId = "30000000-0000-4000-8000-000000000001";
+  const attemptId = "30000000-0000-4000-8000-000000000002";
+  const requestPayload = JSON.stringify({
+    arguments: {
+      sellerpilotQoo10ExactLocalization: {
+        contract: "qoo10_exact_localization_update_v2",
+        releaseSha,
+      },
+    },
+  });
+  try {
+    await db.exec(`
+      alter table sellerpilot_private.channel_gateway_jobs
+        disable trigger user;
+    `);
+    await db.query(`
+      insert into sellerpilot_private.channel_gateway_jobs(
+        id,attempt_id,listing_id,credential_id,channel,operation,environment,
+        status,seller_account_key,request_fingerprint,request_payload
+      ) values(
+        $1,$2,$3,$4,'qoo10','listing.update','production',
+        'reconciliation_required',$5,null,$6::jsonb
+      )
+    `, [
+      jobId,
+      attemptId,
+      listingId,
+      credentialId,
+      sellerAccountKey,
+      requestPayload,
+    ]);
+    await db.exec(`
+      alter table sellerpilot_private.channel_gateway_jobs
+        enable trigger user;
+    `);
+    await db.exec("begin");
+    await db.query(
+      "select set_config('sellerpilot.qoo10_already_live_adopt_source',$1,true)",
+      [jobId],
+    );
+    await db.query(`
+      update sellerpilot_private.channel_gateway_jobs
+         set status='failed',
+             error_message='adopted already-live readback; no provider replay',
+             updated_at=clock_timestamp()
+       where id=$1
+    `, [jobId]);
+    await assert.rejects(
+      db.exec("commit"),
+      /exact Qoo10 localization update job lineage invalid/u,
+    );
+    await db.exec("rollback").catch(() => undefined);
+
+    await db.query(`
+      insert into sellerpilot_private.qoo10_exact_already_live_adoptions(
+        source_job_id,source_attempt_id,listing_id,credential_id,remote_id,
+        provider_status,remote_visibility,purchase_available,
+        provider_call_replayed,external_write_count
+      ) values($1,$2,$3,$4,'1217336970','S2','live',true,false,0)
+    `, [jobId, attemptId, listingId, credentialId]);
+
+    await db.exec("begin");
+    await db.query(
+      "select set_config('sellerpilot.qoo10_already_live_adopt_source',$1,true)",
+      [jobId],
+    );
+    await db.query(`
+      update sellerpilot_private.channel_gateway_jobs
+         set status='failed',
+             error_message='adopted already-live readback; no provider replay',
+             updated_at=clock_timestamp()
+       where id=$1
+    `, [jobId]);
+    await db.exec("commit");
+
+    assert.deepEqual((await db.query(`
+      select status,error_message
+        from sellerpilot_private.channel_gateway_jobs
+       where id=$1
+    `, [jobId])).rows[0], {
+      status: "failed",
+      error_message: "adopted already-live readback; no provider replay",
+    });
+  } finally {
+    await db.close();
+  }
+});
+
 test("the forward migration only replaces guards and never manufactures operations", () => {
   const baseGuard = extractFunction(
     migration,
@@ -276,6 +372,8 @@ test("the forward migration only replaces guards and never manufactures operatio
     "sellerpilot_private.guard_exact_qoo10_adopted_localization_job()",
   );
   assert.match(baseGuard, /current_job\.id = new\.id/u);
+  assert.match(baseGuard, /sellerpilot\.qoo10_already_live_adopt_source/u);
+  assert.match(baseGuard, /qoo10_exact_already_live_adoptions/u);
   assert.match(baseGuard, /permit\.request_fingerprint = v_job\.request_fingerprint/u);
   assert.doesNotMatch(
     baseGuard,
