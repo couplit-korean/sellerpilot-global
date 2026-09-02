@@ -203,6 +203,8 @@ const EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION =
   "20260902104000_bind_ebay_exact_rotating_credential_lineage.sql";
 const EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION =
   "20260902106000_bind_ebay_exact_current_attempt_proof.sql";
+const EBAY_EXACT_PREARM_IMAGES_MIGRATION =
+  "20260902107000_recover_ebay_exact_prearm_images.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -943,6 +945,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION,
       EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION,
       EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION,
+      EBAY_EXACT_PREARM_IMAGES_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1335,6 +1338,39 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.doesNotMatch(
       ebayCurrentAttemptProofMigration,
       /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_PREARM_IMAGES_MIGRATION),
+      "the eBay fresh pre-arm image fence must replay after the latest failed-attempt proof",
+    );
+    const ebayExactPrearmImagesMigration = await readFile(
+      new URL(EBAY_EXACT_PREARM_IMAGES_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /asset_attempt\.id = 'c9d5b739-4ae7-4596-acbc-06f900a21ba3'::uuid/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /v_new constant text :=[\s\S]*?22457f2e-51d8-43c5-bb03-d2c1bb7fe697[\s\S]*?c9d5b739-4ae7-4596-acbc-06f900a21ba3[\s\S]*?079cd680-47fb-4910-b3d8-27d19356e66e/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /jsonb_array_length\(v_transport\) <> 9[\s\S]*?jsonb_array_length\(v_details\) <> 8/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /count\(\*\) = 9[\s\S]*?ref\.source_content_sha256 is not null/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /exact_existing_update_enqueued_lineage_is_current[\s\S]*?ebay_exact_v101_fresh_asset_refs_are_current/u,
+    );
+    assert.doesNotMatch(
+      ebayExactPrearmImagesMigration,
+      /(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private\.marketplace_normalized_asset_refs/iu,
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
@@ -15789,6 +15825,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
         && name !== EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
         && name !== EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
+        && name !== EBAY_EXACT_PREARM_IMAGES_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17539,6 +17576,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
         || name === EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
         || name === EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
+        || name === EBAY_EXACT_PREARM_IMAGES_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.

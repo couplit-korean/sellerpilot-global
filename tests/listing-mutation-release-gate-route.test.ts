@@ -225,5 +225,8 @@ test("Qoo10 recovery capability is server-bound, survives normalization, and pre
   assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) \{[\s\S]*bindQoo10RollbackUpdateRecoveryArguments\([\s\S]*contract: qoo10RollbackUpdateRecoveryContract/);
   assert.match(route, /effectiveArguments = \{[\s\S]*\.\.\.effectiveArguments,[\s\S]*\.\.\.boundEbayListingIdentity/);
   assert.doesNotMatch(route, /\.\.\.structuredClone\(parsed\.data\.arguments\),[\s\S]{0,120}\.\.\.boundEbayListingIdentity/);
-  assert.match(route, /if \(!\(boundQoo10RollbackUpdateRecovery && preGatewayRetryable\)\) \{[\s\S]*await completeListing\(\{ success: false/);
+  assert.match(
+    route,
+    /const preserveExactPreGatewayListing = preGatewayRetryable[\s\S]{0,220}boundQoo10RollbackUpdateRecovery[\s\S]{0,700}if \(!preserveExactPreGatewayListing\) \{[\s\S]{0,120}await completeListing\(\{ success: false/,
+  );
 });

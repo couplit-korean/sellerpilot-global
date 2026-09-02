@@ -2413,6 +2413,8 @@ export async function POST(request: NextRequest) {
     p_operation: operation,
     p_idempotency_key: channel === "temu" && operation === "listing.activate"
       ? temuActivationClaimIdempotencyKey!
+      : boundEbayExactExistingQaRecovery
+      ? `ebay-exact-v101:${ebayExactExistingQaRecoveryIdentity.listingId}:${requestFingerprint}`
       : parsed.data.idempotencyKey,
     p_request_fingerprint: requestFingerprint,
   });
@@ -2812,13 +2814,18 @@ export async function POST(request: NextRequest) {
         });
       }
       // A failure before the gateway made any provider request is safe to
-      // retry. Preserve either exact Qoo10 recovery projection so the next
-      // attempt can pass the same read-only identity RPC instead of destroying
-      // its only rollback-confirmed or already-live classification.
-      const preserveExactQoo10PreGatewayListing = preGatewayRetryable
+      // retry. Preserve an exact recovery projection so the next attempt can
+      // pass the same read-only identity RPC instead of replacing its only
+      // rollback/no-effect evidence with the fresh image-preparation attempt.
+      const preserveExactPreGatewayListing = preGatewayRetryable
         && (Boolean(boundQoo10RollbackUpdateRecovery)
-          || Boolean(boundQoo10AdoptedLocalizationIdentity));
-      if (!preserveExactQoo10PreGatewayListing) {
+          || Boolean(boundQoo10AdoptedLocalizationIdentity)
+          || (channel === "ebay"
+            && operation === "listing.update"
+            && Boolean(boundEbayExactExistingQaRecovery)
+            && boundEbayExactNoEffectRetry
+            && exactExistingUpdatePermitArmed));
+      if (!preserveExactPreGatewayListing) {
         await completeListing({ success: false, safeMessage: message });
       }
       return NextResponse.json({ message, attemptId, preGatewayRetryable }, { status: 422 });

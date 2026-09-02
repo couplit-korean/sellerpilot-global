@@ -67,7 +67,7 @@ test("an exact adopted pre-gateway failure preserves the already-live listing pr
   const route = await readFile(routeUrl, "utf8");
   assert.match(
     route,
-    /const preserveExactQoo10PreGatewayListing = preGatewayRetryable[\s\S]{0,220}boundQoo10RollbackUpdateRecovery[\s\S]{0,160}boundQoo10AdoptedLocalizationIdentity[\s\S]{0,160}if \(!preserveExactQoo10PreGatewayListing\) \{[\s\S]{0,120}completeListing/u,
+    /const preserveExactPreGatewayListing = preGatewayRetryable[\s\S]{0,220}boundQoo10RollbackUpdateRecovery[\s\S]{0,160}boundQoo10AdoptedLocalizationIdentity[\s\S]{0,420}if \(!preserveExactPreGatewayListing\) \{[\s\S]{0,120}completeListing/u,
   );
 });
 
