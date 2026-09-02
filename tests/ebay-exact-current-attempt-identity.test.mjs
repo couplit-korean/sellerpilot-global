@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260902103000_bind_ebay_exact_current_attempt_identity.sql",
   import.meta.url,
 );
+const rotatingCredentialMigrationUrl = new URL(
+  "../supabase/migrations/20260902104000_bind_ebay_exact_rotating_credential_lineage.sql",
+  import.meta.url,
+);
 const credentialMigrationUrl = new URL(
   "../supabase/migrations/20260901082000_bind_ebay_exact_update_to_current_active_credential.sql",
   import.meta.url,
@@ -16,7 +20,9 @@ const ownerId = "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
 const listingId = "8b2cbfaf-3854-437d-b381-abfd70291354";
 const productId = "ddccde35-9c58-4856-b673-d7aa27ce4220";
 const attemptId = "079cd680-47fb-4910-b3d8-27d19356e66e";
-const credentialId = "a74a8894-4985-4475-a833-70abdc79620a";
+const historicalCredentialId = "66285742-5909-40db-b1f3-fa4c300b8911";
+const currentCredentialId = "bbf7c49e-c9db-4279-adeb-b2e1b1489eb9";
+const nextCredentialId = "3df37e80-004a-46e9-9fd0-35bfd9c14589";
 const sellerAccountKey =
   "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f";
 
@@ -71,14 +77,61 @@ test("eBay current-attempt migration is forward-only and preserves every exact f
   assert.doesNotMatch(migration, /fetch\s*\(|api\.ebay\.com/iu);
 });
 
+test("eBay rotating-credential migration changes only the identity function and preserves exact fences", async () => {
+  const migration = await readFile(rotatingCredentialMigrationUrl, "utf8");
+
+  for (const exact of [
+    listingId,
+    productId,
+    attemptId,
+    "800551945442",
+    "244042196011",
+    "QA-20260823-CC-001-US",
+    sellerAccountKey,
+  ]) {
+    assert.match(migration, new RegExp(exact, "u"));
+  }
+  assert.match(migration, /attempt_credential\.id = attempt\.credential_id/u);
+  assert.match(migration, /attempt_credential\.status in \('active', 'revoked'\)/u);
+  assert.match(
+    migration,
+    /attempt_credential\.seller_account_key = listing\.seller_account_key/u,
+  );
+  assert.match(
+    migration,
+    /attempt_credential\.seller_account_key_source = 'provider_certified_v1'/u,
+  );
+  assert.match(migration, /attempt_credential\.version <= credential\.version/u);
+  assert.match(migration, /ebay_exact_current_credential_is_valid/u);
+  assert.match(migration, /exact_existing_update_release_is_current/u);
+  assert.match(migration, /attempt\.status = ''failed''/u);
+  assert.match(migration, /attempt\.http_status = 422/u);
+  assert.match(migration, /attempt_job\.attempt_id = attempt\.id/u);
+  assert.doesNotMatch(migration, /credential\.version\s*=\s*(?:106|107)/u);
+  assert.doesNotMatch(
+    migration,
+    /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+  );
+  assert.doesNotMatch(
+    migration,
+    /update\s+sellerpilot_private\.(?:product_listings|channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+  );
+  assert.doesNotMatch(migration, /fetch\s*\(|api\.ebay\.com/iu);
+});
+
 test("eBay exact identity follows the sole current same-seller credential and the exact failed no-job attempt", async () => {
-  const [migration, credentialMigration] = await Promise.all([
+  const [migration, rotatingCredentialMigration, credentialMigration] = await Promise.all([
     readFile(migrationUrl, "utf8"),
+    readFile(rotatingCredentialMigrationUrl, "utf8"),
     readFile(credentialMigrationUrl, "utf8"),
   ]);
   const identity = extractFunction(
     migration,
     "create or replace function\n  public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(",
+  );
+  const identityAlias = extractFunction(
+    migration,
+    "create or replace function\n  public.sellerpilot_service_get_ebay_exact_qa_recovery_identity(",
   );
   const currentCredential = extractFunction(
     credentialMigration,
@@ -153,6 +206,7 @@ test("eBay exact identity follows the sole current same-seller credential and th
       $$;
       ${currentCredential}
       ${identity}
+      ${identityAlias}
       insert into sellerpilot_private.products values (
         '${productId}', '${ownerId}', 'QA-20260823-CC-001', 1, false, 'active'
       );
@@ -161,11 +215,14 @@ test("eBay exact identity follows the sole current same-seller credential and th
          'revoked', 84, 'A48BC6BD3D4B', '${sellerAccountKey}',
          'provider_certified_v1', now() - interval '2 days',
          now() - interval '1 day', now() - interval '1 day', 'passed'),
-        ('${credentialId}', 'ebay', 'production', 'active', 106,
+        ('${historicalCredentialId}', 'ebay', 'production', 'revoked', 106,
          'A106A106A106', '${sellerAccountKey}', 'provider_certified_v1',
+         now() - interval '2 hours', now() + interval '1 day', now(), 'passed'),
+        ('${currentCredentialId}', 'ebay', 'production', 'active', 107,
+         'A107A107A107', '${sellerAccountKey}', 'provider_certified_v1',
          now(), now() + interval '1 day', now(), 'passed');
       insert into sellerpilot_private.channel_operation_attempts values (
-        '${attemptId}', '${ownerId}', '${credentialId}', 'ebay',
+        '${attemptId}', '${ownerId}', '${historicalCredentialId}', 'ebay',
         'listing.update', 'failed', 422, null, true, true, '${sellerAccountKey}'
       );
       insert into sellerpilot_private.product_listings values (
@@ -194,15 +251,22 @@ test("eBay exact identity follows the sole current same-seller credential and th
     const lookup = async () => (
       await db.query(
         `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(
-           '${listingId}'::uuid, '${credentialId}'::uuid, '${productId}'::uuid,
+           '${listingId}'::uuid, '${currentCredentialId}'::uuid, '${productId}'::uuid,
            'US', 'EBAY_US'
          ) identity`,
       )
     ).rows[0].identity;
 
+    assert.equal(
+      await lookup(),
+      null,
+      "the pre-fix identity incorrectly requires the failed attempt credential to remain current",
+    );
+    await db.exec(rotatingCredentialMigration);
+
     const accepted = await lookup();
     assert.equal(accepted.listingId, listingId);
-    assert.equal(accepted.credentialId, credentialId);
+    assert.equal(accepted.credentialId, currentCredentialId);
     assert.equal(accepted.publicListingId, "800551945442");
     assert.equal(accepted.offerId, "244042196011");
     assert.equal(accepted.priceUsd, 12.9);
@@ -211,7 +275,7 @@ test("eBay exact identity follows the sole current same-seller credential and th
     await db.exec(`
       insert into sellerpilot_private.channel_gateway_jobs values (
         '5ed5a486-08c5-4052-9753-a50b421cbf94', '${attemptId}', '${listingId}',
-        '${credentialId}', 'ebay', 'production', 'listing.update', 'failed',
+        '${currentCredentialId}', 'ebay', 'production', 'listing.update', 'failed',
         '${sellerAccountKey}'
       )
     `);
@@ -225,14 +289,43 @@ test("eBay exact identity follows the sole current same-seller credential and th
     await db.exec(`
       update sellerpilot_private.test_release_state set current = true;
       update sellerpilot_private.channel_credentials
-         set version = 107, fingerprint = 'A107A107A107'
-       where id = '${credentialId}'
+         set status = 'revoked'
+       where id = '${currentCredentialId}';
+      insert into sellerpilot_private.channel_credentials values (
+        '${nextCredentialId}', 'ebay', 'production', 'active', 108,
+        'A108A108A108', '${sellerAccountKey}', 'provider_certified_v1',
+        now(), now() + interval '1 day', now(), 'passed'
+      )
     `);
-    const rotated = await lookup();
+    const rotated = (
+      await db.query(
+        `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(
+           '${listingId}'::uuid, '${nextCredentialId}'::uuid, '${productId}'::uuid,
+           'US', 'EBAY_US'
+         ) identity`,
+      )
+    ).rows[0].identity;
     assert.equal(
       rotated.credentialId,
-      credentialId,
-      "a later sole current provider-certified same-seller credential remains valid",
+      nextCredentialId,
+      "a distinct later sole current provider-certified same-seller credential remains valid",
+    );
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set seller_account_key_source = 'legacy_metadata'
+       where id = '${historicalCredentialId}'
+    `);
+    assert.equal(
+      (
+        await db.query(
+          `select public.sellerpilot_service_get_ebay_exact_existing_qa_recovery_identit(
+             '${listingId}'::uuid, '${nextCredentialId}'::uuid, '${productId}'::uuid,
+             'US', 'EBAY_US'
+           ) identity`,
+        )
+      ).rows[0].identity,
+      null,
+      "the historical attempt credential must retain provider-certified seller lineage",
     );
   } finally {
     await db.close();
