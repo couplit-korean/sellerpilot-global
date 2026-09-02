@@ -19,10 +19,10 @@ export const ebayExactV101ContentContract = Object.freeze({
 });
 
 export const ebayExactV101ContentBaseRequestFingerprint =
-  "ca16ccbee45665f513bc1a4f1a1420be57dbd9b52f065b1f53e413d7e5d81cd2";
+  "21ed51a94009c586f0619780ad9ea0d0e8162b26d9759bdde19240f47b72ed97";
 
 export const ebayExactV101ContentRequestFingerprint =
-  "bda8692c79751806c5a1103a955a13462522ad0adf889259d3a804ba2a4ac231";
+  "acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef";
 
 export const ebayExactV101RepresentativeObjectPath =
   "normalized/29/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a.jpg";
@@ -51,6 +51,9 @@ export const ebayExactExistingQaRecoveryIdentity = Object.freeze({
   priceUsd: 12.9,
   sellerAccountKey: "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f",
 });
+
+export const ebayExactV101SameSellerCredentialSentinel =
+  `sellerpilot-same-seller://${ebayExactExistingQaRecoveryIdentity.sellerAccountKey}`;
 
 export type EbayExactExistingQaRecoveryBinding = {
   contract: typeof ebayExactExistingQaRecoveryContract;
@@ -174,6 +177,85 @@ export function ebayExactExistingQaRecoveryBinding(
   return ebayExactExistingQaRecoveryBindingValue(
     argumentsValue[ebayExactExistingQaRecoveryArgument],
   );
+}
+
+function sellerpilotStorageFingerprintUrl(value: unknown) {
+  const candidate = exactText(value);
+  const storageScheme = "sellerpilot-storage://";
+  let objectPath = "";
+  if (candidate.startsWith(storageScheme)) {
+    objectPath = candidate.slice(storageScheme.length);
+  } else {
+    try {
+      const parsed = new URL(candidate);
+      const signedPrefix = "/storage/v1/object/sign/sellerpilot-ai/";
+      const publicPrefix = "/storage/v1/object/public/sellerpilot-ai/";
+      const prefix = parsed.pathname.startsWith(signedPrefix)
+        ? signedPrefix
+        : parsed.pathname.startsWith(publicPrefix)
+          ? publicPrefix
+          : "";
+      const signed = prefix === signedPrefix;
+      if (parsed.protocol !== "https:"
+          || !/^[a-z0-9-]+\.supabase\.(?:co|in)$/u.test(parsed.hostname)
+          || parsed.port
+          || parsed.username
+          || parsed.password
+          || parsed.hash
+          || !prefix
+          || (signed && !parsed.searchParams.get("token"))
+          || (!signed && parsed.search)) return null;
+      objectPath = decodeURIComponent(parsed.pathname.slice(prefix.length));
+    } catch {
+      return null;
+    }
+  }
+  return objectPath
+    && !objectPath.startsWith("/")
+    && !objectPath.includes("..")
+    && /^[A-Za-z0-9._/-]+$/u.test(objectPath)
+      ? `${storageScheme}${objectPath}`
+      : null;
+}
+
+/**
+ * Removes only expiring storage tokens and the rotating credential UUID from
+ * the exact eBay request fingerprint. The transport arguments are cloned and
+ * remain untouched; every product, listing, commerce and content field stays
+ * inside the canonical request hash.
+ */
+export function ebayExactV101ArgumentsForFingerprint(
+  argumentsValue: Record<string, unknown>,
+) {
+  const binding = ebayExactExistingQaRecoveryBinding(argumentsValue);
+  const assets = recordValue(argumentsValue.sellerpilotAssets);
+  const gallery = Array.isArray(assets?.galleryImageUrls)
+    ? assets.galleryImageUrls
+    : [];
+  const stableGallery = gallery.map(sellerpilotStorageFingerprintUrl);
+  if (!binding
+      || !assets
+      || stableGallery.length < 1
+      || stableGallery.length > 12
+      || stableGallery.some((url) => !url)
+      || new Set(stableGallery).size !== stableGallery.length) {
+    throw new Error("EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED");
+  }
+  const next = structuredClone(argumentsValue);
+  const nextAssets = recordValue(next.sellerpilotAssets);
+  const nextBinding = recordValue(next[ebayExactExistingQaRecoveryArgument]);
+  if (!nextAssets || !nextBinding) {
+    throw new Error("EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED");
+  }
+  next.sellerpilotAssets = {
+    ...nextAssets,
+    galleryImageUrls: stableGallery,
+  };
+  next[ebayExactExistingQaRecoveryArgument] = {
+    ...nextBinding,
+    credentialId: ebayExactV101SameSellerCredentialSentinel,
+  };
+  return next;
 }
 
 export function bindEbayExactExistingQaRecoveryArguments(

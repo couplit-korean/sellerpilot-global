@@ -6,6 +6,7 @@ import {
   assertEbayExactExistingQaUpdateArguments,
   bindEbayExactNoEffectRetryArguments,
   bindEbayExactExistingQaRecoveryArguments,
+  ebayExactV101ArgumentsForFingerprint,
   ebayExactV101ContentContract,
   ebayExactV101ContentContractArgument,
   ebayExactV101ContentRequestFingerprint,
@@ -13,6 +14,7 @@ import {
   ebayExactV101EnglishAspects,
   ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCreateForbidden,
+  ebayExactExistingQaRecoveryArgument,
   ebayExactExistingQaRecoveryBindingValue,
   ebayExactExistingQaRecoveryCandidate,
   ebayExactExistingQaRecoveryIdentity,
@@ -29,6 +31,23 @@ const detailUrls = Array.from(
 const representativeUrl =
   "https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/29/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a.jpg";
 const inventoryImageUrls = [representativeUrl, ...detailUrls];
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function projectedFingerprint(value: Record<string, unknown>) {
+  return createHash("sha256")
+    .update(canonicalJson(ebayExactV101ArgumentsForFingerprint(value)))
+    .digest("hex");
+}
 
 function assetBinding() {
   return {
@@ -170,18 +189,8 @@ test("exact eBay recovery accepts only the fixed failed/live tuple and strips a 
 });
 
 test("exact eBay v101 fingerprint and Material translation are narrowly bound", () => {
-  const canonicalJson = (value: unknown): string => {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-    if (value && typeof value === "object") {
-      return `{${Object.entries(value as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`)
-        .join(",")}}`;
-    }
-    return JSON.stringify(value);
-  };
   const baseRequestFingerprint =
-    "ca16ccbee45665f513bc1a4f1a1420be57dbd9b52f065b1f53e413d7e5d81cd2";
+    "21ed51a94009c586f0619780ad9ea0d0e8162b26d9759bdde19240f47b72ed97";
   assert.equal(
     ebayExactV101ContentRequestFingerprintForBase(
       baseRequestFingerprint,
@@ -226,6 +235,144 @@ test("exact eBay v101 fingerprint and Material translation are narrowly bound", 
     () => ebayExactV101EnglishAspects({ ...source, Brand: ["Бренд"] }),
     /EBAY_EXACT_V101_ENGLISH_ASPECT_SHAPE_REQUIRED/u,
   );
+});
+
+test("exact eBay fingerprint projection ignores only signed token and same-seller credential rotation", () => {
+  const sourcePath =
+    "results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/thumbnail-square.png";
+  const signedUrl = (token: string) =>
+    `https://sellerpilot.supabase.co/storage/v1/object/sign/sellerpilot-ai/${sourcePath}?token=${token}`;
+  const first = exactArguments();
+  first.sellerpilotAssets = {
+    contentMode: "ai_generated",
+    detailAssetMode: "dedicated",
+    galleryImageUrls: [signedUrl("first-token")],
+    detailImageUrls: detailUrls.map((_, index) =>
+      `sellerpilot-storage://approved/detail-${index + 1}.png`),
+    detailImageRoles: detailUrls.map((_, index) => `detail-${index + 1}`),
+    approvedDetailImagePaths: detailUrls.map((_, index) =>
+      `approved/detail-${index + 1}.png`),
+    approvedDetailImageSha256s: detailUrls.map((_, index) =>
+      (index + 17).toString(16).padStart(64, "0")),
+    approvedDetailPageVersion: 1,
+    detailImageManifestDigest: "b".repeat(64),
+  };
+  const second = structuredClone(first);
+  (second.sellerpilotAssets as Record<string, unknown>).galleryImageUrls = [
+    signedUrl("second-token"),
+  ];
+  const rotated = structuredClone(second);
+  (rotated[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>).credentialId =
+    "742773ae-e2ce-4b06-99d2-7c6eb541af03";
+  (first[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>).credentialId =
+    "f78397ec-c387-48ec-b562-64e754d90ac5";
+
+  const projected = ebayExactV101ArgumentsForFingerprint(first);
+  assert.deepEqual(
+    (projected.sellerpilotAssets as Record<string, unknown>).galleryImageUrls,
+    [`sellerpilot-storage://${sourcePath}`],
+  );
+  assert.equal(
+    ((projected[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>)
+      .credentialId as string).endsWith(ebayExactExistingQaRecoveryIdentity.sellerAccountKey),
+    true,
+  );
+  assert.deepEqual(
+    (first.sellerpilotAssets as Record<string, unknown>).galleryImageUrls,
+    [signedUrl("first-token")],
+  );
+  assert.equal(projectedFingerprint(first), projectedFingerprint(second));
+  assert.equal(projectedFingerprint(first), projectedFingerprint(rotated));
+});
+
+test("exact eBay fingerprint projection remains fail-closed for identity, manifest, commerce, policy, and copy drift", () => {
+  const sourcePath =
+    "results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/thumbnail-square.png";
+  const value = exactArguments();
+  value.sellerpilotAssets = {
+    galleryImageUrls: [
+      `https://sellerpilot.supabase.co/storage/v1/object/sign/sellerpilot-ai/${sourcePath}?token=one`,
+    ],
+    detailImageUrls: detailUrls,
+    detailImageRoles: detailUrls.map((_, index) => `detail-${index + 1}`),
+    approvedDetailImagePaths: detailUrls.map((_, index) =>
+      `approved/detail-${index + 1}.png`),
+    detailImageManifestDigest: "b".repeat(64),
+  };
+  const offer = value.offer as Record<string, unknown>;
+  offer.listingPolicies = {
+    fulfillmentPolicyId: "preserve-fulfillment",
+    paymentPolicyId: "preserve-payment",
+    returnPolicyId: "preserve-return",
+  };
+  const baseline = projectedFingerprint(value);
+
+  const wrongSeller = structuredClone(value);
+  (wrongSeller[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>)
+    .sellerAccountKey = "f".repeat(64);
+  assert.throws(
+    () => ebayExactV101ArgumentsForFingerprint(wrongSeller),
+    /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
+  );
+
+  const wrongListing = structuredClone(value);
+  (wrongListing[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>)
+    .publicListingId = "800551945443";
+  assert.throws(
+    () => ebayExactV101ArgumentsForFingerprint(wrongListing),
+    /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
+  );
+
+  for (const [field, changed] of [
+    ["offerId", "244042196012"],
+    ["marketplaceSku", "QA-20260823-CC-002-US"],
+  ] as const) {
+    const wrongIdentity = structuredClone(value);
+    (wrongIdentity[ebayExactExistingQaRecoveryArgument] as Record<string, unknown>)[field] =
+      changed;
+    assert.throws(
+      () => ebayExactV101ArgumentsForFingerprint(wrongIdentity),
+      /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
+    );
+  }
+
+  const attackerGallery = structuredClone(value);
+  (attackerGallery.sellerpilotAssets as Record<string, unknown>).galleryImageUrls = [
+    `https://attacker.example/storage/v1/object/sign/sellerpilot-ai/${sourcePath}?token=one`,
+  ];
+  assert.throws(
+    () => ebayExactV101ArgumentsForFingerprint(attackerGallery),
+    /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
+  );
+
+  const drifts = [
+    (next: Record<string, unknown>) => {
+      (next.sellerpilotAssets as Record<string, unknown>).detailImageManifestDigest =
+        "c".repeat(64);
+    },
+    (next: Record<string, unknown>) => {
+      ((next.sellerpilotAssets as Record<string, unknown>)
+        .approvedDetailImagePaths as string[]).reverse();
+    },
+    (next: Record<string, unknown>) => {
+      ((next.offer as Record<string, unknown>).pricingSummary as Record<string, unknown>) = {
+        price: { currency: "USD", value: 12.91 },
+      };
+    },
+    (next: Record<string, unknown>) => {
+      ((next.offer as Record<string, unknown>).listingPolicies as Record<string, unknown>)
+        .returnPolicyId = "changed-return";
+    },
+    (next: Record<string, unknown>) => {
+      (((next.inventoryItem as Record<string, unknown>).product as Record<string, unknown>))
+        .title = "Different English content";
+    },
+  ];
+  for (const applyDrift of drifts) {
+    const changed = structuredClone(value);
+    applyDrift(changed);
+    assert.notEqual(projectedFingerprint(changed), baseline);
+  }
 });
 
 test("exact eBay no-effect retry marker is server-owned and changes the canonical request", () => {

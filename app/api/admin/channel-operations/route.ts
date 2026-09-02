@@ -27,6 +27,7 @@ import {
   bindEbayExactExistingQaRecoveryArguments,
   ebayExactV101ContentContract,
   ebayExactV101ContentContractArgument,
+  ebayExactV101ArgumentsForFingerprint,
   ebayExactV101ContentRequestFingerprintForBase,
   ebayExactNoEffectRetryArgument,
   ebayExactExistingQaClientBuyerCopySupplied,
@@ -1994,9 +1995,22 @@ export async function POST(request: NextRequest) {
   const contentFingerprintArguments = boundCoupangExactQaRecoveryPhase === "listing.update"
     ? coupangExactQaArgumentsForFingerprint(manifestFingerprintArguments)
     : manifestFingerprintArguments;
-  const fingerprintArguments = strictShopeeSgCreate
+  const channelFingerprintArguments = strictShopeeSgCreate
     ? shopeeSgArgumentsForFingerprint(contentFingerprintArguments)
     : contentFingerprintArguments;
+  let fingerprintArguments = channelFingerprintArguments;
+  if (boundEbayExactExistingQaRecovery) {
+    try {
+      fingerprintArguments = ebayExactV101ArgumentsForFingerprint(
+        channelFingerprintArguments,
+      );
+    } catch {
+      return NextResponse.json({
+        message: "eBay exact 이미지와 동일 판매자 인증 계보를 승인된 고정 fingerprint에 결속하지 못해 원격 수정을 시작하지 않았습니다.",
+        mode: "ebay_exact_v101_content_fingerprint_required",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const baseFingerprintArguments = structuredClone(fingerprintArguments);
   if (boundEbayExactExistingQaRecovery) {
     delete baseFingerprintArguments[ebayExactV101ContentContractArgument];
