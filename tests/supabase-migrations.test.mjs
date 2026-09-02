@@ -201,6 +201,8 @@ const EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION =
   "20260902103000_bind_ebay_exact_current_attempt_identity.sql";
 const EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION =
   "20260902104000_bind_ebay_exact_rotating_credential_lineage.sql";
+const EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION =
+  "20260902106000_bind_ebay_exact_current_attempt_proof.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -940,6 +942,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION,
       EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION,
       EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION,
+      EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1285,6 +1288,52 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.doesNotMatch(
       ebayRotatingCredentialLineageMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION),
+      "the eBay current-attempt proof must replay after the rotating-credential identity",
+    );
+    const ebayCurrentAttemptProofMigration = await readFile(
+      new URL(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt\.id = '079cd680-47fb-4910-b3d8-27d19356e66e'::uuid/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /v_new_fingerprint constant text :=\s*'acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef'/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.id = attempt\.credential_id/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.version <= current_credential\.version/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.version <= credential\.version/u,
+    );
+    assert.match(ebayCurrentAttemptProofMigration, /count\(\*\) = 13/u);
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /normalized\/29\/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a\.jpg/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /pg_catalog\.strpos\(\s*v_proof, 'attempt_credential\.expires_at > statement_timestamp\(\)'\s*\) <> 0/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /pg_catalog\.strpos\(\s*v_identity, 'attempt_credential\.last_check_status = ''passed'''\s*\) <> 0/u,
+    );
+    assert.doesNotMatch(
+      ebayCurrentAttemptProofMigration,
       /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
     );
     assert.ok(
@@ -15739,6 +15788,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
         && name !== EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
         && name !== EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
+        && name !== EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17488,6 +17538,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
         || name === EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
         || name === EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
+        || name === EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
