@@ -1,4 +1,8 @@
 import type { ActiveChannelKey } from "./catalog";
+import {
+  elevenstProcessedFoodCategoryId,
+  elevenstProcessedFoodNotificationFields,
+} from "./elevenst-listing";
 
 export type ListingRequirementStatus = "ready" | "manual" | "runtime";
 
@@ -18,7 +22,7 @@ type RequirementSpec = Omit<ListingRequirement, "status"> & {
   runtime?: boolean;
 };
 
-const unknownValue = /^(?:server_managed|seller confirmation required|unknown|not provided|n\/a|미기재|미확인|확인 필요|판매자 확인 필요)$/i;
+const unknownValue = /^(?:server_managed|seller confirmation required|unknown|not provided|n\/a|tbd|알\s*수\s*없음|모름|미정|미기재|미확인|확인\s*필요|판매자\s*확인\s*필요)$/iu;
 
 function valueAt(value: unknown, path: Array<string | number>) {
   return path.reduce<unknown>((current, part) => {
@@ -62,6 +66,26 @@ const sharedImage = (path: Array<string | number>): RequirementSpec => ({
   path,
   help: "채널 작업자가 공식 이미지 API 규격으로 다시 업로드합니다.",
 });
+
+function elevenstNotificationValue(draft: Record<string, unknown>, code: string) {
+  const items = valueAt(draft, ["product", "ProductNotification", "item"]);
+  if (!Array.isArray(items)) return undefined;
+  const item = items.find((candidate) => candidate && typeof candidate === "object"
+    && String((candidate as Record<string, unknown>).code) === code);
+  return item && typeof item === "object" ? (item as Record<string, unknown>).name : undefined;
+}
+
+const elevenstFoodExplicitConfirmationCodes = new Set(["176398001", "23757260", "23757095", "23756754"]);
+const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFoodNotificationFields.map((field) => ({
+  key: `food-notice-${field.code}`,
+  label: `가공식품 고시 · ${field.label}`,
+  source: "상품 정보",
+  test: (draft) => String(valueAt(draft, ["product", "dispCtgrNo"])) !== elevenstProcessedFoodCategoryId
+    || meaningful(elevenstNotificationValue(draft, field.code)),
+  help: elevenstFoodExplicitConfirmationCodes.has(field.code)
+    ? `추정하지 않습니다. 카테고리 속성 notification:${field.code}에 판매자가 확인한 확정값을 입력해 주세요.`
+    : `카테고리 속성 notification:${field.code}에 확정값을 입력해 주세요.`,
+}));
 
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
@@ -126,6 +150,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["product", "prdSelQty"]) },
     { key: "sale-period", label: "판매 시작·종료일", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["product", "aplBgnDy"])) && meaningful(valueAt(draft, ["product", "aplEndDy"])) },
     { key: "notice", label: "상품정보제공고시", source: "카테고리", path: ["product", "ProductNotification", "type"] },
+    ...elevenstProcessedFoodRequirements,
     { key: "certification", label: "인증·허가 정보", source: "카테고리", path: ["product", "ProductCertGroup"], help: "카테고리에 맞는 인증 대상 여부와 인증 정보를 확인해 주세요." },
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },
   ],

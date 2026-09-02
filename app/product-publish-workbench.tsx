@@ -3,7 +3,12 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
+import {
+  elevenstProcessedFoodCategoryId,
+  elevenstProcessedFoodNotificationFields,
+  elevenstProcessedFoodNoticeType,
+  elevenstSaleDateRange,
+} from "../lib/channels/elevenst-listing";
 import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
 import {
   qoo10ExactAdoptedLiveListingCandidate,
@@ -87,7 +92,7 @@ import { createBoundedRequestSignal, waitForAbortablePromise } from "./operation
 import {
   bulkChannelPublicationIntent,
   channelTargetOptionValue,
-  executeChannelWritesSequentially,
+  executeChannelWritesIndependently,
   isPublicationPendingReviewResponse,
   listingMutationGeneration,
   productEditSupportLabel,
@@ -794,17 +799,27 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     };
   }
   if (channel === "elevenst") {
-    // This exact non-regulated contract has a successful create/readback for
-    // the official cable-organizer leaf. Other categories remain intentionally
-    // incomplete until their own category metadata is verified.
     const verifiedCableOrganizerContract = assignment?.categoryId === "1341821";
-    const notificationItems = verifiedCableOrganizerContract ? [
-      { code: "11800", name: title.slice(0, 100) },
-      { code: "11905", name: manual.manufacturer },
-      { code: "23760413", name: "11번가 판매자 문의 이용" },
-      { code: "23759100", name: manual.countryOfOrigin },
-      { code: "23756033", name: "해당사항 없음" },
-    ] : [];
+    const verifiedProcessedFoodContract = assignment?.categoryId === elevenstProcessedFoodCategoryId;
+    const verifiedNoCertificationContract = verifiedCableOrganizerContract || verifiedProcessedFoodContract;
+    const explicitNotificationValue = (code: string) => assignment?.providedAttributes[`notification:${code}`]?.trim() ?? "";
+    const notificationItems = verifiedCableOrganizerContract
+      ? [
+          { code: "11800", name: title.slice(0, 100) },
+          { code: "11905", name: manual.manufacturer },
+          { code: "23760413", name: "11번가 판매자 문의 이용" },
+          { code: "23759100", name: manual.countryOfOrigin },
+          { code: "23756033", name: "해당사항 없음" },
+        ]
+      : verifiedProcessedFoodContract
+        ? elevenstProcessedFoodNotificationFields.map((field) => ({
+            code: field.code,
+            // The product name is already confirmed in the intake form. Every
+            // other food notice value must be entered explicitly; in particular
+            // expiry, nutrition, GMO, and customer-service phone are never guessed.
+            name: explicitNotificationValue(field.code) || (field.code === "176317774" ? title.slice(0, 100) : ""),
+          }))
+        : [];
     const saleDateRange = elevenstSaleDateRange();
     return {
       sellerpilotAssets,
@@ -827,9 +842,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         prdImage03: galleryImageUrls[2] ?? "",
         prdImage04: galleryImageUrls[3] ?? "",
         htmlDetail: richDescription,
-        ProductCertGroup: verifiedCableOrganizerContract ? [
-          // This verified non-regulated category has no certificate. Sending a made-up
-          // certTypeCd makes 11st validate it as a real certificate and reject it.
+        ProductCertGroup: verifiedNoCertificationContract ? [
+          // 11st reports certInfoRequiredYn=N for both verified leaves. Sending a
+          // made-up certTypeCd makes 11st validate it as a real certificate.
           { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
           { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03" },
           { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03" },
@@ -848,7 +863,10 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         exchDlvCst: "0",
         asDetail: "11번가 판매자 문의를 이용해 주세요.",
         rtngExchDetail: "11번가 반품·교환 정책을 확인해 주세요.",
-        ProductNotification: { type: verifiedCableOrganizerContract ? "891045" : "", item: notificationItems },
+        ProductNotification: {
+          type: verifiedCableOrganizerContract ? "891045" : verifiedProcessedFoodContract ? elevenstProcessedFoodNoticeType : "",
+          item: notificationItems,
+        },
       },
     };
   }
@@ -2075,7 +2093,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await createClient().auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const completed = await executeChannelWritesSequentially(
+      const settled = await executeChannelWritesIndependently(
         readyChannels,
         (channel) => executeChannel(channel, {
           skipConfirm: true,
@@ -2084,14 +2102,26 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           publicationIntent: bulkChannelPublicationIntent(channel),
         }),
       );
+      const completed = settled.map((result) => {
+        if (result.status === "fulfilled") return result.value;
+        const message = result.reason instanceof Error
+          ? result.reason.message
+          : "독립 채널 작업을 시작하지 못했습니다.";
+        setResults((current) => ({
+          ...current,
+          [result.channel]: { phase: "failed", message },
+        }));
+        notify(`${channelCatalog[result.channel].name}: ${message}`);
+        return false;
+      });
       const summary = summarizeBulkPublicationOutcomes(completed);
       if (sessionProductIdRef.current === requestedProductId) await load();
       onChanged?.();
       if (sessionProductIdRef.current === requestedProductId) {
-        notify(`채널 등록·수정 순차 처리 완료 · 공개·수정 성공 ${summary.live}개 / Temu QA 생성·판매중지 확인 ${summary.safeTestContained}개 / 심사·확인 필요 ${summary.attentionRequired}개`);
+        notify(`채널 등록·수정 병렬 처리 완료 · 공개·수정 성공 ${summary.live}개 / Temu QA 생성·판매중지 확인 ${summary.safeTestContained}개 / 심사·확인 필요 ${summary.attentionRequired}개`);
       }
     } catch (error) {
-      notify(error instanceof Error ? error.message : "순차 채널 등록을 완료하지 못했습니다.");
+      notify(error instanceof Error ? error.message : "병렬 채널 등록을 완료하지 못했습니다.");
     } finally {
       setBulkRunning(false);
     }
@@ -2369,8 +2399,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const bulkReadyChannels = bulkConfirming ? getReadyChannels() : [];
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하되, 다중 채널 QA의 Temu 신규 상품은 생성 직후 판매 중지와 readback까지 검증합니다. 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 순차 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
-    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><ul className="publish-bulk-confirm-list">{bulkReadyChannels.map((channel) => {
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하되, 다중 채널 QA의 Temu 신규 상품은 생성 직후 판매 중지와 readback까지 검증합니다. 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 병렬 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널의 실제 상품 등록·콘텐츠 수정을 채널별 독립 작업으로 동시에 실행합니다.</b><ul className="publish-bulk-confirm-list">{bulkReadyChannels.map((channel) => {
       const target = selectedTargets[channel];
       const listing = context.listings.find((item) => item.channel === channel
         && (!target || item.market === target.marketCode && item.targetId === target.targetId));
@@ -2380,7 +2410,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         ? lazadaKrwMyrPricePolicyFromArguments(parseDraft(drafts[channel]) ?? {})
         : null;
       return <li key={channel}><b>{channelCatalog[channel].name} · {details.market}</b><small>{formattedMarketplacePrice(details.price, details.currency)} · 재고 {details.stock}개 · SKU {details.sku}</small>{operation === "listing.update" && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"}만 수정</small>}{lazadaPolicy && <small>Lazada 환율 검증 {lazadaPolicy.sourcePriceKrw.toLocaleString()} KRW → {lazadaPolicy.targetPriceMyr.toFixed(2)} MYR · 단일 SKU 사전조회·수정 후 재조회</small>}</li>;
-    })}</ul><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || bulkReadyChannels.length === 0} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 순차 실행</button></div>}
+    })}</ul><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || bulkReadyChannels.length === 0} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 병렬 실행</button></div>}
     {remoteUpdateChannelCount > 0 && <section className="product-edit-handoff" aria-label="중앙 저장과 채널별 원격 반영 순서">
       <header><span><ShieldCheck size={17} /><b>중앙 저장 후 채널별로 따로 반영합니다.</b></span><em>수정 대상 {remoteUpdateChannelCount}개 채널</em></header>
       <ol>

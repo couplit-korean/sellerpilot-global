@@ -42,15 +42,20 @@ export function isPublicationPendingReviewResponse(
     && (payload.publicationPending === true || payload.publicationFulfilled === false);
 }
 
-export async function executeChannelWritesSequentially<T>(
+export type WorkbenchChannelWriteSettlement<T> =
+  | { channel: ActiveChannelKey; status: "fulfilled"; value: T }
+  | { channel: ActiveChannelKey; status: "rejected"; reason: unknown };
+
+export async function executeChannelWritesIndependently<T>(
   channels: readonly ActiveChannelKey[],
   execute: (channel: ActiveChannelKey) => Promise<T>,
-) {
-  const results: T[] = [];
-  for (const channel of channels) {
-    results.push(await execute(channel));
-  }
-  return results;
+): Promise<WorkbenchChannelWriteSettlement<T>[]> {
+  const settled = await Promise.allSettled(channels.map((channel) => (
+    Promise.resolve().then(() => execute(channel))
+  )));
+  return settled.map((result, index) => result.status === "fulfilled"
+    ? { channel: channels[index]!, status: result.status, value: result.value }
+    : { channel: channels[index]!, status: result.status, reason: result.reason });
 }
 
 /**

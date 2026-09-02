@@ -41,6 +41,8 @@ test("publish and category workbenches expose the same 15 eBay markets", async (
   assert.doesNotMatch(publish, /setCurrency\(nextTarget\.currency\)/);
   assert.match(category, /marketplaceId: target\?\.targetId \?\? "EBAY_US"/);
   assert.match(category, /bindEbayCategoryTree\(payload, target\?\.targetId \?\? ""\)/);
-  assert.match(category, /ebayCategoryInspectionArguments\(selected\.id, currentState\.ebayCategoryTreeBinding, target\?\.targetId \?\? ""\)/);
+  assert.match(category, /resolveEbayCategoryInspection\(\{/);
+  assert.match(category, /binding: currentState\.ebayCategoryTreeBinding/);
+  assert.match(category, /bootstrap: \(args\) => operation\(channel, "categories\.suggest", args\)/);
   assert.doesNotMatch(category, /categoryTreeId: "0"/);
 });

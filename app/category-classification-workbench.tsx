@@ -116,6 +116,41 @@ export function ebayCategoryInspectionArguments(
   return { categoryId: normalizedCategoryId, categoryTreeId: binding.categoryTreeId };
 }
 
+export async function resolveEbayCategoryInspection(input: {
+  categoryId: string;
+  binding?: EbayCategoryTreeBinding;
+  marketplaceId: string;
+  query: string;
+  bootstrap: (arguments_: Record<string, unknown>) => Promise<OperationPayload>;
+}) {
+  const existing = ebayCategoryInspectionArguments(
+    input.categoryId,
+    input.binding,
+    input.marketplaceId,
+  );
+  if (existing && input.binding) {
+    return { arguments: existing, binding: input.binding };
+  }
+
+  const query = sanitizeCategoryQuery(input.query);
+  if (query.length < 2) {
+    throw new Error("eBay 공식 카테고리 트리 조회에 사용할 상품명이 필요합니다.");
+  }
+  const payload = await input.bootstrap({
+    query,
+    marketplaceId: input.marketplaceId,
+    categoryTreeId: "",
+  });
+  const binding = bindEbayCategoryTree(payload, input.marketplaceId);
+  const arguments_ = binding
+    ? ebayCategoryInspectionArguments(input.categoryId, binding, input.marketplaceId)
+    : null;
+  if (!binding || !arguments_) {
+    throw new Error("선택한 eBay 마켓의 공식 카테고리 트리를 확인하지 못했습니다.");
+  }
+  return { arguments: arguments_, binding };
+}
+
 function restoreCategoryStates(productId: string | null): Record<string, ChannelState> {
   if (!productId || typeof window === "undefined") return {};
   try {
@@ -1028,14 +1063,26 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const currentState = states[key] ?? initialState();
     setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "inspecting", error: undefined } }));
     try {
-      const ebayArguments = channel === "ebay"
-        ? ebayCategoryInspectionArguments(selected.id, currentState.ebayCategoryTreeBinding, target?.targetId ?? "")
+      const ebayInspection = channel === "ebay"
+        ? await resolveEbayCategoryInspection({
+            categoryId: selected.id,
+            binding: currentState.ebayCategoryTreeBinding,
+            marketplaceId: target?.targetId ?? "",
+            query: localizedQuery(channel) || selected.name,
+            bootstrap: (args) => operation(channel, "categories.suggest", args),
+          })
         : null;
-      if (channel === "ebay" && !ebayArguments) {
-        throw new Error("선택한 eBay 마켓에서 카테고리를 다시 검색한 뒤 공식 속성을 확인해 주세요.");
+      if (ebayInspection && ebayInspection.binding !== currentState.ebayCategoryTreeBinding) {
+        setStates((current) => ({
+          ...current,
+          [key]: {
+            ...(current[key] ?? initialState()),
+            ebayCategoryTreeBinding: ebayInspection.binding,
+          },
+        }));
       }
       const common = channel === "ebay"
-        ? ebayArguments!
+        ? ebayInspection!.arguments
         : channel === "temu"
           ? { categoryId: selected.id, goodsName: localizedQuery(channel), description: description.slice(0, 3000) }
           : { categoryId: selected.id, ...marketArguments(channel) };

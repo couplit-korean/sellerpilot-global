@@ -79,6 +79,19 @@ function elevenstDraft(context: WorkbenchContext) {
   ) as unknown as { sellerpilotAssets: Record<string, unknown>; product: Record<string, unknown> };
 }
 
+const processedFoodAttributes: Record<string, string> = {
+  "notification:176400445": "롯데웰푸드㈜ / 대한민국",
+  "notification:176398001": "제품 별도 표기일까지",
+  "notification:42154823": "해당사항 없음",
+  "notification:23757260": "해당사항 없음",
+  "notification:23757095": "총 내용량 315g, 100g당 500kcal",
+  "notification:176312674": "우유 함유",
+  "notification:23756754": "080-024-6060",
+  "notification:23757245": "밀가루(밀:미국산), 설탕",
+  "notification:42155152": "315g(6봉입)",
+  "notification:23757000": "과자",
+};
+
 test("11st normal production SKU uses the verified 1341821 notice and non-regulated certification contract", () => {
   const draft = elevenstDraft(publishContext({ sellerSku: "CABLE-ORGANIZER-001" }));
   const notification = draft.product.ProductNotification as { type: string; item: Array<{ code: string; name: string }> };
@@ -92,6 +105,58 @@ test("11st normal production SKU uses the verified 1341821 notice and non-regula
   assert.doesNotThrow(() => validateElevenstListingProduct(draft.product));
 });
 
+test("11st processed-food leaf maps the official 891031 notice fields without changing the cable contract", () => {
+  const draft = elevenstDraft(publishContext({
+    categoryId: "1346631",
+    sellerSku: "FOOD-001",
+    providedAttributes: processedFoodAttributes,
+  }));
+  const notification = draft.product.ProductNotification as { type: string; item: Array<{ code: string; name: string }> };
+
+  assert.equal(notification.type, "891031");
+  assert.deepEqual(notification.item.map((item) => item.code), [
+    "176400445", "176398001", "42154823", "23757260", "23757095", "176312674",
+    "176317774", "23756754", "23757245", "42155152", "23757000",
+  ]);
+  assert.equal(notification.item.find((item) => item.code === "176317774")?.name, "부착형 케이블 정리 클립 6개 세트");
+  assert.equal(inspectListingDraft("elevenst", draft).filter((item) => item.status === "manual").length, 0);
+  assert.doesNotThrow(() => validateElevenstListingProduct(draft.product));
+
+  const cableDraft = elevenstDraft(publishContext());
+  assert.deepEqual((cableDraft.product.ProductNotification as { item: Array<{ code: string }> }).item.map((item) => item.code), [
+    "11800", "11905", "23760413", "23759100", "23756033",
+  ]);
+});
+
+test("11st processed-food preflight exposes and blocks unconfirmed expiry, GMO, nutrition, and phone", () => {
+  const providedAttributes = { ...processedFoodAttributes };
+  delete providedAttributes["notification:176398001"];
+  delete providedAttributes["notification:23757260"];
+  delete providedAttributes["notification:23757095"];
+  delete providedAttributes["notification:23756754"];
+  const draft = elevenstDraft(publishContext({ categoryId: "1346631", providedAttributes }));
+  const notification = draft.product.ProductNotification as { item: Array<{ code: string; name: string }> };
+  const requirements = inspectListingDraft("elevenst", draft);
+
+  for (const code of ["176398001", "23757260", "23757095", "23756754"]) {
+    assert.equal(notification.item.find((item) => item.code === code)?.name, "");
+    const requirement = requirements.find((item) => item.key === `food-notice-${code}`);
+    assert.equal(requirement?.status, "manual");
+    assert.match(requirement?.help ?? "", /추정하지 않습니다/);
+  }
+  assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CONTRACT_FIELD_INVALID:name/);
+});
+
+test("11st processed-food preflight rejects explicit unknown placeholders", () => {
+  const draft = elevenstDraft(publishContext({
+    categoryId: "1346631",
+    providedAttributes: { ...processedFoodAttributes, "notification:176398001": "판매자 확인 필요" },
+  }));
+
+  assert.equal(inspectListingDraft("elevenst", draft).find((item) => item.key === "food-notice-176398001")?.status, "manual");
+  assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CONTRACT_PLACEHOLDER_REJECTED:name/);
+});
+
 test("11st category contract no longer depends on a QA-prefixed seller SKU", () => {
   const production = elevenstDraft(publishContext({ sellerSku: "CABLE-ORGANIZER-001" }));
   const qaPrefixed = elevenstDraft(publishContext({ sellerSku: "QA-CABLE-ORGANIZER-001" }));
@@ -102,7 +167,7 @@ test("11st category contract no longer depends on a QA-prefixed seller SKU", () 
   assert.deepEqual(qaPrefixed.product.ProductCertGroup, production.product.ProductCertGroup);
 });
 
-test("11st categories other than 1341821 cannot inherit guessed notice or certification metadata", () => {
+test("11st categories outside the two verified leaves cannot inherit guessed notice or certification metadata", () => {
   const draft = elevenstDraft(publishContext({
     categoryId: "1341822",
     providedAttributes: {
