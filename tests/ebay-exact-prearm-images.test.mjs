@@ -11,6 +11,10 @@ const priorProofUrl = new URL(
   "../supabase/migrations/20260902106000_bind_ebay_exact_current_attempt_proof.sql",
   import.meta.url,
 );
+const freshFailedRearmUrl = new URL(
+  "../supabase/migrations/20260902108000_rearm_ebay_exact_from_fresh_failed_attempt.sql",
+  import.meta.url,
+);
 const lineageUrl = new URL(
   "../supabase/migrations/20260901194336_rebind_ebay_exact_current_credential_lineage.sql",
   import.meta.url,
@@ -25,6 +29,8 @@ const id = {
   assetAttempt: "c9d5b739-4ae7-4596-acbc-06f900a21ba3",
   sourceAttempt: "22457f2e-51d8-43c5-bb03-d2c1bb7fe697",
   freshAttempt: "20e1c68d-b395-44b4-a71d-4d1c2e4969ca",
+  productionFreshAttempt: "3ffaf977-3950-4a74-af02-16b4cd930ac9",
+  productionCredential: "16fcd1f9-6c9f-45f7-bb5e-05e3a558f2ea",
   historicalCredential: "66285742-5909-40db-b1f3-fa4c300b8911",
   currentCredential: "bbf7c49e-c9db-4279-adeb-b2e1b1489eb9",
   permit: "7ae83178-d335-4b7e-8e35-2f55e905bbde",
@@ -587,6 +593,692 @@ test("fresh exact enqueue requires exactly nine complete current-attempt Storage
     assert.equal(metadata.provolatile, "s");
     assert.deepEqual(metadata.proconfig, ["search_path=\"\""]);
     assert.equal(metadata.exposed_count, 0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("release 62bd fresh failure permits only one exact same-seller JIT rearm proof", async () => {
+  const [prearmMigration, freshFailedRearmMigration, route] = await Promise.all([
+    readFile(migrationUrl, "utf8"),
+    readFile(freshFailedRearmUrl, "utf8"),
+    readFile(routeUrl, "utf8"),
+  ]);
+  const db = await setupDatabase(prearmMigration);
+  const runtimeRelease = "d".repeat(40);
+  const historicalPaths = [
+    representative,
+    ...Array.from({ length: 12 }, (_, index) => digestPath(index + 400)),
+  ];
+  const freshPaths = [
+    representative,
+    ...Array.from({ length: 8 }, (_, index) => digestPath(index + 500)),
+  ];
+  const proof = async () => (await db.query(`
+    select sellerpilot_private.ebay_exact_v101_content_rebind_is_proved(
+      '${id.productionCredential}', '${runtimeRelease}', '${currentFingerprint}'
+    ) value
+  `)).rows[0].value;
+  const helperProof = async (
+    release = runtimeRelease,
+    credential = id.productionCredential,
+  ) => (await db.query(`
+    select sellerpilot_private.ebay_exact_atomic_recovery_state_is_current(
+      '${credential}', '${release}', '${id.productionFreshAttempt}'
+    ) value
+  `)).rows[0].value;
+  const atomicCall = async () => (await db.query(`
+    select public.sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry(
+      '${id.listing}', '${id.productionCredential}',
+      '${id.productionFreshAttempt}', '${runtimeRelease}',
+      '${currentFingerprint}', ${sqlString(exactPayloadFor(freshPaths))}::jsonb
+    ) value
+  `)).rows[0].value;
+  try {
+    await db.exec(`
+      alter table sellerpilot_private.channel_operation_attempts
+        add column started_at timestamptz,
+        add column completed_at timestamptz;
+      alter table sellerpilot_private.channel_credentials
+        add column expires_at timestamptz,
+        add column last_checked_at timestamptz,
+        add column last_check_status text;
+      alter table sellerpilot_private.product_listings
+        add column status text,
+        add column failure_class text,
+        add column marketplace_sku text,
+        add column provider_resource_id text,
+        add column remote_resources jsonb,
+        add column currency text,
+        add column price numeric,
+        add column requested_publication_intent text,
+        add column remote_visibility text,
+        add column provider_status text,
+        add column published_at timestamptz;
+      alter table sellerpilot_private.exact_existing_update_permits
+        add column product_id uuid,
+        add column owner_id uuid,
+        add column market text,
+        add column target_id text,
+        add column seller_sku text,
+        add column provider_resource_id text,
+        add column currency text,
+        add column price numeric,
+        add column stock integer,
+        add column seller_account_key text,
+        add column release_sha text,
+        add column armed_at timestamptz,
+        add column expires_at timestamptz,
+        add column retry_source_attempt_id uuid,
+        add column bound_at timestamptz,
+        add column bound_worker_token_id uuid,
+        add column bound_claim_token uuid,
+        add column consumed_at timestamptz,
+        add column invalidated_at timestamptz,
+        add column invalidation_reason text,
+        add column arguments_sha256 text,
+        add column arguments_bytes integer,
+        add column request_payload_sha256 text,
+        add column request_payload_bytes integer,
+        add column credential_version integer,
+        add column credential_fingerprint text,
+        add column credential_account_source text,
+        add column credential_verified_at timestamptz,
+        add column credential_expires_at timestamptz,
+        add column credential_last_checked_at timestamptz,
+        add column credential_last_check_status text;
+      alter table sellerpilot_private.channel_gateway_jobs
+        add column environment text,
+        add column status text,
+        add column attempt_count integer,
+        add column seller_account_key text,
+        add column worker_token_id uuid,
+        add column claim_token uuid,
+        add column provider_mutation_started_at timestamptz,
+        add column response_payload jsonb,
+        add column error_message text,
+        add column completed_at timestamptz;
+      create table sellerpilot_private.products (
+        id uuid primary key,
+        owner_id uuid not null,
+        sku text not null,
+        on_hand integer not null,
+        demo boolean not null,
+        status text not null
+      );
+      create function sellerpilot_private.exact_existing_update_release_is_current(
+        p_channel text, p_release_sha text
+      ) returns boolean language sql stable set search_path = '' as $$
+        select p_channel = 'ebay' and p_release_sha = '${runtimeRelease}'
+      $$;
+
+      create function sellerpilot_private.guard_exact_existing_update_permit_transition()
+      returns trigger language plpgsql set search_path = '' as $$
+declare
+  v_mutable_fields constant text[] := array[
+    'update_job_id', 'update_attempt_id', 'arguments_sha256',
+    'arguments_bytes', 'request_payload_sha256', 'request_payload_bytes',
+    'bound_at', 'bound_worker_token_id', 'bound_claim_token', 'consumed_at',
+    'invalidated_at', 'invalidation_reason'
+  ];
+begin
+  if tg_op = 'DELETE' then
+    raise exception 'exact existing update permits cannot be deleted'
+      using errcode = '55000';
+  end if;
+  if to_jsonb(new) - v_mutable_fields is distinct from
+       to_jsonb(old) - v_mutable_fields
+  then
+    raise exception 'exact existing update permit identity is immutable'
+      using errcode = '55000';
+  end if;
+
+  if old.update_job_id is null
+     and old.update_attempt_id is null
+     and new.update_job_id is not null
+     and new.update_attempt_id is not null
+     and to_jsonb(new) - array[
+       'update_job_id', 'update_attempt_id', 'arguments_sha256',
+       'arguments_bytes', 'request_payload_sha256',
+       'request_payload_bytes'
+     ] is not distinct from to_jsonb(old) - array[
+       'update_job_id', 'update_attempt_id', 'arguments_sha256',
+       'arguments_bytes', 'request_payload_sha256',
+       'request_payload_bytes'
+     ]
+  then return new; end if;
+  if old.update_job_id is not null
+     and new.update_job_id = old.update_job_id
+     and new.update_attempt_id = old.update_attempt_id
+     and old.bound_at is null
+     and old.bound_worker_token_id is null
+     and old.bound_claim_token is null
+     and new.bound_at is not null
+     and new.bound_worker_token_id is not null
+     and new.bound_claim_token is not null
+     and to_jsonb(new) - array[
+       'bound_at', 'bound_worker_token_id', 'bound_claim_token'
+     ] is not distinct from to_jsonb(old) - array[
+       'bound_at', 'bound_worker_token_id', 'bound_claim_token'
+     ]
+  then return new; end if;
+  if old.bound_at is not null
+     and new.bound_at = old.bound_at
+     and new.bound_worker_token_id = old.bound_worker_token_id
+     and new.bound_claim_token = old.bound_claim_token
+     and old.consumed_at is null
+     and new.consumed_at is not null
+     and to_jsonb(new) - 'consumed_at' is not distinct from
+         to_jsonb(old) - 'consumed_at'
+  then return new; end if;
+  raise exception 'exact existing update permit transition invalid'
+    using errcode = '55000';
+end;
+      $$;
+      create function public.sellerpilot_service_enqueue_listing_gateway_job(
+        p_listing_id uuid,
+        p_credential_id uuid,
+        p_attempt_id uuid,
+        p_channel text,
+        p_operation text,
+        p_request_payload jsonb
+      ) returns jsonb language plpgsql security definer set search_path = '' as $$
+      declare
+        v_job_id constant uuid := '${id.providerJob}'::uuid;
+      begin
+        insert into sellerpilot_private.channel_gateway_jobs (
+          id, attempt_id, listing_id, credential_id, channel, operation,
+          request_fingerprint, request_payload, environment, status,
+          attempt_count, seller_account_key
+        ) values (
+          v_job_id, p_attempt_id, p_listing_id, p_credential_id,
+          p_channel, p_operation, '${currentFingerprint}', p_request_payload,
+          'production', 'queued', 0, '${seller}'
+        );
+        update sellerpilot_private.exact_existing_update_permits
+           set update_job_id = v_job_id,
+               update_attempt_id = p_attempt_id,
+               arguments_sha256 = repeat('a', 64), arguments_bytes = 100,
+               request_payload_sha256 = repeat('b', 64),
+               request_payload_bytes = 100
+         where permit_id = '${id.permit}';
+        return jsonb_build_object(
+          'status', 'queued', 'job_id', v_job_id,
+          'attempt_id', p_attempt_id, 'listing_id', p_listing_id,
+          'reused', false
+        );
+      end;
+      $$;
+
+      insert into sellerpilot_private.products (
+        id, owner_id, sku, on_hand, demo, status
+      ) values (
+        '${id.product}', '${id.owner}', 'QA-20260823-CC-001', 1, false, 'active'
+      );
+      insert into sellerpilot_private.channel_credentials (
+        id, channel, environment, status, version, fingerprint,
+        seller_account_key, seller_account_key_source,
+        seller_account_verified_at
+      ) values (
+        '${id.productionCredential}', 'ebay', 'production', 'active', 108,
+        'A108A108A108', '${seller}', 'provider_certified_v1',
+        '2026-09-02 06:20:00+00'
+      );
+      update sellerpilot_private.channel_credentials
+         set expires_at = '2030-01-01 00:00:00+00',
+             last_checked_at = '2026-09-02 06:25:00+00',
+             last_check_status = 'passed'
+       where id = '${id.productionCredential}';
+      insert into sellerpilot_private.channel_operation_attempts (
+        id, owner_id, credential_id, channel, operation, status, http_status,
+        remote_id, gateway_write_required, pre_gateway_retryable,
+        request_fingerprint, seller_account_key, started_at, completed_at
+      ) values (
+        '${id.productionFreshAttempt}', '${id.owner}',
+        '${id.productionCredential}', 'ebay', 'listing.update', 'failed', 422,
+        null, true, true, '${currentFingerprint}', '${seller}',
+        '2026-09-02 06:26:46.362671+00',
+        '2026-09-02 06:26:54.769797+00'
+      );
+      update sellerpilot_private.product_listings
+         set status = 'failed', failure_class = 'retryable',
+             marketplace_sku = 'QA-20260823-CC-001-US',
+             provider_resource_id = '244042196011',
+             remote_resources = '{}'::jsonb, currency = 'USD', price = 12.90,
+             requested_publication_intent = 'live',
+             remote_visibility = 'unknown', provider_status = null,
+             published_at = null
+       where id = '${id.listing}';
+      update sellerpilot_private.exact_existing_update_permits
+         set product_id = '${id.product}', owner_id = '${id.owner}',
+             market = 'US', target_id = 'EBAY_US',
+             seller_sku = 'QA-20260823-CC-001-US',
+             provider_resource_id = '244042196011', currency = 'USD',
+             price = 12.90, stock = 1, seller_account_key = '${seller}',
+             credential_id = '${id.productionCredential}',
+             release_sha = '62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76',
+             request_fingerprint = '${currentFingerprint}',
+             armed_at = '2026-09-02 06:26:46.052592+00',
+             expires_at = '2026-09-02 06:31:46.052592+00',
+             retry_source_attempt_id = '${id.sourceAttempt}',
+             update_job_id = null, update_attempt_id = null,
+             arguments_sha256 = null, arguments_bytes = null,
+             request_payload_sha256 = null, request_payload_bytes = null,
+             bound_at = null, bound_worker_token_id = null,
+             bound_claim_token = null, consumed_at = null,
+             invalidated_at = null, invalidation_reason = null
+       where permit_id = '${id.permit}';
+      create trigger guard_exact_existing_update_permit_transition
+      before update or delete on sellerpilot_private.exact_existing_update_permits
+      for each row execute function
+        sellerpilot_private.guard_exact_existing_update_permit_transition();
+    `);
+
+    for (const [index, path] of historicalPaths.entries()) {
+      const source = sourceBinding(index);
+      await seedRef(db, {
+        attemptId: id.sourceAttempt,
+        path,
+        sourceBound: index < 8,
+        sourcePath: source.path,
+        sourceSha: source.sha,
+      });
+      await seedRef(db, {
+        attemptId: id.assetAttempt,
+        path,
+        sourceBound: index < 8,
+        sourcePath: source.path,
+        sourceSha: source.sha,
+      });
+    }
+    for (const [index, path] of freshPaths.entries()) {
+      const source = sourceBinding(index);
+      await seedRef(db, {
+        attemptId: id.productionFreshAttempt,
+        path,
+        sourcePath: source.path,
+        sourceSha: source.sha,
+      });
+    }
+
+    assert.equal(
+      await proof(),
+      false,
+      "the same current credential/fingerprint cannot rearm through the predecessor proof",
+    );
+    await db.exec(freshFailedRearmMigration);
+    assert.equal(
+      await helperProof(),
+      false,
+      "the durable marker alone must not authorize the still-failed attempt",
+    );
+    assert.equal(await proof(), false, "the generic predecessor proof stays unchanged");
+    assert.deepEqual(
+      (await db.query(`
+        select count(*)::integer marker_count,
+               coalesce((select jsonb_array_length(reference_set)
+                           from sellerpilot_private.ebay_exact_atomic_recovery_markers
+                          limit 1), 0)::integer ref_count
+          from sellerpilot_private.ebay_exact_atomic_recovery_markers
+      `)).rows[0],
+      { marker_count: 1, ref_count: 9 },
+    );
+
+    // Model the real claim RPC transition: it revives 3ffa to running and
+    // clears the failed HTTP/pre-gateway/completed fields before preparation.
+    await db.exec(`
+      update sellerpilot_private.channel_operation_attempts
+         set status='running', http_status=null, pre_gateway_retryable=false,
+             started_at='2026-09-02 07:00:00+00', completed_at=null
+       where id='${id.productionFreshAttempt}'
+    `);
+    assert.equal(await helperProof(), true);
+
+    const changedPath = freshPaths.at(-1);
+    await db.exec(`delete from sellerpilot_private.marketplace_normalized_asset_refs where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+    assert.equal(await helperProof(), false, "eight fresh refs must fail the recovery fence");
+    await seedRef(db, {
+      attemptId: id.productionFreshAttempt,
+      path: changedPath,
+      sourcePath: sourceBinding(8).path,
+      sourceSha: sourceBinding(8).sha,
+    });
+    assert.equal(await helperProof(), true);
+
+    const tenthPath = digestPath(599);
+    await seedRef(db, {
+      attemptId: id.productionFreshAttempt,
+      path: tenthPath,
+      sourcePath: "results/source/tenth.png",
+      sourceSha: "f".repeat(64),
+    });
+    assert.equal(await helperProof(), false, "ten fresh refs must fail the exact raw count");
+    await db.exec(`delete from sellerpilot_private.marketplace_normalized_asset_refs where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(tenthPath)}`);
+
+    await db.exec(`update sellerpilot_private.marketplace_normalized_assets set status='failed' where object_path=${sqlString(changedPath)}`);
+    assert.equal(await helperProof(), false, "an unavailable fresh asset must fail");
+    await db.exec(`update sellerpilot_private.marketplace_normalized_assets set status='available' where object_path=${sqlString(changedPath)}`);
+
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set canonical_public_url='https://example.invalid/not-canonical.jpg' where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+    assert.equal(await helperProof(), false, "a non-canonical fresh URL must fail");
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set canonical_public_url=${sqlString(`https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${changedPath}`)} where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set source_object_path=null, source_content_sha256=null where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+    assert.equal(await helperProof(), false, "all nine fresh refs must be source-bound");
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set source_object_path=${sqlString(sourceBinding(8).path)}, source_content_sha256=${sqlString(sourceBinding(8).sha)} where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+
+    await db.exec(`
+      insert into sellerpilot_private.channel_gateway_jobs (
+        attempt_id, listing_id, credential_id, channel, operation,
+        request_fingerprint, request_payload
+      ) values (
+        '${id.productionFreshAttempt}', '${id.listing}',
+        '${id.productionCredential}', 'ebay', 'listing.update',
+        '${currentFingerprint}', '{}'::jsonb
+      )
+    `);
+    assert.equal(await helperProof(), false, "any fresh-attempt gateway job must fail");
+    await db.exec(`delete from sellerpilot_private.channel_gateway_jobs where attempt_id='${id.productionFreshAttempt}'`);
+
+    assert.equal(
+      await helperProof("e".repeat(40)),
+      false,
+      "a non-current runtime release cannot borrow the frozen source permit",
+    );
+
+    await db.exec(`update sellerpilot_private.channel_operation_attempts set started_at='2026-09-02 06:26:54.769797+00' where id='${id.productionFreshAttempt}'`);
+    assert.equal(await helperProof(), false, "the revived claim must start after the frozen failure");
+    await db.exec(`update sellerpilot_private.channel_operation_attempts set started_at='2026-09-02 07:00:00+00' where id='${id.productionFreshAttempt}'`);
+
+    await db.exec(`update sellerpilot_private.product_listings set provider_resource_id='changed-offer' where id='${id.listing}'`);
+    assert.equal(await helperProof(), false, "the eBay offer tuple must remain exact");
+    await db.exec(`update sellerpilot_private.product_listings set provider_resource_id='244042196011' where id='${id.listing}'`);
+    assert.equal(await helperProof(), true);
+    assert.equal(
+      await helperProof(runtimeRelease, id.currentCredential),
+      false,
+      "another credential cannot borrow the exact production proof",
+    );
+
+    await db.exec(`set "request.jwt.claim.role" = 'service_role'`);
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set canonical_public_url='https://example.invalid/not-canonical.jpg' where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+    await assert.rejects(
+      atomicCall(),
+      /atomic (?:fresh recovery state|recovery request) invalid/u,
+      "a bad current-attempt ref must roll back before permit rearm or enqueue",
+    );
+    assert.deepEqual(
+      (await db.query(`
+        select release_sha, update_job_id, update_attempt_id
+          from sellerpilot_private.exact_existing_update_permits
+         where permit_id='${id.permit}'
+      `)).rows[0],
+      {
+        release_sha: "62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76",
+        update_job_id: null,
+        update_attempt_id: null,
+      },
+    );
+    assert.equal(
+      (await db.query(`select count(*)::integer value from sellerpilot_private.channel_gateway_jobs where attempt_id='${id.productionFreshAttempt}'`)).rows[0].value,
+      0,
+    );
+    await db.exec(`update sellerpilot_private.marketplace_normalized_asset_refs set canonical_public_url=${sqlString(`https://sellerpilot.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${changedPath}`)} where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+
+    const queued = await atomicCall();
+    assert.deepEqual(queued, {
+      contract: "ebay_exact_v101_atomic_enqueue_v1",
+      status: "queued",
+      jobId: id.providerJob,
+      attemptId: id.productionFreshAttempt,
+      listingId: id.listing,
+      reused: false,
+      releaseSha: runtimeRelease,
+      requestFingerprint: currentFingerprint,
+    });
+    assert.deepEqual(
+      (await db.query(`
+        select release_sha, update_job_id::text, update_attempt_id::text
+          from sellerpilot_private.exact_existing_update_permits
+         where permit_id='${id.permit}'
+      `)).rows[0],
+      {
+        release_sha: runtimeRelease,
+        update_job_id: id.providerJob,
+        update_attempt_id: id.productionFreshAttempt,
+      },
+    );
+
+    const replay = await atomicCall();
+    assert.deepEqual(replay, {
+      contract: "ebay_exact_v101_atomic_enqueue_v1",
+      status: "in_progress",
+      jobId: id.providerJob,
+      attemptId: id.productionFreshAttempt,
+      listingId: id.listing,
+      reused: true,
+      releaseSha: runtimeRelease,
+      requestFingerprint: currentFingerprint,
+    });
+    assert.equal(
+      (await db.query(`select count(*)::integer value from sellerpilot_private.channel_gateway_jobs where attempt_id='${id.productionFreshAttempt}'`)).rows[0].value,
+      1,
+      "two serialized/concurrent-equivalent calls must converge on one job",
+    );
+
+    const workerToken = "a0a0a0a0-a0a0-40a0-80a0-a0a0a0a0a0a0";
+    const claimToken = "b0b0b0b0-b0b0-40b0-80b0-b0b0b0b0b0b0";
+    await db.exec(`
+      update sellerpilot_private.exact_existing_update_permits
+         set bound_at=statement_timestamp(),
+             bound_worker_token_id='${workerToken}',
+             bound_claim_token='${claimToken}'
+       where permit_id='${id.permit}';
+      update sellerpilot_private.channel_gateway_jobs
+         set status='running', worker_token_id='${workerToken}',
+             claim_token='${claimToken}'
+       where id='${id.providerJob}'
+    `);
+    assert.deepEqual(
+      await atomicCall(),
+      replay,
+      "a claimed running job with exact permit tokens must remain replay-safe",
+    );
+
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set provider_mutation_started_at=statement_timestamp()
+       where id='${id.providerJob}'
+    `);
+    await assert.rejects(
+      atomicCall(),
+      /atomic (?:fresh recovery state|recovery request) invalid/u,
+      "provider start without permit consumption must fail closed",
+    );
+    await db.exec(`
+      update sellerpilot_private.exact_existing_update_permits
+         set consumed_at=(select provider_mutation_started_at
+                            from sellerpilot_private.channel_gateway_jobs
+                           where id='${id.providerJob}')
+       where permit_id='${id.permit}'
+    `);
+    assert.equal(
+      (await atomicCall()).jobId,
+      id.providerJob,
+      "a consumed provider-started job must converge on the same job",
+    );
+
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set claim_token='c0c0c0c0-c0c0-40c0-80c0-c0c0c0c0c0c0'
+       where id='${id.providerJob}'
+    `);
+    await assert.rejects(
+      atomicCall(),
+      /atomic (?:fresh recovery state|recovery request) invalid/u,
+      "a worker claim-token mismatch must not reuse the bound job",
+    );
+    await db.exec(`
+      update sellerpilot_private.channel_gateway_jobs
+         set claim_token='${claimToken}'
+       where id='${id.providerJob}'
+    `);
+    assert.equal((await atomicCall()).jobId, id.providerJob);
+
+    await db.exec(`delete from sellerpilot_private.marketplace_normalized_asset_refs where attempt_id='${id.productionFreshAttempt}' and object_path=${sqlString(changedPath)}`);
+    await assert.rejects(
+      atomicCall(),
+      /atomic (?:fresh recovery state|recovery request) invalid/u,
+      "provider-time replay must fail closed after ref drift",
+    );
+    assert.equal(
+      (await db.query(`select count(*)::integer value from sellerpilot_private.channel_gateway_jobs where attempt_id='${id.productionFreshAttempt}'`)).rows[0].value,
+      1,
+    );
+    await seedRef(db, {
+      attemptId: id.productionFreshAttempt,
+      path: changedPath,
+      sourcePath: sourceBinding(8).path,
+      sourceSha: sourceBinding(8).sha,
+    });
+    assert.equal((await atomicCall()).jobId, id.providerJob);
+
+    const metadata = (await db.query(`
+      select procedure.prosecdef,
+             procedure.provolatile,
+             procedure.proconfig,
+             count(*) filter (
+               where privilege.privilege_type = 'EXECUTE'
+                 and coalesce(grantee.rolname, 'PUBLIC') in
+                   ('PUBLIC', 'anon', 'authenticated', 'service_role')
+             )::integer exposed_count
+        from pg_catalog.pg_proc procedure
+        join pg_catalog.pg_namespace namespace on namespace.oid=procedure.pronamespace
+        left join lateral pg_catalog.aclexplode(coalesce(
+          procedure.proacl, pg_catalog.acldefault('f', procedure.proowner)
+        )) privilege on true
+        left join pg_catalog.pg_roles grantee on grantee.oid=privilege.grantee
+       where namespace.nspname='sellerpilot_private'
+         and procedure.proname='ebay_exact_atomic_recovery_state_is_current'
+       group by procedure.prosecdef, procedure.provolatile, procedure.proconfig
+    `)).rows[0];
+    assert.equal(metadata.prosecdef, true);
+    assert.equal(metadata.provolatile, "s");
+    assert.deepEqual(metadata.proconfig, ["search_path=\"\""]);
+    assert.equal(metadata.exposed_count, 0);
+
+    const atomicMetadata = (await db.query(`
+      select procedure.prosecdef,
+             procedure.provolatile,
+             procedure.proconfig,
+             pg_catalog.has_function_privilege(
+               'service_role', procedure.oid, 'EXECUTE'
+             ) service_execute,
+             pg_catalog.has_function_privilege(
+               'authenticated', procedure.oid, 'EXECUTE'
+             ) authenticated_execute,
+             pg_catalog.has_function_privilege(
+               'anon', procedure.oid, 'EXECUTE'
+             ) anon_execute,
+             exists (
+               select 1 from pg_catalog.aclexplode(coalesce(
+                 procedure.proacl,
+                 pg_catalog.acldefault('f', procedure.proowner)
+               )) privilege
+                where privilege.grantee = 0
+                  and privilege.privilege_type = 'EXECUTE'
+             ) public_execute
+        from pg_catalog.pg_proc procedure
+        join pg_catalog.pg_namespace namespace on namespace.oid=procedure.pronamespace
+       where namespace.nspname='public'
+         and procedure.proname='sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry'
+    `)).rows[0];
+    assert.equal(atomicMetadata.prosecdef, true);
+    assert.equal(atomicMetadata.provolatile, "v");
+    assert.deepEqual(atomicMetadata.proconfig, ["search_path=\"\""]);
+    assert.equal(atomicMetadata.service_execute, true);
+    assert.equal(atomicMetadata.authenticated_execute, false);
+    assert.equal(atomicMetadata.anon_execute, false);
+    assert.equal(atomicMetadata.public_execute, false);
+
+    assert.deepEqual(
+      (await db.query(`
+        select class.relrowsecurity,
+               count(*) filter (
+                 where privilege.privilege_type is not null
+                   and coalesce(grantee.rolname, 'PUBLIC') in
+                     ('PUBLIC', 'anon', 'authenticated', 'service_role')
+               )::integer exposed_count,
+               exists (
+                 select 1 from pg_catalog.pg_trigger trigger
+                  where trigger.tgrelid=class.oid
+                    and trigger.tgname='guard_ebay_exact_atomic_recovery_marker'
+                    and not trigger.tgisinternal
+               ) append_only_trigger
+          from pg_catalog.pg_class class
+          join pg_catalog.pg_namespace namespace on namespace.oid=class.relnamespace
+          left join lateral pg_catalog.aclexplode(coalesce(
+            class.relacl, pg_catalog.acldefault('r', class.relowner)
+          )) privilege on true
+          left join pg_catalog.pg_roles grantee on grantee.oid=privilege.grantee
+         where namespace.nspname='sellerpilot_private'
+           and class.relname='ebay_exact_atomic_recovery_markers'
+         group by class.oid, class.relrowsecurity
+      `)).rows[0],
+      { relrowsecurity: true, exposed_count: 0, append_only_trigger: true },
+    );
+    await assert.rejects(
+      db.exec(`update sellerpilot_private.ebay_exact_atomic_recovery_markers set recorded_at=recorded_at`),
+      /append-only/u,
+    );
+    await assert.rejects(
+      db.exec(`delete from sellerpilot_private.ebay_exact_atomic_recovery_markers`),
+      /append-only/u,
+    );
+
+    assert.match(freshFailedRearmMigration, new RegExp(id.productionFreshAttempt, "u"));
+    assert.match(freshFailedRearmMigration, new RegExp(id.productionCredential, "u"));
+    assert.match(freshFailedRearmMigration, /62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76/u);
+    assert.match(freshFailedRearmMigration, /2026-09-02 06:26:46[.]052592[+]00/u);
+    assert.match(freshFailedRearmMigration, /2026-09-02 06:31:46[.]052592[+]00/u);
+    assert.match(freshFailedRearmMigration, /jsonb_array_length\(reference_set\) = 9/u);
+    assert.doesNotMatch(
+      freshFailedRearmMigration,
+      /(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private[.](?:channel_gateway_jobs|channel_operation_attempts|marketplace_normalized_asset_refs)/iu,
+    );
+    assert.doesNotMatch(
+      freshFailedRearmMigration,
+      /insert\s+into\s+sellerpilot_private[.]channel_gateway_jobs/iu,
+    );
+    assert.match(
+      freshFailedRearmMigration,
+      /sellerpilot_service_enqueue_listing_gateway_job/u,
+    );
+
+    const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
+    const prepareIndex = route.indexOf("await prepareMarketplaceImages(serviceClient, channel, effectiveArguments");
+    const assertIndex = route.indexOf("assertEbayExactExistingQaProviderCopyRequest(gatewayArguments)");
+    const atomicIndex = route.indexOf('"sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry"');
+    const waitIndex = route.indexOf("await waitForEbayExactAtomicGatewayJob({");
+    const genericIndex = route.indexOf("} else {\n        gatewayExecution = await executeViaChannelGateway({");
+    assert.ok(claimIndex >= 0 && prepareIndex > claimIndex);
+    assert.ok(assertIndex > prepareIndex, "the nine prepared images must be asserted before atomic enqueue");
+    assert.ok(atomicIndex > assertIndex, "the exact eBay atomic RPC must run after image assertion");
+    assert.ok(waitIndex > atomicIndex, "the route must poll only the atomically returned job");
+    assert.ok(genericIndex > waitIndex, "generic gateway enqueue must remain in the non-atomic branch");
+    assert.equal(
+      (route.match(/sellerpilot_service_arm_ebay_no_effect_retry/gu) ?? []).length,
+      0,
+      "the exact recovery route must not separately pre-arm an eBay permit",
+    );
+    assert.match(
+      route,
+      /boundEbayExactExistingQaRecovery\s*\?\s*`ebay-exact-v101:\$\{ebayExactExistingQaRecoveryIdentity[.]listingId\}:\$\{requestFingerprint\}`/u,
+    );
+    assert.match(
+      route,
+      /ebayExactAtomicEnqueueRequired\s*&&\s*ebayExactAtomicRpcStarted[\s\S]*?manualRequired:\s*!ebayExactAtomicJobCommitted/u,
+    );
   } finally {
     await db.close();
   }

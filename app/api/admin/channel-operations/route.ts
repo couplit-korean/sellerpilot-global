@@ -1,12 +1,13 @@
 import { createHash } from "node:crypto";
 
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   channelOperationCapabilities,
   channelOperationNames,
   executeChannelOperation,
+  type ChannelOperationResult,
   writeChannelOperations,
 } from "../../../../lib/channels/operations";
 import { channelCatalog } from "../../../../lib/channels/catalog";
@@ -368,6 +369,56 @@ function errorMessage(error: unknown) {
   return "판매채널 작업 중 안전하게 처리된 오류가 발생했습니다.";
 }
 
+async function waitForEbayExactAtomicGatewayJob(input: {
+  serviceClient: SupabaseClient;
+  jobId: string;
+  attemptId: string;
+  listingId: string;
+  timeoutMs: number;
+}): Promise<ChannelOperationResult> {
+  const deadline = Date.now() + input.timeoutMs;
+  while (Date.now() < deadline) {
+    const { data, error } = await input.serviceClient.rpc(
+      "sellerpilot_get_channel_gateway_job",
+      { p_job_id: input.jobId },
+    );
+    if (error) {
+      throw new ChannelGatewayInProgressError(
+        input.jobId,
+        input.attemptId,
+        "CHANNEL_GATEWAY_STATUS_UNAVAILABLE",
+        input.listingId,
+      );
+    }
+    const job = isRecord(data) ? data : null;
+    if (job?.status === "succeeded" && isRecord(job.response)) {
+      return job.response as ChannelOperationResult;
+    }
+    if (job?.status === "reconciliation_required") {
+      throw new ChannelGatewayReconciliationRequiredError(
+        input.jobId,
+        input.attemptId,
+        input.listingId,
+      );
+    }
+    if (job?.status === "failed" || job?.status === "cancelled") {
+      throw new ChannelGatewayRemoteFailedError(
+        input.jobId,
+        input.attemptId,
+        input.listingId,
+        typeof job.error === "string" ? job.error : "worker_failed",
+      );
+    }
+    await new Promise<void>((resolve) => setTimeout(resolve, 500));
+  }
+  throw new ChannelGatewayInProgressError(
+    input.jobId,
+    input.attemptId,
+    "CHANNEL_GATEWAY_TIMEOUT",
+    input.listingId,
+  );
+}
+
 export async function POST(request: NextRequest) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -686,6 +737,7 @@ export async function POST(request: NextRequest) {
   let qoo10ExactLocalizationUpdatePermitArmed = false;
   let smartstoreExactQaUpdatePermitArmed = false;
   let exactExistingUpdatePermitArmed = false;
+  let ebayExactAtomicEnqueueRequired = false;
   let boundExactExistingClosedGateUpdateChannel:
     "coupang" | "elevenst" | "ebay" | "lazada" | "temu" | null = null;
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
@@ -2246,51 +2298,59 @@ export async function POST(request: NextRequest) {
       const coupangRepresentative = boundExactExistingClosedGateUpdateChannel === "coupang"
         ? coupangExactQaRepresentativeBinding(effectiveArguments)
         : null;
-      const { data: permitData, error: permitError } = await serviceClient.rpc(
-        boundExactExistingClosedGateUpdateChannel === "coupang"
-          ? "sellerpilot_service_arm_coupang_exact_rep"
-          : boundExactExistingClosedGateUpdateChannel === "temu"
-          ? "sellerpilot_service_arm_temu_exact_update"
-          : boundExactExistingClosedGateUpdateChannel === "lazada"
-          ? "sellerpilot_service_arm_lazada_exact_update"
-          : boundEbayExactNoEffectRetry
-          ? "sellerpilot_service_arm_ebay_no_effect_retry"
-          : "sellerpilot_service_arm_exact_existing_update",
-        {
-          p_channel: boundExactExistingClosedGateUpdateChannel,
-          p_listing_id: parsed.data.resourceListingId,
-          p_credential_id: parsed.data.credentialId,
-          p_release_sha: runtimeRelease.release,
-          p_request_fingerprint: requestFingerprint,
-          ...(boundExactExistingClosedGateUpdateChannel === "lazada"
-            ? { p_target_price_myr: boundListingPrice }
-            : {}),
-          ...(coupangRepresentative ? {
-            p_source_object_path: coupangRepresentative.sourceObjectPath,
-            p_source_sha256: coupangRepresentative.sourceSha256,
-            p_normalized_object_path: coupangRepresentative.normalizedObjectPath,
-            p_content_sha256: coupangRepresentative.contentSha256,
-          } : {}),
-        },
-      );
-      exactExistingUpdatePermitArmed = !permitError
-        && isRecord(permitData)
-        && permitData.contract === "exact_existing_update_permit_v1"
-        && permitData.channel === boundExactExistingClosedGateUpdateChannel
-        && permitData.listingId === parsed.data.resourceListingId
-        && permitData.releaseSha === runtimeRelease.release
-        && permitData.requestFingerprint === requestFingerprint
-        && permitData.bound === false
-        && (boundExactExistingClosedGateUpdateChannel !== "coupang"
-          || (coupangRepresentative !== null
-            && permitData.representativeContract === "coupang_exact_qa_representative_v1"
-            && permitData.sourceSha256 === coupangRepresentative.sourceSha256
-            && permitData.contentSha256 === coupangRepresentative.contentSha256));
-      if (!exactExistingUpdatePermitArmed) {
-        return NextResponse.json({
-          message: "기존 exact 상품 수정의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
-          mode: "exact_existing_update_permit_required",
-        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      if (boundExactExistingClosedGateUpdateChannel === "ebay"
+          && boundEbayExactExistingQaRecovery
+          && boundEbayExactNoEffectRetry) {
+        // This proved no-effect retry is claimed and fully image-prepared
+        // before one database transaction rearms its expired permit and
+        // enqueues its only gateway job. Other channels keep their existing
+        // pre-claim permit order.
+        ebayExactAtomicEnqueueRequired = true;
+      } else {
+        const { data: permitData, error: permitError } = await serviceClient.rpc(
+          boundExactExistingClosedGateUpdateChannel === "coupang"
+            ? "sellerpilot_service_arm_coupang_exact_rep"
+            : boundExactExistingClosedGateUpdateChannel === "temu"
+            ? "sellerpilot_service_arm_temu_exact_update"
+            : boundExactExistingClosedGateUpdateChannel === "lazada"
+            ? "sellerpilot_service_arm_lazada_exact_update"
+            : "sellerpilot_service_arm_exact_existing_update",
+          {
+            p_channel: boundExactExistingClosedGateUpdateChannel,
+            p_listing_id: parsed.data.resourceListingId,
+            p_credential_id: parsed.data.credentialId,
+            p_release_sha: runtimeRelease.release,
+            p_request_fingerprint: requestFingerprint,
+            ...(boundExactExistingClosedGateUpdateChannel === "lazada"
+              ? { p_target_price_myr: boundListingPrice }
+              : {}),
+            ...(coupangRepresentative ? {
+              p_source_object_path: coupangRepresentative.sourceObjectPath,
+              p_source_sha256: coupangRepresentative.sourceSha256,
+              p_normalized_object_path: coupangRepresentative.normalizedObjectPath,
+              p_content_sha256: coupangRepresentative.contentSha256,
+            } : {}),
+          },
+        );
+        exactExistingUpdatePermitArmed = !permitError
+          && isRecord(permitData)
+          && permitData.contract === "exact_existing_update_permit_v1"
+          && permitData.channel === boundExactExistingClosedGateUpdateChannel
+          && permitData.listingId === parsed.data.resourceListingId
+          && permitData.releaseSha === runtimeRelease.release
+          && permitData.requestFingerprint === requestFingerprint
+          && permitData.bound === false
+          && (boundExactExistingClosedGateUpdateChannel !== "coupang"
+            || (coupangRepresentative !== null
+              && permitData.representativeContract === "coupang_exact_qa_representative_v1"
+              && permitData.sourceSha256 === coupangRepresentative.sourceSha256
+              && permitData.contentSha256 === coupangRepresentative.contentSha256));
+        if (!exactExistingUpdatePermitArmed) {
+          return NextResponse.json({
+            message: "기존 exact 상품 수정의 일회성 허가를 만들지 못해 원격 호출을 시작하지 않았습니다.",
+            mode: "exact_existing_update_permit_required",
+          }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+        }
       }
     }
     if (boundShopeeSgExistingUpdate?.phase === "content" && closedReleaseGateIsExact) {
@@ -2344,6 +2404,7 @@ export async function POST(request: NextRequest) {
         && !qoo10ExactLocalizationUpdatePermitArmed
         && !smartstoreExactQaUpdatePermitArmed
         && !exactExistingUpdatePermitArmed
+        && !ebayExactAtomicEnqueueRequired
         && !shopeeSgExistingUpdatePermitArmed) {
       return NextResponse.json({
         message: "판매채널 상품 작업은 채널별 원격 검증이 완료될 때까지 일시 중지되어 있습니다.",
@@ -2578,6 +2639,9 @@ export async function POST(request: NextRequest) {
     || channel === "temu"
     || ((listingGatewayOperation || writeChannelOperations.has(operation)) && channel === "qoo10");
   if (usesChannelGateway) {
+    let ebayExactAtomicRpcStarted = false;
+    let ebayExactAtomicJobCommitted = false;
+    let ebayExactAtomicJobId = "";
     try {
       const gatewayArguments = operation === "listing.create"
         || operation === "listing.update"
@@ -2638,27 +2702,70 @@ export async function POST(request: NextRequest) {
             requestFingerprint,
           }
         : undefined;
-      const gatewayExecution = await executeViaChannelGateway({
-        serviceClient,
-        credentialId: parsed.data.credentialId,
-        attemptId,
-        channel,
-        operation,
-        arguments: gatewayArguments,
-        listingId: operation === "listing.create" ? undefined : listingId || undefined,
-        listingCreate: operation === "listing.create" && parsed.data.productId
-          ? {
-              productId: parsed.data.productId,
-              market: parsed.data.market,
-              targetId: parsed.data.targetId,
-              currency: effectiveCurrency ?? "KRW",
-              price: effectivePrice ?? 0,
-              requestFingerprint,
-            }
-          : undefined,
-        writeResource,
-        timeoutMs: writeChannelOperations.has(operation) ? 45_000 : undefined,
-      });
+      let gatewayExecution: { result: ChannelOperationResult; listingId?: string };
+      if (ebayExactAtomicEnqueueRequired) {
+        const runtimeRelease = resolveRuntimeReleaseIdentity();
+        if (runtimeRelease.status !== "valid") {
+          throw new Error("EBAY_EXACT_ATOMIC_ENQUEUE_RELEASE_INVALID");
+        }
+        ebayExactAtomicRpcStarted = true;
+        const { data: enqueueData, error: enqueueError } = await serviceClient.rpc(
+          "sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry",
+          {
+            p_listing_id: listingId,
+            p_credential_id: parsed.data.credentialId,
+            p_attempt_id: attemptId,
+            p_release_sha: runtimeRelease.release,
+            p_request_fingerprint: requestFingerprint,
+            p_request_payload: { arguments: gatewayArguments },
+          },
+        );
+        const enqueue = isRecord(enqueueData) ? enqueueData : null;
+        const newlyQueued = enqueue?.status === "queued" && enqueue.reused === false;
+        const exactReplay = enqueue?.status === "in_progress" && enqueue.reused === true;
+        if (enqueueError
+            || enqueue?.contract !== "ebay_exact_v101_atomic_enqueue_v1"
+            || (!newlyQueued && !exactReplay)
+            || typeof enqueue.jobId !== "string"
+            || enqueue.attemptId !== attemptId
+            || enqueue.listingId !== listingId
+            || enqueue.releaseSha !== runtimeRelease.release
+            || enqueue.requestFingerprint !== requestFingerprint) {
+          throw new Error("EBAY_EXACT_ATOMIC_ENQUEUE_FAILED");
+        }
+        ebayExactAtomicJobCommitted = true;
+        ebayExactAtomicJobId = enqueue.jobId;
+        const atomicResult = await waitForEbayExactAtomicGatewayJob({
+          serviceClient,
+          jobId: enqueue.jobId,
+          attemptId,
+          listingId,
+          timeoutMs: 45_000,
+        });
+        gatewayExecution = { result: atomicResult, listingId };
+      } else {
+        gatewayExecution = await executeViaChannelGateway({
+          serviceClient,
+          credentialId: parsed.data.credentialId,
+          attemptId,
+          channel,
+          operation,
+          arguments: gatewayArguments,
+          listingId: operation === "listing.create" ? undefined : listingId || undefined,
+          listingCreate: operation === "listing.create" && parsed.data.productId
+            ? {
+                productId: parsed.data.productId,
+                market: parsed.data.market,
+                targetId: parsed.data.targetId,
+                currency: effectiveCurrency ?? "KRW",
+                price: effectivePrice ?? 0,
+                requestFingerprint,
+              }
+            : undefined,
+          writeResource,
+          timeoutMs: writeChannelOperations.has(operation) ? 45_000 : undefined,
+        });
+      }
       const rawResult = gatewayExecution.result;
       if (gatewayExecution.listingId) listingId = gatewayExecution.listingId;
       if (rawResult.ok && listingOperationRequiresVerifiedRemoteState(operation)) {
@@ -2794,6 +2901,24 @@ export async function POST(request: NextRequest) {
           headers: { "cache-control": "no-store, max-age=0" },
         });
       }
+      if (ebayExactAtomicEnqueueRequired && ebayExactAtomicRpcStarted) {
+        return NextResponse.json({
+          ok: false,
+          inProgress: true,
+          manualRequired: !ebayExactAtomicJobCommitted,
+          reconciliationRequired: !ebayExactAtomicJobCommitted,
+          ...(ebayExactAtomicJobId ? { jobId: ebayExactAtomicJobId } : {}),
+          attemptId,
+          listingId: listingId || parsed.data.resourceListingId || undefined,
+          message: ebayExactAtomicJobCommitted
+            ? "eBay exact 작업은 원자적으로 접수됐으며 원격 결과를 계속 확인 중입니다. 같은 상품 수정을 다시 실행하지 마세요."
+            : "eBay exact 원자 접수 결과를 확정할 수 없어 작업 원장을 보존했습니다. 현재 시도를 재실행하지 말고 진행 현황을 확인해 주세요.",
+          mode: "ebay_exact_atomic_enqueue_in_progress",
+        }, {
+          status: 202,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
       const message = errorMessage(error);
       const { data: preGatewayFailed, error: preGatewayFailureError } = await serviceClient.rpc(
         "sellerpilot_service_fail_pre_gateway_channel_operation",
@@ -2824,7 +2949,8 @@ export async function POST(request: NextRequest) {
             && operation === "listing.update"
             && Boolean(boundEbayExactExistingQaRecovery)
             && boundEbayExactNoEffectRetry
-            && exactExistingUpdatePermitArmed));
+            && (exactExistingUpdatePermitArmed
+              || ebayExactAtomicEnqueueRequired)));
       if (!preserveExactPreGatewayListing) {
         await completeListing({ success: false, safeMessage: message });
       }

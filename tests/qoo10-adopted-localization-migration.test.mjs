@@ -232,7 +232,7 @@ test("the adopted route rebuilds server-owned commerce and markers before the ex
   const prepareImages = route.indexOf(
     "await prepareMarketplaceImages(serviceClient, channel, effectiveArguments",
   );
-  const enqueue = route.indexOf("const gatewayExecution = await executeViaChannelGateway({");
+  const enqueue = route.indexOf("gatewayExecution = await executeViaChannelGateway({");
 
   assert.ok(stripExactMarker >= 0 && stripAdoptedMarker > stripExactMarker);
   assert.ok(bindCommerce > stripAdoptedMarker);

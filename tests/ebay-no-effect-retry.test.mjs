@@ -48,9 +48,13 @@ test("the retry surface is one new permit and never an old-job replay", async ()
     migration,
     /update\s+sellerpilot_private\.channel_operation_attempts/iu,
   );
+  assert.doesNotMatch(
+    route,
+    /sellerpilot_service_arm_ebay_no_effect_retry/u,
+  );
   assert.match(
     route,
-    /boundEbayExactNoEffectRetry[\s\S]*?sellerpilot_service_arm_ebay_no_effect_retry/u,
+    /boundEbayExactNoEffectRetry[\s\S]*?ebayExactAtomicEnqueueRequired = true[\s\S]*?sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry/u,
   );
   assert.match(
     recovery,
