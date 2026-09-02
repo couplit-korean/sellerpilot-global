@@ -185,6 +185,8 @@ const EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION =
   "20260901194336_rebind_ebay_exact_current_credential_lineage.sql";
 const EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION =
   "20260902083000_rearm_ebay_exact_dynamic_credential.sql";
+const LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION =
+  "20260902091500_allow_exact_lazada_dual_blocker_reauthorization.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -916,6 +918,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
       EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION,
       "20260902090000_reconcile_qoo10_adopted_content_validation.sql",
+      LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -15621,6 +15624,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
         && name !== EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
         && name !== EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
+        && name !== LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17364,6 +17368,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
         || name === EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
         || name === EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
+        || name === LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
@@ -20848,7 +20853,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
   const db = new PGlite();
   const migrationName =
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
-  const blockerJobId = "a976573f-a150-4061-a1c6-5e8e4880ba2b";
+  const blockerJobId = "b976573f-a150-4061-a1c6-5e8e4880ba2b";
   const tokenHash = "7".repeat(64);
   const staleCode = "stale-unclaimed-lazada-oauth-code";
   const failedCode = "fresh-definite-failure-lazada-code";
