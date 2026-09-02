@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import { PGlite } from "@electric-sql/pglite";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
   bindQoo10ExactAdoptedCommerceArguments,
@@ -17,16 +19,25 @@ import {
 } from "../lib/channels/qoo10-exact-localization-recovery";
 import {
   applyPreparedQoo10Images,
+  buildListingPublicationAssetBinding,
   qoo10RollbackRecoveryPreservesRepresentativeImage,
 } from "../lib/channels/marketplace-images";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { bindMarketplaceArgumentsToApprovedDetailManifest } from "../lib/server-product-detail-manifest";
 
 const identity = qoo10ExactLocalizationRecoveryIdentity;
-const detailImageUrls = Array.from(
-  { length: 8 },
-  (_, index) => `https://cdn.example.test/qoo10-adopted-${index + 1}.jpg`,
-);
+const detailImageUrls = [
+  "002c35dfc480660d5eab429ef9491357b06f7e317539365fadffeb8a186cc3e0",
+  "04f2523967867f7f0c218c635beb34571aec4f97b80cb24adae9d8e5edf994db",
+  "3800dcf97c2814ebe961bd8bd30d53dda7ff0d6b1a9f73a7fed929dea1fe92ac",
+  "641856cd5eff810194e0b5c14309e099c0c716f3643b8f68377bfe6baca521b8",
+  "7fe0ed3832f3bff882b576c6709e7a201a8b2c18b4905dd8b5bbdc3ce5bbcf5e",
+  "cc9af9f4c99383fd159395b5a13289b4b268f548d8f5ccb391c6672af2914410",
+  "e6972e812b95d38ccb08026cc16573660d532012951c54bcbd9aa57807c907c3",
+  "fae4e55b17604528d3f1b14a471b2a72c0856b1bb0e1dc7a324388a9066684a2",
+].map((digest) => (
+  `https://sqaoqucxakebqkiygdxb.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`
+));
 const cleanDetail = `<section lang="ja-JP"><h1>${identity.title}</h1><p>ケーブルをすっきり整理できます。販売価格は1,871円です。</p>${detailImageUrls
   .map((url) => `<img src="${url}">`)
   .join("")}</section>`;
@@ -96,6 +107,16 @@ function argumentsValue() {
       ItemDescription: cleanDetail,
     },
   };
+}
+
+function extractSqlFunction(source: string, signature: string) {
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `${signature} must exist`);
+  const bodyStart = source.indexOf("as $$", start);
+  assert.notEqual(bodyStart, -1);
+  const end = source.indexOf("$$;", bodyStart + 5);
+  assert.notEqual(end, -1);
+  return source.slice(start, end + 3);
 }
 
 test("server-owned adopted content uses the approved eight-role Japanese contract", () => {
@@ -190,6 +211,89 @@ test("the manifest-bound postimage preserves the representative and exact commer
   assert.equal(params.ItemQty, String(identity.quantity));
   assert.equal(localized?.detailImageUrls.length, 8);
   assert.deepEqual(localized?.detailImageUrls, detailImageUrls);
+});
+
+test("the real manifest-bound prepared postimage passes both production SQL validators", async () => {
+  const serverOwned = bindQoo10ExactAdoptedCommerceArguments(argumentsValue());
+  const roles = qoo10ExactAdoptedLocalizedDetailSections()
+    .map((section) => section.imageAsset);
+  const routeArguments = bindMarketplaceArgumentsToApprovedDetailManifest(
+    serverOwned,
+    {
+      version: 1,
+      manifest: {
+        contract: "sellerpilot_detail_image_manifest_v2",
+        algorithm: "sha256",
+        digest: "a".repeat(64),
+        images: roles.map((role, index) => ({
+          role,
+          path: `results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/${role}.png`,
+          sourceSha256: String(index + 1).repeat(64).slice(0, 64),
+        })),
+      },
+    },
+    detailImageUrls,
+  );
+  const prepared = applyPreparedQoo10Images(
+    routeArguments,
+    [],
+    detailImageUrls,
+    qoo10ExactAdoptedLocalizedDetailSections().map((section) => section.imageAltText),
+    roles,
+  );
+  prepared.sellerpilotPublicationAssetBinding = buildListingPublicationAssetBinding({
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: "a".repeat(64),
+    approvedDetailRoles: roles,
+    approvedDetailImagePaths: roles.map((role) => (
+      `results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/${role}.png`
+    )),
+    approvedDetailImageSha256s: roles.map((_, index) => (
+      String(index + 1).repeat(64).slice(0, 64)
+    )),
+    approvedDetailImageUrls: detailImageUrls,
+    providerImageSurface: "detail_content",
+    providerTransportRoles: roles,
+    providerTransportUrls: detailImageUrls,
+  });
+  assert.ok(prepared.sellerpilotPublicationAssetBinding);
+  assert.ok(Buffer.byteLength(JSON.stringify({ arguments: prepared }), "utf8") < 128_000);
+  const exactSource = await readFile(new URL(
+    "../supabase/migrations/20260831144000_generalize_qoo10_exact_localization_s1_activation.sql",
+    import.meta.url,
+  ), "utf8");
+  const adoptedSource = await readFile(new URL(
+    "../supabase/migrations/20260901173500_fence_exact_qoo10_adopted_localization_update.sql",
+    import.meta.url,
+  ), "utf8");
+  const parserSource = await readFile(new URL(
+    "../supabase/migrations/20260831056700_recover_exact_qoo10_s1_activation.sql",
+    import.meta.url,
+  ), "utf8");
+  const db = new PGlite();
+  try {
+    await db.exec("create schema sellerpilot_private");
+    for (const signature of [
+      "create function sellerpilot_private.qoo10_exact_hex_codepoint(",
+      "create function sellerpilot_private.qoo10_exact_decode_html(",
+      "create function sellerpilot_private.qoo10_exact_detail_image_urls(",
+    ]) await db.exec(extractSqlFunction(parserSource, signature));
+    await db.exec(extractSqlFunction(
+      exactSource,
+      "create function sellerpilot_private.qoo10_exact_localization_v2_arguments_valid(",
+    ));
+    await db.exec(extractSqlFunction(
+      adoptedSource,
+      "create function sellerpilot_private.qoo10_exact_adopted_localization_arguments_valid(",
+    ));
+    const result = await db.query<{ value: boolean }>(
+      "select sellerpilot_private.qoo10_exact_adopted_localization_arguments_valid($1::jsonb,$2,$3,$4) value",
+      [JSON.stringify(prepared), "a".repeat(40), "b".repeat(64), "c".repeat(64)],
+    );
+    assert.equal(result.rows[0]?.value, true);
+  } finally {
+    await db.close();
+  }
 });
 
 test("already-live candidate is the exact adopted published S2 tuple only", () => {

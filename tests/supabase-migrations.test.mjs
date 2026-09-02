@@ -195,6 +195,8 @@ const QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION =
   "20260902100500_reconcile_qoo10_adopted_image_binding_pre_gateway_failure.sql";
 const EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION =
   "20260902101500_bind_ebay_exact_server_representative.sql";
+const QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION =
+  "20260902102000_fix_qoo10_adopted_deferred_job_lineage.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -931,6 +933,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION,
       QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION,
       EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION,
+      QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1194,6 +1197,31 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION)
         < migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION),
       "the exact Qoo10 credential lineage correction must replay after the adopted localization fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION),
+      "the Qoo10 deferred-job final-row repair must replay after every applied adopted-image reconciliation",
+    );
+    const qoo10DeferredJobLineageMigration = await readFile(
+      new URL(QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /from sellerpilot_private\.channel_gateway_jobs current_job[\s\S]*?current_job\.id = new\.id/u,
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /permit\.seller_account_key = v_job\.seller_account_key[\s\S]*?permit\.request_fingerprint = v_job\.request_fingerprint/u,
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /qoo10_exact_adopted_localization_arguments_valid[\s\S]*?QOO10_EXACT_ADOPTED_S2_LOCALIZATION_VERIFIED/u,
+    );
+    assert.doesNotMatch(
+      qoo10DeferredJobLineageMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|provider_call)/iu,
     );
     assert.ok(
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
