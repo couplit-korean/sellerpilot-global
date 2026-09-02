@@ -207,6 +207,8 @@ const EBAY_EXACT_PREARM_IMAGES_MIGRATION =
   "20260902107000_recover_ebay_exact_prearm_images.sql";
 const EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION =
   "20260902108000_rearm_ebay_exact_from_fresh_failed_attempt.sql";
+const QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION =
+  "20260902111000_restore_qoo10_adopted_atomic_enqueue_binding.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -949,6 +951,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION,
       EBAY_EXACT_PREARM_IMAGES_MIGRATION,
       EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION,
+      QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -15898,6 +15901,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
         && name !== EBAY_EXACT_PREARM_IMAGES_MIGRATION
         && name !== EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION
+        && name !== QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17650,6 +17654,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
         || name === EBAY_EXACT_PREARM_IMAGES_MIGRATION
         || name === EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION
+        || name === QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
