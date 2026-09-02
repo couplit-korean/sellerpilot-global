@@ -139,9 +139,19 @@ begin
     join sellerpilot_private.products product
       on product.id = evidence.product_id
      and product.owner_id = evidence.owner_id
+    join sellerpilot_private.channel_gateway_jobs source
+     on source.id = evidence.source_job_id
+     and source.attempt_id = evidence.source_attempt_id
+     and source.listing_id = evidence.listing_id
+     and source.credential_id = evidence.credential_id
+     and source.created_by =
+           '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+     and source.channel = 'qoo10'
+     and source.operation = 'listing.update'
+     and source.status = 'failed'
     join sellerpilot_private.channel_credentials credential
       on credential.id = evidence.credential_id
-     and credential.created_by = evidence.owner_id
+     and credential.created_by = source.created_by
    where evidence.attempt_id =
            '089c2075-9a60-4c4e-9b02-d1c39474b618'::uuid
      and evidence.permit_id =
@@ -205,6 +215,17 @@ begin
      and credential.status = 'active'
      and credential.seller_account_key =
            '2d5f4c65827e9f360ee013422ae6730ed1a7c67679a2e4beaa144d6a2c73ac46'
+     and credential.seller_account_key = source.seller_account_key
+     and credential.seller_account_key_source in (
+           'provider_certified_v1', 'credential_incarnation_v1'
+         )
+     and credential.seller_account_verified_at is not null
+     and credential.last_checked_at is not null
+     and credential.last_check_status = 'passed'
+     and (
+       credential.expires_at is null
+       or credential.expires_at > statement_timestamp()
+     )
      and not exists (
        select 1
          from sellerpilot_private.channel_gateway_jobs job
@@ -387,6 +408,16 @@ begin
       on attempt.id = listing.operation_attempt_id
     join sellerpilot_private.channel_credentials credential
       on credential.id = attempt.credential_id
+    join sellerpilot_private.channel_gateway_jobs source
+     on source.id = v_source_job_id
+     and source.attempt_id = v_source_attempt_id
+     and source.listing_id = listing.id
+     and source.credential_id = credential.id
+     and source.created_by =
+           '21eb1892-0894-4f9f-b414-4c9464182dd6'::uuid
+     and source.channel = 'qoo10'
+     and source.operation = 'listing.update'
+     and source.status = 'failed'
     join sellerpilot_private.qoo10_exact_localization_update_permits permit
       on permit.permit_id = v_permit_id
     join sellerpilot_private.qoo10_exact_already_live_adoptions receipt
@@ -475,11 +506,22 @@ begin
      and permit.invalidated_at is null
      and permit.invalidation_reason is null
      and permit.expires_at <= statement_timestamp()
-     and credential.created_by = v_owner_id
+     and credential.created_by = source.created_by
      and credential.channel = 'qoo10'
      and credential.environment = 'production'
      and credential.status = 'active'
      and credential.seller_account_key = listing.seller_account_key
+     and credential.seller_account_key = source.seller_account_key
+     and credential.seller_account_key_source in (
+           'provider_certified_v1', 'credential_incarnation_v1'
+         )
+     and credential.seller_account_verified_at is not null
+     and credential.last_checked_at is not null
+     and credential.last_check_status = 'passed'
+     and (
+       credential.expires_at is null
+       or credential.expires_at > statement_timestamp()
+     )
      and receipt.owner_id = v_owner_id
      and receipt.remote_id = '1217336970'
      and receipt.observation_sha256 =

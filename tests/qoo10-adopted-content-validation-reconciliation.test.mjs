@@ -143,10 +143,15 @@ test("listing restore helper accepts only the proved 422 no-write transition", a
       );
       create table sellerpilot_private.channel_credentials(
         id uuid, created_by uuid, channel text, environment text,
-        status text, seller_account_key text
+        status text, seller_account_key text,
+        seller_account_key_source text, seller_account_verified_at timestamptz,
+        last_checked_at timestamptz, last_check_status text,
+        expires_at timestamptz
       );
       create table sellerpilot_private.channel_gateway_jobs(
-        id uuid, attempt_id uuid, listing_id uuid, operation text, status text
+        id uuid, attempt_id uuid, listing_id uuid, credential_id uuid,
+        created_by uuid, channel text, operation text, status text,
+        seller_account_key text
       );
       create table sellerpilot_private.marketplace_normalized_asset_refs(
         attempt_id uuid
@@ -201,8 +206,15 @@ test("listing restore helper accepts only the proved 422 no-write transition", a
         )
       );
       insert into sellerpilot_private.channel_credentials values(
-        '${credentialId}','${ownerId}','qoo10','production','active',
-        '${sellerAccount}'
+        '${credentialId}','21eb1892-0894-4f9f-b414-4c9464182dd6',
+        'qoo10','production','active','${sellerAccount}',
+        'credential_incarnation_v1','2026-08-25T11:40:32Z',
+        '2026-08-20T08:36:14Z','passed','2027-08-20T14:59:59Z'
+      );
+      insert into sellerpilot_private.channel_gateway_jobs values(
+        '${sourceJobId}','${sourceAttemptId}','${listingId}','${credentialId}',
+        '21eb1892-0894-4f9f-b414-4c9464182dd6','qoo10','listing.update',
+        'failed','${sellerAccount}'
       );
     `);
 
@@ -255,9 +267,29 @@ test("listing restore helper accepts only the proved 422 no-write transition", a
       { ...nextListing, operation_attempt_id: attemptId },
     )).rows[0].value, false);
     await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set created_by = '${ownerId}'
+       where id = '${credentialId}'
+    `);
+    assert.equal((await validate(oldListing, nextListing)).rows[0].value, false);
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set created_by = '21eb1892-0894-4f9f-b414-4c9464182dd6',
+             seller_account_verified_at = null
+       where id = '${credentialId}'
+    `);
+    assert.equal((await validate(oldListing, nextListing)).rows[0].value, false);
+    await db.exec(`
+      update sellerpilot_private.channel_credentials
+         set seller_account_verified_at = '2026-08-25T11:40:32Z'
+       where id = '${credentialId}'
+    `);
+    await db.exec(`
       insert into sellerpilot_private.channel_gateway_jobs values(
         '00000000-0000-4000-8000-000000000001','${attemptId}',
-        '${listingId}','listing.update','failed'
+        '${listingId}','${credentialId}',
+        '21eb1892-0894-4f9f-b414-4c9464182dd6','qoo10','listing.update',
+        'failed','${sellerAccount}'
       )
     `);
     assert.equal((await validate(oldListing, nextListing)).rows[0].value, false);
