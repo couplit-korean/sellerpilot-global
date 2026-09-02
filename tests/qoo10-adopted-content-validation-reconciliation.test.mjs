@@ -57,6 +57,29 @@ test("forward reconciliation is exact, evidence-only, and creates no provider jo
   assert.doesNotMatch(source, /fetch\s*\(|qapi|sendcommand|EditGoodsContents|UpdateGoods|EditGoodsStatus/iu);
 });
 
+test("listing guard patch keeps branches prepended before the Qoo10 anchor", async () => {
+  const source = await readFile(migrationUrl, "utf8");
+  const anchor = "  if nullif(current_setting(''sellerpilot.qoo10_already_live_adoption'', true), '''') is not null then";
+  const injected = "  if nullif(current_setting(''sellerpilot.qoo10_adopted_content_validation_restore'', true), '''') is not null then";
+
+  assert.ok(source.includes(`v_before constant text := '${anchor}'`));
+  assert.ok(source.includes(`v_after constant text := '${injected}`));
+  assert.doesNotMatch(source, /v_before constant text := 'begin\n/u);
+
+  const productionShape = `begin
+  if current_setting('sellerpilot.coupang_exact_rep_apply', true) is not null then
+    return new;
+  end if;
+
+${anchor.replaceAll("''", "'")}`;
+  const patched = productionShape.replace(
+    anchor.replaceAll("''", "'"),
+    `${injected.replaceAll("''", "'")}\n    return new;\n  end if;\n\n${anchor.replaceAll("''", "'")}`,
+  );
+
+  assert.match(patched, /coupang_exact_rep_apply[\s\S]*qoo10_adopted_content_validation_restore[\s\S]*qoo10_already_live_adoption/u);
+});
+
 test("listing restore helper accepts only the proved 422 no-write transition", async () => {
   const source = await readFile(migrationUrl, "utf8");
   const db = new PGlite();

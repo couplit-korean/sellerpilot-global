@@ -274,10 +274,12 @@ revoke all on function
 do $patch_qoo10_adopted_content_validation_listing_guard$
 declare
   v_definition text;
-  v_before constant text := 'begin
-  if nullif(current_setting(''sellerpilot.qoo10_already_live_adoption'', true), '''') is not null then';
-  v_after constant text := 'begin
-  if nullif(current_setting(''sellerpilot.qoo10_adopted_content_validation_restore'', true), '''') is not null then
+  -- Insert immediately before the already-live Qoo10 branch instead of
+  -- assuming that branch is the first statement after BEGIN. Production can
+  -- legitimately prepend other exact-channel recovery branches (for example
+  -- Coupang) while preserving this Qoo10 anchor unchanged.
+  v_before constant text := '  if nullif(current_setting(''sellerpilot.qoo10_already_live_adoption'', true), '''') is not null then';
+  v_after constant text := '  if nullif(current_setting(''sellerpilot.qoo10_adopted_content_validation_restore'', true), '''') is not null then
     if not sellerpilot_private.qoo10_adopted_content_validation_restore_allowed(
       to_jsonb(old),
       to_jsonb(new),
