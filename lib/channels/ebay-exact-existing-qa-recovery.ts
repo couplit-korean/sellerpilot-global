@@ -19,13 +19,19 @@ export const ebayExactV101ContentContract = Object.freeze({
 });
 
 export const ebayExactV101ContentBaseRequestFingerprint =
-  "21ed51a94009c586f0619780ad9ea0d0e8162b26d9759bdde19240f47b72ed97";
+  "8eeb374c49a1e4ec6a3d95c55e407993d8a5938dbc77d4f0c7d33b290cfd5591";
 
 export const ebayExactV101ContentRequestFingerprint =
-  "acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef";
+  "4d3fb2652d0b7de0e4fb9c933aee4bec975ee6a0a081fb94530aae7418f7014e";
 
 export const ebayExactV101RepresentativeObjectPath =
   "normalized/29/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a.jpg";
+
+export const ebayExactV101RepresentativeSourceObjectPath =
+  "results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/thumbnail-square.png";
+
+export const ebayExactV101RepresentativeSourceSha256 =
+  "1be297f0103147951dbb3e7167cd87362f9cf12efe5be2dfa26cd0ed9b918753";
 
 export const ebayExactNoEffectRetryMarker = Object.freeze({
   contract: "ebay_exact_no_effect_retry_v1",
@@ -232,13 +238,24 @@ export function ebayExactV101ArgumentsForFingerprint(
   const gallery = Array.isArray(assets?.galleryImageUrls)
     ? assets.galleryImageUrls
     : [];
+  const approvedGalleryImagePaths = Array.isArray(
+    assets?.approvedGalleryImagePaths,
+  ) ? assets.approvedGalleryImagePaths : [];
+  const approvedGalleryImageSha256s = Array.isArray(
+    assets?.approvedGalleryImageSha256s,
+  ) ? assets.approvedGalleryImageSha256s : [];
   const stableGallery = gallery.map(sellerpilotStorageFingerprintUrl);
   if (!binding
       || !assets
-      || stableGallery.length < 1
-      || stableGallery.length > 12
-      || stableGallery.some((url) => !url)
-      || new Set(stableGallery).size !== stableGallery.length) {
+      || stableGallery.length !== 1
+      || stableGallery[0]
+        !== `sellerpilot-storage://${ebayExactV101RepresentativeSourceObjectPath}`
+      || approvedGalleryImagePaths.length !== 1
+      || approvedGalleryImagePaths[0]
+        !== ebayExactV101RepresentativeSourceObjectPath
+      || approvedGalleryImageSha256s.length !== 1
+      || approvedGalleryImageSha256s[0]
+        !== ebayExactV101RepresentativeSourceSha256) {
     throw new Error("EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED");
   }
   const next = structuredClone(argumentsValue);

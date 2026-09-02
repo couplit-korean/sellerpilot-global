@@ -12,6 +12,8 @@ import {
   ebayExactV101ContentRequestFingerprint,
   ebayExactV101ContentRequestFingerprintForBase,
   ebayExactV101EnglishAspects,
+  ebayExactV101RepresentativeSourceObjectPath,
+  ebayExactV101RepresentativeSourceSha256,
   ebayExactExistingQaClientBuyerCopySupplied,
   ebayExactExistingQaCreateForbidden,
   ebayExactExistingQaRecoveryArgument,
@@ -190,7 +192,7 @@ test("exact eBay recovery accepts only the fixed failed/live tuple and strips a 
 
 test("exact eBay v101 fingerprint and Material translation are narrowly bound", () => {
   const baseRequestFingerprint =
-    "21ed51a94009c586f0619780ad9ea0d0e8162b26d9759bdde19240f47b72ed97";
+    "8eeb374c49a1e4ec6a3d95c55e407993d8a5938dbc77d4f0c7d33b290cfd5591";
   assert.equal(
     ebayExactV101ContentRequestFingerprintForBase(
       baseRequestFingerprint,
@@ -247,6 +249,8 @@ test("exact eBay fingerprint projection ignores only signed token and same-selle
     contentMode: "ai_generated",
     detailAssetMode: "dedicated",
     galleryImageUrls: [signedUrl("first-token")],
+    approvedGalleryImagePaths: [ebayExactV101RepresentativeSourceObjectPath],
+    approvedGalleryImageSha256s: [ebayExactV101RepresentativeSourceSha256],
     detailImageUrls: detailUrls.map((_, index) =>
       `sellerpilot-storage://approved/detail-${index + 1}.png`),
     detailImageRoles: detailUrls.map((_, index) => `detail-${index + 1}`),
@@ -293,6 +297,8 @@ test("exact eBay fingerprint projection remains fail-closed for identity, manife
     galleryImageUrls: [
       `https://sellerpilot.supabase.co/storage/v1/object/sign/sellerpilot-ai/${sourcePath}?token=one`,
     ],
+    approvedGalleryImagePaths: [ebayExactV101RepresentativeSourceObjectPath],
+    approvedGalleryImageSha256s: [ebayExactV101RepresentativeSourceSha256],
     detailImageUrls: detailUrls,
     detailImageRoles: detailUrls.map((_, index) => `detail-${index + 1}`),
     approvedDetailImagePaths: detailUrls.map((_, index) =>
@@ -344,6 +350,23 @@ test("exact eBay fingerprint projection remains fail-closed for identity, manife
     () => ebayExactV101ArgumentsForFingerprint(attackerGallery),
     /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
   );
+
+  for (const [field, changed] of [
+    ["approvedGalleryImagePaths", [
+      ebayExactV101RepresentativeSourceObjectPath.replace(
+        "thumbnail-square.png",
+        "hero.png",
+      ),
+    ]],
+    ["approvedGalleryImageSha256s", ["f".repeat(64)]],
+  ] as const) {
+    const wrongRepresentative = structuredClone(value);
+    (wrongRepresentative.sellerpilotAssets as Record<string, unknown>)[field] = changed;
+    assert.throws(
+      () => ebayExactV101ArgumentsForFingerprint(wrongRepresentative),
+      /EBAY_EXACT_V101_FINGERPRINT_PROJECTION_REQUIRED/u,
+    );
+  }
 
   const drifts = [
     (next: Record<string, unknown>) => {

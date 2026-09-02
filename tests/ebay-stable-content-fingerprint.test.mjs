@@ -7,6 +7,10 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260902093000_stabilize_ebay_exact_content_fingerprint.sql",
   import.meta.url,
 );
+const serverRepresentativeMigrationUrl = new URL(
+  "../supabase/migrations/20260902101500_bind_ebay_exact_server_representative.sql",
+  import.meta.url,
+);
 const recoveryUrl = new URL(
   "../lib/channels/ebay-exact-existing-qa-recovery.ts",
   import.meta.url,
@@ -26,10 +30,16 @@ const currentLineageMigrationUrl = new URL(
 
 const oldFingerprint =
   "bda8692c79751806c5a1103a955a13462522ad0adf889259d3a804ba2a4ac231";
-const stableBaseFingerprint =
-  "21ed51a94009c586f0619780ad9ea0d0e8162b26d9759bdde19240f47b72ed97";
 const stableFingerprint =
   "acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef";
+const currentBaseFingerprint =
+  "8eeb374c49a1e4ec6a3d95c55e407993d8a5938dbc77d4f0c7d33b290cfd5591";
+const currentFingerprint =
+  "4d3fb2652d0b7de0e4fb9c933aee4bec975ee6a0a081fb94530aae7418f7014e";
+const representativeSourcePath =
+  "results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/thumbnail-square.png";
+const representativeSourceSha =
+  "1be297f0103147951dbb3e7167cd87362f9cf12efe5be2dfa26cd0ed9b918753";
 const sellerAccountKey =
   "cc771e4ba635f617f33d7da425c2ee7dd9c6ec161ac84f3d593060052eaf609f";
 
@@ -61,8 +71,8 @@ test("eBay stable fingerprint migration changes only the exact content permit co
   ]) {
     assert.match(migration, new RegExp(exactValue, "u"));
   }
-  assert.match(recovery, new RegExp(stableBaseFingerprint, "u"));
-  assert.match(recovery, new RegExp(stableFingerprint, "u"));
+  assert.match(recovery, new RegExp(currentBaseFingerprint, "u"));
+  assert.match(recovery, new RegExp(currentFingerprint, "u"));
   assert.match(
     route,
     /fingerprintArguments = ebayExactV101ArgumentsForFingerprint\(\s*channelFingerprintArguments/u,
@@ -120,10 +130,16 @@ test("the migration stays dynamic and performs no permit, job, or provider actio
   );
 });
 
-test("the forward migration leaves the permit untouched until the dynamic arm RPC moves old to stable fingerprint", async () => {
-  const [migration, currentCredentialMigration, currentLineageMigration] =
+test("the forward migrations leave the permit untouched until dynamic arm RPCs move old to server-bound fingerprint", async () => {
+  const [
+    migration,
+    serverRepresentativeMigration,
+    currentCredentialMigration,
+    currentLineageMigration,
+  ] =
     await Promise.all([
       readFile(migrationUrl, "utf8"),
+      readFile(serverRepresentativeMigrationUrl, "utf8"),
       readFile(currentCredentialMigrationUrl, "utf8"),
       readFile(currentLineageMigrationUrl, "utf8"),
     ]);
@@ -204,6 +220,10 @@ test("the forward migration leaves the permit untouched until the dynamic arm RP
         p_arguments jsonb
       ) returns boolean language sql immutable as $$
         select p_arguments->>'publicationExpectedFingerprint' = '${oldFingerprint}'
+          and p_arguments#>>'{sellerpilotPublicationAssetBinding,providerTransportImages,0,approvedObjectPath}' ~
+          '^results/[0-9a-f-]+/claims/[0-9a-f-]+/[^/]+[.]png$'
+          and p_arguments#>>'{sellerpilotPublicationAssetBinding,providerTransportImages,0,approvedSourceSha256}' ~
+          '^[a-f0-9]{64}$'
       $$;
       create function sellerpilot_private.exact_existing_update_arguments_before_temu_173960(
         p_channel text, p_arguments jsonb, p_release_sha text,
@@ -367,6 +387,101 @@ test("the forward migration leaves the permit untouched until the dynamic arm RP
       credential_id: "742773ae-e2ce-4b06-99d2-7c6eb541af03",
       credential_version: 105,
       exact_ttl: true,
+    });
+
+    await db.exec(`
+      alter table sellerpilot_private.exact_existing_update_permits
+        disable trigger user;
+      update sellerpilot_private.exact_existing_update_permits
+         set armed_at = now() - interval '10 minutes',
+             expires_at = now() - interval '5 minutes';
+      alter table sellerpilot_private.exact_existing_update_permits
+        enable trigger user;
+    `);
+    await db.exec(serverRepresentativeMigration);
+
+    assert.deepEqual((await db.query(`
+      select request_fingerprint, credential_id, credential_version,
+             update_job_id, consumed_at, expires_at <= now() expired
+        from sellerpilot_private.exact_existing_update_permits
+    `)).rows[0], {
+      request_fingerprint: stableFingerprint,
+      credential_id: "742773ae-e2ce-4b06-99d2-7c6eb541af03",
+      credential_version: 105,
+      update_job_id: null,
+      consumed_at: null,
+      expired: true,
+    }, "the 101500 migration itself must not arm or bind the permit");
+
+    const currentDefinitions = Object.fromEntries(await Promise.all([
+      ["content", "sellerpilot_private.ebay_exact_v101_content_arguments_valid(jsonb)"],
+      ["arguments", "sellerpilot_private.exact_existing_update_arguments_before_temu_173960(text,jsonb,text,text,integer)"],
+      ["proof", "sellerpilot_private.ebay_exact_v101_content_rebind_is_proved(uuid,text,text)"],
+      ["guard", "sellerpilot_private.guard_exact_existing_update_permit_transition()"],
+      ["arm", "public.sellerpilot_service_arm_ebay_no_effect_retry(text,uuid,uuid,text,text)"],
+    ].map(async ([name, signature]) => [
+      name,
+      (await db.query("select pg_get_functiondef($1::regprocedure) definition", [
+        signature,
+      ])).rows[0].definition,
+    ])));
+    for (const definition of Object.values(currentDefinitions)) {
+      assert.match(definition, new RegExp(currentFingerprint, "u"));
+    }
+    assert.match(currentDefinitions.content, new RegExp(representativeSourcePath, "u"));
+    assert.match(currentDefinitions.content, new RegExp(representativeSourceSha, "u"));
+    assert.match(
+      currentDefinitions.proof,
+      new RegExp(`${stableFingerprint}[\\s\\S]*${currentFingerprint}`, "u"),
+    );
+
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_ebay_no_effect_retry(
+           'ebay', '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid,
+           '742773ae-e2ce-4b06-99d2-7c6eb541af03'::uuid,
+           $1::text, $2::text
+         )`,
+        ["d".repeat(40), stableFingerprint],
+      ),
+      /identity invalid/u,
+      "the prior fingerprint must not be accepted as the new target",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_ebay_no_effect_retry(
+           'ebay', '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid,
+           '11111111-2222-4333-8444-555555555555'::uuid,
+           $1::text, $2::text
+         )`,
+        ["d".repeat(40), currentFingerprint],
+      ),
+      /identity invalid/u,
+      "a different credential must remain rejected",
+    );
+
+    const serverBound = (await db.query(
+      `select public.sellerpilot_service_arm_ebay_no_effect_retry(
+         'ebay', '8b2cbfaf-3854-437d-b381-abfd70291354'::uuid,
+         '742773ae-e2ce-4b06-99d2-7c6eb541af03'::uuid,
+         $1::text, $2::text
+       ) result`,
+      ["d".repeat(40), currentFingerprint],
+    )).rows[0].result;
+    assert.equal(serverBound.rearmed, true);
+    assert.equal(serverBound.requestFingerprint, currentFingerprint);
+    assert.deepEqual((await db.query(`
+      select request_fingerprint, credential_id, credential_version,
+             expires_at = armed_at + interval '5 minutes' exact_ttl,
+             update_job_id, consumed_at
+        from sellerpilot_private.exact_existing_update_permits
+    `)).rows[0], {
+      request_fingerprint: currentFingerprint,
+      credential_id: "742773ae-e2ce-4b06-99d2-7c6eb541af03",
+      credential_version: 105,
+      exact_ttl: true,
+      update_job_id: null,
+      consumed_at: null,
     });
   } finally {
     await db.close();

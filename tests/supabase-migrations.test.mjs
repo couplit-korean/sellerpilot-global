@@ -193,6 +193,8 @@ const LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION =
   "20260902100000_recover_exact_lazada_provider_failure_three_blockers.sql";
 const QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION =
   "20260902100500_reconcile_qoo10_adopted_image_binding_pre_gateway_failure.sql";
+const EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION =
+  "20260902101500_bind_ebay_exact_server_representative.sql";
 const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
   "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
 const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
@@ -928,6 +930,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION,
       LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION,
       QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION,
+      EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION,
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -1196,6 +1199,11 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
         < migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION),
       "11st exact snapshot repair must replay forward of the complete deployed chain without reapplying its historical recovery migration",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION),
+      "the server-owned eBay representative fence must replay after the stable dynamic-credential fingerprint",
     );
     let shopeeStaticEgressMigration;
     let smartstoreNonstaticEgressMigration;
@@ -15636,6 +15644,7 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
         && name !== EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
         && name !== LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
+        && name !== EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -17382,6 +17391,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         || name === LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
         || name === EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
         || name === LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
+        || name === EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
