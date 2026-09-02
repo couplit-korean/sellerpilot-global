@@ -915,6 +915,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       SMARTSTORE_EXACT_STOCK_ONE_MIGRATION,
       EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
       EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION,
+      "20260902090000_reconcile_qoo10_adopted_content_validation.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

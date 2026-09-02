@@ -2370,6 +2370,7 @@ async function executeQoo10(input: ExecuteInput) {
       ? verifyQoo10ExactAdoptedLiveReadback({
           resultObject: currentRemote.data.ResultObject,
           expectedDetailImageUrls: exactLocalizedUpdate?.detailImageUrls ?? [],
+          expectedDetailHtml: exactLocalizedUpdate.detailHtml,
           phase: "prewrite",
         })
       : verifyQoo10ExactCurrentS1Readback({
@@ -2475,6 +2476,7 @@ async function executeQoo10(input: ExecuteInput) {
       const exactReadback = verifyQoo10ExactAdoptedLiveReadback({
         resultObject: readback.data.ResultObject,
         expectedDetailImageUrls: exactLocalizedUpdate.detailImageUrls,
+        expectedDetailHtml: exactLocalizedUpdate.detailHtml,
         phase: "postwrite",
       });
       const publication = normalizeQoo10ListingPublicationReadback({

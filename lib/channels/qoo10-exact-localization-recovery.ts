@@ -135,6 +135,92 @@ export function bindQoo10ExactAdoptedLocalizationArguments(
   };
 }
 
+const qoo10ExactAdoptedDetailSections = Object.freeze([
+  {
+    type: "overview",
+    imageAsset: "detail-overview",
+    heading: "商品概要",
+    body: "貼り付け式ケーブル整理クリップを6個まとめたセットです。デスクや作業スペースで散らばりやすいケーブルを決めた位置へ案内し、配線を見やすく整えるための商品です。購入前に設置場所と必要個数をご確認ください。",
+    buyerQuestion: "セット内容と使用目的を購入前に確認できますか？",
+    evidence: "販売者が確認した商品名、セット数量、承認済みの商品画像に基づく案内です。",
+  },
+  {
+    type: "feature",
+    imageAsset: "detail-feature",
+    heading: "形状と特徴",
+    body: "黒色の小型クリップ形状で、ケーブルを通す部分と設置面へ貼り付ける部分を備えています。机まわりの配線位置をそろえたい場合に使える構成です。画像で形状と開口部を確認してからご購入ください。",
+    buyerQuestion: "クリップの形状と色を画像で確認できますか？",
+    evidence: "販売者が承認した特徴画像と商品写真で確認できる外観だけを説明しています。",
+  },
+  {
+    type: "howto",
+    imageAsset: "detail-use",
+    heading: "使用方法",
+    body: "設置面のほこり、水分、油分を取り除き、十分に乾いた状態で貼り付けてください。貼り付け後はクリップへケーブルを通し、無理な力がかからない位置へ整えます。接着状態を確認してから使用してください。",
+    buyerQuestion: "貼り付け前の準備と基本的な使い方を確認できますか？",
+    evidence: "販売者が確認した貼り付け式クリップの使用手順を、未確認の性能表現を加えず記載しています。",
+  },
+  {
+    type: "proof",
+    imageAsset: "detail-package",
+    heading: "梱包と受取確認",
+    body: "本商品は小型クリップ6個のセットとして案内しています。受け取り後は開封時に内容物の個数と外観をご確認ください。小型部品のため、開封や保管の際は紛失しないよう取り扱ってください。",
+    buyerQuestion: "到着後に確認する内容物と個数を確認できますか？",
+    evidence: "販売者が確認した6個セット情報と承認済み梱包画像に基づく案内です。",
+  },
+  {
+    type: "contents",
+    imageAsset: "detail-contents",
+    heading: "セット内容",
+    body: "販売内容は貼り付け式ケーブル整理クリップ6個です。ケーブル、充電器、机などの撮影用小物は商品に含まれません。画像は使用例を含むため、購入対象となるクリップの数量を確認してからご注文ください。",
+    buyerQuestion: "商品に含まれる物と含まれない物を確認できますか？",
+    evidence: "販売者が確定した6個セットの販売単位と承認済み内容物画像に基づく説明です。",
+  },
+  {
+    type: "routine",
+    imageAsset: "detail-routine",
+    heading: "使用前の確認",
+    body: "使用前に設置面とケーブルの太さ、クリップを置く位置をご確認ください。仮の位置で配線の流れを整えてから設置すると、必要な間隔を判断しやすくなります。貼り付け後も定期的に固定状態をご確認ください。",
+    buyerQuestion: "設置位置を決める前の確認事項を確認できますか？",
+    evidence: "販売者が確認した用途に沿い、購入者が設置前後に確認できる事項を整理しています。",
+  },
+  {
+    type: "care",
+    imageAsset: "detail-care",
+    heading: "使用上の注意",
+    body: "設置面の材質、凹凸、汚れ、湿気などにより貼り付き方が異なる場合があります。目立たない場所で状態を確認し、強い荷重や急な引っ張りを避けてください。小型部品は子どもの手が届かない場所で保管してください。",
+    buyerQuestion: "設置面と取り扱いに関する注意事項を確認できますか？",
+    evidence: "未確認の耐荷重や材質を断定せず、貼り付け式小型部品として必要な注意だけを記載しています。",
+  },
+  {
+    type: "spec",
+    imageAsset: "detail-dimensions",
+    heading: "サイズ確認",
+    body: "クリップとケーブルの適合は、使用するケーブルの太さや設置方法によって異なります。購入前に承認済み画像でクリップの形状とケーブルを通す部分をご確認ください。未確認の寸法値は掲載していません。",
+    buyerQuestion: "ケーブルとの適合を購入前にどのように確認しますか？",
+    evidence: "承認済み寸法確認画像を使用し、販売者が確定していない数値を推測せず案内しています。",
+  },
+] as const);
+
+export function qoo10ExactAdoptedLocalizedDetailSections() {
+  const title = qoo10ExactLocalizationRecoveryIdentity.title;
+  return qoo10ExactAdoptedDetailSections.map((section) => ({
+    ...section,
+    imageAltText: `${title} ${section.heading} 商品詳細画像`,
+  }));
+}
+
+export function qoo10ExactAdoptedJapaneseDetailBase() {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  return [
+    '<section lang="ja-JP">',
+    `<h1>${identity.title}</h1>`,
+    "<p>貼り付け式ケーブル整理クリップを6個まとめたセットです。デスクや作業スペースの配線を見やすく整える用途でお使いいただけます。</p>",
+    `<p>販売価格は${identity.priceJpy.toLocaleString("ja-JP")}円です。購入前にセット内容、設置面、ケーブルとの適合をご確認ください。</p>`,
+    "</section>",
+  ].join("");
+}
+
 /**
  * Rebind the immutable commerce carriers for the already-live Qoo10 cleanup.
  * The browser draft is not authoritative for these values, and the adopted
@@ -143,14 +229,42 @@ export function bindQoo10ExactAdoptedLocalizationArguments(
 export function bindQoo10ExactAdoptedCommerceArguments(
   argumentsValue: UnknownRecord,
 ) {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  const localizedDetailSections = qoo10ExactAdoptedLocalizedDetailSections();
   const params: UnknownRecord = {
     ...recordValue(argumentsValue.params),
-    ItemPrice: String(qoo10ExactLocalizationRecoveryIdentity.priceJpy),
-    ItemQty: String(qoo10ExactLocalizationRecoveryIdentity.quantity),
+    ItemCode: identity.remoteId,
+    SellerCode: identity.sellerSku,
+    SecondSubCat: identity.categoryCode,
+    ItemTitle: identity.title,
+    PromotionName: identity.promotionName,
+    Keyword: identity.sourceKeyword,
+    ProductionPlaceType: "2",
+    ProductionPlace: "CN",
+    AdultYN: "N",
+    RetailPrice: String(identity.priceJpy),
+    ItemPrice: String(identity.priceJpy),
+    ItemQty: String(identity.quantity),
+    ShippingNo: identity.shippingNo,
+    ItemDescription: qoo10ExactAdoptedJapaneseDetailBase(),
   };
   delete params.StandardImage;
   return {
     ...argumentsValue,
+    sellerpilotAssets: {
+      ...recordValue(argumentsValue.sellerpilotAssets),
+      contentMode: "ai_generated",
+      detailAssetMode: "dedicated",
+      detailImageRoles: localizedDetailSections.map((section) => section.imageAsset),
+      detailImageAltTexts: localizedDetailSections.map((section) => section.imageAltText),
+      localizedDetailSections,
+      classification: {
+        displayName: "販売者確認分類: ケーブル整理クリップ",
+        evidence: "販売者が確認した商品情報と承認済み画像に基づく分類です。",
+        verificationStatus: "verified",
+        isHealthFunctionalFood: false,
+      },
+    },
     params,
   };
 }
@@ -298,6 +412,7 @@ function exactRepresentativeImagePreserved(value: string) {
 export function verifyQoo10ExactAdoptedLiveReadback(input: {
   resultObject: unknown;
   expectedDetailImageUrls: readonly string[];
+  expectedDetailHtml: string;
   phase: "prewrite" | "postwrite";
 }) {
   const matches = matchingItems(input.resultObject);
@@ -331,6 +446,10 @@ export function verifyQoo10ExactAdoptedLiveReadback(input: {
     ),
     approvedEightImagesPreserved: currentDetailImageUrls.length === 8
       && currentDetailImageUrls.every((url, index) => url === input.expectedDetailImageUrls[index]),
+    exactBuyerVisibleDetailPreserved: input.phase === "prewrite"
+      ? true
+      : normalizedListingPublicationText(detailHtml)
+          === normalizedListingPublicationText(input.expectedDetailHtml),
     japaneseDetailPreserved: input.phase === "prewrite"
       ? /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(detailHtml)
         && /<[^>]+\blang=["']ja-JP["']/iu.test(detailHtml)

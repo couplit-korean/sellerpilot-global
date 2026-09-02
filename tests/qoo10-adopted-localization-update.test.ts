@@ -4,6 +4,8 @@ import test from "node:test";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import {
   bindQoo10ExactAdoptedCommerceArguments,
+  qoo10ExactAdoptedJapaneseDetailBase,
+  qoo10ExactAdoptedLocalizedDetailSections,
   qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactAdoptedLocalizationArgument,
   qoo10ExactAdoptedLocalizationContract,
@@ -11,12 +13,14 @@ import {
   qoo10ExactLocalizationRecoveryIdentity,
   qoo10ExactLocalizationUpdateArgument,
   qoo10ExactLocalizationUpdateContract,
+  verifyQoo10ExactAdoptedLiveReadback,
 } from "../lib/channels/qoo10-exact-localization-recovery";
 import {
   applyPreparedQoo10Images,
   qoo10RollbackRecoveryPreservesRepresentativeImage,
 } from "../lib/channels/marketplace-images";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { bindMarketplaceArgumentsToApprovedDetailManifest } from "../lib/server-product-detail-manifest";
 
 const identity = qoo10ExactLocalizationRecoveryIdentity;
 const detailImageUrls = Array.from(
@@ -94,11 +98,15 @@ function argumentsValue() {
   };
 }
 
-test("server-owned adopted commerce rebinding preserves price and stock while removing the representative image", () => {
+test("server-owned adopted content uses the approved eight-role Japanese contract", () => {
   const bound = bindQoo10ExactAdoptedCommerceArguments({
     untouched: "preserved",
+    sellerpilotAssets: {
+      detailImageRoles: ["detail-context"],
+      localizedDetailSections: [{ type: "use", body: "short" }],
+    },
     params: {
-      ItemCode: identity.remoteId,
+      ItemCode: "attacker-item",
       ItemPrice: "999999",
       ItemQty: "999",
       StandardImage: "https://attacker.example/replace.jpg",
@@ -106,23 +114,63 @@ test("server-owned adopted commerce rebinding preserves price and stock while re
     },
   });
   const params = bound.params as Record<string, unknown>;
+  const assets = bound.sellerpilotAssets as Record<string, unknown>;
+  const sections = assets.localizedDetailSections as Array<Record<string, unknown>>;
 
   assert.equal(bound.untouched, "preserved");
   assert.equal(params.ItemCode, identity.remoteId);
-  assert.equal(params.ItemDescription, cleanDetail);
+  assert.equal(params.SellerCode, identity.sellerSku);
+  assert.equal(params.SecondSubCat, identity.categoryCode);
+  assert.equal(params.ItemTitle, identity.title);
+  assert.equal(params.RetailPrice, String(identity.priceJpy));
   assert.equal(params.ItemPrice, String(identity.priceJpy));
   assert.equal(params.ItemQty, String(identity.quantity));
+  assert.equal(params.ShippingNo, identity.shippingNo);
+  assert.equal(params.ItemDescription, qoo10ExactAdoptedJapaneseDetailBase());
+  assert.doesNotMatch(String(params.ItemDescription), /<img\b/iu);
   assert.equal(Object.hasOwn(params, "StandardImage"), false);
+  assert.deepEqual(sections, qoo10ExactAdoptedLocalizedDetailSections());
+  assert.deepEqual(sections.map((section) => section.type), [
+    "overview", "feature", "howto", "proof",
+    "contents", "routine", "care", "spec",
+  ]);
+  assert.deepEqual(sections.map((section) => section.imageAsset), [
+    "detail-overview", "detail-feature", "detail-use", "detail-package",
+    "detail-contents", "detail-routine", "detail-care", "detail-dimensions",
+  ]);
+  assert.equal(new Set(sections.map((section) => section.type)).size, 8);
+  assert.equal(new Set(sections.map((section) => section.imageAsset)).size, 8);
+  for (const section of sections) {
+    assert.ok(String(section.heading).length >= 4);
+    assert.ok(String(section.body).length >= 60, String(section.imageAsset));
+    assert.ok(String(section.body).length <= 700, String(section.imageAsset));
+    assert.ok(String(section.buyerQuestion).length >= 8);
+    assert.ok(String(section.evidence).length >= 10);
+    assert.ok(String(section.imageAltText).length >= 1);
+  }
 });
 
-test("the route image-preparation postimage preserves the adopted representative and exact commerce tuple", () => {
-  const routeArguments = argumentsValue();
-  (routeArguments.params as Record<string, unknown>).ItemDescription = [
-    `<div lang="ja-JP"><h1>${identity.title}</h1><p>ケーブルをすっきり整理できます。販売価格は1,871円です。</p></div>`,
-    `<section data-sellerpilot-detail-images="true">${detailImageUrls
-      .map((url) => `<img src="${url}">`)
-      .join("")}</section>`,
-  ].join("");
+test("the manifest-bound postimage preserves the representative and exact commerce tuple", () => {
+  const serverOwned = bindQoo10ExactAdoptedCommerceArguments(argumentsValue());
+  const roles = qoo10ExactAdoptedLocalizedDetailSections()
+    .map((section) => section.imageAsset);
+  const routeArguments = bindMarketplaceArgumentsToApprovedDetailManifest(
+    serverOwned,
+    {
+      version: 1,
+      manifest: {
+        contract: "sellerpilot_detail_image_manifest_v2",
+        algorithm: "sha256",
+        digest: "a".repeat(64),
+        images: roles.map((role, index) => ({
+          role,
+          path: `results/334631fe-0095-4ea8-a20a-16971f6ca71a/claims/eee7b548-62e7-4175-bd54-deb426da6c06/${role}.png`,
+          sourceSha256: String(index + 1).repeat(64).slice(0, 64),
+        })),
+      },
+    },
+    detailImageUrls,
+  );
   const prepared = applyPreparedQoo10Images(
     routeArguments,
     ["https://attacker.example/replace.jpg"],
@@ -173,6 +221,42 @@ test("already-live candidate is the exact adopted published S2 tuple only", () =
       ...candidate,
       [field]: value,
     }), false, field);
+  }
+});
+
+test("postwrite readback accepts only the exact transmitted buyer-visible detail text", () => {
+  const exact = verifyQoo10ExactAdoptedLiveReadback({
+    resultObject: readback(cleanDetail),
+    expectedDetailImageUrls: detailImageUrls,
+    expectedDetailHtml: cleanDetail,
+    phase: "postwrite",
+  });
+  assert.equal(exact.ok, true, JSON.stringify(exact));
+  assert.equal(exact.checks.exactBuyerVisibleDetailPreserved, true);
+
+  for (const [name, detail] of [
+    ["different clean Japanese", cleanDetail.replace(
+      "ケーブルをすっきり整理できます。販売価格は1,871円です。",
+      "承認されていない別の日本語説明です。",
+    )],
+    ["truncated clean Japanese", cleanDetail.replace(
+      "ケーブルをすっきり整理できます。販売価格は1,871円です。",
+      "ケーブルを整理します。",
+    )],
+  ] as const) {
+    const verification = verifyQoo10ExactAdoptedLiveReadback({
+      resultObject: readback(detail),
+      expectedDetailImageUrls: detailImageUrls,
+      expectedDetailHtml: cleanDetail,
+      phase: "postwrite",
+    });
+    assert.equal(
+      verification.checks.approvedEightImagesPreserved,
+      true,
+      name,
+    );
+    assert.equal(verification.checks.exactBuyerVisibleDetailPreserved, false, name);
+    assert.equal(verification.ok, false, name);
   }
 });
 
@@ -284,6 +368,51 @@ test("an ambiguous content response with no clean readback is quarantined for re
     );
     assert.equal(calls.includes("ItemsBasic.UpdateGoods"), false);
     assert.equal(calls.includes("ItemsBasic.EditGoodsStatus"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("a clean but different Japanese readback is quarantined for reconciliation", async () => {
+  const originalFetch = globalThis.fetch;
+  const differentDetail = cleanDetail.replace(
+    "ケーブルをすっきり整理できます。販売価格は1,871円です。",
+    "承認されていない別の日本語説明です。",
+  );
+  let readbacks = 0;
+  globalThis.fetch = async (input) => {
+    const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+    if (method === "ItemsLookup.GetItemDetailInfo") {
+      readbacks += 1;
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: readback(readbacks === 1 ? dirtyDetail : differentDetail),
+      });
+    }
+    assert.equal(method, "ItemsContents.EditGoodsContents");
+    return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.update",
+      payload: { api_key: "private-test-key" },
+      arguments: argumentsValue(),
+      environment: "production",
+    });
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(
+      gatewayJobCompletionStatus(result.operation, result.ok, result.steps),
+      "reconciliation_required",
+    );
+    const postwrite = result.steps.find(
+      (candidate) => candidate.name === "qoo10-exact-adopted-localization-postwrite-readback",
+    );
+    const checks = postwrite?.data.sellerpilotExactAdoptedChecks as
+      | Record<string, unknown>
+      | undefined;
+    assert.equal(checks?.approvedEightImagesPreserved, true);
+    assert.equal(checks?.exactBuyerVisibleDetailPreserved, false);
   } finally {
     globalThis.fetch = originalFetch;
   }
