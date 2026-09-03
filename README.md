@@ -4,6 +4,7 @@ Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBa
 
 - 운영: https://sellerpilot-global.vercel.app
 - 스택: Next.js + Supabase(Auth·Postgres·Vault) + Vercel Production
+- **계정 연결 (GitHub vs Vercel):** [docs/계정연결.md](docs/계정연결.md)
 - **지금 연결·IP·배포 사실:** [docs/현재상태.md](docs/현재상태.md)
 - 문서 색인: [docs/README.md](docs/README.md)
 

@@ -1,6 +1,6 @@
 # 문서 색인
 
-운영 사실의 원장은 [현재상태.md](./현재상태.md)다. 다른 문서와 충돌하면 현재상태를 고친 뒤 이쪽을 맞춘다.
+계정·Git·Vercel이 헷갈리면 [계정연결.md](./계정연결.md)를 먼저 본다. 운영 사실의 원장은 [현재상태.md](./현재상태.md)다.
 
 작업이 끝날 때마다 `.md`를 현재 기준으로 고치고 `integration-aside`에 커밋·푸시한다. 비밀 원문은 넣지 않는다.
 
@@ -8,6 +8,7 @@
 
 | 파일 | 용도 |
 |---|---|
+| [계정연결.md](./계정연결.md) | GitHub Kimchanghee vs Vercel/Supabase couplit.official |
 | [현재상태.md](./현재상태.md) | 연결, IP, Git, 배포, 채널 실측 |
 | [운영_배포_인증_체크리스트.md](./운영_배포_인증_체크리스트.md) | 계정·환경변수·마이그레이션 절차 |
 | [channel-gateway-worker.md](./channel-gateway-worker.md) | 게이트웨이 drain, IP 정책 |
