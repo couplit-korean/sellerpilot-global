@@ -1,6 +1,6 @@
 # SellerPilot 판매채널 API 적용·기능차이 보고
 
-기준일: 2026-08-24
+기준일: 2026-09-04. 실측 원장은 [docs/현재상태.md](./현재상태.md).
 활성 대상: Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBay, Temu
 비활성: Alibaba.com, 1688
 
@@ -13,8 +13,8 @@
 현재 실계정 판정은 **8개 활성 채널 중 상품 등록부터 실제 주문·배송·CS까지 전 과정을 현재 시점에 E2E 통과한 채널은 0개**다. 운영 원장에는 Qoo10·Shopee·Lazada·쿠팡·11번가·네이버·eBay의 상품 등록 성공 이력이 있고, 11번가 주문 읽기도 정상이다. 그러나 배송 쓰기에 사용할 `paid` 또는 `ready_to_ship` 실주문이 0건이며 Lazada Buyer IM은 앱 권한이 없어 거절된다. 과거 성공 이력과 지금 호출 가능한 상태를 구분해서 표시한다.
 
 - Qoo10: 운영 QAPI 키·상품 읽기·주문/문의 수집과 상품 등록 성공. 현재 실주문·문의 0건이라 배송/답변 쓰기 대조 대기
-- Shopee: 운영 OAuth·상품 등록·주문 수집 정상. 현재 주문 0건이며 Seller Chat 통합은 미지원
-- Lazada: 운영 OAuth·상품 등록·주문 수집 정상. 공식 배송 계약의 `GetShipmentProvider → Pack → ReadyToShip` 구현과 계약 테스트는 통과했지만 안전하게 쓸 실주문은 0건이다. Buyer IM은 공식 API가 존재하지만 앱 권한 부족으로 세션 호출 거절
+- Shopee: 2026-09-03 토큰 refresh·shop_info 성공(Couplet Seoul/SG). `orders.list`는 Vercel 동적 IP 미등록 시 `source_ip_undeclared`. Seller Chat 미지원
+- Lazada: 커머스 앱 137451 주문·상품, CS Bot 137571 IM. `/im/session/list` 로컬 성공. 프로덕션은 IM 라우팅 커밋(`faddf78`) 배포 전
 - 쿠팡: 운영 HMAC·상품 등록·주문/문의 수집 정상. 수집된 주문 1건은 취소 상태라 배송 쓰기 대상으로 사용할 수 없음
 - 네이버: 운영 Commerce OAuth·상품 등록·주문/문의 수집 정상. 현재 주문·문의 0건
 - eBay: 운영 User OAuth·상품 등록·주문 수집 정상. Sell REST 공통 메시지함은 미지원

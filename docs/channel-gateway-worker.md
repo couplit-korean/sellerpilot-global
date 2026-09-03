@@ -37,25 +37,17 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 
 ## 고정 egress 차단
 
-쿠팡·스마트스토어·11번가·Temu·Shopee는 Vercel Static IP와 각 개발자센터의 허용 IP가
-실제로 일치할 때만 서버리스 실행을 켠다. Static IP는 유료 기능이므로 사용자
-승인 없이 구매하거나 활성화하지 않는다.
+유료 Vercel Static IP는 사용하지 않는다. 관측된 공인 IP를 각 채널 개발자센터 화이트리스트에 등록한다. 실제 IP 목록은 [docs/현재상태.md](./현재상태.md)를 본다.
 
-네이버 커머스API 공식 FAQ는 내 스토어 애플리케이션에 실제 호출 컴퓨터의
-Outbound IPv4를 등록해야 하며, NAT 환경에서는 NAT 공인 IP를 사용하고
-애플리케이션당 최대 3개까지 등록할 수 있다고 명시한다.
-`GW.IP_NOT_ALLOWED`는 이 등록값과 네이버가 관측한 호출 IP가 다를 때의 정상적인
-fail-closed 응답이다.
+`isEligibleClaim`은 Shopee `oauth.exchange`에만 static-egress attestation을 요구한다. Shopee `diagnostic.test`·`orders.list`·숍 조회는 이 게이트를 통과한다. Shopee `orders.list`는 서버리스에서도 켜지만, Open Platform이 호출 IP를 강제한다. `source_ip_undeclared`면 에러에 나온 IP를 앱 콘솔에 추가한다. Vercel 동적 IP는 바뀐다.
+
+쿠팡·스마트스토어·11번가·Temu는 개발자센터 허용 IP와 실제 송신 IP가 일치할 때만 서버리스 실행을 켠다. 환경변수 `SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`와 Supabase static-egress 정책을 검증된 채널만 켜라는 규칙은 그대로다. 환경변수, DB 정책, attestation 중 하나라도 다르면 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단하며 로컬 worker로 우회하지 않는다.
+
+네이버 커머스API 공식 FAQ는 내 스토어 애플리케이션에 실제 호출 컴퓨터의 Outbound IPv4를 등록해야 하며, NAT 환경에서는 NAT 공인 IP를 사용하고 애플리케이션당 최대 3개까지 등록할 수 있다고 명시한다. `GW.IP_NOT_ALLOWED`는 이 등록값과 네이버가 관측한 호출 IP가 다를 때의 정상적인 fail-closed 응답이다.
 
 - 공식 FAQ: https://github.com/commerce-api-naver/commerce-api/discussions/2291
 
-검증이 끝난 채널만 Production 환경변수
-`SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
-Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation
-중 하나라도 다르면 외부 호출 전에 `STATIC_EGRESS_REQUIRED`로 차단하며 로컬
-worker로 우회하지 않는다. Shopee는 OAuth 토큰 교환부터 같은 게이트를 적용한다.
-특히 Temu는 로컬 Mac 공인 IP 조회, AWS check-IP,
-키체인 allowlist 경로를 사용하지 않으며 Vercel 서버리스 gateway에서만 실행한다.
+특히 Temu는 로컬 Mac 공인 IP 조회, AWS check-IP, 키체인 allowlist 경로를 사용하지 않으며 Vercel 서버리스 gateway에서만 실행한다.
 
 ## 배포 순서
 
