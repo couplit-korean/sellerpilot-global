@@ -3,8 +3,44 @@
 import { AlertTriangle, Check, CircleCheck, CirclePause, Code2, LoaderCircle, PackageCheck, RefreshCw, Rocket, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
-import { elevenstSaleDateRange } from "../lib/channels/elevenst-listing";
+import {
+  elevenstProcessedFoodCategoryId,
+  elevenstProcessedFoodNotificationFields,
+  elevenstProcessedFoodNoticeType,
+  elevenstSaleDateRange,
+} from "../lib/channels/elevenst-listing";
 import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
+import {
+  qoo10ExactAdoptedLiveListingCandidate,
+  qoo10ExactLocalizationLedgerCandidate,
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationRequestCandidate,
+  qoo10ExactReviewedJapaneseDetail,
+} from "../lib/channels/qoo10-exact-localization-identity";
+import {
+  smartstoreExactQaRecoveryCandidate,
+  smartstoreExactQaRecoveryIdentity,
+} from "../lib/channels/smartstore-exact-qa-recovery";
+import {
+  coupangExactQaRecoveryCandidate,
+  coupangExactQaRecoveryIdentity,
+} from "../lib/channels/coupang-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryCandidate,
+  ebayExactExistingQaRecoveryIdentity,
+} from "../lib/channels/ebay-exact-existing-qa-recovery";
+import {
+  elevenstExactExistingPublicationCandidate,
+  elevenstExactExistingPublicationIdentity,
+} from "../lib/channels/elevenst-exact-existing-identity";
+import {
+  lazadaExactExistingPublicationCandidate,
+  lazadaExactExistingPublicationIdentity,
+} from "../lib/channels/lazada-exact-existing-identity";
+import {
+  temuExactExistingUpdateCandidate,
+  temuExactExistingUpdateIdentity,
+} from "../lib/channels/temu-existing-update-shared";
 import {
   marketplaceChannelDetailImageCount,
   marketplaceGeneratedAssetCount,
@@ -31,7 +67,7 @@ import {
   lazadaKrwMyrPricePolicyFromArguments,
   type LazadaKrwMyrRateEvidence,
 } from "../lib/channels/lazada-price-policy";
-import { blockingListingRequirements, inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import { inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
@@ -56,12 +92,14 @@ import { fetchProductDetailData, productDetailDataToHtml } from "./_publishing/p
 import type { ProductDetailData } from "./product-detail-puck";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import {
+  bulkChannelPublicationIntent,
   channelTargetOptionValue,
-  executeChannelWritesSequentially,
+  executeChannelWritesIndependently,
   isPublicationPendingReviewResponse,
   listingMutationGeneration,
   productEditSupportLabel,
   reconcileQueuedChannelResults,
+  summarizeBulkPublicationOutcomes,
   workbenchProductContextMatches,
   type WorkbenchChannelResult,
 } from "./_publishing/workbench-release-safety";
@@ -71,6 +109,14 @@ type CredentialRow = {
   channel: ActiveChannelKey;
   environment: "sandbox" | "production";
   status: string;
+};
+
+type RemoteEditListingAvailability = {
+  listingId: string;
+  channel: ActiveChannelKey;
+  runnable: boolean;
+  mode: string;
+  reason: string;
 };
 
 type Assignment = {
@@ -99,6 +145,138 @@ type Listing = {
   providerStatus?: string | null;
   operationAttemptId?: string | null;
 };
+
+function smartstoreExactQaWorkbenchRecoveryCandidate(
+  productId: string | null,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  return productId === smartstoreExactQaRecoveryIdentity.productId
+    && smartstoreExactQaRecoveryCandidate({
+      channel,
+      listingId: listing?.id,
+      remoteId: listing?.remoteId,
+      status: listing?.status,
+      requestedPublicationIntent: listing?.requestedPublicationIntent,
+      remoteVisibility: listing?.remoteVisibility,
+      providerStatus: listing?.providerStatus,
+      publishedAt: listing?.publishedAt,
+      failureClass: listing?.failureClass,
+    });
+}
+
+export function exactExternalActionWorkbenchRecoveryCandidate(
+  productId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  if (!listing) return false;
+  const reference = {
+    channel,
+    listingId: listing.id,
+    remoteId: listing.remoteId,
+    marketplaceSku: listing.marketplaceSku,
+    status: listing.status,
+    requestedPublicationIntent: listing.requestedPublicationIntent,
+    remoteVisibility: listing.remoteVisibility,
+    providerStatus: listing.providerStatus,
+    publishedAt: listing.publishedAt,
+    failureClass: listing.failureClass,
+  };
+  if (channel === "ebay") {
+    return productId === ebayExactExistingQaRecoveryIdentity.productId
+      && ebayExactExistingQaRecoveryCandidate(reference);
+  }
+  if (channel === "coupang") {
+    return productId === coupangExactQaRecoveryIdentity.productId
+      && coupangExactQaRecoveryCandidate(reference);
+  }
+  if (channel === "elevenst") {
+    return productId === elevenstExactExistingPublicationIdentity.productId
+      && elevenstExactExistingPublicationCandidate(reference);
+  }
+  if (channel === "lazada") {
+    return productId === lazadaExactExistingPublicationIdentity.productId
+      && lazadaExactExistingPublicationCandidate(reference);
+  }
+  return false;
+}
+
+function qoo10ExactLocalizationListingCandidate(
+  productId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  if (qoo10ExactAdoptedLiveListingCandidate({
+    credentialId: qoo10ExactLocalizationRecoveryIdentity.credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+    providerStatus: listing?.providerStatus,
+    publishedAt: listing?.publishedAt,
+  })) return true;
+  const unresolvedPartialEffect = qoo10ExactLocalizationLedgerCandidate({
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+  });
+  return Boolean(unresolvedPartialEffect
+    && listing?.failureClass !== "external_action"
+    && listing?.remoteVisibility !== "unknown");
+}
+
+function qoo10ExactLocalizationWriteCandidate(
+  productId: string | null | undefined,
+  credentialId: string | null | undefined,
+  channel: ActiveChannelKey,
+  listing: Listing | null | undefined,
+) {
+  if (qoo10ExactAdoptedLiveListingCandidate({
+    credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+    providerStatus: listing?.providerStatus,
+    publishedAt: listing?.publishedAt,
+  })) return true;
+  const unresolvedPartialEffect = qoo10ExactLocalizationRequestCandidate({
+    credentialId,
+    channel,
+    productId,
+    listingId: listing?.id,
+    remoteId: listing?.remoteId,
+    market: listing?.market,
+    targetId: listing?.targetId,
+    status: listing?.status,
+    failureClass: listing?.failureClass,
+    requestedPublicationIntent: listing?.requestedPublicationIntent,
+    remoteVisibility: listing?.remoteVisibility,
+  });
+  return Boolean(unresolvedPartialEffect
+    && listing?.failureClass !== "external_action"
+    && listing?.remoteVisibility !== "unknown");
+}
 
 type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
 const ebayMarketplaceTargets: ChannelTarget[] = [
@@ -195,7 +373,7 @@ function replaceLegacyQoo10ListingReferences(
   };
 }
 const publishContextRequestTimeoutMs = 30_000;
-const publicationSelectableChannelKeys = activeChannelKeys.filter((channel) => channel !== "temu");
+const publicationSelectableChannelKeys = activeChannelKeys;
 type ManualFields = {
   productName: string;
   description: string;
@@ -270,7 +448,8 @@ type ChannelOperationResponse = {
 type ConfirmationRequest =
   | { kind: "bulk" }
   | { kind: "channel"; channel: ActiveChannelKey }
-  | { kind: "qoo10-stop"; listing: Listing };
+  | { kind: "qoo10-stop"; listing: Listing }
+  | { kind: "temu-activate"; listing: Listing };
 
 const productEditFieldLabels = {
   productName: "상품명",
@@ -351,11 +530,22 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const product = context.product;
   const listingMarket = target?.marketCode ?? ({ qoo10: "JP", coupang: "KR", elevenst: "KR", smartstore: "KR", ebay: "US", temu: "KR", shopee: "SG", lazada: "MY" } as const)[channel];
   const localized = context.localizedListings?.find((item) => item.channel === channel && item.market === listingMarket);
-  const coreContent = listingCoreContentForOperation({
-    operation,
-    central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
-    localized,
-  });
+  const exactEbayProviderCopyUpdate = channel === "ebay"
+    && operation === "listing.update"
+    && exactExternalActionWorkbenchRecoveryCandidate(product.id, channel, existingListing);
+  const coreContent = exactEbayProviderCopyUpdate
+    ? { title: "", shortDescription: "", description: "" }
+    : listingCoreContentForOperation({
+        operation,
+        central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
+        localized,
+        allowReviewedQoo10LegacyRepair: channel === "qoo10"
+          && Boolean(localized?.title)
+          && repairLegacyQoo10JapaneseFallbackTitle(
+            localized?.title ?? "",
+            context.manualFields.productName,
+          ) !== localized?.title,
+      });
   const manual = context.manualFields;
   const { title, description, shortDescription } = coreContent;
   const repairedQoo10Title = channel === "qoo10"
@@ -439,6 +629,17 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const marketSku = target ? `${manual.sellerSku || product.sku}-${target.marketCode}`.slice(0, 100) : manual.sellerSku || product.sku;
   if (channel === "qoo10") {
     const productionPlace = qoo10ProductionPlaceFields(manual.countryOfOrigin);
+    const exactLocalizationUpdate = qoo10ExactLocalizationListingCandidate(
+      product.id,
+      channel,
+      existingListing,
+    ) || (
+      product.id === qoo10ExactLocalizationRecoveryIdentity.productId
+      && existingListing?.id === qoo10ExactLocalizationRecoveryIdentity.listingId
+      && existingListing.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
+      && qoo10RollbackListingUpdateCandidate(channel, existingListing)
+    );
+    const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
     return {
       sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
       params: {
@@ -447,27 +648,38 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: marketplaceTitle,
-        PromotionName: marketplaceShortDescription.slice(0, 20),
-        SellerCode: qoo10SellerCode(product.sku, existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined),
+        ItemTitle: exactLocalizationUpdate ? exactIdentity.title : marketplaceTitle,
+        PromotionName: exactLocalizationUpdate
+          ? exactIdentity.promotionName
+          : marketplaceShortDescription.slice(0, 20),
+        SellerCode: exactLocalizationUpdate
+          ? exactIdentity.sellerSku
+          : qoo10SellerCode(
+              product.sku,
+              existingListing?.status !== "published" ? existingListing?.remoteId ?? undefined : undefined,
+            ),
         IndustrialCode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "",
         IndustrialCodeType: manual.gtinStatus === "HAS_GTIN" ? "J" : "",
         ...productionPlace,
         AdultYN: "N",
         ContactTel: "",
         StandardImage: sourceImage,
-        ItemDescription: richDescription,
+        ItemDescription: exactLocalizationUpdate
+          ? qoo10ExactReviewedJapaneseDetail(detailImageUrls)
+          : richDescription,
         AdditionalOption: "",
         ItemType: "",
-        RetailPrice: String(channelPrice),
-        ItemPrice: String(channelPrice),
+        RetailPrice: String(exactLocalizationUpdate ? exactIdentity.priceJpy : channelPrice),
+        ItemPrice: String(exactLocalizationUpdate ? exactIdentity.priceJpy : channelPrice),
         TaxRate: "S",
-        ItemQty: String(quantity),
+        ItemQty: String(exactLocalizationUpdate ? exactIdentity.quantity : quantity),
         ExpireDate: qoo10ExpiryDate(),
-        ShippingNo: "0",
+        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : "0",
         AvailableDateType: "0",
         AvailableDateValue: "3",
-        Keyword: seoKeywords.join(",").slice(0, 300),
+        Keyword: exactLocalizationUpdate
+          ? exactIdentity.sourceKeyword
+          : seoKeywords.join(",").slice(0, 300),
       },
     };
   }
@@ -591,17 +803,27 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     };
   }
   if (channel === "elevenst") {
-    // This exact non-regulated contract has a successful create/readback for
-    // the official cable-organizer leaf. Other categories remain intentionally
-    // incomplete until their own category metadata is verified.
     const verifiedCableOrganizerContract = assignment?.categoryId === "1341821";
-    const notificationItems = verifiedCableOrganizerContract ? [
-      { code: "11800", name: title.slice(0, 100) },
-      { code: "11905", name: manual.manufacturer },
-      { code: "23760413", name: "11번가 판매자 문의 이용" },
-      { code: "23759100", name: manual.countryOfOrigin },
-      { code: "23756033", name: "해당사항 없음" },
-    ] : [];
+    const verifiedProcessedFoodContract = assignment?.categoryId === elevenstProcessedFoodCategoryId;
+    const verifiedNoCertificationContract = verifiedCableOrganizerContract || verifiedProcessedFoodContract;
+    const explicitNotificationValue = (code: string) => assignment?.providedAttributes[`notification:${code}`]?.trim() ?? "";
+    const notificationItems = verifiedCableOrganizerContract
+      ? [
+          { code: "11800", name: title.slice(0, 100) },
+          { code: "11905", name: manual.manufacturer },
+          { code: "23760413", name: "11번가 판매자 문의 이용" },
+          { code: "23759100", name: manual.countryOfOrigin },
+          { code: "23756033", name: "해당사항 없음" },
+        ]
+      : verifiedProcessedFoodContract
+        ? elevenstProcessedFoodNotificationFields.map((field) => ({
+            code: field.code,
+            // The product name is already confirmed in the intake form. Every
+            // other food notice value must be entered explicitly; in particular
+            // expiry, nutrition, GMO, and customer-service phone are never guessed.
+            name: explicitNotificationValue(field.code) || (field.code === "176317774" ? title.slice(0, 100) : ""),
+          }))
+        : [];
     const saleDateRange = elevenstSaleDateRange();
     return {
       sellerpilotAssets,
@@ -624,9 +846,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         prdImage03: galleryImageUrls[2] ?? "",
         prdImage04: galleryImageUrls[3] ?? "",
         htmlDetail: puckDetailHtml || richDescription,
-        ProductCertGroup: verifiedCableOrganizerContract ? [
-          // This verified non-regulated category has no certificate. Sending a made-up
-          // certTypeCd makes 11st validate it as a real certificate and reject it.
+        ProductCertGroup: verifiedNoCertificationContract ? [
+          // 11st reports certInfoRequiredYn=N for both verified leaves. Sending a
+          // made-up certTypeCd makes 11st validate it as a real certificate.
           { crtfGrpTypCd: "01", crtfGrpObjClfCd: "03" },
           { crtfGrpTypCd: "02", crtfGrpObjClfCd: "03" },
           { crtfGrpTypCd: "03", crtfGrpObjClfCd: "03" },
@@ -645,7 +867,10 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         exchDlvCst: "0",
         asDetail: "11번가 판매자 문의를 이용해 주세요.",
         rtngExchDetail: "11번가 반품·교환 정책을 확인해 주세요.",
-        ProductNotification: { type: verifiedCableOrganizerContract ? "891045" : "", item: notificationItems },
+        ProductNotification: {
+          type: verifiedCableOrganizerContract ? "891045" : verifiedProcessedFoodContract ? elevenstProcessedFoodNoticeType : "",
+          item: notificationItems,
+        },
       },
     };
   }
@@ -679,7 +904,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         goodsBasic: {
           externalGoodsId,
           goodsName: title.slice(0, 500),
-          extCatName: (assignment?.categoryPath.join(" > ") || manual.categoryHint).slice(0, 500),
+          // Temu V3 accepts a leaf category ID in extCatName. A path/name can
+          // fall back to an algorithmic recommendation, which is not exact
+          // enough for the one-product QA release.
+          extCatName: assignment?.categoryId ?? "",
+          costTemplate: "",
           goodsDesc: temuPlainDescription,
           goodsCarouselImage: galleryImageUrls.slice(0, 10),
           detailImage: detailImageUrls.slice(0, 10),
@@ -701,6 +930,25 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           variations: [{ name: "Type", value: "Standard" }],
           ...(manual.gtinStatus === "HAS_GTIN" && manual.gtin ? { barCode: { barCodeType: "GTIN-14", barCodeId: [manual.gtin] } } : {}),
         }],
+      },
+    };
+  }
+  if (exactEbayProviderCopyUpdate) {
+    return {
+      sellerpilotAssets,
+      inventoryItem: {
+        availability: { shipToLocationAvailability: { quantity } },
+        condition: manual.condition,
+        product: { imageUrls: galleryImageUrls },
+      },
+      offer: {
+        availableQuantity: quantity,
+        pricingSummary: {
+          price: {
+            value: String(channelPrice),
+            currency: target?.currency ?? ebayExactExistingQaRecoveryIdentity.currency,
+          },
+        },
       },
     };
   }
@@ -761,9 +1009,62 @@ export function missingNativeValues(
   if (channel === "coupang") return [...assetRequirements, json.includes('"displayCategoryCode":0') ? "displayCategoryCode" : "", !json.includes('"vendorPath":"https://') ? "public product image" : ""].filter(Boolean);
   if (channel === "elevenst") return [...assetRequirements, !json.includes('"prdImage01":"https://') ? "public product image" : "", json.includes('"dispCtgrNo":""') ? "dispCtgrNo" : "", !json.includes('"ProductNotification"') ? "ProductNotification" : ""].filter(Boolean);
   if (channel === "smartstore") return [...assetRequirements, !Array.isArray(value.imageUrls) || value.imageUrls.length === 0 ? "source imageUrls" : "", !json.includes('"originAreaCode":"04"') ? "originAreaInfo" : ""].filter(Boolean);
-  if (channel === "temu") return [...assetRequirements, json.includes('"skuList":[]') ? "skuList" : "", json.includes('"images":[]') ? "images" : "", json.includes('"externalGoodsId":""') ? "externalGoodsId" : ""].filter(Boolean);
+  if (channel === "temu") return [
+    ...assetRequirements,
+    json.includes('"skuList":[]') ? "skuList" : "",
+    json.includes('"images":[]') ? "images" : "",
+    json.includes('"externalGoodsId":""') ? "externalGoodsId" : "",
+    json.includes('"extCatName":""') ? "Temu leaf category ID" : "",
+    json.includes('"costTemplate":""') ? "Temu shipping template" : "",
+  ].filter(Boolean);
   if (operation === "listing.update") return assetRequirements;
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
+}
+
+export function inspectWorkbenchListingDraft(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update" = "listing.create",
+  recoveryContext?: {
+    productId: string | null | undefined;
+    listing: Listing | null | undefined;
+  },
+) {
+  const requirements = inspectListingDraft(channel, draft, operation);
+  const exactEbayProviderCopyUpdate = operation === "listing.update"
+    && exactExternalActionWorkbenchRecoveryCandidate(
+      recoveryContext?.productId,
+      channel,
+      recoveryContext?.listing,
+    );
+  if (channel !== "ebay" || !exactEbayProviderCopyUpdate) {
+    return requirements;
+  }
+  return requirements.map((requirement) => (
+    requirement.key === "title" || requirement.key === "description"
+      ? {
+          ...requirement,
+          source: "eBay 공급자 원문",
+          status: "runtime" as const,
+          help: "브라우저 입력을 받지 않고 서버가 exact offer·SKU·listing을 재검증한 뒤 현재 eBay 원문을 보존합니다.",
+        }
+      : requirement
+  ));
+}
+
+function blockingWorkbenchListingRequirements(
+  channel: ActiveChannelKey,
+  draft: Record<string, unknown>,
+  operation: "listing.create" | "listing.update",
+  productId: string | null | undefined,
+  listing: Listing | null | undefined,
+) {
+  return inspectWorkbenchListingDraft(
+    channel,
+    draft,
+    operation,
+    { productId, listing },
+  ).filter((item) => item.status === "manual");
 }
 
 function parseDraft(value: string | undefined) {
@@ -821,11 +1122,192 @@ function lazadaMyrRateFromSnapshot(value: unknown): LazadaKrwMyrRateEvidence | n
   };
 }
 
-function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number, lazadaMyrRate?: LazadaKrwMyrRateEvidence | null) {
-  return Object.fromEntries(activeChannelKeys.map((channel) => [
-    channel,
-    JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2),
-  ]));
+export function buildDraftMap(context: PublishContext, price: number, quantity: number, targets: Partial<Record<ActiveChannelKey, ChannelTarget>>, packageFields: PackageFields, globalBaseUsdPrice: number, lazadaMyrRate?: LazadaKrwMyrRateEvidence | null) {
+  return Object.fromEntries(activeChannelKeys.map((channel) => {
+    try {
+      return [
+        channel,
+        JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2),
+      ];
+    } catch {
+      // A localization or provider-contract failure belongs to that channel.
+      // Preserve every unrelated draft while keeping the failed one blocked by
+      // the existing required-field checks.
+      return [channel, "{}"];
+    }
+  }));
+}
+
+export function buildSynchronizedDraftMap(
+  context: PublishContext,
+  currentDrafts: Partial<Record<ActiveChannelKey, string>>,
+  price: number,
+  quantity: number,
+  targets: Partial<Record<ActiveChannelKey, ChannelTarget>>,
+  packageFields: PackageFields,
+  globalBaseUsdPrice: number,
+  lazadaMyrRate?: LazadaKrwMyrRateEvidence | null,
+) {
+  return Object.fromEntries(activeChannelKeys.map((channel) => {
+    const currentText = currentDrafts[channel];
+    const currentDraft = parseDraft(currentText);
+    if (currentText && !currentDraft) return [channel, currentText];
+    try {
+      const target = targets[channel];
+      const listing = context.listings.find((item) => item.channel === channel
+        && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const operation = listingWriteOperation(listing);
+      let nextDraft: Record<string, unknown> = buildChannelArguments(
+        channel,
+        context,
+        price,
+        quantity,
+        target,
+        packageFields,
+        globalBaseUsdPrice,
+        lazadaMyrRate,
+      );
+      if (currentDraft) {
+        for (const requirement of inspectWorkbenchListingDraft(
+          channel,
+          nextDraft,
+          operation,
+          { productId: context.product.id, listing },
+        )) {
+          if (!requirement.manualPath) continue;
+          nextDraft = setListingDraftValue(
+            nextDraft,
+            requirement.manualPath,
+            listingDraftValue(currentDraft, requirement.manualPath),
+          );
+        }
+      }
+      return [channel, JSON.stringify(nextDraft, null, 2)];
+    } catch {
+      // Keep a hand-edited or previously valid channel draft intact when one
+      // provider's localization/contract build fails. The normal validation
+      // fence will continue to block that channel without losing user input.
+      return [channel, currentText ?? "{}"];
+    }
+  }));
+}
+
+type ChannelConfirmationDetails = {
+  currency: string;
+  market: string;
+  price: number;
+  sku: string;
+  stock: number;
+};
+
+const fallbackChannelMarkets: Record<ActiveChannelKey, string> = {
+  qoo10: "JP",
+  coupang: "KR",
+  elevenst: "KR",
+  smartstore: "KR",
+  ebay: "US",
+  temu: "KR",
+  shopee: "SG",
+  lazada: "MY",
+};
+
+function draftValueAt(value: unknown, path: Array<string | number>) {
+  return path.reduce<unknown>((current, part) => {
+    if (!current || typeof current !== "object") return undefined;
+    return (current as Record<string | number, unknown>)[part];
+  }, value);
+}
+
+function confirmationDetails(
+  channel: ActiveChannelKey,
+  context: PublishContext,
+  draft: Record<string, unknown> | null,
+  target: ChannelTarget | undefined,
+  listing: Listing | null | undefined,
+  sourcePrice: number,
+  sourceStock: number,
+  globalBaseUsdPrice: number,
+): ChannelConfirmationDetails {
+  const market = target?.marketCode ?? listing?.market ?? fallbackChannelMarkets[channel];
+  const baseSku = context.manualFields.sellerSku || context.product.sku;
+  const fallbackSku = target ? `${baseSku}-${target.marketCode}`.slice(0, 100) : baseSku;
+  const fallbackCurrency = marketplaceListingCurrency(channel, target?.currency);
+  const fallbackPrice = marketplaceListingPrice(channel, sourcePrice, {
+    globalBaseUsdPrice,
+    targetCurrency: target?.currency,
+  });
+  const numeric = (path: Array<string | number>, fallback: number) => {
+    const value = Number(draftValueAt(draft, path));
+    return Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const text = (path: Array<string | number>, fallback: string) => {
+    const value = String(draftValueAt(draft, path) ?? "").trim();
+    return value || fallback;
+  };
+  if (channel === "qoo10") return {
+    market,
+    currency: "JPY",
+    price: numeric(["params", "ItemPrice"], fallbackPrice),
+    stock: numeric(["params", "ItemQty"], sourceStock),
+    sku: text(["params", "SellerCode"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "shopee") return {
+    market,
+    currency: target?.currency ?? fallbackCurrency,
+    price: numeric(["publish", "item", "original_price"], fallbackPrice),
+    stock: numeric(["publish", "item", "normal_stock"], sourceStock),
+    sku: text(["publish", "item", "item_sku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "lazada") return {
+    market,
+    currency: target?.currency ?? fallbackCurrency,
+    price: numeric(["request", "Request", "Product", "Skus", "Sku", 0, "price"], fallbackPrice),
+    stock: numeric(["request", "Request", "Product", "Skus", "Sku", 0, "quantity"], sourceStock),
+    sku: text(["request", "Request", "Product", "Skus", "Sku", 0, "SellerSku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "coupang") return {
+    market,
+    currency: "KRW",
+    price: numeric(["body", "items", 0, "salePrice"], fallbackPrice),
+    stock: numeric(["body", "items", 0, "maximumBuyCount"], sourceStock),
+    sku: text(["body", "items", 0, "externalVendorSku"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "elevenst") return {
+    market,
+    currency: "KRW",
+    price: numeric(["product", "selPrc"], fallbackPrice),
+    stock: numeric(["product", "prdSelQty"], sourceStock),
+    sku: text(["product", "sellerPrdCd"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "smartstore") return {
+    market,
+    currency: "KRW",
+    price: numeric(["body", "originProduct", "salePrice"], fallbackPrice),
+    stock: numeric(["body", "originProduct", "stockQuantity"], sourceStock),
+    sku: text(["body", "originProduct", "detailAttribute", "sellerCodeInfo", "sellerManagementCode"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  if (channel === "temu") return {
+    market,
+    currency: text(["body", "skuList", 0, "price", "basePrice", "currency"], fallbackCurrency),
+    price: numeric(["body", "skuList", 0, "price", "basePrice", "amount"], fallbackPrice),
+    stock: numeric(["body", "skuList", 0, "quantity"], sourceStock),
+    sku: text(["body", "skuList", 0, "externalSkuId"], listing?.marketplaceSku ?? fallbackSku),
+  };
+  return {
+    market,
+    currency: text(["offer", "pricingSummary", "price", "currency"], fallbackCurrency),
+    price: numeric(["offer", "pricingSummary", "price", "value"], fallbackPrice),
+    stock: numeric(["offer", "availableQuantity"], sourceStock),
+    sku: text(["sku"], text(["offer", "sku"], listing?.marketplaceSku ?? fallbackSku)),
+  };
+}
+
+function formattedMarketplacePrice(value: number, currency: string) {
+  const decimalDigits = ["KRW", "JPY", "VND", "IDR"].includes(currency.toUpperCase()) ? 0 : 2;
+  return `${value.toLocaleString("en-US", {
+    minimumFractionDigits: decimalDigits,
+    maximumFractionDigits: decimalDigits,
+  })} ${currency}`;
 }
 
 type ProductPublishWorkbenchProps = {
@@ -843,6 +1325,9 @@ export function ProductPublishWorkbench(props: ProductPublishWorkbenchProps) {
 function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVersion, notify, onChanged }: ProductPublishWorkbenchProps) {
   const [context, setContext] = useState<PublishContext | null>(null);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
+  const [remoteEditAvailability, setRemoteEditAvailability] = useState<
+    Record<string, RemoteEditListingAvailability>
+  >({});
   const [drafts, setDrafts] = useState<Partial<Record<ActiveChannelKey, string>>>({});
   const [results, setResults] = useState<Partial<Record<ActiveChannelKey, ChannelResult>>>({});
   const [availableTargets, setAvailableTargets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", ChannelTarget[]>>>({});
@@ -858,6 +1343,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [bulkConfirming, setBulkConfirming] = useState(false);
   const [confirmingChannel, setConfirmingChannel] = useState<ActiveChannelKey | null>(null);
   const [qoo10StopConfirming, setQoo10StopConfirming] = useState<Listing | null>(null);
+  const [temuActivateConfirming, setTemuActivateConfirming] = useState<Listing | null>(null);
   const priceRef = useRef(price);
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const lazadaMyrRateRef = useRef<LazadaKrwMyrRateEvidence | null>(lazadaMyrRate);
@@ -871,7 +1357,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const writeRequestControllersRef = useRef(new Set<AbortController>());
   const mutationGenerationRef = useRef(new Map<string, string>());
   const mountedRef = useRef(true);
-  const confirmationOpen = bulkConfirming || confirmingChannel !== null || qoo10StopConfirming !== null;
+  const confirmationOpen = bulkConfirming
+    || confirmingChannel !== null
+    || qoo10StopConfirming !== null
+    || temuActivateConfirming !== null;
   const centralEditFieldSupport = useMemo(() => centralProductEditFieldSupport(), []);
   const marketplaceThumbnailCount = context?.generatedImages.filter((item) => (item.id === "square" || item.id === "hero") && item.url).length ?? 0;
   const dedicatedDetailImageCount = context?.generatedImages.filter((item) => item.id.startsWith("detail-") && item.url).length ?? 0;
@@ -911,6 +1400,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     setBulkConfirming(false);
     setConfirmingChannel(null);
     setQoo10StopConfirming(null);
+    setTemuActivateConfirming(null);
     const opener = confirmationOpenerRef.current;
     confirmationOpenerRef.current = null;
     window.requestAnimationFrame(() => {
@@ -923,6 +1413,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     setBulkConfirming(request.kind === "bulk");
     setConfirmingChannel(request.kind === "channel" ? request.channel : null);
     setQoo10StopConfirming(request.kind === "qoo10-stop" ? request.listing : null);
+    setTemuActivateConfirming(request.kind === "temu-activate" ? request.listing : null);
   }, []);
 
   useEffect(() => {
@@ -950,6 +1441,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     if (!productId) {
       loadRequestRef.current = null;
       setContext(null);
+      setRemoteEditAvailability({});
       setLoading(false);
       return;
     }
@@ -1006,6 +1498,71 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const nextLazadaMyrRate = exchangeRatesResponse.ok
         ? lazadaMyrRateFromSnapshot(exchangeRatesPayload)
         : null;
+      const credentialRows = Array.isArray(credentialsResponse.data)
+        ? credentialsResponse.data as CredentialRow[]
+        : [];
+      const nextRemoteEditAvailability: Record<string, RemoteEditListingAvailability> = {};
+      const exactSmartstoreListing = nextPayload.listings.find((listing) => (
+        smartstoreExactQaWorkbenchRecoveryCandidate(
+          requestedProductId,
+          "smartstore",
+          listing,
+        )
+      ));
+      if (exactSmartstoreListing) {
+        const exactCredential = credentialRows.find((credential) => (
+          credential.id === smartstoreExactQaRecoveryIdentity.credentialId
+            && credential.channel === "smartstore"
+            && credential.environment === "production"
+            && credential.status === "active"
+        ));
+        try {
+          const readinessUrl = new URL(
+            `/api/admin/products/${requestedProductId}/remote-edit`,
+            window.location.origin,
+          );
+          if (exactCredential) {
+            readinessUrl.searchParams.set("credentialId", exactCredential.id);
+          }
+          const readinessResponse = await waitForAbortablePromise(fetch(readinessUrl, {
+            headers: { authorization: `Bearer ${accessToken}` },
+            cache: "no-store",
+            signal: bounded.signal,
+          }), bounded.signal);
+          const readinessPayload = await waitForAbortablePromise(
+            readinessResponse.json().catch(() => ({ listings: [] })),
+            bounded.signal,
+          ) as { listings?: RemoteEditListingAvailability[] };
+          const exactReadiness = Array.isArray(readinessPayload.listings)
+            ? readinessPayload.listings.find((item) => (
+              item.listingId === exactSmartstoreListing.id
+                && item.channel === "smartstore"
+                && typeof item.runnable === "boolean"
+                && typeof item.mode === "string"
+                && typeof item.reason === "string"
+            ))
+            : null;
+          nextRemoteEditAvailability[exactSmartstoreListing.id] = readinessResponse.ok
+              && exactReadiness
+            ? exactReadiness
+            : {
+                listingId: exactSmartstoreListing.id,
+                channel: "smartstore",
+                runnable: false,
+                mode: "smartstore_exact_qa_readiness_unavailable",
+                reason: "스마트스토어 exact 실행 준비 상태를 서버에서 확인하지 못해 원격 반영을 차단했습니다.",
+              };
+        } catch (error) {
+          if (bounded.signal.aborted) throw error;
+          nextRemoteEditAvailability[exactSmartstoreListing.id] = {
+            listingId: exactSmartstoreListing.id,
+            channel: "smartstore",
+            runnable: false,
+            mode: "smartstore_exact_qa_readiness_unavailable",
+            reason: "스마트스토어 exact 실행 준비 상태 조회가 실패해 원격 반영을 차단했습니다.",
+          };
+        }
+      }
       const initialTargets: Partial<Record<ActiveChannelKey, ChannelTarget>> = { shopee: shopeeTargets[0], lazada: lazadaTargets[0], ebay: ebayMarketplaceTargets[0] };
       const manual = nextPayload.manualFields;
       const initialPrice = manual.sellingPrice;
@@ -1026,7 +1583,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         setGlobalBaseUsdPrice(initialPrice);
       }
       setContext(nextPayload);
-      setCredentials(Array.isArray(credentialsResponse.data) ? credentialsResponse.data as CredentialRow[] : []);
+      setCredentials(credentialRows);
+      setRemoteEditAvailability(nextRemoteEditAvailability);
       setAvailableTargets({ shopee: shopeeTargets, lazada: lazadaTargets, ebay: ebayMarketplaceTargets });
       setSelectedTargets(initialTargets);
       setDrafts(buildDraftMap(nextPayload, initialPrice, initialQuantity, initialTargets, initialPackage, manual.currency === "USD" ? initialPrice : globalBaseUsdPriceRef.current, nextLazadaMyrRate));
@@ -1118,21 +1676,50 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     };
   }, [fetchQueuedListings, productId, queuedResultSignature]);
 
-  const activeCredentials = useMemo(() => new Map(
-    credentials
-      .filter((item) => item.status === "active" && item.environment === "production")
-      .map((item) => [item.channel, item]),
-  ), [credentials]);
+  const activeCredentials = useMemo(() => {
+    const active = credentials.filter((item) => (
+      item.status === "active" && item.environment === "production"
+    ));
+    const byChannel = new Map(active.map((item) => [item.channel, item]));
+    const exactSmartstoreCredential = active.find((item) => (
+      item.channel === "smartstore"
+        && item.id === smartstoreExactQaRecoveryIdentity.credentialId
+    ));
+    if (exactSmartstoreCredential) {
+      byChannel.set("smartstore", exactSmartstoreCredential);
+    }
+    return byChannel;
+  }, [credentials]);
   const visibleChannels = useMemo(
     () => publicationSelectableChannelKeys.filter((channel) => selectedChannels.includes(channel)),
     [selectedChannels],
   );
 
+  const synchronizeCommonDrafts = (
+    nextContext: PublishContext,
+    nextPrice = priceRef.current,
+    nextQuantity = quantityRef.current,
+    nextTargets = selectedTargets,
+    nextPackageFields = packageFieldsRef.current,
+    nextGlobalBaseUsdPrice = globalBaseUsdPriceRef.current,
+  ) => {
+    setDrafts((current) => buildSynchronizedDraftMap(
+      nextContext,
+      current,
+      nextPrice,
+      nextQuantity,
+      nextTargets,
+      nextPackageFields,
+      nextGlobalBaseUsdPrice,
+      lazadaMyrRateRef.current,
+    ));
+  };
+
   const updateProductFact = (key: "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents", value: string) => {
     if (!context) return;
     const nextContext = { ...context, manualFields: { ...context.manualFields, [key]: value } };
     setContext(nextContext);
-    setDrafts(buildDraftMap(nextContext, priceRef.current, quantityRef.current, selectedTargets, packageFieldsRef.current, globalBaseUsdPriceRef.current, lazadaMyrRateRef.current));
+    synchronizeCommonDrafts(nextContext);
   };
 
   const updateManualDraftField = (channel: ActiveChannelKey, path: string[], value: string) => {
@@ -1144,11 +1731,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }));
   };
 
-  const executeChannel = async (channel: ActiveChannelKey, options: { skipConfirm?: boolean; accessToken?: string; deferRefresh?: boolean } = {}) => {
-    if (channel === "temu") {
-      notify("Temu 상품 게시 상태를 독립적으로 재조회할 수 있을 때까지 자동 등록을 차단합니다.");
-      return false;
-    }
+  const executeChannel = async (channel: ActiveChannelKey, options: {
+    skipConfirm?: boolean;
+    accessToken?: string;
+    deferRefresh?: boolean;
+    publicationIntent?: "safe_test" | "live";
+  } = {}) => {
     if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
       notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
       return false;
@@ -1167,8 +1755,28 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return false;
     }
     const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+    const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+      productId,
+      channel,
+      listing,
+    );
     const recoverableQoo10RollbackUpdate = qoo10RollbackListingUpdateCandidate(channel, listing);
-    if (listing?.failureClass === "external_action" && !recoverableEbayUpdate) {
+    const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+      productId,
+      channel,
+      listing,
+    );
+    const exactQoo10LocalizationUpdate = qoo10ExactLocalizationWriteCandidate(
+      productId,
+      credential?.id,
+      channel,
+      listing,
+    );
+    if (listing?.failureClass === "external_action"
+        && !recoverableEbayUpdate
+        && !recoverableExactExternalActionUpdate
+        && !recoverableSmartstoreUpdate
+        && !exactQoo10LocalizationUpdate) {
       notify(`${channelCatalog[channel].name} 원격 상태를 수동 확인하기 전에는 새 상품 작업을 실행할 수 없습니다.`);
       return false;
     }
@@ -1193,7 +1801,13 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     const missing = [
       ...missingNativeValues(channel, channelArguments, operation),
-      ...blockingListingRequirements(channel, channelArguments, operation).map((item) => item.label),
+      ...blockingWorkbenchListingRequirements(
+        channel,
+        channelArguments,
+        operation,
+        productId,
+        listing,
+      ).map((item) => item.label),
     ].filter((value, index, values) => values.indexOf(value) === index);
     if (missing.length) {
       notify(`${channelCatalog[channel].name} 필수값 보완: ${missing.join(", ")}`);
@@ -1202,7 +1816,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     if (operation === "listing.update") {
       if (!listing) return false;
       try {
-        channelArguments = prepareListingUpdateArguments(channel, channelArguments, listing);
+        channelArguments = prepareListingUpdateArguments(
+          channel,
+          channelArguments,
+          { ...listing, listingId: listing.id },
+          exactQoo10LocalizationUpdate
+            ? { qoo10ExactLocalizationProductId: productId }
+            : undefined,
+        );
       } catch {
         notify(recoverableQoo10RollbackUpdate
           ? "Qoo10 롤백 원격 ID와 판매중지 상태를 확인하지 못해 복구 수정을 차단했습니다."
@@ -1234,7 +1855,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     const retryGeneration = listingMutationGeneration(listing, mutationGenerationRef.current.get(mutationScope));
     mutationGenerationRef.current.set(mutationScope, retryGeneration);
     const publicationIntent = operation === "listing.create"
-      ? "live" as const
+      ? (options.publicationIntent ?? "live")
       : listing?.requestedPublicationIntent;
     const runningResult: ChannelResult = {
       phase: "running",
@@ -1258,7 +1879,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         price: operationPrice,
         retryGeneration,
       };
-      const response = operation === "listing.update" && listing
+      const response = operation === "listing.update"
+          && listing
+          && !exactQoo10LocalizationUpdate
         ? await waitForAbortablePromise(fetch(`/api/admin/products/${requestedProductId}/remote-edit`, {
             method: "POST",
             headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
@@ -1280,10 +1903,13 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
               credentialId: credential.id,
               channel,
               operation,
-              publicationIntent: "live",
+              publicationIntent,
               idempotencyKey: `listing:${requestedProductId}:${channel}:${await fingerprint(mutationContract)}`,
               confirmWrite: true,
               productId: requestedProductId,
+              ...(operation === "listing.update" && listing
+                ? { resourceListingId: listing.id }
+                : {}),
               currency: listingCurrency,
               price: operationPrice,
               market: operationMarket,
@@ -1362,13 +1988,27 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         return false;
       }
       if (!response.ok || payload.ok !== true) throw Object.assign(new Error(payload.message ?? payload.safeMessage ?? `상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"}이 실패했습니다.`), { attemptId: payload.attemptId });
-      setResults((current) => ({ ...current, [channel]: { ...runningResult, phase: "succeeded", message: payload.safeMessage, remoteId: payload.remoteId, attemptId: payload.attemptId, listingId: payload.listingId ?? listing?.id } }));
-      notify(`${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
+      const temuSafeTestRequested = operation === "listing.create"
+        && channel === "temu"
+        && publicationIntent === "safe_test";
+      const safeTestContained = temuSafeTestRequested
+        && payload.publicationFulfilled === true
+        && ["non_public", "withdrawn"].includes(payload.remoteState?.visibility ?? "");
+      if (temuSafeTestRequested && !safeTestContained) {
+        throw Object.assign(new Error("Temu QA 상품의 판매중지 readback을 확정하지 못했습니다. 공개 성공으로 처리하지 않으며 정확한 원격 상태 조정이 필요합니다."), { attemptId: payload.attemptId });
+      }
+      const successMessage = safeTestContained
+        ? "Temu QA 상품 생성 후 판매중지와 non_public readback을 확인했습니다. 생성과 중지 사이 일시 노출 가능성이 있는 일회성 QA 결과이며 공개 게시 성공은 아닙니다."
+        : payload.safeMessage;
+      setResults((current) => ({ ...current, [channel]: { ...runningResult, phase: "succeeded", message: successMessage, remoteId: payload.remoteId, attemptId: payload.attemptId, listingId: payload.listingId ?? listing?.id } }));
+      notify(safeTestContained
+        ? `${channelCatalog[channel].name} QA 생성·판매중지 확인 · 공개 게시 성공 0건 · 원격 ID ${payload.remoteId ?? "응답 확인 필요"}`
+        : `${channelCatalog[channel].name} 상품 ${operation === "listing.update" ? "콘텐츠 수정" : "등록"} 성공 · 원격 ID ${payload.remoteId ?? listing?.remoteId ?? "응답 확인 필요"}`);
       if (!options.deferRefresh && isCurrentProduct()) {
         await load();
         onChanged?.();
       }
-      return true;
+      return safeTestContained ? "safe_test_contained" as const : "live" as const;
     } catch (error) {
       if (!isCurrentProduct()) {
         onChanged?.();
@@ -1389,6 +2029,52 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
   };
 
+  const getReadyChannels = () => {
+    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) return [];
+    return visibleChannels.filter((channel) => {
+      const credential = activeCredentials.get(channel);
+      const target = selectedTargets[channel];
+      const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
+      const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const operation = listingWriteOperation(listing);
+      const parsedDraft = parseDraft(drafts[channel]);
+      const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
+      const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
+      const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
+      const hasMissingRequired = !parsedDraft
+        || blockingWorkbenchListingRequirements(
+          channel,
+          parsedDraft,
+          operation,
+          productId,
+          listing,
+        ).length > 0
+        || missingNativeValues(channel, parsedDraft, operation).length > 0;
+      const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
+      return Boolean(imagePackageReady
+        && channelOperationAvailable(channel, operation)
+        && credential
+        && assignment
+        && remoteIdentityReady
+        && !hasMissingRequired
+        && !["queued", "publishing"].includes(listing?.status ?? "")
+        && !(listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review")
+        && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
+        && (listing?.failureClass !== "external_action"
+          || recoverableEbayUpdate
+          || recoverableExactExternalActionUpdate
+          || recoverableSmartstoreUpdate));
+    }).slice(0, publicationSelectableChannelKeys.length);
+  };
+
   const executeReadyChannels = async (confirmed = false) => {
     if (bulkRunning) return;
     if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
@@ -1400,27 +2086,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return;
     }
     const requestedProductId = productId;
-    const readyChannels = visibleChannels.filter((channel) => {
-      const credential = activeCredentials.get(channel);
-      const target = selectedTargets[channel];
-      const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
-      const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
-      const operation = listingWriteOperation(listing);
-      const parsedDraft = parseDraft(drafts[channel]);
-      const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
-      const hasMissingRequired = !parsedDraft || blockingListingRequirements(channel, parsedDraft, operation).length > 0 || missingNativeValues(channel, parsedDraft, operation).length > 0;
-      const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
-      return Boolean(imagePackageReady
-        && channelOperationAvailable(channel, operation)
-        && credential
-        && assignment
-        && remoteIdentityReady
-        && !hasMissingRequired
-        && !["queued", "publishing"].includes(listing?.status ?? "")
-        && !(listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review")
-        && !["queued", "running", "pending_review", "blocked"].includes(results[channel]?.phase ?? "idle")
-        && (listing?.failureClass !== "external_action" || recoverableEbayUpdate));
-    }).slice(0, publicationSelectableChannelKeys.length);
+    const readyChannels = getReadyChannels();
     if (!readyChannels.length) return notify("활성 키·확정 카테고리·검증된 원격 ID가 모두 준비된 등록·수정 대상 채널이 없습니다.");
     if (!confirmed) {
       openConfirmation({ kind: "bulk" });
@@ -1432,18 +2098,35 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await createClient().auth.getSession();
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
-      const completed = await executeChannelWritesSequentially(
+      const settled = await executeChannelWritesIndependently(
         readyChannels,
-        (channel) => executeChannel(channel, { skipConfirm: true, accessToken, deferRefresh: true }),
+        (channel) => executeChannel(channel, {
+          skipConfirm: true,
+          accessToken,
+          deferRefresh: true,
+          publicationIntent: bulkChannelPublicationIntent(channel),
+        }),
       );
-      const succeeded = completed.filter(Boolean).length;
+      const completed = settled.map((result) => {
+        if (result.status === "fulfilled") return result.value;
+        const message = result.reason instanceof Error
+          ? result.reason.message
+          : "독립 채널 작업을 시작하지 못했습니다.";
+        setResults((current) => ({
+          ...current,
+          [result.channel]: { phase: "failed", message },
+        }));
+        notify(`${channelCatalog[result.channel].name}: ${message}`);
+        return false;
+      });
+      const summary = summarizeBulkPublicationOutcomes(completed);
       if (sessionProductIdRef.current === requestedProductId) await load();
       onChanged?.();
       if (sessionProductIdRef.current === requestedProductId) {
-        notify(`채널 등록·수정 순차 처리 완료 · 공개 게시 성공 ${succeeded}개 / 심사·확인 필요 ${readyChannels.length - succeeded}개`);
+        notify(`채널 등록·수정 병렬 처리 완료 · 공개·수정 성공 ${summary.live}개 / Temu QA 생성·판매중지 확인 ${summary.safeTestContained}개 / 심사·확인 필요 ${summary.attentionRequired}개`);
       }
     } catch (error) {
-      notify(error instanceof Error ? error.message : "순차 채널 등록을 완료하지 못했습니다.");
+      notify(error instanceof Error ? error.message : "병렬 채널 등록을 완료하지 못했습니다.");
     } finally {
       setBulkRunning(false);
     }
@@ -1562,6 +2245,152 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
   };
 
+  const activateTemuListing = async (listing: Listing) => {
+    const credential = activeCredentials.get("temu");
+    if (!productId || !context || !workbenchProductContextMatches(productId, context.product.id)) {
+      return notify("선택한 상품의 등록 준비 정보를 다시 확인해 주세요.");
+    }
+    if (!imagePackageReady) return notify(imagePackageBlockedMessage);
+    if (!credential
+        || !listing.remoteId
+        || listing.channel !== "temu"
+        || listing.status !== "paused"
+        || listing.requestedPublicationIntent !== "safe_test"
+        || !["non_public", "withdrawn"].includes(listing.remoteVisibility ?? "")) {
+      return notify("Temu QA 상품의 검증된 비공개 원장과 원격 ID를 확인해 주세요.");
+    }
+    const requestedProductId = productId;
+    const writeController = new AbortController();
+    writeRequestControllersRef.current.add(writeController);
+    const boundedWrite = createBoundedRequestSignal(
+      writeController.signal,
+      65_000,
+      "Temu 공개 승격 응답 확인이 65초를 초과했습니다. 같은 상품을 다시 승격하지 말고 진행 상태를 확인해 주세요.",
+    );
+    const isCurrentProduct = () => mountedRef.current
+      && !writeController.signal.aborted
+      && sessionProductIdRef.current === requestedProductId;
+    const runningResult: ChannelResult = {
+      phase: "running",
+      operation: "listing.activate",
+      message: "Temu 비공개 QA 상품의 최종 공개 승격 요청 중",
+      listingId: listing.id,
+      market: listing.market,
+      targetId: listing.targetId,
+    };
+    closeConfirmation();
+    setResults((current) => ({ ...current, temu: runningResult }));
+    try {
+      const accessToken = (await waitForAbortablePromise(
+        createClient().auth.getSession(), boundedWrite.signal,
+      )).data.session?.access_token;
+      if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
+      const response = await waitForAbortablePromise(fetch("/api/admin/channel-operations", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+        signal: boundedWrite.signal,
+        body: JSON.stringify({
+          credentialId: credential.id,
+          channel: "temu",
+          operation: "listing.activate",
+          idempotencyKey: `listing-activate:${requestedProductId}:temu:${listing.id}:${listing.remoteId}:${listing.operationAttemptId ?? "safe-test"}`,
+          confirmWrite: true,
+          productId: requestedProductId,
+          resourceListingId: listing.id,
+          market: listing.market,
+          targetId: listing.targetId,
+          arguments: {},
+        }),
+      }), boundedWrite.signal);
+      const payload = await waitForAbortablePromise(
+        response.json().catch(() => ({ message: "Temu 공개 승격 응답을 읽지 못했습니다." })),
+        boundedWrite.signal,
+      ) as ChannelOperationResponse;
+      if (!isCurrentProduct()) return;
+      if (isPublicationPendingReviewResponse(response.status, payload)) {
+        const message = payload.message ?? payload.safeMessage
+          ?? "Temu 공개 승격은 접수됐지만 판매채널 심사 중입니다. live readback 전에는 공개 성공으로 처리하지 않습니다.";
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase: "pending_review",
+          message,
+          remoteId: payload.remoteId ?? listing.remoteId ?? undefined,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        await load();
+        onChanged?.();
+        notify(`Temu 심사 대기 · 공개 성공 0건 · ${message}`);
+        return;
+      }
+      if (response.status === 202 && payload.inProgress === true) {
+        const message = payload.message ?? "Temu 공개 승격 작업이 백그라운드에서 진행 중입니다.";
+        const phase = payload.attemptId ? "queued" as const : "blocked" as const;
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase,
+          message: payload.attemptId
+            ? message
+            : `${message} 작업 추적 ID가 없어 같은 상품의 재승격을 차단합니다.`,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        await load();
+        onChanged?.();
+        notify(message);
+        return;
+      }
+      if (payload.manualRequired === true || payload.reconciliationRequired === true) {
+        const message = payload.message ?? "Temu 공개 승격 결과가 불명확합니다. 판매자센터에서 정확한 상태를 확인해 주세요.";
+        setResults((current) => ({ ...current, temu: {
+          ...runningResult,
+          phase: "blocked",
+          message,
+          attemptId: payload.attemptId,
+          listingId: payload.listingId ?? listing.id,
+        } }));
+        notify(message);
+        return;
+      }
+      if (!response.ok
+          || payload.ok !== true
+          || payload.publicationFulfilled !== true
+          || payload.remoteState?.visibility !== "live") {
+        throw Object.assign(new Error(payload.message ?? payload.safeMessage
+          ?? "Temu 공개 승격의 live readback을 확인하지 못했습니다. 같은 상품을 다시 승격하지 마세요."), {
+          attemptId: payload.attemptId,
+        });
+      }
+      setResults((current) => ({ ...current, temu: {
+        ...runningResult,
+        phase: "succeeded",
+        message: "Temu 동일 원격 상품의 live readback을 확인했습니다.",
+        remoteId: payload.remoteId ?? listing.remoteId ?? undefined,
+        attemptId: payload.attemptId,
+        listingId: payload.listingId ?? listing.id,
+      } }));
+      await load();
+      onChanged?.();
+      notify(`Temu 최종 공개 승격 완료 · 원격 ID ${payload.remoteId ?? listing.remoteId}`);
+    } catch (error) {
+      if (!isCurrentProduct()) return;
+      const attemptId = error && typeof error === "object" && "attemptId" in error
+        && typeof error.attemptId === "string" ? error.attemptId : undefined;
+      const message = error instanceof Error ? error.message : "Temu 공개 승격 결과를 확인하지 못했습니다.";
+      setResults((current) => ({ ...current, temu: {
+        ...runningResult,
+        phase: "blocked",
+        message,
+        attemptId,
+        listingId: listing.id,
+      } }));
+      notify(message);
+    } finally {
+      boundedWrite.dispose();
+      writeRequestControllersRef.current.delete(writeController);
+    }
+  };
+
   if (!productId) return <section className="panel product-publish-workbench disabled"><PackageCheck size={28} /><b>실제 채널 등록은 상품 원장 생성 후 열립니다.</b><small>대표사진 분석을 완료하면 상품 UUID와 채널 등록 초안이 자동으로 연결됩니다.</small></section>;
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
   if (!context || !workbenchProductContextMatches(productId, context.product.id)) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
@@ -1572,10 +2401,21 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       && (!target || item.market === target.marketCode && item.targetId === target.targetId));
     return listingWriteOperation(listing) === "listing.update";
   }).length;
+  const bulkReadyChannels = bulkConfirming ? getReadyChannels() : [];
 
   return <section className="panel product-publish-workbench">
-    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하고, 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 순차 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
-    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널에 실제 상품 등록·콘텐츠 수정을 화면 표시 순서대로 한 채널씩 실행합니다.</b><small>신규 등록은 실제 판매 공개로 요청합니다. 앞 채널의 응답을 확인한 뒤 다음 채널을 실행하며, 심사 대기는 공개 게시 성공으로 집계하지 않습니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>확인 후 순차 실행</button></div>}
+    <div className="publish-workbench-head"><div><span className="panel-kicker">FINAL WRITE PREFLIGHT</span><h3>실제 채널 등록 · 콘텐츠 수정</h3><p>최종 확인한 신규 상품은 실제 판매 공개 의도로 등록하되, 다중 채널 QA의 Temu 신규 상품은 생성 직후 판매 중지와 readback까지 검증합니다. 이미 게시된 채널은 검증된 원격 ID를 유지한 채 지원 항목만 수정합니다. Lazada MY 기존 단일 SKU는 원격 ID·SKU·카테고리·통화를 사전 조회한 경우에만 가격·재고를 함께 반영하고 다시 조회하며, 나머지 채널은 가격·재고를 별도 작업으로 유지합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 병렬 처리 중" : bulkConfirming ? "최종 확인 열림" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
+    {bulkConfirming && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation" role="alertdialog" aria-label="다중 채널 실제 등록 콘텐츠 수정 최종 확인"><AlertTriangle size={18} /><div><b>준비된 채널의 실제 상품 등록·콘텐츠 수정을 채널별 독립 작업으로 동시에 실행합니다.</b><ul className="publish-bulk-confirm-list">{bulkReadyChannels.map((channel) => {
+      const target = selectedTargets[channel];
+      const listing = context.listings.find((item) => item.channel === channel
+        && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+      const details = confirmationDetails(channel, context, parseDraft(drafts[channel]), target, listing, price, quantity, globalBaseUsdPrice);
+      const operation = listingWriteOperation(listing);
+      const lazadaPolicy = channel === "lazada" && operation === "listing.update"
+        ? lazadaKrwMyrPricePolicyFromArguments(parseDraft(drafts[channel]) ?? {})
+        : null;
+      return <li key={channel}><b>{channelCatalog[channel].name} · {details.market}</b><small>{formattedMarketplacePrice(details.price, details.currency)} · 재고 {details.stock}개 · SKU {details.sku}</small>{operation === "listing.update" && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"}만 수정</small>}{lazadaPolicy && <small>Lazada 환율 검증 {lazadaPolicy.sourcePriceKrw.toLocaleString()} KRW → {lazadaPolicy.targetPriceMyr.toFixed(2)} MYR · 단일 SKU 사전조회·수정 후 재조회</small>}</li>;
+    })}</ul><small>신규 등록은 실제 판매 공개로 요청하되 Temu는 공식 비공개 생성 옵션이 없어 QA 상품을 생성한 직후 판매중지를 시도합니다. 두 요청 사이 일시 노출과 중지 실패 시 수동 조정 가능성이 있으며, 판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다. 이 QA 원격 상품은 최종 공개 승격 전용 확인 절차를 거쳐야 합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || bulkReadyChannels.length === 0} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels(true)}>위험 확인 후 병렬 실행</button></div>}
     {remoteUpdateChannelCount > 0 && <section className="product-edit-handoff" aria-label="중앙 저장과 채널별 원격 반영 순서">
       <header><span><ShieldCheck size={17} /><b>중앙 저장 후 채널별로 따로 반영합니다.</b></span><em>수정 대상 {remoteUpdateChannelCount}개 채널</em></header>
       <ol>
@@ -1587,20 +2427,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     </section>}
     <div className="product-edit-draft-scope" role="note"><div><b>채널 전송용 공통 초안</b><small>아래 값을 바꾸면 채널 payload 초안만 갱신됩니다. 중앙 상품을 다시 저장하는 입력란이 아닙니다.</small></div><span>중앙 재저장 아님</span></div>
     <div className="publish-common-fields">
-      <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); }} /></label>
-      <label><span>판매 통화 <i>필수</i></span><input required value={currency} maxLength={3} onChange={(event) => setCurrency(event.target.value.toUpperCase())} /></label>
-      <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); }} /></label>
-      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); }} /></label>
-      <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
-      <label><span>높이 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.height} onChange={(event) => { const next = { ...packageFields, height: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); }} /></label>
+      <label><span>국내 기준 판매가 KRW <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={price} onChange={(event) => { const value = Number(event.target.value); priceRef.current = value; setPrice(value); synchronizeCommonDrafts(context, value); }} /></label>
+      <label><span>기준 판매 통화</span><input value={currency} maxLength={3} readOnly aria-readonly="true" title="중앙 상품에 저장된 기준 통화이며, 채널별 판매 통화는 선택한 마켓에 따라 자동 계산됩니다." /></label>
+      <label><span>글로벌 채널 기준가 USD <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={globalBaseUsdPrice} onChange={(event) => { const value = Number(event.target.value); globalBaseUsdPriceRef.current = value; setGlobalBaseUsdPrice(value); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, packageFieldsRef.current, value); }} /></label>
+      <label><span>재고 <i>필수</i></span><input required type="number" min="0" step="1" value={quantity} onChange={(event) => { const value = Number(event.target.value); quantityRef.current = value; setQuantity(value); synchronizeCommonDrafts(context, priceRef.current, value); }} /></label>
+      <label><span>중량 kg <i>필수</i></span><input required type="number" min="0.01" step="0.01" value={packageFields.weight} onChange={(event) => { const next = { ...packageFields, weight: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>가로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.length} onChange={(event) => { const next = { ...packageFields, length: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>세로 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.width} onChange={(event) => { const next = { ...packageFields, width: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
+      <label><span>높이 cm <i>필수</i></span><input required type="number" min="1" step="1" value={packageFields.height} onChange={(event) => { const next = { ...packageFields, height: Number(event.target.value) }; packageFieldsRef.current = next; setPackageFields(next); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, selectedTargets, next); }} /></label>
       <label><span>브랜드 <i>필수</i></span><input required value={context.manualFields.brandName} onChange={(event) => updateProductFact("brandName", event.target.value)} placeholder="브랜드명 또는 No Brand" /></label>
       <label><span>제조사·공급처 <i>필수</i></span><input required value={context.manualFields.manufacturer} onChange={(event) => updateProductFact("manufacturer", event.target.value)} placeholder="실제 제조사 또는 공급처" /></label>
       <label><span>원산지 <i>필수</i></span><input required value={context.manualFields.countryOfOrigin} onChange={(event) => updateProductFact("countryOfOrigin", event.target.value)} placeholder="예: 대한민국" /></label>
       <label><span>재질·성분 <i>필수</i></span><input required value={context.manualFields.material} onChange={(event) => updateProductFact("material", event.target.value)} placeholder="실물·공식 상품정보 기준" /></label>
       <label><span>판매 구성 <i>필수</i></span><select required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select></label>
-      <button type="button" onClick={() => setDrafts(buildDraftMap(context, price, quantity, selectedTargets, packageFields, globalBaseUsdPrice, lazadaMyrRate))}><RefreshCw size={14} />공통값으로 초안 갱신</button>
+      <span className="publish-common-sync-status" role="status"><RefreshCw size={14} />공통값 변경 즉시 채널 초안에 자동 반영</span>
     </div>
     <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
     {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "승인된 상세페이지 이미지 8장이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 승인 상세 ${approvedDetailManifest?.images.length ?? 0}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "상세페이지 8장 운영 원장이 없는 직접등록 상품은 단일·일괄 채널 전송을 모두 차단합니다." : `마스터 ${marketplaceGeneratedAssetCount}종 이미지 원장은 보존하고, 상세페이지에 선택·저장된 서로 다른 8장만 게시 원장으로 승인해야 합니다.`}</small></div></div>}
@@ -1612,7 +2452,52 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
       const listing = context.listings.find((item) => item.channel === channel && (!target || item.market === target.marketCode && item.targetId === target.targetId));
       const recoverableEbayUpdate = legacyEbayListingUpdateCandidate(channel, listing);
-      const result = listing?.failureClass === "external_action" && !recoverableEbayUpdate
+      const recoverableExactExternalActionUpdate = exactExternalActionWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
+      const recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate(
+        productId,
+        channel,
+        listing,
+      );
+      const exactQoo10LocalizationUpdate = qoo10ExactLocalizationWriteCandidate(
+        productId,
+        credential?.id,
+        channel,
+        listing,
+      );
+      const exactTemuExistingUpdate = Boolean(listing) && temuExactExistingUpdateCandidate({
+        channel,
+        operation: "listing.update",
+        productId: productId ?? undefined,
+        remoteId: listing?.remoteId,
+        status: listing?.status,
+        requestedPublicationIntent: listing?.requestedPublicationIntent,
+        remoteVisibility: listing?.remoteVisibility,
+      });
+      const recoverableExternalActionUpdate = recoverableEbayUpdate
+        || recoverableExactExternalActionUpdate
+        || recoverableSmartstoreUpdate
+        || exactQoo10LocalizationUpdate
+        || exactTemuExistingUpdate;
+      const recoveryReadyMessage = recoverableEbayUpdate
+        ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다."
+        : recoverableExactExternalActionUpdate && channel === "coupang"
+          ? `불변 쿠팡 sellerProductId ${coupangExactQaRecoveryIdentity.sellerProductId}·vendorItemId ${coupangExactQaRecoveryIdentity.vendorItemId} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+          : recoverableExactExternalActionUpdate && channel === "elevenst"
+            ? `불변 11번가 productNo ${elevenstExactExistingPublicationIdentity.remoteId}·SKU 결속과 최초 원본 snapshot을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+            : recoverableExactExternalActionUpdate && channel === "lazada"
+              ? `Lazada OAuth 판매자 계보와 기존 MY item ${lazadaExactExistingPublicationIdentity.remoteId}의 비공개 상태를 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+        : recoverableSmartstoreUpdate
+          ? `불변 스마트스토어 원상품 ${smartstoreExactQaRecoveryIdentity.originProductNo}·채널상품 ${smartstoreExactQaRecoveryIdentity.channelProductNo} 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다.`
+          : exactQoo10LocalizationUpdate
+            ? "고정된 Qoo10 상품·원격 ID·운영 키를 서버의 일회성 허가와 다시 결속한 뒤 같은 상품만 수정합니다."
+          : exactTemuExistingUpdate
+            ? `Temu ACTIVE goods ${temuExactExistingUpdateIdentity.goodsId}의 한국어 제목·설명·핵심 bullet만 1회 부분 수정하고 가격·재고·이미지·ACTIVE 상태를 다시 조회합니다.`
+          : "";
+      const result = listing?.failureClass === "external_action" && !recoverableExternalActionUpdate
         ? { phase: "blocked" as const, message: listing.lastError ?? "원격 판매자센터 상태를 수동 확인해야 합니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id }
         : listing?.requestedPublicationIntent === "live" && listing.remoteVisibility === "pending_review"
           ? { phase: "pending_review" as const, message: "판매채널 심사 대기 중입니다. 공개 상태 readback 전에는 게시 성공으로 집계하거나 다시 등록하지 않습니다.", attemptId: listing.operationAttemptId ?? undefined, listingId: listing.id, remoteId: listing.remoteId ?? undefined }
@@ -1622,7 +2507,18 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const operation = listingWriteOperation(listing);
       const remoteUpdate = operation === "listing.update";
       const operationRelease = channelOperationRelease(channel, operation);
-      const operationAvailable = operationRelease.available;
+      const exactSmartstoreReadiness = recoverableSmartstoreUpdate && listing
+        ? remoteEditAvailability[listing.id]
+        : null;
+      const operationAvailable = (operationRelease.available || exactTemuExistingUpdate)
+        && (!recoverableSmartstoreUpdate || exactSmartstoreReadiness?.runnable === true);
+      const exactSmartstoreBlockedLabel = exactSmartstoreReadiness?.mode === "static_egress_required"
+        ? "스마트스토어 고정 egress 확인 필요"
+        : exactSmartstoreReadiness?.mode === "smartstore_exact_qa_atomic_identity_required"
+          ? "스마트스토어 exact 원장 결속 확인 필요"
+          : exactSmartstoreReadiness?.mode === "smartstore_exact_qa_credential_required"
+            ? "스마트스토어 운영 인증정보 확인 필요"
+            : "스마트스토어 실행 준비 상태 확인 필요";
       const capability = remoteUpdate ? definition.capabilities.listingUpdate : definition.capabilities.listingCreate;
       const editFieldSupport = remoteUpdate ? channelProductEditFieldSupport(channel) : null;
       const remotePlan = remoteUpdate ? productEditRemotePlan(channel, operationAvailable) : null;
@@ -1646,25 +2542,49 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && editFieldSupport?.price.operation === "listing.update"
         && editFieldSupport.inventory.operation === "listing.update";
       const draftObject = parseDraft(drafts[channel]);
+      const confirmation = confirmationDetails(
+        channel,
+        context,
+        draftObject,
+        target,
+        listing,
+        price,
+        quantity,
+        globalBaseUsdPrice,
+      );
       const lazadaFinalPricePolicy = remoteCommerceUpdate && draftObject
         ? lazadaKrwMyrPricePolicyFromArguments(draftObject)
         : null;
-      const requirements = draftObject ? inspectListingDraft(channel, draftObject, operation) : [];
+      const requirements = draftObject
+        ? inspectWorkbenchListingDraft(
+          channel,
+          draftObject,
+          operation,
+          { productId, listing },
+        )
+        : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
       const nativeMissing = draftObject ? missingNativeValues(channel, draftObject, operation) : [];
       const blockingCount = blockingRequirements.length + nativeMissing.length;
       const invalidDraft = !draftObject;
+      const temuActivationLedgerEligible = channel === "temu"
+        && Boolean(listing?.remoteId)
+        && listing?.status === "paused"
+        && listing.requestedPublicationIntent === "safe_test"
+        && ["non_public", "withdrawn"].includes(listing.remoteVisibility ?? "");
+      const temuActivationLocked = result.operation === "listing.activate"
+        && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
       return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
-        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); setCurrency(nextTarget.currency); setDrafts((current) => ({ ...current, [channel]: JSON.stringify(buildChannelArguments(channel, context, price, quantity, nextTarget, packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2) })); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
-        {!operationAvailable && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
+        <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? "콘텐츠 수정 준비" : "원격 ID 필요" : recoverableSmartstoreUpdate ? "실행 준비 확인 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; const nextTargets = { ...selectedTargets, [channel]: nextTarget }; setSelectedTargets(nextTargets); synchronizeCommonDrafts(context, priceRef.current, quantityRef.current, nextTargets); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
+        {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{recoverableSmartstoreUpdate ? exactSmartstoreBlockedLabel : remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{recoverableSmartstoreUpdate ? `${exactSmartstoreReadiness?.reason ?? "실행 준비 상태를 아직 확인하지 못했습니다."} · safe mode ${exactSmartstoreReadiness?.mode ?? "smartstore_exact_qa_readiness_unavailable"}` : remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
         {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
           <header className="product-edit-support-header"><div><b>이 채널의 원격 수정 범위</b><small>중앙 저장과 원격 반영은 분리되며, 일부 지원 필드는 원격 반영 후 수동 확인도 필요합니다.</small></div><span>콘텐츠 완전 {remoteListingSupportedFieldLabels.length} · 일부 {remoteListingPartialFieldLabels.length} · 수동 {remoteManualFieldLabels.length}</span></header>
           <div className="product-edit-support-grid"><div className="remote-edit-support">{productEditFieldKeys.map((field) => { const support = editFieldSupport[field]; const operationLabel = support.operation === "inventory.update" ? "별도 재고 동기화" : support.operation === "price.update" ? "별도 가격 작업" : support.operation === "listing.update" ? "상품 콘텐츠 반영" : "중앙 저장"; return <span className={support.state} title={support.reason} key={field}><b>{productEditFieldLabels[field]}</b><small className="remote-edit-support-state">{productEditSupportLabel(support.state, centralEditFieldSupport[field].state)} · {operationLabel}</small><small className="remote-edit-support-reason product-edit-support-reason">{support.reason}</small></span>; })}</div></div>
           {remoteInventorySupport && <p className={`product-edit-inventory-scope ${remoteInventorySupport.state}`}><PackageCheck size={14} /><span><b>{remoteCommerceUpdate ? `가격·재고는 이 버튼에 포함: ${lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW → ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR` : "최신 환율 확인 필요"}` : `재고는 이 버튼과 별도: ${remoteInventorySupport.state === "supported" ? "재고 동기화 지원" : "판매자센터 수동 확인"}`}</b><small>{remoteInventorySupport.reason} {remoteCommerceUpdate ? "원격 단일 SKU·카테고리·할인 미적용·단일 창고와 현재 환율을 확인하지 못하면 쓰기 전에 차단합니다." : "아래 상품 콘텐츠 반영 버튼은 재고를 변경하지 않습니다."}</small></span></p>}
           {remoteManualFieldLabels.length > 0 && <p className="product-edit-manual-scope"><AlertTriangle size={14} /><span><b>별도 수동 확인·반영: {remoteManualFieldLabels.join(" · ")}</b><small>일부 지원 필드도 채널 정책 보존 범위를 확인해야 합니다. 이 화면은 수동 확인이 필요한 값을 완전 반영 성공으로 표시하지 않습니다.</small></span></p>}
         </section>}
-        {remoteUpdate && !operationAvailable && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />원격 반영 차단 · 판매자센터 수동 수정</button>}
+        {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />{recoverableSmartstoreUpdate ? "원격 반영 차단 · 준비 조건 확인 필요" : "원격 반영 차단 · 판매자센터 수동 수정"}</button>}
         {operationAvailable && <>
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
@@ -1682,15 +2602,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             </label>)}</div>}
           </div>}
           {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}
-          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableEbayUpdate ? "blocked" : "failed"}`}><b>{recoverableEbayUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableEbayUpdate ? "불변 eBay offer·SKU·listing 결속을 서버에서 다시 확인한 뒤 기존 상품만 수정합니다." : listing.lastError}</p>}
+          {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableExternalActionUpdate ? "blocked" : "failed"}`}><b>{exactQoo10LocalizationUpdate ? "Qoo10 일본어 현지화 1회 복구 준비" : recoverableExternalActionUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableExternalActionUpdate ? recoveryReadyMessage : listing.lastError}</p>}
           <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
           {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
           {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name}{target ? ` ${target.marketCode} · ${target.displayName}` : ""} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{remoteUpdate ? remoteCommerceUpdate ? `원격 ID ${listing?.remoteId ?? "확인 필요"} · ${lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR` : "MYR 환율 확인 필요"} · 재고 ${quantity}개 · 단일 SKU 사전조회 후 함께 반영` : `원격 ID ${listing?.remoteId ?? "확인 필요"} · 가격·재고·옵션·판매 구성은 변경하지 않음` : `가격 ${price.toLocaleString()} ${target?.currency || currency} · 재고 ${quantity}개`}</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
+          {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
           {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
           {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
           <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || !credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={!imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
           {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
+        </>}
+        {temuActivationLedgerEligible && listing && <>
+          <p className="product-edit-action-scope" id="temu-final-activation-scope"><AlertTriangle size={14} /><span><b>Temu 비공개 QA 원격 상품 최종 공개 승격</b><small>새 상품을 만들지 않고 이 원격 ID에만 판매 시작을 한 번 요청합니다. 실행 후 live 또는 심사 대기 readback을 확인하며, 결과가 불명확하면 재실행을 잠그고 판매자센터 확인이 필요합니다.</small></span></p>
+          {temuActivateConfirming?.id === listing.id && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Temu 최종 공개 승격 확인"><AlertTriangle size={18} /><div><b>Temu 원격 상품 {listing.remoteId}를 실제 판매 공개 상태로 승격합니다.</b><small>QA 생성·판매중지 확인이 끝난 동일 상품만 대상으로 하며, 이 작업은 실제 고객에게 노출될 수 있습니다. 현재 승인 상세 이미지 8장과 최초 등록 계보가 바뀌면 서버가 실행 전에 차단합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!credential || !imagePackageReady} onClick={() => void activateTemuListing(listing)}>Temu 실제 판매 공개 승격 실행</button></div>}
+          <button type="button" className="publish-execute" aria-describedby="temu-final-activation-scope" disabled={!credential || !imagePackageReady || temuActivationLocked || temuActivateConfirming?.id === listing.id} onClick={() => openConfirmation({ kind: "temu-activate", listing })}>{result.operation === "listing.activate" && result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{result.operation === "listing.activate" && result.phase === "queued" ? "Temu 공개 승격 진행 중" : result.operation === "listing.activate" && result.phase === "pending_review" ? "Temu 공개 심사 대기" : result.operation === "listing.activate" && result.phase === "blocked" ? "Temu 상태 수동 확인 필요" : temuActivateConfirming?.id === listing.id ? "최종 공개 확인 열림" : "Temu 동일 QA 상품 최종 공개 승격"}</button>
         </>}
       </article>;
     })}</div>

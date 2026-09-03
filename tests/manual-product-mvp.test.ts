@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActiveChannelKey } from "../lib/channels/catalog";
 import {
   buildChannelArguments,
+  buildDraftMap,
   missingNativeValues,
 } from "../app/product-publish-workbench";
 import {
@@ -12,8 +13,22 @@ import {
   normalizePendingManualProductRequest,
 } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
+import {
+  prepareListingUpdateArguments,
+  unapprovedLocalizationReviewMarker,
+} from "../lib/channels/listing-update";
+import { qoo10DetailImageUrls } from "../lib/channels/qoo10-listing-create-preflight";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
+import {
+  listingPublicationLanguageVerified,
+  normalizedListingPublicationText,
+} from "../lib/channels/listing-publication-content";
+import {
+  qoo10ExactForeignPriceCopyPresent,
+  bindQoo10ExactLocalizationUpdateArguments,
+  qoo10ExactLegacyRomanizedCopyPresent,
+  qoo10ExactLocalizationRecoveryIdentity,
+} from "../lib/channels/qoo10-exact-localization-recovery";
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -92,6 +107,57 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(JSON.stringify(draft).includes("detail-overview"), false);
   assert.equal(missingNativeValues("qoo10", draft).some((item) => item.includes("dedicated marketplace")), false);
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
+});
+
+test("one rejected channel localization keeps every unrelated draft available", () => {
+  const context = manualContext();
+  context.listings.push({
+    id: "22222222-2222-4222-8222-222222222222",
+    channel: "shopee",
+    market: "SG",
+    targetId: "1719148844",
+    remoteId: "987654321",
+    status: "published",
+    lastError: null,
+    failureClass: null,
+    publishedAt: "2026-08-31T00:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+    providerStatus: "NORMAL",
+  });
+  context.localizedListings.push({
+    channel: "shopee",
+    market: "SG",
+    locale: "en-SG",
+    title: `${unapprovedLocalizationReviewMarker} Cable organizer clips`,
+    shortDescription: "Localization review required.",
+    description: "Localization review required before publication.",
+    keywords: [],
+  });
+  const drafts = buildDraftMap(
+    context,
+    10_000,
+    3,
+    {
+      shopee: {
+        targetId: "1719148844",
+        displayName: "Singapore",
+        marketCode: "SG",
+        locale: "en-SG",
+        language: "English",
+        currency: "SGD",
+      },
+    },
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  );
+  assert.equal(drafts.shopee, "{}", "the rejected channel stays fail-closed");
+  assert.notEqual(drafts.qoo10, "{}", "Qoo10 remains independently reachable");
+  assert.equal(
+    (JSON.parse(drafts.qoo10 ?? "{}") as { params?: { ItemTitle?: string } })
+      .params?.ItemTitle,
+    "판매자 확인 원본 상품",
+  );
 });
 
 const legacyQoo10RomanizedName = "buchakhyeong keibeul jeongri keulrip 6gae seteu";
@@ -217,6 +283,122 @@ test("Qoo10 create and exact existing-product update replace legacy romanized re
     assert.equal(JSON.stringify(draft).includes(legacyQoo10ReviewedTitle), false, `${operation} full legacy title`);
     assert.equal(listingPublicationLanguageVerified("ja-JP", draft.params.ItemTitle, "title"), true);
   }
+});
+
+test("exact Qoo10 workbench draft discards source KRW and romanized copy before provider preparation", () => {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  const context = productionLikeQoo10LegacyContext("update");
+  context.product.id = identity.productId;
+  context.product.sku = identity.sellerSku;
+  context.manualFields.sellerSku = identity.sellerSku;
+  context.manualFields.sellingPrice = 5_000;
+  context.manualFields.stock = 1;
+  context.manualFields.description = `${identity.legacyRomanizedName} 가격은 5,000원입니다.`;
+  context.assignments[0].categoryId = identity.categoryCode;
+
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  ) as {
+    params: Record<string, string>;
+    sellerpilotAssets: { detailImageUrls: string[] };
+  };
+
+  assert.equal(draft.params.ItemTitle, identity.title);
+  assert.equal(draft.params.PromotionName, identity.promotionName);
+  assert.equal(draft.params.SellerCode, identity.sellerSku);
+  assert.equal(draft.params.Keyword, identity.sourceKeyword);
+  assert.equal(draft.params.RetailPrice, String(identity.priceJpy));
+  assert.equal(draft.params.ItemPrice, String(identity.priceJpy));
+  assert.equal(draft.params.ItemQty, String(identity.quantity));
+  assert.equal(draft.params.ShippingNo, identity.shippingNo);
+  assert.match(draft.params.ItemDescription, /販売価格は1,871円です/u);
+  assert.equal(qoo10ExactLegacyRomanizedCopyPresent(draft.params.ItemDescription), false);
+  assert.equal(qoo10ExactForeignPriceCopyPresent(draft.params.ItemDescription), false);
+  assert.doesNotMatch(draft.params.ItemDescription, /[가-힣]/u);
+  assert.equal(
+    listingPublicationLanguageVerified(
+      "ja-JP",
+      normalizedListingPublicationText(draft.params.ItemDescription),
+      "description",
+    ),
+    true,
+  );
+  assert.equal(draft.sellerpilotAssets.detailImageUrls.length, 8);
+  assert.deepEqual(
+    qoo10DetailImageUrls(draft.params.ItemDescription),
+    draft.sellerpilotAssets.detailImageUrls,
+  );
+  const prepared = prepareListingUpdateArguments(
+    "qoo10",
+    bindQoo10ExactLocalizationUpdateArguments(
+      draft as unknown as Record<string, unknown>,
+      "c".repeat(40),
+    ),
+    { status: "published", remoteId: identity.remoteId },
+  ) as { params: Record<string, string> };
+  assert.equal(prepared.params.SellerCode, identity.sellerSku);
+  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
+  assert.equal(prepared.params.ItemQty, String(identity.quantity));
+  assert.equal(prepared.params.ShippingNo, identity.shippingNo);
+});
+
+test("exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option", () => {
+  const identity = qoo10ExactLocalizationRecoveryIdentity;
+  const context = productionLikeQoo10LegacyContext("update");
+  context.product.id = identity.productId;
+  context.product.sku = identity.sellerSku;
+  context.manualFields.sellerSku = identity.sellerSku;
+  context.manualFields.sellingPrice = 5_000;
+  context.manualFields.stock = 1;
+  context.assignments[0].categoryId = identity.categoryCode;
+  context.listings[0] = {
+    ...context.listings[0]!,
+    status: "failed",
+    failureClass: "external_action",
+    remoteVisibility: "unknown",
+    providerStatus: null,
+  };
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.2, length: 10, width: 8, height: 4 },
+    10,
+  ) as { params: Record<string, string> };
+  assert.equal(draft.params.ItemTitle, identity.title);
+  assert.throws(
+    () => prepareListingUpdateArguments("qoo10", draft, context.listings[0]!),
+    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
+    "the generic external_action path remains fenced",
+  );
+  const prepared = prepareListingUpdateArguments(
+    "qoo10",
+    draft,
+    { ...context.listings[0]!, listingId: context.listings[0]!.id },
+    { qoo10ExactLocalizationProductId: identity.productId },
+  ) as { params: Record<string, string> };
+  assert.equal(prepared.params.ItemCode, identity.remoteId);
+  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
+  assert.equal(prepared.params.ItemQty, String(identity.quantity));
+  assert.equal(Object.hasOwn(prepared.params, "StandardImage"), false);
+  assert.throws(
+    () => prepareListingUpdateArguments(
+      "qoo10",
+      draft,
+      { ...context.listings[0]!, listingId: context.listings[0]!.id, targetId: "OTHER" },
+      { qoo10ExactLocalizationProductId: identity.productId },
+    ),
+    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
+    "near-miss tuples remain fenced before a provider request can be built",
+  );
 });
 
 test("Qoo10 preserves seller-authored Japanese and Hangul titles and description text", () => {
@@ -359,6 +541,30 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
+test("Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied", () => {
+  const context = manualContext();
+  context.assignments = [{
+    ...context.assignments[0],
+    channel: "temu",
+    market: "KR",
+    categoryId: "601099",
+    categoryPath: ["Electronics", "Cable organizers"],
+  }];
+  const draft = buildChannelArguments(
+    "temu",
+    context,
+    5_000,
+    1,
+    undefined,
+    { weight: 0.1, length: 10, width: 8, height: 2 },
+    5,
+  ) as Record<string, unknown>;
+  const body = draft.body as { goodsBasic: Record<string, unknown> };
+  assert.equal(body.goodsBasic.extCatName, "601099");
+  assert.equal(body.goodsBasic.costTemplate, "");
+  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), true);
+});
+
 test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
   const context = manualContext();
   context.manualFields.sellingPrice = 5_000;
@@ -369,6 +575,16 @@ test("Lazada MY existing-product draft replaces the global USD default with the 
     channel: "lazada",
     market: "MY",
     categoryId: "10100205",
+  }];
+  context.localizedListings = [{
+    channel: "lazada",
+    market: "MY",
+    locale: "ms-MY",
+    title: "Klip pengurusan kabel pelekat 6 keping",
+    shortDescription: "Set klip untuk menyusun kabel dengan kemas di ruang kerja.",
+    description: "Set enam klip pelekat untuk membantu menyusun kabel dengan kemas di meja atau ruang kerja.",
+    keywords: ["klip kabel", "pengurusan kabel", "ruang kerja"],
+    thumbnailAltText: "Set klip pengurusan kabel pelekat 6 keping",
   }];
   context.listings = [{
     id: "22222222-2222-4222-8222-222222222222",
@@ -560,7 +776,7 @@ test("an ambiguous manual request preserves one canonical body and UUID for the 
 
 test("channel operations binds request image mode to the server product lineage before claiming an attempt", async () => {
   const route = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
-  const bindingIndex = route.indexOf("marketplaceContentModeMatchesProduct(parsed.data.arguments, contentMode)");
+  const bindingIndex = route.indexOf("marketplaceContentModeMatchesProduct(contentArguments, contentMode)");
   const claimIndex = route.indexOf("sellerpilot_claim_channel_operation");
   assert.ok(bindingIndex >= 0, "request content mode binding must exist");
   assert.ok(claimIndex > bindingIndex, "content mode mismatch must fail before an idempotency attempt is claimed");

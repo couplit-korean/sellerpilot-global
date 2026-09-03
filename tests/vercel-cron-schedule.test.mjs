@@ -36,6 +36,7 @@ function assertFailClosedCronGet(source, label) {
 test("Vercel has no cron because Supabase owns every schedule", async () => {
   const config = JSON.parse(await readFile(new URL("vercel.json", root), "utf8"));
   assert.equal(Object.hasOwn(config, "crons"), false);
+  assert.deepEqual(config.regions, ["icn1"]);
 });
 
 test("Supabase-scheduled GET routes accept only HMAC-derived auth and canary without work", async () => {

@@ -9,7 +9,6 @@ import {
   configuredServerlessStaticEgressChannels,
   hasServerlessStaticEgressFor,
   SERVERLESS_STATIC_EGRESS_REQUIRED,
-  type ServerlessStaticEgressChannel,
 } from "../../../../../lib/channels/serverless-static-egress";
 
 export const runtime = "nodejs";
@@ -26,6 +25,12 @@ const statusQuerySchema = z.object({
 });
 
 const noStoreHeaders = { "cache-control": "no-store, max-age=0" };
+
+function noStoreAdminError(response: NextResponse) {
+  const cloned = response.clone();
+  cloned.headers.set("cache-control", noStoreHeaders["cache-control"]);
+  return cloned;
+}
 
 function contextRecord(value: unknown) {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
@@ -86,7 +91,7 @@ function failureMessage(error: unknown) {
 
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
-  if (isAdminApiError(admin)) return admin;
+  if (isAdminApiError(admin)) return noStoreAdminError(admin);
 
   const url = new URL(request.url);
   const parsed = statusQuerySchema.safeParse({
@@ -113,7 +118,7 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const admin = await authenticateAdminRequest(request);
-  if (isAdminApiError(admin)) return admin;
+  if (isAdminApiError(admin)) return noStoreAdminError(admin);
 
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -166,18 +171,22 @@ export async function POST(request: Request) {
     );
   }
 
-  if (
-    (channel === "coupang" || channel === "smartstore")
-    && !hasServerlessStaticEgressFor(
+  if (channel === "coupang" || channel === "smartstore") {
+    const environmentReady = hasServerlessStaticEgressFor(
       configuredServerlessStaticEgressChannels(),
-      [channel as ServerlessStaticEgressChannel],
-    )
-  ) {
-    return NextResponse.json({
-      message: "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.",
-      blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
-      staticEgressReady: false,
-    }, { status: 409, headers: noStoreHeaders });
+      [channel],
+    );
+    const { data: staticEgressStatus, error: staticEgressError } = environmentReady
+      ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
+      : { data: null, error: null };
+    const databasePolicy = objectRecord(staticEgressStatus);
+    if (!environmentReady || staticEgressError || databasePolicy?.[channel] !== true) {
+      return NextResponse.json({
+        message: "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.",
+        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+        staticEgressReady: false,
+      }, { status: 409, headers: noStoreHeaders });
+    }
   }
 
   try {

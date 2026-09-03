@@ -13,6 +13,7 @@ export type LazadaExistingListingUpdatePreflight = {
   price: string;
   quantity: number;
   providerStatus: string;
+  updateSkuStatus?: "inactive" | "active";
 };
 
 function recordValue(value: unknown): UnknownRecord {
@@ -93,6 +94,14 @@ function requestedSku(argumentsValue: UnknownRecord) {
   return { sellerSku, price, quantity };
 }
 
+export function lazadaRequestedUpdateSellerSku(argumentsValue: UnknownRecord) {
+  try {
+    return requestedSku(argumentsValue).sellerSku;
+  } catch {
+    return null;
+  }
+}
+
 export function lazadaRequestedUpdateQuantity(argumentsValue: UnknownRecord) {
   try {
     return requestedSku(argumentsValue).quantity;
@@ -117,6 +126,57 @@ function specialPrice(sku: UnknownRecord) {
   return Number.isFinite(parsed) ? parsed : Number.NaN;
 }
 
+function productsFromGetProducts(remoteData: UnknownRecord) {
+  const data = recordValue(remoteData.data);
+  const lowercaseContainer = recordValue(data.products);
+  const uppercaseContainer = recordValue(data.Products);
+  const value = Array.isArray(data.products)
+    ? data.products
+    : Array.isArray(data.Products)
+      ? data.Products
+      : lowercaseContainer.product
+        ?? lowercaseContainer.Product
+        ?? uppercaseContainer.product
+        ?? uppercaseContainer.Product;
+  return strictArray(value);
+}
+
+/**
+ * GetProducts is queried by the exact SellerSku before GetProductItem is
+ * trusted. This detects the dangerous case where the requested SellerSku is
+ * absent or resolves to a different/duplicate item under the current seller.
+ */
+export function assertLazadaExistingListingGetProductsPreflight(input: {
+  argumentsValue: UnknownRecord;
+  remoteData: UnknownRecord;
+}) {
+  const itemId = exactText(input.argumentsValue.itemId);
+  if (!/^\d+$/u.test(itemId)) throw new Error("LAZADA_UPDATE_ITEM_ID_REQUIRED");
+  const requested = requestedSku(input.argumentsValue);
+  const products = productsFromGetProducts(input.remoteData);
+  const matches = products.flatMap((product) => {
+    const remoteItemId = exactText(product.item_id ?? product.ItemId ?? product.itemId);
+    return lazadaSkuRows(product)
+      .filter((sku) => exactText(sku.SellerSku ?? sku.seller_sku) === requested.sellerSku)
+      .map((sku) => ({ remoteItemId, sku }));
+  });
+  if (products.length !== 1 || matches.length !== 1) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_IDENTITY_AMBIGUOUS");
+  }
+  if (matches[0]?.remoteItemId !== itemId) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_ITEM_ID_MISMATCH");
+  }
+  const skuId = remoteSkuId(matches[0].sku);
+  if (!/^\d+$/u.test(skuId)) {
+    throw new Error("LAZADA_UPDATE_GET_PRODUCTS_SKU_IDENTITY_MISMATCH");
+  }
+  return {
+    itemId,
+    sellerSku: requested.sellerSku,
+    skuId,
+  };
+}
+
 /**
  * Validates Lazada's authoritative GetProductItem response before any media or
  * product mutation. The released SellerPilot update deliberately supports one
@@ -126,6 +186,7 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
   argumentsValue: UnknownRecord;
   remoteData: UnknownRecord;
   country: string;
+  requiredVisibility?: "live" | "non_public";
 }): LazadaExistingListingUpdatePreflight {
   const country = input.country.trim().toLowerCase();
   const requestedCountry = exactText(input.argumentsValue.country).toLowerCase();
@@ -158,8 +219,13 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
     throw new Error("LAZADA_UPDATE_SKU_IDENTITY_MISMATCH");
   }
   const status = providerStatus(product, remoteSku);
-  if (!["ACTIVE", "LIVE", "ONLINE"].includes(status)) {
+  const requiredVisibility = input.requiredVisibility ?? "live";
+  if (requiredVisibility === "live" && !["ACTIVE", "LIVE", "ONLINE"].includes(status)) {
     throw new Error("LAZADA_UPDATE_REMOTE_SKU_NOT_LIVE");
+  }
+  if (requiredVisibility === "non_public"
+      && !["INACTIVE", "OFFLINE", "SUSPENDED", "UNLIST", "UNLISTED"].includes(status)) {
+    throw new Error("LAZADA_UPDATE_REMOTE_SKU_NOT_NON_PUBLIC");
   }
   if (specialPrice(remoteSku) !== 0) {
     throw new Error("LAZADA_UPDATE_ACTIVE_SPECIAL_PRICE_UNSUPPORTED");
@@ -181,6 +247,7 @@ export function assertLazadaExistingListingUpdatePreflight(input: {
     price: normalizedMoney(requested.price),
     quantity: requested.quantity,
     providerStatus: status,
+    ...(requiredVisibility === "non_public" ? { updateSkuStatus: "inactive" as const } : {}),
   };
 }
 
@@ -199,6 +266,7 @@ export function bindLazadaExistingSkuToUpdateRequest(
       SellerSku: preflight.sellerSku,
       price: preflight.price,
       quantity: String(preflight.quantity),
+      ...(preflight.updateSkuStatus ? { Status: preflight.updateSkuStatus } : {}),
     }],
   };
   requestRoot.Product = product;

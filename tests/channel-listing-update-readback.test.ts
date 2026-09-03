@@ -101,6 +101,7 @@ test("Lazada listing update verifies the requested item identity after the XML w
 test("Smartstore listing 13671684696 update preserves category 50001578 and remote sale/display policy", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let transmittedBody: Record<string, unknown> | null = null;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
@@ -116,7 +117,11 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
         naverShoppingRegistration: true,
       },
     });
-    if (init?.method === "GET") return Response.json({
+    if (init?.method === "PUT") {
+      transmittedBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return Response.json({});
+    }
+    if (init?.method === "GET") return Response.json(transmittedBody ?? {
       originProductNo: 13671684696,
       smartstoreChannelProductNo: 20000001,
       originProduct: {
@@ -170,8 +175,8 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
       originProduct: {
         leafCategoryId: "50001578",
         name: "수정 상품",
-        salePrice: 77_770,
-        stockQuantity: 9,
+        salePrice: 1_000,
+        stockQuantity: 999,
         deliveryInfo: { deliveryType: "DELIVERY" },
         detailAttribute: {
           productInfoProvidedNotice: {

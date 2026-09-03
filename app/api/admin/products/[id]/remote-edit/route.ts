@@ -18,8 +18,29 @@ import {
   type Qoo10RollbackUpdateRecoveryBinding,
 } from "../../../../../../lib/channels/listing-update";
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
+import { coupangExactQaRecoveryCandidate } from "../../../../../../lib/channels/coupang-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryBindingValue,
+  ebayExactExistingQaRecoveryCandidate,
+  ebayExactExistingQaRecoveryIdentity,
+} from "../../../../../../lib/channels/ebay-exact-existing-qa-recovery";
+import { elevenstExactExistingPublicationCandidate } from "../../../../../../lib/channels/elevenst-exact-existing-publication";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
+import {
+  lazadaExactExistingPublicationCandidate,
+  lazadaExactExistingPublicationIdentity,
+} from "../../../../../../lib/channels/lazada-exact-existing-identity";
+import { lazadaExactRemoteEditReadinessBlock } from "../../../../../../lib/channels/lazada-exact-remote-edit-readiness";
+import {
+  smartstoreExactQaReadinessBlock,
+  smartstoreExactQaRecoveryCandidate,
+  smartstoreExactQaRecoveryIdentity,
+} from "../../../../../../lib/channels/smartstore-exact-qa-recovery";
+import {
+  configuredServerlessStaticEgressChannels,
+  hasServerlessStaticEgressFor,
+} from "../../../../../../lib/channels/serverless-static-egress";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -63,6 +84,11 @@ type ListingRecord = Record<string, unknown> & {
   channel: ActiveChannelKey;
 };
 
+type ListingAvailabilityBlock = {
+  mode: string;
+  reason: string;
+};
+
 function recordValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -84,6 +110,7 @@ function listingRecords(value: unknown): ListingRecord[] {
 
 function listingReference(listing: ListingRecord): ListingUpdateReference {
   return {
+    listingId: listing.id,
     status: typeof listing.status === "string" ? listing.status : "",
     remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
     publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
@@ -105,7 +132,11 @@ function listingReference(listing: ListingRecord): ListingUpdateReference {
   };
 }
 
-function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUpdate = false) {
+function listingExecutionBlock(
+  listing: ListingRecord,
+  allowVerifiedLegacyEbayUpdate = false,
+  allowExactEbayUpdate = false,
+) {
   const status = typeof listing.status === "string" ? listing.status : "";
   const failureClass = typeof listing.failureClass === "string" ? listing.failureClass : "";
   if (status === "queued" || status === "publishing") {
@@ -115,7 +146,66 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
       message: "이 상품·채널의 기존 원격 작업이 진행 중이므로 새 쓰기를 실행하지 않았습니다.",
     };
   }
-  if (failureClass === "external_action" && !allowVerifiedLegacyEbayUpdate) {
+  const allowExactCoupangRecovery = coupangExactQaRecoveryCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
+  const allowExactElevenstRecovery = elevenstExactExistingPublicationCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    marketplaceSku: typeof listing.marketplaceSku === "string" ? listing.marketplaceSku : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
+  const allowExactLazadaRecovery = lazadaExactExistingPublicationCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
+  const allowExactSmartstoreRecovery = smartstoreExactQaRecoveryCandidate({
+    channel: listing.channel,
+    listingId: listing.id,
+    remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+    status,
+    requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+      ? listing.requestedPublicationIntent
+      : null,
+    remoteVisibility: typeof listing.remoteVisibility === "string" ? listing.remoteVisibility : null,
+    providerStatus: typeof listing.providerStatus === "string" ? listing.providerStatus : null,
+    publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+    failureClass,
+  });
+  if (failureClass === "external_action"
+      && !allowVerifiedLegacyEbayUpdate
+      && !allowExactEbayUpdate
+      && !allowExactCoupangRecovery
+      && !allowExactElevenstRecovery
+      && !allowExactLazadaRecovery
+      && !allowExactSmartstoreRecovery) {
     return {
       status: 409,
       mode: "external_reconciliation_required",
@@ -139,9 +229,27 @@ function listingExecutionBlock(listing: ListingRecord, allowVerifiedLegacyEbayUp
   return null;
 }
 
-function listingAvailability(listing: ListingRecord) {
+function listingAvailability(
+  listing: ListingRecord,
+  productId: string,
+  readinessBlock: ListingAvailabilityBlock | null = null,
+) {
   const release = channelOperationRelease(listing.channel, "listing.update");
-  const executionBlock = listingExecutionBlock(listing);
+  const reference = listingReference(listing);
+  const allowExactEbayUpdate = productId === ebayExactExistingQaRecoveryIdentity.productId
+    && ebayExactExistingQaRecoveryCandidate({
+      channel: listing.channel,
+      listingId: listing.id,
+      remoteId: reference.remoteId,
+      marketplaceSku: reference.marketplaceSku,
+      status: reference.status,
+      requestedPublicationIntent: reference.requestedPublicationIntent,
+      remoteVisibility: reference.remoteVisibility,
+      providerStatus: reference.providerStatus,
+      publishedAt: reference.publishedAt,
+      failureClass: reference.failureClass,
+    });
+  const executionBlock = listingExecutionBlock(listing, false, allowExactEbayUpdate);
   const remotePlan = productEditRemotePlan(listing.channel, release.available);
   return {
     listingId: listing.id,
@@ -150,9 +258,13 @@ function listingAvailability(listing: ListingRecord) {
     targetId: typeof listing.targetId === "string" ? listing.targetId : "",
     status: typeof listing.status === "string" ? listing.status : "",
     remoteIdPresent: Boolean(listingReference(listing).remoteId?.trim()),
-    runnable: release.available && executionBlock === null,
-    mode: release.available ? executionBlock?.mode ?? release.mode : release.mode,
-    reason: release.available ? executionBlock?.message ?? release.reason : release.reason,
+    runnable: release.available && executionBlock === null && readinessBlock === null,
+    mode: release.available
+      ? readinessBlock?.mode ?? executionBlock?.mode ?? release.mode
+      : release.mode,
+    reason: release.available
+      ? readinessBlock?.reason ?? executionBlock?.message ?? release.reason
+      : release.reason,
     fields: channelProductEditFieldSupport(listing.channel),
     remotePlan,
   };
@@ -177,10 +289,132 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   if (!productId.success) return NextResponse.json({ message: "상품 ID 형식이 올바르지 않습니다." }, { status: 400 });
   const loaded = await productContext(request, productId.data);
   if ("response" in loaded) return loaded.response;
+  const listings = listingRecords(loaded.context.listings);
+  const credentialId = new URL(request.url).searchParams.get("credentialId");
+  const exactLazadaListing = listings.find((listing) => (
+    productId.data === lazadaExactExistingPublicationIdentity.productId
+      && lazadaExactExistingPublicationCandidate({
+        channel: listing.channel,
+        listingId: listing.id,
+        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+        status: typeof listing.status === "string" ? listing.status : null,
+        requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+          ? listing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof listing.remoteVisibility === "string"
+          ? listing.remoteVisibility
+          : null,
+        providerStatus: typeof listing.providerStatus === "string"
+          ? listing.providerStatus
+          : null,
+        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+        failureClass: typeof listing.failureClass === "string" ? listing.failureClass : null,
+      })
+  ));
+  let exactLazadaReadinessBlock: ListingAvailabilityBlock | null = null;
+  if (exactLazadaListing) {
+    const { data: preparationData, error: preparationError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_prepare_exact_lazada_live_adoption",
+      { p_listing_id: exactLazadaListing.id },
+    );
+    const preparation = recordValue(preparationData);
+    const targetId = typeof exactLazadaListing.targetId === "string"
+      ? exactLazadaListing.targetId.trim()
+      : "";
+    const mayReadProviderIdentity = preparation.status === "already_bound"
+      && productIdSchema.safeParse(credentialId).success
+      && /^\d+$/u.test(targetId);
+    const providerIdentityResult = mayReadProviderIdentity
+      ? await loaded.admin.serviceClient.rpc(
+          "sellerpilot_service_get_lazada_exact_update_id",
+          {
+            p_listing_id: exactLazadaListing.id,
+            p_credential_id: credentialId,
+            p_product_id: productId.data,
+            p_market: lazadaExactExistingPublicationIdentity.market,
+            p_target_id: targetId,
+          },
+        )
+      : { data: null, error: null };
+    exactLazadaReadinessBlock = lazadaExactRemoteEditReadinessBlock({
+      credentialId,
+      targetId,
+      preparationData,
+      preparationError: Boolean(preparationError),
+      providerIdentityData: providerIdentityResult.data,
+      providerIdentityError: Boolean(providerIdentityResult.error),
+    });
+  }
+  const exactSmartstoreListing = listings.find((listing) => (
+    productId.data === smartstoreExactQaRecoveryIdentity.productId
+      && smartstoreExactQaRecoveryCandidate({
+        channel: listing.channel,
+        listingId: listing.id,
+        remoteId: typeof listing.remoteId === "string" ? listing.remoteId : null,
+        status: typeof listing.status === "string" ? listing.status : null,
+        requestedPublicationIntent: typeof listing.requestedPublicationIntent === "string"
+          ? listing.requestedPublicationIntent
+          : null,
+        remoteVisibility: typeof listing.remoteVisibility === "string"
+          ? listing.remoteVisibility
+          : null,
+        providerStatus: typeof listing.providerStatus === "string"
+          ? listing.providerStatus
+          : null,
+        publishedAt: typeof listing.publishedAt === "string" ? listing.publishedAt : null,
+        failureClass: typeof listing.failureClass === "string" ? listing.failureClass : null,
+      })
+  ));
+  let exactSmartstoreReadinessBlock: ListingAvailabilityBlock | null = null;
+  if (exactSmartstoreListing) {
+    if (credentialId !== smartstoreExactQaRecoveryIdentity.credentialId) {
+      exactSmartstoreReadinessBlock = smartstoreExactQaReadinessBlock({ credentialId });
+    } else {
+      const [identityResult, staticEgressResult] = await Promise.all([
+        loaded.admin.serviceClient.rpc(
+          "sellerpilot_service_get_smartstore_exact_qa_recovery_identity",
+          {
+            p_listing_id: exactSmartstoreListing.id,
+            p_credential_id: credentialId,
+            p_product_id: productId.data,
+            p_market: typeof exactSmartstoreListing.market === "string"
+              ? exactSmartstoreListing.market
+              : "",
+            p_target_id: typeof exactSmartstoreListing.targetId === "string"
+              ? exactSmartstoreListing.targetId
+              : "",
+          },
+        ),
+        loaded.admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
+      ]);
+      const staticEgressStatus = recordValue(staticEgressResult.data);
+      exactSmartstoreReadinessBlock = smartstoreExactQaReadinessBlock({
+        credentialId,
+        identity: identityResult.data,
+        identityError: Boolean(identityResult.error),
+        environmentStaticEgressReady: hasServerlessStaticEgressFor(
+          configuredServerlessStaticEgressChannels(),
+          ["smartstore"],
+        ),
+        databaseStaticEgressReady: staticEgressStatus.smartstore === true,
+        staticEgressError: Boolean(staticEgressResult.error),
+      });
+    }
+  }
   return NextResponse.json({
     productId: productId.data,
     centralFields: centralProductEditFieldSupport(),
-    listings: listingRecords(loaded.context.listings).map(listingAvailability),
+    listings: listings.map((listing) => (
+      listingAvailability(
+        listing,
+        productId.data,
+        listing.id === exactSmartstoreListing?.id
+          ? exactSmartstoreReadinessBlock
+          : listing.id === exactLazadaListing?.id
+            ? exactLazadaReadinessBlock
+            : null,
+      )
+    )),
   }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
 
@@ -226,6 +460,19 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   }
 
   const reference = listingReference(listing);
+  const exactEbayCandidate = productId.data === ebayExactExistingQaRecoveryIdentity.productId
+    && ebayExactExistingQaRecoveryCandidate({
+      channel: listing.channel,
+      listingId: listing.id,
+      remoteId: reference.remoteId,
+      marketplaceSku: reference.marketplaceSku,
+      status: reference.status,
+      requestedPublicationIntent: reference.requestedPublicationIntent,
+      remoteVisibility: reference.remoteVisibility,
+      providerStatus: reference.providerStatus,
+      publishedAt: reference.publishedAt,
+      failureClass: reference.failureClass,
+    });
   let boundQoo10RollbackUpdateRecovery: Qoo10RollbackUpdateRecoveryBinding | null = null;
   if (qoo10RollbackListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
@@ -252,8 +499,50 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     }
     boundQoo10RollbackUpdateRecovery = identity.data;
   }
+  let verifiedExactEbayUpdate = false;
+  if (exactEbayCandidate) {
+    const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
+      "sellerpilot_service_get_ebay_exact_qa_recovery_identity",
+      {
+        p_listing_id: listing.id,
+        p_credential_id: body.data.credentialId,
+        p_product_id: productId.data,
+        p_market: typeof listing.market === "string" ? listing.market : "",
+        p_target_id: typeof listing.targetId === "string" ? listing.targetId : "",
+      },
+    );
+    const identity = ebayExactExistingQaRecoveryBindingValue(identityData);
+    if (identityError) {
+      console.error("ebay_exact_existing_identity_rpc_failed", {
+        code: typeof identityError.code === "string" ? identityError.code : "unknown",
+      });
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_identity_rpc_failed",
+        message: "eBay exact QA 운영 결속 조회가 실패해 원격 수정을 실행하지 않았습니다.",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!identity) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_identity_contract_required",
+        message: "eBay exact QA 상품·offer·SKU·운영 인증정보 결속값이 현재 원장과 일치하지 않아 원격 수정을 실행하지 않았습니다.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (identity.credentialId !== body.data.credentialId) {
+      return NextResponse.json({
+        ok: false,
+        status: "blocked",
+        mode: "ebay_exact_existing_credential_stale",
+        message: "eBay 운영 인증정보가 갱신되었습니다. 상품 화면을 새로고침한 뒤 다시 확인해 주세요.",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    verifiedExactEbayUpdate = true;
+  }
   let verifiedLegacyEbayUpdate = false;
-  if (legacyEbayListingUpdateCandidate(listing.channel, reference)) {
+  if (!exactEbayCandidate && legacyEbayListingUpdateCandidate(listing.channel, reference)) {
     const { data: identityData, error: identityError } = await loaded.admin.serviceClient.rpc(
       "sellerpilot_service_get_ebay_listing_update_identity",
       {
@@ -275,7 +564,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       && identity.offerId.trim().length > 0;
   }
 
-  const executionBlock = listingExecutionBlock(listing, verifiedLegacyEbayUpdate);
+  const executionBlock = listingExecutionBlock(
+    listing,
+    verifiedLegacyEbayUpdate,
+    verifiedExactEbayUpdate,
+  );
   if (executionBlock) {
     return NextResponse.json({
       ok: false,

@@ -833,20 +833,16 @@ for (const [name, caseTitle, caseDetailHtml] of [
     const originalFetch = globalThis.fetch;
     const caseKeyword = "No Brand,購入前確認";
     const args = languageCaseArguments(caseTitle, caseDetailHtml, caseKeyword);
-    globalThis.fetch = async (input) => qooMethod(input) === "ItemsBasic.EditGoodsStatus"
-      ? Response.json({ ResultCode: 0 })
-      : Response.json({
-          ResultCode: 0,
-          ResultObject: readback("S2", {
-            ItemTitle: caseTitle,
-            Keyword: caseKeyword,
-            ItemDetail: caseDetailHtml,
-          }),
-        });
+    let providerCalls = 0;
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return Response.json({ ResultCode: 0 });
+    };
     try {
       const result = await operation("listing.activate", args);
       assert.equal(result.ok, false);
-      assert.equal(result.steps[1]?.data.sellerpilotReconciliationRequired, true);
+      assert.equal(result.steps[0]?.name, "qoo10-s1-activation-prewrite-fence");
+      assert.equal(providerCalls, 0);
       assert.equal(result.remoteState, undefined);
     } finally {
       globalThis.fetch = originalFetch;
@@ -854,12 +850,53 @@ for (const [name, caseTitle, caseDetailHtml] of [
   });
 }
 
-test("serverless matrix exposes activation only for Qoo10 and rejects invalid context before the mutation fence", async () => {
+for (const [name, residual] of [
+  ["romanized product name", "buchakhyeong keibeul jeongri keulrip 6gae seteu"],
+  ["romanized colour", "geomjeongsaek"],
+  ["source KRW price", "5000 KRW"],
+  ["source won symbol price", "₩5,000"],
+  ["source Hangul won price", "5,000원"],
+  ["source katakana won price", "5,000ウォン"],
+] as const) {
+  test(`exact Qoo10 activation rejects residual ${name} before provider access`, async () => {
+    const legacyDetailHtml = `<section lang="ja-JP"><h1>${title}</h1><p>${residual} 日本語の商品説明です。</p>${detailImageUrls
+      .map((url) => `<img src="${url}">`)
+      .join("")}</section>`;
+    const args = {
+      ...argumentsValue(),
+      params: {
+        ...argumentsValue().params,
+        ItemDescription: legacyDetailHtml,
+      },
+    };
+    assert.equal(qoo10S1ActivationArgumentsValid(args), false);
+
+    const originalFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = async () => {
+      providerCalls += 1;
+      return Response.json({ ResultCode: 0 });
+    };
+    try {
+      const result = await operation("listing.activate", args);
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0]?.name, "qoo10-s1-activation-prewrite-fence");
+      assert.equal(providerCalls, 0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+test("serverless matrix exposes activation only for Qoo10 and Temu and rejects invalid context before the mutation fence", async () => {
   const channels: GatewayClaim["channel"][] = [
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
   ];
   for (const channel of channels) {
-    assert.equal(serverlessGatewayOperationAllowed(channel, "listing.activate"), channel === "qoo10");
+    assert.equal(
+      serverlessGatewayOperationAllowed(channel, "listing.activate"),
+      channel === "qoo10" || channel === "temu",
+    );
   }
   const events: string[] = [];
   const job: GatewayClaim = {
@@ -882,7 +919,73 @@ test("serverless matrix exposes activation only for Qoo10 and rejects invalid co
       beginCredentialMutation: async () => { events.push("credential"); },
       stageCredentialRefresh: async () => { events.push("refresh"); },
     },
-  }), /QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED/);
+  }), /LISTING_ACTIVATION_SERVER_CONTEXT_REQUIRED/);
+  assert.deepEqual(events, []);
+});
+
+test("serverless worker rejects the exact Qoo10 duplicate create before credentials, media, or mutation fence", async () => {
+  const events: string[] = [];
+  const job: GatewayClaim = {
+    id: "61000000-0000-4000-8000-000000000001",
+    claim_token: "62000000-0000-4000-8000-000000000001",
+    credential_id: "63000000-0000-4000-8000-000000000001",
+    channel: "qoo10",
+    operation: "listing.create",
+    environment: "production",
+    request: {
+      arguments: {
+        params: {
+          SellerCode: sellerCode,
+          SecondSubCat: categoryCode,
+          ItemTitle: title,
+        },
+      },
+    },
+    credential: { api_key: "private-test-key" },
+    attempt_count: 1,
+  };
+  await assert.rejects(executeServerlessGatewayProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginCredentialMutation: async () => { events.push("credential"); },
+      stageCredentialRefresh: async () => { events.push("stage"); },
+      beginProviderMutation: async () => { events.push("mutation"); },
+    },
+  }, async () => {
+    events.push("provider");
+    throw new Error("provider must not execute");
+  }), /QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN/);
+  assert.deepEqual(events, []);
+});
+
+test("serverless worker rejects an unbound exact Qoo10 localization update before credentials or provider calls", async () => {
+  const events: string[] = [];
+  const job: GatewayClaim = {
+    id: "64000000-0000-4000-8000-000000000001",
+    claim_token: "65000000-0000-4000-8000-000000000001",
+    credential_id: "66000000-0000-4000-8000-000000000001",
+    channel: "qoo10",
+    operation: "listing.update",
+    environment: "production",
+    request: { arguments: { params: { ItemCode: remoteId } } },
+    credential: { api_key: "private-test-key" },
+    attempt_count: 1,
+  };
+  await assert.rejects(executeServerlessGatewayProviderJob({
+    job,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { events.push("lease"); },
+      beginCredentialMutation: async () => { events.push("credential"); },
+      stageCredentialRefresh: async () => { events.push("stage"); },
+      beginProviderMutation: async () => { events.push("mutation"); },
+    },
+  }, async () => {
+    events.push("provider");
+    throw new Error("provider must not execute");
+  }), /QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED/);
   assert.deepEqual(events, []);
 });
 

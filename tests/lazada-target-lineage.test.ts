@@ -85,14 +85,19 @@ test("cached Lazada targets must cover the exact countries and seller ids of the
 
 test("channel target route validates current Lazada production lineage before cache return and cache store", async () => {
   const source = await readFile(new URL("../app/api/admin/channel-targets/route.ts", import.meta.url), "utf8");
+  const gatewaySource = await readFile(new URL("../lib/channels/gateway.ts", import.meta.url), "utf8");
   const getSource = source.slice(source.indexOf("export async function GET"), source.indexOf("function remoteProfile"));
   const validationIndex = getSource.indexOf('{ p_channel: "lazada", p_environment: "production" }');
-  const cacheReturnIndex = getSource.indexOf("lineageBoundLazadaTargets(normalizedCachedTargets, activeLazadaSecret)");
+  const cacheReturnIndex = getSource.indexOf("lineageBoundLazadaTargetForMarket(");
   assert.ok(validationIndex >= 0 && cacheReturnIndex > validationIndex);
   assert.match(source, /p_channel: "lazada", p_environment: "production"/);
   assert.match(source, /lazadaEnvelope\.credentialId !== credential\.id/);
   assert.match(source, /currentCredentialId !== activeLazadaCredentialId/);
   assert.match(source, /latestCredentialId !== activeLazadaCredentialId/);
   assert.match(source, /remoteTargetId !== expectedSellerId/);
+  assert.match(source, /parsed\.data\.credentialId !== credential\.id/);
+  assert.match(gatewaySource, /sellerpilot_enqueue_lazada_target_sync/);
+  assert.match(source, /code: lazadaTargetSyncRequiredCode/);
+  assert.match(source, /code: lazadaMyTargetMismatchCode/);
   assert.doesNotMatch(source, /channel\.data === "lazada" && cachedTargetsComplete/);
 });

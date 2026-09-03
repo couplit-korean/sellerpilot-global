@@ -4,6 +4,7 @@ import {
   activeProductionCredentialMap,
   bindEbayCategoryTree,
   ebayCategoryInspectionArguments,
+  resolveEbayCategoryInspection,
   selectActiveProductionCredential,
   type CredentialRow,
 } from "../app/category-classification-workbench";
@@ -57,4 +58,69 @@ test("eBay US tree zero remains valid but cannot be replayed for a non-US market
     { categoryId: "123", categoryTreeId: "0" },
   );
   assert.equal(ebayCategoryInspectionArguments("123", us ?? undefined, "EBAY_GB"), null);
+});
+
+test("eBay manual inspection bootstraps a fresh tree for the current marketplace", async () => {
+  const calls: Record<string, unknown>[] = [];
+  const resolved = await resolveEbayCategoryInspection({
+    categoryId: " 20473 ",
+    marketplaceId: "EBAY_US",
+    query: " Lotte Sand Milk Biscuit 315g ",
+    bootstrap: async (arguments_) => {
+      calls.push(arguments_);
+      return { ok: true, remoteId: "0" };
+    },
+  });
+
+  assert.deepEqual(calls, [{
+    query: "Lotte Sand Milk Biscuit 315g",
+    marketplaceId: "EBAY_US",
+    categoryTreeId: "",
+  }]);
+  assert.deepEqual(resolved, {
+    arguments: { categoryId: "20473", categoryTreeId: "0" },
+    binding: { marketplaceId: "EBAY_US", categoryTreeId: "0" },
+  });
+});
+
+test("eBay manual inspection reuses only a current-market in-memory binding", async () => {
+  let calls = 0;
+  const resolved = await resolveEbayCategoryInspection({
+    categoryId: "20473",
+    binding: { marketplaceId: "EBAY_US", categoryTreeId: "0" },
+    marketplaceId: "EBAY_US",
+    query: "Lotte Sand Milk Biscuit 315g",
+    bootstrap: async () => {
+      calls += 1;
+      return { ok: true, remoteId: "3" };
+    },
+  });
+
+  assert.equal(calls, 0);
+  assert.deepEqual(resolved.arguments, { categoryId: "20473", categoryTreeId: "0" });
+});
+
+test("eBay manual inspection replaces a stale-market binding with provider readback", async () => {
+  const resolved = await resolveEbayCategoryInspection({
+    categoryId: "20473",
+    binding: { marketplaceId: "EBAY_GB", categoryTreeId: "3" },
+    marketplaceId: "EBAY_US",
+    query: "Lotte Sand Milk Biscuit 315g",
+    bootstrap: async () => ({ ok: true, remoteId: "0" }),
+  });
+
+  assert.deepEqual(resolved.binding, { marketplaceId: "EBAY_US", categoryTreeId: "0" });
+  assert.deepEqual(resolved.arguments, { categoryId: "20473", categoryTreeId: "0" });
+});
+
+test("eBay manual inspection fails closed when bootstrap has no provider tree", async () => {
+  await assert.rejects(
+    resolveEbayCategoryInspection({
+      categoryId: "20473",
+      marketplaceId: "EBAY_US",
+      query: "Lotte Sand Milk Biscuit 315g",
+      bootstrap: async () => ({ ok: true, remoteId: "" }),
+    }),
+    /공식 카테고리 트리를 확인하지 못했습니다/,
+  );
 });

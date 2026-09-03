@@ -3,7 +3,7 @@ import type { ActiveChannelKey } from "./catalog";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import { listingPublicationAssetBindingContract } from "./marketplace-images";
 
-type PublicationChannel = Exclude<ActiveChannelKey, "temu">;
+type PublicationChannel = ActiveChannelKey;
 type UnknownRecord = Record<string, unknown>;
 
 type AssetIdentity = {
@@ -432,6 +432,53 @@ function shopeeRepresentativeImageIdentity(input: {
     : "";
 }
 
+function temuContentProjection(
+  side: "source" | "remote",
+  value: UnknownRecord,
+): ListingPublicationContentProjection {
+  const sourceRoot = recordValue(value.body);
+  const resultRoot = recordValue(value.result);
+  const dataRoot = recordValue(value.data);
+  const root = side === "source"
+    ? sourceRoot
+    : Object.keys(resultRoot).length
+      ? resultRoot
+      : Object.keys(dataRoot).length
+        ? dataRoot
+        : value;
+  const goodsBasic = Object.keys(recordValue(root.goodsBasic)).length
+    ? recordValue(root.goodsBasic)
+    : root;
+  const gallery = recordValue(root.goodsGallery);
+  const rawDescription = firstText(goodsBasic, ["goodsDesc", "description"]);
+  const bulletPoints = Array.isArray(goodsBasic.bulletPoints)
+    ? goodsBasic.bulletPoints.map(normalizedListingPublicationText).filter(Boolean)
+    : [];
+  const descriptionParts = [normalizedListingPublicationText(rawDescription), ...bulletPoints].filter(Boolean);
+  const description = [...new Set(descriptionParts)].join(" ");
+  const detailImageIdentities = exactImageIdentities(
+    gallery.detailImage
+      ?? gallery.detailImages
+      ?? goodsBasic.detailImage
+      ?? goodsBasic.detailImages,
+  );
+  const carouselImages = exactImageIdentities(
+    gallery.goodsCarouselImage
+      ?? gallery.carouselImages
+      ?? goodsBasic.goodsCarouselImage
+      ?? goodsBasic.carouselImages,
+  );
+  const title = normalizedListingPublicationText(firstText(goodsBasic, ["goodsName", "title"]));
+  return {
+    title,
+    titleParts: title ? [title] : [],
+    description,
+    detailImageCount: detailImageIdentities.length,
+    detailImageIdentities,
+    representativeImageIdentity: carouselImages[0] ?? "",
+  };
+}
+
 export function listingPublicationContentProjection(
   channel: PublicationChannel,
   side: "source" | "remote",
@@ -498,6 +545,7 @@ export function listingPublicationContentProjection(
     const title = normalizedListingPublicationText(firstText(channelProduct, ["channelProductName"]));
     return { title, titleParts: title ? [title] : [], description: normalizedListingPublicationText(description), detailImageCount: detailImageIdentities.length, detailImageIdentities };
   }
+  if (channel === "temu") return temuContentProjection(side, value);
   const inventoryItem = recordValue(value.inventoryItem);
   const product = recordValue(inventoryItem.product);
   const offer = recordValue(value.offer);
@@ -519,8 +567,9 @@ function parseAssetIdentities(
   value: unknown,
   allowGalleryRole = false,
   requireApprovedObjectPath = false,
+  expectedCounts: readonly number[] = [8],
 ): AssetIdentity[] | null {
-  if (!Array.isArray(value) || value.length !== 8) return null;
+  if (!Array.isArray(value) || !expectedCounts.includes(value.length)) return null;
   const identities = value.map((item) => {
     const row = recordValue(item);
     return {
@@ -555,19 +604,24 @@ function parseAssetIdentities(
     || !/^normalized\/[0-9a-f]{2}\/[0-9a-f]{64}\.jpg$/u.test(item.objectPath)
     || !/^[0-9a-f]{64}$/u.test(item.contentSha256)
     || item.objectPath !== `normalized/${item.contentSha256.slice(0, 2)}/${item.contentSha256}.jpg`)) return null;
-  if (new Set(identities.map((item) => item.role)).size !== 8
-      || new Set(identities.map((item) => item.publicUrl)).size !== 8
-      || new Set(identities.map((item) => item.objectPath)).size !== 8
-      || new Set(identities.map((item) => item.contentSha256)).size !== 8
+  if (new Set(identities.map((item) => item.role)).size !== identities.length
+      || new Set(identities.map((item) => item.publicUrl)).size !== identities.length
+      || new Set(identities.map((item) => item.objectPath)).size !== identities.length
+      || new Set(identities.map((item) => item.contentSha256)).size !== identities.length
       || (requireApprovedObjectPath
-        && new Set(identities.map((item) => item.approvedSourceSha256)).size !== 8)) return null;
+        && new Set(identities.map((item) => item.approvedSourceSha256)).size !== identities.length)) return null;
   return identities;
 }
 
 export function parseListingPublicationAssetBinding(value: unknown): ListingPublicationAssetBinding | null {
   const row = recordValue(value);
   const approvedDetailImages = parseAssetIdentities(row.approvedDetailImages, false, true);
-  const providerTransportImages = parseAssetIdentities(row.providerTransportImages, true);
+  const providerTransportImages = parseAssetIdentities(
+    row.providerTransportImages,
+    true,
+    false,
+    row.providerImageSurface === "gallery" ? [8, 9] : [8],
+  );
   const version = Number(row.approvedDetailPageVersion);
   const surface = row.providerImageSurface;
   if (row.contract !== listingPublicationAssetBindingContract
@@ -578,7 +632,12 @@ export function parseListingPublicationAssetBinding(value: unknown): ListingPubl
   if ((surface === "detail_content" || surface === "buyer_visible")
       && !sameOrderedValues(approvedDetailImages.map((item) => item.publicUrl), providerTransportImages.map((item) => item.publicUrl))) return null;
   if (surface === "gallery" && (providerTransportImages[0]?.role !== "gallery-representative"
-      || !sameOrderedValues(approvedDetailImages.slice(0, 7).map((item) => item.publicUrl), providerTransportImages.slice(1).map((item) => item.publicUrl)))) return null;
+      || !sameOrderedValues(
+        approvedDetailImages
+          .slice(0, providerTransportImages.length - 1)
+          .map((item) => item.publicUrl),
+        providerTransportImages.slice(1).map((item) => item.publicUrl),
+      ))) return null;
   return {
     contract: listingPublicationAssetBindingContract,
     approvedDetailPageVersion: version,
@@ -612,6 +671,9 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
   const sourceRepresentativeImageDigest = exactText(row.sourceRepresentativeImageDigest);
   const providerRepresentativeImageIdentity = exactText(row.providerRepresentativeImageIdentity);
   const providerRepresentativeImageDigest = exactText(row.providerRepresentativeImageDigest);
+  const transportRoleCountValid = surface === "gallery"
+    ? transportRoles.length === 8 || transportRoles.length === 9
+    : transportRoles.length === 8;
   const representativeEvidenceValid = !sourceRepresentativeImageDigest
     && !providerRepresentativeImageIdentity
     && !providerRepresentativeImageDigest
@@ -623,7 +685,7 @@ function parseProviderAssetEvidence(value: unknown): ProviderAssetEvidence | nul
       || !/^[a-f0-9]{64}$/u.test(exactText(row.approvedManifestDigest))
       || !Number.isSafeInteger(Number(row.approvedDetailPageVersion)) || Number(row.approvedDetailPageVersion) < 1
       || approvedRoles.length !== 8 || new Set(approvedRoles).size !== 8
-      || transportRoles.length !== 8 || new Set(transportRoles).size !== 8
+      || !transportRoleCountValid || new Set(transportRoles).size !== transportRoles.length
       || identities.length !== 8 || new Set(identities).size !== 8
       || (surface !== "detail_content" && surface !== "gallery")
       || !representativeEvidenceValid
@@ -665,7 +727,11 @@ export function listingPublicationProviderAssetEvidence(input: {
     : binding.providerImageSurface;
   if (providerImageSurface !== "gallery" && providerImageSurface !== "detail_content") return null;
   const buyerVisibleShopee = input.channel === "shopee" && binding.providerImageSurface === "buyer_visible";
-  const representativeBound = buyerVisibleShopee || input.channel === "lazada";
+  const representativeBound = buyerVisibleShopee
+    || input.channel === "lazada"
+    || (input.channel !== "coupang"
+      && binding.providerTransportImages.length === 9
+      && binding.providerTransportImages[0]?.role === "gallery-representative");
   const sourceRepresentativeImage = sourceProjection.representativeImageIdentity ?? "";
   const providerRepresentativeImage = projection.representativeImageIdentity ?? "";
   if (representativeBound && (!sourceRepresentativeImage || !providerRepresentativeImage)) return null;
@@ -696,6 +762,7 @@ function canonicalRemoteResources(channel: PublicationChannel, value: unknown) {
     lazada: ["itemId", "country", "categoryId", "skuIds", "sellerSkus"],
     coupang: ["sellerProductId", "vendorItemIds"],
     smartstore: ["originProductNo", "smartstoreChannelProductNo"],
+    temu: ["goodsId", "externalGoodsId"],
     ebay: ["offerId", "listingId", "sku", "marketplaceId"],
   };
   const result: Record<string, string | string[]> = {};
@@ -755,6 +822,15 @@ function sourceDeclaredRemoteResources(
       ? { smartstoreChannelProductNo: firstText(sourceArguments, ["smartstoreChannelProductNo"]) }
       : {}),
   };
+  if (channel === "temu") {
+    const goodsBasic = recordValue(body.goodsBasic);
+    return {
+      goodsId: remoteId,
+      ...(firstText(goodsBasic, ["externalGoodsId", "outGoodsSn"])
+        ? { externalGoodsId: firstText(goodsBasic, ["externalGoodsId", "outGoodsSn"]) }
+        : {}),
+    };
+  }
   const inventorySku = firstText(sourceArguments, ["sku"])
     || firstText(recordValue(sourceArguments.inventoryItem), ["sku"]);
   return {
@@ -831,7 +907,13 @@ export function verifyListingPublicationContent(input: {
   const providerEvidence = parseProviderAssetEvidence(recordValue(responseState.evidence).publicationAssetBinding);
   const sourceAssetProjectionVerified = Boolean(binding
     && source.detailImageIdentities.length === 8
-    && sameOrderedValues(source.detailImageIdentities, binding.providerTransportImages.map((item) => item.publicUrl)));
+    && sameOrderedValues(
+      source.detailImageIdentities,
+      binding.providerImageSurface === "gallery"
+        && binding.providerTransportImages.length === 9
+        ? binding.providerTransportImages.slice(1).map((item) => item.publicUrl)
+        : binding.providerTransportImages.map((item) => item.publicUrl),
+    ));
   const approvedManifestDigestVerified = Boolean(binding && providerEvidence
     && providerEvidence.sourceAssetBindingDigest === digest(binding)
     && providerEvidence.approvedManifestDigest === binding.approvedManifestDigest
@@ -853,10 +935,15 @@ export function verifyListingPublicationContent(input: {
     : verifiedProviderImageSurface === "gallery"
       ? binding?.providerImageSurface === "buyer_visible"
         ? "representative_plus_approved_detail_8_exact_gallery_9"
-        : "representative_plus_approved_detail_7_exact_gallery_8"
+        : binding?.providerTransportImages.length === marketplaceChannelDetailImageCount + 1
+          ? "representative_plus_approved_detail_8_exact_gallery_9"
+          : "representative_plus_approved_detail_7_exact_gallery_8"
       : "unknown";
   const representativeRequired = binding?.providerImageSurface === "buyer_visible"
-    || input.channel === "lazada";
+    || input.channel === "lazada"
+    || (input.channel !== "coupang"
+      && binding?.providerTransportImages.length === 9
+      && binding.providerTransportImages[0]?.role === "gallery-representative");
   const representativeImageVerified = !representativeRequired
     || Boolean(providerEvidence
       && source.representativeImageIdentity

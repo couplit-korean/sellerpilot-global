@@ -62,7 +62,8 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /환율 새로고침/);
   assert.match(page, /const dashboardExchangeRateRefreshMs = 60_000/);
   assert.doesNotMatch(page, /Math\.random/);
-  assert.doesNotMatch(page, /beforeunload|onbeforeunload/);
+  assert.match(page, /window\.addEventListener\("beforeunload", warnBeforeUnload\)/);
+  assert.match(page, /window\.removeEventListener\("beforeunload", warnBeforeUnload\)/);
   assert.doesNotMatch(page, /sellerpilot-operation-sync-requested-at/);
   assert.doesNotMatch(page, /window\.setInterval\(run, 5 \* 60_000\)/);
   assert.equal((page.match(/window\.setInterval\(refreshWhenVisible, 10_000\)/g) ?? []).length, 1);
@@ -448,8 +449,11 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(channelOperationsRoute, /sellerpilot_claim_channel_operation/);
   assert.match(channelOperationsRoute, /executeViaChannelGateway/);
   assert.doesNotMatch(channelOperationsRoute, /ensureEbayAccessToken/);
-  assert.match(channelTargetClient, /cached\.status === 401/);
-  assert.match(channelTargetClient, /request\("POST"\)/);
+  assert.match(channelTargetClient, /cached\.status !== 409/);
+  assert.match(channelTargetClient, /lazadaTargetSyncRequiredPayload/);
+  assert.match(channelTargetClient, /syncRequired\.credentialId/);
+  assert.match(channelTargetClient, /request\("POST", syncRequired\.credentialId\)/);
+  assert.doesNotMatch(channelTargetClient, /cached\.status === (?:404|500|503)/);
   assert.match(channelTargetClient, /pendingTargetRequests/);
   assert.match(connectorMigration, /channel_operation_attempts/);
   assert.match(connectorMigration, /sellerpilot_claim_channel_operation/);

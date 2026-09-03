@@ -15,7 +15,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
   assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
-  assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay"/s);
+  assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*"temu"/s);
   assert.match(route, /p_release_sha: identity\.status === "valid" \? identity\.release : null/);
   assert.doesNotMatch(route, /parsed\.data\.(?:release|releaseSha|sha)/);
   assert.doesNotMatch(route, /process\.env/);
@@ -39,6 +39,7 @@ test("listing publication release actions call only the fenced service RPCs", as
   assert.match(route, /p_open: parsed\.data\.action === "open_gate"/);
   assert.match(route, /p_release_sha: parsed\.data\.action === "open_gate" && identity\.status === "valid"[\s\S]*?: null/);
   assert.match(route, /listing_release_gate_preconditions_unmet/);
+  assert.match(route, /8개 어댑터·재조회기·현재 런타임 SHA/);
   assert.match(route, /같은 작업을 반복하지 말고 현재 상태를 먼저 확인해 주세요/);
   assert.doesNotMatch(route, /error\.message|error\.details|error\.hint/);
 });
@@ -57,10 +58,11 @@ test("channel connection UI uses inline two-step confirmations for release write
   assert.match(runtimeCard, /disabled=\{!listingRelease\.readyForOpen \|\| listingReleaseBusy/);
   assert.match(runtimeCard, /게시 게이트 닫기/);
   assert.match(runtimeCard, /Qoo10만 열기/);
-  assert.match(runtimeCard, /다른 6개 채널은 계속 차단됩니다/);
-  for (const label of ["Qoo10", "Shopee", "Lazada", "쿠팡", "11번가", "스마트스토어", "eBay"]) {
+  assert.match(runtimeCard, /다른 7개 채널은 계속 차단됩니다/);
+  for (const label of ["Qoo10", "Shopee", "Lazada", "쿠팡", "11번가", "스마트스토어", "eBay", "Temu"]) {
     assert.match(runtimeCard, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*확인 기록`, "s"));
   }
+  assert.match(runtimeCard, /8개 채널 게시 릴리스 게이트/);
 });
 
 test("listing release controls remain usable without horizontal overflow on narrow screens", async () => {

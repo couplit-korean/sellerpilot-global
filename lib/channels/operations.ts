@@ -14,6 +14,7 @@ import {
   readStoredNaverAccessToken,
   shopeeMerchantRequest,
   shopeeRequest,
+  temuExactLong,
   temuRequest,
   textValue,
   type RemoteResponse,
@@ -44,16 +45,64 @@ import {
   type Qoo10ListingCreateExpectation,
 } from "./qoo10-listing-create-preflight";
 import {
+  qoo10ExactAdoptedLocalizationArgument,
+  qoo10ExactAdoptedLocalizationBinding,
+  qoo10ExactLocalizationUpdateBinding,
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizedUpdate as qoo10ExactLocalizedUpdateOrThrow,
+  qoo10ExactTargetCreateForbidden,
+  verifyQoo10ExactCurrentS1Readback,
+  verifyQoo10ExactAdoptedLiveReadback,
+  type Qoo10ExactLocalizedUpdate,
+} from "./qoo10-exact-localization-recovery";
+import {
   ebayAsqMarketplaceId,
   ebayAsqMarketplaceIdFromSiteCode,
   type EbayAsqMarketplaceId,
 } from "./ebay-asq";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
+import {
+  assertEbayExactExistingQaUpdateArguments,
+  assertEbayExactExistingQaProviderCopyRequest,
+  ebayExactExistingQaRecoveryBinding,
+  ebayExactV101EnglishAspects,
+} from "./ebay-exact-existing-qa-recovery";
+import { upsertMarketplaceDetailImages } from "./marketplace-images";
+import { parseListingPublicationAssetBinding } from "./listing-publication-content";
 import { validateElevenstListingProduct } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
-import { coupangListingUpdateWrite } from "./coupang-listing-update";
+import {
+  assertElevenstExactExistingUpdate,
+  elevenstExactExistingBaselineVerified,
+  elevenstExactExistingCreateForbidden,
+  elevenstExactExistingLiveReadbackVerified,
+  elevenstExactExistingStagedReadbackVerified,
+  elevenstExactExistingUpdateTarget,
+} from "./elevenst-exact-existing-publication";
+import {
+  assertCoupangExactQaCurrentProduct,
+  assertCoupangExactQaInventoryReadback,
+  assertCoupangExactQaUpdateReadback,
+  coupangListingUpdateWrite,
+} from "./coupang-listing-update";
+import {
+  assertCoupangExactQaProviderContract,
+  coupangExactQaRepresentativeBinding,
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBinding,
+  coupangExactQaRecoveryIdentity,
+  type CoupangExactQaRecoveryBinding,
+} from "./coupang-exact-qa-recovery";
+import {
+  coupangExactRepresentativePrewriteSnapshot,
+  coupangProviderImageSnapshotSha256,
+  verifyCoupangExactRepresentativeReadback,
+  type CoupangProviderImageIdentity,
+} from "./coupang-representative-readback";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
 import {
+  elevenstExactExistingUpdateProjectionDigestInput,
   elevenstListingUpdateProjectionDigestInput,
   listingUpdateRemoteIdentity,
   mergeListingUpdatePatch,
@@ -79,6 +128,14 @@ import {
 } from "./provider-shopee-publication-readback";
 import { shopeeExactGlobalCategoryPath } from "./shopee-category-tree";
 import {
+  assertShopeeSgExistingContentSource,
+  assertShopeeSgExistingInventorySource,
+  shopeeSgExistingUpdateBinding,
+  verifyShopeeSgExistingContentReadback,
+  verifyShopeeSgExistingInventoryReadback,
+  verifyShopeeSgExistingUpdatePrewrite,
+} from "./shopee-sg-existing-update";
+import {
   lazadaListingArgumentsForPublicationIntent,
   lazadaListingArgumentsForRemoteItem,
   lazadaListingRemoteIdFromArguments,
@@ -93,6 +150,26 @@ import {
 } from "./listing-publication-readback";
 import { executeListingPublicationVerification } from "./listing-publication-verification";
 import { uploadChannelNativeImages } from "./native-image-upload";
+import {
+  normalizeTemuListingPublicationReadback,
+  temuActivationBinding,
+  temuContainmentDiscoveryBinding,
+  temuCreateCorrelationMatches,
+  temuExactLongGoodsId,
+  temuExactGoodsListArguments,
+  temuPublicationExpectedSkus,
+} from "./provider-temu-publication-readback";
+import {
+  normalizeTemuCredentialIdentityObservation,
+  normalizeTemuExistingAdoptionObservation,
+  temuCredentialCertificationBinding,
+  temuExistingAdoptionBinding,
+  temuExistingAdoptionExternalGoodsId,
+} from "./temu-existing-adoption";
+import {
+  temuExactExistingUpdateIdentity,
+  temuExactExistingUpdateRequest,
+} from "./temu-existing-update";
 
 export const channelOperationNames = [
   "categories.list",
@@ -181,6 +258,13 @@ type ExecuteInput = {
   shopeeShopCredential?: SecretPayload;
   arguments: Record<string, unknown>;
   environment: "sandbox" | "production";
+  providerMutationHooks?: {
+    begin: () => Promise<void>;
+    assertLeaseHealthy: () => Promise<void>;
+    bindCoupangRepresentativePrewrite?: (
+      images: CoupangProviderImageIdentity[],
+    ) => Promise<{ prewriteSnapshotSha256: string }>;
+  };
 };
 
 const MAX_PROVIDER_SYNC_PAGES = 20;
@@ -1059,6 +1143,12 @@ async function executeElevenst(input: ExecuteInput) {
     )], categoryId);
   }
   if (input.operation === "listing.create") {
+    if (elevenstExactExistingCreateForbidden({ argumentsValue: input.arguments })) {
+      return result(input, [elevenstPrewriteFailureStep(
+        "product-duplicate-create-fence",
+        new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN"),
+      )]);
+    }
     let product: Record<string, unknown>;
     try {
       product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
@@ -1226,8 +1316,10 @@ async function executeElevenst(input: ExecuteInput) {
     const productNo = pathSegment(stringArgument(input.arguments, "productNo"));
     let product: Record<string, unknown>;
     let snapshotMutableFingerprint: string;
+    const exactExistingPublication = elevenstExactExistingUpdateTarget(input.arguments);
     try {
       product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+      if (exactExistingPublication) assertElevenstExactExistingUpdate(input.arguments);
       snapshotMutableFingerprint = stringArgument(input.arguments, "sellerpilotSnapshotMutableFingerprint");
       if (!/^[a-f0-9]{64}$/u.test(snapshotMutableFingerprint)) {
         throw new Error("ELEVENST_UPDATE_SNAPSHOT_FINGERPRINT_INVALID");
@@ -1256,15 +1348,29 @@ async function executeElevenst(input: ExecuteInput) {
       && String(beforeProduct.sellerPrdCd ?? "") === sellerProductCode;
     const beforeMutableFingerprint = Object.keys(beforeProduct).length
       ? createHash("sha256")
-        .update(elevenstListingUpdateProjectionDigestInput(beforeProduct))
+        .update(exactExistingPublication
+          ? elevenstExactExistingUpdateProjectionDigestInput(beforeProduct)
+          : elevenstListingUpdateProjectionDigestInput(beforeProduct))
         .digest("hex")
       : "";
     const snapshotVerified = beforeMutableFingerprint === snapshotMutableFingerprint;
-    const beforeVerified = identityVerified && snapshotVerified;
+    const exactBaselineVerified = !exactExistingPublication
+      || elevenstExactExistingBaselineVerified(beforeProduct);
+    const beforeVerified = identityVerified && snapshotVerified && exactBaselineVerified;
     const beforeStep = elevenstVerifiedStep("product-update-preflight", beforeRemote, beforeVerified);
     beforeStep.data = {
       ...beforeStep.data,
       sellerpilotSnapshotMutableProjectionMatched: snapshotVerified,
+      ...(exactExistingPublication
+        ? { sellerpilotExactExistingBaselineStatus105Verified: exactBaselineVerified }
+        : {}),
+      ...((identityVerified && snapshotVerified && !exactBaselineVerified)
+        ? {
+            error: "ELEVENST_EXACT_EXISTING_BASELINE_STATUS_REQUIRED",
+            message: "정확한 기존 11번가 상품이 판매중지 상태 105인지 확인되지 않아 PUT을 시작하지 않았습니다.",
+            sellerpilotVerification: "ELEVENST_EXACT_EXISTING_BASELINE_STATUS_REQUIRED",
+          }
+        : {}),
       ...((identityVerified && !snapshotVerified)
         ? {
             error: "ELEVENST_UPDATE_SNAPSHOT_DRIFT",
@@ -1292,6 +1398,149 @@ async function executeElevenst(input: ExecuteInput) {
     if (!updateStep.ok) return result(input, [beforeStep, updateStep], decodeURIComponent(productNo));
 
     const publicationExpectation = elevenstPublicationExpectation(input);
+    if (exactExistingPublication) {
+      let stagedRemote: RemoteResponse | null = null;
+      let stagedVerified = false;
+      let alreadyLive = false;
+      let stagedRemoteState: VerifiedListingRemoteState | null = null;
+      for (let attempt = 0; attempt < 3 && !stagedVerified; attempt += 1) {
+        if (attempt > 0) await operationDelay(800 * attempt);
+        try {
+          stagedRemote = await readExactProduct();
+        } catch {
+          stagedRemote = elevenstUnavailableRemote("11번가 상품 수정 내용의 판매 재개 전 재조회 응답을 확인하지 못했습니다.");
+          continue;
+        }
+        const stagedProduct = stagedRemote.data.product && typeof stagedRemote.data.product === "object" && !Array.isArray(stagedRemote.data.product)
+          ? stagedRemote.data.product as Record<string, unknown>
+          : {};
+        const stagedIdentityVerified = stagedRemote.data.accepted === true
+          && String(stagedRemote.data.productNo ?? stagedProduct.prdNo ?? "") === decodeURIComponent(productNo)
+          && String(stagedProduct.sellerPrdCd ?? "") === sellerProductCode;
+        const stagedContent = verifyListingUpdateReadback("elevenst", input.arguments, stagedRemote.data);
+        const exactStaged = elevenstExactExistingStagedReadbackVerified(input.arguments, stagedProduct);
+        const exactLive = elevenstExactExistingLiveReadbackVerified(input.arguments, stagedProduct);
+        alreadyLive = stagedIdentityVerified && stagedContent.ok && exactLive;
+        stagedVerified = stagedIdentityVerified && stagedContent.ok && (exactStaged || exactLive);
+        stagedRemoteState = alreadyLive && publicationExpectation
+          ? elevenstVerifiedListingRemoteState({
+              operation: input.operation,
+              remoteId: decodeURIComponent(productNo),
+              product: stagedProduct,
+              expectedSellerProductCode: sellerProductCode,
+              ...publicationExpectation,
+            })
+          : null;
+        stagedRemote.data.sellerpilotMismatches = stagedContent.mismatches.slice(0, 50);
+      }
+      if (!stagedRemote) throw new Error("ELEVENST_STAGED_READBACK_MISSING");
+      const stagedStep = elevenstVerifiedStep(
+        alreadyLive ? "listing-readback" : "listing-staged-readback",
+        stagedRemote,
+        stagedVerified && (!alreadyLive || !publicationExpectation || Boolean(stagedRemoteState)),
+      );
+      stagedStep.data = {
+        ...stagedStep.data,
+        sellerpilotMismatches: stagedRemote.data.sellerpilotMismatches,
+        sellerpilotExactExistingStagedStatus105Verified: stagedVerified && !alreadyLive,
+        sellerpilotExactExistingAlreadyLiveStatus103Verified: stagedVerified && alreadyLive,
+      };
+      if (alreadyLive && publicationExpectation) {
+        stagedStep.data = {
+          ...stagedStep.data,
+          ...elevenstPublicationReadbackStep(stagedRemote, stagedRemoteState).data,
+          sellerpilotMismatches: stagedRemote.data.sellerpilotMismatches,
+          sellerpilotExactExistingStagedStatus105Verified: false,
+          sellerpilotExactExistingAlreadyLiveStatus103Verified: true,
+        };
+      }
+      if (!stagedStep.ok || alreadyLive) {
+        return result(
+          input,
+          [beforeStep, updateStep, stagedStep],
+          decodeURIComponent(productNo),
+          undefined,
+          stagedRemoteState ?? undefined,
+        );
+      }
+
+      let restartRemote: RemoteResponse;
+      try {
+        restartRemote = await elevenstSellerXmlRequest({
+          payload: input.payload,
+          method: "PUT",
+          path: `/rest/prodstatservice/stat/restartdisplay/${productNo}`,
+        });
+      } catch {
+        restartRemote = elevenstUnavailableRemote("11번가 판매중지 해제 응답을 확인하지 못했습니다.");
+      }
+      const restartMessage = String(restartRemote.data.resultMessage ?? "");
+      const restartVerified = restartRemote.response.status === 200
+        && restartRemote.data.accepted === true
+        && String(restartRemote.data.resultCode ?? "") === "200"
+        && /\[\s*STAT\s*:\s*103\s*\]/iu.test(restartMessage);
+      const restartStep = elevenstVerifiedStep("restart-display", restartRemote, restartVerified);
+      if (restartRemote.response.ok && restartRemote.data.accepted === true) {
+        restartStep.data.sellerpilotMutation = "accepted";
+      }
+      if (!restartStep.ok) {
+        return result(
+          input,
+          [beforeStep, updateStep, stagedStep, restartStep],
+          decodeURIComponent(productNo),
+        );
+      }
+
+      let finalRemote: RemoteResponse | null = null;
+      let finalVerified = false;
+      let finalRemoteState: VerifiedListingRemoteState | null = null;
+      for (let attempt = 0; attempt < 3 && !finalVerified; attempt += 1) {
+        if (attempt > 0) await operationDelay(800 * attempt);
+        try {
+          finalRemote = await readExactProduct();
+        } catch {
+          finalRemote = elevenstUnavailableRemote("11번가 판매중지 해제 후 재조회 응답을 확인하지 못했습니다.");
+          continue;
+        }
+        const finalProduct = finalRemote.data.product && typeof finalRemote.data.product === "object" && !Array.isArray(finalRemote.data.product)
+          ? finalRemote.data.product as Record<string, unknown>
+          : {};
+        const finalIdentityVerified = finalRemote.data.accepted === true
+          && String(finalRemote.data.productNo ?? finalProduct.prdNo ?? "") === decodeURIComponent(productNo)
+          && String(finalProduct.sellerPrdCd ?? "") === sellerProductCode;
+        const finalContent = verifyListingUpdateReadback("elevenst", input.arguments, finalRemote.data);
+        finalRemoteState = publicationExpectation
+          ? elevenstVerifiedListingRemoteState({
+              operation: input.operation,
+              remoteId: decodeURIComponent(productNo),
+              product: finalProduct,
+              expectedSellerProductCode: sellerProductCode,
+              ...publicationExpectation,
+            })
+          : null;
+        finalVerified = finalIdentityVerified
+          && finalContent.ok
+          && elevenstExactExistingLiveReadbackVerified(input.arguments, finalProduct)
+          && (!publicationExpectation || Boolean(finalRemoteState));
+        finalRemote.data.sellerpilotMismatches = finalContent.mismatches.slice(0, 50);
+      }
+      if (!finalRemote) throw new Error("ELEVENST_READBACK_MISSING");
+      const finalStep = elevenstVerifiedStep("listing-readback", finalRemote, finalVerified);
+      if (publicationExpectation) {
+        finalStep.data = {
+          ...elevenstPublicationReadbackStep(finalRemote, finalRemoteState).data,
+          sellerpilotMismatches: finalRemote.data.sellerpilotMismatches,
+        };
+      }
+      return result(
+        input,
+        [beforeStep, updateStep, stagedStep, restartStep, finalStep],
+        decodeURIComponent(productNo),
+        undefined,
+        finalRemoteState ?? undefined,
+      );
+    }
+
     let readbackRemote: RemoteResponse | null = null;
     let readbackVerified = false;
     let remoteState: VerifiedListingRemoteState | null = null;
@@ -1321,6 +1570,8 @@ async function executeElevenst(input: ExecuteInput) {
         : null;
       readbackVerified = identityVerified
         && contentVerified.ok
+        && (!exactExistingPublication
+          || elevenstExactExistingLiveReadbackVerified(input.arguments, readbackProduct))
         && (!publicationExpectation || Boolean(remoteState));
       readbackRemote.data.sellerpilotMismatches = contentVerified.mismatches.slice(0, 50);
     }
@@ -1873,6 +2124,20 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], categoryId);
   }
+  if (input.operation === "listing.create"
+      && qoo10ExactTargetCreateForbidden(input.arguments)) {
+    return result(input, [{
+      name: "qoo10-exact-duplicate-create-fence",
+      ok: false,
+      status: 409,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }]);
+  }
   const activationMarkerSupplied = Object.hasOwn(input.arguments, qoo10S1ActivationArgument);
   const activationBinding = qoo10S1ActivationBinding(input.arguments);
   if (activationMarkerSupplied !== (input.operation === "listing.activate")
@@ -1972,9 +2237,72 @@ async function executeQoo10(input: ExecuteInput) {
     qoo10RollbackUpdateRecoveryArgument,
   );
   const rollbackRecovery = qoo10RollbackUpdateRecoveryBinding(input.arguments);
-  const rollbackRecoveryReadbackExpectation = rollbackRecovery
+  const exactLocalizationMarkerSupplied = Object.hasOwn(
+    input.arguments,
+    qoo10ExactLocalizationUpdateArgument,
+  );
+  const exactLocalizationBinding = qoo10ExactLocalizationUpdateBinding(
+    input.arguments,
+  );
+  const exactAdoptedMarkerSupplied = Object.hasOwn(
+    input.arguments,
+    qoo10ExactAdoptedLocalizationArgument,
+  );
+  const exactAdoptedBinding = qoo10ExactAdoptedLocalizationBinding(
+    input.arguments,
+  );
+  if (exactLocalizationMarkerSupplied && (
+    input.operation !== "listing.update"
+    || !exactLocalizationBinding
+  )) {
+    return result(input, [{
+      name: "qoo10-exact-localization-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_EXACT_LOCALIZED_UPDATE_INVALID",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }], suppliedParams.ItemCode);
+  }
+  if (exactAdoptedMarkerSupplied && (
+    input.operation !== "listing.update"
+    || !exactLocalizationBinding
+    || !exactAdoptedBinding
+  )) {
+    return result(input, [{
+      name: "qoo10-exact-adopted-localization-prewrite-fence",
+      ok: false,
+      status: 422,
+      data: {
+        ResultCode: -9999,
+        ResultMsg: "QOO10_EXACT_ADOPTED_LOCALIZATION_CONTEXT_INVALID",
+        sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    }], suppliedParams.ItemCode);
+  }
+  const updateRecovery = rollbackRecovery ?? (exactLocalizationBinding ? {
+    status: "allowed" as const,
+    contract: "qoo10_create_rollback_confirmation_v1" as const,
+    listingId: qoo10ExactLocalizationRecoveryIdentity.listingId,
+    remoteId: qoo10ExactLocalizationRecoveryIdentity.remoteId,
+    providerStatus: "S1" as const,
+    sourceJobId: "fac9c5c4-940d-4600-88f3-8f97a069dfbf",
+    expectedState: {
+      categoryCode: qoo10ExactLocalizationRecoveryIdentity.categoryCode,
+      retailPriceJpy: qoo10ExactLocalizationRecoveryIdentity.priceJpy,
+      sellPriceJpy: qoo10ExactLocalizationRecoveryIdentity.priceJpy,
+      quantity: qoo10ExactLocalizationRecoveryIdentity.quantity,
+      shippingNo: qoo10ExactLocalizationRecoveryIdentity.shippingNo,
+      biContentsNo: qoo10ExactLocalizationRecoveryIdentity.representativeImageContentId,
+    },
+  } : null);
+  const rollbackRecoveryReadbackExpectation = updateRecovery
     ? qoo10RollbackRecoveryExpectation(
-        rollbackRecovery.expectedState,
+        updateRecovery.expectedState,
         suppliedParams.ItemDescription ?? "",
       )
     : null;
@@ -2005,9 +2333,202 @@ async function executeQoo10(input: ExecuteInput) {
       },
     }], suppliedParams.ItemCode);
   }
+  let exactLocalizedUpdate: Qoo10ExactLocalizedUpdate | null = null;
+  const exactPrewriteSteps: ChannelOperationStep[] = [];
+  if (exactLocalizationBinding
+      && updateRecovery?.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
+    try {
+      exactLocalizedUpdate = qoo10ExactLocalizedUpdateOrThrow(
+        input.arguments,
+        updateRecovery.remoteId,
+        true,
+      );
+      if (!exactLocalizedUpdate) throw new Error("QOO10_EXACT_LOCALIZED_UPDATE_INVALID");
+    } catch {
+      return result(input, [{
+        name: "qoo10-exact-localization-prewrite-fence",
+        ok: false,
+        status: 422,
+        data: {
+          ResultCode: -9999,
+          ResultMsg: "QOO10_EXACT_LOCALIZED_UPDATE_INVALID",
+          sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }], updateRecovery.remoteId);
+    }
+    const currentRemote = await qoo10Request({
+      payload: input.payload,
+      service: "ItemsLookup",
+      method: "GetItemDetailInfo",
+      version: "1.2",
+      params: {
+        ItemCode: updateRecovery.remoteId,
+        SellerCode: suppliedParams.SellerCode ?? "",
+      },
+    });
+    const currentVerification = exactAdoptedBinding
+      ? verifyQoo10ExactAdoptedLiveReadback({
+          resultObject: currentRemote.data.ResultObject,
+          expectedDetailImageUrls: exactLocalizedUpdate?.detailImageUrls ?? [],
+          expectedDetailHtml: exactLocalizedUpdate.detailHtml,
+          phase: "prewrite",
+        })
+      : verifyQoo10ExactCurrentS1Readback({
+          resultObject: currentRemote.data.ResultObject,
+          expectedDetailImageUrls: exactLocalizedUpdate?.detailImageUrls ?? [],
+        });
+    const currentStep = step(
+      exactAdoptedBinding
+        ? "qoo10-exact-adopted-live-prewrite-readback"
+        : "qoo10-exact-current-s1-prewrite-readback",
+      currentRemote,
+    );
+    currentStep.ok = currentStep.ok
+      && qoo10ExactSuccessResultCode(currentRemote.data)
+      && currentVerification.ok;
+    currentStep.data = {
+      ...currentStep.data,
+      sellerpilotVerification: currentStep.ok
+        ? exactAdoptedBinding
+          ? "QOO10_EXACT_ADOPTED_S2_CONTAMINATION_AND_SURFACES_VERIFIED"
+          : "QOO10_EXACT_CURRENT_S1_AND_IMAGES_VERIFIED"
+        : exactAdoptedBinding
+          ? "QOO10_EXACT_ADOPTED_S2_PREWRITE_MISMATCH"
+          : "QOO10_EXACT_CURRENT_S1_OR_IMAGES_MISMATCH",
+      sellerpilotExactCurrentChecks: currentVerification.checks,
+      sellerpilotActualProviderStatus: currentVerification.providerStatus || null,
+      sellerpilotExpectedDetailImageCount: 8,
+      ...(!currentStep.ok ? { sellerpilotNoWriteConfirmed: true } : {}),
+    };
+    exactPrewriteSteps.push(currentStep);
+    if (!currentStep.ok) return result(input, exactPrewriteSteps, updateRecovery.remoteId);
+  }
+  if (exactAdoptedBinding && exactLocalizedUpdate) {
+    const publicationExpectation = qoo10PublicationExpectation(input);
+    if (!publicationExpectation || Object.hasOwn(suppliedParams, "StandardImage")) {
+      return result(input, [{
+        name: "qoo10-exact-adopted-localization-content-only-fence",
+        ok: false,
+        status: 422,
+        data: {
+          ResultCode: -9999,
+          ResultMsg: "QOO10_EXACT_ADOPTED_LOCALIZATION_CONTENT_ONLY_REQUIRED",
+          sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }], updateRecovery?.remoteId);
+    }
+    let detailRemote: RemoteResponse;
+    try {
+      detailRemote = await qoo10Request({
+        payload: input.payload,
+        service: "ItemsContents",
+        method: "EditGoodsContents",
+        version: "1.0",
+        params: {
+          ItemCode: qoo10ExactLocalizationRecoveryIdentity.remoteId,
+          SellerCode: "",
+          Contents: exactLocalizedUpdate.detailHtml,
+        },
+      });
+    } catch {
+      detailRemote = qoo10UnavailableResponse(
+        "QOO10_EXACT_ADOPTED_LOCALIZATION_RESPONSE_UNAVAILABLE",
+      );
+    }
+    const detailStep = step("EditGoodsContents", detailRemote);
+    const explicitRejection = qoo10ExplicitProviderRejection(detailRemote);
+    detailStep.ok = detailStep.ok && qoo10ExactSuccessResultCode(detailRemote.data);
+    detailStep.data = {
+      ...detailStep.data,
+      sellerpilotVerification: detailStep.ok
+        ? "QOO10_EXACT_ADOPTED_LOCALIZATION_ACCEPTED"
+        : explicitRejection
+          ? "QOO10_EXACT_ADOPTED_LOCALIZATION_EXPLICITLY_REJECTED"
+          : "QOO10_EXACT_ADOPTED_LOCALIZATION_OUTCOME_AMBIGUOUS",
+      ...(explicitRejection ? { sellerpilotNoWriteConfirmed: true } : {}),
+      ...(!detailStep.ok && !explicitRejection
+        ? { sellerpilotReconciliationRequired: true }
+        : {}),
+    };
+
+    let postReadbackStep: ChannelOperationStep | null = null;
+    let verifiedRemoteState: VerifiedListingRemoteState | undefined;
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      if (attempt > 0) await operationDelay(750 * attempt);
+      let readback: RemoteResponse;
+      try {
+        readback = await qoo10Request({
+          payload: input.payload,
+          service: "ItemsLookup",
+          method: "GetItemDetailInfo",
+          version: "1.2",
+          params: {
+            ItemCode: qoo10ExactLocalizationRecoveryIdentity.remoteId,
+            SellerCode: qoo10ExactLocalizationRecoveryIdentity.sellerSku,
+          },
+        });
+      } catch {
+        readback = qoo10UnavailableResponse(
+          "QOO10_EXACT_ADOPTED_LOCALIZATION_POST_READBACK_UNAVAILABLE",
+        );
+      }
+      const exactReadback = verifyQoo10ExactAdoptedLiveReadback({
+        resultObject: readback.data.ResultObject,
+        expectedDetailImageUrls: exactLocalizedUpdate.detailImageUrls,
+        expectedDetailHtml: exactLocalizedUpdate.detailHtml,
+        phase: "postwrite",
+      });
+      const publication = normalizeQoo10ListingPublicationReadback({
+        operation: "listing.update",
+        remoteId: qoo10ExactLocalizationRecoveryIdentity.remoteId,
+        resultObject: readback.data.ResultObject,
+        expectedSellerCode: qoo10ExactLocalizationRecoveryIdentity.sellerSku,
+        expectedRecovery: rollbackRecoveryReadbackExpectation!,
+        ...publicationExpectation,
+      });
+      const publicationStep = qoo10PublicationReadbackStep(readback, publication);
+      const ok = publicationStep.ok
+        && exactReadback.ok
+        && publication.providerStatus.trim().toUpperCase() === "S2"
+        && publication.remoteState?.visibility === "live";
+      postReadbackStep = {
+        ...publicationStep,
+        name: "qoo10-exact-adopted-localization-postwrite-readback",
+        ok,
+        data: {
+          ...publicationStep.data,
+          sellerpilotExactAdoptedChecks: exactReadback.checks,
+          sellerpilotVerification: ok
+            ? "QOO10_EXACT_ADOPTED_S2_LOCALIZATION_VERIFIED"
+            : "QOO10_EXACT_ADOPTED_S2_LOCALIZATION_UNVERIFIED",
+          ...(!ok && !explicitRejection
+            ? { sellerpilotReconciliationRequired: true }
+            : {}),
+        },
+      };
+      if (ok && publication.remoteState) {
+        detailStep.ok = true;
+        detailStep.data = {
+          ...detailStep.data,
+          sellerpilotVerification: "QOO10_EXACT_ADOPTED_LOCALIZATION_CONFIRMED_BY_READBACK",
+        };
+        verifiedRemoteState = publication.remoteState;
+        break;
+      }
+    }
+    return result(
+      input,
+      [...exactPrewriteSteps, detailStep, postReadbackStep!],
+      qoo10ExactLocalizationRecoveryIdentity.remoteId,
+      undefined,
+      verifiedRemoteState,
+    );
+  }
   let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
   let sellerAccountIdentityDigest = "";
-  let createPreflightSteps: ChannelOperationStep[] = [];
+  let createPreflightSteps: ChannelOperationStep[] = exactPrewriteSteps;
   if (input.operation === "listing.create"
       && input.arguments.publicationStateContract === listingRemoteStateContractVersion) {
     const localPreflight = qoo10ListingCreateExpectation({
@@ -2165,13 +2686,13 @@ async function executeQoo10(input: ExecuteInput) {
         .find((value): value is string | number => typeof value === "string" || typeof value === "number")
         ?.toString()
       : undefined;
-  const responseIdentityMismatch = Boolean(rollbackRecovery
+  const responseIdentityMismatch = Boolean(updateRecovery
     && responseIdentities.length > 0
     && (new Set(responseIdentities.map((identity) => identity.value)).size !== 1
       || responseIdentities.some((identity) => !identity.value
-        || identity.value !== rollbackRecovery.remoteId
+        || identity.value !== updateRecovery.remoteId
         || identity.value !== params.ItemCode)));
-  if (rollbackRecovery && responseIdentityMismatch) {
+  if (updateRecovery && responseIdentityMismatch) {
     return result(input, [
       ...createPreflightSteps,
       createStep,
@@ -2185,7 +2706,7 @@ async function executeQoo10(input: ExecuteInput) {
           ResultMsg: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
           sellerpilotProviderResultMessage: qoo10ResultMessage(remote.data) || null,
           sellerpilotVerification: "QOO10_ROLLBACK_UPDATE_RESPONSE_IDENTITY_MISMATCH",
-          sellerpilotExpectedRemoteId: rollbackRecovery.remoteId,
+          sellerpilotExpectedRemoteId: updateRecovery.remoteId,
           sellerpilotExpectedItemCode: params.ItemCode,
           sellerpilotResponseIdentities: Object.fromEntries(
             responseIdentities.map((identity) => [identity.alias, identity.value || null]),
@@ -2193,9 +2714,9 @@ async function executeQoo10(input: ExecuteInput) {
           sellerpilotReconciliationRequired: true,
         },
       },
-    ], rollbackRecovery.remoteId);
+    ], updateRecovery.remoteId);
   }
-  const remoteId = rollbackRecovery?.remoteId ?? responseRemoteId
+  const remoteId = updateRecovery?.remoteId ?? responseRemoteId
     ?? (input.operation === "listing.update" || input.operation === "listing.stop" ? params.ItemCode : undefined);
   const expectedRepresentativeImageContentId = input.operation === "listing.create" && remoteId
     ? qoo10SetNewGoodsMainImageContentId(resultObject, remoteId)
@@ -2261,7 +2782,7 @@ async function executeQoo10(input: ExecuteInput) {
     return result(input, [createStep, lastReadbackStep!], remoteId);
   }
   const publicationExpectation = qoo10PublicationExpectation(input);
-  if (rollbackRecovery
+  if (updateRecovery
       && rollbackRecoveryReadbackExpectation
       && publicationExpectation
       && qoo10ExplicitProviderRejection(remote)) {
@@ -2274,11 +2795,11 @@ async function executeQoo10(input: ExecuteInput) {
         service: "ItemsLookup",
         method: "GetItemDetailInfo",
         version: "1.2",
-        params: { ItemCode: rollbackRecovery.remoteId, SellerCode: params.SellerCode ?? "" },
+        params: { ItemCode: updateRecovery.remoteId, SellerCode: params.SellerCode ?? "" },
       });
       const publication = normalizeQoo10ListingPublicationReadback({
         operation: "listing.update",
-        remoteId: rollbackRecovery.remoteId,
+        remoteId: updateRecovery.remoteId,
         resultObject: readback.data.ResultObject,
         expectedSellerCode: params.SellerCode || undefined,
         expectedRecovery: rollbackRecoveryReadbackExpectation,
@@ -2306,7 +2827,7 @@ async function executeQoo10(input: ExecuteInput) {
       ...createPreflightSteps,
       createStep,
       rejectionReadbackStep!,
-    ], rollbackRecovery.remoteId, undefined, rejectionRemoteState);
+    ], updateRecovery.remoteId, undefined, rejectionRemoteState);
   }
   if ((input.operation !== "listing.create" && input.operation !== "listing.update") || !createStep.ok || !remoteId) {
     return result(input, [...createPreflightSteps, createStep], remoteId);
@@ -2332,7 +2853,7 @@ async function executeQoo10(input: ExecuteInput) {
   let readbackImageCount = 0;
   let readbackAccepted = false;
   let updateReadbackStep: ChannelOperationStep | null = null;
-  if (rollbackRecovery) {
+  if (updateRecovery) {
     if (!detailUpdateStep.ok || !publicationExpectation) {
       return result(input, [
         ...createPreflightSteps,
@@ -2344,6 +2865,7 @@ async function executeQoo10(input: ExecuteInput) {
     // content. Only an exact mutable-field and eight-image S1 readback may
     // cross the separate activation mutation.
     let preActivationStep: ChannelOperationStep | null = null;
+    let preActivationRemoteState: VerifiedListingRemoteState | undefined;
     for (let attempt = 0; attempt < 4; attempt += 1) {
       if (attempt > 0) await operationDelay(750 * attempt);
       const readback = await qoo10Request({
@@ -2374,7 +2896,10 @@ async function executeQoo10(input: ExecuteInput) {
         mutable,
         expectedDetailImages,
       });
-      if (preActivationStep.ok) break;
+      if (preActivationStep.ok) {
+        preActivationRemoteState = publication.remoteState;
+        break;
+      }
     }
     if (!preActivationStep?.ok) {
       return result(input, [
@@ -2383,6 +2908,18 @@ async function executeQoo10(input: ExecuteInput) {
         detailUpdateStep,
         preActivationStep!,
       ], remoteId);
+    }
+
+    // This one exact product remains S1 after the corrected update. A fresh
+    // verifier must bind the observed localized copy before root opens the
+    // separate, single-use listing.activate permit in the final release.
+    if (exactLocalizedUpdate) {
+      return result(input, [
+        ...createPreflightSteps,
+        createStep,
+        detailUpdateStep,
+        preActivationStep,
+      ], remoteId, undefined, preActivationRemoteState);
     }
 
     const activation = await qoo10Request({
@@ -2982,6 +3519,9 @@ async function executeShopee(input: ExecuteInput) {
     return result(input, [step("category-attributes-compatibility", legacyRemote)], categoryId);
   }
   if (input.operation === "inventory.update") {
+    const exactExisting = shopeeSgExistingUpdateBinding(input.arguments, "inventory")
+      ? assertShopeeSgExistingInventorySource(input.arguments)
+      : null;
     const suppliedBody = input.arguments.body ? objectValue(input.arguments, "body") : null;
     const itemId = suppliedBody
       ? String(suppliedBody.item_id ?? suppliedBody.itemId ?? "").trim()
@@ -2998,6 +3538,53 @@ async function executeShopee(input: ExecuteInput) {
       ? integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 })
       : Number(suppliedQuantity);
     const steps: ChannelOperationStep[] = [];
+    if (exactExisting) {
+      const [shopRemote, itemRemote] = await Promise.all([
+        shopeeRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/api/v2/shop/get_shop_info",
+        }),
+        shopeeRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/api/v2/product/get_item_base_info",
+          query: new URLSearchParams({ item_id_list: exactExisting.itemId }),
+        }),
+      ]);
+      const exactPreflightStep = step("shopee-sg-existing-inventory-prewrite", itemRemote);
+      exactPreflightStep.ok = exactPreflightStep.ok
+        && shopRemote.response.ok
+        && !shopRemote.data.error
+        && verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.payload,
+          shopRemoteData: shopRemote.data,
+          itemRemoteData: itemRemote.data,
+          phase: "inventory",
+        });
+      exactPreflightStep.data = {
+        ...exactPreflightStep.data,
+        sellerpilotVerification: exactPreflightStep.ok
+          ? "SHOPEE_SG_EXISTING_INVENTORY_PREWRITE_VERIFIED"
+          : "SHOPEE_SG_EXISTING_INVENTORY_PREWRITE_MISMATCH",
+      };
+      steps.push(exactPreflightStep);
+      if (!exactPreflightStep.ok) return result(input, steps, itemId);
+      if (!input.providerMutationHooks) {
+        return result(input, [...steps, {
+          name: "shopee-sg-existing-inventory-provider-boundary",
+          ok: false,
+          status: 409,
+          data: {
+            sellerpilotNoWriteConfirmed: true,
+            sellerpilotVerification: "SHOPEE_SG_EXISTING_INVENTORY_PROVIDER_BOUNDARY_REQUIRED",
+          },
+        }], itemId);
+      }
+    }
     let writeBody = suppliedBody;
     if (!writeBody) {
       const modelsRemote = await shopeeRequest({
@@ -3016,6 +3603,11 @@ async function executeShopee(input: ExecuteInput) {
         ? modelList.map((model) => ({ model_id: Number(model.model_id), seller_stock: [{ stock: quantity }] }))
         : [{ model_id: 0, seller_stock: [{ stock: quantity }] }];
       writeBody = { item_id: Number(itemId), stock_list: stockList };
+    }
+    if (exactExisting) {
+      await input.providerMutationHooks!.assertLeaseHealthy();
+      await input.providerMutationHooks!.begin();
+      await input.providerMutationHooks!.assertLeaseHealthy();
     }
     const writeRemote = await shopeeRequest({
       payload: input.payload,
@@ -3039,10 +3631,30 @@ async function executeShopee(input: ExecuteInput) {
     const item = itemList.find((candidate) => String(candidate.item_id ?? "") === itemId) ?? itemList[0] ?? {};
     const stockInfo = objectValue(item, "stock_info_v2", false);
     const summaryInfo = objectValue(stockInfo, "summary_info", false);
-    steps.push(inventoryQuantityVerificationStep("inventory-readback", readback, quantity, summaryInfo.total_available_stock));
+    const readbackStep = inventoryQuantityVerificationStep(
+      "inventory-readback",
+      readback,
+      quantity,
+      summaryInfo.total_available_stock,
+    );
+    if (exactExisting) {
+      const exactEvidence = verifyShopeeSgExistingInventoryReadback({
+        argumentsValue: input.arguments,
+        remoteData: readback.data,
+      });
+      readbackStep.ok = readbackStep.ok && Boolean(exactEvidence);
+      readbackStep.data = {
+        ...readbackStep.data,
+        ...(exactEvidence ? { sellerpilotShopeeSgExistingReadback: exactEvidence } : {}),
+      };
+    }
+    steps.push(readbackStep);
     return result(input, steps, itemId);
   }
   if (input.operation === "listing.update") {
+    const exactExisting = shopeeSgExistingUpdateBinding(input.arguments, "content")
+      ? assertShopeeSgExistingContentSource(input.arguments)
+      : null;
     const localItemId = stringArgument(input.arguments, "localItemId");
     const body = objectValue(input.arguments, "body");
     if (String(body.item_id ?? "") !== localItemId) throw new Error("SHOPEE_LOCAL_ITEM_ID_MISMATCH");
@@ -3053,7 +3665,17 @@ async function executeShopee(input: ExecuteInput) {
       path: "/api/v2/product/get_item_base_info",
       query: new URLSearchParams({ item_id_list: localItemId }),
     });
-    const preflightRemote = await readLocalItem();
+    const [preflightRemote, shopRemote] = exactExisting
+      ? await Promise.all([
+          readLocalItem(),
+          shopeeRequest({
+            payload: input.payload,
+            environment: input.environment,
+            method: "GET",
+            path: "/api/v2/shop/get_shop_info",
+          }),
+        ])
+      : [await readLocalItem(), null];
     const preflightStep = step("local-item-preflight", preflightRemote);
     const preflightResponse = objectValue(preflightRemote.data, "response", false);
     const preflightItems = Array.isArray(preflightResponse.item_list)
@@ -3061,6 +3683,18 @@ async function executeShopee(input: ExecuteInput) {
       : [];
     const localIdentityVerified = preflightItems.some((item) => String(item.item_id ?? "") === localItemId);
     preflightStep.ok = preflightStep.ok && localIdentityVerified;
+    if (exactExisting) {
+      preflightStep.ok = preflightStep.ok
+        && Boolean(shopRemote?.response.ok)
+        && !shopRemote?.data.error
+        && verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.payload,
+          shopRemoteData: shopRemote?.data ?? {},
+          itemRemoteData: preflightRemote.data,
+          phase: "content",
+        });
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok ? "SHOPEE_LOCAL_ITEM_ID_VERIFIED" : "SHOPEE_LOCAL_ITEM_ID_NOT_FOUND",
@@ -3089,6 +3723,17 @@ async function executeShopee(input: ExecuteInput) {
         listingUpdateReadbackStep("listing-readback", verification.remote, input.channel, input.arguments),
         verification,
       );
+      if (exactExisting) {
+        const exactEvidence = verifyShopeeSgExistingContentReadback({
+          argumentsValue: input.arguments,
+          remoteData: verification.remote.data,
+        });
+        readbackStep.ok = readbackStep.ok && Boolean(exactEvidence);
+        readbackStep.data = {
+          ...readbackStep.data,
+          ...(exactEvidence ? { sellerpilotShopeeSgExistingReadback: exactEvidence } : {}),
+        };
+      }
       return result(input, [preflightStep, writeStep, readbackStep], localItemId, undefined, verification.remoteState);
     }
     const readbackRemote = await readLocalItem();
@@ -3601,6 +4246,7 @@ async function coupangListingResultWithPublicationReadback(
   steps: ChannelOperationStep[],
   remoteId: string,
   expectedStopVendorItemIds?: string[],
+  exactRecovery?: CoupangExactQaRecoveryBinding | null,
 ) {
   if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
     return result(input, steps, remoteId);
@@ -3641,6 +4287,45 @@ async function coupangListingResultWithPublicationReadback(
     };
     readbackSteps.push(vendorStep);
   });
+  if (exactRecovery?.phase === "listing.update") {
+    const commerceReadback = readback.vendorItemReadbacks.find(({ vendorItemId }) =>
+      vendorItemId === exactRecovery.vendorItemId);
+    const commerceStep: ChannelOperationStep = commerceReadback
+      ? step("coupang-exact-commerce-readback", commerceReadback.remote)
+      : {
+          name: "coupang-exact-commerce-readback",
+          ok: false,
+          status: 422,
+          data: {},
+        };
+    if (commerceStep.ok && commerceReadback) {
+      try {
+        const sellerProduct = readback.sellerProductReadback
+          ? assertCoupangExactQaCurrentProduct(
+              objectValue(readback.sellerProductReadback.data, "data", false),
+              exactRecovery,
+            )
+          : null;
+        assertCoupangExactQaInventoryReadback(
+          objectValue(commerceReadback.remote.data, "data", false),
+          exactRecovery,
+          {
+            requestedVendorItemId: commerceReadback.vendorItemId,
+            authoritativeVendorItemId: String(sellerProduct?.item.vendorItemId ?? ""),
+          },
+        );
+      } catch {
+        commerceStep.ok = false;
+      }
+    }
+    commerceStep.data = {
+      ...commerceStep.data,
+      sellerpilotVerification: commerceStep.ok
+        ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
+        : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
+    };
+    readbackSteps.push(commerceStep);
+  }
   readbackSteps.push(publicationStateVerificationStep(input.channel, readback.state, readback.failureCode));
   return result(input, [...steps, ...readbackSteps], remoteId, undefined, readback.state);
 }
@@ -3690,6 +4375,15 @@ async function executeCoupang(input: ExecuteInput) {
     return result(input, [step("category-status", remote)], categoryId);
   }
   if (input.operation === "listing.update") {
+    const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.update");
+    if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
+    if (exactRecovery) {
+      assertCoupangExactQaProviderContract(input.arguments, "listing.update", {
+        sanitizedUpdate: true,
+      });
+    }
     const patchBody = objectValue(input.arguments, "body");
     const remoteId = String(patchBody.sellerProductId ?? "").trim();
     if (!remoteId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerProductId");
@@ -3702,11 +4396,51 @@ async function executeCoupang(input: ExecuteInput) {
     const preflightStep = step("listing-update-preflight", preflightRemote);
     const currentBody = objectValue(preflightRemote.data, "data", false);
     preflightStep.ok = preflightStep.ok && String(currentBody.sellerProductId ?? "") === remoteId;
+    let exactCurrentProduct: ReturnType<typeof assertCoupangExactQaCurrentProduct> | null = null;
+    if (preflightStep.ok && exactRecovery) {
+      try {
+        exactCurrentProduct = assertCoupangExactQaCurrentProduct(currentBody, exactRecovery);
+      } catch {
+        preflightStep.ok = false;
+      }
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok ? "COUPANG_EXISTING_LISTING_VERIFIED" : "COUPANG_EXISTING_LISTING_MISMATCH",
     };
     if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
+
+    const preflightSteps = [preflightStep];
+    if (exactRecovery) {
+      const commerceRemote = await coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${pathSegment(exactRecovery.vendorItemId)}/inventories`,
+      });
+      const commerceStep = step("listing-update-commerce-preflight", commerceRemote);
+      if (commerceStep.ok) {
+        try {
+          assertCoupangExactQaInventoryReadback(
+            objectValue(commerceRemote.data, "data", false),
+            exactRecovery,
+            {
+              requestedVendorItemId: exactRecovery.vendorItemId,
+              authoritativeVendorItemId: String(exactCurrentProduct?.item.vendorItemId ?? ""),
+            },
+          );
+        } catch {
+          commerceStep.ok = false;
+        }
+      }
+      commerceStep.data = {
+        ...commerceStep.data,
+        sellerpilotVerification: commerceStep.ok
+          ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
+          : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
+      };
+      preflightSteps.push(commerceStep);
+      if (!commerceStep.ok) return result(input, preflightSteps, remoteId);
+    }
 
     const coupangUpdate = coupangListingUpdateWrite(currentBody, patchBody);
     const mergedBody = coupangUpdate.body;
@@ -3715,6 +4449,48 @@ async function executeCoupang(input: ExecuteInput) {
     if (listingPublicationReadbackRequested(input)) {
       mergedBody.requested = listingPublicationIntentFromArguments(input.arguments) === "live";
     }
+    if (exactRecovery) {
+      const documentStep: ChannelOperationStep = {
+        name: "listing-update-document-preflight",
+        ok: true,
+        status: 200,
+        data: {},
+      };
+      try {
+        assertCoupangExactQaUpdateReadback(mergedBody, exactRecovery);
+      } catch {
+        documentStep.ok = false;
+        documentStep.status = 422;
+      }
+      documentStep.data = {
+        sellerpilotVerification: documentStep.ok
+          ? "COUPANG_EXACT_QA_UPDATE_DOCUMENT_VERIFIED"
+          : "COUPANG_EXACT_QA_UPDATE_DOCUMENT_MISMATCH",
+      };
+      preflightSteps.push(documentStep);
+      if (!documentStep.ok) return result(input, preflightSteps, remoteId);
+    }
+    let exactPrewriteImages: CoupangProviderImageIdentity[] | null = null;
+    let exactPrewriteSnapshotSha256 = "";
+    if (exactRecovery) {
+      const hooks = input.providerMutationHooks;
+      if (!hooks?.bindCoupangRepresentativePrewrite) {
+        throw new Error("COUPANG_EXACT_QA_PROVIDER_BOUNDARY_REQUIRED");
+      }
+      exactPrewriteImages = coupangExactRepresentativePrewriteSnapshot(currentBody);
+      await hooks.assertLeaseHealthy();
+      const boundPrewrite = await hooks.bindCoupangRepresentativePrewrite(
+        exactPrewriteImages,
+      );
+      exactPrewriteSnapshotSha256 = boundPrewrite.prewriteSnapshotSha256;
+      if (exactPrewriteSnapshotSha256 !==
+          coupangProviderImageSnapshotSha256(exactPrewriteImages)) {
+        throw new Error("COUPANG_EXACT_QA_PREWRITE_BINDING_FAILED");
+      }
+      await hooks.assertLeaseHealthy();
+      await hooks.begin();
+      await hooks.assertLeaseHealthy();
+    }
     const writeRemote = await coupangRequest({
       payload: input.payload,
       method: "PUT",
@@ -3722,7 +4498,7 @@ async function executeCoupang(input: ExecuteInput) {
       body: mergedBody,
     });
     const writeStep = step("listing.update", writeRemote);
-    if (!writeStep.ok) return result(input, [preflightStep, writeStep], remoteId);
+    if (!writeStep.ok) return result(input, [...preflightSteps, writeStep], remoteId);
     const readbackRemote = await readProduct();
     const readbackStep = listingUpdateReadbackStep("listing-readback", readbackRemote, input.channel, {
       ...input.arguments,
@@ -3730,7 +4506,54 @@ async function executeCoupang(input: ExecuteInput) {
     });
     const readbackBody = objectValue(readbackRemote.data, "data", false);
     readbackStep.ok = readbackStep.ok && String(readbackBody.sellerProductId ?? "") === remoteId;
-    return coupangListingResultWithPublicationReadback(input, [preflightStep, writeStep, readbackStep], remoteId);
+    if (readbackStep.ok && exactRecovery) {
+      try {
+        assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery, {
+          providerReadback: true,
+        });
+        const representative = coupangExactQaRepresentativeBinding(input.arguments);
+        if (!representative || !exactPrewriteImages) {
+          throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
+        }
+        const providerIdentity = verifyCoupangExactRepresentativeReadback({
+          currentValue: readbackBody,
+          prewriteImages: exactPrewriteImages,
+          argumentsValue: input.arguments,
+        });
+        readbackStep.data = {
+          ...readbackStep.data,
+          sellerpilotCoupangExactRepresentativeReadback: {
+            contract: "coupang_exact_qa_representative_readback_v1",
+            sellerProductId: exactRecovery.sellerProductId,
+            vendorItemId: exactRecovery.vendorItemId,
+            role: representative.role,
+            sourceBucket: representative.sourceBucket,
+            sourceObjectPath: representative.sourceObjectPath,
+            sourceSha256: representative.sourceSha256,
+            normalizedObjectPath: representative.normalizedObjectPath,
+            contentSha256: representative.contentSha256,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            remoteGalleryVerified: true,
+            providerPrewriteSnapshotSha256: exactPrewriteSnapshotSha256,
+            ...providerIdentity,
+          },
+        };
+      } catch {
+        readbackStep.ok = false;
+        readbackStep.data = {
+          ...readbackStep.data,
+          sellerpilotVerification: "COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH",
+        };
+      }
+    }
+    return coupangListingResultWithPublicationReadback(
+      input,
+      [...preflightSteps, writeStep, readbackStep],
+      remoteId,
+      undefined,
+      exactRecovery,
+    );
   }
   if (input.operation === "listing.create") {
     const body: Record<string, unknown> = { ...objectValue(input.arguments, "body"), vendorId };
@@ -3849,6 +4672,13 @@ async function executeCoupang(input: ExecuteInput) {
     );
   }
   if (input.operation === "listing.stop") {
+    const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.stop");
+    if (Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) && !exactRecovery) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
+    if (exactRecovery) {
+      assertCoupangExactQaProviderContract(input.arguments, "listing.stop");
+    }
     const sellerProductId = stringArgument(input.arguments, "sellerProductId");
     const suppliedVendorItemId = stringArgument(input.arguments, "vendorItemId", false);
     const preflightRemote = await coupangRequest({
@@ -3867,6 +4697,18 @@ async function executeCoupang(input: ExecuteInput) {
       && rawVendorItemIds.every(Boolean)
       && vendorItemIds.length === items.length
       && (!suppliedVendorItemId || vendorItemIds.includes(suppliedVendorItemId));
+    if (preflightStep.ok && exactRecovery) {
+      try {
+        assertCoupangExactQaCurrentProduct(sellerProduct, exactRecovery);
+        preflightStep.ok = sellerProductId === coupangExactQaRecoveryIdentity.sellerProductId
+          && suppliedVendorItemId === coupangExactQaRecoveryIdentity.vendorItemId
+          && stringArgument(input.arguments, "sellerSku") === coupangExactQaRecoveryIdentity.sellerSku
+          && vendorItemIds.length === 1
+          && vendorItemIds[0] === coupangExactQaRecoveryIdentity.vendorItemId;
+      } catch {
+        preflightStep.ok = false;
+      }
+    }
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok
@@ -4555,11 +5397,162 @@ function temuGoodsMatch(value: unknown, remoteId: string, externalGoodsId: strin
     && [item.outGoodsSn, item.externalGoodsId].some((candidate) => String(candidate ?? "") === externalGoodsId);
 }
 
+function temuExternalIdentityConflict(remote: RemoteResponse) {
+  const providerText = JSON.stringify(remote.data).toLowerCase();
+  return remote.response.status === 409
+    || /external.?goods.?id[\s\S]{0,120}(?:already.?exists|duplicate)/u.test(providerText)
+    || /(?:already.?exists|duplicate)[\s\S]{0,120}external.?goods.?id/u.test(providerText);
+}
+
 function temuStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
 }
 
 async function executeTemu(input: ExecuteInput) {
+  if (input.operation === "listing.publication.verify") {
+    const certification = temuCredentialCertificationBinding(input.arguments);
+    if (certification) {
+      const accountRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.open.accesstoken.info.get",
+        arguments: {},
+      });
+      const accountTransport = step("temu-credential-certification-account", accountRemote);
+      const identity = accountTransport.ok
+        ? normalizeTemuCredentialIdentityObservation(accountRemote.data)
+        : null;
+      const accountStep: ChannelOperationStep = {
+        name: "temu-credential-certification-account",
+        ok: Boolean(identity),
+        status: identity ? 200 : accountTransport.status,
+        ...(accountTransport.requestId ? { requestId: accountTransport.requestId } : {}),
+        data: {
+          sellerpilotVerification: identity
+            ? "TEMU_CREDENTIAL_PROVIDER_IDENTITY_VERIFIED"
+            : "TEMU_CREDENTIAL_PROVIDER_IDENTITY_UNVERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotNoSecretStored: true,
+          ...(identity ? { sellerpilotTemuCredentialIdentity: identity } : {}),
+        },
+      };
+      return result(input, [accountStep]);
+    }
+    const adoption = temuExistingAdoptionBinding(input.arguments);
+    if (adoption) {
+      const [detailRemote, statusRemote, stockRemote] = await Promise.all([
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.detail.query",
+          arguments: { goodsId: temuExactLong(adoption.goodsId), versionQueryType: 1, language: "ko" },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.publish.status.get",
+          arguments: { goodsIdList: [temuExactLong(adoption.goodsId)] },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(adoption.goodsId) },
+        }),
+      ]);
+      const detailStep = step("temu-existing-adoption-detail", detailRemote);
+      const statusStep = step("temu-existing-adoption-status", statusRemote);
+      const stockStep = step("temu-existing-adoption-stock", stockRemote);
+      const externalGoodsId = detailStep.ok
+        ? temuExistingAdoptionExternalGoodsId(detailRemote.data)
+        : null;
+      if (!detailStep.ok || !statusStep.ok || !stockStep.ok || !externalGoodsId) {
+        return result(input, [detailStep, statusStep, stockStep, {
+          name: "temu-existing-adoption-identity-fence",
+          ok: false,
+          status: 422,
+          data: {
+            sellerpilotVerification: "TEMU_EXISTING_ADOPTION_REMOTE_IDENTITY_UNVERIFIED",
+            sellerpilotNoWriteConfirmed: true,
+          },
+        }], adoption.goodsId);
+      }
+      const listRemote = await temuRequest({
+        payload: input.payload,
+        type: "temu.local.goods.list.retrieve",
+        arguments: temuExactGoodsListArguments(externalGoodsId),
+      });
+      const listStep = step("temu-existing-adoption-list", listRemote);
+      const observation = listStep.ok
+        ? normalizeTemuExistingAdoptionObservation({
+            binding: adoption,
+            listData: listRemote.data,
+            publishStatusData: statusRemote.data,
+            detailData: detailRemote.data,
+            stockData: stockRemote.data,
+          })
+        : null;
+      const verificationStep: ChannelOperationStep = {
+        name: "temu-existing-adoption-observation",
+        ok: Boolean(observation),
+        status: observation ? 200 : 422,
+        data: {
+          sellerpilotVerification: observation
+            ? "TEMU_EXISTING_ACTIVE_OBSERVATION_VERIFIED"
+            : "TEMU_EXISTING_ACTIVE_OBSERVATION_MISMATCH",
+          sellerpilotNoWriteConfirmed: true,
+          ...(observation ? { sellerpilotTemuExistingAdoptionObservation: observation } : {}),
+        },
+      };
+      return result(
+        input,
+        [detailStep, statusStep, stockStep, listStep, verificationStep],
+        adoption.goodsId,
+      );
+    }
+    const discovery = temuContainmentDiscoveryBinding(input.arguments);
+    if (!discovery || input.arguments.sellerpilotReadOnly !== true) {
+      return result(input, [{
+        name: "temu-containment-discovery-fence",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification: "TEMU_CONTAINMENT_DISCOVERY_CONTEXT_INVALID",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    const remote = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: temuExactGoodsListArguments(discovery.externalGoodsId),
+    });
+    const discoveryStep = step("temu-containment-external-id-discovery", remote);
+    const goods = temuResultObject(remote.data).goodsList;
+    const matches = Array.isArray(goods)
+      ? goods.filter((item) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+        const record = item as Record<string, unknown>;
+        return [record.outGoodsSn, record.externalGoodsId]
+          .some((candidate) => String(candidate ?? "") === discovery.externalGoodsId);
+      }) as Record<string, unknown>[]
+      : [];
+    const recoveredGoodsId = matches.length === 1
+      ? temuExactLongGoodsId(matches[0]?.goodsId)
+      : null;
+    const exactOutcome = matches.length === 0 || (matches.length === 1 && Boolean(recoveredGoodsId));
+    discoveryStep.ok = discoveryStep.ok && exactOutcome;
+    discoveryStep.data = {
+      ...discoveryStep.data,
+      sellerpilotVerification: matches.length === 0
+        ? "TEMU_CONTAINMENT_DISCOVERY_NOT_VISIBLE_YET"
+        : recoveredGoodsId
+          ? "TEMU_CONTAINMENT_DISCOVERY_EXACT_ONE"
+          : "TEMU_CONTAINMENT_DISCOVERY_COLLISION_OR_INVALID_ID",
+      sellerpilotReadOnly: true,
+      sellerpilotExternalGoodsId: discovery.externalGoodsId,
+      sellerpilotMatchingGoodsCount: matches.length,
+      ...(recoveredGoodsId ? { sellerpilotRecoveredGoodsId: recoveredGoodsId } : {}),
+      ...(!exactOutcome ? { sellerpilotReconciliationRequired: true } : {}),
+    };
+    return result(input, [discoveryStep], recoveredGoodsId ?? undefined);
+  }
   if (input.operation === "categories.list" || input.operation === "categories.suggest" || input.operation === "categories.attributes" || input.operation === "categories.validate") {
     const goodsName = stringArgument(input.arguments, "goodsName", false)
       || stringArgument(input.arguments, "query", false)
@@ -4577,56 +5570,667 @@ async function executeTemu(input: ExecuteInput) {
     const categoryId = temuResultObject(remote.data).catId;
     return result(input, [step("category-recommend", remote)], categoryId === undefined ? undefined : String(categoryId));
   }
+  if (input.operation === "listing.update") {
+    const update = temuExactExistingUpdateRequest(input.arguments);
+    const expectedFingerprint = stringArgument(
+      input.arguments,
+      "publicationExpectedFingerprint",
+      false,
+    );
+    const exactInput = Boolean(
+      update
+      && input.arguments.publicationStateContract === listingRemoteStateContractVersion
+      && listingPublicationIntentFromArguments(input.arguments) === "live"
+      && input.arguments.publicationExpectedLocale === "ko-KR"
+      && Number(input.arguments.publicationExpectedImageCount) === marketplaceChannelDetailImageCount
+      && /^[a-f0-9]{64}$/u.test(expectedFingerprint),
+    );
+    if (!exactInput || !update) {
+      return result(input, [{
+        name: "temu-exact-existing-update-prewrite-fence",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification: "TEMU_EXACT_EXISTING_UPDATE_CONTEXT_INVALID",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+
+    const readExact = async () => {
+      const [list, status, detail, stock] = await Promise.all([
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.list.retrieve",
+          arguments: temuExactGoodsListArguments(update.binding.externalGoodsId),
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.publish.status.get",
+          arguments: { goodsIdList: [temuExactLong(update.binding.goodsId)] },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.detail.query",
+          arguments: {
+            goodsId: temuExactLong(update.binding.goodsId),
+            versionQueryType: 1,
+            language: "ko",
+          },
+        }),
+        temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(update.binding.goodsId) },
+        }),
+      ]);
+      return { list, status, detail, stock };
+    };
+
+    const tokenInfo = await temuRequest({
+      payload: input.payload,
+      type: "bg.open.accesstoken.info.get",
+      arguments: {},
+    });
+    const tokenTransport = step("temu-exact-update-current-credential", tokenInfo);
+    const tokenIdentity = tokenTransport.ok
+      ? normalizeTemuCredentialIdentityObservation(tokenInfo.data)
+      : null;
+    const tokenInfoResult = temuResultObject(tokenInfo.data);
+    const rawScopes = Array.isArray(tokenInfoResult.apiScopeList)
+      ? tokenInfoResult.apiScopeList
+      : [];
+    const scopes = rawScopes.map((scope) => typeof scope === "string" ? scope.trim() : "");
+    const credentialVerified = Boolean(tokenIdentity)
+      && tokenIdentity?.sellerAccountKey === update.binding.sellerAccountKey
+      && scopes.length === rawScopes.length
+      && scopes.every(Boolean)
+      && new Set(scopes).size === scopes.length
+      && scopes.includes(temuExactExistingUpdateIdentity.providerOperation);
+    const credentialStep: ChannelOperationStep = {
+      name: "temu-exact-update-current-credential",
+      ok: credentialVerified,
+      status: credentialVerified ? 200 : 422,
+      data: {
+        sellerpilotVerification: credentialVerified
+          ? "TEMU_CURRENT_TOKEN_SELLER_AND_PARTIAL_UPDATE_SCOPE_VERIFIED"
+          : "TEMU_CURRENT_TOKEN_SELLER_OR_PARTIAL_UPDATE_SCOPE_UNVERIFIED",
+        sellerpilotNoWriteConfirmed: true,
+      },
+    };
+    if (!credentialVerified) return result(input, [credentialStep], update.binding.goodsId);
+
+    const pre = await readExact();
+    const preSteps = [
+      credentialStep,
+      step("temu-exact-update-pre-list", pre.list),
+      step("temu-exact-update-pre-status", pre.status),
+      step("temu-exact-update-pre-detail", pre.detail),
+      step("temu-exact-update-pre-stock", pre.stock),
+    ];
+    const preReadback = normalizeTemuListingPublicationReadback({
+      operation: "listing.update",
+      intent: "live",
+      remoteId: update.binding.goodsId,
+      externalGoodsId: update.binding.externalGoodsId,
+      listData: pre.list.data,
+      publishStatusData: pre.status.data,
+      detailData: pre.detail.data,
+      stockData: pre.stock.data,
+      expectedLocale: temuExactExistingUpdateIdentity.locale,
+      expectedFingerprint,
+      expectedRepresentativeImages: update.expectedRepresentativeImages,
+      expectedDetailImages: update.expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: update.providerArguments.goodsName,
+      expectedGoodsDesc: update.providerArguments.goodsDesc,
+      expectedBulletPoints: update.providerArguments.bulletPoints,
+      expectedSkus: update.expectedSkus,
+      requireExactActiveStatus: true,
+    });
+    const preChecks = preReadback.checks;
+    const preflightOk = preSteps.every((entry) => entry.ok)
+      && preReadback.visibility === "live"
+      && preReadback.providerStatus === "statusName=ACTIVE;goodsStatus=ACTIVE"
+      && preChecks.identityVerified
+      && preChecks.statusVerified
+      && preChecks.representativeImageVerified
+      && preChecks.imageCountVerified
+      && preChecks.imageOrderVerified
+      && preChecks.skuIdentityVerified
+      && preChecks.priceVerified
+      && preChecks.stockVerified
+      && preChecks.goodsIdVerified
+      && preChecks.externalGoodsIdVerified;
+    const preflightStep: ChannelOperationStep = {
+      name: "temu-exact-existing-update-preflight",
+      ok: preflightOk,
+      status: preflightOk ? 200 : 422,
+      data: {
+        sellerpilotVerification: preflightOk
+          ? "TEMU_EXACT_ACTIVE_COMMERCE_AND_ASSETS_VERIFIED"
+          : "TEMU_EXACT_ACTIVE_COMMERCE_OR_ASSETS_MISMATCH",
+        sellerpilotPublicationChecks: preChecks,
+        sellerpilotRemoteVisibility: preReadback.visibility,
+        sellerpilotNoWriteConfirmed: true,
+      },
+    };
+    if (!preflightOk) return result(input, [...preSteps, preflightStep], update.binding.goodsId);
+
+    if (!input.providerMutationHooks) {
+      return result(input, [preflightStep, {
+        name: "temu-exact-existing-update-provider-boundary",
+        ok: false,
+        status: 409,
+        data: {
+          sellerpilotVerification: "TEMU_EXACT_UPDATE_PROVIDER_BOUNDARY_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }], update.binding.goodsId);
+    }
+    await input.providerMutationHooks.assertLeaseHealthy();
+    await input.providerMutationHooks.begin();
+    await input.providerMutationHooks.assertLeaseHealthy();
+
+    // The official partial-update contract is deliberately used here. Images,
+    // price, stock, SKU identity, and sale state are immutable in this action
+    // and were independently verified above. There is exactly one provider
+    // mutation; any ambiguous transport outcome is quarantined by the gateway.
+    const updateRemote = await temuRequest({
+      payload: input.payload,
+      type: temuExactExistingUpdateIdentity.providerOperation,
+      arguments: {
+        ...update.providerArguments,
+        goodsId: temuExactLong(update.binding.goodsId),
+      },
+    });
+    const updateStep = step("temu-exact-content-partial-update", updateRemote);
+
+    const post = await readExact();
+    const postTransportSteps = [
+      step("temu-exact-update-post-list", post.list),
+      step("temu-exact-update-post-status", post.status),
+      step("temu-exact-update-post-detail", post.detail),
+      step("temu-exact-update-post-stock", post.stock),
+    ];
+    const postReadback = normalizeTemuListingPublicationReadback({
+      operation: "listing.update",
+      intent: "live",
+      remoteId: update.binding.goodsId,
+      externalGoodsId: update.binding.externalGoodsId,
+      listData: post.list.data,
+      publishStatusData: post.status.data,
+      detailData: post.detail.data,
+      stockData: post.stock.data,
+      expectedLocale: temuExactExistingUpdateIdentity.locale,
+      expectedFingerprint,
+      expectedRepresentativeImages: update.expectedRepresentativeImages,
+      expectedDetailImages: update.expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: update.providerArguments.goodsName,
+      expectedGoodsDesc: update.providerArguments.goodsDesc,
+      expectedBulletPoints: update.providerArguments.bulletPoints,
+      expectedSkus: update.expectedSkus,
+      requireExactActiveStatus: true,
+    });
+    const postOk = updateStep.ok
+      && postTransportSteps.every((entry) => entry.ok)
+      && Boolean(postReadback.remoteState)
+      && postReadback.visibility === "live"
+      && postReadback.providerStatus === preReadback.providerStatus
+      && postReadback.providerStatus === "statusName=ACTIVE;goodsStatus=ACTIVE";
+    const postStep: ChannelOperationStep = {
+      name: "temu-exact-existing-update-post-readback",
+      ok: postOk,
+      status: postOk ? 200 : 422,
+      data: {
+        sellerpilotVerification: postOk
+          ? "TEMU_EXACT_CONTENT_UPDATE_AND_LIVE_STATE_VERIFIED"
+          : "TEMU_EXACT_CONTENT_UPDATE_READBACK_UNVERIFIED",
+        sellerpilotPublicationChecks: postReadback.checks,
+        sellerpilotRemoteVisibility: postReadback.visibility,
+        sellerpilotProviderStatus: postReadback.providerStatus,
+        ...(!postOk ? { sellerpilotReconciliationRequired: true } : {}),
+      },
+    };
+    return result(
+      input,
+      [preflightStep, updateStep, ...postTransportSteps, postStep],
+      update.binding.goodsId,
+      undefined,
+      postReadback.remoteState,
+    );
+  }
+  if (input.operation === "listing.activate") {
+    const activation = temuActivationBinding(input.arguments);
+    const body = objectValue(input.arguments, "body", false);
+    const goodsBasic = objectValue(body, "goodsBasic", false);
+    const expectedRepresentativeImages = temuStringArray(goodsBasic.goodsCarouselImage);
+    const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
+    const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
+    const expectedSkus = temuPublicationExpectedSkus(body);
+    const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
+    const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
+    const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
+    const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
+    const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
+    const exactInput = Boolean(
+      activation
+      && input.arguments.publicationStateContract === listingRemoteStateContractVersion
+      && listingPublicationIntentFromArguments(input.arguments) === "live"
+      && expectedLocale === "ko-KR"
+      && body.language === "ko"
+      && /^[a-f0-9]{64}$/u.test(expectedFingerprint)
+      && expectedImageCount === marketplaceChannelDetailImageCount
+      && /^[1-9]\d*$/u.test(exactLeafCategoryId)
+      && Boolean(shippingTemplate)
+      && shippingTemplate.length <= 500
+      && !/\p{Cc}/u.test(shippingTemplate)
+      && expectedRepresentativeImages.length === 1
+      && /^https:\/\//u.test(expectedRepresentativeImages[0])
+      && !expectedDetailImages.includes(expectedRepresentativeImages[0])
+      && expectedDetailImages.length === marketplaceChannelDetailImageCount
+      && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
+      && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
+      && Boolean(expectedSkus)
+    );
+    if (!exactInput || !activation) {
+      return result(input, [{
+        name: "temu-activation-prewrite-fence",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification: "TEMU_ACTIVATION_CONTEXT_INVALID",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+
+    const preList = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: temuExactGoodsListArguments(activation.externalGoodsId),
+    });
+    const preStatus = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.publish.status.get",
+      arguments: { goodsIdList: [temuExactLong(activation.exactGoodsId)] },
+    });
+    const preDetail = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId), versionQueryType: 1, language: "ko" },
+    });
+    const preStock = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.sku.stock.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId) },
+    });
+    const prePublication = normalizeTemuListingPublicationReadback({
+      operation: "listing.create",
+      intent: "safe_test",
+      remoteId: activation.goodsId,
+      externalGoodsId: activation.externalGoodsId,
+      listData: preList.data,
+      publishStatusData: preStatus.data,
+      detailData: preDetail.data,
+      expectedLocale,
+      expectedFingerprint,
+      expectedRepresentativeImages,
+      expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
+      expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
+      expectedBulletPoints,
+      expectedSkus: expectedSkus!,
+      stockData: preStock.data,
+    });
+    const preListStep = step("temu-activation-pre-list", preList);
+    const preStatusStep = step("temu-activation-pre-status", preStatus);
+    const preDetailStep = step("temu-activation-pre-detail", preDetail);
+    const preStockStep = step("temu-activation-pre-stock", preStock);
+    const preflightStep: ChannelOperationStep = {
+      name: "temu-activation-non-public-preflight",
+      ok: Boolean(preListStep.ok
+        && preStatusStep.ok
+        && preDetailStep.ok
+        && preStockStep.ok
+        && prePublication.remoteState
+        && ["non_public", "withdrawn"].includes(prePublication.remoteState.visibility)),
+      status: prePublication.remoteState ? 200 : 422,
+      data: {
+        sellerpilotVerification: prePublication.remoteState
+          ? "TEMU_EXACT_NON_PUBLIC_ACTIVATION_SOURCE_VERIFIED"
+          : "TEMU_EXACT_NON_PUBLIC_ACTIVATION_SOURCE_UNVERIFIED",
+        sellerpilotPublicationChecks: prePublication.checks,
+        sellerpilotRemoteVisibility: prePublication.visibility,
+      },
+    };
+    if (!preflightStep.ok) return result(input, [preflightStep], activation.goodsId);
+
+    if (!input.providerMutationHooks) {
+      return result(input, [preflightStep, {
+        name: "temu-activation-provider-boundary",
+        ok: false,
+        status: 409,
+        data: {
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotVerification: "TEMU_ACTIVATION_PROVIDER_BOUNDARY_REQUIRED",
+        },
+      }], activation.goodsId);
+    }
+    await input.providerMutationHooks.assertLeaseHealthy();
+    await input.providerMutationHooks.begin();
+    await input.providerMutationHooks.assertLeaseHealthy();
+
+    const activateRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.sale.status.set",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId), onsale: 1, operationType: 1 },
+    });
+    const activateStep = step("goods-activate", activateRemote);
+
+    const postList = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: temuExactGoodsListArguments(activation.externalGoodsId),
+    });
+    const postStatus = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.publish.status.get",
+      arguments: { goodsIdList: [temuExactLong(activation.exactGoodsId)] },
+    });
+    const postDetail = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId), versionQueryType: 1, language: "ko" },
+    });
+    const postStock = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.sku.stock.query",
+      arguments: { goodsId: temuExactLong(activation.exactGoodsId) },
+    });
+    const postPublication = normalizeTemuListingPublicationReadback({
+      operation: "listing.create",
+      intent: "live",
+      remoteId: activation.goodsId,
+      externalGoodsId: activation.externalGoodsId,
+      listData: postList.data,
+      publishStatusData: postStatus.data,
+      detailData: postDetail.data,
+      expectedLocale,
+      expectedFingerprint,
+      expectedRepresentativeImages,
+      expectedDetailImages,
+      requestedLanguage: "ko",
+      expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
+      expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
+      expectedBulletPoints,
+      expectedSkus: expectedSkus!,
+      stockData: postStock.data,
+    });
+    const postListStep = step("temu-activation-post-list", postList);
+    const postStatusStep = step("temu-activation-post-status", postStatus);
+    const postDetailStep = step("temu-activation-post-detail", postDetail);
+    const postStockStep = step("temu-activation-post-stock", postStock);
+    const postStep: ChannelOperationStep = {
+      name: "temu-activation-post-readback",
+      ok: Boolean(postListStep.ok
+        && postStatusStep.ok
+        && postDetailStep.ok
+        && postStockStep.ok
+        && postPublication.remoteState),
+      status: postPublication.remoteState ? 200 : 422,
+      data: {
+        sellerpilotVerification: postPublication.remoteState
+          ? "TEMU_ACTIVATION_LIVE_OR_PENDING_VERIFIED"
+          : "TEMU_ACTIVATION_STATE_UNVERIFIED",
+        sellerpilotPublicationChecks: postPublication.checks,
+        sellerpilotRemoteVisibility: postPublication.visibility,
+        sellerpilotProviderStatus: postPublication.providerStatus,
+        ...(!postPublication.remoteState ? { sellerpilotReconciliationRequired: true } : {}),
+      },
+    };
+    return result(
+      input,
+      [preflightStep, activateStep, postStockStep, postStep],
+      activation.goodsId,
+      undefined,
+      postPublication.remoteState,
+    );
+  }
   if (input.operation === "listing.create") {
     const body = objectValue(input.arguments, "body");
     const goodsBasic = objectValue(body, "goodsBasic");
     const externalGoodsId = stringArgument(goodsBasic, "externalGoodsId");
-    const createRemote = await temuRequest({ payload: input.payload, type: "temu.local.goods.v3.add", arguments: body });
-    const created = temuResultObject(createRemote.data);
-    let remoteId = created.goodsId === undefined ? "" : String(created.goodsId);
-    const createStep = step("goods-v3-add", createRemote);
+    const strictPublication = input.arguments.publicationStateContract === listingRemoteStateContractVersion;
+    const publicationIntent = listingPublicationIntentFromArguments(input.arguments);
+    const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
+    const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
+    const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
+    const expectedRepresentativeImages = temuStringArray(goodsBasic.goodsCarouselImage);
+    const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
+    const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
+    const expectedSkus = temuPublicationExpectedSkus(body);
+    if (strictPublication) {
+      const providerLanguage = String(body.language ?? goodsBasic.language ?? "")
+        .trim()
+        .replaceAll("_", "-")
+        .toLowerCase();
+      const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
+      const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
+      const exactPublicationInput = Boolean(
+        publicationIntent
+        && expectedLocale === "ko-KR"
+        && (providerLanguage === "ko" || providerLanguage === "ko-kr")
+        && /^[a-f0-9]{64}$/u.test(expectedFingerprint)
+        && input.arguments.publicationExpectedImageCount === marketplaceChannelDetailImageCount
+        && /^[1-9]\d*$/u.test(exactLeafCategoryId)
+        && Boolean(shippingTemplate)
+        && shippingTemplate.length <= 500
+        && !/\p{Cc}/u.test(shippingTemplate)
+        && !/^(?:server_managed|unknown|n\/a|미확인|확인 필요)$/iu.test(shippingTemplate)
+        && expectedRepresentativeImages.length === 1
+        && /^https:\/\//u.test(expectedRepresentativeImages[0])
+        && !expectedDetailImages.includes(expectedRepresentativeImages[0])
+        && expectedDetailImages.length === marketplaceChannelDetailImageCount
+        && new Set(expectedDetailImages).size === marketplaceChannelDetailImageCount
+        && expectedDetailImages.every((url) => /^https:\/\//u.test(url))
+        && temuCreateCorrelationMatches(input.arguments, externalGoodsId)
+        && Boolean(expectedSkus)
+      );
+      if (!exactPublicationInput) {
+        return result(input, [{
+          name: "publication-prewrite",
+          ok: false,
+          status: 422,
+          data: {
+            error: "TEMU_PUBLICATION_PREWRITE_INVALID",
+            sellerpilotVerification: "TEMU_PUBLICATION_PREWRITE_REJECTED",
+          },
+        }]);
+      }
+    }
     const steps: ChannelOperationStep[] = [];
-    if (createStep.ok && remoteId) {
+    const preflightRemote = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: temuExactGoodsListArguments(externalGoodsId),
+    });
+    const preflightStep = step("goods-create-external-id-preflight", preflightRemote);
+    const preflightGoods = temuResultObject(preflightRemote.data).goodsList;
+    const preflightListVerified = Array.isArray(preflightGoods);
+    const preflightEmpty = preflightListVerified && preflightGoods.length === 0;
+    preflightStep.ok = preflightStep.ok && preflightEmpty;
+    preflightStep.data = {
+      ...preflightStep.data,
+      ...(preflightListVerified && !preflightEmpty
+        ? { sellerpilotReconciliationRequired: true }
+        : {}),
+      observedGoodsCount: preflightListVerified ? preflightGoods.length : undefined,
+      sellerpilotVerification: preflightEmpty
+        ? "TEMU_EXTERNAL_ID_AVAILABLE"
+        : preflightListVerified
+          ? "TEMU_EXTERNAL_ID_ALREADY_EXISTS"
+          : "TEMU_EXTERNAL_ID_PREFLIGHT_UNVERIFIED",
+    };
+    steps.push(preflightStep);
+    if (!preflightStep.ok) return result(input, steps);
+
+    let createRemote: RemoteResponse | null = null;
+    let createTransportUncertain = false;
+    try {
+      createRemote = await temuRequest({ payload: input.payload, type: "temu.local.goods.v3.add", arguments: body });
+    } catch {
+      // A network timeout after the provider accepted the create is not proof
+      // that no product exists. Reconcile by the immutable externalGoodsId and
+      // never issue a second create from this execution.
+      createTransportUncertain = true;
+    }
+    const created = createRemote ? temuResultObject(createRemote.data) : {};
+    let remoteId = temuExactLongGoodsId(created.goodsId) ?? "";
+    const createStep = createRemote ? step("goods-v3-add", createRemote) : null;
+    if (createStep?.ok && remoteId) {
       steps.push(createStep);
     } else {
+      if (createStep) {
+        if (!createStep.ok && createRemote && temuExternalIdentityConflict(createRemote)) {
+          createStep.data = {
+            ...createStep.data,
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "TEMU_EXTERNAL_ID_COLLISION_MANUAL_RECONCILIATION",
+          };
+        }
+        steps.push(createStep);
+      }
+      // A definite provider rejection must never be converted into ownership of
+      // a pre-existing product with the same external ID. In particular, a
+      // duplicate response is a manual reconciliation case, not permission to
+      // look up and off-shelf someone else's existing listing.
+      const recoveryAllowed = preflightEmpty
+        && temuCreateCorrelationMatches(input.arguments, externalGoodsId)
+        && (createTransportUncertain || createStep?.ok === true);
+      if (!recoveryAllowed) {
+        if (createTransportUncertain) {
+          steps.push({
+            name: "goods-v3-add",
+            ok: false,
+            status: 408,
+            data: {
+              sellerpilotReconciliationRequired: true,
+              sellerpilotVerification: "TEMU_CREATE_TRANSPORT_UNCERTAIN_WITHOUT_LINEAGE",
+            },
+          });
+        }
+        return result(input, steps);
+      }
       // Preserve a provider-accepted create marker even if the response omitted
       // goodsId. If lookup recovery also misses, the gateway must quarantine
       // this create instead of treating it as safely retryable.
-      if (createStep.ok) steps.push(createStep);
       // A successful Temu create can outlive a gateway timeout. Retrying the same
       // external ID would otherwise fail as a duplicate, so recover the existing
       // product and continue the same status/image verification path.
       const reconcileRemote = await temuRequest({
         payload: input.payload,
         type: "temu.local.goods.list.retrieve",
-        arguments: { outGoodsSnList: [externalGoodsId], pageSize: 25 },
+        arguments: temuExactGoodsListArguments(externalGoodsId),
       });
       const reconcileGoods = temuResultObject(reconcileRemote.data).goodsList;
-      const existing = Array.isArray(reconcileGoods)
-        ? reconcileGoods.find((item) => {
+      const matchingGoods = Array.isArray(reconcileGoods)
+        ? reconcileGoods.filter((item) => {
           if (!item || typeof item !== "object" || Array.isArray(item)) return false;
           const record = item as Record<string, unknown>;
           return [record.outGoodsSn, record.externalGoodsId].some((candidate) => String(candidate ?? "") === externalGoodsId);
-        }) as Record<string, unknown> | undefined
-        : undefined;
-      remoteId = existing?.goodsId === undefined ? "" : String(existing.goodsId);
+        }) as Record<string, unknown>[]
+        : [];
+      const existing = matchingGoods.length === 1 ? matchingGoods[0] : undefined;
+      remoteId = temuExactLongGoodsId(existing?.goodsId) ?? "";
       const reconcileStep = step("goods-reconcile", reconcileRemote);
-      reconcileStep.ok = reconcileStep.ok && Boolean(remoteId);
+      reconcileStep.ok = reconcileStep.ok && matchingGoods.length === 1 && Boolean(remoteId);
       reconcileStep.data = {
         ...reconcileStep.data,
         recoveredGoodsId: remoteId || undefined,
-        createStatus: createRemote.response.status,
+        matchingGoodsCount: matchingGoods.length,
+        createStatus: createRemote?.response.status,
+        createTransportUncertain,
+        ...(!remoteId || matchingGoods.length !== 1 ? { sellerpilotReconciliationRequired: true } : {}),
         sellerpilotVerification: remoteId ? "EXISTING_GOODS_RECOVERED" : "TEMU_GOODS_RECONCILE_MISSING",
       };
       steps.push(reconcileStep);
       if (!reconcileStep.ok || !remoteId) return result(input, steps, remoteId || undefined);
     }
-    const readbackRemote = await temuRequest({
-      payload: input.payload,
-      type: "temu.local.goods.list.retrieve",
-      arguments: { outGoodsSnList: [externalGoodsId], pageSize: 25 },
-    });
-    const readbackStep = step("goods-readback", readbackRemote);
+
+    if (!remoteId) {
+      steps.push({
+        name: "goods-id-exact-long-verification",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotReconciliationRequired: true,
+          sellerpilotVerification: "TEMU_GOODS_ID_NOT_EXACT_LONG",
+        },
+      });
+      return result(input, steps);
+    }
+
+    // safe_test is a containment operation. As soon as the immutable provider
+    // identity is known, request off-shelf before any fallible list/status/detail
+    // readback. A later eventual-consistency miss therefore cannot leave a
+    // provider-accepted create untreated or be reported as successful.
+    if (strictPublication && publicationIntent === "safe_test") {
+      let offShelfRemote: RemoteResponse;
+      try {
+        offShelfRemote = await temuRequest({
+          payload: input.payload,
+          type: "bg.local.goods.sale.status.set",
+          arguments: { goodsId: temuExactLong(remoteId), onsale: 0, operationType: 1 },
+        });
+      } catch {
+        steps.push({
+          name: "goods-safe-test-off-shelf",
+          ok: false,
+          status: 408,
+          data: {
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "TEMU_SAFE_TEST_OFF_SHELF_TRANSPORT_UNCERTAIN",
+            sellerpilotKnownGoodsId: remoteId,
+            sellerpilotKnownExternalGoodsId: externalGoodsId,
+          },
+        });
+        return result(input, steps, remoteId);
+      }
+      const offShelfStep = step("goods-safe-test-off-shelf", offShelfRemote);
+      steps.push(offShelfStep);
+      if (!offShelfStep.ok) return result(input, steps, remoteId);
+    }
+
+    let readbackRemote: RemoteResponse;
+    try {
+      readbackRemote = await temuRequest({
+        payload: input.payload,
+        type: "temu.local.goods.list.retrieve",
+        arguments: temuExactGoodsListArguments(externalGoodsId),
+      });
+    } catch {
+      steps.push({
+        name: "goods-readback",
+        ok: false,
+        status: 408,
+        data: {
+          sellerpilotReconciliationRequired: true,
+          sellerpilotVerification: "TEMU_POST_CREATE_LIST_TRANSPORT_UNCERTAIN",
+          sellerpilotKnownGoodsId: remoteId,
+          sellerpilotKnownExternalGoodsId: externalGoodsId,
+        },
+      });
+      return result(input, steps, remoteId);
+    }
+    const readbackStep = step(
+      strictPublication && publicationIntent === "safe_test"
+        ? "goods-safe-test-off-shelf-readback"
+        : "goods-readback",
+      readbackRemote,
+    );
     const goodsList = temuResultObject(readbackRemote.data).goodsList;
     const matched = Array.isArray(goodsList) && goodsList.some((item) => temuGoodsMatch(item, remoteId, externalGoodsId));
     readbackStep.ok = readbackStep.ok && matched;
@@ -4636,12 +6240,29 @@ async function executeTemu(input: ExecuteInput) {
     };
     steps.push(readbackStep);
     if (!readbackStep.ok) return result(input, steps, remoteId);
+    const finalListReadbackRemote = readbackRemote;
 
-    const publishStatusRemote = await temuRequest({
-      payload: input.payload,
-      type: "bg.local.goods.publish.status.get",
-      arguments: { goodsIdList: [Number(remoteId)] },
-    });
+    let publishStatusRemote: RemoteResponse;
+    try {
+      publishStatusRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.local.goods.publish.status.get",
+        arguments: { goodsIdList: [temuExactLong(remoteId)] },
+      });
+    } catch {
+      steps.push({
+        name: "goods-publish-status",
+        ok: false,
+        status: 408,
+        data: {
+          sellerpilotReconciliationRequired: true,
+          sellerpilotVerification: "TEMU_POST_CREATE_STATUS_TRANSPORT_UNCERTAIN",
+          sellerpilotKnownGoodsId: remoteId,
+          sellerpilotKnownExternalGoodsId: externalGoodsId,
+        },
+      });
+      return result(input, steps, remoteId);
+    }
     const publishStatusStep = step("goods-publish-status", publishStatusRemote);
     const publishStatuses = temuResultObject(publishStatusRemote.data).goodsPublishStatusList;
     const publishStatus = Array.isArray(publishStatuses)
@@ -4658,11 +6279,50 @@ async function executeTemu(input: ExecuteInput) {
     steps.push(publishStatusStep);
     if (!publishStatusStep.ok) return result(input, steps, remoteId);
 
-    const detailRemote = await temuRequest({
-      payload: input.payload,
-      type: "bg.local.goods.detail.query",
-      arguments: { goodsId: Number(remoteId), versionQueryType: 1 },
-    });
+    let detailRemote: RemoteResponse;
+    try {
+      detailRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.local.goods.detail.query",
+        arguments: { goodsId: temuExactLong(remoteId), versionQueryType: 1, language: "ko" },
+      });
+    } catch {
+      steps.push({
+        name: "goods-detail-image-readback",
+        ok: false,
+        status: 408,
+        data: {
+          sellerpilotReconciliationRequired: true,
+          sellerpilotVerification: "TEMU_POST_CREATE_DETAIL_TRANSPORT_UNCERTAIN",
+          sellerpilotKnownGoodsId: remoteId,
+          sellerpilotKnownExternalGoodsId: externalGoodsId,
+        },
+      });
+      return result(input, steps, remoteId);
+    }
+    let stockRemote: RemoteResponse | null = null;
+    if (strictPublication) {
+      try {
+        stockRemote = await temuRequest({
+          payload: input.payload,
+          type: "temu.local.goods.sku.stock.query",
+          arguments: { goodsId: temuExactLong(remoteId) },
+        });
+      } catch {
+        steps.push({
+          name: "goods-sku-stock-readback",
+          ok: false,
+          status: 408,
+          data: {
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "TEMU_POST_CREATE_STOCK_TRANSPORT_UNCERTAIN",
+            sellerpilotKnownGoodsId: remoteId,
+            sellerpilotKnownExternalGoodsId: externalGoodsId,
+          },
+        });
+        return result(input, steps, remoteId);
+      }
+    }
     const detailStep = step("goods-detail-image-readback", detailRemote);
     const detail = temuResultObject(detailRemote.data);
     const gallery = objectValue(detail, "goodsGallery", false);
@@ -4671,19 +6331,73 @@ async function executeTemu(input: ExecuteInput) {
     const actualCarouselImageCount = temuStringArray(gallery.goodsCarouselImage).length;
     const actualDetailImageCount = temuStringArray(gallery.detailImage).length;
     const detailMatches = String(detail.goodsId ?? "") === remoteId;
-    const imagesMatch = actualCarouselImageCount >= expectedCarouselImageCount
-      && actualDetailImageCount >= expectedDetailImageCount;
+    const imagesMatch = strictPublication
+      ? expectedImageCount === marketplaceChannelDetailImageCount
+        && expectedRepresentativeImages.length === 1
+        && actualCarouselImageCount === 1
+        && temuStringArray(gallery.goodsCarouselImage)[0] === expectedRepresentativeImages[0]
+        && expectedDetailImageCount === marketplaceChannelDetailImageCount
+        && actualDetailImageCount === marketplaceChannelDetailImageCount
+        && temuStringArray(gallery.detailImage).every((url, index) => url === expectedDetailImages[index])
+      : actualCarouselImageCount >= expectedCarouselImageCount
+        && actualDetailImageCount >= expectedDetailImageCount;
+    const publication = strictPublication
+      ? normalizeTemuListingPublicationReadback({
+          operation: "listing.create",
+          intent: publicationIntent,
+          remoteId,
+          externalGoodsId,
+          listData: finalListReadbackRemote.data,
+          publishStatusData: publishStatusRemote.data,
+          detailData: detailRemote.data,
+          expectedLocale,
+          expectedFingerprint,
+          expectedRepresentativeImages,
+          expectedDetailImages,
+          requestedLanguage: "ko",
+          expectedGoodsName: stringArgument(goodsBasic, "goodsName", false),
+          expectedGoodsDesc: stringArgument(goodsBasic, "goodsDesc", false),
+          expectedBulletPoints,
+          expectedSkus: expectedSkus!,
+          stockData: stockRemote!.data,
+        })
+      : null;
+    if (stockRemote) {
+      const stockStep = step("goods-sku-stock-readback", stockRemote);
+      stockStep.ok = stockStep.ok && Boolean(publication?.checks.stockVerified);
+      stockStep.data = {
+        ...stockStep.data,
+        sellerpilotVerification: publication?.checks.stockVerified
+          ? "TEMU_SKU_STOCK_VERIFIED"
+          : "TEMU_SKU_STOCK_MISMATCH",
+      };
+      steps.push(stockStep);
+    }
     detailStep.ok = detailStep.ok && detailMatches && imagesMatch;
+    if (strictPublication) detailStep.ok = detailStep.ok && Boolean(publication?.remoteState);
     detailStep.data = {
       ...detailStep.data,
       expectedCarouselImageCount,
       actualCarouselImageCount,
       expectedDetailImageCount,
       actualDetailImageCount,
-      sellerpilotVerification: detailStep.ok ? "IMAGES_VERIFIED" : "TEMU_IMAGE_READBACK_MISSING",
+      ...(publication ? {
+          sellerpilotPublicationChecks: publication.checks,
+          sellerpilotRemoteVisibility: publication.visibility,
+          sellerpilotProviderStatus: publication.providerStatus,
+        } : {}),
+      sellerpilotVerification: detailStep.ok
+        ? "IMAGES_VERIFIED"
+        : publication && !publication.checks.skuIdentityVerified
+          ? "TEMU_SKU_IDENTITY_READBACK_MISMATCH"
+          : publication && !publication.checks.priceVerified
+            ? "TEMU_PRICE_READBACK_MISMATCH"
+            : publication && !publication.checks.stockVerified
+              ? "TEMU_STOCK_READBACK_MISMATCH"
+              : "TEMU_IMAGE_READBACK_MISSING",
     };
     steps.push(detailStep);
-    return result(input, steps, remoteId);
+    return result(input, steps, remoteId, undefined, publication?.remoteState);
   }
   if (input.operation === "listing.update") {
     // bg.local.goods.update replaces the full goods record (same shape as the
@@ -4794,25 +6508,116 @@ async function executeTemu(input: ExecuteInput) {
   }
   if (input.operation === "listing.stop") {
     const goodsId = stringArgument(input.arguments, "goodsId");
-    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.sale.status.set", arguments: { goodsId: Number(goodsId), onsale: 0, operationType: 1 } });
-    return result(input, [step("goods-off-shelf", remote)], goodsId);
+    const strictPublication = input.arguments.publicationStateContract === listingRemoteStateContractVersion;
+    const externalGoodsId = stringArgument(input.arguments, "externalGoodsId", !strictPublication ? false : true);
+    const exactGoodsId = temuExactLongGoodsId(goodsId);
+    if (exactGoodsId === null) {
+      return result(input, [{
+        name: "goods-id-exact-long-verification",
+        ok: false,
+        status: 422,
+        data: { sellerpilotVerification: "TEMU_GOODS_ID_NOT_EXACT_LONG" },
+      }]);
+    }
+    const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.sale.status.set", arguments: { goodsId: temuExactLong(exactGoodsId), onsale: 0, operationType: 1 } });
+    const steps: ChannelOperationStep[] = [step("goods-off-shelf", remote)];
+    if (!steps[0].ok || !strictPublication) return result(input, steps, goodsId);
+    const listRemote = await temuRequest({
+      payload: input.payload,
+      type: "temu.local.goods.list.retrieve",
+      arguments: temuExactGoodsListArguments(externalGoodsId),
+    });
+    const listStep = step("goods-off-shelf-list-readback", listRemote);
+    steps.push(listStep);
+    const statusRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.publish.status.get",
+      arguments: { goodsIdList: [temuExactLong(exactGoodsId)] },
+    });
+    const statusStep = step("goods-off-shelf-status-readback", statusRemote);
+    steps.push(statusStep);
+    const detailRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId: temuExactLong(exactGoodsId), versionQueryType: 1, language: "ko" },
+    });
+    const publication = normalizeTemuListingPublicationReadback({
+      operation: "listing.stop",
+      remoteId: goodsId,
+      externalGoodsId,
+      listData: listRemote.data,
+      publishStatusData: statusRemote.data,
+      detailData: detailRemote.data,
+      expectedLocale: stringArgument(input.arguments, "publicationExpectedLocale", false),
+      expectedFingerprint: stringArgument(input.arguments, "publicationExpectedFingerprint", false),
+      expectedRepresentativeImages: [],
+      expectedDetailImages: [],
+      requestedLanguage: "ko",
+    });
+    const detailStep = step("goods-off-shelf-detail-readback", detailRemote);
+    detailStep.ok = detailStep.ok && Boolean(publication.remoteState);
+    detailStep.data = {
+      ...detailStep.data,
+      sellerpilotPublicationChecks: publication.checks,
+      sellerpilotRemoteVisibility: publication.visibility,
+      sellerpilotProviderStatus: publication.providerStatus,
+      sellerpilotVerification: publication.remoteState
+        ? "TEMU_OFF_SHELF_REVERIFIED"
+        : "TEMU_OFF_SHELF_UNVERIFIED",
+    };
+    steps.push(detailStep);
+    return result(input, steps, goodsId, undefined, publication.remoteState);
   }
   if (input.operation === "inventory.update") {
     const goodsId = stringArgument(input.arguments, "goodsId", false);
+    const exactGoodsId = temuExactLongGoodsId(goodsId);
     const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });
-    let body = input.arguments.body ? objectValue(input.arguments, "body") : null;
     const steps: ChannelOperationStep[] = [];
-    if (!body && goodsId) {
-      const detail = await temuRequest({ payload: input.payload, type: "bg.local.goods.detail.query", arguments: { goodsId: Number(goodsId), versionQueryType: 1 } });
-      const detailStep = step("inventory-item-readback", detail);
-      steps.push(detailStep);
-      if (!detailStep.ok) return result(input, steps, goodsId);
-      const detailData = temuResultObject(detail.data);
-      const skus = Array.isArray(detailData.skuList) ? detailData.skuList.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)) : [];
-      const skuStockList = skus.map((sku) => ({ skuId: Number(sku.skuId ?? sku.goodsSkuId), stockQuantity: quantity })).filter((sku) => Number.isFinite(sku.skuId));
-      body = { goodsId: Number(goodsId), skuStockList };
+    if (!exactGoodsId) {
+      return result(input, [{
+        name: "inventory-exact-long-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotVerification: "TEMU_INVENTORY_GOODS_ID_NOT_EXACT_LONG",
+        },
+      }]);
     }
-    if (!body) throw new Error("CHANNEL_ARGUMENT_REQUIRED:body");
+    const detail = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId: temuExactLong(exactGoodsId), versionQueryType: 1 },
+    });
+    const detailStep = step("inventory-item-readback", detail);
+    steps.push(detailStep);
+    if (!detailStep.ok) return result(input, steps, goodsId);
+    const detailData = temuResultObject(detail.data);
+    const skus = Array.isArray(detailData.skuList)
+      ? detailData.skuList.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+      : [];
+    const exactSkuIds = skus.map((sku) => temuExactLongGoodsId(sku.skuId ?? sku.goodsSkuId));
+    if (exactSkuIds.length === 0
+        || exactSkuIds.some((skuId) => !skuId)
+        || new Set(exactSkuIds).size !== exactSkuIds.length) {
+      steps.push({
+        name: "inventory-sku-exact-long-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotVerification: "TEMU_INVENTORY_SKU_ID_NOT_EXACT_LONG",
+        },
+      });
+      return result(input, steps, goodsId);
+    }
+    const body = {
+      goodsId: temuExactLong(exactGoodsId),
+      skuStockList: exactSkuIds.map((skuId) => ({
+        skuId: temuExactLong(skuId!),
+        stockQuantity: quantity,
+      })),
+    };
     const remote = await temuRequest({ payload: input.payload, type: "bg.local.goods.stock.edit", arguments: body });
     const responseGoodsId = temuResultObject(remote.data).goodsId;
     const writeStep = step("goods-stock", remote);
@@ -4821,14 +6626,21 @@ async function executeTemu(input: ExecuteInput) {
     const verificationRemote = await temuRequest({
       payload: input.payload,
       type: "bg.local.goods.detail.query",
-      arguments: { goodsId: Number(goodsId), versionQueryType: 1 },
+      arguments: { goodsId: temuExactLong(exactGoodsId), versionQueryType: 1 },
     });
     const verificationData = temuResultObject(verificationRemote.data);
     const verificationSkus = Array.isArray(verificationData.skuList)
       ? verificationData.skuList.filter((sku): sku is Record<string, unknown> => Boolean(sku) && typeof sku === "object" && !Array.isArray(sku))
       : [];
+    const verificationSkuIds = verificationSkus.map((sku) => temuExactLongGoodsId(sku.skuId ?? sku.goodsSkuId));
     const quantities = verificationSkus.map((sku) => Number(sku.stockQuantity ?? sku.quantity));
-    const verifiedQuantity = quantities.length > 0 && quantities.every((value) => value === quantity) ? quantity : Number.NaN;
+    const exactSkuOrderVerified = verificationSkuIds.length === exactSkuIds.length
+      && verificationSkuIds.every((skuId, index) => skuId === exactSkuIds[index]);
+    const verifiedQuantity = exactSkuOrderVerified
+      && quantities.length === exactSkuIds.length
+      && quantities.every((value) => value === quantity)
+      ? quantity
+      : Number.NaN;
     steps.push(inventoryQuantityVerificationStep("inventory-readback", verificationRemote, quantity, verifiedQuantity));
     return result(input, steps, responseGoodsId === undefined ? goodsId : String(responseGoodsId));
   }
@@ -5079,6 +6891,121 @@ async function ebayListingResultWithPublicationReadback(
   );
 }
 
+function ebayProviderDescriptionWithoutImages(value: unknown) {
+  return String(value ?? "")
+    .replace(/<img\b[^>]*>/giu, "")
+    .trim();
+}
+
+function ebayCompactInventoryDescription(...providerValues: unknown[]) {
+  for (const providerValue of providerValues) {
+    const compact = ebayProviderDescriptionWithoutImages(providerValue)
+      .replace(/<!--[\s\S]*?-->/gu, " ")
+      .replace(/<script\b[\s\S]*?<\/script>/giu, " ")
+      .replace(/<style\b[\s\S]*?<\/style>/giu, " ")
+      .replace(/<[^>]*>/gu, " ")
+      .replace(/&nbsp;|&#160;/giu, " ")
+      .replace(/&amp;/giu, "&")
+      .replace(/&lt;/giu, "<")
+      .replace(/&gt;/giu, ">")
+      .replace(/&quot;|&#34;/giu, '"')
+      .replace(/&#39;|&apos;/giu, "'")
+      .replace(/\s+/gu, " ")
+      .trim();
+    if (!compact) continue;
+    if (compact.length <= 1_000) return compact;
+    const bounded = compact.slice(0, 1_000);
+    const lastSpace = bounded.lastIndexOf(" ");
+    return (lastSpace >= 800 ? bounded.slice(0, lastSpace) : bounded).trim();
+  }
+  throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_DESCRIPTION_REQUIRED");
+}
+
+function ebayExactProviderCopyArguments(input: {
+  sourceArguments: Record<string, unknown>;
+  currentOffer: Record<string, unknown>;
+  currentInventoryItem: Record<string, unknown>;
+  requestedOffer: Record<string, unknown>;
+  requestedInventoryItem: Record<string, unknown>;
+}) {
+  const publicationBinding = parseListingPublicationAssetBinding(
+    input.sourceArguments.sellerpilotPublicationAssetBinding,
+  );
+  if (!publicationBinding
+      || publicationBinding.providerImageSurface !== "gallery"
+      || publicationBinding.providerTransportImages.length !== 9
+      || publicationBinding.providerTransportImages[0]?.role !== "gallery-representative") {
+    throw new Error("EBAY_EXACT_EXISTING_QA_APPROVED_DETAIL_BINDING_REQUIRED");
+  }
+  const detailUrls = publicationBinding.providerTransportImages
+    .slice(1)
+    .map((image) => image.publicUrl);
+  const detailRoles = publicationBinding.providerTransportImages
+    .slice(1)
+    .map((image) => image.role);
+  const detailAltTexts = detailRoles.map((_, index) =>
+    `Cable organizer product detail image ${index + 1}`);
+  const currentProduct = objectValue(input.currentInventoryItem, "product");
+  const requestedProduct = objectValue(input.requestedInventoryItem, "product");
+  const requestedImageUrls = Array.isArray(requestedProduct.imageUrls)
+    ? requestedProduct.imageUrls
+    : [];
+  const representativeImageUrl = String(requestedImageUrls[0] ?? "").trim();
+  const inventoryImageUrls = [representativeImageUrl, ...detailUrls];
+  if (!representativeImageUrl
+      || inventoryImageUrls.length !== 9
+      || new Set(inventoryImageUrls).size !== 9
+      || requestedImageUrls.length !== inventoryImageUrls.length
+      || !requestedImageUrls.every(
+        (value, index) => String(value).trim() === inventoryImageUrls[index],
+      )) {
+    throw new Error("EBAY_EXACT_V101_NINE_IMAGES_REQUIRED");
+  }
+  const aspects = ebayExactV101EnglishAspects(currentProduct.aspects);
+  // The Inventory API limits product.description to 1-4000 characters. Detail
+  // image HTML belongs to the offer surface. Keep a conservative 1000-character
+  // inventory copy derived only from immutable provider GET values.
+  const description = ebayCompactInventoryDescription(
+    currentProduct.description,
+    input.currentOffer.listingDescription,
+    currentProduct.title,
+  );
+  const listingDescription = upsertMarketplaceDetailImages(
+    ebayProviderDescriptionWithoutImages(input.currentOffer.listingDescription),
+    detailUrls,
+    detailAltTexts,
+    detailRoles,
+  );
+  const inventoryBody = mergeListingUpdatePatch(input.currentInventoryItem, {
+    condition: input.requestedInventoryItem.condition,
+    availability: input.requestedInventoryItem.availability,
+    product: {
+      imageUrls: inventoryImageUrls,
+      description,
+      aspects,
+    },
+  }) as Record<string, unknown>;
+  const offerBody = mergeListingUpdatePatch(input.currentOffer, {
+    availableQuantity: input.requestedOffer.availableQuantity,
+    pricingSummary: input.requestedOffer.pricingSummary,
+    listingDescription,
+  }) as Record<string, unknown>;
+  const readbackArguments = {
+    ...input.sourceArguments,
+    // Both eBay endpoints use full-replacement semantics. Carry every
+    // allowlisted provider GET field into the final subset readback so a 204
+    // response cannot hide a dropped policy, location, schedule, package, or
+    // inventory field.
+    inventoryItem: structuredClone(inventoryBody),
+    offer: structuredClone(offerBody),
+  };
+  assertEbayExactExistingQaUpdateArguments(readbackArguments, {
+    expectedDetailImageUrls: detailUrls,
+    inventoryDescriptionMode: "compact_text",
+  });
+  return { inventoryBody, offerBody, readbackArguments };
+}
+
 async function executeEbay(input: ExecuteInput) {
   if (input.operation === "categories.list") {
     const categoryTreeId = pathSegment(stringArgument(input.arguments, "categoryTreeId"));
@@ -5243,11 +7170,11 @@ async function executeEbay(input: ExecuteInput) {
       : result(input, steps, finalRemoteId);
   }
   if (input.operation === "listing.update") {
-    const offerId = pathSegment(stringArgument(input.arguments, "offerId"));
+    const exactRecovery = ebayExactExistingQaRecoveryBinding(input.arguments);
+    if (exactRecovery) assertEbayExactExistingQaProviderCopyRequest(input.arguments);
     const listingId = stringArgument(input.arguments, "listingId");
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const decodedSku = decodeURIComponent(sku);
-    const decodedOfferId = decodeURIComponent(offerId);
     const marketplaceId = ebayAsqMarketplaceId(input.arguments.marketplaceId);
     const requestedOffer = input.arguments.offer === undefined
       ? {}
@@ -5258,6 +7185,57 @@ async function executeEbay(input: ExecuteInput) {
     if (!Object.keys(requestedOffer).length && !Object.keys(requestedInventoryItem).length) {
       throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
     }
+
+    const steps: ChannelOperationStep[] = [];
+    let decodedOfferId = exactRecovery ? "" : stringArgument(input.arguments, "offerId");
+    if (exactRecovery) {
+      const discoveryRead = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/sell/inventory/v1/offer",
+        query: new URLSearchParams({
+          sku: decodedSku,
+          marketplace_id: marketplaceId,
+          limit: "25",
+        }),
+      });
+      const offers = Array.isArray(discoveryRead.data.offers)
+        ? discoveryRead.data.offers.filter((value): value is Record<string, unknown> =>
+          Boolean(value) && typeof value === "object" && !Array.isArray(value))
+        : [];
+      const publicIdentityOffers = offers.filter((candidate) => {
+        const candidateListing = candidate.listing
+          && typeof candidate.listing === "object"
+          && !Array.isArray(candidate.listing)
+          ? candidate.listing as Record<string, unknown>
+          : {};
+        return String(candidate.sku ?? "").trim() === decodedSku
+          && String(candidate.marketplaceId ?? "").trim().toUpperCase() === marketplaceId
+          && String(candidate.status ?? "").trim().toUpperCase() === "PUBLISHED"
+          && String(candidateListing.listingId ?? "").trim() === listingId
+          && String(candidateListing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE"
+          && Boolean(String(candidate.offerId ?? "").trim());
+      });
+      const exactOffers = publicIdentityOffers.filter((candidate) =>
+        String(candidate.offerId ?? "").trim() === exactRecovery.offerId);
+      const discoveryStep = step("offer-update-discovery-readback", discoveryRead);
+      discoveryStep.ok = discoveryStep.ok
+        && publicIdentityOffers.length === 1
+        && exactOffers.length === 1;
+      discoveryStep.data = {
+        ...discoveryStep.data,
+        sellerpilotVerification: discoveryStep.ok
+          ? "EBAY_EXACT_OFFER_DISCOVERED"
+          : "EBAY_EXACT_OFFER_DISCOVERY_MISMATCH",
+        exactOfferCount: exactOffers.length,
+        publicIdentityOfferCount: publicIdentityOffers.length,
+      };
+      steps.push(discoveryStep);
+      if (!discoveryStep.ok) return result(input, steps, listingId);
+      decodedOfferId = exactRecovery.offerId;
+    }
+    const offerId = pathSegment(decodedOfferId);
 
     const offerRead = await ebayRequest({
       payload: input.payload,
@@ -5292,31 +7270,53 @@ async function executeEbay(input: ExecuteInput) {
     };
     const inventoryPreflight = step("inventory-item-update-preflight-readback", inventoryRead);
     inventoryPreflight.ok = inventoryPreflight.ok && identityVerified;
-    const steps: ChannelOperationStep[] = [offerPreflight, inventoryPreflight];
+    steps.push(offerPreflight, inventoryPreflight);
     if (!identityVerified) return result(input, steps, listingId);
 
     const offerWritableFields = [
       "availableQuantity", "categoryId", "charity", "extendedProducerResponsibility",
       "format", "hideBuyerDetails", "includeCatalogProductDetails", "listingDescription",
-      "listingDuration", "listingPolicies", "lotSize", "merchantLocationKey",
+      "listingDuration", "listingPolicies", "listingStartDate", "lotSize", "merchantLocationKey",
       "pricingSummary", "quantityLimitPerBuyer", "regulatory", "secondaryCategoryId",
       "sku", "storeCategoryNames", "tax",
     ] as const;
     const currentOffer = Object.fromEntries(offerWritableFields.flatMap((key) =>
       offerRead.data[key] === undefined ? [] : [[key, structuredClone(offerRead.data[key])]]));
-    const offerBody = mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<string, unknown>;
-    offerBody.sku = decodedSku;
-    offerBody.marketplaceId = marketplaceId;
-
     const inventoryWritableFields = [
       "availability", "condition", "conditionDescription", "packageWeightAndSize", "product",
     ] as const;
     const currentInventoryItem = Object.fromEntries(inventoryWritableFields.flatMap((key) =>
       inventoryRead.data[key] === undefined ? [] : [[key, structuredClone(inventoryRead.data[key])]]));
-    const inventoryBody = mergeListingUpdatePatch(
-      currentInventoryItem,
-      requestedInventoryItem,
-    ) as Record<string, unknown>;
+    const exactPrepared = exactRecovery
+      ? ebayExactProviderCopyArguments({
+          sourceArguments: input.arguments,
+          currentOffer,
+          currentInventoryItem,
+          requestedOffer,
+          requestedInventoryItem,
+        })
+      : null;
+    const offerBody = exactPrepared?.offerBody
+      ?? mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<string, unknown>;
+    offerBody.sku = decodedSku;
+    offerBody.marketplaceId = marketplaceId;
+    const inventoryBody = exactPrepared?.inventoryBody
+      ?? mergeListingUpdatePatch(
+        currentInventoryItem,
+        requestedInventoryItem,
+      ) as Record<string, unknown>;
+
+    if (Object.keys(requestedOffer).length) {
+      assertEbayListingCreateConfiguration({ offer: offerBody });
+    }
+    if (exactRecovery) {
+      if (!input.providerMutationHooks) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_MUTATION_HOOKS_REQUIRED");
+      }
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+    }
 
     if (Object.keys(requestedInventoryItem).length) {
       const inventoryRemote = await ebayRequest({
@@ -5331,7 +7331,6 @@ async function executeEbay(input: ExecuteInput) {
       if (!inventoryStep.ok) return result(input, steps, listingId);
     }
     if (Object.keys(requestedOffer).length) {
-      assertEbayListingCreateConfiguration({ offer: offerBody });
       const offerRemote = await ebayRequest({
         payload: input.payload,
         environment: input.environment,
@@ -5344,7 +7343,7 @@ async function executeEbay(input: ExecuteInput) {
       if (!offerStep.ok) return result(input, steps, listingId);
     }
     return ebayListingResultWithPublicationReadback(
-      input,
+      exactPrepared ? { ...input, arguments: exactPrepared.readbackArguments } : input,
       steps,
       listingId,
       decodedOfferId,
@@ -5536,8 +7535,14 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       && input.operation !== "listing.activate") {
     return executeQoo10(input);
   }
+  if (input.operation === "listing.publication.verify"
+      && input.channel === "temu"
+      && (temuCredentialCertificationBinding(input.arguments)
+        || temuExistingAdoptionBinding(input.arguments)
+        || temuContainmentDiscoveryBinding(input.arguments))) {
+    return executeTemu(input);
+  }
   if (input.operation === "listing.publication.verify") {
-    if (input.channel === "temu") throw new Error("CHANNEL_OPERATION_UNSUPPORTED:listing.publication.verify");
     const verification = await executeListingPublicationVerification({
       ...input,
       channel: input.channel,
@@ -5554,6 +7559,11 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       verification.remoteState,
     );
   }
+  if (input.channel === "coupang"
+      && (input.operation === "listing.update" || input.operation === "listing.stop")
+      && Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument)) {
+    assertCoupangExactQaProviderContract(input.arguments, input.operation);
+  }
   const requestedPublicationIntent = listingPublicationIntentFromArguments(input.arguments);
   const requestedPublicationStateContract = input.arguments.publicationStateContract === listingRemoteStateContractVersion
     ? listingRemoteStateContractVersion
@@ -5569,6 +7579,11 @@ export async function executeChannelOperation(input: ExecuteInput): Promise<Chan
       && Number.isInteger(input.arguments.publicationExpectedImageCount)
     ? input.arguments.publicationExpectedImageCount
     : undefined;
+  if (input.channel === "ebay"
+      && input.operation === "listing.update"
+      && ebayExactExistingQaRecoveryBinding(input.arguments)) {
+    assertEbayExactExistingQaProviderCopyRequest(input.arguments);
+  }
   const safeInput = input.operation === "listing.update"
     ? {
       ...input,

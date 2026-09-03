@@ -69,6 +69,8 @@ const QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION =
   "20260831057200_allow_exact_qoo10_s1_activation_provider_boundary.sql";
 const QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION =
   "20260831057300_retire_failed_exact_qoo10_s1_activation_permit.sql";
+const TEMU_PUBLICATION_RELEASE_MIGRATION =
+  "20260831133000_expand_verified_publication_to_temu.sql";
 const COMPETITOR_PRICE_V3_MIGRATION =
   "20260831130000_competitor_price_v3.sql";
 const COMPETITOR_MATCH_REVIEW_MIGRATION =
@@ -83,6 +85,138 @@ const COMPETITOR_QUEUE_RETIREMENT_PRODUCTION_DIGESTS = {
 };
 const COMPETITOR_IDENTITY_LINEAGE_MIGRATION =
   "20260831132000_competitor_identity_lineage_fence.sql";
+const SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION =
+  "20260831132018_smartstore_exact_qa_recovery_fence.sql";
+const COUPANG_EXACT_QA_RECOVERY_MIGRATION =
+  "20260831140000_coupang_exact_qa_recovery_fence.sql";
+const EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION =
+  "20260831143000_ebay_exact_existing_qa_recovery_fence.sql";
+const QOO10_EXACT_LOCALIZATION_V2_MIGRATION =
+  "20260831144000_generalize_qoo10_exact_localization_s1_activation.sql";
+const SMARTSTORE_NONSTATIC_EGRESS_MIGRATION =
+  "20260831145000_release_smartstore_from_static_egress.sql";
+const TEMU_EXACT_CABLE_MIGRATION =
+  "20260831146000_temu_exact_cable_clips.sql";
+const QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION =
+  "20260831195108_reach_exact_qoo10_localization_through_closed_gate.sql";
+const SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION =
+  "20260901053500_allow_exact_smartstore_update_through_closed_gate.sql";
+const SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION =
+  "20260901070000_correct_smartstore_representative_filename.sql";
+const EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION =
+  "20260901080000_allow_exact_existing_updates_through_closed_gate.sql";
+const QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION =
+  "20260901081000_initialize_qoo10_release_status_records.sql";
+const EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION =
+  "20260901081500_backfill_exact_domestic_market_targets.sql";
+const EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION =
+  "20260901082000_bind_ebay_exact_update_to_current_active_credential.sql";
+const COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION =
+  "20260901082500_reconcile_coupang_exact_pre_gateway_failure.sql";
+const QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION =
+  "20260901083000_reconcile_exact_qoo10_uncertain_no_remote_effect.sql";
+const QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION =
+  "20260901084000_bind_qoo10_no_effect_legacy_fac9_payload.sql";
+const QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION =
+  "20260901085000_reconcile_qoo10_partial_manual_activation.sql";
+const SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION =
+  "20260901120000_restore_smartstore_static_egress_fence.sql";
+const ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION =
+  "20260901130000_reconcile_exact_elevenst_manual_live_readback.sql";
+const EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION =
+  "20260901140000_fix_exact_update_enqueued_lineage_phase.sql";
+const EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION =
+  "20260901150000_fix_exact_update_deferred_job_lineage.sql";
+const LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION =
+  "20260901151000_idempotent_lazada_target_sync.sql";
+const COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION =
+  "20260901160000_reconcile_exact_coupang_unclaimed_static_egress_job.sql";
+const EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION =
+  "20260901163000_expose_ebay_exact_qa_recovery_rpc.sql";
+const EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION =
+  "20260901164500_expose_ebay_serverless_listing_update.sql";
+const EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION =
+  "20260901165500_recover_ebay_deterministic_no_effect_retry.sql";
+const EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION =
+  "20260901165700_correct_ebay_no_effect_terminal_source_proof.sql";
+const EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION =
+  "20260901165800_recover_ebay_exact_pre_gateway_retry.sql";
+const EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION =
+  "20260901165900_recover_ebay_exact_credential_rotation.sql";
+const SMARTSTORE_ACTIVE_IDENTITY_ALIGNMENT_MIGRATION =
+  "20260901171000_align_smartstore_exact_active_identity.sql";
+const SHOPEE_SG_EXISTING_ADOPTION_MIGRATION =
+  "20260901171500_adopt_exact_shopee_sg_existing_item.sql";
+const LAZADA_EXACT_LIVE_ADOPTION_MIGRATION =
+  "20260901173000_adopt_exact_lazada_live_listing.sql";
+const EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION =
+  "20260901173100_merge_shopee_lazada_exact_adoption_completion.sql";
+const TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION =
+  "20260901173200_exact_temu_existing_active_adoption.sql";
+const TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION =
+  "20260901173300_certify_exact_temu_existing_adoption_credential.sql";
+const QOO10_ALREADY_LIVE_ADOPTION_MIGRATION =
+  "20260901173400_adopt_exact_qoo10_already_live_readback.sql";
+const QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION =
+  "20260901173500_fence_exact_qoo10_adopted_localization_update.sql";
+const QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION =
+  "20260901173600_align_exact_qoo10_adoption_credential_lineage.sql";
+const EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION =
+  "20260901173700_recover_ebay_exact_v101_credential_rotation.sql";
+const EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION =
+  "20260901173950_rebind_ebay_v101_content_contract.sql";
+const LAZADA_BLANK_TARGET_ADOPTION_MIGRATION =
+  "20260901173900_adopt_exact_lazada_blank_target_after_verified_readback.sql";
+const QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION =
+  "20260901173650_fix_qoo10_exact_localization_v2_source_compile.sql";
+const QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION =
+  "20260901173680_expose_qoo10_adopted_localization_short_rpcs.sql";
+const TEMU_EXACT_EXISTING_UPDATE_MIGRATION =
+  "20260901173960_allow_exact_temu_existing_content_update.sql";
+const SHOPEE_SG_EXACT_UPDATE_MIGRATION =
+  "20260901173970_allow_exact_shopee_sg_existing_updates.sql";
+const LAZADA_EXACT_EXISTING_UPDATE_MIGRATION =
+  "20260901173980_allow_exact_lazada_my_live_update.sql";
+const COUPANG_EXACT_REPRESENTATIVE_MIGRATION =
+  "20260901173990_bind_coupang_exact_representative.sql";
+const SMARTSTORE_EXACT_STOCK_ONE_MIGRATION =
+  "20260901174000_require_exact_smartstore_stock_one.sql";
+const EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION =
+  "20260901194336_rebind_ebay_exact_current_credential_lineage.sql";
+const EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION =
+  "20260902083000_rearm_ebay_exact_dynamic_credential.sql";
+const LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION =
+  "20260902091500_allow_exact_lazada_dual_blocker_reauthorization.sql";
+const EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION =
+  "20260902093000_stabilize_ebay_exact_content_fingerprint.sql";
+const LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION =
+  "20260902100000_recover_exact_lazada_provider_failure_three_blockers.sql";
+const QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION =
+  "20260902100500_reconcile_qoo10_adopted_image_binding_pre_gateway_failure.sql";
+const EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION =
+  "20260902101500_bind_ebay_exact_server_representative.sql";
+const QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION =
+  "20260902102000_fix_qoo10_adopted_deferred_job_lineage.sql";
+const EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION =
+  "20260902103000_bind_ebay_exact_current_attempt_identity.sql";
+const EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION =
+  "20260902104000_bind_ebay_exact_rotating_credential_lineage.sql";
+const EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION =
+  "20260902106000_bind_ebay_exact_current_attempt_proof.sql";
+const EBAY_EXACT_PREARM_IMAGES_MIGRATION =
+  "20260902107000_recover_ebay_exact_prearm_images.sql";
+const EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION =
+  "20260902108000_rearm_ebay_exact_from_fresh_failed_attempt.sql";
+const QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION =
+  "20260902111000_restore_qoo10_adopted_atomic_enqueue_binding.sql";
+const EBAY_ATOMIC_REARMED_PERMIT_LINEAGE_MIGRATION =
+  "20260902112000_allow_ebay_atomic_rearmed_permit_lineage.sql";
+const EBAY_EXACT_CONTENT_FENCE_MIGRATION =
+  "20260901040027_harden_ebay_exact_existing_qa_language_and_image_fence.sql";
+const ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION =
+  "20260901044230_recover_exact_elevenst_snapshot_forward.sql";
+const EBAY_EXACT_PROVIDER_COPY_MIGRATION =
+  "20260901050509_preserve_ebay_exact_provider_copy.sql";
 const ELEVENST_SNAPSHOT_RECOVERY_MIGRATION =
   "20260831054000_recover_elevenst_listing_snapshot.sql";
 const UNRECORDED_QOO10_SCHEMA_MIGRATIONS = new Set([
@@ -296,6 +430,16 @@ as $$
     else convert_to(md5(value || algorithm), 'UTF8')
   end
 $$;
+create or replace function extensions.digest(value bytea, algorithm text)
+returns bytea
+language sql
+immutable
+as $$
+  select case
+    when lower(algorithm) = 'sha256' then sha256(value)
+    else sha256(value || convert_to(algorithm, 'UTF8'))
+  end
+$$;
 `;
 
 function withoutUnavailableExtensions(sql, { injectQoo10History = true } = {}) {
@@ -452,10 +596,14 @@ async function competitorQueueRetirementDigests(db) {
   `)).rows[0];
 }
 
-async function attestPublicationRelease(db, releaseSha = PUBLICATION_RELEASE_SHA) {
-  for (const channel of [
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
-  ]) {
+async function attestPublicationRelease(
+  db,
+  releaseSha = PUBLICATION_RELEASE_SHA,
+  channels = [
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
+  ],
+) {
+  for (const channel of channels) {
     await db.query(
       "select public.sellerpilot_service_set_listing_publication_adapter_ready($1,true,$2)",
       [channel, releaseSha],
@@ -737,6 +885,76 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
+      SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION,
+      TEMU_PUBLICATION_RELEASE_MIGRATION,
+      COUPANG_EXACT_QA_RECOVERY_MIGRATION,
+      EBAY_EXACT_EXISTING_QA_RECOVERY_MIGRATION,
+      QOO10_EXACT_LOCALIZATION_V2_MIGRATION,
+      SMARTSTORE_NONSTATIC_EGRESS_MIGRATION,
+      TEMU_EXACT_CABLE_MIGRATION,
+      QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION,
+      EBAY_EXACT_CONTENT_FENCE_MIGRATION,
+      ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION,
+      EBAY_EXACT_PROVIDER_COPY_MIGRATION,
+      SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION,
+      SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION,
+      EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION,
+      QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION,
+      EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION,
+      EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION,
+      COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION,
+      QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION,
+      QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION,
+      QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION,
+      "20260901090000_fix_coupang_exact_sanitized_enqueue_contract.sql",
+      SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION,
+      "20260901125000_fix_coupang_exact_item_match_binding.sql",
+      ELEVENST_MANUAL_LIVE_RECONCILIATION_MIGRATION,
+      EXACT_EXISTING_ENQUEUED_LINEAGE_PHASE_MIGRATION,
+      EXACT_EXISTING_DEFERRED_JOB_LINEAGE_MIGRATION,
+      LAZADA_TARGET_SYNC_DEDUPLICATION_MIGRATION,
+      COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION,
+      EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION,
+      EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION,
+      EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION,
+      EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
+      EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION,
+      EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION,
+      SMARTSTORE_ACTIVE_IDENTITY_ALIGNMENT_MIGRATION,
+      SHOPEE_SG_EXISTING_ADOPTION_MIGRATION,
+      LAZADA_EXACT_LIVE_ADOPTION_MIGRATION,
+      EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION,
+      TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION,
+      TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION,
+      QOO10_ALREADY_LIVE_ADOPTION_MIGRATION,
+      QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION,
+      QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION,
+      QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
+      QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION,
+      EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION,
+      LAZADA_BLANK_TARGET_ADOPTION_MIGRATION,
+      EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION,
+      TEMU_EXACT_EXISTING_UPDATE_MIGRATION,
+      SHOPEE_SG_EXACT_UPDATE_MIGRATION,
+      LAZADA_EXACT_EXISTING_UPDATE_MIGRATION,
+      COUPANG_EXACT_REPRESENTATIVE_MIGRATION,
+      SMARTSTORE_EXACT_STOCK_ONE_MIGRATION,
+      EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
+      EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION,
+      "20260902090000_reconcile_qoo10_adopted_content_validation.sql",
+      LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION,
+      EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION,
+      LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION,
+      QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION,
+      EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION,
+      QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION,
+      EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION,
+      EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION,
+      EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION,
+      EBAY_EXACT_PREARM_IMAGES_MIGRATION,
+      EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION,
+      QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION,
+      EBAY_ATOMIC_REARMED_PERMIT_LINEAGE_MIGRATION,
       "20260903100000_inventory_ledger.sql",
       "20260903110000_settlement_reconciliation.sql",
       "20260903120000_product_detail_data.sql",
@@ -826,10 +1044,426 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         && migrationNames.indexOf(COMPETITOR_MATCH_REVIEW_MIGRATION)
           < migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
         && migrationNames.indexOf(COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION)
-          < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION),
-      "competitor v3, review ledger, queue retirement, and identity fence must replay after Qoo10 573 in order",
+          < migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+        && migrationNames.indexOf(COMPETITOR_IDENTITY_LINEAGE_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION)
+        && migrationNames.indexOf(SMARTSTORE_EXACT_QA_RECOVERY_MIGRATION)
+          < migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
+        && migrationNames.indexOf(TEMU_PUBLICATION_RELEASE_MIGRATION)
+          < migrationNames.indexOf(COUPANG_EXACT_QA_RECOVERY_MIGRATION),
+      "competitor v3, review ledger, queue retirement, identity fence, Smartstore recovery, Temu publication, and Coupang recovery fence must replay after Qoo10 573 in order",
+    );
+    assert.ok(
+      migrationNames.indexOf(TEMU_EXACT_CABLE_MIGRATION)
+        < migrationNames.indexOf(QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION)
+        && migrationNames.indexOf(QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
+          < migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION)
+        && migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_PROVIDER_COPY_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION)
+        && migrationNames.indexOf(SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION)
+          < migrationNames.indexOf(SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION),
+      "eBay content, 11st snapshot, eBay provider copy, Smartstore permit, and its representative filename correction must replay in deployed order",
+    );
+    assert.ok(
+      migrationNames.indexOf(SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION)
+        < migrationNames.indexOf(EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION),
+      "Coupang, 11st, and eBay exact one-time permits must replay after the Smartstore representative filename correction",
+    );
+    assert.ok(
+      migrationNames.indexOf(EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION)
+        < migrationNames.indexOf(QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION),
+      "Qoo10 release status record initialization must replay after all 080000 exact permits",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION)
+        < migrationNames.indexOf(EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION),
+      "the exact domestic market-target repair must replay after the deployed 081000 status initialization",
+    );
+    assert.ok(
+      migrationNames.indexOf(EXACT_DOMESTIC_MARKET_TARGET_BACKFILL_MIGRATION)
+        < migrationNames.indexOf(EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION),
+      "eBay rotating credential fence must replay after the exact domestic market-target repair",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION)
+        < migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION),
+      "Coupang proved pre-gateway reconciliation must replay after the current eBay credential fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION),
+      "the short eBay PostgREST RPC must replay after the latest committed exact-job reconciliation",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_QA_RPC_EXPOSURE_MIGRATION)
+        < migrationNames.indexOf(EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION),
+      "the eBay serverless update pair must replay only after the exact identity RPC and provider fences",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION)
+        < migrationNames.indexOf(EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION)
+        && migrationNames.indexOf(EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION)
+          < migrationNames.indexOf(
+            EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
+          )
+        && migrationNames.indexOf(
+          EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION,
+        ) < migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION),
+      "the one-shot eBay retry, terminal proof correction, exact pre-gateway recovery, and current-credential rotation must replay after the source job can execute",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION),
+      "Shopee SG existing-item adoption must wrap the final deployed lineage completion chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        && migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
+      "the eBay v101 forward rotation must replay after the historical v100 transition and the currently deployed adoption chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        < migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION),
+      "the exact eBay v101 content fingerprint must rebind after the deployed Lazada 173900 lineage adoption",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION)
+        < migrationNames.indexOf(
+          QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION,
+        )
+        && migrationNames.indexOf(QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION)
+          < migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
+        && migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
+          < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION),
+      "the Qoo10 source compile and short-RPC fixes must replay after adoption lineage and before the independent eBay v101 rotation",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+        && migrationNames.indexOf(EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION)
+          < migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION),
+      "the Lazada blank-target recovery must replay only after the Qoo10 short-RPC and eBay v101 postimages",
+    );
+    assert.ok(
+      migrationNames.indexOf(LAZADA_BLANK_TARGET_ADOPTION_MIGRATION)
+        < migrationNames.indexOf(TEMU_EXACT_EXISTING_UPDATE_MIGRATION),
+      "the exact Temu content update fence must replay after the adopted ACTIVE listing and final preceding channel migrations",
+    );
+    assert.ok(
+      migrationNames.indexOf(TEMU_EXACT_EXISTING_UPDATE_MIGRATION)
+        < migrationNames.indexOf(SMARTSTORE_EXACT_STOCK_ONE_MIGRATION),
+      "the exact Smartstore stock-one correction must replay after the current deployed Temu fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(SMARTSTORE_EXACT_STOCK_ONE_MIGRATION)
+        < migrationNames.indexOf(
+          EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION,
+        ),
+      "the dynamic eBay current-credential lineage must replay after the deployed exact-channel chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION),
+      "the eBay current-credential identity and permit rearm must replay after the first dynamic lineage migration",
+    );
+    assert.ok(
+      migrationNames.indexOf(SHOPEE_SG_EXISTING_ADOPTION_MIGRATION)
+        < migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(LAZADA_EXACT_LIVE_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION)
+        && migrationNames.indexOf(EXACT_ADOPTION_COMPLETION_MERGE_MIGRATION)
+          < migrationNames.indexOf(TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION)
+        && migrationNames.indexOf(TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION)
+          < migrationNames.indexOf(TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION),
+      "the forward completion merger and Temu exact adoption pair must replay after the already-applied Lazada migration",
+    );
+    assert.ok(
+      migrationNames.indexOf(COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION),
+      "Qoo10 no-effect reconciliation must replay after the Coupang pre-gateway reconciliation",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION),
+      "Qoo10 legacy no-effect payload repair must replay after the base no-effect contract",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION)
+        < migrationNames.indexOf(QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION),
+      "Qoo10 partial/manual reconciliation must supersede the rejected no-effect path",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION),
+      "Smartstore fixed-egress correction must replay after the current Qoo10 production chain",
+    );
+    assert.ok(
+      migrationNames.indexOf(TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ALREADY_LIVE_ADOPTION_MIGRATION),
+      "the exact Qoo10 already-live adoption must replay after the Temu credential certification",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ALREADY_LIVE_ADOPTION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION),
+      "the exact Qoo10 content-only localization permit must replay after the immutable already-live adoption",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION),
+      "the exact Qoo10 credential lineage correction must replay after the adopted localization fence",
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_IMAGE_BINDING_RECONCILIATION_MIGRATION)
+        < migrationNames.indexOf(QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION),
+      "the Qoo10 deferred-job final-row repair must replay after every applied adopted-image reconciliation",
+    );
+    const qoo10DeferredJobLineageMigration = await readFile(
+      new URL(QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /from sellerpilot_private\.channel_gateway_jobs current_job[\s\S]*?current_job\.id = new\.id/u,
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /permit\.seller_account_key = v_job\.seller_account_key[\s\S]*?permit\.request_fingerprint = v_job\.request_fingerprint/u,
+    );
+    assert.match(
+      qoo10DeferredJobLineageMigration,
+      /qoo10_exact_adopted_localization_arguments_valid[\s\S]*?QOO10_EXACT_ADOPTED_S2_LOCALIZATION_VERIFIED/u,
+    );
+    assert.doesNotMatch(
+      qoo10DeferredJobLineageMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|provider_call)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(QOO10_ADOPTED_DEFERRED_JOB_LINEAGE_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION),
+      "the eBay current-attempt identity must replay after the Qoo10 deferred-job repair",
+    );
+    const ebayCurrentAttemptIdentityMigration = await readFile(
+      new URL(EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayCurrentAttemptIdentityMigration,
+      /listing\.operation_attempt_id\s*=\s*'079cd680-47fb-4910-b3d8-27d19356e66e'::uuid/u,
+    );
+    assert.match(
+      ebayCurrentAttemptIdentityMigration,
+      /attempt_job\.attempt_id = attempt\.id/u,
+    );
+    assert.match(
+      ebayCurrentAttemptIdentityMigration,
+      /ebay_exact_current_credential_is_valid[\s\S]*?exact_existing_update_release_is_current/u,
+    );
+    assert.doesNotMatch(
+      ebayCurrentAttemptIdentityMigration,
+      /credential\.version\s*=\s*106/u,
+    );
+    assert.doesNotMatch(
+      ebayCurrentAttemptIdentityMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION),
+      "the eBay rotating-credential identity must replay after the current-attempt identity",
+    );
+    const ebayRotatingCredentialLineageMigration = await readFile(
+      new URL(EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayRotatingCredentialLineageMigration,
+      /attempt_credential\.id = attempt\.credential_id/u,
+    );
+    assert.match(
+      ebayRotatingCredentialLineageMigration,
+      /attempt_credential\.seller_account_key = listing\.seller_account_key/u,
+    );
+    assert.match(
+      ebayRotatingCredentialLineageMigration,
+      /attempt_credential\.version <= credential\.version/u,
+    );
+    assert.match(
+      ebayRotatingCredentialLineageMigration,
+      /ebay_exact_current_credential_is_valid/u,
+    );
+    assert.doesNotMatch(
+      ebayRotatingCredentialLineageMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION),
+      "the eBay current-attempt proof must replay after the rotating-credential identity",
+    );
+    const ebayCurrentAttemptProofMigration = await readFile(
+      new URL(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt\.id = '079cd680-47fb-4910-b3d8-27d19356e66e'::uuid/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /v_new_fingerprint constant text :=\s*'acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef'/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.id = attempt\.credential_id/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.version <= current_credential\.version/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /attempt_credential\.version <= credential\.version/u,
+    );
+    assert.match(ebayCurrentAttemptProofMigration, /count\(\*\) = 13/u);
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /normalized\/29\/292b94242598d2cf1c9ca4b2f46aee31fdf467a8a852a6a1f56bf9ec37ada82a\.jpg/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /pg_catalog\.strpos\(\s*v_proof, 'attempt_credential\.expires_at > statement_timestamp\(\)'\s*\) <> 0/u,
+    );
+    assert.match(
+      ebayCurrentAttemptProofMigration,
+      /pg_catalog\.strpos\(\s*v_identity, 'attempt_credential\.last_check_status = ''passed'''\s*\) <> 0/u,
+    );
+    assert.doesNotMatch(
+      ebayCurrentAttemptProofMigration,
+      /insert\s+into\s+sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|exact_existing_update_permits)/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_PREARM_IMAGES_MIGRATION),
+      "the eBay fresh pre-arm image fence must replay after the latest failed-attempt proof",
+    );
+    const ebayExactPrearmImagesMigration = await readFile(
+      new URL(EBAY_EXACT_PREARM_IMAGES_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /asset_attempt\.id = 'c9d5b739-4ae7-4596-acbc-06f900a21ba3'::uuid/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /v_new constant text :=[\s\S]*?22457f2e-51d8-43c5-bb03-d2c1bb7fe697[\s\S]*?c9d5b739-4ae7-4596-acbc-06f900a21ba3[\s\S]*?079cd680-47fb-4910-b3d8-27d19356e66e/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /jsonb_array_length\(v_transport\) <> 9[\s\S]*?jsonb_array_length\(v_details\) <> 8/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /count\(\*\) = 9[\s\S]*?ref\.source_content_sha256 is not null/u,
+    );
+    assert.match(
+      ebayExactPrearmImagesMigration,
+      /exact_existing_update_enqueued_lineage_is_current[\s\S]*?ebay_exact_v101_fresh_asset_refs_are_current/u,
+    );
+    assert.doesNotMatch(
+      ebayExactPrearmImagesMigration,
+      /(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private\.marketplace_normalized_asset_refs/iu,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_PREARM_IMAGES_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION),
+      "the exact 3ffa same-seller rearm fence must replay after the nine-image attempt fence",
+    );
+    const ebayExactFreshFailedRearmMigration = await readFile(
+      new URL(EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION, migrationUrl),
+      "utf8",
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /3ffaf977-3950-4a74-af02-16b4cd930ac9/u,
+    );
+    assert.doesNotMatch(
+      ebayExactFreshFailedRearmMigration,
+      /9d5d4f30-099d-4e55-9bea-b71cc2334850/u,
+      "the active eBay credential must remain dynamically resolved after rotation",
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /ebay_exact_current_credential_is_valid/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /pg_catalog[.]hashtext\('sellerpilot:ebay:production'\)/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /execution_credential[.]status in \('active', 'grace', 'revoked'\)/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /62bd8810d5e54d0f98880d1cb4be5c17b6ad2e76/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /2026-09-02 06:26:46[.]052592[+]00[\s\S]*?2026-09-02 06:31:46[.]052592[+]00/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /create table sellerpilot_private[.]ebay_exact_atomic_recovery_markers[\s\S]*?jsonb_array_length\(reference_set\) = 9/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry[\s\S]*?sellerpilot_service_enqueue_listing_gateway_job/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /'status', 'in_progress'[\s\S]*?'reused', true/u,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /if tg_op = 'DELETE'[\s\S]*?ebay_exact_atomic_recovery_state_is_current[\s\S]*?if to_jsonb\(new\) - v_mutable_fields is distinct from/u,
+      "the exact rearm must be inserted before the predecessor immutable-identity rejection",
+    );
+    assert.doesNotMatch(
+      ebayExactFreshFailedRearmMigration,
+      /ebay_exact_v101_content_rebind_is_proved/u,
+      "the generic same-credential proof must remain unchanged",
+    );
+    assert.doesNotMatch(
+      ebayExactFreshFailedRearmMigration,
+      /(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private[.](?:channel_gateway_jobs|channel_operation_attempts|marketplace_normalized_asset_refs)/iu,
+    );
+    assert.match(
+      ebayExactFreshFailedRearmMigration,
+      /revoke all on function[\s\S]*?sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry[\s\S]*?from public, anon, authenticated, service_role[\s\S]*?grant execute on function[\s\S]*?to service_role/u,
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_CONTENT_FENCE_MIGRATION)
+        < migrationNames.indexOf(ELEVENST_EXACT_SNAPSHOT_FORWARD_MIGRATION),
+      "11st exact snapshot repair must replay forward of the complete deployed chain without reapplying its historical recovery migration",
+    );
+    assert.ok(
+      migrationNames.indexOf(EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION)
+        < migrationNames.indexOf(EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION),
+      "the server-owned eBay representative fence must replay after the stable dynamic-credential fingerprint",
     );
     let shopeeStaticEgressMigration;
+    let smartstoreNonstaticEgressMigration;
     let qoo10ProviderBoundaryOuterPreimage;
     let qoo10ProviderBoundaryJobPreimage;
     let fullSchemaQueueFixture;
@@ -839,6 +1473,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       if (name === SHOPEE_STATIC_EGRESS_MIGRATION) {
         shopeeStaticEgressMigration = source;
         continue;
+      }
+      if (name === SMARTSTORE_NONSTATIC_EGRESS_MIGRATION) {
+        smartstoreNonstaticEgressMigration = source;
       }
       let sql = name === "20260828210000_non_cs_release_integrity.sql"
         ? withoutFinalStrictWorkerScopeFence(source)
@@ -1108,6 +1745,139 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
              version, statements, name
            ) values ($1, '{}'::text[], $2)`,
           [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+      if (name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION) {
+        assert.deepEqual(
+          (await db.query(`
+            select proc.proname,
+                   pg_catalog.octet_length(proc.proname) bytes,
+                   pg_catalog.pg_get_userbyid(proc.proowner) owner,
+                   language.lanname language,
+                   proc.provolatile volatility,
+                   proc.prosecdef security_definer,
+                   proc.proconfig = array['search_path=""']::text[] empty_path,
+                   not pg_catalog.has_function_privilege(
+                     'anon', proc.oid, 'EXECUTE'
+                   ) anon_closed,
+                   not pg_catalog.has_function_privilege(
+                     'authenticated', proc.oid, 'EXECUTE'
+                   ) authenticated_closed,
+                   pg_catalog.has_function_privilege(
+                     'service_role', proc.oid, 'EXECUTE'
+                   ) service_open
+              from pg_catalog.pg_proc proc
+              join pg_catalog.pg_namespace namespace
+                on namespace.oid = proc.pronamespace
+              join pg_catalog.pg_language language
+                on language.oid = proc.prolang
+             where namespace.nspname = 'public'
+               and proc.proname in (
+                 'sellerpilot_service_get_qoo10_adopted_localization_identity',
+                 'sellerpilot_service_arm_qoo10_adopted_localization_update'
+               )
+             order by proc.proname
+          `)).rows,
+          [
+            {
+              proname: "sellerpilot_service_arm_qoo10_adopted_localization_update",
+              bytes: 57,
+              owner: "postgres",
+              language: "plpgsql",
+              volatility: "v",
+              security_definer: true,
+              empty_path: true,
+              anon_closed: true,
+              authenticated_closed: true,
+              service_open: true,
+            },
+            {
+              proname: "sellerpilot_service_get_qoo10_adopted_localization_identity",
+              bytes: 59,
+              owner: "postgres",
+              language: "plpgsql",
+              volatility: "v",
+              security_definer: true,
+              empty_path: true,
+              anon_closed: true,
+              authenticated_closed: true,
+              service_open: true,
+            },
+          ],
+        );
+        assert.equal(
+          await scalar(
+            db,
+            `select count(*) from pg_catalog.pg_proc proc
+              join pg_catalog.pg_namespace namespace
+                on namespace.oid = proc.pronamespace
+             where namespace.nspname = 'public'
+               and proc.proname in (
+                 'sellerpilot_service_get_exact_qoo10_adopted_localization_identi',
+                 'sellerpilot_service_arm_exact_qoo10_adopted_localization_update'
+               )`,
+          ),
+          0,
+          "the truncated and 63-byte predecessor RPC names must not remain exposed",
+        );
+      }
+      if (name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION) {
+        const definition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure
+          )`,
+        );
+        assert.match(
+          definition,
+          /\/thumbnail-square\[\.\]png\$/u,
+          "the chronological replay must finish on the canonical representative filename",
+        );
+        assert.doesNotMatch(
+          definition,
+          /\/square\[\.\]png\$/u,
+          "the legacy representative filename must not survive the forward correction",
+        );
+        assert.deepEqual(
+          (await db.query(
+            `select p.provolatile = 'i' as immutable,
+                    not p.prosecdef as invoker,
+                    p.proconfig = array['search_path=""']::text[] as empty_path,
+                    not has_function_privilege('public',p.oid,'EXECUTE') as public_closed,
+                    not has_function_privilege('anon',p.oid,'EXECUTE') as anon_closed,
+                    not has_function_privilege('authenticated',p.oid,'EXECUTE') as authenticated_closed,
+                    not has_function_privilege('service_role',p.oid,'EXECUTE') as service_closed
+               from pg_proc p
+              where p.oid =
+                'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure`,
+          )).rows,
+          [{
+            immutable: true,
+            invoker: true,
+            empty_path: true,
+            public_closed: true,
+            anon_closed: true,
+            authenticated_closed: true,
+            service_closed: true,
+          }],
+        );
+      }
+      if (name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION) {
+        const definition = await scalar(
+          db,
+          `select pg_get_functiondef(
+            'sellerpilot_private.smartstore_exact_qa_update_arguments_valid(jsonb,text)'::regprocedure
+          )`,
+        );
+        assert.match(
+          definition,
+          /v_origin->>'stockQuantity' IS NOT DISTINCT FROM '1'/iu,
+          "the chronological replay must require exactly one Smartstore stock unit",
+        );
+        assert.doesNotMatch(
+          definition,
+          /coalesce\(v_origin->>'stockQuantity', ''\) ~ '\^\[1-9\]\[0-9\]\{0,7\}\$'/iu,
+          "the broad positive-stock predecessor must not survive",
         );
       }
       if (name === QOO10_SCOPED_PROVIDER_CHAIN_MIGRATION) {
@@ -1888,6 +2658,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       }
     }
     assert.equal(typeof shopeeStaticEgressMigration, "string");
+    assert.equal(typeof smartstoreNonstaticEgressMigration, "string");
     const listingReleaseGate = await scalar(
       db,
       "select public.sellerpilot_service_listing_mutation_release_gate_status()",
@@ -2409,6 +3180,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "ebay:inventory.update",
       "ebay:listing.create",
       "ebay:listing.lineage.verify",
+      "ebay:listing.update",
       "ebay:oauth.exchange",
       "ebay:orders.get",
       "ebay:orders.list",
@@ -2497,6 +3269,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "temu:inventory.update",
       "temu:listing.create",
       "temu:listing.stop",
+      "temu:listing.update",
       "temu:orders.get",
       "temu:orders.list",
       "temu:shipment.confirm",
@@ -2525,6 +3298,173 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           order by pair`,
       )).rows.map((row) => row.pair),
       expectedServerlessGatewayPairs,
+    );
+    const temuUpdateName = "케이블 정리 클립 6개 세트";
+    const temuUpdateDescription = "책상과 차량의 케이블을 깔끔하게 정리하는 한국어 상품 설명입니다.";
+    const temuUpdateBullets = [
+      "간편하게 부착할 수 있습니다.",
+      "여러 공간에서 활용할 수 있습니다.",
+    ];
+    const temuUpdateContentDigest = createHash("sha256")
+      .update(`${temuUpdateName}\u001f${temuUpdateDescription}\u001f${temuUpdateBullets.join("\u001e")}`, "utf8")
+      .digest("hex");
+    const temuRepresentativeDigest = "a".repeat(64);
+    const temuUpdateRepresentative =
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/aa/${temuRepresentativeDigest}.jpg`;
+    const temuUpdateDetailDigests = Array.from(
+      { length: 8 },
+      (_, index) => String(index + 1).repeat(64),
+    );
+    const temuUpdateDetailRoles = Array.from(
+      { length: 8 },
+      (_, index) => `detail-role-${index + 1}`,
+    );
+    const temuUpdateDetails = temuUpdateDetailDigests.map((digest) =>
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+    const temuApprovedDetailImages = temuUpdateDetails.map((publicUrl, index) => ({
+      role: temuUpdateDetailRoles[index],
+      approvedObjectPath:
+        `results/61000000-0000-4000-8000-000000000001/claims/62000000-0000-4000-8000-000000000001/${temuUpdateDetailRoles[index]}.png`,
+      approvedSourceSha256: String(index + 2).repeat(64),
+      publicUrl,
+      objectPath:
+        `normalized/${temuUpdateDetailDigests[index].slice(0, 2)}/${temuUpdateDetailDigests[index]}.jpg`,
+      contentSha256: temuUpdateDetailDigests[index],
+    }));
+    const temuUpdateArguments = {
+      publicationExpectedFingerprint: "d".repeat(64),
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      publicationExpectedLocale: "ko-KR",
+      publicationExpectedImageCount: 8,
+      goodsId: "608570473054515",
+      externalGoodsId: "QA-TEMU-EXISTING-001",
+      sellerpilotTemuExactExistingUpdate: {
+        contract: "temu_exact_existing_active_content_update_v1",
+        productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+        listingId: "61000000-0000-4000-8000-000000000001",
+        credentialId: "62000000-0000-4000-8000-000000000001",
+        goodsId: "608570473054515",
+        skuId: "123896921649274",
+        externalGoodsId: "QA-TEMU-EXISTING-001",
+        externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+        sellerAccountKey: "a".repeat(64),
+        approvedManifestDigest: "b".repeat(64),
+        releaseSha: "c".repeat(40),
+      },
+      sellerpilotTemuPartialUpdate: {
+        operation: "bg.local.goods.partial.update",
+        mutableFields: ["goodsName", "goodsDesc", "bulletPoints"],
+        contentDigest: temuUpdateContentDigest,
+      },
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "detail_content",
+        approvedManifestDigest: "b".repeat(64),
+        approvedDetailImages: temuApprovedDetailImages,
+        providerTransportImages: temuApprovedDetailImages.map((image) => ({
+          role: image.role,
+          publicUrl: image.publicUrl,
+          objectPath: image.objectPath,
+          contentSha256: image.contentSha256,
+        })),
+      },
+      sellerpilotTemuExactPreservedAssets: {
+        contract: "temu_exact_preserved_assets_v1",
+        representativeImage: {
+          role: "gallery-representative",
+          publicUrl: temuUpdateRepresentative,
+          objectPath: `normalized/aa/${temuRepresentativeDigest}.jpg`,
+          sourceKind: "normalized_output",
+          sourceSha256: temuRepresentativeDigest,
+          contentSha256: temuRepresentativeDigest,
+        },
+        detailImages: temuApprovedDetailImages,
+      },
+      body: {
+        language: "ko",
+        goodsBasic: {
+          externalGoodsId: "QA-TEMU-EXISTING-001",
+          goodsName: temuUpdateName,
+          goodsDesc: temuUpdateDescription,
+          bulletPoints: temuUpdateBullets,
+          goodsCarouselImage: [temuUpdateRepresentative],
+          detailImage: temuUpdateDetails,
+        },
+        skuList: [{
+          externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+          price: { basePrice: { amount: "5000", currency: "KRW" } },
+          quantity: 1,
+        }],
+      },
+    };
+    const temuArgumentsValid = async (argumentsValue) => scalar(
+      db,
+      `select sellerpilot_private.temu_exact_update_arguments_valid(
+         $1::jsonb, repeat('c', 40), repeat('d', 64), 1
+       )`,
+      [JSON.stringify(argumentsValue)],
+    );
+    assert.equal(await temuArgumentsValid(temuUpdateArguments), true);
+    assert.equal(await temuArgumentsValid({
+      ...temuUpdateArguments,
+      goodsId: "608570473054516",
+    }), false);
+    assert.equal(await temuArgumentsValid({
+      ...temuUpdateArguments,
+      sellerpilotTemuPartialUpdate: {
+        ...temuUpdateArguments.sellerpilotTemuPartialUpdate,
+        contentDigest: "e".repeat(64),
+      },
+    }), false);
+    assert.equal(await temuArgumentsValid({
+      ...temuUpdateArguments,
+      body: {
+        ...temuUpdateArguments.body,
+        goodsBasic: {
+          ...temuUpdateArguments.body.goodsBasic,
+          detailImage: [...temuUpdateDetails.slice(0, 7), temuUpdateDetails[0]],
+        },
+      },
+    }), false);
+    assert.deepEqual(
+      (await db.query(`
+        select procedure.proname as name,
+               octet_length(procedure.proname) as bytes,
+               procedure.prosecdef as security_definer,
+               procedure.proconfig = array['search_path=""']::text[] as safe_search_path,
+               pg_catalog.has_function_privilege('anon', procedure.oid, 'EXECUTE') as anon_execute,
+               pg_catalog.has_function_privilege('authenticated', procedure.oid, 'EXECUTE') as authenticated_execute,
+               pg_catalog.has_function_privilege('service_role', procedure.oid, 'EXECUTE') as service_execute
+          from pg_catalog.pg_proc procedure
+          join pg_catalog.pg_namespace namespace on namespace.oid = procedure.pronamespace
+         where namespace.nspname = 'public'
+           and procedure.proname in (
+             'sellerpilot_service_get_temu_exact_update_id',
+             'sellerpilot_service_arm_temu_exact_update'
+           )
+         order by procedure.proname
+      `)).rows,
+      [
+        {
+          name: "sellerpilot_service_arm_temu_exact_update",
+          bytes: 41,
+          security_definer: true,
+          safe_search_path: true,
+          anon_execute: false,
+          authenticated_execute: false,
+          service_execute: true,
+        },
+        {
+          name: "sellerpilot_service_get_temu_exact_update_id",
+          bytes: 44,
+          security_definer: true,
+          safe_search_path: true,
+          anon_execute: false,
+          authenticated_execute: false,
+          service_execute: true,
+        },
+      ],
     );
     assert.equal(
       await scalar(
@@ -2637,7 +3577,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, smartstore: false, temu: false },
+      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
     );
     assert.doesNotMatch(
       await scalar(
@@ -2738,6 +3678,360 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     );
     await setClaims(db);
     assert.equal(await scalar(db, "select public.sellerpilot_is_admin()"), true);
+
+    await db.exec("begin");
+    try {
+      const temuActivationCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'temu', 'production', '{"app_key":"claim-test-only"}'::jsonb,
+          now() + interval '30 days', 90, 30, 7
+        )`,
+      );
+      const activationClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1, 'temu', 'listing.activate', 'temu-activation:${"1".repeat(64)}', $2
+        )`,
+        [temuActivationCredentialId, "2".repeat(64)],
+      );
+      assert.equal(activationClaim.status, "running");
+      assert.equal(activationClaim.duplicate, false);
+      assert.equal(
+        await scalar(
+          db,
+          `select gateway_write_required
+             from sellerpilot_private.channel_operation_attempts
+            where id=$1`,
+          [activationClaim.attempt_id],
+        ),
+        true,
+        "Temu activation claim must be provider-write classified",
+      );
+      const duplicateActivationClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1, 'temu', 'listing.activate', 'temu-activation:${"1".repeat(64)}', $2
+        )`,
+        [temuActivationCredentialId, "2".repeat(64)],
+      );
+      assert.equal(duplicateActivationClaim.status, "running");
+      assert.equal(duplicateActivationClaim.duplicate, false);
+      assert.equal(duplicateActivationClaim.attempt_id, activationClaim.attempt_id);
+      assert.equal(
+        await scalar(
+          db,
+          `select count(*)::integer
+             from sellerpilot_private.channel_operation_attempts
+            where channel='temu' and operation='listing.activate'
+              and idempotency_key='temu-activation:${"1".repeat(64)}'`,
+        ),
+        1,
+        "a repeated pre-gateway Temu activation claim must resume one attempt",
+      );
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_claim_channel_operation(
+            $1, 'qoo10', 'listing.activate', 'qoo10-activation-${"3".repeat(32)}', $2
+          )`,
+          [temuActivationCredentialId, "4".repeat(64)],
+        ),
+        /invalid channel operation/,
+        "listing.activate must remain rejected for every non-Temu claim",
+      );
+    } finally {
+      await db.exec("rollback");
+    }
+
+    await db.exec("begin");
+    try {
+      // The core-flow fixture intentionally replays the older v1 approval
+      // migration above to test its compatibility wrapper after the full
+      // chronological chain. Isolate this Temu-v2 activation behavior from
+      // that synthetic post-replay constraint; the chronological dynamic
+      // Temu suite exercises the real v2 constraint unchanged.
+      await db.exec(
+        "alter table sellerpilot_private.products drop constraint products_detail_page_approval_check",
+      );
+      const sellerAccountKey = "5".repeat(64);
+      const createFingerprint = "6".repeat(64);
+      const activationFingerprint = "7".repeat(64);
+      const manifestDigest = "8".repeat(64);
+      const goodsId = "9007199254740993";
+      const externalGoodsId = "SP-TEMU-ACTIVATION-GENERATION-TEST";
+      const assetImages = Array.from({ length: 8 }, (_, index) => ({
+        role: `detail-${index + 1}`,
+        path: `products/temu-activation/detail-${index + 1}.jpg`,
+        sourceSha256: String(index + 1).repeat(64),
+      }));
+      const assetBinding = {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "detail_content",
+        approvedDetailPageVersion: 1,
+        approvedManifestDigest: manifestDigest,
+        approvedDetailImages: assetImages.map((image) => ({
+          role: image.role,
+          approvedObjectPath: image.path,
+          approvedSourceSha256: image.sourceSha256,
+        })),
+      };
+      const detailImage = assetImages.map((image) => `https://assets.example.test/${image.path}`);
+      const sourceArguments = {
+        publicationIntent: "safe_test",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ko-KR",
+        publicationExpectedImageCount: 8,
+        publicationExpectedFingerprint: createFingerprint,
+        sellerpilotPublicationAssetBinding: assetBinding,
+        body: {
+          goodsBasic: {
+            externalGoodsId,
+            goodsName: "Temu 승격 세대 테스트 상품",
+            goodsDesc: "승인된 한국어 상세 설명",
+            detailImage,
+          },
+        },
+      };
+      const temuCredentialId = await scalar(
+        db,
+        `select public.sellerpilot_rotate_credential(
+          'temu', 'production', '{"app_key":"activation-generation-test"}'::jsonb,
+          now() + interval '30 days', 90, 30, 7
+        )`,
+      );
+      await db.exec("set local session_replication_role = replica");
+      await db.query(
+        `update sellerpilot_private.channel_credentials
+            set seller_account_key=$2,
+                seller_account_key_source='provider_certified_v1',
+                seller_account_verified_at=clock_timestamp()
+          where id=$1`,
+        [temuCredentialId, sellerAccountKey],
+      );
+      await db.exec("set local session_replication_role = origin");
+      await attestPublicationRelease(db);
+      await activatePublicationRuntimeRelease(db);
+      await db.query(
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      );
+      await db.query(
+        `update sellerpilot_private.serverless_static_egress_policy
+            set enabled=true,updated_at=clock_timestamp()
+          where channel='temu'`,
+      );
+      await scalar(
+        db,
+        `select set_config(
+          'request.headers','{"x-sellerpilot-static-egress-channels":"temu"}',true
+        )`,
+      );
+      const sourceAttempt = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.create','temu-source-create-${"9".repeat(48)}',$2
+        )`,
+        [temuCredentialId, createFingerprint],
+      );
+      await db.exec("set local session_replication_role = replica");
+      const productId = await scalar(
+        db,
+        `insert into sellerpilot_private.products (
+           owner_id,external_code,sku,name,description,status,on_hand,reserved,
+           reorder_point,cost_krw,demo,detail_page_version,
+           detail_page_data,detail_page_updated_at,
+           detail_page_approved_version,detail_page_image_manifest
+         ) values (
+           $1,'TEMU-ACTIVATION-GENERATION','TEMU-ACTIVATION-GENERATION',
+           'Temu 승격 세대 테스트 상품','승인된 한국어 상세 설명','active',10,0,
+           1,1000,false,1,'{}'::jsonb,clock_timestamp(),1,$2::jsonb
+         ) returning id`,
+        [ADMIN_ID, JSON.stringify({
+          contract: "sellerpilot_detail_image_manifest_v2",
+          algorithm: "sha256",
+          digest: manifestDigest,
+          images: assetImages,
+        })],
+      );
+      const listingId = await scalar(
+        db,
+        `insert into sellerpilot_private.product_listings (
+           owner_id,product_id,channel_key,market,target_id,remote_id,status,
+           currency,price,operation_attempt_id,last_verified_at,
+           requested_publication_intent,remote_visibility,provider_status,
+           remote_resources,seller_account_key
+         ) values (
+           $1,$2,'temu','KR','',$3::text,'paused','KRW',10000,$4,
+           clock_timestamp(),'safe_test','non_public','OFF_SHELF',
+           jsonb_build_object('resources',jsonb_build_object(
+             'goodsId',$3::text,'externalGoodsId',$5::text
+           )),$6
+         ) returning id`,
+        [ADMIN_ID, productId, goodsId, sourceAttempt.attempt_id, externalGoodsId, sellerAccountKey],
+      );
+      const sourceJobId = await scalar(
+        db,
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           credential_id,attempt_id,listing_id,channel,operation,environment,
+           request_payload,response_payload,status,seller_account_key,
+           request_fingerprint,created_by,provider_mutation_started_at,
+           started_at,completed_at,updated_at
+         ) values (
+           $1,$2,$3,'temu','listing.create','production',
+           jsonb_build_object('arguments',$4::jsonb),$5::jsonb,'succeeded',$6,$7,$8,
+           clock_timestamp(),clock_timestamp(),clock_timestamp(),clock_timestamp()
+         ) returning id`,
+        [
+          temuCredentialId,
+          sourceAttempt.attempt_id,
+          listingId,
+          JSON.stringify(sourceArguments),
+          JSON.stringify({
+            ok: true,
+            publicationFulfilled: true,
+            publicationIntent: "safe_test",
+            remoteId: goodsId,
+            remoteState: {
+              verified: true,
+              visibility: "non_public",
+              locale: "ko-KR",
+              fingerprint: createFingerprint,
+              imageCount: 8,
+              resources: { goodsId, externalGoodsId },
+            },
+          }),
+          sellerAccountKey,
+          createFingerprint,
+          ADMIN_ID,
+        ],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_operation_attempts
+            set status='succeeded',remote_id=$2,completed_at=clock_timestamp()
+          where id=$1`,
+        [sourceAttempt.attempt_id, goodsId],
+      );
+      await db.exec("set local session_replication_role = origin");
+
+      const firstContext = await scalar(
+        db,
+        `select sellerpilot_private.temu_activation_context(
+          $1,$2,$3,$4,'KR',''
+        )`,
+        [ADMIN_ID, productId, listingId, temuCredentialId],
+      );
+      assert.equal(firstContext.status, "allowed");
+      assert.equal(firstContext.activationGeneration, 1);
+      assert.match(firstContext.claimIdempotencyKey, /^temu-activation:[a-f0-9]{64}$/);
+      const firstClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.activate',$2,$3
+        )`,
+        [temuCredentialId, firstContext.claimIdempotencyKey, activationFingerprint],
+      );
+      const firstArguments = {
+        ...firstContext.arguments,
+        publicationExpectedFingerprint: activationFingerprint,
+      };
+      await scalar(
+        db,
+        `select set_config('request.jwt.claim.role','service_role',true)`,
+      );
+      const firstEnqueue = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_activation(
+          $1,$2,$3,jsonb_build_object('arguments',$4::jsonb)
+        )`,
+        [listingId, temuCredentialId, firstClaim.attempt_id, JSON.stringify(firstArguments)],
+      );
+      assert.equal(firstEnqueue.status, "queued");
+      assert.equal(
+        await scalar(
+          db,
+          `select sellerpilot_private.temu_activation_context(
+            $1,$2,$3,$4,'KR',''
+          ) is null`,
+          [ADMIN_ID, productId, listingId, temuCredentialId],
+        ),
+        true,
+        "an active activation permit must not mint a second claim generation",
+      );
+
+      await db.exec("set local session_replication_role = replica");
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status='failed',error_message='synthetic pre-provider failure',
+                completed_at=clock_timestamp(),updated_at=clock_timestamp()
+          where id=$1`,
+        [firstEnqueue.job_id],
+      );
+      await db.query(
+        `update sellerpilot_private.temu_listing_activation_permits
+            set terminal_status='failed',completed_at=clock_timestamp()
+          where activation_job_id=$1 and consumed_at is null`,
+        [firstEnqueue.job_id],
+      );
+      await db.query(
+        `update sellerpilot_private.channel_operation_attempts
+            set status='failed',safe_message='synthetic pre-provider failure',
+                completed_at=clock_timestamp()
+          where id=$1`,
+        [firstClaim.attempt_id],
+      );
+      await db.query(
+        `update sellerpilot_private.product_listings
+            set status='paused',operation_attempt_id=$2,
+                requested_publication_intent='safe_test',remote_visibility='non_public'
+          where id=$1`,
+        [listingId, sourceAttempt.attempt_id],
+      );
+      await db.exec("set local session_replication_role = origin");
+      await scalar(db, "select set_config('request.jwt.claim.role','authenticated',true)");
+      const secondContext = await scalar(
+        db,
+        `select sellerpilot_private.temu_activation_context(
+          $1,$2,$3,$4,'KR',''
+        )`,
+        [ADMIN_ID, productId, listingId, temuCredentialId],
+      );
+      assert.equal(secondContext.activationGeneration, 2);
+      assert.notEqual(secondContext.claimIdempotencyKey, firstContext.claimIdempotencyKey);
+      const secondClaim = await scalar(
+        db,
+        `select public.sellerpilot_claim_channel_operation(
+          $1,'temu','listing.activate',$2,$3
+        )`,
+        [temuCredentialId, secondContext.claimIdempotencyKey, "a".repeat(64)],
+      );
+      assert.notEqual(secondClaim.attempt_id, firstClaim.attempt_id);
+      await scalar(db, "select set_config('request.jwt.claim.role','service_role',true)");
+      const secondEnqueue = await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_activation(
+          $1,$2,$3,jsonb_build_object(
+            'arguments',jsonb_set($4::jsonb,'{publicationExpectedFingerprint}',to_jsonb($5::text))
+          )
+        )`,
+        [listingId, temuCredentialId, secondClaim.attempt_id, JSON.stringify(secondContext.arguments), "a".repeat(64)],
+      );
+      assert.equal(secondEnqueue.status, "queued");
+      assert.notEqual(secondEnqueue.job_id, sourceJobId);
+      assert.equal(
+        await scalar(
+          db,
+          `select count(*)::integer
+             from sellerpilot_private.temu_listing_activation_permits
+            where listing_id=$1`,
+          [listingId],
+        ),
+        2,
+        "only a new DB-owned generation may enqueue after a proven pre-provider failure",
+      );
+    } finally {
+      await db.exec("rollback");
+      await setClaims(db);
+    }
 
     const credentialId = await scalar(
       db,
@@ -2960,6 +4254,61 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_get_active_credential_secret('lazada', 'production')",
     );
     assert.equal(refreshedSecret.secret_payload.access_token, "new-access-token");
+    const firstLazadaTargetSyncJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_lazada_target_sync($1, 'my')",
+      [refreshedCredentialId],
+    );
+    const reusedLazadaTargetSyncJobId = await scalar(
+      db,
+      "select public.sellerpilot_enqueue_lazada_target_sync($1, 'MY')",
+      [refreshedCredentialId],
+    );
+    assert.equal(reusedLazadaTargetSyncJobId, firstLazadaTargetSyncJobId);
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where credential_id = $1
+            and channel = 'lazada'
+            and operation = 'shops.get'
+            and status in ('queued', 'running')`,
+        [refreshedCredentialId],
+      ),
+      1,
+    );
+    await assert.rejects(
+      scalar(
+        db,
+        "select public.sellerpilot_enqueue_lazada_target_sync($1, 'sg')",
+        [refreshedCredentialId],
+      ),
+      /invalid Lazada target sync/,
+    );
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select has_function_privilege($1, 'public.sellerpilot_enqueue_lazada_target_sync(uuid,text)', 'EXECUTE')",
+          [role],
+        ),
+        false,
+      );
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select has_function_privilege('service_role', 'public.sellerpilot_enqueue_lazada_target_sync(uuid,text)', 'EXECUTE')",
+      ),
+      true,
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'cancelled', completed_at = now(), updated_at = now()
+        where id = $1`,
+      [firstLazadaTargetSyncJobId],
+    );
     assert.equal(
       await scalar(db, "select public.sellerpilot_service_consume_lazada_im_bootstrap($1)", [refreshedCredentialId]),
       true,
@@ -3113,7 +4462,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         )`,
         [channel],
       );
-      assert.equal(blockedInquiry.status, "fixed_egress_required");
+      assert.equal(blockedInquiry.status, "fixed_egress_required", channel);
       assert.equal(blockedInquiry.blockedReason, "STATIC_EGRESS_REQUIRED");
     }
     assert.equal(
@@ -3122,6 +4471,72 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select count(*)::integer from sellerpilot_private.channel_gateway_jobs",
       ),
       periodicJobCountBeforeStaticEgressChecks,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select enabled from sellerpilot_private.serverless_static_egress_policy where channel = 'smartstore'",
+      ),
+      false,
+      "the retained Smartstore policy row must not be enabled by the forward migration",
+    );
+    await scalar(db, "select set_config('request.headers', '{}', false)");
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.serverless_static_egress_allowed('smartstore')",
+      ),
+      false,
+    );
+    for (const channel of ["coupang", "elevenst", "temu"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.serverless_static_egress_allowed($1)",
+          [channel],
+        ),
+        false,
+      );
+    }
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = true, updated_at = clock_timestamp()
+        where channel in ('coupang', 'smartstore', 'elevenst', 'temu', 'shopee')`,
+    );
+    for (const channel of ["coupang", "smartstore", "elevenst", "temu"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.serverless_static_egress_allowed($1)",
+          [channel],
+        ),
+        false,
+        `${channel} must still require the runtime header when its DB policy is enabled`,
+      );
+    }
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers',
+        '{"x-sellerpilot-static-egress-channels":"coupang,smartstore,elevenst,temu,shopee"}',
+        false
+      )`,
+    );
+    for (const channel of ["coupang", "smartstore", "elevenst", "temu"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.serverless_static_egress_allowed($1)",
+          [channel],
+        ),
+        true,
+      );
+    }
+    await scalar(db, "select set_config('request.headers', '{}', false)");
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = false, updated_at = clock_timestamp()
+        where channel in ('coupang', 'smartstore', 'elevenst', 'temu', 'shopee')`,
     );
     assert.match(
       await scalar(
@@ -10774,9 +12189,10 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.support_reply_deliveries where ticket_id = $1", [csTicketId]), 2);
 
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    await db.exec(withoutUnavailableExtensions(smartstoreNonstaticEgressMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
+      { coupang: false, elevenst: false, shopee: false, temu: false },
     );
     assert.match(
       await scalar(
@@ -10813,9 +12229,38 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "select public.sellerpilot_service_serverless_static_egress_status()",
     );
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    await db.exec(withoutUnavailableExtensions(smartstoreNonstaticEgressMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
       firstShopeeStaticEgressStatus,
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled = true, updated_at = clock_timestamp()
+        where channel = 'shopee'`,
+    );
+    await scalar(db, "select set_config('request.headers', '{}', false)");
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.serverless_static_egress_allowed('shopee')",
+      ),
+      false,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers',
+        '{"x-sellerpilot-static-egress-channels":"shopee"}',
+        false
+      )`,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.serverless_static_egress_allowed('shopee')",
+      ),
+      true,
     );
     for (const role of ["anon", "authenticated", "service_role"]) {
       assert.equal(
@@ -10840,6 +12285,3180 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         "select has_function_privilege('service_role', 'public.sellerpilot_service_serverless_static_egress_status()', 'EXECUTE')",
       ),
       true,
+    );
+
+    // The exact Temu existing-item path may enqueue only after a certified
+    // credential, approved 8-image manifest, and runtime static-egress proof.
+    const temuExactOwnerId = "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
+    await db.query(
+      "insert into auth.users(id,email) values ($1,'temu-exact-owner@example.test')",
+      [temuExactOwnerId],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users(user_id,display_name) values ($1,'Temu Exact Owner')",
+      [temuExactOwnerId],
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const temuAdoptionCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'temu', 'production',
+        '{"app_key":"temu-adoption","app_secret":"secret","access_token":"token"}'::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+    );
+    const adoptionManifestDigest = "9".repeat(64);
+    // This shared fixture intentionally replayed the older 301145 manifest
+    // migration above. Restore the chronological 301210 v2 constraint before
+    // exercising the later exact-adoption migration.
+    await db.exec(`
+      alter table sellerpilot_private.products
+        drop constraint products_detail_page_approval_check;
+      alter table sellerpilot_private.products
+        add constraint products_detail_page_approval_check check (
+          (detail_page_approved_version = 0 and detail_page_image_manifest is null)
+          or (
+            detail_page_data is not null
+            and detail_page_version > 0
+            and detail_page_approved_version = detail_page_version
+            and jsonb_typeof(detail_page_image_manifest) = 'object'
+            and detail_page_image_manifest->>'contract' in (
+              'sellerpilot_detail_image_manifest_v1',
+              'sellerpilot_detail_image_manifest_v2'
+            )
+            and detail_page_image_manifest->>'algorithm' = 'sha256'
+            and detail_page_image_manifest->>'digest' ~ '^[a-f0-9]{64}$'
+            and jsonb_typeof(detail_page_image_manifest->'images') = 'array'
+            and jsonb_array_length(detail_page_image_manifest->'images') = 8
+          )
+        );
+    `);
+    await db.query(
+      `insert into sellerpilot_private.products (
+         id,owner_id,external_code,sku,name,description,status,on_hand,reserved,
+         reorder_point,cost_krw,demo,detail_page_version,detail_page_data,
+         detail_page_updated_at,detail_page_approved_version,
+         detail_page_image_manifest
+       ) values (
+         'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,
+         'TEMU-EXISTING-ACTIVE-QA','QA-20260823-CC-001',
+         '테무 기존 활성 상품','테무 기존 활성 상품 결속 테스트','active',1,0,
+         0,1000,false,1,'{}'::jsonb,clock_timestamp(),1,$2::jsonb
+       )`,
+      [temuExactOwnerId, JSON.stringify({
+        contract: "sellerpilot_detail_image_manifest_v2",
+        algorithm: "sha256",
+        digest: adoptionManifestDigest,
+        images: Array.from({ length: 8 }, (_, index) => ({
+          role: `detail-${index + 1}`,
+          path: `results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/62000000-0000-4000-8000-000000000001/detail-${index + 1}.png`,
+          sha256: String(index + 1).repeat(64).slice(0, 64),
+          sourceSha256: String(index + 1).repeat(64).slice(0, 64),
+        })),
+      })],
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='temu'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers','{"x-sellerpilot-static-egress-channels":"temu"}',false
+      )`,
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const credentialBeforeCertification = (await db.query(
+      `select status,version,vault_secret_id,seller_account_key,
+              seller_account_key_source
+         from sellerpilot_private.channel_credentials
+        where id=$1`,
+      [temuAdoptionCredentialId],
+    )).rows[0];
+    assert.equal(credentialBeforeCertification.seller_account_key_source, "credential_incarnation_v1");
+    const certificationQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_temu_exact_credential_certification(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+      )`,
+      [temuAdoptionCredentialId, temuExactOwnerId],
+    );
+    assert.equal(certificationQueued.status, "queued");
+    assert.equal(certificationQueued.credentialRotated, false);
+    const adoptionWorkerTokenId = await scalar(
+      db,
+      "select id from sellerpilot_private.ai_cli_worker_tokens order by created_at,id limit 1",
+    );
+    assert.equal(typeof adoptionWorkerTokenId, "string");
+    const providerMallId = "1024";
+    const certifiedTemuSellerAccountKey = createHash("sha256")
+      .update(`temu\u001fproduction\u001ftemu:mall:${providerMallId}`, "utf8")
+      .digest("hex");
+    const certificationObservedAt = new Date().toISOString();
+    const certificationObservation = {
+      contract: "temu_exact_credential_identity_observation_v1",
+      verified: true,
+      mallId: providerMallId,
+      sellerSubject: `temu:mall:${providerMallId}`,
+      sellerAccountKey: certifiedTemuSellerAccountKey,
+      apiScopeDigest: "c".repeat(64),
+      apiScopeCount: 2,
+      observedAt: certificationObservedAt,
+      digest: "d".repeat(64),
+    };
+    const certificationResponse = {
+      ok: true,
+      channel: "temu",
+      operation: "listing.publication.verify",
+      steps: [{
+        name: "temu-credential-certification-account",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotVerification: "TEMU_CREDENTIAL_PROVIDER_IDENTITY_VERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotNoSecretStored: true,
+          sellerpilotTemuCredentialIdentity: certificationObservation,
+        },
+      }],
+    };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',attempt_count=1,worker_token_id=$2,
+              claim_token='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+              started_at=clock_timestamp()-interval '1 second',
+              completed_at=clock_timestamp(),response_payload=$3::jsonb,
+              updated_at=clock_timestamp()
+        where id=$1`,
+      [certificationQueued.jobId, adoptionWorkerTokenId, JSON.stringify(certificationResponse)],
+    );
+    await db.query(
+      `insert into sellerpilot_private.gateway_completion_receipts (
+         job_id,claim_token,worker_token_id,completion_fingerprint
+       ) values (
+         $1,'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',$2,$3
+       )`,
+      [certificationQueued.jobId, adoptionWorkerTokenId, "e".repeat(64)],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs set status=status where id=$1`,
+      [certificationQueued.jobId],
+    );
+    const certificationReady = await scalar(
+      db,
+      `select public.sellerpilot_service_temu_exact_credential_certification_status(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1
+      )`,
+      [temuExactOwnerId],
+    );
+    assert.equal(certificationReady.status, "ready");
+    assert.match(certificationReady.observationDigest, /^[a-f0-9]{64}$/);
+    assert.notEqual(certificationReady.observationDigest, certificationObservation.digest);
+    const certificationCommitted = await scalar(
+      db,
+      `select public.sellerpilot_service_commit_temu_exact_credential_certification(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+      )`,
+      [certificationQueued.reviewId, certificationReady.observationDigest, temuExactOwnerId],
+    );
+    assert.equal(certificationCommitted.status, "committed");
+    assert.equal(certificationCommitted.providerWritePerformed, false);
+    assert.equal(certificationCommitted.credentialRotated, false);
+    assert.deepEqual(
+      (await db.query(
+        `select status,version,vault_secret_id,seller_account_key,
+                seller_account_key_source
+           from sellerpilot_private.channel_credentials
+          where id=$1`,
+        [temuAdoptionCredentialId],
+      )).rows,
+      [{
+        status: credentialBeforeCertification.status,
+        version: credentialBeforeCertification.version,
+        vault_secret_id: credentialBeforeCertification.vault_secret_id,
+        seller_account_key: certifiedTemuSellerAccountKey,
+        seller_account_key_source: "provider_certified_v1",
+      }],
+    );
+    const adoptionQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_temu_exact_existing_adoption(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+      )`,
+      [temuAdoptionCredentialId, temuExactOwnerId],
+    );
+    assert.equal(adoptionQueued.status, "queued");
+    assert.equal(adoptionQueued.reused, false);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_enqueue_temu_exact_existing_adoption(
+          'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2
+        )`,
+        [temuAdoptionCredentialId, temuExactOwnerId],
+      )).jobId,
+      adoptionQueued.jobId,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select channel,operation,status,listing_id,attempt_id,
+                request_payload#>'{arguments,sellerpilotReadOnly}' as read_only,
+                provider_mutation_started_at
+           from sellerpilot_private.channel_gateway_jobs
+          where id=$1`,
+        [adoptionQueued.jobId],
+      )).rows,
+      [{
+        channel: "temu",
+        operation: "listing.publication.verify",
+        status: "queued",
+        listing_id: null,
+        attempt_id: null,
+        read_only: true,
+        provider_mutation_started_at: null,
+      }],
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_commit_temu_exact_existing_adoption(
+          'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+        )`,
+        [adoptionQueued.reviewId, "a".repeat(64), temuExactOwnerId],
+      ),
+      /FRESH_DIGEST_CONFIRMATION_REQUIRED/,
+    );
+    const adoptionObservedAt = new Date().toISOString();
+    const adoptionObservation = {
+      contract: "temu_exact_existing_active_observation_v1",
+      verified: true,
+      goodsId: "608570473054515",
+      skuId: "123896921649274",
+      externalGoodsId: "QA-TEMU-EXISTING-001",
+      externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+      providerStatus: "statusName=ACTIVE",
+      visibility: "live",
+      locale: "ko-KR",
+      currency: "KRW",
+      price: "5000",
+      stock: 1,
+      goodsName: "케이블 정리 클립 테스트 상품",
+      goodsDesc: "케이블을 깔끔하게 정리하는 한국어 상세 설명입니다.",
+      bulletPoints: ["책상과 차량에서 사용할 수 있습니다."],
+      representativeImages: ["https://assets.example.test/temu-adoption/hero.jpg"],
+      detailImages: Array.from(
+        { length: 8 },
+        (_, index) => `https://assets.example.test/temu-adoption/detail-${index + 1}.jpg`,
+      ),
+      observedAt: adoptionObservedAt,
+      digest: "a".repeat(64),
+    };
+    const adoptionResponse = {
+      ok: true,
+      channel: "temu",
+      operation: "listing.publication.verify",
+      remoteId: "608570473054515",
+      steps: [
+        { name: "temu-existing-adoption-detail", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-status", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-stock", ok: true, status: 200, data: {} },
+        { name: "temu-existing-adoption-list", ok: true, status: 200, data: {} },
+        {
+          name: "temu-existing-adoption-observation",
+          ok: true,
+          status: 200,
+          data: {
+            sellerpilotVerification: "TEMU_EXISTING_ACTIVE_OBSERVATION_VERIFIED",
+            sellerpilotNoWriteConfirmed: true,
+            sellerpilotTemuExistingAdoptionObservation: adoptionObservation,
+          },
+        },
+      ],
+    };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='succeeded',attempt_count=1,worker_token_id=$2,
+              claim_token='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+              started_at=clock_timestamp()-interval '1 second',
+              completed_at=clock_timestamp(),response_payload=$3::jsonb,
+              updated_at=clock_timestamp()
+        where id=$1`,
+      [adoptionQueued.jobId, adoptionWorkerTokenId, JSON.stringify(adoptionResponse)],
+    );
+    await db.query(
+      `insert into sellerpilot_private.gateway_completion_receipts (
+         job_id,claim_token,worker_token_id,completion_fingerprint
+       ) values (
+         $1,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',$2,$3
+       )`,
+      [adoptionQueued.jobId, adoptionWorkerTokenId, "b".repeat(64)],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status=status
+        where id=$1`,
+      [adoptionQueued.jobId],
+    );
+    const adoptionReady = await scalar(
+      db,
+      `select public.sellerpilot_service_temu_exact_existing_adoption_status(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1
+      )`,
+      [temuExactOwnerId],
+    );
+    assert.equal(adoptionReady.status, "ready");
+    assert.match(adoptionReady.observationDigest, /^[a-f0-9]{64}$/);
+    assert.notEqual(adoptionReady.observationDigest, adoptionObservation.digest);
+    const adoptionCommitted = await scalar(
+      db,
+      `select public.sellerpilot_service_commit_temu_exact_existing_adoption(
+        'ddccde35-9c58-4856-b673-d7aa27ce4220',$1,$2,$3
+      )`,
+      [adoptionQueued.reviewId, adoptionReady.observationDigest, temuExactOwnerId],
+    );
+    assert.equal(adoptionCommitted.status, "committed");
+    assert.equal(adoptionCommitted.providerWritePerformed, false);
+    assert.deepEqual(
+      (await db.query(
+        `select remote_id,marketplace_sku,status,currency,price::text,
+                requested_publication_intent,remote_visibility,
+                seller_account_key,
+                remote_resources#>>'{verification,observationDigest}' as digest
+           from sellerpilot_private.product_listings
+          where id=$1`,
+        [adoptionCommitted.listingId],
+      )).rows,
+      [{
+        remote_id: "608570473054515",
+        marketplace_sku: "QA-TEMU-EXISTING-001-SKU",
+        status: "published",
+        currency: "KRW",
+        price: "5000.00",
+        requested_publication_intent: "live",
+        remote_visibility: "live",
+        seller_account_key: certifiedTemuSellerAccountKey,
+        digest: adoptionReady.observationDigest,
+      }],
+    );
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set last_checked_at=clock_timestamp(),last_check_status='passed'
+        where id=$1`,
+      [temuAdoptionCredentialId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await scalar(
+      db,
+      "select public.sellerpilot_service_set_listing_mutation_release_gate(false,$1)",
+      [PUBLICATION_RELEASE_SHA],
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select listing.market,listing.target_id,listing.marketplace_sku,
+                listing.provider_status,listing.last_verified_at is not null as verified,
+                listing.published_at is not null as published,
+                listing.failure_class,listing.last_error,
+                listing.remote_resources#>>'{verification,contract}' as verification_contract,
+                listing.remote_resources#>>'{verification,locale}' as locale,
+                listing.remote_resources#>>'{verification,readOnlyProviderObservation}' as read_only,
+                listing.remote_resources#>>'{verification,jobId}' as source_job_id,
+                listing.remote_resources#>>'{resources,goodsId}' as resource_goods_id,
+                listing.remote_resources#>>'{resources,skuId}' as resource_sku_id,
+                listing.remote_resources#>>'{verification,currency}' as verified_currency,
+                listing.remote_resources#>>'{verification,price}' as verified_price,
+                listing.remote_resources#>>'{verification,stock}' as verified_stock,
+                listing.remote_resources#>>'{verification,representativeImageCount}' as representative_count,
+                listing.remote_resources#>>'{verification,detailImageCount}' as detail_count,
+                product.detail_page_version,product.detail_page_approved_version,
+                jsonb_array_length(product.detail_page_image_manifest->'images') as image_count,
+                (select count(distinct image->>'path')::integer
+                   from jsonb_array_elements(product.detail_page_image_manifest->'images') image) as path_count,
+                (select count(distinct image->>'sourceSha256')::integer
+                   from jsonb_array_elements(product.detail_page_image_manifest->'images') image) as source_sha_count,
+                credential.status as credential_status,
+                credential.seller_account_key_source,
+                credential.seller_account_verified_at is not null as account_verified,
+                credential.seller_account_key=listing.seller_account_key as account_matches,
+                credential.expires_at > statement_timestamp() as credential_fresh,
+                credential.last_check_status,
+                (select count(*)::integer from sellerpilot_private.channel_credentials competing
+                  where competing.channel='temu' and competing.environment='production'
+                    and competing.status='active' and competing.id<>credential.id) as competing_credentials,
+                (select count(*)::integer from sellerpilot_private.channel_gateway_jobs job
+                  where job.channel='temu' and job.listing_id=listing.id
+                    and job.operation in ('listing.create','listing.update','listing.stop','listing.activate')
+                    and job.status in ('queued','running','reconciliation_required')) as competing_jobs
+           from sellerpilot_private.product_listings listing
+           join sellerpilot_private.products product on product.id=listing.product_id
+           join sellerpilot_private.channel_credentials credential on credential.id=$2
+          where listing.id=$1`,
+        [adoptionCommitted.listingId, temuAdoptionCredentialId],
+      )).rows,
+      [{
+        market: "KR",
+        target_id: "KR",
+        marketplace_sku: "QA-TEMU-EXISTING-001-SKU",
+        provider_status: "statusName=ACTIVE",
+        verified: true,
+        published: true,
+        failure_class: null,
+        last_error: null,
+        verification_contract: "temu_exact_existing_active_adoption_v1",
+        locale: "ko-KR",
+        read_only: "true",
+        source_job_id: adoptionQueued.jobId,
+        resource_goods_id: "608570473054515",
+        resource_sku_id: "123896921649274",
+        verified_currency: "KRW",
+        verified_price: "5000",
+        verified_stock: "1",
+        representative_count: "1",
+        detail_count: "8",
+        detail_page_version: 1,
+        detail_page_approved_version: 1,
+        image_count: 8,
+        path_count: 8,
+        source_sha_count: 8,
+        credential_status: "active",
+        seller_account_key_source: "provider_certified_v1",
+        account_verified: true,
+        account_matches: true,
+        credential_fresh: true,
+        last_check_status: "passed",
+        competing_credentials: 0,
+        competing_jobs: 0,
+      }],
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await scalar(db, "select set_config('request.headers', '{}', false)");
+    const exactTemuIdentity = await scalar(
+      db,
+      `select public.sellerpilot_service_get_temu_exact_update_id(
+         $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','KR','KR'
+       )`,
+      [adoptionCommitted.listingId, temuAdoptionCredentialId],
+    );
+    assert.deepEqual(exactTemuIdentity, {
+      contract: "temu_exact_existing_update_identity_v1",
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      listingId: adoptionCommitted.listingId,
+      credentialId: temuAdoptionCredentialId,
+      goodsId: "608570473054515",
+      skuId: "123896921649274",
+      externalGoodsId: "QA-TEMU-EXISTING-001",
+      externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+      sellerAccountKey: certifiedTemuSellerAccountKey,
+      approvedManifestDigest: adoptionManifestDigest,
+    });
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_temu_exact_update_id(
+           '61000000-0000-4000-8000-000000000099',$1,
+           'ddccde35-9c58-4856-b673-d7aa27ce4220','KR','KR'
+         )`,
+        [temuAdoptionCredentialId],
+      ),
+      null,
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=false,updated_at=clock_timestamp()
+        where channel='temu'`,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_temu_exact_update_id(
+           $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','KR','KR'
+         )`,
+        [adoptionCommitted.listingId, temuAdoptionCredentialId],
+      ),
+      null,
+      "the admin-route identity RPC must use the durable policy, not stale request headers",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_temu_exact_update(
+           'temu',$1,$2,$3,$4
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "d".repeat(64),
+        ],
+      ),
+      /Temu exact update static egress unavailable/,
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='temu'`,
+    );
+    const temuExactPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_temu_exact_update(
+         'temu',$1,$2,$3,$4
+       )`,
+      [
+        adoptionCommitted.listingId,
+        temuAdoptionCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        "d".repeat(64),
+      ],
+    );
+    assert.equal(temuExactPermit.bound, false);
+    assert.equal(temuExactPermit.reused, false);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_arm_temu_exact_update(
+           'temu',$1,$2,$3,$4
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "d".repeat(64),
+        ],
+      )).reused,
+      true,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_temu_exact_update(
+           'temu',$1,$2,$3,$4
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "e".repeat(64),
+        ],
+      ),
+      /different active permit/,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select channel,listing_id,product_id,credential_id,remote_id,
+                provider_resource_id,currency,price::text,stock,
+                snapshot_revision,snapshot_payload_sha256,
+                update_job_id,consumed_at,invalidated_at
+           from sellerpilot_private.exact_existing_update_permits
+          where permit_id=$1`,
+        [temuExactPermit.permitId],
+      )).rows,
+      [{
+        channel: "temu",
+        listing_id: adoptionCommitted.listingId,
+        product_id: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+        credential_id: temuAdoptionCredentialId,
+        remote_id: "608570473054515",
+        provider_resource_id: "123896921649274",
+        currency: "KRW",
+        price: "5000",
+        stock: 1,
+        snapshot_revision: 1,
+        snapshot_payload_sha256: adoptionManifestDigest,
+        update_job_id: null,
+        consumed_at: null,
+        invalidated_at: null,
+      }],
+    );
+
+    const exactTemuApprovedDetails = temuUpdateDetails.map((publicUrl, index) => ({
+      role: `detail-${index + 1}`,
+      approvedObjectPath: `results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/62000000-0000-4000-8000-000000000001/detail-${index + 1}.png`,
+      approvedSourceSha256: String(index + 1).repeat(64).slice(0, 64),
+      publicUrl,
+      objectPath:
+        `normalized/${temuUpdateDetailDigests[index].slice(0, 2)}/${temuUpdateDetailDigests[index]}.jpg`,
+      contentSha256: temuUpdateDetailDigests[index],
+    }));
+    const exactTemuUpdateArguments = {
+      ...temuUpdateArguments,
+      publicationExpectedFingerprint: "d".repeat(64),
+      sellerpilotTemuExactExistingUpdate: {
+        ...temuUpdateArguments.sellerpilotTemuExactExistingUpdate,
+        listingId: adoptionCommitted.listingId,
+        credentialId: temuAdoptionCredentialId,
+        sellerAccountKey: certifiedTemuSellerAccountKey,
+        approvedManifestDigest: adoptionManifestDigest,
+        releaseSha: PUBLICATION_RELEASE_SHA,
+      },
+      sellerpilotPublicationAssetBinding: {
+        ...temuUpdateArguments.sellerpilotPublicationAssetBinding,
+        approvedDetailPageVersion: 1,
+        approvedManifestDigest: adoptionManifestDigest,
+        approvedDetailImages: exactTemuApprovedDetails,
+        providerTransportImages: exactTemuApprovedDetails.map((image) => ({
+          role: image.role,
+          publicUrl: image.publicUrl,
+          objectPath: image.objectPath,
+          contentSha256: image.contentSha256,
+        })),
+      },
+      sellerpilotTemuExactPreservedAssets: {
+        ...temuUpdateArguments.sellerpilotTemuExactPreservedAssets,
+        detailImages: exactTemuApprovedDetails,
+      },
+    };
+    const exactTemuRequest = { arguments: exactTemuUpdateArguments };
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.temu_exact_update_arguments_valid(
+           $1::jsonb,$2,$3,1
+         )`,
+        [
+          JSON.stringify(exactTemuUpdateArguments),
+          PUBLICATION_RELEASE_SHA,
+          "d".repeat(64),
+        ],
+      ),
+      true,
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const exactTemuAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'temu','listing.update',$2,$3
+       )`,
+      [
+        temuAdoptionCredentialId,
+        `temu-exact-existing-update:${"d".repeat(64)}`,
+        "d".repeat(64),
+      ],
+    );
+    assert.equal(exactTemuAttempt.status, "running");
+    assert.equal(exactTemuAttempt.duplicate, false);
+
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.exact_existing_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [temuExactPermit.permitId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'temu','listing.update',$4::jsonb
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          exactTemuAttempt.attempt_id,
+          JSON.stringify(exactTemuRequest),
+        ],
+      ),
+      /query returned no rows/,
+      "an expired one-shot permit must not enqueue",
+    );
+    const renewedTemuPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_temu_exact_update(
+         'temu',$1,$2,$3,$4
+       )`,
+      [
+        adoptionCommitted.listingId,
+        temuAdoptionCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        "d".repeat(64),
+      ],
+    );
+    assert.notEqual(renewedTemuPermit.permitId, temuExactPermit.permitId);
+    const tamperedTemuRequest = structuredClone(exactTemuRequest);
+    tamperedTemuRequest.arguments.sellerpilotTemuExactExistingUpdate.skuId =
+      "123896921649275";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'temu','listing.update',$4::jsonb
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          exactTemuAttempt.attempt_id,
+          JSON.stringify(tamperedTemuRequest),
+        ],
+      ),
+      /query returned no rows/,
+      "a tampered exact SKU must not enqueue",
+    );
+    const exactTemuEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+         $1,$2,$3,'temu','listing.update',$4::jsonb
+       )`,
+      [
+        adoptionCommitted.listingId,
+        temuAdoptionCredentialId,
+        exactTemuAttempt.attempt_id,
+        JSON.stringify(exactTemuRequest),
+      ],
+    );
+    assert.equal(exactTemuEnqueue.status, "queued");
+    assert.equal(exactTemuEnqueue.attempt_id, exactTemuAttempt.attempt_id);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_temu_exact_update(
+           'temu',$1,$2,$3,$4
+         )`,
+        [
+          adoptionCommitted.listingId,
+          temuAdoptionCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "d".repeat(64),
+        ],
+      ),
+      /identity|required|active|queued|lineage/i,
+      "an active exact job must prevent a second permit",
+    );
+
+    const exactTemuWorkerHash = "0".repeat(64);
+    await db.query(
+      `insert into sellerpilot_private.ai_cli_worker_tokens (
+         label,token_hash,fingerprint,status,scope,expires_at,created_by
+       ) values (
+         'Temu exact existing update worker',$1,'TEMUEXACT960','active',
+         'serverless_cs',clock_timestamp()+interval '1 day',$2
+       )`,
+      [exactTemuWorkerHash, temuExactOwnerId],
+    );
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"temu"}',false
+       )`,
+    );
+    const exactTemuClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/temu-exact-update')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(exactTemuClaim.id, exactTemuEnqueue.job_id);
+    assert.equal(exactTemuClaim.operation, "listing.update");
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,'aaaaaaaa-0000-4000-8000-000000000001'
+         )`,
+        [exactTemuWorkerHash, exactTemuClaim.id],
+      ),
+      false,
+      "a different claim token must never consume the permit",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, exactTemuClaim.id, exactTemuClaim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select provider_mutation_started_at is not null as provider_started,
+                permit.consumed_at is not null as consumed
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [exactTemuClaim.id],
+      )).rows,
+      [{ provider_started: true, consumed: true }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, exactTemuClaim.id, exactTemuClaim.claim_token],
+      ),
+      false,
+      "a consumed permit must not begin a second provider mutation",
+    );
+
+    const exactTemuSuccess = {
+      ok: true,
+      channel: "temu",
+      operation: "listing.update",
+      publicationIntent: "live",
+      publicationFulfilled: true,
+      publicationStateContract: "verified_remote_state_v1",
+      remoteId: "608570473054515",
+      steps: [{ name: "temu-partial-update", ok: true, status: 200, data: {} }],
+      remoteState: {
+        verified: true,
+        visibility: "live",
+        providerStatus: "statusName=ACTIVE;goodsStatus=ACTIVE",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          version: "temu_list_status_detail_stock_v3",
+          readbackMethods: [
+            "temu.local.goods.list.retrieve",
+            "bg.local.goods.publish.status.get",
+            "bg.local.goods.detail.query",
+            "temu.local.goods.sku.stock.query",
+          ],
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          representativeImageVerified: true,
+          imageCountVerified: true,
+          imageOrderVerified: true,
+          contentVerified: true,
+          contentDigest: temuUpdateContentDigest,
+          skuIdentityVerified: true,
+          priceVerified: true,
+          stockVerified: true,
+          goodsIdVerified: true,
+          externalGoodsIdVerified: true,
+          observedRepresentativeImageCount: 1,
+          representativeImageDigest: createHash("sha256")
+            .update(JSON.stringify([temuUpdateRepresentative]), "utf8")
+            .digest("hex"),
+          observedDetailImageCount: 8,
+          orderedDetailImageDigest: createHash("sha256")
+            .update(JSON.stringify(temuUpdateDetails), "utf8")
+            .digest("hex"),
+          observedSkuCount: 1,
+          publicationAssetBinding: {
+            contract: "sellerpilot_provider_asset_binding_v1",
+            sourceAssetBindingDigest: createHash("sha256")
+              .update(JSON.stringify(exactTemuUpdateArguments.sellerpilotPublicationAssetBinding), "utf8")
+              .digest("hex"),
+            approvedManifestDigest: adoptionManifestDigest,
+            approvedDetailPageVersion: 1,
+            approvedDetailRoles: exactTemuApprovedDetails.map((image) => image.role),
+            providerImageSurface: "detail_content",
+            providerTransportRoles: exactTemuApprovedDetails.map((image) => image.role),
+            providerDetailImageIdentities: temuUpdateDetails,
+            providerImageDigest: createHash("sha256")
+              .update(JSON.stringify(temuUpdateDetails), "utf8")
+              .digest("hex"),
+          },
+        },
+        resources: {
+          goodsId: "608570473054515",
+          skuId: "123896921649274",
+          externalGoodsId: "QA-TEMU-EXISTING-001",
+          externalSkuId: "QA-TEMU-EXISTING-001-SKU",
+        },
+        locale: "ko-KR",
+        fingerprint: "d".repeat(64),
+        imageCount: 8,
+      },
+      safeMessage: "Temu exact existing content update verified.",
+    };
+    for (const [label, tamperedResponse] of [
+      ["content digest", {
+        ...exactTemuSuccess,
+        remoteState: {
+          ...exactTemuSuccess.remoteState,
+          evidence: {
+            ...exactTemuSuccess.remoteState.evidence,
+            contentDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["detail image digest", {
+        ...exactTemuSuccess,
+        remoteState: {
+          ...exactTemuSuccess.remoteState,
+          evidence: {
+            ...exactTemuSuccess.remoteState.evidence,
+            orderedDetailImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["representative image digest", {
+        ...exactTemuSuccess,
+        remoteState: {
+          ...exactTemuSuccess.remoteState,
+          evidence: {
+            ...exactTemuSuccess.remoteState.evidence,
+            representativeImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["pre-completion normalized fallback", {
+        ...exactTemuSuccess,
+        publicationFulfilled: false,
+        remoteState: {
+          ...exactTemuSuccess.remoteState,
+          visibility: "pending_review",
+          evidence: {
+            ...exactTemuSuccess.remoteState.evidence,
+            providerObservedVisibility: "live",
+          },
+        },
+      }],
+    ]) {
+      await db.exec("begin");
+      try {
+        const tamperedCompletion = await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+             $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+           )`,
+          [
+            exactTemuWorkerHash,
+            exactTemuClaim.id,
+            exactTemuClaim.claim_token,
+            JSON.stringify(tamperedResponse),
+          ],
+        );
+        assert.fail(`tampered ${label} completed: ${JSON.stringify(tamperedCompletion)}`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error), /invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    const exactTemuCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        exactTemuClaim.id,
+        exactTemuClaim.claim_token,
+        JSON.stringify(exactTemuSuccess),
+      ],
+    );
+    assert.equal(exactTemuCompletion.status, "completed");
+    assert.deepEqual(
+      (await db.query(
+        `select job.status,attempt.status as attempt_status,listing.status as listing_status,
+                listing.remote_visibility,listing.provider_status,
+                listing.remote_resources#>>'{resources,goodsId}' as goods_id,
+                listing.remote_resources#>>'{resources,skuId}' as sku_id,
+                permit.consumed_at is not null as consumed,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id=job.attempt_id
+           join sellerpilot_private.product_listings listing on listing.id=job.listing_id
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [exactTemuClaim.id],
+      )).rows,
+      [{
+        status: "succeeded",
+        attempt_status: "succeeded",
+        listing_status: "published",
+        remote_visibility: "live",
+        provider_status: "statusName=ACTIVE;goodsStatus=ACTIVE",
+        goods_id: "608570473054515",
+        sku_id: "123896921649274",
+        consumed: true,
+        receipt_count: 1,
+      }],
+    );
+
+    // Exercise the exact Shopee path against the chronological full migration
+    // image. Both the read-only existing-item adoption and the two write phases
+    // use their real public enqueue/claim/completion RPC chains.
+    let shopeeExactListingId;
+    let shopeeLineageJobId;
+    let shopeeAdoptionId;
+    let shopeeSellerKey;
+    let shopeeEvidenceDigest;
+    const shopeeContentFingerprint = "6".repeat(64);
+    const shopeeInventoryFingerprint = "5".repeat(64);
+    const shopeeTitle = "Reusable Cable Organizer Clips for Home and Office";
+    const shopeeDescription =
+      "Keep charging cables neatly organized with durable reusable clips for desks, offices, and travel.";
+    const shopeeTitleDigest = createHash("sha256")
+      .update(shopeeTitle, "utf8")
+      .digest("hex");
+    const shopeeDescriptionDigest = createHash("sha256")
+      .update(shopeeDescription, "utf8")
+      .digest("hex");
+    const shopeeSourceDigests = Array.from({ length: 9 }, (_, index) =>
+      (index + 33).toString(16).padStart(64, "0"));
+    const shopeeContentDigests = Array.from({ length: 9 }, (_, index) =>
+      (index + 49).toString(16).padStart(64, "0"));
+    const shopeeDetailRoles = Array.from(
+      { length: 8 },
+      (_, index) => `detail-role-${index + 1}`,
+    );
+    const shopeeImageUrls = shopeeContentDigests.map((digest) =>
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+    const shopeeApprovedDetails = shopeeDetailRoles.map((role, index) => ({
+      role,
+      approvedObjectPath:
+        `results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/63000000-0000-4000-8000-000000000005/${role}.png`,
+      approvedSourceSha256: shopeeSourceDigests[index + 1],
+      publicUrl: shopeeImageUrls[index + 1],
+      objectPath:
+        `normalized/${shopeeContentDigests[index + 1].slice(0, 2)}/${shopeeContentDigests[index + 1]}.jpg`,
+      contentSha256: shopeeContentDigests[index + 1],
+    }));
+    const shopeeApprovedEvidence = {
+      contract: "sellerpilot_shopee_sg_exact_assets_v1",
+      representativeImage: {
+        role: "gallery-representative",
+        sourceSha256: shopeeSourceDigests[0],
+        contentSha256: shopeeContentDigests[0],
+      },
+      detailImages: shopeeDetailRoles.map((role, index) => ({
+        role,
+        sourceSha256: shopeeSourceDigests[index + 1],
+        contentSha256: shopeeContentDigests[index + 1],
+      })),
+    };
+
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeExactCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+         'shopee','production',$1::jsonb,now()+interval '30 days',90,30,7
+       )`,
+      [JSON.stringify({
+        partner_id: "2031489",
+        partner_key: "full-replay-shopee-secret",
+        provider_account_identity_version: "v1",
+        provider_account_subject: "shopee:main:5511564",
+        authorization_expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        merchant_id: "5511564",
+        merchant_ids: ["5511564"],
+        shop_id: "1719148844",
+        shopee_targets: [{
+          type: "shop",
+          id: "1719148844",
+          access_token: "full-replay-shopee-access",
+          refresh_token: "full-replay-shopee-refresh",
+          access_token_expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        }, {
+          type: "merchant",
+          id: "5511564",
+        }],
+      })],
+    );
+    shopeeSellerKey = await scalar(
+      db,
+      `select seller_account_key
+         from sellerpilot_private.channel_credentials
+        where id=$1
+          and seller_account_key_source='provider_certified_v1'
+          and seller_account_verified_at is not null`,
+      [shopeeExactCredentialId],
+    );
+    assert.match(shopeeSellerKey, /^[a-f0-9]{64}$/u);
+    await scalar(
+      db,
+      `select public.sellerpilot_service_upsert_channel_market_target(
+         $1,$2,'shopee','1719148844','Shopee SG','SG','en-SG','English',
+         'SGD','active'
+       )`,
+      [temuExactOwnerId, shopeeExactCredentialId],
+    );
+    const shopeeAdoptionQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_shopee_sg_existing_adoption(
+         $1,'ddccde35-9c58-4856-b673-d7aa27ce4220',$2
+       )`,
+      [temuExactOwnerId, shopeeExactCredentialId],
+    );
+    assert.equal(shopeeAdoptionQueued.status, "queued");
+    assert.equal(shopeeAdoptionQueued.reused, false);
+    shopeeExactListingId = shopeeAdoptionQueued.listing_id;
+    shopeeLineageJobId = shopeeAdoptionQueued.job_id;
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"shopee"}',false
+       )`,
+    );
+    let shopeeAdoptionClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-adoption')",
+      [exactTemuWorkerHash],
+    );
+    if (shopeeAdoptionClaim.id !== shopeeLineageJobId) {
+      assert.equal(shopeeAdoptionClaim.channel, "qoo10");
+      assert.equal(shopeeAdoptionClaim.operation, "orders.list");
+      assert.equal(
+        await scalar(
+          db,
+          "select provider_mutation_started_at is null from sellerpilot_private.channel_gateway_jobs where id=$1",
+          [shopeeAdoptionClaim.id],
+        ),
+        true,
+      );
+      assert.equal(
+        await scalar(
+          db,
+          `select public.sellerpilot_complete_channel_gateway_job(
+             $1,$2,$3,'failed',null,'full replay expected read drain'
+           )`,
+          [
+            exactTemuWorkerHash,
+            shopeeAdoptionClaim.id,
+            shopeeAdoptionClaim.claim_token,
+          ],
+        ),
+        true,
+      );
+      shopeeAdoptionClaim = await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-adoption')",
+        [exactTemuWorkerHash],
+      );
+    }
+    assert.equal(shopeeAdoptionClaim.id, shopeeLineageJobId);
+    assert.equal(shopeeAdoptionClaim.operation, "listing.lineage.verify");
+    const shopeeAdoptionResult = await scalar(
+      db,
+      `select public.sellerpilot_complete_listing_lineage_verification(
+         $1,$2,$3,'succeeded',$4::jsonb,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeLineageJobId,
+        shopeeAdoptionClaim.claim_token,
+        JSON.stringify({
+          ok: true,
+          channel: "shopee",
+          operation: "listing.lineage.verify",
+          evidenceVersion: "provider_listing_readback_v1",
+          expectedRemoteId: "53717126190",
+          verifiedRemoteId: "53717126190",
+          market: "SG",
+          targetId: "1719148844",
+          verification: "exact_provider_readback",
+          shopeeAdoption: {
+            contract: "sellerpilot_shopee_sg_existing_adoption_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            merchantId: "5511564",
+            shopId: "1719148844",
+            market: "SG",
+            locale: "en-SG",
+            currency: "SGD",
+            price: 16.77,
+            providerStatus: "UNLIST",
+            galleryImageCount: 9,
+            detailImageCount: 8,
+            representativeImageVerified: true,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+          },
+        }),
+      ],
+    );
+    assert.equal(shopeeAdoptionResult.status, "bound");
+    const shopeeAdoptionRow = (await db.query(
+      `select adoption.id,adoption.evidence_digest,
+              lineage.evidence_digest as lineage_evidence_digest
+         from sellerpilot_private.shopee_existing_adoption_attestations adoption
+         join sellerpilot_private.provider_listing_lineage_attestations lineage
+           on lineage.gateway_job_id=adoption.gateway_job_id
+          and lineage.listing_id=adoption.listing_id
+          and lineage.credential_id=adoption.credential_id
+          and lineage.seller_account_key=adoption.seller_account_key
+        where adoption.gateway_job_id=$1`,
+      [shopeeLineageJobId],
+    )).rows[0];
+    shopeeAdoptionId = shopeeAdoptionRow.id;
+    shopeeEvidenceDigest = shopeeAdoptionRow.evidence_digest;
+    assert.match(shopeeEvidenceDigest, /^[a-f0-9]{64}$/u);
+    assert.match(shopeeAdoptionRow.lineage_evidence_digest, /^[a-f0-9]{64}$/u);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_get_shopee_sg_existing_adoption_status(
+           $1,'ddccde35-9c58-4856-b673-d7aa27ce4220'
+         )`,
+        [temuExactOwnerId],
+      )).status,
+      "already_bound",
+    );
+
+    const shopeeMarker = (phase) => ({
+      contract: "sellerpilot_shopee_sg_existing_update_v1",
+      phase,
+      listingId: shopeeExactListingId,
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      credentialId: shopeeExactCredentialId,
+      sellerAccountKey: shopeeSellerKey,
+      itemId: "53717126190",
+      sku: "QA-20260823-CC-001",
+      merchantId: "5511564",
+      shopId: "1719148844",
+      market: "SG",
+      locale: "en-SG",
+      currency: "SGD",
+      priceSgd: 16.77,
+      stock: 1,
+      providerStatus: "UNLIST",
+      adoptionAttestationId: shopeeAdoptionId,
+      adoptionGatewayJobId: shopeeLineageJobId,
+      adoptionEvidenceDigest: shopeeEvidenceDigest,
+      approvedAssetEvidence: shopeeApprovedEvidence,
+      releaseSha: PUBLICATION_RELEASE_SHA,
+    });
+    const shopeeContentArguments = {
+      sellerpilotShopeeSgExistingUpdate: shopeeMarker("content"),
+      localItemId: "53717126190",
+      shopId: "1719148844",
+      country: "sg",
+      body: {
+        item_id: 53717126190,
+        item_name: shopeeTitle,
+        description: shopeeDescription,
+      },
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "safe_test",
+      publicationExpectedLocale: "en-SG",
+      publicationExpectedImageCount: 8,
+      publicationExpectedFingerprint: shopeeContentFingerprint,
+      imageUrls: shopeeImageUrls,
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        approvedDetailPageVersion: 1,
+        approvedManifestDigest: adoptionManifestDigest,
+        approvedDetailImages: shopeeApprovedDetails,
+        providerImageSurface: "gallery",
+        providerTransportImages: [{
+          role: "gallery-representative",
+          approvedObjectPath:
+            "results/ddccde35-9c58-4856-b673-d7aa27ce4220/claims/63000000-0000-4000-8000-000000000005/square.png",
+          approvedSourceSha256: shopeeSourceDigests[0],
+          publicUrl: shopeeImageUrls[0],
+          objectPath:
+            `normalized/${shopeeContentDigests[0].slice(0, 2)}/${shopeeContentDigests[0]}.jpg`,
+          contentSha256: shopeeContentDigests[0],
+        }, ...shopeeApprovedDetails.map((detail) => ({
+          role: detail.role,
+          publicUrl: detail.publicUrl,
+          objectPath: detail.objectPath,
+          contentSha256: detail.contentSha256,
+        }))],
+      },
+    };
+    const shopeeContentRequest = { arguments: shopeeContentArguments };
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'inventory',$1,$2,$3,$4
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeInventoryFingerprint,
+        ],
+      ),
+      /content|required|lineage/u,
+      "inventory cannot arm before receipt-bound content succeeds",
+    );
+    const expiredShopeePermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'content',$1,$2,$3,$4,$5,$6
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeContentFingerprint,
+        "2".repeat(64),
+        shopeeDescriptionDigest,
+      ],
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const shopeeContentAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'shopee','listing.update','shopee-sg-exact-content-full-replay',$2
+       )`,
+      [shopeeExactCredentialId, shopeeContentFingerprint],
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'shopee','listing.update',$4::jsonb
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          shopeeContentAttempt.attempt_id,
+          JSON.stringify(shopeeContentRequest),
+        ],
+      ),
+      /digest|permit|required|RELEASE_GATE_CLOSED/iu,
+      "the permit title digest must match the exact request body",
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "4".repeat(64),
+          "2".repeat(64),
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /already used/u,
+      "a second active permit with a different request must fail closed",
+    );
+    await db.exec("set session_replication_role=replica");
+    await db.query(
+      `update sellerpilot_private.shopee_sg_exact_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [expiredShopeePermit.permitId],
+    );
+    await db.exec("set session_replication_role=origin");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'shopee','listing.update',$4::jsonb
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          shopeeContentAttempt.attempt_id,
+          JSON.stringify(shopeeContentRequest),
+        ],
+      ),
+      /permit|required|RELEASE_GATE_CLOSED/iu,
+      "an expired permit must not enqueue a provider write",
+    );
+    const shopeeContentPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'content',$1,$2,$3,$4,$5,$6
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeContentFingerprint,
+        shopeeTitleDigest,
+        shopeeDescriptionDigest,
+      ],
+    );
+    assert.notEqual(shopeeContentPermit.permitId, expiredShopeePermit.permitId);
+    const shopeeContentQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+         $1,$2,$3,'shopee','listing.update',$4::jsonb
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        shopeeContentAttempt.attempt_id,
+        JSON.stringify(shopeeContentRequest),
+      ],
+    );
+    assert.equal(shopeeContentQueued.status, "queued");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeContentFingerprint,
+          shopeeTitleDigest,
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /lineage|required|active|queued/u,
+      "an active exact job must prevent a second permit or job",
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"shopee"}',false
+       )`,
+    );
+    const shopeeContentClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-content')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(shopeeContentClaim.id, shopeeContentQueued.job_id);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeContentClaim.id, shopeeContentClaim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeContentClaim.id, shopeeContentClaim.claim_token],
+      ),
+      false,
+      "a consumed content permit must never begin another provider mutation",
+    );
+    const shopeeProviderImageDigest = "3".repeat(64);
+    const shopeeContentSuccess = {
+      ok: true,
+      channel: "shopee",
+      operation: "listing.update",
+      publicationIntent: "safe_test",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationFulfilled: true,
+      remoteId: "53717126190",
+      steps: [{
+        name: "listing-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotShopeeSgExistingReadback: {
+            contract: "sellerpilot_shopee_sg_existing_content_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            currency: "SGD",
+            priceSgd: 16.77,
+            providerStatus: "UNLIST",
+            visibility: "non_public",
+            providerImageIdentityDigest: shopeeProviderImageDigest,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            approvedAssetEvidence: shopeeApprovedEvidence,
+          },
+        },
+      }],
+      remoteState: {
+        verified: true,
+        visibility: "non_public",
+        providerStatus: "UNLIST",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          version: "shopee_sg_exact_existing_update_v1",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+        },
+        resources: {
+          itemId: "53717126190",
+          sku: "QA-20260823-CC-001",
+        },
+        locale: "en-SG",
+        fingerprint: shopeeContentFingerprint,
+        imageCount: 8,
+      },
+      safeMessage: "Shopee SG exact content update verified.",
+    };
+    const tamperedContent = structuredClone(shopeeContentSuccess);
+    tamperedContent.steps[0].data.sellerpilotShopeeSgExistingReadback.titleDigest =
+      "2".repeat(64);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_gateway_transaction(
+           $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+         )`,
+        [
+          exactTemuWorkerHash,
+          shopeeContentClaim.id,
+          shopeeContentClaim.claim_token,
+          JSON.stringify(tamperedContent),
+        ],
+      ),
+      /Shopee SG exact success readback invalid|completion/u,
+    );
+    const shopeeContentCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeContentClaim.id,
+        shopeeContentClaim.claim_token,
+        JSON.stringify(shopeeContentSuccess),
+      ],
+    );
+    assert.equal(shopeeContentCompletion.status, "completed");
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [shopeeContentClaim.id],
+      ),
+      1,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+           'content',$1,$2,$3,$4,$5,$6
+         )`,
+        [
+          shopeeExactListingId,
+          shopeeExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          shopeeContentFingerprint,
+          shopeeTitleDigest,
+          shopeeDescriptionDigest,
+        ],
+      ),
+      /already used|active|lineage|required/u,
+      "a consumed content phase can never be armed again",
+    );
+
+    const shopeeInventoryArguments = {
+      sellerpilotShopeeSgExistingUpdate: shopeeMarker("inventory"),
+      shopId: "1719148844",
+      country: "sg",
+      itemId: "53717126190",
+      quantity: 1,
+    };
+    const shopeeInventoryResourceKey = createHash("sha256")
+      .update(`shopee\0listing_mutation\0${shopeeExactListingId}`, "utf8")
+      .digest("hex");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeInventoryPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_shopee_sg_exact_update(
+         'inventory',$1,$2,$3,$4
+       )`,
+      [
+        shopeeExactListingId,
+        shopeeExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        shopeeInventoryFingerprint,
+      ],
+    );
+    assert.equal(shopeeInventoryPermit.status, "armed");
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const shopeeInventoryAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'shopee','inventory.update','shopee-sg-exact-inventory-full-replay',$2
+       )`,
+      [shopeeExactCredentialId, shopeeInventoryFingerprint],
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    const shopeeInventoryQueued = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_resource_gateway_job(
+         $1,$2,'shopee','inventory.update',$3::jsonb,'listing_mutation',$4,$5,
+         $6,null,null,null,null
+       )`,
+      [
+        shopeeExactCredentialId,
+        shopeeInventoryAttempt.attempt_id,
+        JSON.stringify({ arguments: shopeeInventoryArguments }),
+        shopeeInventoryResourceKey,
+        shopeeInventoryFingerprint,
+        shopeeExactListingId,
+      ],
+    );
+    assert.equal(shopeeInventoryQueued.status, "queued");
+    const shopeeInventoryClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/shopee-exact-inventory')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(shopeeInventoryClaim.id, shopeeInventoryQueued.job_id);
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, shopeeInventoryClaim.id, shopeeInventoryClaim.claim_token],
+      ),
+      true,
+    );
+    const shopeeInventorySuccess = {
+      ok: true,
+      channel: "shopee",
+      operation: "inventory.update",
+      remoteId: "53717126190",
+      steps: [{
+        name: "inventory-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotShopeeSgExistingReadback: {
+            contract: "sellerpilot_shopee_sg_existing_inventory_readback_v1",
+            itemId: "53717126190",
+            sku: "QA-20260823-CC-001",
+            currency: "SGD",
+            priceSgd: 16.77,
+            stock: 1,
+            providerStatus: "UNLIST",
+            visibility: "non_public",
+            providerImageIdentityDigest: shopeeProviderImageDigest,
+            titleDigest: shopeeTitleDigest,
+            descriptionDigest: shopeeDescriptionDigest,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            titleLanguageVerified: true,
+            descriptionLanguageVerified: true,
+            approvedAssetEvidence: shopeeApprovedEvidence,
+          },
+        },
+      }],
+      safeMessage: "Shopee SG exact inventory update verified.",
+    };
+    const tamperedInventory = structuredClone(shopeeInventorySuccess);
+    tamperedInventory.steps[0].data
+      .sellerpilotShopeeSgExistingReadback.descriptionDigest = "1".repeat(64);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_complete_gateway_transaction(
+           $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+         )`,
+        [
+          exactTemuWorkerHash,
+          shopeeInventoryClaim.id,
+          shopeeInventoryClaim.claim_token,
+          JSON.stringify(tamperedInventory),
+        ],
+      ),
+      /Shopee SG exact success readback invalid|completion/u,
+    );
+    const shopeeInventoryCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        shopeeInventoryClaim.id,
+        shopeeInventoryClaim.claim_token,
+        JSON.stringify(shopeeInventorySuccess),
+      ],
+    );
+    assert.equal(shopeeInventoryCompletion.status, "completed");
+    assert.deepEqual(
+      (await db.query(
+        `select permit.phase,permit.title_sha256,permit.description_sha256,
+                job.status,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.shopee_sg_exact_update_permits permit
+           join sellerpilot_private.channel_gateway_jobs job
+             on job.id=permit.update_job_id
+          where permit.listing_id=$1
+          order by permit.phase`,
+        [shopeeExactListingId],
+      )).rows,
+      [{
+        phase: "content",
+        title_sha256: shopeeTitleDigest,
+        description_sha256: shopeeDescriptionDigest,
+        status: "succeeded",
+        receipt_count: 1,
+      }, {
+        phase: "inventory",
+        title_sha256: shopeeTitleDigest,
+        description_sha256: shopeeDescriptionDigest,
+        status: "succeeded",
+        receipt_count: 1,
+      }],
+      "content and inventory must share the exact receipt-bound copy digests",
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=false,updated_at=clock_timestamp()
+        where channel='shopee'`,
+    );
+    // The exact Lazada MY path reuses one immutable, provider-certified
+    // lineage attestation, then binds the closed-gate exception to one
+    // request, one queue job, one worker claim, and one provider boundary.
+    const lazadaExactListingId = "42021335-9793-4834-8cd5-b73169fd1f48";
+    const lazadaExactTargetId = "200100300";
+    const lazadaExactSellerKey = createHash("sha256")
+      .update(`lazada\u001fproduction\u001flazada:my:${lazadaExactTargetId}`, "utf8")
+      .digest("hex");
+    const lazadaExactFingerprint = "7".repeat(64);
+    const lazadaManifestDigest = adoptionManifestDigest;
+    const lazadaLineageDigest = "6".repeat(64);
+    const lazadaTargetPrice = 14.29;
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const lazadaExactCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'lazada','production',
+        '{"app_key":"lazada-exact","app_secret":"secret","access_token":"token","refresh_token":"refresh"}'::jsonb,
+        now() + interval '30 days',90,30,7
+      )`,
+    );
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,
+              seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp(),
+              last_checked_at=clock_timestamp(),last_check_status='passed'
+        where id=$1`,
+      [lazadaExactCredentialId, lazadaExactSellerKey],
+    );
+    await db.query(
+      `insert into sellerpilot_private.channel_market_targets (
+         owner_id,credential_id,channel,environment,target_id,display_name,
+         market_code,locale,language,currency,remote_status,verified_at,updated_at
+       ) values (
+         $1,$2,'lazada','production',$3,'Exact Lazada MY seller',
+         'MY','ms-MY','Malay','MYR','active',clock_timestamp(),clock_timestamp()
+       )`,
+      [temuExactOwnerId, lazadaExactCredentialId, lazadaExactTargetId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_listings (
+         id,owner_id,product_id,channel_key,market,target_id,remote_id,status,
+         currency,price,seller_account_key,failure_class,last_error,
+         requested_publication_intent,remote_visibility,provider_status,
+         published_at,last_verified_at
+       ) values (
+         $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','lazada','MY',$3,
+         '14976038919','failed','MYR',$4,$5,'external_action',
+         'Exact adopted listing awaits content correction.','live','unknown',
+         null,null,clock_timestamp()
+       )`,
+      [
+        lazadaExactListingId,
+        temuExactOwnerId,
+        lazadaExactTargetId,
+        lazadaTargetPrice,
+        lazadaExactSellerKey,
+      ],
+    );
+    const lazadaLineageJobId = await scalar(
+      db,
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id,listing_id,channel,operation,environment,request_payload,
+         response_payload,status,seller_account_key,request_fingerprint,
+         created_by,attempt_count,started_at,completed_at,updated_at
+       ) values (
+         $1,$2,'lazada','listing.lineage.verify','production',
+         jsonb_build_object('arguments',jsonb_build_object(
+           'expectedRemoteId','14976038919','market','MY','country','my',
+           'targetId',$3::text,'marketplaceSku','QA-20260823-CC-001-MY'
+         )),
+         '{"ok":true,"remoteId":"14976038919"}'::jsonb,'succeeded',$4,$5,$6,
+         1,clock_timestamp()-interval '2 seconds',clock_timestamp(),clock_timestamp()
+       ) returning id`,
+      [
+        lazadaExactCredentialId,
+        lazadaExactListingId,
+        lazadaExactTargetId,
+        lazadaExactSellerKey,
+        "5".repeat(64),
+        temuExactOwnerId,
+      ],
+    );
+    const lazadaLineageAttestationId = await scalar(
+      db,
+      `insert into sellerpilot_private.provider_listing_lineage_attestations (
+         listing_id,credential_id,gateway_job_id,seller_account_key,channel,
+         environment,expected_remote_id,verified_remote_id,market,target_id,
+         marketplace_sku,provider_resource_id,evidence_version,evidence_digest,
+         completion_claim_token_hash,verified_at
+       ) values (
+         $1,$2,$3,$4,'lazada','production','14976038919','14976038919',
+         'MY',$5,null,null,'provider_listing_readback_v1',$6,$7,clock_timestamp()
+       ) returning id`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        lazadaLineageJobId,
+        lazadaExactSellerKey,
+        lazadaExactTargetId,
+        lazadaLineageDigest,
+        "4".repeat(64),
+      ],
+    );
+    await db.exec("set session_replication_role = origin");
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='lazada'`,
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await scalar(db, "select set_config('request.headers','{}',false)");
+    const lazadaExactIdentity = await scalar(
+      db,
+      `select public.sellerpilot_service_get_lazada_exact_update_id(
+         $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','MY',$3
+       )`,
+      [lazadaExactListingId, lazadaExactCredentialId, lazadaExactTargetId],
+    );
+    assert.deepEqual(lazadaExactIdentity, {
+      contract: "lazada_exact_existing_my_live_update_v1",
+      productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+      listingId: lazadaExactListingId,
+      credentialId: lazadaExactCredentialId,
+      itemId: "14976038919",
+      sellerSku: "QA-20260823-CC-001-MY",
+      sellerAccountKey: lazadaExactSellerKey,
+      targetId: lazadaExactTargetId,
+      lineageAttestationId: lazadaLineageAttestationId,
+      lineageEvidenceDigest: lazadaLineageDigest,
+    });
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_lazada_exact_update_id(
+           $1,$2,'ddccde35-9c58-4856-b673-d7aa27ce4220','MY','999999999'
+         )`,
+        [lazadaExactListingId, lazadaExactCredentialId],
+      ),
+      null,
+      "a different Lazada seller target must not resolve the exact identity",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_get_lazada_exact_update_id(
+           '42021335-9793-4834-8cd5-b73169fd1f49',$1,
+           'ddccde35-9c58-4856-b673-d7aa27ce4220','MY',$2
+         )`,
+        [lazadaExactCredentialId, lazadaExactTargetId],
+      ),
+      null,
+      "a different listing must not resolve the exact identity",
+    );
+
+    const lazadaExactPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_lazada_exact_update(
+         'lazada',$1,$2,$3,$4,$5
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        lazadaExactFingerprint,
+        lazadaTargetPrice,
+      ],
+    );
+    assert.equal(lazadaExactPermit.bound, false);
+    assert.equal(lazadaExactPermit.reused, false);
+    assert.equal(
+      (await scalar(
+        db,
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      )).reused,
+      true,
+    );
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          "8".repeat(64),
+          lazadaTargetPrice,
+        ],
+      ),
+      /different active permit/i,
+    );
+
+    const lazadaRepresentative =
+      "https://assets.example.test/lazada-exact/representative.jpg";
+    const lazadaDetails = Array.from(
+      { length: 8 },
+      (_, index) => `https://assets.example.test/lazada-exact/detail-${index + 1}.jpg`,
+    );
+    const lazadaTitle = "Klip pengurusan kabel pelekat, set 6 unit";
+    const lazadaDescription =
+      `<section><p>Klip kabel yang tahan lama untuk meja kemas dan mudah digunakan.</p>${lazadaDetails.map((url) => `<img src="${url}">`).join("")}</section>`;
+    const lazadaArguments = {
+      itemId: "14976038919",
+      country: "my",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      publicationExpectedLocale: "ms-MY",
+      publicationExpectedFingerprint: lazadaExactFingerprint,
+      publicationExpectedImageCount: 8,
+      sellerpilotExpectedSellerId: lazadaExactTargetId,
+      sellerpilotLazadaExactExistingUpdate: {
+        ...lazadaExactIdentity,
+        approvedManifestDigest: lazadaManifestDigest,
+        releaseSha: PUBLICATION_RELEASE_SHA,
+      },
+      sellerpilotLazadaPricePolicy: {
+        contract: "lazada_krw_myr_reference_price_v1",
+        sourceCurrency: "KRW",
+        sourcePriceKrw: 5000,
+        targetCurrency: "MYR",
+        targetPriceMyr: lazadaTargetPrice,
+        rate: {
+          krwPerMyr: 350,
+          sourceUrl: "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates",
+          frequency: "minute-market",
+        },
+      },
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "detail_content",
+        approvedManifestDigest: lazadaManifestDigest,
+        providerTransportImages: lazadaDetails.map((publicUrl, index) => ({
+          role: `detail-${index + 1}`,
+          publicUrl,
+        })),
+      },
+      sellerpilotAssets: { galleryImageUrls: [lazadaRepresentative] },
+      imageUrls: [lazadaRepresentative, ...lazadaDetails],
+      request: {
+        Request: {
+          Product: {
+            PrimaryCategory: "10100205",
+            Attributes: {
+              name: lazadaTitle,
+              description: lazadaDescription,
+            },
+            Skus: {
+              Sku: [{
+                SellerSku: "QA-20260823-CC-001-MY",
+                price: String(lazadaTargetPrice),
+                quantity: "1",
+                Status: "active",
+              }],
+            },
+          },
+        },
+      },
+    };
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.lazada_exact_update_arguments_valid(
+           $1::jsonb,$2,$3,$4,1
+         )`,
+        [
+          JSON.stringify(lazadaArguments),
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      ),
+      true,
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const lazadaExactAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+         $1,'lazada','listing.update',$2,$3
+       )`,
+      [
+        lazadaExactCredentialId,
+        `lazada-exact-existing-update:${lazadaExactFingerprint}`,
+        lazadaExactFingerprint,
+      ],
+    );
+    assert.equal(lazadaExactAttempt.status, "running");
+    const lazadaExactRequest = { arguments: lazadaArguments };
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.exact_existing_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [lazadaExactPermit.permitId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'lazada','listing.update',$4::jsonb
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          lazadaExactAttempt.attempt_id,
+          JSON.stringify(lazadaExactRequest),
+        ],
+      ),
+      /query returned no rows|exact|permit|gate/i,
+      "an expired Lazada one-shot permit must not enqueue",
+    );
+    const renewedLazadaPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_lazada_exact_update(
+         'lazada',$1,$2,$3,$4,$5
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        PUBLICATION_RELEASE_SHA,
+        lazadaExactFingerprint,
+        lazadaTargetPrice,
+      ],
+    );
+    assert.notEqual(renewedLazadaPermit.permitId, lazadaExactPermit.permitId);
+    const tamperedLazadaRequest = structuredClone(lazadaExactRequest);
+    tamperedLazadaRequest.arguments.sellerpilotLazadaExactExistingUpdate.itemId =
+      "14976038920";
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+           $1,$2,$3,'lazada','listing.update',$4::jsonb
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          lazadaExactAttempt.attempt_id,
+          JSON.stringify(tamperedLazadaRequest),
+        ],
+      ),
+      /query returned no rows|exact|permit|gate/i,
+      "a tampered remote item must not enqueue",
+    );
+    const lazadaExactEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+         $1,$2,$3,'lazada','listing.update',$4::jsonb
+       )`,
+      [
+        lazadaExactListingId,
+        lazadaExactCredentialId,
+        lazadaExactAttempt.attempt_id,
+        JSON.stringify(lazadaExactRequest),
+      ],
+    );
+    assert.equal(lazadaExactEnqueue.status, "queued");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_lazada_exact_update(
+           'lazada',$1,$2,$3,$4,$5
+         )`,
+        [
+          lazadaExactListingId,
+          lazadaExactCredentialId,
+          PUBLICATION_RELEASE_SHA,
+          lazadaExactFingerprint,
+          lazadaTargetPrice,
+        ],
+      ),
+      /identity|lineage|active|queued|required/i,
+      "an active exact Lazada job must prevent a second permit",
+    );
+
+    await scalar(
+      db,
+      `select set_config(
+         'request.headers','{"x-sellerpilot-static-egress-channels":"lazada"}',false
+       )`,
+    );
+    const lazadaExactClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/lazada-exact-update')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(lazadaExactClaim.id, lazadaExactEnqueue.job_id);
+    assert.equal(lazadaExactClaim.operation, "listing.update");
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,'aaaaaaaa-0000-4000-8000-000000000002'
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id],
+      ),
+      false,
+      "a different Lazada claim token must not consume the permit",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id, lazadaExactClaim.claim_token],
+      ),
+      true,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select job.provider_mutation_started_at is not null as provider_started,
+                permit.bound_at is not null as bound,
+                permit.consumed_at is not null as consumed
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [lazadaExactClaim.id],
+      )).rows,
+      [{ provider_started: true, bound: true, consumed: true }],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+           $1,$2,$3
+         )`,
+        [exactTemuWorkerHash, lazadaExactClaim.id, lazadaExactClaim.claim_token],
+      ),
+      false,
+      "a consumed Lazada permit must not begin a second mutation",
+    );
+
+    const lazadaProviderRepresentative =
+      "https://my-live.slatic.net/p/lazada-exact-representative.jpg";
+    const lazadaProviderDetails = Array.from(
+      { length: 8 },
+      (_, index) => `https://my-live.slatic.net/p/lazada-exact-detail-${index + 1}.jpg`,
+    );
+    const lazadaExactSuccess = {
+      ok: true,
+      channel: "lazada",
+      operation: "listing.update",
+      publicationIntent: "live",
+      publicationFulfilled: true,
+      publicationStateContract: "verified_remote_state_v1",
+      remoteId: "14976038919",
+      steps: [{ name: "lazada-update-product", ok: true, status: 200, data: {} }],
+      remoteState: {
+        verified: true,
+        visibility: "live",
+        providerStatus: "ACTIVE",
+        verifiedAt: new Date().toISOString(),
+        evidence: {
+          version: "lazada_exact_my_update_readback_v1",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+          categoryVerified: true,
+          commerceVerified: true,
+          contentVerified: true,
+          sellerSkuVerified: true,
+          skuIdVerified: true,
+          preflightSkuId: "170000000001",
+          priceVerified: true,
+          stockVerified: true,
+          activeStatusVerified: true,
+          titleLanguageVerified: true,
+          descriptionLanguageVerified: true,
+          representativeImageVerified: true,
+          detailImagesVerified: true,
+          categoryAttributesVerified: true,
+          observedRepresentativeImageCount: 1,
+          observedDetailImageCount: 8,
+          representativeImageDigest: createHash("sha256")
+            .update(JSON.stringify([lazadaProviderRepresentative]), "utf8")
+            .digest("hex"),
+          orderedDetailImageDigest: createHash("sha256")
+            .update(JSON.stringify(lazadaProviderDetails), "utf8")
+            .digest("hex"),
+          titleDigest: createHash("sha256").update(lazadaTitle, "utf8").digest("hex"),
+          descriptionDigest: createHash("sha256")
+            .update(lazadaDescription, "utf8").digest("hex"),
+        },
+        resources: {
+          itemId: "14976038919",
+          skuId: "170000000001",
+          sellerSku: "QA-20260823-CC-001-MY",
+          country: "my",
+          currency: "MYR",
+          price: lazadaTargetPrice,
+          stock: 1,
+          categoryId: "10100205",
+          representativeImageUrl: lazadaProviderRepresentative,
+          detailImageUrls: lazadaProviderDetails,
+        },
+        locale: "ms-MY",
+        fingerprint: lazadaExactFingerprint,
+        imageCount: 8,
+      },
+      safeMessage: "Lazada exact existing MY update verified.",
+    };
+    for (const [label, tamperedResponse] of [
+      ["sku identity", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          resources: { ...lazadaExactSuccess.remoteState.resources, skuId: "170000000002" },
+        },
+      }],
+      ["status", {
+        ...lazadaExactSuccess,
+        remoteState: { ...lazadaExactSuccess.remoteState, providerStatus: "INACTIVE" },
+      }],
+      ["price", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          resources: { ...lazadaExactSuccess.remoteState.resources, price: 14.30 },
+        },
+      }],
+      ["title digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: { ...lazadaExactSuccess.remoteState.evidence, titleDigest: "f".repeat(64) },
+        },
+      }],
+      ["description digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            descriptionDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["representative digest", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            representativeImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+      ["detail order", {
+        ...lazadaExactSuccess,
+        remoteState: {
+          ...lazadaExactSuccess.remoteState,
+          evidence: {
+            ...lazadaExactSuccess.remoteState.evidence,
+            orderedDetailImageDigest: "f".repeat(64),
+          },
+        },
+      }],
+    ]) {
+      await db.exec("begin");
+      try {
+        const tamperedCompletion = await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+             $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+           )`,
+          [
+            exactTemuWorkerHash,
+            lazadaExactClaim.id,
+            lazadaExactClaim.claim_token,
+            JSON.stringify(tamperedResponse),
+          ],
+        );
+        assert.fail(`tampered Lazada ${label} completed: ${JSON.stringify(tamperedCompletion)}`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error), /invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    const lazadaExactCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+         $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+       )`,
+      [
+        exactTemuWorkerHash,
+        lazadaExactClaim.id,
+        lazadaExactClaim.claim_token,
+        JSON.stringify(lazadaExactSuccess),
+      ],
+    );
+    assert.equal(lazadaExactCompletion.status, "completed");
+    assert.deepEqual(
+      (await db.query(
+        `select job.status,attempt.status as attempt_status,
+                listing.status as listing_status,listing.remote_visibility,
+                listing.provider_status,
+                listing.remote_resources#>>'{resources,itemId}' as item_id,
+                listing.remote_resources#>>'{resources,skuId}' as sku_id,
+                listing.remote_resources#>>'{resources,sellerSku}' as seller_sku,
+                listing.remote_resources#>>'{resources,currency}' as currency,
+                listing.remote_resources#>>'{resources,price}' as price,
+                listing.remote_resources#>>'{resources,stock}' as stock,
+                permit.consumed_at is not null as consumed,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id=job.attempt_id
+           join sellerpilot_private.product_listings listing on listing.id=job.listing_id
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [lazadaExactClaim.id],
+      )).rows,
+      [{
+        status: "succeeded",
+        attempt_status: "succeeded",
+        listing_status: "published",
+        remote_visibility: "live",
+        provider_status: "ACTIVE",
+        item_id: "14976038919",
+        sku_id: "170000000001",
+        seller_sku: "QA-20260823-CC-001-MY",
+        currency: "MYR",
+        price: String(lazadaTargetPrice),
+        stock: "1",
+        consumed: true,
+        receipt_count: 1,
+      }],
+    );
+    // The exact Coupang representative update crosses the full public RPC
+    // lifecycle. A fresh provider GET snapshot is bound after claim but before
+    // the mutation fence; completion must attest the content-addressed
+    // representative plus eight unchanged detail identities.
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const exactCoupangCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'coupang','production',
+        '{"vendor_id":"A00012345","access_key":"access","secret_key":"secret"}'::jsonb,
+        now()+interval '30 days',90,30,7
+      )`,
+    );
+    const exactCoupangSellerAccountKey = await scalar(
+      db,
+      "select seller_account_key from sellerpilot_private.channel_credentials where id=$1",
+      [exactCoupangCredentialId],
+    );
+    await db.query(
+      `insert into sellerpilot_private.product_listings (
+         id,owner_id,product_id,channel_key,market,target_id,remote_id,
+         marketplace_sku,status,currency,price,
+         requested_publication_intent,remote_visibility,provider_status,
+         published_at,failure_class,last_error,seller_account_key
+       ) values (
+         '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,
+         'ddccde35-9c58-4856-b673-d7aa27ce4220','coupang','KR','KR',
+         '16356981734','QA-20260823-CC-001','failed',
+         'KRW',5000,'live','unknown',null,null,'external_action',
+         'pre-gateway exact QA fixture',$2
+       )`,
+      [temuExactOwnerId, exactCoupangSellerAccountKey],
+    );
+    await db.query(
+      `update sellerpilot_private.serverless_static_egress_policy
+          set enabled=true,updated_at=clock_timestamp()
+        where channel='coupang'`,
+    );
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await scalar(db, "select set_config('request.headers','{}',false)");
+    const exactCoupangFingerprint = "6".repeat(64);
+    const exactCoupangSourceSha = "7".repeat(64);
+    const exactCoupangRepresentativeSha = "a".repeat(64);
+    const exactCoupangSourcePath =
+      "results/61000000-0000-4000-8000-000000000001/claims/62000000-0000-4000-8000-000000000001/thumbnail-square.png";
+    const exactCoupangRepresentativePath =
+      `normalized/aa/${exactCoupangRepresentativeSha}.jpg`;
+    const exactCoupangRepresentativeUrl =
+      `https://demo.supabase.co/storage/v1/object/public/sellerpilot-marketplace/${exactCoupangRepresentativePath}`;
+    const exactCoupangApprovedDetails = exactTemuApprovedDetails;
+    const exactCoupangTransport = [{
+      role: "gallery-representative",
+      approvedObjectPath: exactCoupangSourcePath,
+      approvedSourceSha256: exactCoupangSourceSha,
+      publicUrl: exactCoupangRepresentativeUrl,
+      objectPath: exactCoupangRepresentativePath,
+      contentSha256: exactCoupangRepresentativeSha,
+    }, ...exactCoupangApprovedDetails];
+    const exactCoupangArguments = {
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationExpectedLocale: "ko-KR",
+      publicationExpectedImageCount: 8,
+      publicationExpectedFingerprint: exactCoupangFingerprint,
+      sellerpilotCoupangExactQaRecovery: {
+        contract: "coupang_exact_qa_recovery_v1",
+        phase: "listing.update",
+        productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+        listingId: "7ffc6e46-3173-4695-9889-5fa1529765f1",
+        sellerProductId: "16356981734",
+        vendorItemId: "95962393877",
+        sellerSku: "QA-20260823-CC-001",
+        sellerAccountLineage: "validated_by_service_rpc",
+      },
+      sellerpilotCoupangExactQaRepresentative: {
+        contract: "coupang_exact_qa_representative_v1",
+        role: "gallery-representative",
+        sourceBucket: "sellerpilot-ai",
+        sourceObjectPath: exactCoupangSourcePath,
+        sourceSha256: exactCoupangSourceSha,
+        normalizedObjectPath: exactCoupangRepresentativePath,
+        contentSha256: exactCoupangRepresentativeSha,
+      },
+      sellerpilotPublicationAssetBinding: {
+        contract: "sellerpilot_publication_asset_binding_v1",
+        providerImageSurface: "gallery",
+        approvedManifestDigest: adoptionManifestDigest,
+        approvedDetailPageVersion: 1,
+        approvedDetailImages: exactCoupangApprovedDetails,
+        providerTransportImages: exactCoupangTransport,
+      },
+      body: {
+        sellerProductId: "16356981734",
+        items: [{
+          sellerpilotItemMatchId: "95962393877",
+          modelNo: "QA-20260823-CC-001",
+          images: exactCoupangTransport.map((image,index) => ({
+            imageOrder: index,
+            imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
+            vendorPath: image.publicUrl,
+          })),
+          contents: exactCoupangApprovedDetails.map((image) => ({
+            contentsType: "IMAGE",
+            contentDetails: [{ detailType: "IMAGE", content: image.publicUrl }],
+          })),
+        }],
+      },
+    };
+    let exactCoupangPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_coupang_exact_rep(
+        'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+        $4,$5,$6,$7
+      )`,
+      [
+        exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,exactCoupangFingerprint,
+        exactCoupangSourcePath,exactCoupangSourceSha,
+        exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+      ],
+    );
+    assert.equal(exactCoupangPermit.bound,false);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_arm_coupang_exact_rep(
+          'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+          $4,$5,$6,$7
+        )`,
+        [
+          exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,"8".repeat(64),
+          exactCoupangSourcePath,exactCoupangSourceSha,
+          exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+        ],
+      ),
+      /conflict|different active permit/i,
+    );
+    await setClaims(db, "authenticated", temuExactOwnerId);
+    const exactCoupangAttempt = await scalar(
+      db,
+      `select public.sellerpilot_claim_channel_operation(
+        $1,'coupang','listing.update',$2,$3
+      )`,
+      [
+        exactCoupangCredentialId,
+        `coupang-exact-representative:${exactCoupangFingerprint}`,
+        exactCoupangFingerprint,
+      ],
+    );
+    // Exercise expiry through the real arm -> owner claim -> service enqueue
+    // path. The trigger bypass only advances this isolated fixture's wall
+    // clock; the public enqueue RPC must still reject the expired permit.
+    await db.exec("set session_replication_role = replica");
+    await db.query(
+      `update sellerpilot_private.exact_existing_update_permits
+          set armed_at=clock_timestamp()-interval '6 minutes',
+              expires_at=clock_timestamp()-interval '1 minute'
+        where permit_id=$1`,
+      [exactCoupangPermit.permitId],
+    );
+    await db.exec("set session_replication_role = origin");
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+          '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+          'coupang','listing.update',$3::jsonb
+        )`,
+        [
+          exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+          JSON.stringify({ arguments: exactCoupangArguments }),
+        ],
+      ),
+      /query returned no rows|expired|permit|release_gate_closed/i,
+      "an expired Coupang exact representative permit must not enqueue",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*)::integer
+           from sellerpilot_private.channel_gateway_jobs
+          where attempt_id=$1 and channel='coupang' and operation='listing.update'`,
+        [exactCoupangAttempt.attempt_id],
+      ),
+      0,
+    );
+    exactCoupangPermit = await scalar(
+      db,
+      `select public.sellerpilot_service_arm_coupang_exact_rep(
+        'coupang','7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,$3,
+        $4,$5,$6,$7
+      )`,
+      [
+        exactCoupangCredentialId,PUBLICATION_RELEASE_SHA,exactCoupangFingerprint,
+        exactCoupangSourcePath,exactCoupangSourceSha,
+        exactCoupangRepresentativePath,exactCoupangRepresentativeSha,
+      ],
+    );
+    assert.equal(exactCoupangPermit.bound,false);
+    const tamperedCoupangRequest = {
+      arguments: structuredClone(exactCoupangArguments),
+    };
+    tamperedCoupangRequest.arguments
+      .sellerpilotCoupangExactQaRepresentative.contentSha256 = "f".repeat(64);
+    await setClaims(db, "service_role", temuExactOwnerId);
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_enqueue_listing_gateway_job(
+          '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+          'coupang','listing.update',$3::jsonb
+        )`,
+        [
+          exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+          JSON.stringify(tamperedCoupangRequest),
+        ],
+      ),
+      /query returned no rows|mismatch|invalid|release_gate_closed/i,
+    );
+    const exactCoupangEnqueue = await scalar(
+      db,
+      `select public.sellerpilot_service_enqueue_listing_gateway_job(
+        '7ffc6e46-3173-4695-9889-5fa1529765f1',$1,$2,
+        'coupang','listing.update',$3::jsonb
+      )`,
+      [
+        exactCoupangCredentialId,exactCoupangAttempt.attempt_id,
+        JSON.stringify({ arguments: exactCoupangArguments }),
+      ],
+    );
+    await scalar(
+      db,
+      `select set_config(
+        'request.headers','{"x-sellerpilot-static-egress-channels":"coupang"}',false
+      )`,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select sellerpilot_private.exact_existing_update_enqueued_lineage_is_current(
+          $1
+        )`,
+        [exactCoupangPermit.permitId],
+      ),
+      true,
+      JSON.stringify((await db.query(
+        `select listing.status,listing.remote_visibility,listing.provider_status,
+                listing.operation_attempt_id,job.status as job_status,
+                job.attempt_count,permit.update_job_id,permit.update_attempt_id,
+                permit.invalidated_at,permit.expires_at>statement_timestamp() as fresh,
+                sellerpilot_private.exact_existing_update_arguments_valid(
+                  'coupang',job.request_payload->'arguments',permit.release_sha,
+                  permit.request_fingerprint,permit.stock
+                ) as arguments_valid
+           from sellerpilot_private.exact_existing_update_permits permit
+           join sellerpilot_private.product_listings listing on listing.id=permit.listing_id
+           join sellerpilot_private.channel_gateway_jobs job on job.id=permit.update_job_id
+          where permit.permit_id=$1`,
+        [exactCoupangPermit.permitId],
+      )).rows),
+    );
+    const coupangClaimTransitionDiagnostic = await scalar(
+      db,
+      `with source as (
+         select to_jsonb(job) old_value,to_jsonb(job) || jsonb_build_object(
+           'status','running','worker_token_id',token.id,
+           'claim_token','aaaaaaaa-0000-4000-8000-000000000099'::uuid,
+           'attempt_count',job.attempt_count+1,
+           'lease_expires_at',clock_timestamp()+interval '15 minutes',
+           'started_at',coalesce(job.started_at,clock_timestamp()),
+           'error_message',null,'updated_at',clock_timestamp()
+         ) new_value
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.ai_cli_worker_tokens token on token.token_hash=$2
+          where job.id=$1
+       ) select jsonb_build_object(
+         'oldStatus',old_value->>'status','newStatus',new_value->>'status',
+         'channel',old_value->>'channel','operation',old_value->>'operation',
+         'oldAttempt',old_value->>'attempt_count','newAttempt',new_value->>'attempt_count',
+         'oldWorker',old_value->'worker_token_id','newWorker',new_value->'worker_token_id',
+         'oldClaim',old_value->'claim_token','newClaim',new_value->'claim_token',
+         'oldProvider',old_value->'provider_mutation_started_at',
+         'newProvider',new_value->'provider_mutation_started_at',
+         'completed',new_value->'completed_at','response',new_value->'response_payload',
+         'error',new_value->'error_message',
+         'stable',(new_value-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+              -'lease_expires_at'-'started_at'-'error_message'-'updated_at') =
+            (old_value-'status'-'worker_token_id'-'claim_token'-'attempt_count'
+              -'lease_expires_at'-'started_at'-'error_message'-'updated_at')
+       ) from source`,
+      [exactCoupangEnqueue.job_id, exactTemuWorkerHash],
+    );
+    assert.equal(coupangClaimTransitionDiagnostic.stable,true,
+      JSON.stringify(coupangClaimTransitionDiagnostic));
+    const coupangPermitDiagnostic = await scalar(
+      db,
+      `select jsonb_build_object(
+        'attemptEq',permit.update_attempt_id=job.attempt_id,
+        'listingEq',permit.listing_id=job.listing_id,
+        'credentialEq',permit.credential_id=job.credential_id,
+        'sellerEq',permit.seller_account_key=job.seller_account_key,
+        'fingerprintEq',permit.request_fingerprint=job.request_fingerprint,
+        'payloadShaEq',permit.request_payload_sha256=encode(extensions.digest(
+          job.request_payload::text,'sha256'),'hex'),
+        'payloadBytesEq',permit.request_payload_bytes=octet_length(job.request_payload::text),
+        'unbound',permit.bound_at is null and permit.consumed_at is null,
+        'companion',exists(select 1 from sellerpilot_private.coupang_exact_representative_permits rep
+          where rep.permit_id=permit.permit_id and rep.request_fingerprint=permit.request_fingerprint
+            and rep.release_sha=permit.release_sha),
+        'lineage',sellerpilot_private.exact_existing_update_enqueued_lineage_is_current(permit.permit_id),
+        'arguments',sellerpilot_private.exact_existing_update_arguments_valid(
+          'coupang',job.request_payload->'arguments',permit.release_sha,
+          permit.request_fingerprint,permit.stock)
+      ) value from sellerpilot_private.exact_existing_update_permits permit
+        join sellerpilot_private.channel_gateway_jobs job on job.id=permit.update_job_id
+       where permit.permit_id=$1`,
+      [exactCoupangPermit.permitId],
+    );
+    assert.deepEqual(coupangPermitDiagnostic,{
+      attemptEq: true,
+      listingEq: true,
+      credentialEq: true,
+      sellerEq: true,
+      fingerprintEq: true,
+      payloadShaEq: true,
+      payloadBytesEq: true,
+      unbound: true,
+      companion: true,
+      lineage: true,
+      arguments: true,
+    });
+    const exactCoupangClaim = await scalar(
+      db,
+      "select public.sellerpilot_claim_serverless_gateway_job($1,'test/coupang-exact-representative')",
+      [exactTemuWorkerHash],
+    );
+    assert.equal(exactCoupangClaim.id,exactCoupangEnqueue.job_id);
+    const exactCoupangPrewriteImages = exactCoupangTransport.map((image,index) => ({
+      imageOrder: index,
+      imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
+      cdnPath: index === 0
+        ? "vendor_inventory/images/old-representative.jpg"
+        : `vendor_inventory/images/${image.contentSha256}.jpg`,
+      vendorPath: index === 0
+        ? "old-representative.jpg"
+        : `${image.contentSha256}.jpg`,
+    }));
+    const exactCoupangPrewrite = await scalar(
+      db,
+      `select public.sellerpilot_service_bind_coupang_rep_prewrite(
+        $1,$2,$3,$4::jsonb
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangPrewriteImages),
+      ],
+    );
+    assert.equal(exactCoupangPrewrite.contract,"coupang_exact_rep_prewrite_v1");
+    await assert.rejects(
+      db.query(
+        `select public.sellerpilot_service_bind_coupang_rep_prewrite(
+          $1,$2,$3,$4::jsonb
+        )`,
+        [
+          exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+          JSON.stringify(exactCoupangPrewriteImages.map((image,index) =>
+            index === 0 ? { ...image,vendorPath: "tampered.jpg" } : image)),
+        ],
+      ),
+      /conflict/,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+          $1,$2,$3
+        )`,
+        [exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_service_begin_serverless_gateway_provider_mutation(
+          $1,$2,$3
+        )`,
+        [exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token],
+      ),
+      false,
+    );
+    const exactCoupangPostwriteImages = exactCoupangPrewriteImages.map(
+      (image,index) => index === 0 ? {
+        ...image,
+        cdnPath: `vendor_inventory/images/${exactCoupangRepresentativeSha}.jpg`,
+        vendorPath: `${exactCoupangRepresentativeSha}.jpg`,
+      } : image,
+    );
+    const coupangSnapshotDigest = (images) => createHash("sha256").update(
+      images.map((image) => [
+        image.imageOrder,image.imageType,image.cdnPath,image.vendorPath,
+      ].join("\u001f")).join("\u001e"),
+      "utf8",
+    ).digest("hex");
+    const exactCoupangResponse = {
+      ok: true,
+      channel: "coupang",
+      operation: "listing.update",
+      remoteId: "16356981734",
+      publicationIntent: "live",
+      publicationFulfilled: true,
+      publicationStateContract: "verified_remote_state_v1",
+      remoteState: {
+        verified: true,
+        visibility: "live",
+        providerStatus: "승인완료",
+        verifiedAt: new Date().toISOString(),
+        locale: "ko-KR",
+        fingerprint: exactCoupangFingerprint,
+        imageCount: 8,
+        evidence: {
+          version: "coupang_seller_product_inventory_v2",
+          identityVerified: true,
+          statusVerified: true,
+          localeVerified: true,
+          fingerprintVerified: true,
+          imageCountVerified: true,
+          publicationAssetBinding: {
+            contract: "sellerpilot_provider_asset_binding_v1",
+            sourceAssetBindingDigest: createHash("sha256")
+              .update(JSON.stringify(exactCoupangArguments.sellerpilotPublicationAssetBinding),"utf8")
+              .digest("hex"),
+            approvedManifestDigest: adoptionManifestDigest,
+            approvedDetailPageVersion: 1,
+            approvedDetailRoles: exactCoupangApprovedDetails.map((image) => image.role),
+            providerImageSurface: "gallery",
+            providerTransportRoles: exactCoupangTransport.map((image) => image.role),
+            providerDetailImageIdentities: exactCoupangApprovedDetails.map((image) => image.publicUrl),
+            providerImageDigest: createHash("sha256")
+              .update(JSON.stringify(exactCoupangApprovedDetails.map((image) => image.publicUrl)),"utf8")
+              .digest("hex"),
+          },
+        },
+        resources: {
+          sellerProductId: "16356981734",
+          vendorItemIds: ["95962393877"],
+        },
+      },
+      steps: [{
+        name: "coupang-exact-commerce-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotVerification: "COUPANG_EXACT_QA_COMMERCE_VERIFIED",
+          data: {
+            sellerItemId: 123456789,
+            amountInStock: 1,
+            salePrice: 5000,
+            onSale: true,
+          },
+        },
+      }, {
+        name: "listing-readback",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotCoupangExactRepresentativeReadback: {
+            contract: "coupang_exact_qa_representative_readback_v1",
+            sellerProductId: "16356981734",
+            vendorItemId: "95962393877",
+            role: "gallery-representative",
+            sourceBucket: "sellerpilot-ai",
+            sourceObjectPath: exactCoupangSourcePath,
+            sourceSha256: exactCoupangSourceSha,
+            normalizedObjectPath: exactCoupangRepresentativePath,
+            contentSha256: exactCoupangRepresentativeSha,
+            representativeImageCount: 1,
+            detailImageCount: 8,
+            remoteGalleryVerified: true,
+            providerPrewriteSnapshotSha256:
+              exactCoupangPrewrite.prewriteSnapshotSha256,
+            prewriteImages: exactCoupangPrewriteImages,
+            postwriteImages: exactCoupangPostwriteImages,
+            expectedContentSha256s:
+              exactCoupangTransport.map((image) => image.contentSha256),
+            providerReadbackSnapshotSha256:
+              coupangSnapshotDigest(exactCoupangPostwriteImages),
+            providerVendorBasenamesVerified: true,
+            providerRepresentativeAlreadyExpected: false,
+            providerRepresentativeChanged: true,
+            providerDetailImagesPreserved: true,
+          },
+        },
+      }],
+      safeMessage: "Coupang exact representative update verified.",
+    };
+    const tamperedRepresentative = structuredClone(exactCoupangResponse);
+    tamperedRepresentative.steps[1].data
+      .sellerpilotCoupangExactRepresentativeReadback.postwriteImages[0]
+      .vendorPath = "old-representative.jpg";
+    const vendorPathOnlyRepresentative = structuredClone(exactCoupangResponse);
+    const vendorPathOnlyEvidence = vendorPathOnlyRepresentative.steps[1].data
+      .sellerpilotCoupangExactRepresentativeReadback;
+    vendorPathOnlyEvidence.postwriteImages[0].cdnPath =
+      vendorPathOnlyEvidence.prewriteImages[0].cdnPath;
+    vendorPathOnlyEvidence.providerReadbackSnapshotSha256 =
+      coupangSnapshotDigest(vendorPathOnlyEvidence.postwriteImages);
+    const tamperedCommerce = structuredClone(exactCoupangResponse);
+    tamperedCommerce.steps[0].data.data.amountInStock = 2;
+    for (const [label,tamperedCompletion] of [
+      ["representative",tamperedRepresentative],
+      ["representative-transition",vendorPathOnlyRepresentative],
+      ["commerce",tamperedCommerce],
+    ]) {
+      await db.exec("begin");
+      try {
+        await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+            JSON.stringify(tamperedCompletion),
+          ],
+        );
+        assert.fail(`tampered Coupang ${label} completion succeeded`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error),/invalid|completion|listing/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    const wrongCoupangClaim = "aaaaaaaa-0000-4000-8000-000000000098";
+    for (const [label,workerHash,claimToken] of [
+      ["worker", "1".repeat(64), exactCoupangClaim.claim_token],
+      ["claim", exactTemuWorkerHash, wrongCoupangClaim],
+    ]) {
+      await db.exec("begin");
+      try {
+        await scalar(
+          db,
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            workerHash,exactCoupangClaim.id,claimToken,
+            JSON.stringify(exactCoupangResponse),
+          ],
+        );
+        assert.fail(`forged Coupang ${label} completion succeeded`);
+      } catch (error) {
+        if (error instanceof assert.AssertionError) throw error;
+        assert.match(String(error),/claim|token|completion|owned|invalid/i);
+      } finally {
+        await db.exec("rollback");
+      }
+    }
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [exactCoupangClaim.id],
+      ),
+      0,
+    );
+    const exactCoupangCompletion = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+        $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangResponse),
+      ],
+    );
+    assert.equal(exactCoupangCompletion.status,"completed");
+    const exactCoupangListingAfterFirstCompletion = await scalar(
+      db,
+      "select to_jsonb(listing) from sellerpilot_private.product_listings listing where id='7ffc6e46-3173-4695-9889-5fa1529765f1'",
+    );
+    for (const [label,workerHash,claimToken] of [
+      ["worker", "1".repeat(64), exactCoupangClaim.claim_token],
+      ["claim", exactTemuWorkerHash, wrongCoupangClaim],
+    ]) {
+      await assert.rejects(
+        db.query(
+          `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+          )`,
+          [
+            workerHash,exactCoupangClaim.id,claimToken,
+            JSON.stringify(exactCoupangResponse),
+          ],
+        ),
+        /claim|token|completion|owned|invalid/i,
+        `forged Coupang ${label} completion replay must fail`,
+      );
+    }
+    const exactCoupangReplay = await scalar(
+      db,
+      `select public.sellerpilot_service_complete_gateway_transaction(
+        $1,$2,$3,'succeeded',$4::jsonb,null,null,'[]'::jsonb,null,null
+      )`,
+      [
+        exactTemuWorkerHash,exactCoupangClaim.id,exactCoupangClaim.claim_token,
+        JSON.stringify(exactCoupangResponse),
+      ],
+    );
+    assert.equal(exactCoupangReplay.status,"completed");
+    assert.equal(exactCoupangReplay.replayed,true);
+    assert.deepEqual(
+      await scalar(
+        db,
+        "select to_jsonb(listing) from sellerpilot_private.product_listings listing where id='7ffc6e46-3173-4695-9889-5fa1529765f1'",
+      ),
+      exactCoupangListingAfterFirstCompletion,
+      "a receipt replay must not rewrite the exact Coupang listing projection",
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+        [exactCoupangClaim.id],
+      ),
+      1,
+    );
+    const persistedCoupangDiagnostic = await scalar(
+      db,
+      `select jsonb_build_object(
+        'helper',sellerpilot_private.coupang_exact_rep_response_valid(
+          job.id,job.response_payload),
+        'jobStatus',job.status,'completed',job.completed_at is not null,
+        'providerStarted',job.provider_mutation_started_at is not null,
+        'consumed',permit.consumed_at is not null,
+        'boundWorker',permit.bound_worker_token_id,
+        'boundClaim',permit.bound_claim_token,
+        'receipt',to_jsonb(receipt),
+        'prewriteSha',prewrite.prewrite_snapshot_sha256
+      ) value
+        from sellerpilot_private.channel_gateway_jobs job
+        join sellerpilot_private.exact_existing_update_permits permit
+          on permit.update_job_id=job.id
+        join sellerpilot_private.coupang_exact_rep_prewrites prewrite
+          on prewrite.permit_id=permit.permit_id
+        left join sellerpilot_private.gateway_completion_receipts receipt
+          on receipt.job_id=job.id
+       where job.id=$1`,
+      [exactCoupangClaim.id],
+    );
+    assert.equal(persistedCoupangDiagnostic.helper,true,
+      JSON.stringify(persistedCoupangDiagnostic));
+    assert.deepEqual(
+      (await db.query(
+        `select job.status,attempt.status as attempt_status,
+                listing.status as listing_status,listing.remote_visibility,
+                permit.consumed_at is not null as consumed,
+                (select count(*)::integer
+                   from sellerpilot_private.gateway_completion_receipts receipt
+                  where receipt.job_id=job.id) as receipt_count
+           from sellerpilot_private.channel_gateway_jobs job
+           join sellerpilot_private.channel_operation_attempts attempt
+             on attempt.id=job.attempt_id
+           join sellerpilot_private.product_listings listing on listing.id=job.listing_id
+           join sellerpilot_private.exact_existing_update_permits permit
+             on permit.update_job_id=job.id
+          where job.id=$1`,
+        [exactCoupangClaim.id],
+      )).rows,
+      [{
+        status: "succeeded",
+        attempt_status: "succeeded",
+        listing_status: "published",
+        remote_visibility: "live",
+        consumed: true,
+        receipt_count: 1,
+      }],
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("Temu pending activation patches the exact production chain without 310540 history", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(supabaseCompatibilityLayer);
+    await db.exec(`
+      create schema supabase_migrations;
+      create table supabase_migrations.schema_migrations (
+        version text primary key,
+        statements text[] not null default '{}'::text[],
+        name text
+      );
+    `);
+    const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
+    const migrationNames = (await readdir(migrationUrl))
+      .filter((name) => name.endsWith(".sql")
+        && name <= TEMU_PUBLICATION_RELEASE_MIGRATION
+        && name !== ELEVENST_SNAPSHOT_RECOVERY_MIGRATION)
+      .sort();
+    for (const name of migrationNames) {
+      if (name === LEGACY_SCOPE_RETIREMENT_MIGRATION) continue;
+      const source = await readFile(new URL(name, migrationUrl), "utf8");
+      let sql = name === "20260828210000_non_cs_release_integrity.sql"
+        ? withoutFinalStrictWorkerScopeFence(source)
+        : source;
+      if (name === TEMU_PUBLICATION_RELEASE_MIGRATION) {
+        assert.equal(
+          await scalar(
+            db,
+            `select to_regprocedure(
+              'public.sellerpilot_310540_listing_publication_verification_source(text,uuid,uuid)'
+            )`,
+          ),
+          null,
+        );
+        assert.deepEqual(
+          (await db.query(`
+            select
+              md5(pg_get_functiondef(
+                'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+              )) register_md5,
+              md5(pg_get_functiondef(to_regprocedure(
+                'public.sellerpilot_056700_listing_publication_verification_source_before_qoo10_s1(text,uuid,uuid)'
+              ))) source_md5,
+              md5(pg_get_functiondef(
+                'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)'::regprocedure
+              )) current_md5
+          `)).rows,
+          [{
+            register_md5: "ebca2a9602ffc003a80f68eeed874c99",
+            source_md5: "e3f30aa629b5a1a2bb4f46a3722ec115",
+            current_md5: "4765c255abb7e84d7054c56b4cb1fc3d",
+          }],
+          "the production-gap replay must reach the observed rolled-back preimage",
+        );
+        const registrarPatch = sql.match(
+          /do \$temu_pending_review_registrar\$[\s\S]*?\$temu_pending_review_registrar\$;/,
+        )?.[0];
+        assert.ok(registrarPatch);
+        await db.exec(registrarPatch);
+        assert.equal(
+          await scalar(
+            db,
+            `select md5(pg_get_functiondef(
+              'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+            ))`,
+          ),
+          "ffc6745ae02af71c199772a685746d37",
+          "the earlier 133000 registrar statement must produce statement 63's exact preimage",
+        );
+      }
+      await db.exec(withoutUnavailableExtensions(sql));
+      if (!UNRECORDED_QOO10_SCHEMA_MIGRATIONS.has(name)) {
+        const version = name.match(/^\d+/)?.[0];
+        assert.ok(version);
+        await db.query(
+          `insert into supabase_migrations.schema_migrations (
+             version, statements, name
+           ) values ($1, '{}'::text[], $2)`,
+          [version, name.replace(/^\d+_/, "").replace(/\.sql$/, "")],
+        );
+      }
+    }
+    assert.equal(
+      await scalar(
+        db,
+        `select count(*) from supabase_migrations.schema_migrations
+          where version in ('20260831054000','20260831133000')`,
+      ),
+      1,
+      "133000 must apply without fabricating or repairing 310540 history",
+    );
+    assert.deepEqual(
+      (await db.query(`
+        select
+          strpos(pg_get_functiondef(to_regprocedure(
+            'public.sellerpilot_056700_listing_publication_verification_source_before_qoo10_s1(text,uuid,uuid)'
+          )), '''listing.create'', ''listing.update'', ''listing.activate''') > 0
+            source_patched,
+          md5(pg_get_functiondef(
+            'public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)'::regprocedure
+          )) current_md5,
+          strpos(pg_get_functiondef(
+            'sellerpilot_private.register_pending_listing_publication_review(uuid)'::regprocedure
+          ), '''listing.create'', ''listing.update'', ''listing.activate''') > 0
+            registrar_patched
+      `)).rows,
+      [{
+        source_patched: true,
+        current_md5: "4765c255abb7e84d7054c56b4cb1fc3d",
+        registrar_patched: true,
+      }],
+      "only the exact gap predecessor and private sources may be patched",
     );
   } finally {
     await db.close();
@@ -11242,7 +15861,54 @@ test("static egress gate closes history and pre-gate reads without touching repl
         && name !== QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         && name !== QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
         && name !== QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+        && name !== TEMU_PUBLICATION_RELEASE_MIGRATION
+        && name !== QOO10_EXACT_LOCALIZATION_V2_MIGRATION
+        && name !== QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
+        && name !== SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
+        && name !== SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
+        && name !== EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION
+        && name !== QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION
+        && name !== EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION
+        && name !== QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
+        && name !== QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
+        && name !== QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
+        && name !== SMARTSTORE_STATIC_EGRESS_RESTORATION_MIGRATION
         && name !== COMPETITOR_IDENTITY_LINEAGE_MIGRATION
+        && name !== SMARTSTORE_NONSTATIC_EGRESS_MIGRATION
+        && name !== TEMU_EXACT_CABLE_MIGRATION
+        && name !== COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
+        && name !== EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION
+        && name !== EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION
+        && name !== EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
+        && name !== EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
+        && name !== EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
+        && name !== TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
+        && name !== TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
+        && name !== TEMU_EXACT_EXISTING_UPDATE_MIGRATION
+        && name !== LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
+        && name !== COUPANG_EXACT_REPRESENTATIVE_MIGRATION
+        && name !== QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
+        && name !== QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
+        && name !== QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
+        && name !== EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        && name !== EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
+        && name !== QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
+        && name !== QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
+        && name !== SHOPEE_SG_EXACT_UPDATE_MIGRATION
+        && name !== SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
+        && name !== EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
+        && name !== EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
+        && name !== LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
+        && name !== EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
+        && name !== LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
+        && name !== EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
+        && name !== EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
+        && name !== EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
+        && name !== EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
+        && name !== EBAY_EXACT_PREARM_IMAGES_MIGRATION
+        && name !== EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION
+        && name !== QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION
+        && name !== EBAY_ATOMIC_REARMED_PERMIT_LINEAGE_MIGRATION
         && name !== elevenstSnapshotRecoveryMigrationName)
       .sort();
     for (const name of migrationNames) {
@@ -12922,11 +17588,15 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let shopeeIdentityMigration;
     let lazadaSafeOauthMigration;
     let shopeeStaticEgressMigration;
+    let smartstoreNonstaticEgressMigration;
     let lazadaProviderMarkerMigration;
     let lazadaOauthReauthorizationMigration;
     let qoo10StaleVerifierRetirementMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
+      if (name === SMARTSTORE_NONSTATIC_EGRESS_MIGRATION) {
+        smartstoreNonstaticEgressMigration = source;
+      }
       if (name === legacyEbayDiagnosticMigrationName) {
         legacyEbayDiagnosticMigration = source;
       } else if (name === providerIdentityCertificationMigrationName) {
@@ -12947,11 +17617,59 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         name === QOO10_EXACT_S1_CLAIM_PRIORITY_MIGRATION
         || name === QOO10_EXACT_S1_PROVIDER_BOUNDARY_MIGRATION
         || name === QOO10_FAILED_PREPROVIDER_PERMIT_RETIREMENT_MIGRATION
+        || name === TEMU_PUBLICATION_RELEASE_MIGRATION
+        || name === QOO10_EXACT_LOCALIZATION_V2_MIGRATION
+        || name === QOO10_EXACT_CLOSED_GATE_REACHABILITY_MIGRATION
+        || name === SMARTSTORE_EXACT_CLOSED_GATE_PERMIT_MIGRATION
+        || name === SMARTSTORE_REPRESENTATIVE_FILENAME_MIGRATION
+        || name === EXACT_EXISTING_CLOSED_GATE_PERMIT_MIGRATION
+        || name === QOO10_RELEASE_STATUS_RECORD_INITIALIZATION_MIGRATION
+        || name === EBAY_CURRENT_CREDENTIAL_FENCE_MIGRATION
+        || name === COUPANG_EXACT_PRE_GATEWAY_RECONCILIATION_MIGRATION
+        || name === QOO10_NO_REMOTE_EFFECT_RECONCILIATION_MIGRATION
+        || name === QOO10_NO_EFFECT_LEGACY_PAYLOAD_MIGRATION
+        || name === QOO10_PARTIAL_MANUAL_RECONCILIATION_MIGRATION
+        || name === TEMU_EXACT_CABLE_MIGRATION
+        || name === COUPANG_UNCLAIMED_STATIC_EGRESS_RECONCILIATION_MIGRATION
+        || name === EBAY_SERVERLESS_LISTING_UPDATE_MIGRATION
+        || name === EBAY_DETERMINISTIC_NO_EFFECT_RETRY_MIGRATION
+        || name === EBAY_NO_EFFECT_TERMINAL_PROOF_CORRECTION_MIGRATION
+        || name === EBAY_EXACT_PRE_GATEWAY_RETRY_MIGRATION
+        || name === EBAY_EXACT_CREDENTIAL_ROTATION_MIGRATION
+        || name === TEMU_EXACT_EXISTING_ACTIVE_ADOPTION_MIGRATION
+        || name === TEMU_EXACT_CREDENTIAL_CERTIFICATION_MIGRATION
+        || name === TEMU_EXACT_EXISTING_UPDATE_MIGRATION
+        || name === LAZADA_EXACT_EXISTING_UPDATE_MIGRATION
+        || name === COUPANG_EXACT_REPRESENTATIVE_MIGRATION
+        || name === QOO10_ALREADY_LIVE_ADOPTION_MIGRATION
+        || name === QOO10_ADOPTED_LOCALIZATION_UPDATE_MIGRATION
+        || name === QOO10_ADOPTION_CREDENTIAL_LINEAGE_FIX_MIGRATION
+        || name === EBAY_EXACT_V101_CREDENTIAL_ROTATION_MIGRATION
+        || name === EBAY_EXACT_V101_CONTENT_CONTRACT_MIGRATION
+        || name === QOO10_LOCALIZATION_V2_SOURCE_COMPILE_FIX_MIGRATION
+        || name === QOO10_ADOPTED_LOCALIZATION_SHORT_RPC_MIGRATION
+        || name === SHOPEE_SG_EXACT_UPDATE_MIGRATION
+        || name === SMARTSTORE_EXACT_STOCK_ONE_MIGRATION
+        || name === EBAY_EXACT_CURRENT_CREDENTIAL_LINEAGE_MIGRATION
+        || name === EBAY_EXACT_DYNAMIC_CREDENTIAL_REARM_MIGRATION
+        || name === LAZADA_EXACT_DUAL_BLOCKER_REAUTHORIZATION_MIGRATION
+        || name === EBAY_EXACT_STABLE_CONTENT_FINGERPRINT_MIGRATION
+        || name === LAZADA_EXACT_THREE_BLOCKER_RECOVERY_MIGRATION
+        || name === EBAY_EXACT_SERVER_REPRESENTATIVE_MIGRATION
+        || name === EBAY_EXACT_CURRENT_ATTEMPT_IDENTITY_MIGRATION
+        || name === EBAY_EXACT_ROTATING_CREDENTIAL_LINEAGE_MIGRATION
+        || name === EBAY_EXACT_CURRENT_ATTEMPT_PROOF_MIGRATION
+        || name === EBAY_EXACT_PREARM_IMAGES_MIGRATION
+        || name === EBAY_EXACT_FRESH_FAILED_REARM_MIGRATION
+        || name === QOO10_ADOPTED_ATOMIC_ENQUEUE_BINDING_MIGRATION
+        || name === EBAY_ATOMIC_REARMED_PERMIT_LINEAGE_MIGRATION
       ) {
         // This fixture deliberately applies the 204000 Lazada wrapper after
         // the exact-S1 recovery migration, unlike chronological production.
-        // The 571/572 exact-chain migrations are covered by the chronological
-        // full replay and must not bless this synthetic wrapper postimage.
+        // The 571/572 exact-chain, later Temu release, and exact no-effect
+        // migrations are covered by the chronological full replay and must not
+        // bless this synthetic wrapper or stale-verifier postimage before 57000
+        // is applied below.
       } else {
         await db.exec(withoutUnavailableExtensions(source));
       }
@@ -12961,10 +17679,13 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     assert.equal(typeof shopeeIdentityMigration, "string");
     assert.equal(typeof lazadaSafeOauthMigration, "string");
     assert.equal(typeof shopeeStaticEgressMigration, "string");
+    assert.equal(typeof smartstoreNonstaticEgressMigration, "string");
     assert.equal(typeof lazadaProviderMarkerMigration, "string");
     assert.equal(typeof lazadaOauthReauthorizationMigration, "string");
     assert.equal(typeof qoo10StaleVerifierRetirementMigration, "string");
-    await attestPublicationRelease(db);
+    await attestPublicationRelease(db, PUBLICATION_RELEASE_SHA, [
+      "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    ]);
     await activatePublicationRuntimeRelease(db);
     assert.equal(
       (await scalar(
@@ -12998,6 +17719,14 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       `select public.sellerpilot_rotate_credential(
         'temu', 'production',
         '{"app_key":"temu-app","app_secret":"temu-secret","access_token":"temu-access"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
+    const smartstoreCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'smartstore', 'production',
+        '{"client_id":"smartstore-client","client_secret":"smartstore-secret"}'::jsonb,
         now() + interval '365 days', 180, 30, 0
       )`,
     );
@@ -13609,12 +18338,13 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
 
     await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    await db.exec(withoutUnavailableExtensions(smartstoreNonstaticEgressMigration));
     await db.exec(withoutUnavailableExtensions(lazadaProviderMarkerMigration));
     await db.exec(withoutUnavailableExtensions(lazadaOauthReauthorizationMigration));
     await db.exec(withoutUnavailableExtensions(qoo10StaleVerifierRetirementMigration));
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: false },
+      { coupang: false, elevenst: false, shopee: false, temu: false },
     );
     const shopeeFixedEgressCredentialId = await scalar(
       db,
@@ -13764,6 +18494,24 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
         where channel = 'shopee'`,
     );
 
+    // This intentionally non-chronological fixture skips the later Temu
+    // publication release migration. Re-attest the seven-channel release at
+    // the exact point where its legacy Temu fixed-egress probe crosses the
+    // listing mutation claim fence; credential/identity setup above may have
+    // conservatively closed the global gate.
+    await attestPublicationRelease(db, PUBLICATION_RELEASE_SHA, [
+      "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    ]);
+    await activatePublicationRuntimeRelease(db);
+    assert.equal(
+      (await scalar(
+        db,
+        "select public.sellerpilot_service_set_listing_mutation_release_gate(true,$1)",
+        [PUBLICATION_RELEASE_SHA],
+      )).effectiveOpen,
+      true,
+    );
+
     const temuJobId = await scalar(
       db,
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -13855,6 +18603,52 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
       [temuJobId],
     );
 
+    await scalar(db, "select set_config('request.headers', '{}', false)");
+    const smartstoreNonstaticJobs = new Map(
+      (await db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs (
+           credential_id, channel, operation, environment,
+           request_payload, created_by, created_at
+         ) values
+           ($1, 'smartstore', 'listing.update', 'production',
+            '{"arguments":{"listingId":"smartstore-nonstatic-listing-probe"}}'::jsonb,
+            $2, clock_timestamp() + interval '10 minutes'),
+           ($1, 'smartstore', 'orders.list', 'production',
+            '{"arguments":{"fromDate":"2026-08-30","toDate":"2026-08-31"}}'::jsonb,
+            $2, clock_timestamp() + interval '11 minutes'),
+           ($1, 'smartstore', 'inquiries.reply', 'production',
+            '{"arguments":{"kind":"customer","inquiryNo":"90001","reply":"nonstatic claim probe"}}'::jsonb,
+            $2, clock_timestamp() + interval '12 minutes')
+         returning id::text, operation`,
+        [smartstoreCredentialId, ADMIN_ID],
+      )).rows.map((row) => [row.id, row.operation]),
+    );
+    for (let index = 0; index < 3; index += 1) {
+      const claim = await scalar(
+        db,
+        "select public.sellerpilot_claim_serverless_gateway_job($1, $2)",
+        [serverlessHash, `test/smartstore-nonstatic-${index + 1}`],
+      );
+      assert.equal(claim.channel, "smartstore");
+      assert.equal(smartstoreNonstaticJobs.get(claim.id), claim.operation);
+      smartstoreNonstaticJobs.delete(claim.id);
+      await db.query(
+        `update sellerpilot_private.channel_gateway_jobs
+            set status = 'cancelled', worker_token_id = null,
+                claim_token = null, lease_expires_at = null,
+                completed_at = clock_timestamp(),
+                error_message = 'Smartstore non-static claim fixture completed.',
+                updated_at = clock_timestamp()
+          where id = $1 and status = 'running'`,
+        [claim.id],
+      );
+    }
+    assert.equal(
+      smartstoreNonstaticJobs.size,
+      0,
+      "Smartstore listing update, read, and CS jobs must all claim without a static-egress header",
+    );
+
     const ordersJobId = await scalar(
       db,
       `insert into sellerpilot_private.channel_gateway_jobs (
@@ -13901,7 +18695,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     );
     assert.deepEqual(
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      { coupang: false, elevenst: false, shopee: false, smartstore: false, temu: true },
+      { coupang: false, elevenst: false, shopee: false, temu: true },
     );
   } finally {
     await db.close();
@@ -14535,12 +19329,20 @@ test("Coupang bounded reads drain nine jobs per window and opportunistic reaping
       [capacityRaceId],
     );
 
-    const reaperDefinition = await scalar(
-      db,
-      "select pg_get_functiondef('public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer)'::regprocedure)",
-    );
-    assert.match(reaperDefinition, /pg_try_advisory_xact_lock\(193674993, 821065043\)/i);
-    assert.doesNotMatch(reaperDefinition, /pg_advisory_xact_lock\(193674993, 821065042\)/i);
+    const [reaperDefinition, reaperPreTemuDefinition] = await Promise.all([
+      scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer)'::regprocedure)",
+      ),
+      scalar(
+        db,
+        "select pg_get_functiondef('public.sellerpilot_133000_reap_gateway_before_temu_publication(integer)'::regprocedure)",
+      ),
+    ]);
+    assert.match(reaperPreTemuDefinition, /pg_try_advisory_xact_lock\(193674993, 821065043\)/i);
+    assert.doesNotMatch(reaperPreTemuDefinition, /pg_advisory_xact_lock\(193674993, 821065042\)/i);
+    assert.match(reaperDefinition, /sellerpilot_133000_reap_gateway_before_temu_publication/);
+    assert.match(reaperDefinition, /finalize_reaped_temu_publication_jobs/);
 
     // PGlite exposes one backend, so model the try-lock loser by returning the
     // reaper's exact zero-work payload. The claimant must ignore that outcome
@@ -16345,7 +21147,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
   const db = new PGlite();
   const migrationName =
     "20260830183000_allow_fresh_lazada_oauth_past_safe_refresh_reconciliation.sql";
-  const blockerJobId = "a976573f-a150-4061-a1c6-5e8e4880ba2b";
+  const blockerJobId = "b976573f-a150-4061-a1c6-5e8e4880ba2b";
   const tokenHash = "7".repeat(64);
   const staleCode = "stale-unclaimed-lazada-oauth-code";
   const failedCode = "fresh-definite-failure-lazada-code";

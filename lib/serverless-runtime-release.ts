@@ -15,6 +15,7 @@ import {
 const releasePattern = /^[0-9a-f]{40}$/;
 const receiptPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const candidateDeploymentHostPattern = /^sellerpilot-global-[a-z0-9]+-project-e59d\.vercel\.app$/;
+const SELLERPILOT_VERCEL_PROJECT_ID = "prj_9fRYsoTT4fD6XVEMe4NX9mpPlljA";
 export const VERCEL_PROTECTION_BYPASS_HEADER = "x-vercel-protection-bypass";
 const VERCEL_TRUSTED_OIDC_HEADER = "x-vercel-trusted-oidc-idp-token";
 const internalSchedulePaths = [
@@ -54,12 +55,10 @@ export type ServerlessRuntimeReleaseResult = {
 };
 
 export type ServerlessRuntimeCandidateCanaryResult = {
-  ok: true;
   release: string;
-  canaries: {
-    gateway: number;
-    schedules: Array<{ path: string; status: number }>;
-  };
+  claimed: 0;
+  processed: 0;
+  executed: false;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -179,6 +178,9 @@ export function candidateAutomationBypassAuthorized(
 export async function runCandidateServerlessRuntimeCanary(input: {
   origin: string;
   vercelUrl: string;
+  vercelProjectId: string;
+  vercelEnvironment: string;
+  vercelTargetEnvironment: string;
   release: string;
   cronSecret: string;
   fetchImpl?: typeof fetch;
@@ -187,6 +189,11 @@ export async function runCandidateServerlessRuntimeCanary(input: {
   const release = input.release.trim().toLowerCase();
   if (!releasePattern.test(release)) {
     throw new ServerlessRuntimeReleaseError("runtime_release_invalid", 503);
+  }
+  if (input.vercelProjectId.trim() !== SELLERPILOT_VERCEL_PROJECT_ID
+      || input.vercelEnvironment.trim() !== "production"
+      || input.vercelTargetEnvironment.trim() !== "production") {
+    throw new ServerlessRuntimeReleaseError("runtime_candidate_project_required", 409);
   }
   const cronSecret = input.cronSecret.trim();
   if (cronSecret.length < 16) {
@@ -215,7 +222,7 @@ export async function runCandidateServerlessRuntimeCanary(input: {
   if (!deploymentProtectionToken) {
     throw new ServerlessRuntimeReleaseError("runtime_candidate_self_auth_unavailable", 503);
   }
-  const canaries = await runNoWorkCanaries({
+  await runNoWorkCanaries({
     origin: parsedOrigin.origin,
     release,
     bearer: deriveSupabaseInternalScheduleBearer(cronSecret),
@@ -223,9 +230,10 @@ export async function runCandidateServerlessRuntimeCanary(input: {
     fetchImpl: input.fetchImpl ?? fetch,
   });
   return {
-    ok: true,
     release,
-    canaries,
+    claimed: 0,
+    processed: 0,
+    executed: false,
   };
 }
 

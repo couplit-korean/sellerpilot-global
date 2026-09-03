@@ -23,6 +23,14 @@ export const shopeeSgListingCreateContextContract =
 export const shopeeSgPreparedCreateEvidenceContract =
   "sellerpilot_shopee_sg_prepared_create_evidence_v1" as const;
 
+export const shopeeSgExactCreateIdentity = Object.freeze({
+  productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
+  sku: "QA-20260823-CC-001",
+  merchantId: "5511564",
+  shopId: "1719148844",
+  market: "SG",
+});
+
 export const coinbaseExchangeRateDocumentationUrl =
   "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates";
 const coinbaseKrwExchangeRateEndpoint =
@@ -186,8 +194,13 @@ export function shopeeSgListingCreateContextFromArguments(
   if (declaredSgd === null || declaredUsd === null
       || Math.abs(declaredSgd - targetPriceSgd) > 0.000_001
       || Math.abs(declaredUsd - globalPriceUsd) > 0.000_001) return null;
-  if (sku === "QA-20260823-CC-001" && (
-    sourcePriceKrw !== 5_000
+  const exactCreateSignalled = productId === shopeeSgExactCreateIdentity.productId
+    || sku === shopeeSgExactCreateIdentity.sku;
+  if (exactCreateSignalled && (
+    productId !== shopeeSgExactCreateIdentity.productId
+    || sku !== shopeeSgExactCreateIdentity.sku
+    || targetId !== shopeeSgExactCreateIdentity.shopId
+    || sourcePriceKrw !== 5_000
     || quantity !== 1
     || categoryId !== shopeeSgCableClipCategory.id
     || !sameOrderedValues(categoryPath, shopeeSgCableClipCategory.path)
@@ -211,6 +224,43 @@ export function shopeeSgListingCreateContextFromArguments(
     categoryConfirmedAt,
     rate,
   };
+}
+
+/**
+ * Binds the exact QA create to the provider-selected merchant and shop
+ * credentials. Request arguments cannot select a different provider account:
+ * those identifiers are read only from the credentials selected by the
+ * gateway immediately before provider access.
+ */
+export function assertShopeeSgExactCreateProviderBinding(input: {
+  expectation: ShopeeSgListingCreateExpectation;
+  merchantCredential: UnknownRecord;
+  shopCredential: UnknownRecord;
+}) {
+  const { context } = input.expectation;
+  const exactCreateSignalled = context.productId === shopeeSgExactCreateIdentity.productId
+    || context.sku === shopeeSgExactCreateIdentity.sku;
+  if (!exactCreateSignalled) return null;
+  if (context.productId !== shopeeSgExactCreateIdentity.productId
+      || context.sku !== shopeeSgExactCreateIdentity.sku
+      || context.market !== shopeeSgExactCreateIdentity.market
+      || context.targetId !== shopeeSgExactCreateIdentity.shopId
+      || exactText(input.merchantCredential.merchant_id)
+        !== shopeeSgExactCreateIdentity.merchantId
+      || exactText(input.shopCredential.shop_id) !== shopeeSgExactCreateIdentity.shopId) {
+    throw new Error("SHOPEE_SG_EXACT_CREATE_PROVIDER_BINDING_MISMATCH");
+  }
+  return shopeeSgExactCreateIdentity;
+}
+
+export function shopeeSgExactCreateRequested(argumentsValue: UnknownRecord) {
+  const context = recordValue(argumentsValue.sellerpilotShopeeSgCreateContext);
+  const body = recordValue(argumentsValue.body);
+  const publish = recordValue(argumentsValue.publish);
+  const item = recordValue(publish.item);
+  return exactText(context.productId).toLowerCase() === shopeeSgExactCreateIdentity.productId
+    || [context.sku, body.global_item_sku, item.item_sku]
+      .some((value) => exactText(value) === shopeeSgExactCreateIdentity.sku);
 }
 
 /**
@@ -582,7 +632,7 @@ export function shopeeSgExpectedCategoryPathVerified(
 ) {
   const path = shopeeExactGlobalCategoryPath(remoteData, context.categoryId);
   if (!path || !sameOrderedValues(path.names, context.categoryPath)) return null;
-  if (context.sku === "QA-20260823-CC-001"
+  if (context.sku === shopeeSgExactCreateIdentity.sku
       && (!sameOrderedValues(path.ids, shopeeSgCableClipCategory.ids)
         || !sameOrderedValues(path.names, shopeeSgCableClipCategory.path))) return null;
   return path;

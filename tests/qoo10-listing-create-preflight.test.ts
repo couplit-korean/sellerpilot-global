@@ -15,7 +15,9 @@ import {
 const PRODUCT_ID = "10000000-0000-4000-8000-000000000001";
 const ATTEMPT_ID = "20000000-0000-4000-8000-000000000001";
 const CLAIM_ID = "30000000-0000-4000-8000-000000000001";
-const SKU = "QA-20260823-CC-001";
+// The exact CC-001 SKU already owns remote 1217336970 and is update-only.
+// Generic create-contract coverage must use a distinct fixture identity.
+const SKU = "QA-20260823-CF-002";
 const ITEM_CODE = "1234567890";
 const TEST_ITEM_CODE = "1098765432";
 const BI_CONTENTS_NO = "8461402963";
@@ -584,7 +586,7 @@ test("admin create route injects the server-owned Qoo10 product/SKU/JPY/stock co
   const source = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const contextIndex = source.indexOf("buildQoo10ListingCreateContext({");
   const bindingIndex = source.indexOf("sellerpilotQoo10CreateContext: qoo10CreateContext");
-  const fingerprintIndex = source.indexOf("const fingerprintArguments =");
+  const fingerprintIndex = source.indexOf("let fingerprintArguments =");
   assert.ok(contextIndex > 0);
   assert.ok(bindingIndex > contextIndex);
   assert.ok(fingerprintIndex > bindingIndex);

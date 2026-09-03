@@ -269,6 +269,15 @@ test("CS route accepts one durable reply job and exposes delivery polling", () =
   assert.match(route, /sellerpilot_get_inquiry_reply_delivery/);
   assert.match(route, /status: 202/);
   assert.match(route, /accepted: true/);
+  assert.match(route, /export const runtime = "nodejs"/);
+  assert.match(
+    route,
+    /function noStoreAdminError\(response: NextResponse\)[\s\S]*response\.clone\(\)[\s\S]*headers\.set\("cache-control", noStoreHeaders\["cache-control"\]\)/,
+  );
+  assert.equal(
+    route.match(/if \(isAdminApiError\(admin\)\) return noStoreAdminError\(admin\);/g)?.length,
+    2,
+  );
   assert.doesNotMatch(route, /executeInquiryReplyViaChannelGateway/);
   assert.doesNotMatch(route, /executeChannelOperation/);
   assert.doesNotMatch(route, /sellerpilot_update_ticket/);

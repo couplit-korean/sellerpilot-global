@@ -58,10 +58,26 @@ const supportedProductFields = new Set([
   "ProductNotification",
 ]);
 
-const supportedNoticeCodes = new Set(["11800", "11905", "23760413", "23759100", "23756033"]);
+const generalProductNoticeCodes = new Set(["11800", "11905", "23760413", "23759100", "23756033"]);
 const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"]);
 const verifiedSimpleListingCategoryId = "1341821";
-const placeholderValue = /^(?:알\s*수\s*없음|모름|미정|unknown|n\/?a|none|null|undefined|-+)$/iu;
+export const elevenstProcessedFoodCategoryId = "1346631";
+export const elevenstProcessedFoodNoticeType = "891031";
+export const elevenstProcessedFoodNotificationFields = [
+  { code: "176400445", label: "생산자 및 소재지 (수입품의 경우 생산자, 수입자 및 제조국)" },
+  { code: "176398001", label: "제조연월일, 소비기한 또는 품질유지기한" },
+  { code: "42154823", label: "수입식품 해당 시 수입신고 문구" },
+  { code: "23757260", label: "유전자변형식품 표시" },
+  { code: "23757095", label: "영양성분" },
+  { code: "176312674", label: "소비자안전을 위한 주의사항" },
+  { code: "176317774", label: "제품명" },
+  { code: "23756754", label: "소비자상담 관련 전화번호" },
+  { code: "23757245", label: "원재료명 (원산지 포함) 및 함량" },
+  { code: "42155152", label: "포장단위별 내용물의 용량(중량), 수량" },
+  { code: "23757000", label: "식품의 유형" },
+] as const;
+const processedFoodNoticeCodes = new Set(elevenstProcessedFoodNotificationFields.map((field) => field.code));
+const placeholderValue = /^(?:알\s*수\s*없음|모름|미정|미기재|미확인|확인\s*필요|판매자\s*확인\s*필요|tbd|unknown|not\s*provided|n\/?a|none|null|undefined|-+)$/iu;
 
 export const elevenstListingUpdateFields = [
   "prdNm",
@@ -171,12 +187,15 @@ function validateCertificationGroups(product: Record<string, unknown>) {
   }
 }
 
-function validateProductNotification(product: Record<string, unknown>) {
+function validateProductNotification(product: Record<string, unknown>, categoryId: string) {
   const notification = object(product.ProductNotification, "ProductNotification");
   if (Object.keys(notification).some((key) => !["type", "item"].includes(key))) {
     throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
   }
-  if (text(notification, "type", 20) !== "891045") throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
+  const processedFood = categoryId === elevenstProcessedFoodCategoryId;
+  const expectedType = processedFood ? elevenstProcessedFoodNoticeType : "891045";
+  const supportedNoticeCodes = processedFood ? processedFoodNoticeCodes : generalProductNoticeCodes;
+  if (text(notification, "type", 20) !== expectedType) throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
   const items = notification.item;
   if (!Array.isArray(items) || items.length !== supportedNoticeCodes.size) {
     throw new Error("ELEVENST_NOTICE_CONTRACT_UNVERIFIED");
@@ -195,11 +214,10 @@ function validateProductNotification(product: Record<string, unknown>) {
 }
 
 /**
- * Validate only the 11st simple, non-regulated general-product contract that
- * has an observed successful create/readback path for official leaf 1341821.
- * Category-specific options, certifications, notices, and delivery modes stay
- * blocked until their exact provider metadata is supplied; this function never
- * fills those values in or reuses this leaf's no-certification declaration.
+ * Validate the exact contracts verified from 11st metadata: the simple
+ * non-regulated general-product leaf 1341821 and processed-food leaf 1346631.
+ * Other category-specific options, certifications, notices, and delivery modes
+ * remain blocked until their exact provider metadata is supplied.
  */
 export function validateElevenstListingProduct(value: unknown): Record<string, unknown> {
   const product = object(value, "product");
@@ -209,7 +227,7 @@ export function validateElevenstListingProduct(value: unknown): Record<string, u
   exactCode(product, "selMthdCd", ["01"]);
   const categoryId = text(product, "dispCtgrNo", 20);
   if (!/^\d{7,12}$/u.test(categoryId)) throw new Error("ELEVENST_CONTRACT_FIELD_INVALID:dispCtgrNo");
-  if (categoryId !== verifiedSimpleListingCategoryId) {
+  if (![verifiedSimpleListingCategoryId, elevenstProcessedFoodCategoryId].includes(categoryId)) {
     throw new Error("ELEVENST_CATEGORY_CONTRACT_UNVERIFIED");
   }
   exactCode(product, "prdTypCd", ["01"]);
@@ -248,7 +266,7 @@ export function validateElevenstListingProduct(value: unknown): Record<string, u
   integerText(product, "exchDlvCst", { min: 0, max: 9_999_990 });
   knownText(product, "asDetail", 1_000);
   knownText(product, "rtngExchDetail", 1_000);
-  validateProductNotification(product);
+  validateProductNotification(product, categoryId);
 
   return product;
 }

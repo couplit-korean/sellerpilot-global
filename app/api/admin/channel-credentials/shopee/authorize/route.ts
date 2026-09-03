@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { createClient } from "@supabase/supabase-js";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
@@ -11,6 +11,12 @@ import {
   ChannelGatewayReconciliationRequiredError,
   exchangeOAuthViaChannelGateway,
 } from "../../../../../../lib/channels/gateway";
+import {
+  configuredServerlessStaticEgressChannels,
+  databaseServerlessStaticEgressAllows,
+  hasServerlessStaticEgressFor,
+  SERVERLESS_STATIC_EGRESS_REQUIRED,
+} from "../../../../../../lib/channels/serverless-static-egress";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -43,6 +49,65 @@ function canonicalTimestamp(value: string | null, fallback: string) {
   if (!value) return fallback;
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : fallback;
+}
+
+async function shopeeStaticEgressReady(serviceClient: SupabaseClient) {
+  const { data, error } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_static_egress_status",
+  );
+  return !error
+    && hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"])
+    && databaseServerlessStaticEgressAllows(data, "shopee");
+}
+
+async function shopeeGatewayWorkerReady(serviceClient: SupabaseClient) {
+  const { data, error } = await serviceClient.rpc(
+    "sellerpilot_service_serverless_cs_wakeup_status",
+  );
+  const runtimeState = data
+    && typeof data === "object"
+    && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : {};
+  return !error
+    && runtimeState.configured === true
+    && runtimeState.active === true;
+}
+
+function shopeeStaticEgressBlocked(message: string) {
+  return NextResponse.json({
+    ok: false,
+    manualRequired: true,
+    externalActionRequired: true,
+    staticEgressReady: false,
+    blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
+    mode: "static_egress_required",
+    message,
+  }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+function shopeeGatewayWorkerBlocked(message: string) {
+  return NextResponse.json({
+    ok: false,
+    operatorActionRequired: true,
+    workerReady: false,
+    blockedReason: "SERVERLESS_WORKER_REQUIRED",
+    mode: "serverless_worker_required",
+    message,
+  }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
+async function shopeeOAuthGatewayBlocked(
+  serviceClient: SupabaseClient,
+  input: { staticEgressMessage: string; workerMessage: string },
+) {
+  const [staticEgressReady, workerReady] = await Promise.all([
+    shopeeStaticEgressReady(serviceClient),
+    shopeeGatewayWorkerReady(serviceClient),
+  ]);
+  if (!staticEgressReady) return shopeeStaticEgressBlocked(input.staticEgressMessage);
+  if (!workerReady) return shopeeGatewayWorkerBlocked(input.workerMessage);
+  return null;
 }
 
 function oauthStartResponse(
@@ -113,6 +178,13 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+  if (oauthCode) {
+    const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
+      staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 다시 시작해 주세요.",
+      workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 승인 코드를 대기열에 넣지 않았습니다. 작업자 상태를 확인한 뒤 OAuth 승인을 다시 시작해 주세요.",
+    });
+    if (blocked) return blocked;
+  }
   const metadata = credentialId && Array.isArray(credentialRows)
     ? credentialRows.find((row) => row && typeof row === "object" && "id" in row && row.id === credentialId)
     : null;
@@ -174,6 +246,13 @@ export async function POST(request: NextRequest) {
   const partnerKey = textValue(incoming, "partner_key") || textValue(previousSecret, "partner_key");
   if (!partnerId || !partnerKey) {
     return NextResponse.json({ message: "Live Partner ID와 Live Partner Key가 필요합니다." }, { status: 400 });
+  }
+  if (parsed.data.startOAuth) {
+    const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
+      staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 시작해 주세요.",
+      workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 판매자 승인을 시작하지 않았습니다. 작업자 상태를 확인해 주세요.",
+    });
+    if (blocked) return blocked;
   }
   const nextSecret: Record<string, unknown> = {
     ...previousSecret,

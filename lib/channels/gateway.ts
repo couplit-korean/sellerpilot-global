@@ -256,17 +256,25 @@ export async function executeViaChannelGateway(input: {
       throw new ChannelGatewayInProgressError(jobId, effectiveAttemptId, "CHANNEL_GATEWAY_IN_PROGRESS", effectiveListingId);
     }
   } else if (input.listingId) {
-    if (!input.attemptId || !["listing.create", "listing.update", "listing.stop"].includes(input.operation)) {
+    if (!input.attemptId || !["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(input.operation)) {
       throw new Error("CHANNEL_GATEWAY_LISTING_BINDING_INVALID");
     }
-    const { data, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_service_enqueue_listing_gateway_job", {
-      p_listing_id: input.listingId,
-      p_credential_id: input.credentialId,
-      p_attempt_id: input.attemptId,
-      p_channel: input.channel,
-      p_operation: input.operation,
-      p_request_payload: { arguments: input.arguments },
-    });
+    const { data, error: enqueueError } = input.channel === "temu"
+        && input.operation === "listing.activate"
+      ? await input.serviceClient.rpc("sellerpilot_service_enqueue_temu_activation", {
+          p_listing_id: input.listingId,
+          p_credential_id: input.credentialId,
+          p_attempt_id: input.attemptId,
+          p_request_payload: { arguments: input.arguments },
+        })
+      : await input.serviceClient.rpc("sellerpilot_service_enqueue_listing_gateway_job", {
+          p_listing_id: input.listingId,
+          p_credential_id: input.credentialId,
+          p_attempt_id: input.attemptId,
+          p_channel: input.channel,
+          p_operation: input.operation,
+          p_request_payload: { arguments: input.arguments },
+        });
     const enqueue = data && typeof data === "object" && !Array.isArray(data)
       ? data as ListingGatewayEnqueue
       : null;
@@ -505,13 +513,18 @@ export async function executeChannelTargetDiscovery(input: {
   request: Record<string, unknown>;
   timeoutMs?: number;
 }) {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
-    p_credential_id: input.credentialId,
-    p_attempt_id: null,
-    p_channel: input.channel,
-    p_operation: "shops.get",
-    p_request_payload: input.request,
-  });
+  const { data: jobId, error: enqueueError } = input.channel === "lazada"
+    ? await input.serviceClient.rpc("sellerpilot_enqueue_lazada_target_sync", {
+        p_credential_id: input.credentialId,
+        p_country: input.request.country,
+      })
+    : await input.serviceClient.rpc("sellerpilot_enqueue_channel_gateway_job", {
+        p_credential_id: input.credentialId,
+        p_attempt_id: null,
+        p_channel: input.channel,
+        p_operation: "shops.get",
+        p_request_payload: input.request,
+      });
   if (enqueueError || typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
   return await waitForGatewayJob(input.serviceClient, jobId, input.timeoutMs ?? 45_000);
 }

@@ -38,6 +38,7 @@ function lazadaOAuthClaim(): ProviderOAuthClaim {
     credential: {
       app_key: "137451",
       app_secret: "private-app-secret-value",
+      country: "my",
     },
     attempt_count: 1,
   });
@@ -129,6 +130,70 @@ test("Lazada OAuth preserves an allowlisted error field when code is absent", as
         return true;
       },
     );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada OAuth prefers an allowlisted provider code over a conflicting error field", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({
+    type: "ISV",
+    code: "InvalidCode",
+    error: "InvalidSignature",
+    message: "private-user@example.com supplied a private authorization code",
+  });
+
+  try {
+    await assert.rejects(
+      executeProviderOAuthExchange(lazadaOAuthClaim(), {
+        assertLeaseHealthy: async () => undefined,
+        beginCredentialMutation: async () => undefined,
+        beginOAuthProviderCall: async () => undefined,
+        stageCredentialRefresh: async () => {
+          throw new Error("unexpected credential stage");
+        },
+      }),
+      (error: unknown) => {
+        assert.ok(error instanceof LazadaOAuthProviderFailureError);
+        assert.equal(error.category, "ISV");
+        assert.equal(error.providerCode, "INVALID_CODE");
+        assert.equal(
+          error.message,
+          "LAZADA_OAUTH_PROVIDER_FAILURE:ISV:INVALID_CODE",
+        );
+        assert.doesNotMatch(error.message, /private|example\.com|authorization/i);
+        return true;
+      },
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada OAuth rejects a callback code bound to another app key before any fence or fetch", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetched = false;
+  const events: string[] = [];
+  globalThis.fetch = async () => {
+    fetched = true;
+    return Response.json({ code: "0" });
+  };
+  const claim = lazadaOAuthClaim();
+  claim.request.code = "0_999999_private-one-time-authorization-code";
+
+  try {
+    await assert.rejects(
+      executeProviderOAuthExchange(claim, {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        beginOAuthProviderCall: async () => { events.push("provider-call-boundary"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      }),
+      /LAZADA_OAUTH_CODE_APP_KEY_MISMATCH/u,
+    );
+    assert.equal(fetched, false);
+    assert.deepEqual(events, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

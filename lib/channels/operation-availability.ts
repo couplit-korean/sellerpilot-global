@@ -48,6 +48,7 @@ const publicationVerificationChannels = new Set<ActiveChannelKey>([
   "elevenst",
   "smartstore",
   "ebay",
+  "temu",
 ]);
 
 // Product updates are released only when this codebase has both a complete
@@ -92,11 +93,11 @@ export function channelOperationRelease(
   operation: ChannelOperationName,
   environment: ChannelEnvironment = "production",
 ): ChannelOperationRelease {
-  if (operation === "listing.activate" && channel !== "qoo10") {
+  if (operation === "listing.activate" && channel !== "qoo10" && channel !== "temu") {
     return {
       available: false,
       mode: "release_verification_required",
-      reason: "S1 검증 원장에 묶인 Qoo10 전용 활성화 복구 작업입니다.",
+      reason: "검증된 비공개 게시 원장에 묶인 Qoo10·Temu 전용 활성화 작업입니다.",
     };
   }
   if (operation === "listing.publication.verify" && !publicationVerificationChannels.has(channel)) {

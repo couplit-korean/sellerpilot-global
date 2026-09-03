@@ -2,11 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   channelTargetOptionValue,
-  executeChannelWritesSequentially,
+  executeChannelWritesIndependently,
   isPublicationPendingReviewResponse,
   listingMutationGeneration,
   productEditSupportLabel,
   reconcileQueuedChannelResults,
+  bulkChannelPublicationIntent,
+  summarizeBulkPublicationOutcomes,
   workbenchProductContextMatches,
   type WorkbenchChannelResult,
   type WorkbenchListingSnapshot,
@@ -81,30 +83,64 @@ test("only a successful HTTP 202 publication decision becomes pending review", (
   }), false);
 });
 
-test("provider writes run one at a time in visible channel order", async () => {
+test("provider writes fan out independently and one rejection does not block the other channels", async () => {
   const events: string[] = [];
   let running = 0;
   let maximumRunning = 0;
-  const result = await executeChannelWritesSequentially(
+  const result = await executeChannelWritesIndependently(
     ["qoo10", "shopee", "lazada"],
     async (channel) => {
       running += 1;
       maximumRunning = Math.max(maximumRunning, running);
       events.push(`start:${channel}`);
-      await Promise.resolve();
-      events.push(`end:${channel}`);
-      running -= 1;
-      return channel;
+      try {
+        await Promise.resolve();
+        if (channel === "shopee") throw new Error("provider rejected");
+        events.push(`end:${channel}`);
+        return channel;
+      } finally {
+        running -= 1;
+      }
     },
   );
 
-  assert.equal(maximumRunning, 1);
-  assert.deepEqual(result, ["qoo10", "shopee", "lazada"]);
+  assert.equal(maximumRunning, 3);
   assert.deepEqual(events, [
-    "start:qoo10", "end:qoo10",
-    "start:shopee", "end:shopee",
-    "start:lazada", "end:lazada",
+    "start:qoo10", "start:shopee", "start:lazada",
+    "end:qoo10", "end:lazada",
   ]);
+  assert.deepEqual(result[0], { channel: "qoo10", status: "fulfilled", value: "qoo10" });
+  assert.equal(result[1]?.channel, "shopee");
+  assert.equal(result[1]?.status, "rejected");
+  assert.match(result[1]?.status === "rejected" && result[1].reason instanceof Error
+    ? result[1].reason.message
+    : "", /provider rejected/);
+  assert.deepEqual(result[2], { channel: "lazada", status: "fulfilled", value: "lazada" });
+});
+
+test("a synchronous channel executor throw is isolated as a rejected settlement", async () => {
+  const invoked: string[] = [];
+  const result = await executeChannelWritesIndependently(
+    ["coupang", "elevenst"],
+    (channel) => {
+      invoked.push(channel);
+      if (channel === "coupang") throw new Error("synchronous preflight failure");
+      return Promise.resolve(channel);
+    },
+  );
+
+  assert.deepEqual(invoked, ["coupang", "elevenst"]);
+  assert.equal(result[0]?.status, "rejected");
+  assert.deepEqual(result[1], { channel: "elevenst", status: "fulfilled", value: "elevenst" });
+});
+
+test("Temu bulk QA is contained separately and never counted as public success", () => {
+  assert.equal(bulkChannelPublicationIntent("temu"), "safe_test");
+  assert.equal(bulkChannelPublicationIntent("qoo10"), "live");
+  assert.deepEqual(
+    summarizeBulkPublicationOutcomes(["live", "safe_test_contained", false]),
+    { live: 1, safeTestContained: 1, attentionRequired: 1 },
+  );
 });
 
 test("queued reconciliation requires the exact listing and attempt", () => {
@@ -204,4 +240,47 @@ test("live publication review remains pending and never reconciles as succeeded"
   })]);
   assert.equal(pending.qoo10?.phase, "pending_review");
   assert.match(pending.qoo10?.message ?? "", /공개 게시 성공에는 포함되지 않습니다/);
+});
+
+test("Temu final activation resolves only from its exact attempt to live or pending review", () => {
+  const queued: Partial<Record<"temu", WorkbenchChannelResult>> = {
+    temu: {
+      phase: "queued",
+      operation: "listing.activate",
+      attemptId: "40000000-0000-4000-8000-000000000001",
+      listingId: "30000000-0000-4000-8000-000000000001",
+      market: "",
+      targetId: "",
+    },
+  };
+  const live = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "published",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  })]);
+  assert.equal(live.temu?.phase, "succeeded");
+
+  const pending = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "paused",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "pending_review",
+  })]);
+  assert.equal(pending.temu?.phase, "pending_review");
+
+  const wrongAttempt = reconcileQueuedChannelResults(queued, [listing({
+    channel: "temu",
+    market: "",
+    status: "published",
+    failureClass: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+    operationAttemptId: "40000000-0000-4000-8000-000000000099",
+  })]);
+  assert.equal(wrongAttempt, queued);
 });

@@ -17,7 +17,8 @@ test("listing lineage verification is an authenticated service-RPC-only route", 
 
   assert.ok(auth >= 0 && auth < bodyParse);
   assert.ok(bodyParse < prepare && prepare < enqueue);
-  assert.match(source, /admin\.serviceClient\.rpc\([\s\S]*sellerpilot_service_prepare_listing_lineage_verification/);
+  assert.match(source, /prepareRpc[\s\S]*sellerpilot_service_prepare_listing_lineage_verification/);
+  assert.match(source, /admin\.serviceClient\.rpc\(\s*prepareRpc,/);
   assert.match(source, /admin\.serviceClient\.rpc\([\s\S]*sellerpilot_service_enqueue_listing_lineage_verification/);
   assert.doesNotMatch(source, /admin\.userClient\.rpc/);
   assert.doesNotMatch(source, /executeViaChannelGateway|executeChannelOperation|\bfetch\(/);
@@ -42,6 +43,21 @@ test("dry-run cannot enqueue and execute returns honest deduplicated states", as
   assert.match(source, /status: result\.status,[\s\S]*reused: result\.reused[\s\S]*}, 202\)/);
   assert.match(source, /status === "queued"[\s\S]{0,160}return reused[\s\S]{0,160}새 작업을 만들지 않았습니다/);
   assert.match(source, /return response\(\{\n\s+ok: false,\n\s+accepted: true,/);
+});
+
+test("the one exact Lazada live listing uses dedicated fail-closed adoption RPCs", async () => {
+  const source = await readFile(routeUrl, "utf8");
+
+  assert.match(source, /lazadaExactExistingPublicationIdentity\.listingId/);
+  assert.match(
+    source,
+    /exactLazadaLiveAdoption[\s\S]*sellerpilot_service_prepare_exact_lazada_live_adoption/,
+  );
+  assert.match(
+    source,
+    /exactLazadaLiveAdoption[\s\S]*sellerpilot_service_enqueue_exact_lazada_live_adoption/,
+  );
+  assert.doesNotMatch(source, /sellerpilotExactLazadaLiveAdoption|marketplaceSku/);
 });
 
 test("the public DTO strips credential and provider identity material", async () => {

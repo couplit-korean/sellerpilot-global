@@ -18,6 +18,7 @@ const publicationChannels = [
   "elevenst",
   "smartstore",
   "ebay",
+  "temu",
 ] as const;
 
 const channelLabels: Record<(typeof publicationChannels)[number], string> = {
@@ -28,6 +29,7 @@ const channelLabels: Record<(typeof publicationChannels)[number], string> = {
   elevenst: "11번가",
   smartstore: "네이버 스마트스토어",
   ebay: "eBay",
+  temu: "Temu",
 };
 
 const actionSchema = z.discriminatedUnion("action", [
@@ -262,7 +264,7 @@ export async function POST(request: Request) {
       message: preconditionFailure
         ? parsed.data.action === "open_channel_gate"
           ? "Qoo10 어댑터·재조회기·현재 런타임 SHA와 Qoo10 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
-          : "7개 어댑터·재조회기·현재 런타임 SHA와 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
+          : "8개 어댑터·재조회기·현재 런타임 SHA와 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
         : "게시 릴리스 상태 변경 결과를 확정하지 못했습니다. 상태를 다시 조회해 주세요.",
     }, preconditionFailure ? 409 : 503);
   }

@@ -7,17 +7,25 @@ import {
   replaceMarketplaceImageUrls,
 } from "./listing-normalization";
 import {
+  assertLazadaExistingListingGetProductsPreflight,
   assertLazadaExistingListingUpdatePreflight,
   bindLazadaExistingSkuToUpdateRequest,
   lazadaCategoryAttributeCount,
   lazadaCategoryTreeLeaf,
   lazadaPrimaryCategory,
+  lazadaRequestedUpdateSellerSku,
 } from "./lazada-listing-update";
+import {
+  assertLazadaExactExistingUpdateArguments,
+  lazadaExactExistingCreateForbidden,
+  lazadaExactExistingUpdateTarget,
+} from "./lazada-exact-existing-identity";
 import {
   assertLazadaKrwMyrPricePolicy,
   loadAuthoritativeKrwPerMyr,
   type LazadaKrwMyrRateEvidence,
 } from "./lazada-price-policy";
+import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
 import { downloadMarketplaceImage } from "./marketplace-images";
 import {
   buildShopeeSignature,
@@ -33,15 +41,33 @@ import {
   type SecretPayload,
 } from "./protocols";
 import {
+  assertShopeeSgExistingContentSource,
+  shopeeSgExistingUpdateBinding,
+  verifyShopeeSgExistingUpdatePrewrite,
+} from "./shopee-sg-existing-update";
+import {
   bindSmartstoreUploadedProductImages,
   finalizeSmartstoreListingBody,
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
 import {
+  smartstoreExactQaRecoveryArgument,
+  smartstoreExactQaRecoveryBinding,
+  smartstoreExactQaRecoveryIdentity,
+} from "./smartstore-exact-qa-recovery";
+import {
+  coupangExactQaNoticeContent,
+  coupangExactQaRecoveryBinding,
+  coupangExactQaRecoveryIdentity,
+} from "./coupang-exact-qa-recovery";
+import { prepareCoupangExactQaRecoveryArguments } from "./coupang-listing-update";
+import {
+  assertShopeeSgExactCreateProviderBinding,
   assertShopeeSgCurrentPrice,
   buildShopeeSgPreparedCreateEvidence,
   loadAuthoritativeKrwSgdUsdRate,
   shopeeSgExpectedCategoryPathVerified,
+  shopeeSgExactCreateRequested,
   shopeeSgListingCreateExpectation,
   shopeeSgListingCreateRequested,
 } from "./shopee-sg-listing-create";
@@ -209,6 +235,200 @@ export type ShopeeGlobalImagePlan = {
 function successfulShopeeRead(remote: ShopeeRemote, errorCode: string) {
   if (!remote.response.ok || remote.data.error) throw new Error(errorCode);
   return recordValue(remote.data.response) ?? {};
+}
+
+type ShopeeExactInventoryRead = (
+  path: string,
+  query: URLSearchParams,
+) => Promise<ShopeeRemote>;
+
+const shopeeExactInventoryPageSize = 100;
+const shopeeExactInventoryDetailBatchSize = 50;
+const shopeeExactLocalItemStatuses = [
+  "NORMAL",
+  "UNLIST",
+  "BANNED",
+  "DELETED",
+] as const;
+
+function shopeeInventoryRows(
+  response: UnknownRecord,
+  listKeys: readonly string[],
+  errorCode: string,
+) {
+  const presentKeys = listKeys.filter((key) => Object.hasOwn(response, key));
+  const listValue = presentKeys.length === 1 ? response[presentKeys[0]] : null;
+  if (!Array.isArray(listValue)) {
+    throw new Error(errorCode);
+  }
+  const rows = listValue.map(recordValue);
+  if (rows.some((row) => !row)) throw new Error(errorCode);
+  return rows as UnknownRecord[];
+}
+
+function shopeeInventoryId(value: unknown, errorCode: string) {
+  const id = typeof value === "string" || typeof value === "number"
+    ? String(value).trim()
+    : "";
+  if (!/^[1-9][0-9]{0,31}$/u.test(id)) throw new Error(errorCode);
+  return id;
+}
+
+async function readCompleteShopeeInventoryIds(input: {
+  read: ShopeeExactInventoryRead;
+  path: string;
+  listKeys: readonly string[];
+  idKey: string;
+  errorCode: string;
+  fixedQuery?: Record<string, string>;
+}) {
+  const ids: string[] = [];
+  const seenIds = new Set<string>();
+  let offset = 0;
+  let expectedTotal: number | null = null;
+  for (let page = 0; page < 1_000; page += 1) {
+    const remote = await input.read(input.path, new URLSearchParams({
+      ...(input.fixedQuery ?? {}),
+      offset: String(offset),
+      page_size: String(shopeeExactInventoryPageSize),
+    }));
+    const response = successfulShopeeRead(remote, input.errorCode);
+    const totalCount = integerLimit(response.total_count);
+    if (totalCount === null
+        || (expectedTotal !== null && totalCount !== expectedTotal)) {
+      throw new Error(input.errorCode);
+    }
+    expectedTotal ??= totalCount;
+    const rows = shopeeInventoryRows(response, input.listKeys, input.errorCode);
+    if (rows.length > shopeeExactInventoryPageSize
+        || offset + rows.length > expectedTotal
+        || (offset < expectedTotal && rows.length === 0)) {
+      throw new Error(input.errorCode);
+    }
+    for (const row of rows) {
+      const id = shopeeInventoryId(row[input.idKey], input.errorCode);
+      if (seenIds.has(id)) throw new Error(input.errorCode);
+      seenIds.add(id);
+      ids.push(id);
+    }
+    const complete = offset + rows.length === expectedTotal;
+    if (Object.hasOwn(response, "has_next_page")) {
+      if (typeof response.has_next_page !== "boolean"
+          || response.has_next_page !== !complete) {
+        throw new Error(input.errorCode);
+      }
+    }
+    if (complete) return ids;
+    offset += rows.length;
+  }
+  throw new Error(input.errorCode);
+}
+
+async function readExactShopeeSkuMatches(input: {
+  ids: readonly string[];
+  read: ShopeeExactInventoryRead;
+  path: string;
+  queryKey: "global_item_id_list" | "item_id_list";
+  listKeys: readonly string[];
+  idKey: "global_item_id" | "item_id";
+  skuKey: "global_item_sku" | "item_sku";
+  sku: string;
+  errorCode: string;
+}) {
+  const matches: string[] = [];
+  for (let offset = 0; offset < input.ids.length; offset += shopeeExactInventoryDetailBatchSize) {
+    const batch = input.ids.slice(offset, offset + shopeeExactInventoryDetailBatchSize);
+    const remote = await input.read(input.path, new URLSearchParams({
+      [input.queryKey]: batch.join(","),
+    }));
+    const response = successfulShopeeRead(remote, input.errorCode);
+    const rows = shopeeInventoryRows(response, input.listKeys, input.errorCode);
+    if (rows.length !== batch.length) throw new Error(input.errorCode);
+    const expectedIds = new Set(batch);
+    const returnedIds = new Set<string>();
+    for (const row of rows) {
+      const id = shopeeInventoryId(row[input.idKey], input.errorCode);
+      if (!expectedIds.has(id) || returnedIds.has(id)
+          || !Object.hasOwn(row, input.skuKey)
+          || (typeof row[input.skuKey] !== "string"
+            && typeof row[input.skuKey] !== "number")) {
+        throw new Error(input.errorCode);
+      }
+      returnedIds.add(id);
+      if (String(row[input.skuKey]).trim() === input.sku) matches.push(id);
+    }
+    if (returnedIds.size !== expectedIds.size) throw new Error(input.errorCode);
+  }
+  return matches;
+}
+
+async function assertShopeeSgExactSkuAbsent(input: {
+  merchantRead: ShopeeExactInventoryRead;
+  shopRead: ShopeeExactInventoryRead;
+  sku: string;
+}) {
+  const globalIds = await readCompleteShopeeInventoryIds({
+    read: input.merchantRead,
+    path: "/api/v2/global_product/get_global_item_list",
+    listKeys: ["global_item_list"],
+    idKey: "global_item_id",
+    errorCode: "SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE",
+  });
+  const globalMatches = await readExactShopeeSkuMatches({
+    ids: globalIds,
+    read: input.merchantRead,
+    path: "/api/v2/global_product/get_global_item_info",
+    queryKey: "global_item_id_list",
+    listKeys: ["global_item_list"],
+    idKey: "global_item_id",
+    skuKey: "global_item_sku",
+    sku: input.sku,
+    errorCode: "SHOPEE_SG_EXACT_GLOBAL_INVENTORY_INCOMPLETE",
+  });
+  if (globalMatches.length) {
+    throw new Error("SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_GLOBAL");
+  }
+
+  const localIds: string[] = [];
+  const seenLocalIds = new Set<string>();
+  for (const itemStatus of shopeeExactLocalItemStatuses) {
+    const statusIds = await readCompleteShopeeInventoryIds({
+      read: input.shopRead,
+      path: "/api/v2/product/get_item_list",
+      listKeys: ["item", "item_list"],
+      idKey: "item_id",
+      errorCode: "SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE",
+      fixedQuery: { item_status: itemStatus },
+    });
+    for (const id of statusIds) {
+      if (seenLocalIds.has(id)) {
+        throw new Error("SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE");
+      }
+      seenLocalIds.add(id);
+      localIds.push(id);
+    }
+  }
+  const localMatches = await readExactShopeeSkuMatches({
+    ids: localIds,
+    read: input.shopRead,
+    path: "/api/v2/product/get_item_base_info",
+    queryKey: "item_id_list",
+    listKeys: ["item_list"],
+    idKey: "item_id",
+    skuKey: "item_sku",
+    sku: input.sku,
+    errorCode: "SHOPEE_SG_EXACT_LOCAL_INVENTORY_INCOMPLETE",
+  });
+  if (localMatches.length) {
+    throw new Error("SHOPEE_SG_EXACT_SKU_ALREADY_EXISTS_LOCAL");
+  }
+  return {
+    contract: "sellerpilot_shopee_sg_exact_sku_absence_v1",
+    sku: input.sku,
+    globalItemCount: globalIds.length,
+    localItemCount: localIds.length,
+    localStatuses: [...shopeeExactLocalItemStatuses],
+  } as const;
 }
 
 function integerLimit(value: unknown) {
@@ -446,11 +666,52 @@ async function prepareShopeeListing(
 ): Promise<UnknownRecord> {
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 9);
   if (!imageUrls.length) throw new Error("SHOPEE_LISTING_IMAGES_MISSING");
-  const logistics = await activeShopeeLogistics(
-    input.credential,
-    input.environment,
-    input.hooks,
-  );
+  const exactExisting = input.operation === "listing.update"
+      && shopeeSgExistingUpdateBinding(input.arguments, "content")
+    ? assertShopeeSgExistingContentSource(input.arguments)
+    : null;
+  if (exactExisting && imageUrls.length !== 9) {
+    throw new Error("SHOPEE_SG_EXISTING_UPDATE_EXACT_IMAGES_REQUIRED");
+  }
+  if (exactExisting) {
+    const [shopRemote, itemRemote] = await Promise.all([
+      shopeeRequest({
+        payload: input.credential,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/shop/get_shop_info",
+      }),
+      shopeeRequest({
+        payload: input.credential,
+        environment: input.environment,
+        method: "GET",
+        path: "/api/v2/product/get_item_base_info",
+        query: new URLSearchParams({ item_id_list: exactExisting.itemId }),
+      }),
+    ]);
+    if (!shopRemote.response.ok
+        || !itemRemote.response.ok
+        || shopRemote.data.error
+        || itemRemote.data.error
+        || !verifyShopeeSgExistingUpdatePrewrite({
+          argumentsValue: input.arguments,
+          credentialPayload: input.credential,
+          shopRemoteData: shopRemote.data,
+          itemRemoteData: itemRemote.data,
+          phase: "content",
+        })) {
+      throw new Error("SHOPEE_SG_EXISTING_UPDATE_PREWRITE_MISMATCH");
+    }
+  }
+  // Exact existing-item updates are intentionally content-only. Supplying
+  // logistic_info to update_item would also mutate shipping configuration.
+  const logistics = exactExisting
+    ? null
+    : await activeShopeeLogistics(
+        input.credential,
+        input.environment,
+        input.hooks,
+      );
   const imageIds: string[] = [];
   for (const imageUrl of imageUrls) {
     await input.hooks.assertLeaseHealthy();
@@ -464,10 +725,16 @@ async function prepareShopeeListing(
   }
   return {
     ...input.arguments,
+    ...(exactExisting
+      ? {
+          sellerpilotProviderDetailImageIds: imageIds.slice(1),
+          sellerpilotProviderImageSurface: "gallery",
+        }
+      : {}),
     body: {
       ...(recordValue(input.arguments.body) ?? {}),
       image: { image_id_list: imageIds },
-      logistic_info: logistics,
+      ...(logistics ? { logistic_info: logistics } : {}),
     },
   };
 }
@@ -491,6 +758,13 @@ export async function prepareShopeeGlobalListing(
   if (strictSgCreate && (!strictExpectation || !strictExpectation.ok)) {
     throw new Error("SHOPEE_SG_CREATE_PREWRITE_MISMATCH");
   }
+  const exactCreateIdentity = strictExpectation?.ok
+    ? assertShopeeSgExactCreateProviderBinding({
+        expectation: strictExpectation.expectation,
+        merchantCredential: input.credential,
+        shopCredential: shopPayload,
+      })
+    : null;
   const globalCategoryId = Number(body.category_id);
   if (!Number.isSafeInteger(globalCategoryId) || globalCategoryId <= 0) {
     throw new Error("SHOPEE_GLOBAL_CATEGORY_MISSING");
@@ -591,6 +865,13 @@ export async function prepareShopeeGlobalListing(
     productHint,
     errorCode: "SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING",
   });
+  const exactSkuAbsenceEvidence = exactCreateIdentity
+    ? await assertShopeeSgExactSkuAbsent({
+        merchantRead,
+        shopRead,
+        sku: exactCreateIdentity.sku,
+      })
+    : null;
   const imageIds: string[] = [];
   for (const [index, imageUrl] of imageUrls.entries()) {
     await input.hooks.assertLeaseHealthy();
@@ -634,6 +915,9 @@ export async function prepareShopeeGlobalListing(
   };
   return {
     ...input.arguments,
+    ...(exactSkuAbsenceEvidence
+      ? { sellerpilotShopeeSgExactSkuAbsenceEvidence: exactSkuAbsenceEvidence }
+      : {}),
     ...(providerGlobalCategoryPath
       ? { sellerpilotProviderGlobalCategoryPath: providerGlobalCategoryPath }
       : {}),
@@ -737,24 +1021,54 @@ export async function prepareLazadaListing(
   input: PrepareProviderListingInput,
   dependencies: LazadaListingRuntimeDependencies = lazadaListingRuntimeDependencies,
 ): Promise<UnknownRecord> {
+  if (input.operation === "listing.create"
+      && lazadaExactExistingCreateForbidden({ argumentsValue: input.arguments })) {
+    throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+  }
+  if (input.operation === "listing.update") {
+    assertLazadaExactExistingUpdateArguments(input.arguments);
+  }
   const sources = lazadaBoundPublicationImageSources(input.arguments);
   if (!sources.migrationSources.length || !sources.representative) {
     throw new Error("LAZADA_LISTING_IMAGES_MISSING");
   }
   let preparedArguments = input.arguments;
   if (input.operation === "listing.update") {
+    const exactExistingTarget = lazadaExactExistingUpdateTarget(input.arguments);
     const request = recordValue(recordValue(recordValue(input.arguments.request)?.Request)?.Product);
     const primaryCategory = lazadaPrimaryCategory(request ?? {});
     const itemId = String(input.arguments.itemId ?? "").trim();
+    const sellerSku = lazadaRequestedUpdateSellerSku(input.arguments);
     const country = String(input.arguments.country ?? textValue(input.credential, "country") ?? "")
       .trim()
       .toLowerCase();
     const languageCode = lazadaLanguageCode(country);
-    if (!/^\d+$/u.test(itemId) || !/^\d+$/u.test(primaryCategory) || !languageCode) {
+    const expectedSellerId = String(input.arguments.sellerpilotExpectedSellerId ?? "").trim();
+    if (!/^\d+$/u.test(itemId)
+        || !/^\d+$/u.test(primaryCategory)
+        || !sellerSku
+        || !languageCode) {
       throw new Error("LAZADA_UPDATE_PREFLIGHT_ARGUMENTS_INVALID");
     }
     await input.hooks.assertLeaseHealthy();
-    const [itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+    const [sellerRemote, productsRemote, itemRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+      exactExistingTarget
+        ? dependencies.lazadaRequest({
+            payload: input.credential,
+            path: "/seller/get",
+          })
+        : Promise.resolve(null),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/products/get",
+        params: {
+          filter: "all",
+          sku_seller_list: JSON.stringify([sellerSku]),
+          options: "1",
+          limit: "100",
+          offset: "0",
+        },
+      }),
       dependencies.lazadaRequest({
         payload: input.credential,
         path: "/product/item/get",
@@ -772,6 +1086,20 @@ export async function prepareLazadaListing(
       }),
       dependencies.loadKrwPerMyr(input.signal),
     ]);
+    if (exactExistingTarget) {
+      if (!sellerRemote || !lazadaAccepted(sellerRemote)) {
+        throw new Error("LAZADA_UPDATE_SELLER_PREFLIGHT_FAILED");
+      }
+      assertLazadaActiveSellerLineage({
+        credential: input.credential,
+        remoteData: sellerRemote.data,
+        country,
+        expectedSellerId,
+      });
+    }
+    if (!lazadaAccepted(productsRemote)) {
+      throw new Error("LAZADA_UPDATE_PRODUCTS_PREFLIGHT_FAILED");
+    }
     if (!lazadaAccepted(itemRemote)) throw new Error("LAZADA_UPDATE_ITEM_PREFLIGHT_FAILED");
     if (!lazadaAccepted(treeRemote)
         || !lazadaCategoryTreeLeaf(treeRemote.data, primaryCategory)) {
@@ -785,11 +1113,22 @@ export async function prepareLazadaListing(
       argumentsValue: input.arguments,
       authoritativeRate,
     });
-    const preflight = assertLazadaExistingListingUpdatePreflight({
+    const productsPreflight = assertLazadaExistingListingGetProductsPreflight({
+      argumentsValue: input.arguments,
+      remoteData: productsRemote.data,
+    });
+    const remotePreflight = assertLazadaExistingListingUpdatePreflight({
       argumentsValue: input.arguments,
       remoteData: itemRemote.data,
       country,
+      requiredVisibility: "live",
     });
+    const preflight = exactExistingTarget
+      ? { ...remotePreflight, updateSkuStatus: "active" as const }
+      : remotePreflight;
+    if (productsPreflight.skuId !== preflight.skuId) {
+      throw new Error("LAZADA_UPDATE_PRODUCTS_ITEM_SKU_ID_MISMATCH");
+    }
     preparedArguments = bindLazadaExistingSkuToUpdateRequest(input.arguments, preflight);
   }
 
@@ -860,6 +1199,11 @@ export async function prepareLazadaListing(
 }
 
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
+  const exactRecovery = smartstoreExactQaRecoveryBinding(input.arguments);
+  if (Object.hasOwn(input.arguments, smartstoreExactQaRecoveryArgument)
+      && !exactRecovery) {
+    throw new Error("SMARTSTORE_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
   const sourceBody = structuredClone(recordValue(input.arguments.body) ?? {});
   const imagePlan = smartstoreImageUploadPlan({
     imageUrls: input.arguments.imageUrls,
@@ -890,6 +1234,138 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       ?? addressBooks[0];
     phone = String(address?.phoneNumber1 ?? address?.phoneNumber2 ?? "").trim();
     if (!addressRemote.response.ok || !phone) throw new Error("NAVER_AFTER_SERVICE_PHONE_MISSING");
+  }
+
+  if (input.operation === "listing.create") {
+    const originProduct = recordValue(sourceBody.originProduct) ?? {};
+    const categoryId = String(originProduct.leafCategoryId ?? "").trim();
+    if (!/^\d+$/.test(categoryId)) throw new Error("NAVER_LEAF_CATEGORY_MISSING");
+    await input.hooks.assertLeaseHealthy();
+    const categoryRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v1/categories/${encodeURIComponent(categoryId)}`,
+    });
+    const category = recordValue(categoryRemote.data) ?? {};
+    if (!categoryRemote.response.ok
+        || String(category.id ?? "").trim() !== categoryId
+        || category.last !== true) {
+      throw new Error("NAVER_LEAF_CATEGORY_PREFLIGHT_FAILED");
+    }
+
+    const detailAttribute = recordValue(originProduct.detailAttribute) ?? {};
+    const sellerCodeInfo = recordValue(detailAttribute.sellerCodeInfo) ?? {};
+    const sellerManagementCode = String(sellerCodeInfo.sellerManagementCode ?? "").trim();
+    if (!sellerManagementCode) throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
+    await input.hooks.assertLeaseHealthy();
+    const duplicateRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "POST",
+      path: "/v1/products/search",
+      body: {
+        searchKeywordType: "SELLER_CODE",
+        sellerManagementCode,
+        page: 1,
+        size: 50,
+        orderType: "NO",
+      },
+    });
+    if (!duplicateRemote.response.ok || !Array.isArray(duplicateRemote.data.contents)) {
+      throw new Error("NAVER_DUPLICATE_PREFLIGHT_FAILED");
+    }
+  } else {
+    const remoteId = String(input.arguments.originProductNo ?? "").trim();
+    if (!/^\d+$/.test(remoteId)) throw new Error("NAVER_ORIGIN_PRODUCT_ID_MISSING");
+    const requestedOriginProduct = recordValue(sourceBody.originProduct) ?? {};
+    const requestedDetailAttribute = recordValue(requestedOriginProduct.detailAttribute) ?? {};
+    const requestedSellerCodeInfo = recordValue(requestedDetailAttribute.sellerCodeInfo) ?? {};
+    const expectedSellerManagementCode = String(
+      requestedSellerCodeInfo.sellerManagementCode ?? "",
+    ).trim();
+    if (!expectedSellerManagementCode) {
+      throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
+    }
+    if (exactRecovery) {
+      const requestedTitle = String(requestedOriginProduct.name ?? "").trim();
+      const requestedDescription = String(requestedOriginProduct.detailContent ?? "").trim();
+      const requestedPrice = Number(normalizeTenWonAmount(requestedOriginProduct.salePrice));
+      const requestedStock = Number(requestedOriginProduct.stockQuantity);
+      if (remoteId !== exactRecovery.originProductNo
+          || expectedSellerManagementCode !== exactRecovery.centralSku
+          || requestedPrice !== smartstoreExactQaRecoveryIdentity.priceKrw
+          || !Number.isSafeInteger(requestedStock)
+          || requestedStock !== smartstoreExactQaRecoveryIdentity.stock
+          || input.arguments.publicationIntent !== "live"
+          || input.arguments.publicationExpectedLocale !== "ko-KR"
+          || input.arguments.publicationExpectedImageCount !== 8
+          || !/[가-힣]/u.test(requestedTitle)
+          || !/[가-힣]/u.test(requestedDescription)) {
+        throw new Error("SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH");
+      }
+    }
+    await input.hooks.assertLeaseHealthy();
+    const originRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v2/products/origin-products/${encodeURIComponent(remoteId)}`,
+    });
+    const currentOriginProduct = recordValue(originRemote.data.originProduct) ?? {};
+    const embeddedChannelProduct = recordValue(originRemote.data.smartstoreChannelProduct) ?? {};
+    const responseOriginProductNo = String(
+      originRemote.data.originProductNo ?? currentOriginProduct.originProductNo ?? "",
+    ).trim();
+    const responseChannelProductNo = String(
+      originRemote.data.smartstoreChannelProductNo
+        ?? embeddedChannelProduct.channelProductNo
+        ?? "",
+    ).trim();
+    const currentDetailAttribute = recordValue(currentOriginProduct.detailAttribute) ?? {};
+    const currentSellerCodeInfo = recordValue(currentDetailAttribute.sellerCodeInfo) ?? {};
+    const originSellerManagementCode = String(
+      currentSellerCodeInfo.sellerManagementCode
+        ?? currentOriginProduct.sellerManagementCode
+        ?? "",
+    ).trim();
+    if (!originRemote.response.ok
+        || !Object.keys(currentOriginProduct).length
+        || (responseOriginProductNo && responseOriginProductNo !== remoteId)
+        || !/^\d+$/.test(responseChannelProductNo)
+        || (exactRecovery
+          && responseChannelProductNo !== exactRecovery.channelProductNo)
+        || originSellerManagementCode !== expectedSellerManagementCode) {
+      throw new Error("NAVER_UPDATE_ORIGIN_PREFLIGHT_FAILED");
+    }
+
+    await input.hooks.assertLeaseHealthy();
+    const channelRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v2/products/channel-products/${encodeURIComponent(responseChannelProductNo)}`,
+    });
+    const currentChannelProduct = recordValue(channelRemote.data.smartstoreChannelProduct) ?? {};
+    const authoritativeChannelProductNo = String(
+      currentChannelProduct.channelProductNo
+        ?? currentChannelProduct.smartstoreChannelProductNo
+        ?? channelRemote.data.smartstoreChannelProductNo
+        ?? "",
+    ).trim();
+    const authoritativeOriginProductNo = String(
+      currentChannelProduct.originProductNo
+        ?? channelRemote.data.originProductNo
+        ?? "",
+    ).trim();
+    const channelSellerManagementCode = String(
+      currentChannelProduct.sellerManagementCode ?? expectedSellerManagementCode,
+    ).trim();
+    if (!channelRemote.response.ok
+        || !Object.keys(currentChannelProduct).length
+        || authoritativeChannelProductNo !== responseChannelProductNo
+        || authoritativeOriginProductNo !== remoteId
+        || (exactRecovery
+          && authoritativeChannelProductNo !== exactRecovery.channelProductNo)
+        || channelSellerManagementCode !== expectedSellerManagementCode) {
+      throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
+    }
   }
 
   const form = new FormData();
@@ -1038,6 +1514,7 @@ function prepareCoupangItem(
   itemValue: unknown,
   metadata: UnknownRecord,
   facts: UnknownRecord,
+  exactNoticeCategoryName?: string,
 ) {
   const item = structuredClone(recordValue(itemValue) ?? {});
   const metaAttributes = Array.isArray(metadata.attributes)
@@ -1103,27 +1580,39 @@ function prepareCoupangItem(
       : {}),
   }));
 
-  if (!Array.isArray(item.notices) || !item.notices.length) {
+  if (exactNoticeCategoryName || !Array.isArray(item.notices) || !item.notices.length) {
     const noticeCategories = Array.isArray(metadata.noticeCategories)
       ? metadata.noticeCategories.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
       : [];
-    const noticeCategory = noticeCategories.find((category) =>
-      Array.isArray(category.noticeCategoryDetailNames)
-      && category.noticeCategoryDetailNames.some((detail) =>
-        recordValue(detail)?.required === "MANDATORY"))
-      ?? noticeCategories[0];
+    const noticeCategory = exactNoticeCategoryName
+      ? noticeCategories.find((category) =>
+        String(category.noticeCategoryName ?? "").trim() === exactNoticeCategoryName)
+      : noticeCategories.find((category) =>
+        Array.isArray(category.noticeCategoryDetailNames)
+        && category.noticeCategoryDetailNames.some((detail) =>
+          recordValue(detail)?.required === "MANDATORY"))
+        ?? noticeCategories[0];
+    if (!noticeCategory) {
+      throw new Error(exactNoticeCategoryName
+        ? "COUPANG_EXACT_QA_NOTICE_CATEGORY_UNAVAILABLE"
+        : "COUPANG_NOTICE_METADATA_MISSING");
+    }
     const details = Array.isArray(noticeCategory?.noticeCategoryDetailNames)
       ? noticeCategory.noticeCategoryDetailNames
         .map(recordValue)
         .filter((row): row is UnknownRecord => Boolean(row))
       : [];
-    const notices = details
-      .filter((detail) => detail.required === "MANDATORY")
-      .map((detail) => ({
-        noticeCategoryName: String(noticeCategory?.noticeCategoryName ?? ""),
-        noticeCategoryDetailName: String(detail.noticeCategoryDetailName ?? ""),
-        content: "상품상세 참조",
-      }));
+    const mandatoryDetails = details.filter((detail) => detail.required === "MANDATORY");
+    const notices = mandatoryDetails.map((detail) => ({
+      noticeCategoryName: String(noticeCategory?.noticeCategoryName ?? ""),
+      noticeCategoryDetailName: String(detail.noticeCategoryDetailName ?? ""),
+      content: exactNoticeCategoryName
+        ? coupangExactQaNoticeContent(detail.noticeCategoryDetailName)
+        : "상품상세 참조",
+    }));
+    if (exactNoticeCategoryName && notices.some((notice) => !notice.content)) {
+      throw new Error("COUPANG_EXACT_QA_NOTICE_DETAIL_UNSUPPORTED");
+    }
     if (!notices.length) throw new Error("COUPANG_NOTICE_METADATA_MISSING");
     item.notices = notices;
   }
@@ -1149,14 +1638,21 @@ function prepareCoupangItem(
 async function prepareCoupangListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
   const requestedBy = textValue(input.credential, "requested_by");
   if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
-  const body = structuredClone(recordValue(input.arguments.body) ?? {});
+  const recovery = coupangExactQaRecoveryBinding(input.arguments, "listing.update");
+  if (Object.hasOwn(input.arguments, "sellerpilotCoupangExactQaRecovery") && !recovery) {
+    throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+  }
+  const strictArguments = recovery
+    ? prepareCoupangExactQaRecoveryArguments(input.arguments)
+    : input.arguments;
+  const body = structuredClone(recordValue(strictArguments.body) ?? {});
   const categoryCode = Number(body.displayCategoryCode);
   if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) {
     throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
   }
   const vendorId = textValue(input.credential, "vendor_id");
   await input.hooks.assertLeaseHealthy();
-  const [outboundRemote, returnRemote, metadataRemote] = await Promise.all([
+  const [outboundRemote, returnRemote, metadataRemote, categoryStatusRemote] = await Promise.all([
     coupangRequest({
       payload: input.credential,
       method: "GET",
@@ -1174,10 +1670,21 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       method: "GET",
       path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryCode}`,
     }),
+    recovery ? coupangRequest({
+      payload: input.credential,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryCode}/status`,
+    }) : Promise.resolve(null),
   ]);
   if (!outboundRemote.response.ok) throw new Error("COUPANG_OUTBOUND_QUERY_FAILED");
   if (!returnRemote.response.ok) throw new Error("COUPANG_RETURN_CENTER_QUERY_FAILED");
   if (!metadataRemote.response.ok) throw new Error("COUPANG_CATEGORY_METADATA_FAILED");
+  if (recovery && (!categoryStatusRemote
+      || !categoryStatusRemote.response.ok
+      || categoryStatusRemote.data.code !== "SUCCESS"
+      || categoryStatusRemote.data.data !== true)) {
+    throw new Error("COUPANG_EXACT_QA_CATEGORY_INACTIVE");
+  }
 
   const outboundCenters = nestedContent(outboundRemote.data)
     .map(recordValue)
@@ -1186,9 +1693,16 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     .map(recordValue)
     .filter((row): row is UnknownRecord => Boolean(row));
   const outbound = outboundCenters.find((center) =>
-    coupangUsable(center.usable) && preferredKoreanAddress(center.placeAddresses));
+    coupangUsable(center.usable)
+    && preferredKoreanAddress(center.placeAddresses)
+    && (!recovery || (Number.isSafeInteger(Number(center.outboundShippingPlaceCode))
+      && Number(center.outboundShippingPlaceCode) > 0)));
   const returnCenter = returnCenters.find((center) =>
-    coupangUsable(center.usable) && preferredKoreanAddress(center.placeAddresses));
+    coupangUsable(center.usable)
+    && preferredKoreanAddress(center.placeAddresses)
+    && (!recovery || (String(center.returnCenterCode ?? "").trim()
+      && String(center.deliverCode ?? "").trim()
+      && positiveFee(center))));
   if (!returnCenter) {
     throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
   }
@@ -1198,15 +1712,27 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
   if (!returnAddress) throw new Error("COUPANG_RETURN_ADDRESS_MISSING");
   const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
-  const returnFee = positiveFee(returnCenter) ?? 3_000;
+  const returnFee = positiveFee(returnCenter) ?? (recovery ? null : 3_000);
+  if (!returnFee) throw new Error("COUPANG_RETURN_FEE_MISSING");
   const returnCenterCode = contractedDeliveryCode
     ? String(returnCenter.returnCenterCode)
     : "NO_RETURN_CENTERCODE";
+  if (recovery && (returnCenterCode === "NO_RETURN_CENTERCODE"
+      || !String(returnAddress.companyContactNumber ?? "").trim()
+      || !String(returnAddress.returnZipCode ?? "").trim()
+      || !String(returnAddress.returnAddress ?? "").trim())) {
+    throw new Error("COUPANG_EXACT_QA_ACTIVE_SHIPPING_METADATA_REQUIRED");
+  }
   const metadata = coupangMetadata(metadataRemote.data);
-  const facts = recordValue(input.arguments.facts) ?? {};
+  const facts = recordValue(strictArguments.facts) ?? {};
   const items = Array.isArray(body.items)
     ? body.items.map((item) => {
-      const prepared = prepareCoupangItem(item, metadata, facts);
+      const prepared = prepareCoupangItem(
+        item,
+        metadata,
+        facts,
+        recovery ? coupangExactQaRecoveryIdentity.noticeCategoryName : undefined,
+      );
       prepared.originalPrice = normalizeTenWonAmount(prepared.originalPrice);
       prepared.salePrice = normalizeTenWonAmount(prepared.salePrice);
       return prepared;
@@ -1215,7 +1741,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   if (!items.length) throw new Error("COUPANG_ITEMS_MISSING");
 
   return {
-    ...input.arguments,
+    ...strictArguments,
     body: {
       ...body,
       vendorId,
@@ -1239,7 +1765,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       returnAddressDetail: String(returnAddress.returnAddressDetail ?? ""),
       returnCharge: returnFee,
       vendorUserId: requestedBy,
-      requested: input.arguments.publicationIntent === "safe_test" ? false : true,
+      requested: strictArguments.publicationIntent === "safe_test" ? false : true,
       items,
     },
   };
@@ -1250,7 +1776,13 @@ export async function prepareMarketplaceListingArguments(
 ): Promise<PreparedProviderListing> {
   if (input.channel === "shopee") {
     if (input.arguments.globalProduct === true) {
-      if (input.operation !== "listing.create" || input.arguments.resumeOnly === true) {
+      if (input.operation !== "listing.create") {
+        return { arguments: input.arguments, mediaMutationObserved: false };
+      }
+      if (input.arguments.resumeOnly === true) {
+        if (shopeeSgExactCreateRequested(input.arguments)) {
+          throw new Error("SHOPEE_SG_EXACT_CREATE_RESUME_REQUIRES_FRESH_PREFLIGHT");
+        }
         return { arguments: input.arguments, mediaMutationObserved: false };
       }
       return {
@@ -1275,7 +1807,8 @@ export async function prepareMarketplaceListingArguments(
       mediaMutationObserved: true,
     };
   }
-  if (input.channel === "coupang" && input.operation === "listing.create") {
+  if (input.channel === "coupang" && (input.operation === "listing.create"
+      || coupangExactQaRecoveryBinding(input.arguments, "listing.update"))) {
     return {
       arguments: await prepareCoupangListing(input),
       mediaMutationObserved: false,

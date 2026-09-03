@@ -49,7 +49,11 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
     assert.equal(remote.requiredInformation.state, "partial", channel);
     assert.equal(remote.options.state, "blocked", channel);
     assert.equal(remote.saleConfiguration.state, "blocked", channel);
-    assert.equal(remote.price.state, channel === "lazada" ? "supported" : "blocked", channel);
+    assert.equal(
+      remote.price.state,
+      channel === "lazada" || channel === "smartstore" ? "supported" : "blocked",
+      channel,
+    );
     assert.equal(remote.inventory.state, "supported", channel);
   }
 
@@ -304,8 +308,8 @@ test("상품 수정 payload는 원격 identity를 고정하고 Lazada 단일 SKU
   }, publishedListing);
   const smartstoreBody = smartstore.body as Record<string, unknown>;
   const originProduct = smartstoreBody.originProduct as Record<string, unknown>;
-  assert.equal(Object.hasOwn(originProduct, "salePrice"), false);
-  assert.equal(Object.hasOwn(originProduct, "stockQuantity"), false);
+  assert.equal(originProduct.salePrice, 999999);
+  assert.equal(originProduct.stockQuantity, 999);
   assert.equal(Object.hasOwn(originProduct.detailAttribute as object, "optionInfo"), false);
   assert.deepEqual(smartstoreBody.smartstoreChannelProduct, { channelProductName: "수정 상품" });
 });
@@ -371,11 +375,25 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(source, /boundQoo10RollbackUpdateRecovery = identity\.data/);
   assert.match(source, /mode: "qoo10_rollback_identity_required"/);
   const legacyCandidateCheck = source.indexOf("legacyEbayListingUpdateCandidate(listing.channel, reference)");
+  const exactEbayCandidateCheck = source.indexOf("ebayExactExistingQaRecoveryCandidate({");
+  const exactIdentityRpc = source.indexOf('"sellerpilot_service_get_ebay_exact_qa_recovery_identity"');
   const immutableIdentityRpc = source.indexOf('"sellerpilot_service_get_ebay_listing_update_identity"');
-  const executionBlock = source.indexOf("listingExecutionBlock(listing, verifiedLegacyEbayUpdate)");
+  const executionBlock = source.indexOf("listingExecutionBlock(\n    listing,\n    verifiedLegacyEbayUpdate,\n    verifiedExactEbayUpdate,");
+  assert.ok(exactEbayCandidateCheck >= 0);
+  assert.ok(exactIdentityRpc > exactEbayCandidateCheck);
   assert.ok(legacyCandidateCheck >= 0);
   assert.ok(immutableIdentityRpc > legacyCandidateCheck);
   assert.ok(executionBlock > immutableIdentityRpc, "the external_action fence may open only after the server-owned immutable identity RPC");
+  assert.match(source, /productId\.data === ebayExactExistingQaRecoveryIdentity\.productId/);
+  assert.match(source, /identity = ebayExactExistingQaRecoveryBindingValue\(identityData\)/);
+  assert.match(source, /mode: "ebay_exact_existing_identity_rpc_failed"/);
+  assert.match(source, /mode: "ebay_exact_existing_identity_contract_required"/);
+  assert.match(source, /mode: "ebay_exact_existing_credential_stale"/);
+  assert.match(source, /typeof identityError\.code === "string"/);
+  assert.doesNotMatch(source, /identityError\.(?:message|details|hint)/);
+  assert.match(source, /identity\.credentialId !== body\.data\.credentialId/);
+  assert.match(source, /!exactEbayCandidate && legacyEbayListingUpdateCandidate/);
+  assert.match(source, /&& !allowExactEbayUpdate/);
   assert.match(source, /identity\.listingId === reference\.remoteId/);
   assert.match(source, /identity\.sku === reference\.marketplaceSku/);
   assert.match(source, /identity\.marketplaceId === String\(listing\.targetId \?\? ""\)\.trim\(\)\.toUpperCase\(\)/);
@@ -400,9 +418,14 @@ test("전용 route는 원장 listing ID와 bounded 재시도 경로만 generic g
   assert.match(workbench, /channelTargetOptionValue\(item\)/);
   assert.match(workbench, /providerStatus\?: string \| null/);
   assert.match(workbench, /qoo10RollbackListingUpdateCandidate\(channel, listing\)/);
-  assert.match(workbench, /failureClass === "external_action" && !recoverableEbayUpdate/);
+  assert.match(workbench, /recoverableSmartstoreUpdate = smartstoreExactQaWorkbenchRecoveryCandidate/);
+  assert.match(workbench, /failureClass === "external_action"[\s\S]{0,180}&& !recoverableEbayUpdate[\s\S]{0,180}&& !recoverableSmartstoreUpdate/);
+  assert.match(source, /allowExactSmartstoreRecovery = smartstoreExactQaRecoveryCandidate/);
+  assert.match(source, /&& !allowExactLazadaRecovery[\s\S]{0,120}&& !allowExactSmartstoreRecovery/);
   assert.doesNotMatch(workbench, /failureClass === "external_action" && !recoverableEbayUpdate && !recoverableQoo10RollbackUpdate/);
   const channelOperations = readFileSync(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
+  assert.match(channelOperations, /"sellerpilot_service_get_ebay_exact_qa_recovery_identity"/);
+  assert.doesNotMatch(channelOperations, /"sellerpilot_service_get_ebay_exact_existing_qa_recovery_identity"/);
   assert.match(channelOperations, /boundListingCurrency = policy\.targetCurrency/);
   assert.match(channelOperations, /boundListingPrice = policy\.targetPriceMyr/);
   assert.match(channelOperations, /requestedStock !== centralStock/);

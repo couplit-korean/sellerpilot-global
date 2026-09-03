@@ -2,6 +2,12 @@ import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnos
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { ebayAsqOperationMarketplaceId } from "./ebay-asq";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
+import {
+  assertEbayExactExistingQaProviderCopyRequest,
+  ebayExactExistingQaCreateForbidden,
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryBinding,
+} from "./ebay-exact-existing-qa-recovery";
 import type { GatewayClaim } from "./gateway-contract";
 import {
   executeProviderListingLineageVerification,
@@ -32,6 +38,7 @@ import {
   fetchNaverAccessToken,
   lazadaRequest,
   readStoredNaverAccessToken,
+  readStoredShopeeShopAccessToken,
   runWithProviderReadOnlyTransport,
   runWithChannelRequestSignal,
   shopeeRequest,
@@ -40,29 +47,71 @@ import {
   type SecretPayload,
 } from "./protocols";
 import {
+  assertShopeeSgExistingContentSource,
+  assertShopeeSgExistingInventorySource,
+  shopeeSgExistingUpdateArgument,
+  shopeeSgExistingUpdateBinding,
+} from "./shopee-sg-existing-update";
+import {
   executeProviderOAuthExchange,
   type ProviderOAuthClaim,
   type ProviderOAuthResult,
 } from "./provider-oauth-runtime";
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
+import {
+  coupangExactQaCreateForbidden,
+  coupangExactQaRecoveryArgument,
+  coupangExactQaRecoveryBinding,
+} from "./coupang-exact-qa-recovery";
 import { channelPriceUpdateRelease } from "./price-update-release";
 import {
   qoo10S1ActivationArgument,
   qoo10S1ActivationArgumentsValid,
 } from "./qoo10-listing-activation";
+import {
+  qoo10ExactAdoptedLocalizationArgument,
+  qoo10ExactAdoptedLocalizationBinding,
+  qoo10ExactLocalizationRecoveryIdentity,
+  qoo10ExactLocalizationUpdateArgument,
+  qoo10ExactLocalizationUpdateBinding,
+  qoo10ExactTargetCreateForbidden,
+} from "./qoo10-exact-localization-recovery";
+import {
+  temuActivationBinding,
+  temuContainmentDiscoveryBinding,
+} from "./provider-temu-publication-readback";
+import {
+  temuCredentialCertificationBinding,
+  temuExistingAdoptionBinding,
+} from "./temu-existing-adoption";
+import { temuExactExistingUpdateRequest } from "./temu-existing-update";
+import {
+  assertElevenstExactExistingUpdate,
+  elevenstExactExistingCreateForbidden,
+  elevenstExactExistingPublicationArgument,
+  elevenstExactExistingPublicationBinding,
+  elevenstExactExistingUpdateTarget,
+} from "./elevenst-exact-existing-publication";
+import {
+  assertLazadaExactExistingUpdateArguments,
+  lazadaExactExistingCreateForbidden,
+  lazadaExactExistingUpdateArgument,
+  lazadaExactExistingUpdateRequest,
+  lazadaExactExistingUpdateTarget,
+} from "./lazada-exact-existing-identity";
 
 const serverlessWriteMatrix = {
   "listing.create": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
   ]),
   "listing.update": new Set([
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore",
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
   ]),
   "listing.stop": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore",
   ]),
-  "listing.activate": new Set(["qoo10"]),
+  "listing.activate": new Set(["qoo10", "temu"]),
   "inventory.update": new Set([
     "qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay",
   ]),
@@ -94,7 +143,7 @@ const serverlessReadMatrix = {
   "categories.validate": allServerlessChannels,
   "orders.get": new Set(["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"]),
   "listing.publication.verify": new Set([
-    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay",
+    "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
   ]),
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
 
@@ -112,6 +161,14 @@ export type ServerlessGatewayExecutionHooks = {
   beginOAuthProviderCall?: () => Promise<void>;
   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
   beginProviderMutation: () => Promise<void>;
+  bindCoupangRepresentativePrewrite?: (
+    images: Array<{
+      imageOrder: number;
+      imageType: "REPRESENTATION" | "DETAIL";
+      cdnPath: string;
+      vendorPath: string;
+    }>,
+  ) => Promise<{ prewriteSnapshotSha256: string }>;
   assertLeaseHealthy: () => Promise<void>;
 };
 
@@ -238,6 +295,19 @@ async function prepareCredential(
   if (input.job.channel === "shopee") {
     if (publicationReadOnly && !readProviderAccountIdentity(credential, "shopee")) {
       throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
+    }
+    const exactExistingUpdate = shopeeSgExistingUpdateBinding(arguments_);
+    if (exactExistingUpdate) {
+      const stored = readStoredShopeeShopAccessToken(
+        credential,
+        exactExistingUpdate.shopId,
+        10 * 60 * 1_000,
+      );
+      if (!stored) {
+        throw new Error("SHOPEE_SG_EXISTING_UPDATE_FRESH_OAUTH_REQUIRED");
+      }
+      credential = stored;
+      return { credential, arguments_, shopeeShopCredential: stored };
     }
     const sourceRemoteState = publicationSource?.success
       ? recordValue(publicationSource.data.sourceResponsePayload.remoteState)
@@ -559,19 +629,186 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     const rawArguments = requestArguments(input.job);
-    const activationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
-    if (activationMarkerSupplied !== (input.job.operation === "listing.activate")
-        || (input.job.operation === "listing.activate"
-          && (input.job.channel !== "qoo10" || !qoo10S1ActivationArgumentsValid(rawArguments)))) {
-      throw new Error("QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED");
+    if (input.job.channel === "coupang"
+        && input.job.operation === "listing.create"
+        && coupangExactQaCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("COUPANG_EXACT_QA_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    if (input.job.channel === "elevenst"
+        && input.job.operation === "listing.create"
+        && elevenstExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    if (input.job.channel === "lazada"
+        && input.job.operation === "listing.create"
+        && lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const lazadaExactUpdateMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      lazadaExactExistingUpdateArgument,
+    );
+    const lazadaExactUpdateTarget = input.job.channel === "lazada"
+      && input.job.operation === "listing.update"
+      && lazadaExactExistingUpdateTarget(rawArguments);
+    if (lazadaExactUpdateMarkerSupplied || lazadaExactUpdateTarget) {
+      const exactBinding = lazadaExactExistingUpdateRequest(rawArguments);
+      if (!lazadaExactUpdateTarget || !exactBinding) {
+        throw new Error("LAZADA_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+      }
+      if (input.job.credential_id !== exactBinding.credentialId) {
+        throw new Error("LAZADA_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
+      }
+      assertLazadaExactExistingUpdateArguments(rawArguments);
+    }
+    if (input.job.channel === "ebay"
+        && input.job.operation === "listing.create"
+        && ebayExactExistingQaCreateForbidden({ argumentsValue: rawArguments })) {
+      throw new Error("EBAY_EXACT_EXISTING_QA_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const ebayExactRecovery = ebayExactExistingQaRecoveryBinding(rawArguments);
+    if (Object.hasOwn(rawArguments, ebayExactExistingQaRecoveryArgument)
+        && (input.job.channel !== "ebay"
+          || input.job.operation !== "listing.update"
+          || !ebayExactRecovery)) {
+      throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "ebay" && input.job.operation === "listing.update") {
+      if (!ebayExactRecovery) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
+      }
+      if (input.job.credential_id !== ebayExactRecovery.credentialId) {
+        throw new Error("EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH");
+      }
+      assertEbayExactExistingQaProviderCopyRequest(rawArguments);
+    }
+    const elevenstExactPublication = elevenstExactExistingPublicationBinding(rawArguments);
+    if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
+        && (input.job.channel !== "elevenst"
+          || input.job.operation !== "listing.update"
+          || !elevenstExactPublication)) {
+      throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "elevenst"
+        && input.job.operation === "listing.update"
+        && elevenstExactExistingUpdateTarget(rawArguments)) {
+      if (!elevenstExactPublication) {
+        throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
+      }
+      if (input.job.credential_id !== elevenstExactPublication.credentialId) {
+        throw new Error("ELEVENST_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
+      }
+      assertElevenstExactExistingUpdate(rawArguments);
+    }
+    const coupangRecoveryPhase = input.job.operation === "listing.update"
+      || input.job.operation === "listing.stop"
+      ? input.job.operation
+      : undefined;
+    if (Object.hasOwn(rawArguments, coupangExactQaRecoveryArgument)
+        && (input.job.channel !== "coupang"
+          || !coupangRecoveryPhase
+          || !coupangExactQaRecoveryBinding(rawArguments, coupangRecoveryPhase))) {
+      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
+    }
+    if (input.job.channel === "qoo10"
+        && input.job.operation === "listing.create"
+        && qoo10ExactTargetCreateForbidden(rawArguments)) {
+      // This QA SKU already owns remote item 1217336970. Reject the stale
+      // create before credential refresh, media preparation, or the worker's
+      // provider-mutation fence; only the exact bound update is recoverable.
+      throw new Error("QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN");
+    }
+    const qoo10ExactLocalizationMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      qoo10ExactLocalizationUpdateArgument,
+    );
+    const qoo10ExactLocalizationTarget = input.job.channel === "qoo10"
+      && input.job.operation === "listing.update"
+      && String((rawArguments.params as Record<string, unknown> | undefined)?.ItemCode ?? "")
+        === qoo10ExactLocalizationRecoveryIdentity.remoteId;
+    if ((qoo10ExactLocalizationMarkerSupplied || qoo10ExactLocalizationTarget)
+        && (!qoo10ExactLocalizationTarget
+          || !qoo10ExactLocalizationUpdateBinding(rawArguments))) {
+      throw new Error("QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
+    }
+    const qoo10ExactAdoptedMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      qoo10ExactAdoptedLocalizationArgument,
+    );
+    if (qoo10ExactAdoptedMarkerSupplied
+        && (!qoo10ExactLocalizationTarget
+          || !qoo10ExactAdoptedLocalizationBinding(rawArguments))) {
+      throw new Error("QOO10_EXACT_ADOPTED_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
+    }
+    const shopeeExactUpdateMarkerSupplied = Object.hasOwn(
+      rawArguments,
+      shopeeSgExistingUpdateArgument,
+    );
+    const shopeeExactUpdatePhase = input.job.operation === "listing.update"
+      ? "content" as const
+      : input.job.operation === "inventory.update"
+        ? "inventory" as const
+        : null;
+    const shopeeExactUpdate = shopeeExactUpdatePhase
+      ? shopeeSgExistingUpdateBinding(rawArguments, shopeeExactUpdatePhase)
+      : null;
+    if (shopeeExactUpdateMarkerSupplied && (!shopeeExactUpdatePhase || !shopeeExactUpdate)) {
+      throw new Error("SHOPEE_SG_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+    }
+    if (shopeeExactUpdatePhase && shopeeExactUpdate) {
+      if (input.job.channel !== "shopee"
+          || input.job.credential_id !== shopeeExactUpdate.credentialId) {
+        throw new Error("SHOPEE_SG_EXISTING_UPDATE_LINEAGE_MISMATCH");
+      }
+      if (shopeeExactUpdatePhase === "content") {
+        assertShopeeSgExistingContentSource(rawArguments);
+      } else {
+        assertShopeeSgExistingInventorySource(rawArguments);
+      }
+    }
+    const contentBoundPublicationWrite = (
+      input.job.operation === "listing.create"
+      || input.job.operation === "listing.update"
+      || (input.job.channel === "temu" && input.job.operation === "listing.activate")
+    )
+      && rawArguments.publicationStateContract === "verified_remote_state_v1"
+      && (rawArguments.publicationIntent === "live"
+        || ((input.job.channel === "temu" || Boolean(shopeeExactUpdate))
+          && rawArguments.publicationIntent === "safe_test"));
+    const qoo10ActivationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
+    const temuActivationMarkerSupplied = Object.hasOwn(rawArguments, "sellerpilotTemuActivation");
+    const exactActivationContext = input.job.operation === "listing.activate"
+      ? input.job.channel === "qoo10"
+        ? qoo10ActivationMarkerSupplied
+          && !temuActivationMarkerSupplied
+          && qoo10S1ActivationArgumentsValid(rawArguments)
+        : input.job.channel === "temu"
+          ? !qoo10ActivationMarkerSupplied
+            && temuActivationMarkerSupplied
+            && Boolean(temuActivationBinding(rawArguments))
+          : false
+      : !qoo10ActivationMarkerSupplied && !temuActivationMarkerSupplied;
+    if (!exactActivationContext) {
+      throw new Error("LISTING_ACTIVATION_SERVER_CONTEXT_REQUIRED");
     }
     if (input.job.operation === "listing.publication.verify") {
       const source = listingPublicationVerificationSourceSchema.safeParse(
         rawArguments.sellerpilotPublicationSource,
       );
+      const containmentDiscovery = input.job.channel === "temu"
+        ? temuContainmentDiscoveryBinding(rawArguments)
+        : null;
+      const existingAdoption = input.job.channel === "temu"
+        ? temuExistingAdoptionBinding(rawArguments)
+        : null;
+      const credentialCertification = input.job.channel === "temu"
+        ? temuCredentialCertificationBinding(rawArguments)
+        : null;
       if (rawArguments.sellerpilotReadOnly !== true
-          || !source.success
-          || source.data.verificationJobId !== input.job.id) {
+          || (!containmentDiscovery
+            && !existingAdoption
+            && !credentialCertification
+            && (!source.success || source.data.verificationJobId !== input.job.id))) {
         throw new Error("LISTING_PUBLICATION_VERIFY_READ_ONLY_CONTEXT_REQUIRED");
       }
     }
@@ -581,18 +818,17 @@ export async function executeServerlessGatewayProviderJob(
       // operator decision and cannot be inferred safely by the worker.
       assertEbayListingCreateConfiguration(rawArguments);
     }
-    if (input.job.channel !== "temu"
-        && (input.job.operation === "listing.create" || input.job.operation === "listing.update")
-        && rawArguments.publicationStateContract === "verified_remote_state_v1"
-        && rawArguments.publicationIntent === "live") {
+    if (contentBoundPublicationWrite) {
       if (!parseListingPublicationAssetBinding(rawArguments.sellerpilotPublicationAssetBinding)) {
         throw new Error("LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED");
       }
-      assertListingPublicationSourceLocalized({
-        channel: input.job.channel as Exclude<GatewayClaim["channel"], "temu">,
-        expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
-        sourceArguments: rawArguments,
-      });
+      if (!ebayExactRecovery) {
+        assertListingPublicationSourceLocalized({
+          channel: input.job.channel,
+          expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
+          sourceArguments: rawArguments,
+        });
+      }
     }
 
     const preparedCredential = await prepareCredential(input, rawArguments);
@@ -616,7 +852,31 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     await input.hooks.assertLeaseHealthy();
-    if (writeChannelOperations.has(input.job.operation)) {
+    const delayedTemuActivationBoundary = input.job.channel === "temu"
+      && input.job.operation === "listing.activate";
+    const delayedTemuExactUpdateBoundary = input.job.channel === "temu"
+      && input.job.operation === "listing.update"
+      && Boolean(temuExactExistingUpdateRequest(operationArguments));
+    if (input.job.channel === "temu"
+        && input.job.operation === "listing.update"
+        && !delayedTemuExactUpdateBoundary) {
+      throw new Error("TEMU_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
+    }
+    const delayedEbayExactUpdateBoundary = input.job.channel === "ebay"
+      && input.job.operation === "listing.update"
+      && Boolean(ebayExactRecovery);
+    const delayedShopeeExactInventoryBoundary = input.job.channel === "shopee"
+      && input.job.operation === "inventory.update"
+      && shopeeExactUpdate?.phase === "inventory";
+    const delayedCoupangExactUpdateBoundary = input.job.channel === "coupang"
+      && input.job.operation === "listing.update"
+      && Boolean(coupangExactQaRecoveryBinding(operationArguments, "listing.update"));
+    if (writeChannelOperations.has(input.job.operation)
+        && !delayedTemuActivationBoundary
+        && !delayedTemuExactUpdateBoundary
+        && !delayedEbayExactUpdateBoundary
+        && !delayedShopeeExactInventoryBoundary
+        && !delayedCoupangExactUpdateBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -627,6 +887,24 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
+      ...(delayedTemuActivationBoundary
+          || delayedTemuExactUpdateBoundary
+          || delayedEbayExactUpdateBoundary
+          || delayedShopeeExactInventoryBoundary
+          || delayedCoupangExactUpdateBoundary
+        ? {
+            providerMutationHooks: {
+              begin: input.hooks.beginProviderMutation,
+              assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+              ...(input.hooks.bindCoupangRepresentativePrewrite
+                ? {
+                    bindCoupangRepresentativePrewrite:
+                      input.hooks.bindCoupangRepresentativePrewrite,
+                  }
+                : {}),
+            },
+          }
+        : {}),
       ...(preparedCredential.shopeeShopCredential
         ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
         : {}),
@@ -634,13 +912,9 @@ export async function executeServerlessGatewayProviderJob(
     let result = input.job.operation === "listing.publication.verify"
       ? await runWithProviderReadOnlyTransport(executeOperation)
       : await executeOperation();
-    if (input.job.channel !== "temu"
-        && (input.job.operation === "listing.create" || input.job.operation === "listing.update")
-        && rawArguments.publicationStateContract === "verified_remote_state_v1"
-        && rawArguments.publicationIntent === "live"
-        && result.remoteState) {
+    if (contentBoundPublicationWrite && result.remoteState) {
       const publicationAssetBinding = listingPublicationProviderAssetEvidence({
-        channel: input.job.channel as Exclude<GatewayClaim["channel"], "temu">,
+        channel: input.job.channel,
         remoteId: result.remoteId ?? "",
         sourceArguments: rawArguments,
         providerArguments: operationArguments,

@@ -142,7 +142,20 @@ export function finalizeSmartstoreListingBody(input: {
   const body = structuredClone(recordValue(input.body));
   const originProduct = recordValue(body.originProduct);
   if (Object.hasOwn(originProduct, "salePrice")) {
-    originProduct.salePrice = normalizeTenWonAmount(originProduct.salePrice);
+    const salePrice = Number(normalizeTenWonAmount(originProduct.salePrice));
+    if (!Number.isSafeInteger(salePrice) || salePrice < 10 || salePrice > 999_999_990) {
+      throw new Error("NAVER_SALE_PRICE_INVALID");
+    }
+    originProduct.salePrice = salePrice;
+  }
+  if (Object.hasOwn(originProduct, "stockQuantity")) {
+    const stockQuantity = Number(originProduct.stockQuantity);
+    if (!Number.isSafeInteger(stockQuantity)
+        || stockQuantity < 0
+        || stockQuantity > 99_999_999) {
+      throw new Error("NAVER_STOCK_QUANTITY_INVALID");
+    }
+    originProduct.stockQuantity = stockQuantity;
   }
   if (input.operation === "listing.create") {
     const detailAttribute = recordValue(originProduct.detailAttribute);

@@ -7,6 +7,13 @@ import {
   ChannelGatewayReconciliationRequiredError,
   exchangeOAuthViaChannelGateway,
 } from "../../../../../../lib/channels/gateway";
+import {
+  lazadaAuthorizationUrl,
+  lazadaCountryFromOAuthState,
+  lazadaOAuthState,
+  resolveLazadaCredentialCountry,
+  lazadaTargetCountry,
+} from "../../../../../../lib/channels/lazada-my-contract";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -41,19 +48,12 @@ async function oauthStartResponse(
   credentialId: string,
   persistState: (state: string) => Promise<boolean>,
 ) {
-  const state = `sellerpilot-lazada-${randomBytes(24).toString("base64url")}`;
+  const state = lazadaOAuthState(randomBytes(24).toString("base64url"));
   if (!await persistState(state)) {
     return NextResponse.json({ message: "Lazada OAuth 상태를 안전하게 저장하지 못했습니다." }, { status: 500 });
   }
   const redirectUri = new URL("/", request.nextUrl.origin).toString();
-  const authorizationUrl = new URL("https://auth.lazada.com/oauth/authorize");
-  authorizationUrl.search = new URLSearchParams({
-    response_type: "code",
-    force_auth: "true",
-    redirect_uri: redirectUri,
-    client_id: appKey,
-    state,
-  }).toString();
+  const authorizationUrl = lazadaAuthorizationUrl({ appKey, redirectUri, state });
   const response = NextResponse.json({
     message: "Lazada 승인 화면으로 이동합니다.",
     authorizationUrl: authorizationUrl.toString(),
@@ -96,14 +96,21 @@ export async function POST(request: NextRequest) {
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const oauthCode = textValue(parsed.data.secretPayload, "authorization_code");
+  const oauthStateCountry = parsed.data.oauthState
+    ? lazadaCountryFromOAuthState(parsed.data.oauthState)
+    : "";
   let credentialId = parsed.data.credentialId;
   if (oauthCode) {
     const cookieValue = request.cookies.get(oauthCookieName)?.value ?? "";
     const separator = cookieValue.lastIndexOf(".");
     const cookieState = separator > 0 ? cookieValue.slice(0, separator) : "";
     const cookieCredentialId = separator > 0 ? cookieValue.slice(separator + 1) : "";
-    if (!parsed.data.oauthState) {
+    if (!parsed.data.oauthState || oauthStateCountry !== lazadaTargetCountry) {
       return NextResponse.json({ message: "Lazada OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
+    }
+    const submittedCountry = textValue(parsed.data.secretPayload, "country").toLowerCase();
+    if (submittedCountry && submittedCountry !== oauthStateCountry) {
+      return NextResponse.json({ message: "Lazada OAuth 대상 국가가 승인 상태와 일치하지 않습니다." }, { status: 409 });
     }
     const cookieValid = Boolean(cookieState)
       && sameValue(parsed.data.oauthState, cookieState)
@@ -123,13 +130,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (oauthCode) {
-    const requestedCountry = textValue(parsed.data.secretPayload, "country").toLowerCase();
     try {
       await exchangeOAuthViaChannelGateway({
         serviceClient,
         credentialId: credentialId ?? "",
         channel: "lazada",
-        request: { code: oauthCode, ...(requestedCountry ? { country: requestedCountry } : {}) },
+        request: { code: oauthCode, country: oauthStateCountry },
       });
     } catch (error) {
       if (error instanceof ChannelGatewayInProgressError) {
@@ -164,8 +170,16 @@ export async function POST(request: NextRequest) {
   const appKey = textValue(incoming, "app_key") || textValue(previousSecret, "app_key");
   const appSecret = textValue(incoming, "app_secret") || textValue(previousSecret, "app_secret");
   const code = oauthCode;
-  const country = (textValue(incoming, "country") || textValue(previousSecret, "country") || "my").toLowerCase();
+  const country = resolveLazadaCredentialCountry({
+    startOAuth: parsed.data.startOAuth,
+    hasOAuthCode: Boolean(code),
+    incomingCountry: textValue(incoming, "country"),
+    previousCountry: textValue(previousSecret, "country"),
+  });
   if (!appKey || !appSecret) return NextResponse.json({ message: "App Key와 App Secret이 필요합니다." }, { status: 400 });
+  if (country !== lazadaTargetCountry) {
+    return NextResponse.json({ message: "현재 Lazada 운영 대상은 Malaysia(MY)만 허용합니다." }, { status: 409 });
+  }
 
   const nextSecret: Record<string, unknown> = { ...previousSecret, ...incoming, app_key: appKey, app_secret: appSecret, country };
   delete nextSecret.authorization_code;

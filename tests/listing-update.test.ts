@@ -284,6 +284,27 @@ test("updates preserve remote copy when localization is a current marked or lega
       description: "buchakhyeong keibeul jeongri keulrip 6gae seteu is shown for review.",
     },
   }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
+
+  const reviewedQoo10LegacyRepair = {
+    title: "buchakhyeong keibeul jeongri keulrip 6gae seteu - 購入前確認",
+    shortDescription: "販売者が確認した商品情報です。",
+    description: "buchakhyeong keibeul jeongri keulrip 6gae seteu の販売者確認済み詳細です。",
+  };
+  assert.deepEqual(listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: reviewedQoo10LegacyRepair,
+    allowReviewedQoo10LegacyRepair: true,
+  }), reviewedQoo10LegacyRepair);
+  assert.throws(() => listingCoreContentForOperation({
+    operation: "listing.update",
+    central,
+    localized: {
+      ...reviewedQoo10LegacyRepair,
+      title: `${unapprovedLocalizationReviewMarker} ${reviewedQoo10LegacyRepair.title}`,
+    },
+    allowReviewedQoo10LegacyRepair: true,
+  }), /LISTING_LOCALIZATION_REVIEW_REQUIRED/);
 });
 
 test("Shopee SG and Lazada MY update payloads keep their channel-localized copy", () => {
@@ -337,7 +358,7 @@ test("published listing update drafts bind the immutable remote product identity
     prepareListingUpdateArguments("smartstore", { body: { originProduct: { name: "수정 상품", salePrice: 1000 }, smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "ON" } } }, listing),
     {
       body: {
-        originProduct: { name: "수정 상품" },
+        originProduct: { name: "수정 상품", salePrice: 1000 },
         smartstoreChannelProduct: { channelProductName: "수정 상품" },
       },
       originProductNo: "123456789",
@@ -490,13 +511,19 @@ test("normalized update readback rejects unchanged requested mutable fields", ()
     body: { originProduct: { name: "수정 상품", detailContent: "<p>새 설명</p>", salePrice: 1000 } },
   }, listing);
   assert.deepEqual(verifyListingUpdateReadback("smartstore", argumentsValue, {
-    originProduct: { name: "수정 상품", detailContent: "<p>새 설명</p>", salePrice: 55_000 },
+    originProduct: { name: "수정 상품", detailContent: "<p>새 설명</p>", salePrice: 1000 },
   }), { ok: true, mismatches: [] });
+  assert.deepEqual(verifyListingUpdateReadback("smartstore", argumentsValue, {
+    originProduct: { name: "수정 상품", detailContent: "<p>새 설명</p>", salePrice: 55_000 },
+  }), { ok: false, mismatches: ["originProduct.salePrice"] });
   const mismatch = verifyListingUpdateReadback("smartstore", argumentsValue, {
     originProduct: { name: "기존 상품", detailContent: "<p>새 설명</p>", salePrice: 55_000 },
   });
   assert.equal(mismatch.ok, false);
-  assert.deepEqual(mismatch.mismatches, ["originProduct.name"]);
+  assert.deepEqual(mismatch.mismatches, [
+    "originProduct.name",
+    "originProduct.salePrice",
+  ]);
 });
 
 test("Lazada update keeps the verified XML request and adds a readback identity", () => {

@@ -74,6 +74,7 @@ test("saved raw provider rows deduplicate before display and eligibility while p
   assert.deepEqual(deduplicated.map((item) => item.matchTier).sort(), ["exact", "probable", "rejected"]);
   assert.equal(deduplicated.find((item) => item.matchTier === "exact")?.provenance.length, 2);
   assert.equal(deduplicated.find((item) => item.matchTier === "probable")?.provenance.length, 2);
-  assert.equal(lowestEligibleCompetitorPrice(deduplicated)?.matchTier, "exact");
-  assert.equal(lowestEligibleCompetitorPrice(deduplicated)?.totalPurchasePrice?.krwAmount, 14_500);
+  const eligibilityOptions = { now: observedAt };
+  assert.equal(lowestEligibleCompetitorPrice(deduplicated, eligibilityOptions)?.matchTier, "exact");
+  assert.equal(lowestEligibleCompetitorPrice(deduplicated, eligibilityOptions)?.totalPurchasePrice?.krwAmount, 14_500);
 });

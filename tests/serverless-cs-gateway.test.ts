@@ -591,7 +591,7 @@ test("missing generic claim RPC falls back to the inquiries-only compatibility c
   assert.equal(names.filter((name) => name === "sellerpilot_claim_ebay_asq_serverless_job").length, 0);
 });
 
-test("explicit static egress enables Coupang and Smartstore current reads", () => {
+test("Smartstore and Coupang current reads require explicit static egress", () => {
   const enqueues = serverlessCsCurrentInquiryEnqueues(
     new Date("2026-08-28T07:00:00.000Z"),
     ["coupang", "smartstore"],

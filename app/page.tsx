@@ -111,6 +111,7 @@ import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
 import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import { isResolvedProductFact } from "../lib/product-facts";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
 import { createRevisionPhotoSelectionFence, releaseStaleRevisionPhoto } from "../lib/product-revision-photo-fence";
@@ -188,7 +189,7 @@ import {
   shouldClearPendingProductResearch,
   type PendingProductResearch,
 } from "./_publishing/product-research-lifecycle";
-import { csChannelVerification, csReplyDraftValue, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
+import { csChannelAttentionCount, csChannelVerification, csReplyDraftValue, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
 import {
   csChannelFilterFromValue,
   csNavigationParams,
@@ -1471,6 +1472,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
   const [editOpen, setEditOpen] = useState(false);
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
+  const [showAllDetailAssets, setShowAllDetailAssets] = useState(false);
   const [revisionPhotos, setRevisionPhotos] = useState<StudioPhoto[]>([]);
   const [revisionPhotosProcessing, setRevisionPhotosProcessing] = useState(false);
   const [revisionPhotoSession] = useState(() => createStudioPhotoEditSession<StudioPhoto>());
@@ -2272,6 +2274,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       : null],
   ].filter((row): row is [string, string] => typeof row[1] === "string" && row[1].length > 0);
   const detailAssets = detailContext.generatedImages.length > 0 ? detailContext.generatedImages : detailContext.sourceImages;
+  const visibleDetailAssets = showAllDetailAssets ? detailAssets : detailAssets.slice(0, 4);
   const savedDetailAssetUrls = useMemo(() => {
     const generated = Object.fromEntries(detailContext.generatedImages
       .filter((asset): asset is ProductDetailAsset & { id: string; url: string } => Boolean(asset.id && asset.url))
@@ -2384,7 +2387,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 
       <section className="panel product-detail-assets">
         <div className="panel-heading"><div><span className="panel-kicker">GENERATED DETAIL PAGE</span><h3>등록 이미지 · 상세페이지 디자인</h3></div><ImagePlus size={18} /></div>
-        {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : detailAssets.length > 0 ? <div className="product-detail-asset-grid">{detailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 720px) 44vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption><span>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</span>{asset.id && commerceOperations.aiJobId ? <button type="button" onClick={() => void regenerateDetailAsset(asset.id!)} disabled={Boolean(regeneratingDetailAsset)}>{regeneratingDetailAsset === asset.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button> : null}</figcaption></figure>)}</div> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
+        {remoteListingState === "loading" ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>상세페이지 결과를 불러오는 중입니다.</b></div> : remoteListingState === "unavailable" ? <div className="product-detail-empty compact error" role="alert"><AlertCircle size={24} /><b>상세 이미지 연결 정보를 불러오지 못했습니다.</b><small>이미지가 없는 상태가 아니라 조회 실패입니다. 잠시 후 상품 상세를 다시 열어 주세요.</small></div> : detailAssets.length > 0 ? <><div className="product-detail-asset-grid">{visibleDetailAssets.map((asset, index) => <figure key={`${asset.id ?? asset.path}-${index}`}><div><ProductVisual src={asset.url} size="(max-width: 720px) 44vw, 280px" alt={`${product.name} ${asset.id ?? `상품 이미지 ${index + 1}`}`} /></div><figcaption><span>{asset.id?.replaceAll("-", " ") ?? `원본 이미지 ${index + 1}`}</span>{asset.id && commerceOperations.aiJobId ? <button type="button" onClick={() => void regenerateDetailAsset(asset.id!)} disabled={Boolean(regeneratingDetailAsset)}>{regeneratingDetailAsset === asset.id ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}이 이미지만 재제작</button> : null}</figcaption></figure>)}</div>{detailAssets.length > 4 ? <button type="button" className="product-detail-assets-toggle" aria-expanded={showAllDetailAssets} onClick={() => setShowAllDetailAssets((current) => !current)}>{showAllDetailAssets ? "대표 4장만 보기" : `나머지 ${detailAssets.length - 4}장 펼쳐 보기`}<ChevronDown size={15} /></button> : null}</> : <div className="product-detail-empty compact"><ImagePlus size={24} /><b>저장된 상세 이미지가 없습니다.</b><small>기존 텍스트 상품이거나 이미지 생성 결과가 상품 원장에 연결되지 않은 상태입니다.</small></div>}
       </section>
 
       {remoteListingState === "ready" ? <SavedProductDetailPage key={`${product.sourceId}:${savedDetailPage?.version ?? "none"}:${savedDetailPage?.updatedAt ?? "none"}`} productId={product.sourceId} source={detailPageSource} initialDetailPage={savedDetailPage} assetUrls={savedDetailAssetUrls} authenticatedFetch={authenticatedFetch} notify={notify} /> : null}
@@ -2617,6 +2620,8 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
 }
 
 function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
+  const existingProductEdit = Boolean(initialProduct?.id);
+  const draftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
   const [running, setRunning] = useState(false);
   const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
@@ -2645,6 +2650,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const productResearchRecoveryGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const intakeRef = useRef(intake);
+  const [hydratedDraftStorageKey, setHydratedDraftStorageKey] = useState("");
+  const [activeStage, setActiveStage] = useState<1 | 2 | 3>(initialProduct?.id ? 3 : 1);
   const productResearchInputRef = useRef(intake.researchInput);
   const researchAppliedValuesRef = useRef<Partial<ProductIntakeDraft>>({});
   const [manualErrors, setManualErrors] = useState<Record<string, string>>({});
@@ -2694,6 +2701,66 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   useEffect(() => {
     intakeRef.current = intake;
   }, [intake]);
+
+  useEffect(() => {
+    const restoreTimer = window.setTimeout(() => {
+      try {
+        const stored = window.sessionStorage.getItem(draftStorageKey);
+        if (stored) {
+          const parsed = JSON.parse(stored) as unknown;
+          if (isRecord(parsed)) {
+            const restored = { ...emptyProductIntake } as ProductIntakeDraft;
+            for (const key of Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>) {
+              const candidate = parsed[key];
+              if (typeof candidate === typeof emptyProductIntake[key]) {
+                (restored as Record<keyof ProductIntakeDraft, unknown>)[key] = candidate;
+              }
+            }
+            restored.condition = productConditions.includes(restored.condition) ? restored.condition : "NEW";
+            restored.currency = productCurrencies.includes(restored.currency) ? restored.currency : "KRW";
+            restored.gtinStatus = restored.gtinStatus === "HAS_GTIN" ? "HAS_GTIN" : "NO_GTIN";
+            restored.imageRightsConfirmed = false;
+            restored.productFactsConfirmed = false;
+            intakeRef.current = restored;
+            setIntake(restored);
+          }
+        }
+      } catch {
+        window.sessionStorage.removeItem(draftStorageKey);
+      } finally {
+        setActiveStage(initialProduct?.id ? 3 : 1);
+        setHydratedDraftStorageKey(draftStorageKey);
+      }
+    }, 0);
+    return () => window.clearTimeout(restoreTimer);
+  }, [draftStorageKey, initialProduct?.id]);
+
+  useEffect(() => {
+    if (hydratedDraftStorageKey !== draftStorageKey) return;
+    if (queuedJobId) {
+      window.sessionStorage.removeItem(draftStorageKey);
+      return;
+    }
+    const saveTimer = window.setTimeout(() => {
+      window.sessionStorage.setItem(draftStorageKey, JSON.stringify(intake));
+    }, 250);
+    return () => window.clearTimeout(saveTimer);
+  }, [draftStorageKey, hydratedDraftStorageKey, intake, queuedJobId]);
+
+  useEffect(() => {
+    const hasIntakeChanges = (Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>)
+      .some((key) => key !== "imageRightsConfirmed"
+        && key !== "productFactsConfirmed"
+        && !Object.is(intake[key], emptyProductIntake[key]));
+    const hasDraft = Boolean(mainPhoto || Object.keys(slotPhotos).length || extraPhotos.length || hasIntakeChanges);
+    if (!hasDraft || queuedJobId) return;
+    const warnBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [extraPhotos.length, intake, mainPhoto, queuedJobId, slotPhotos]);
 
   useEffect(() => {
     const previousFile = previousMainPhotoFileRef.current;
@@ -2783,9 +2850,16 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
     .map((metric) => metric.channelKey), [channelMetrics]);
   const selectedChannels = useMemo(
-    () => connectedChannelKeys.filter((key) => key !== "temu" && channelSelection[key] !== false),
+    () => connectedChannelKeys.filter((key) => channelSelection[key] !== false),
     [channelSelection, connectedChannelKeys],
   );
+  const invalidateImageRightsConfirmation = useCallback(() => {
+    const currentIntake = intakeRef.current;
+    if (!currentIntake.imageRightsConfirmed) return;
+    const nextIntake = { ...currentIntake, imageRightsConfirmed: false };
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
+  }, []);
   const studioCompetitorContext = useMemo<StudioCompetitorContext>(() => ({
     query: (intake.productName || intake.researchInput).trim().slice(0, 160),
     providerStatuses: competitorProviders.slice(0, 4).map((provider) => ({
@@ -2898,6 +2972,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const currentIntake = intakeRef.current;
     const nextTemplateIntake: ProductIntakeDraft = {
       ...currentIntake,
+      productFactsConfirmed: false,
       weightKg: numeric("weightKg", currentIntake.weightKg), packageLengthCm: numeric("packageLengthCm", currentIntake.packageLengthCm),
       packageWidthCm: numeric("packageWidthCm", currentIntake.packageWidthCm), packageHeightCm: numeric("packageHeightCm", currentIntake.packageHeightCm),
       shippingFeeKrw: numeric("shippingFeeKrw", currentIntake.shippingFeeKrw), shippingRule: string("shippingRule", currentIntake.shippingRule), packagingRule: string("packagingRule", currentIntake.packagingRule),
@@ -2915,6 +2990,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     const currentIntake = intakeRef.current;
     let nextIntake: ProductIntakeDraft = { ...currentIntake, [key]: value };
+    if (key !== "imageRightsConfirmed" && key !== "productFactsConfirmed" && !Object.is(currentIntake[key], value)) {
+      nextIntake.productFactsConfirmed = false;
+    }
     if (firstDraftGenerated) {
       setFirstDraftReviewed(false);
       closeGeneratedProductRegistration();
@@ -3073,6 +3151,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         if (current) releasePhotoUrl(current.url);
         return photo;
       });
+      invalidateImageRightsConfirmation();
       setUploadError("");
     } catch (error) {
       if (!photoSelectionFence.isCurrent(token)) return;
@@ -3217,6 +3296,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       productUrl: currentIntake.productUrl.trim() || firstReadableSource,
       gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
       gtin: currentIntake.gtin || suggestion.gtin || "",
+      productFactsConfirmed: false,
     };
     researchAppliedValuesRef.current = collectResearchAppliedValues(
       currentIntake,
@@ -3729,6 +3809,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
       });
+      invalidateImageRightsConfirmation();
       setUploadError("");
     } catch (error) {
       if (!photoSelectionFence.isCurrent(token)) return;
@@ -3830,6 +3911,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         }
         return kept;
       });
+      if (accepted.length) invalidateImageRightsConfirmation();
       if (firstFailure) {
         const message = firstFailure.reason instanceof Error ? firstFailure.reason.message : "일부 추가 사진을 확인해 주세요.";
         setUploadError(message);
@@ -3862,6 +3944,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       delete next[slotId];
       return next;
     });
+    invalidateImageRightsConfirmation();
   };
 
   const removeExtraPhoto = (index: number) => {
@@ -3878,6 +3961,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       }
       return current.filter((_, photoIndex) => photoIndex !== index);
     });
+    invalidateImageRightsConfirmation();
   };
 
   const startAutomation = () => {
@@ -3954,6 +4038,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setRunning(true);
     setUploadError("");
     setStudioSubmissionMode("ai");
+    setActiveStage(2);
     notify(`검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 후속 자산을 제작합니다. 외부 채널 업로드는 아직 시작하지 않습니다.`);
     setStudioRequestId((current) => current + 1);
   };
@@ -3976,11 +4061,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     intake.productName.trim().length >= 2,
     intake.sellerSku.trim().length >= 2,
     intake.categoryHint.trim().length >= 2,
-    Boolean(intake.brandName.trim()),
-    Boolean(intake.manufacturer.trim()),
-    intake.countryOfOrigin.trim().length >= 2,
-    intake.material.trim().length >= 2,
-    intake.packageContents.trim().length >= 2,
+    isResolvedProductFact(intake.brandName),
+    isResolvedProductFact(intake.manufacturer),
+    isResolvedProductFact(intake.countryOfOrigin),
+    isResolvedProductFact(intake.material),
+    isResolvedProductFact(intake.packageContents),
     intake.sellingPrice > 0,
     intake.stock > 0,
     intake.weightKg > 0,
@@ -3998,14 +4083,23 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   return (
     <div className="page-stack publishing-page">
       <section className="publishing-workflow-header">
-        <div className="publishing-workflow-copy"><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>사진과 설명으로 1차 정보·이미지 6개를 함께 만드세요.</h2><p>1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다. 사람이 사실정보와 이미지를 확인·수정한 뒤 상세페이지를 제작하고, 상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다.</p></div>
-        <ol className="publishing-steps" aria-label="상품 등록 단계">
-          <li className="active"><span>1</span><b>1차 정보 · 이미지 6개</b><small>{firstDraftContentReady ? "생성 완료" : `${intakeProgress}% 입력`}</small></li>
-          <li><span>2</span><b>사람 확인 · 상세페이지</b><small>{firstDraftReviewed ? "검토 완료" : "검토 필요"}</small></li>
-          <li><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? `${selectedChannels.length}개 채널 준비` : "상세 완료 후 열림"}</small></li>
+        <div className="publishing-workflow-copy">{existingProductEdit ? <><span className="eyebrow dark"><RefreshCw size={14} /> 채널 상품 수정</span><h2>저장된 상품 원장으로 채널별 콘텐츠를 확인하세요.</h2><p>신규상품 입력을 다시 시작하지 않습니다. 저장된 상품정보·승인 이미지·채널별 초안을 아래 편집기에서 불러오고, 채널마다 지원 범위를 확인한 뒤 별도로 반영합니다.</p></> : <><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>사진과 설명으로 1차 정보·이미지 6개를 함께 만드세요.</h2><p>1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다. 사람이 사실정보와 이미지를 확인·수정한 뒤 상세페이지를 제작하고, 상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다.</p></>}</div>
+        <ol className="publishing-steps" aria-label={existingProductEdit ? "채널 상품 수정 단계" : "상품 등록 단계"}>
+          {existingProductEdit ? <>
+            <li className="active"><span>1</span><b>상품 원장 연결</b><small>연결 완료</small></li>
+            <li><span>2</span><b>채널별 초안 확인</b><small>아래에서 확인</small></li>
+            <li><span>3</span><b>채널별 원격 반영</b><small>{selectedChannels.length}개 채널 준비</small></li>
+          </> : <>
+            <li className={activeStage === 1 ? "active" : ""}><button type="button" aria-current={activeStage === 1 ? "step" : undefined} onClick={() => setActiveStage(1)}><span>1</span><b>1차 정보 · 이미지 6개</b><small>{firstDraftContentReady ? "생성 완료" : `${intakeProgress}% 입력`}</small></button></li>
+            <li className={activeStage === 2 ? "active" : ""}><button type="button" aria-current={activeStage === 2 ? "step" : undefined} disabled={!firstDraftContentReady} onClick={() => setActiveStage(2)}><span>2</span><b>사람 확인 · 상세페이지</b><small>{firstDraftReviewed ? "검토 완료" : "검토 필요"}</small></button></li>
+            <li className={activeStage === 3 ? "active" : ""}><button type="button" aria-current={activeStage === 3 ? "step" : undefined} disabled={!resolvedProductId} onClick={() => setActiveStage(3)}><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? `${selectedChannels.length}개 채널 준비` : "상세 완료 후 열림"}</small></button></li>
+          </>}
         </ol>
       </section>
       {queuedJobId && <section className="panel publishing-parallel-banner"><span><CheckCircle2 size={20} /><span><b>이 상품을 등록 큐에 넣었습니다.</b><small>작업 ID {queuedJobId.slice(0, 8)} · AI 작업 큐에서 계속 처리되므로 다른 상품을 바로 올릴 수 있습니다.</small></span></span><div><button type="button" className="credential-secondary" onClick={onShowHistory}>진행상황 보기</button><button type="button" className="primary-button" onClick={onStartAnother}><Plus size={15} />다른 상품 등록</button></div></section>}
+      {existingProductEdit && initialProduct ? <section className="panel publishing-parallel-banner" aria-label="기존 상품 채널 수정 안내"><span><ShieldCheck size={20} /><span><b>{initialProduct.name}</b><small>상품 ID {initialProduct.id} · 저장된 원장과 승인 이미지가 일치하는지 읽은 뒤에만 채널별 실행 버튼이 열립니다.</small></span></span></section> : null}
+      {!existingProductEdit && <>
+      <section className="publishing-stage-panel" aria-label="1단계 자료 입력과 1차 검토" hidden={activeStage !== 1}>
       <section className="publishing-layout">
         <article className="panel upload-panel">
           <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
@@ -4129,11 +4223,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
           <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
-          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const publicationSelectable = key !== "temu"; const selected = publicationSelectable && selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{publicationSelectable ? `${channel.market} · 공식 API 등록 가능` : "연결됨 · 게시 상태 독립 readback 검증 전"}</small></span><input type="checkbox" checked={selected} disabled={!publicationSelectable} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={publicationSelectable ? `${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}` : `${channel.name} 상품 게시 검증 전 선택 불가`} /><i><Check size={12} /></i></label>; })}</div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
           <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>상품 원장 저장</b><small>서버 AI 분석 또는 판매자 확인 원본으로 저장</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
+      </section>
+      <section className="publishing-stage-panel" aria-label="2단계 상세페이지 제작" hidden={activeStage !== 2}>
       <AiProductStudio
         mainPhoto={mainPhoto}
         photos={mainPhoto ? [mainPhoto, ...Object.values(slotPhotos), ...extraPhotos] : []}
@@ -4151,7 +4247,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           setRunning(nextRunning);
         }}
         notify={notify}
-        onJobQueued={(jobId) => setQueuedJobId(jobId)}
+        onJobQueued={(jobId) => {
+          setQueuedJobId(jobId);
+          setActiveStage(2);
+          window.sessionStorage.removeItem(draftStorageKey);
+        }}
         onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(studioResult.product.name);
           setAnalyzedProductId(productId);
@@ -4179,14 +4279,19 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           intakeRef.current = nextIntake;
           setIntake(nextIntake);
           setPublishRefreshVersion((current) => current + 1);
+          setActiveStage(3);
         }}
         onManualResultReady={(productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(submittedIntake.productName);
           setAnalyzedProductId(productId);
           setPublishRefreshVersion((current) => current + 1);
+          setActiveStage(3);
           onManualProductCreated();
         }}
       />
+      </section>
+      </>}
+      <section className="publishing-stage-panel" aria-label="3단계 카테고리와 채널 등록" hidden={!existingProductEdit && activeStage !== 3}>
       <CategoryClassificationWorkbench
         productId={resolvedProductId}
         productName={analyzedProductName || `${intake.productName} ${intake.categoryHint}`.trim()}
@@ -4196,12 +4301,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify={notify}
         onConfirmed={() => setPublishRefreshVersion((current) => current + 1)}
       />
-      <ProductPublishWorkbench
-        productId={resolvedProductId}
-        selectedChannels={selectedChannels}
-        refreshVersion={publishRefreshVersion}
-        notify={notify}
-      />
+      <div id="channel-product-edit-workbench">
+        <ProductPublishWorkbench
+          productId={resolvedProductId}
+          selectedChannels={selectedChannels}
+          refreshVersion={publishRefreshVersion}
+          notify={notify}
+        />
+      </div>
+      </section>
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={onShowHistory}>작업 이력<ChevronRight size={15} /></button></div>
         <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
         {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
@@ -4640,12 +4748,22 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDeliveryStatu
   };
   const unresolvedCount = channelTickets.filter((ticket) => ticket.status !== "처리 완료").length;
   const lastSuccess = syncStatus.filter((item) => item.data_type === "inquiries" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
-  const failedCount = syncStatus.filter((item) => item.data_type === "inquiries" && item.status === "failed").length;
   const inquiryChannelStates = activeChannelKeys.map((channelKey) => {
     const rows = syncStatus.filter((item) => item.channel_key === channelKey && item.data_type === "inquiries").sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
     const state = rows[0] ?? null;
     return { channelKey, state };
   });
+  const inquiryAttentionCount = csChannelAttentionCount(inquiryChannelStates.map(({ channelKey, state }) => ({
+    channelKey,
+    status: state?.status,
+    importedCount: state?.imported_count,
+    lastError: state?.last_error,
+    needsAttention: Boolean(
+      historyBackfill
+      && ["coupang", "smartstore"].includes(channelKey)
+      && historyBackfill.status !== "succeeded"
+    ),
+  })));
   const historyBackfillActive = historyBackfill?.status === "queued" || historyBackfill?.status === "running";
   const historyBackfillDays = historyBackfill?.historyDays ?? 30;
   const historyBackfillTitle = historyBackfill?.status === "succeeded"
@@ -4666,7 +4784,7 @@ function CsPage({ notify, displayTickets, displayOrders, onSend, onDeliveryStatu
   return (
     <div className="page-stack cs-page">
       <section className="cs-summary"><button type="button" aria-pressed={resolvedInitialStatus === "open"} className={resolvedInitialStatus === "open" ? "active" : ""} onClick={() => applyFilters(initialChannel, "open")}><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "urgent"} className={resolvedInitialStatus === "urgent" ? "active" : ""} onClick={() => applyFilters(initialChannel, "urgent")}><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{channelTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "all"} className={resolvedInitialStatus === "all" ? "active" : ""} onClick={() => applyFilters(initialChannel, "all")}><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>전체 문의 · 주문</small><strong>{channelTickets.length} · {channelOrders.length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "reconciliation"} className={resolvedInitialStatus === "reconciliation" ? "active" : ""} onClick={() => applyFilters(initialChannel, "reconciliation")}><span className="metric-icon blue"><Bot size={18} /></span><span><small>원장 확인 필요</small><strong>{channelTickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length}</strong></span></button></section>
-      <section className="panel-heading table-title cs-live-heading"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{failedCount ? ` · ${failedCount}개 채널 확인 필요` : ""}</h3></div><div className="cs-filter-actions"><label className="filter-select compact"><span className="sr-only">문의 채널 필터</span><select value={initialChannel} onChange={(event) => applyFilters(csChannelFilterFromValue(event.target.value), resolvedInitialStatus)}><option value="all">전체 채널</option>{activeChannelKeys.map((channelKey) => <option value={channelKey} key={channelKey}>{channels[channelKey].name}</option>)}</select><ChevronDown size={14} /></label><button className="filter-button" type="button" onClick={() => void onBackfill()} disabled={syncing}><Clock3 size={15} />쿠팡·스마트스토어 30일</button><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "주문·문의 새로고침"}</button></div></section>
+      <section className="panel-heading table-title cs-live-heading"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{inquiryAttentionCount ? ` · ${inquiryAttentionCount}개 채널 확인 필요` : ""}</h3></div><div className="cs-filter-actions"><label className="filter-select compact"><span className="sr-only">문의 채널 필터</span><select value={initialChannel} onChange={(event) => applyFilters(csChannelFilterFromValue(event.target.value), resolvedInitialStatus)}><option value="all">전체 채널</option>{activeChannelKeys.map((channelKey) => <option value={channelKey} key={channelKey}>{channels[channelKey].name}</option>)}</select><ChevronDown size={14} /></label><button className="filter-button" type="button" onClick={() => void onBackfill()} disabled={syncing}><Clock3 size={15} />쿠팡·스마트스토어 30일</button><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "주문·문의 새로고침"}</button></div></section>
       {historyBackfill ? <section className={`panel cs-history-backfill ${historyBackfill.status}`} role="status" aria-live="polite"><div className="cs-history-backfill-heading"><span className="metric-icon blue">{historyBackfillActive ? <LoaderCircle className="spin" size={17} /> : historyBackfill.status === "succeeded" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}</span><span><b>{historyBackfillTitle}</b><small>{historyBackfill.fromDate}~{historyBackfill.toDate} · 쿠팡·스마트스토어 · 전체 페이지 기준</small></span><em>{historyBackfill.progressPercent}%</em></div><div className="cs-history-progress" role="progressbar" aria-label={`${historyBackfill.historyDays}일 문의 이력 처리율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={historyBackfill.progressPercent}><i style={{ width: `${historyBackfill.progressPercent}%` }} /></div><div className="cs-history-counts"><span>완료 <b>{historyBackfill.succeededJobs}</b></span><span>대기 <b>{historyBackfill.queuedJobs}</b></span><span>처리 중 <b>{historyBackfill.runningJobs}</b></span><span className={historyBackfill.failedJobs ? "failed" : ""}>실패 <b>{historyBackfill.failedJobs}</b></span><small>{historyBackfill.status === "blocked" ? "고정 egress가 확인될 때까지 작업을 접수하거나 자동 재시도하지 않습니다." : <>총 {historyBackfill.totalJobs}개 작업 · 최초 범위 {historyBackfill.expectedInitialJobs}개{historyBackfill.status === "failed" ? " · 버튼을 다시 누르면 재전송 위험이 없는 실패 읽기만 재시도합니다." : historyBackfillActive ? " · 첫 작업 성공만으로 전체 완료 처리하지 않습니다." : " · 모든 페이지 반영을 확인했습니다."}</>}</small></div></section> : null}
       <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); const historyChannel = Boolean(historyBackfill && ["coupang", "smartstore"].includes(channelKey)); const historyBlocked = historyBackfill?.status === "blocked" || historyBackfill?.blockedReason === "STATIC_EGRESS_REQUIRED"; const historyOverride = historyChannel && historyBackfill?.status !== "succeeded" ? historyBlocked ? { readLabel: "Vercel 고정 egress 설정 후 조회 가능", badge: "설정 필요", tone: "unsupported" } as const : { readLabel: historyBackfill?.status === "failed" ? `${historyBackfill.historyDays}일 이력 일부 실패 · 성공 ${historyBackfill.succeededJobs}/${historyBackfill.totalJobs}` : `${historyBackfill?.historyDays ?? 30}일 이력 처리 중 · 성공 ${historyBackfill?.succeededJobs ?? 0}/${historyBackfill?.totalJobs ?? 0}`, badge: historyBackfill?.status === "failed" ? "재시도 필요" : "이력 처리 중", tone: historyBackfill?.status === "failed" ? "failed" : "unsupported" } as const : null; return <button type="button" aria-pressed={initialChannel === channelKey} className={initialChannel === channelKey ? "active" : ""} key={channelKey} onClick={() => applyFilters(channelKey, resolvedInitialStatus)}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{historyOverride?.readLabel ?? verification.readLabel}{!historyOverride && state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={historyOverride?.tone ?? verification.tone}>{historyOverride?.badge ?? verification.badge}</em></button>; })}</div></section>
       {displayTickets.length === 0 ? <section className="panel live-empty-state large"><Inbox size={32} /><b>운영 원장에 실제 문의가 0건입니다.</b><small>지원·승인된 채널의 문의 조회가 성공하고 실제 문의가 있으면 고객 정보와 원문이 표시됩니다.</small><button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button></section> :
@@ -4716,18 +4834,24 @@ const defaultNotificationPreferences: NotificationPreferences = { kakao_enabled:
 function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; notify: (message: string) => void }) {
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const kakaoTestRequestIdRef = useRef<string | null>(null);
   const [kakao, setKakao] = useState<{ connected?: boolean; nickname?: string; kakaoUserId?: string; expiresAt?: string }>({ connected: false });
   const [preferences, setPreferences] = useState(defaultNotificationPreferences);
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const response = await authenticatedFetch("/api/integrations/kakao/settings");
       const payload = await response.json().catch(() => ({ message: "알림 설정 응답을 읽지 못했습니다." })) as { kakao?: typeof kakao; preferences?: Partial<NotificationPreferences>; message?: string };
       if (!response.ok) throw new Error(payload.message ?? "알림 설정을 불러오지 못했습니다.");
       setKakao(payload.kakao ?? { connected: false });
       setPreferences({ ...defaultNotificationPreferences, ...(payload.preferences ?? {}) });
-    } catch (error) { notify(error instanceof Error ? error.message : "알림 설정을 불러오지 못했습니다."); }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "알림 설정을 불러오지 못했습니다.";
+      setLoadError(message);
+      notify(message);
+    }
     finally { setLoading(false); }
   }, [authenticatedFetch, notify]);
   useEffect(() => { const timer = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(timer); }, [load]);
@@ -4741,6 +4865,7 @@ function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch:
     } catch (error) { notify(error instanceof Error ? error.message : "카카오 연결을 시작하지 못했습니다."); setWorking(false); }
   };
   const save = async () => {
+    if (loadError) return notify("현재 저장값을 확인하지 못해 알림 설정 저장을 차단했습니다. 먼저 다시 불러와 주세요.");
     setWorking(true);
     try {
       const response = await authenticatedFetch("/api/integrations/kakao/settings", { method: "POST", body: JSON.stringify({ preferences }) });
@@ -4779,8 +4904,8 @@ function NotificationsPage({ authenticatedFetch, notify }: { authenticatedFetch:
     { key: "settlement_rate_risk", title: "환율 정산 손실 주의", detail: "기준환율보다 2% 이상 불리한 정산이 감지될 때", icon: CircleDollarSign },
   ];
   return <div className="page-stack notifications-settings-page">
-    <section className="panel kakao-connect-card"><div><span className="kakao-symbol">K</span><span><small>공식 Kakao Login · KakaoTalk Message API</small><h3>{kakao.connected ? `${kakao.nickname || "사용자"} 카카오톡 연결됨` : "가입한 사용자 카카오톡 연결"}</h3><p>이 컴퓨터의 카카오톡이 아니라 로그인한 사용자 본인의 카카오 계정을 OAuth로 연결합니다. 알림은 공식 API가 허용하는 본인 ‘나와의 채팅’으로 전송됩니다.</p></span></div><div>{kakao.connected ? <><span className="status-badge success"><i />연결 정상</span><button type="button" className="credential-secondary" onClick={() => void test()} disabled={working}>테스트 보내기</button></> : <button type="button" className="kakao-connect-button" onClick={() => void connect()} disabled={working}>{working ? <LoaderCircle className="spin" size={16} /> : <MessageCircleMore size={16} />}카카오 계정 연결</button>}</div></section>
-    <section className="panel notification-preferences"><div className="panel-heading"><div><span className="panel-kicker">DETAILED NOTIFICATIONS</span><h3>업무별 알림 세부 설정</h3></div><label className="master-notification-toggle"><input type="checkbox" aria-label="카카오 알림 전체 사용" checked={preferences.kakao_enabled} onChange={(event) => setPreferences((current) => ({ ...current, kakao_enabled: event.target.checked }))} /><span>카카오 알림 전체</span></label></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>알림 설정을 불러오는 중입니다.</b></div> : <div className="notification-preference-grid">{options.map((option) => <label key={option.key}><span className="metric-icon blue"><option.icon size={16} /></span><span><b>{option.title}</b><small>{option.detail}</small></span><input type="checkbox" aria-label={`${option.title} 알림`} checked={preferences[option.key]} onChange={(event) => setPreferences((current) => ({ ...current, [option.key]: event.target.checked }))} /></label>)}</div>}<footer><small>웹 종 알림은 개별·전체 닫기를 지원하며, 새로운 상태 변화가 생기면 다시 표시됩니다.</small><button type="button" className="publish-execute" disabled={working || loading} onClick={() => void save()}>{working ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}설정 저장</button></footer></section>
+    <section className="panel kakao-connect-card"><div><span className="kakao-symbol">K</span><span><small>공식 Kakao Login · KakaoTalk Message API</small><h3>{loadError ? "카카오 연결 상태 확인 필요" : kakao.connected ? `${kakao.nickname || "사용자"} 카카오톡 연결됨` : "가입한 사용자 카카오톡 연결"}</h3><p>이 컴퓨터의 카카오톡이 아니라 로그인한 사용자 본인의 카카오 계정을 OAuth로 연결합니다. 알림은 공식 API가 허용하는 본인 ‘나와의 채팅’으로 전송됩니다.</p></span></div><div>{!loadError && kakao.connected ? <><span className="status-badge success"><i />연결 정상</span><button type="button" className="credential-secondary" onClick={() => void test()} disabled={working}>테스트 보내기</button></> : <button type="button" className="kakao-connect-button" onClick={() => loadError ? void load() : void connect()} disabled={working || loading}>{working || loading ? <LoaderCircle className="spin" size={16} /> : loadError ? <RefreshCw size={16} /> : <MessageCircleMore size={16} />}{loadError ? "상태 다시 불러오기" : "카카오 계정 연결"}</button>}</div></section>
+    <section className="panel notification-preferences"><div className="panel-heading"><div><span className="panel-kicker">DETAILED NOTIFICATIONS</span><h3>업무별 알림 세부 설정</h3></div><label className="master-notification-toggle"><input type="checkbox" aria-label="카카오 알림 전체 사용" checked={preferences.kakao_enabled} disabled={loading || Boolean(loadError)} onChange={(event) => setPreferences((current) => ({ ...current, kakao_enabled: event.target.checked }))} /><span>카카오 알림 전체</span></label></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>알림 설정을 불러오는 중입니다.</b></div> : loadError ? <div className="settings-load-error" role="alert"><AlertCircle size={20} /><span><b>저장된 알림 설정을 불러오지 못했습니다.</b><small>{loadError}</small></span><button type="button" className="credential-secondary" onClick={() => void load()}><RefreshCw size={14} />다시 불러오기</button></div> : <div className="notification-preference-grid">{options.map((option) => <label key={option.key}><span className="metric-icon blue"><option.icon size={16} /></span><span><b>{option.title}</b><small>{option.detail}</small></span><input type="checkbox" aria-label={`${option.title} 알림`} checked={preferences[option.key]} onChange={(event) => setPreferences((current) => ({ ...current, [option.key]: event.target.checked }))} /></label>)}</div>}<footer><small>{loadError ? "기존 저장값을 확인할 때까지 변경 저장을 차단합니다." : "웹 종 알림은 개별·전체 닫기를 지원하며, 새로운 상태 변화가 생기면 다시 표시됩니다."}</small><button type="button" className="publish-execute" disabled={working || loading || Boolean(loadError)} onClick={() => void save()}>{working ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}설정 저장</button></footer></section>
   </div>;
 }
 
@@ -4788,21 +4913,37 @@ function TemplatesPage({ authenticatedFetch, notify }: { authenticatedFetch: (in
   const [templates, setTemplates] = useState<CommerceTemplate[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [pendingDeleteId, setPendingDeleteId] = useState("");
+  const [deletingId, setDeletingId] = useState("");
+  const deleteConfirmationRef = useRef<HTMLDivElement>(null);
+  const deleteCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const closeDeleteConfirmation = useCallback(() => {
+    if (!deletingId) setPendingDeleteId("");
+  }, [deletingId]);
+  useModalInteraction(Boolean(pendingDeleteId), deleteConfirmationRef, closeDeleteConfirmation, {
+    dismissible: !deletingId,
+    initialFocusRef: deleteCancelButtonRef,
+  });
   const [draft, setDraft] = useState({ name: "", kind: "packaging_shipping" as CommerceTemplate["kind"], shippingFeeKrw: 0, shippingRule: "", packagingRule: "", weightKg: 0.5, packageLengthCm: 20, packageWidthCm: 20, packageHeightCm: 10, isDefault: false });
   const loadTemplates = useCallback(async () => {
     setLoading(true);
+    setLoadError("");
     try {
       const response = await authenticatedFetch("/api/admin/templates");
       const payload = await response.json().catch(() => ({ message: "템플릿 응답을 읽지 못했습니다." })) as { templates?: CommerceTemplate[]; message?: string };
       if (!response.ok) throw new Error(payload.message ?? "템플릿을 불러오지 못했습니다.");
       setTemplates(Array.isArray(payload.templates) ? payload.templates : []);
     } catch (error) {
-      notify(error instanceof Error ? error.message : "템플릿을 불러오지 못했습니다.");
+      const message = error instanceof Error ? error.message : "템플릿을 불러오지 못했습니다.";
+      setLoadError(message);
+      notify(message);
     } finally { setLoading(false); }
   }, [authenticatedFetch, notify]);
   useEffect(() => { const timer = window.setTimeout(() => void loadTemplates(), 0); return () => window.clearTimeout(timer); }, [loadTemplates]);
   const save = async () => {
     if (!draft.name.trim() || saving) return;
+    if (loadError) return notify("기존 템플릿을 확인하지 못해 저장을 차단했습니다. 먼저 다시 불러와 주세요.");
     setSaving(true);
     try {
       const response = await authenticatedFetch("/api/admin/templates", { method: "POST", body: JSON.stringify({ name: draft.name, kind: draft.kind, isDefault: draft.isDefault, values: { shippingFeeKrw: draft.shippingFeeKrw, shippingRule: draft.shippingRule, packagingRule: draft.packagingRule, weightKg: draft.weightKg, packageLengthCm: draft.packageLengthCm, packageWidthCm: draft.packageWidthCm, packageHeightCm: draft.packageHeightCm } }) });
@@ -4815,14 +4956,21 @@ function TemplatesPage({ authenticatedFetch, notify }: { authenticatedFetch: (in
     finally { setSaving(false); }
   };
   const remove = async (id: string) => {
-    const response = await authenticatedFetch(`/api/admin/templates?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (!response.ok) return notify("템플릿을 삭제하지 못했습니다.");
-    setTemplates((current) => current.filter((template) => template.id !== id));
-    notify("템플릿을 삭제했습니다.");
+    if (deletingId) return;
+    setDeletingId(id);
+    try {
+      const response = await authenticatedFetch(`/api/admin/templates?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!response.ok) return notify("템플릿을 삭제하지 못했습니다.");
+      setTemplates((current) => current.filter((template) => template.id !== id));
+      setPendingDeleteId("");
+      notify("템플릿을 삭제했습니다.");
+    } finally {
+      setDeletingId("");
+    }
   };
   return <div className="page-stack templates-page">
-    <section className="panel template-editor"><div className="panel-heading"><div><span className="panel-kicker">REUSABLE RULES</span><h3>배송비 · 포장/배송규칙 템플릿</h3></div><FileText size={18} /></div><p>한 번 저장한 값은 상품 등록의 포장·배송 입력란 위에 버튼으로 나타납니다.</p><div className="template-form-grid"><label><span>템플릿 이름</span><input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="예: 국내 택배 기본" /></label><label><span>유형</span><select value={draft.kind} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as CommerceTemplate["kind"] }))}><option value="packaging_shipping">포장 · 배송</option><option value="shipping_fee">배송비</option></select></label><label><span>배송비 KRW</span><input type="number" min="0" value={draft.shippingFeeKrw} onChange={(event) => setDraft((current) => ({ ...current, shippingFeeKrw: Number(event.target.value) }))} /></label><label><span>중량 kg</span><input type="number" min="0.01" step="0.01" value={draft.weightKg} onChange={(event) => setDraft((current) => ({ ...current, weightKg: Number(event.target.value) }))} /></label><label><span>가로 cm</span><input type="number" min="0.1" value={draft.packageLengthCm} onChange={(event) => setDraft((current) => ({ ...current, packageLengthCm: Number(event.target.value) }))} /></label><label><span>세로 cm</span><input type="number" min="0.1" value={draft.packageWidthCm} onChange={(event) => setDraft((current) => ({ ...current, packageWidthCm: Number(event.target.value) }))} /></label><label><span>높이 cm</span><input type="number" min="0.1" value={draft.packageHeightCm} onChange={(event) => setDraft((current) => ({ ...current, packageHeightCm: Number(event.target.value) }))} /></label><label className="template-wide"><span>배송 규칙</span><textarea value={draft.shippingRule} onChange={(event) => setDraft((current) => ({ ...current, shippingRule: event.target.value }))} placeholder="출고일, 배송지역, 반품 배송 안내" /></label><label className="template-wide"><span>포장 규칙</span><textarea value={draft.packagingRule} onChange={(event) => setDraft((current) => ({ ...current, packagingRule: event.target.value }))} placeholder="완충재, 합포장, 파손 방지 규칙" /></label><label className="template-default"><input type="checkbox" checked={draft.isDefault} onChange={(event) => setDraft((current) => ({ ...current, isDefault: event.target.checked }))} /><span>이 유형의 기본 템플릿</span></label></div><button type="button" className="publish-execute" disabled={!draft.name.trim() || saving} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "저장 중" : "템플릿 저장"}</button></section>
-    <section className="panel template-list-panel"><div className="panel-heading"><div><span className="panel-kicker">SAVED TEMPLATES</span><h3>저장된 템플릿</h3></div><span className="count-chip">{templates.length}</span></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>템플릿을 불러오는 중입니다.</b></div> : templates.length ? <div className="template-card-grid">{templates.map((template) => <article key={template.id}><div><FileText size={16} /><span><b>{template.name}</b><small>{template.kind === "shipping_fee" ? "배송비" : "포장 · 배송"}{template.is_default ? " · 기본" : ""}</small></span><button type="button" aria-label={`${template.name} 삭제`} onClick={() => void remove(template.id)}><Trash2 size={14} /></button></div><dl><div><dt>배송비</dt><dd>{Number(template.values.shippingFeeKrw ?? 0).toLocaleString()}원</dd></div><div><dt>포장</dt><dd>{String(template.values.packagingRule ?? "미입력")}</dd></div><div><dt>배송</dt><dd>{String(template.values.shippingRule ?? "미입력")}</dd></div></dl></article>)}</div> : <div className="product-detail-empty compact"><FileText size={24} /><b>저장된 템플릿이 없습니다.</b><small>위에서 자주 쓰는 배송비와 포장·배송 규칙을 먼저 저장하세요.</small></div>}</section>
+    <section className="panel template-editor"><div className="panel-heading"><div><span className="panel-kicker">REUSABLE RULES</span><h3>배송비 · 포장/배송규칙 템플릿</h3></div><FileText size={18} /></div><p>한 번 저장한 값은 상품 등록의 포장·배송 입력란 위에 버튼으로 나타납니다.</p><div className="template-form-grid"><label><span>템플릿 이름</span><input value={draft.name} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="예: 국내 택배 기본" /></label><label><span>유형</span><select value={draft.kind} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, kind: event.target.value as CommerceTemplate["kind"] }))}><option value="packaging_shipping">포장 · 배송</option><option value="shipping_fee">배송비</option></select></label><label><span>배송비 KRW</span><input type="number" min="0" value={draft.shippingFeeKrw} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, shippingFeeKrw: Number(event.target.value) }))} /></label><label><span>중량 kg</span><input type="number" min="0.01" step="0.01" value={draft.weightKg} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, weightKg: Number(event.target.value) }))} /></label><label><span>가로 cm</span><input type="number" min="0.1" value={draft.packageLengthCm} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, packageLengthCm: Number(event.target.value) }))} /></label><label><span>세로 cm</span><input type="number" min="0.1" value={draft.packageWidthCm} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, packageWidthCm: Number(event.target.value) }))} /></label><label><span>높이 cm</span><input type="number" min="0.1" value={draft.packageHeightCm} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, packageHeightCm: Number(event.target.value) }))} /></label><label className="template-wide"><span>배송 규칙</span><textarea value={draft.shippingRule} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, shippingRule: event.target.value }))} placeholder="출고일, 배송지역, 반품 배송 안내" /></label><label className="template-wide"><span>포장 규칙</span><textarea value={draft.packagingRule} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, packagingRule: event.target.value }))} placeholder="완충재, 합포장, 파손 방지 규칙" /></label><label className="template-default"><input type="checkbox" checked={draft.isDefault} disabled={Boolean(loadError)} onChange={(event) => setDraft((current) => ({ ...current, isDefault: event.target.checked }))} /><span>이 유형의 기본 템플릿</span></label></div>{loadError ? <div className="settings-load-error" role="alert"><AlertCircle size={20} /><span><b>기존 템플릿을 불러오지 못했습니다.</b><small>{loadError}</small></span><button type="button" className="credential-secondary" onClick={() => void loadTemplates()}><RefreshCw size={14} />다시 불러오기</button></div> : null}<button type="button" className="publish-execute" disabled={!draft.name.trim() || saving || Boolean(loadError)} onClick={() => void save()}>{saving ? <LoaderCircle className="spin" size={15} /> : <Check size={15} />}{saving ? "저장 중" : "템플릿 저장"}</button></section>
+    <section className="panel template-list-panel"><div className="panel-heading"><div><span className="panel-kicker">SAVED TEMPLATES</span><h3>저장된 템플릿</h3></div><span className="count-chip">{loadError ? "확인 필요" : templates.length}</span></div>{loading ? <div className="product-detail-empty compact"><LoaderCircle className="spin" size={22} /><b>템플릿을 불러오는 중입니다.</b></div> : loadError ? <div className="product-detail-empty compact error" role="alert"><AlertCircle size={24} /><b>저장된 템플릿을 표시할 수 없습니다.</b><small>빈 목록이 아니라 조회 실패입니다. 다시 불러온 뒤 수정하세요.</small></div> : templates.length ? <div className="template-card-grid">{templates.map((template) => <article key={template.id}><div><FileText size={16} /><span><b>{template.name}</b><small>{template.kind === "shipping_fee" ? "배송비" : "포장 · 배송"}{template.is_default ? " · 기본" : ""}</small></span><button type="button" aria-label={`${template.name} 삭제`} disabled={Boolean(deletingId)} onClick={() => setPendingDeleteId(template.id)}><Trash2 size={14} /></button></div><dl><div><dt>배송비</dt><dd>{Number(template.values.shippingFeeKrw ?? 0).toLocaleString()}원</dd></div><div><dt>포장</dt><dd>{String(template.values.packagingRule ?? "미입력")}</dd></div><div><dt>배송</dt><dd>{String(template.values.shippingRule ?? "미입력")}</dd></div></dl>{pendingDeleteId === template.id ? <div ref={deleteConfirmationRef} tabIndex={-1} className="inline-destructive-confirm" role="alertdialog" aria-modal="true" aria-label={`${template.name} 템플릿 삭제 확인`}><span><b>이 템플릿을 삭제할까요?</b><small>삭제 후 상품 등록에서 다시 선택할 수 없습니다.</small></span><div><button ref={deleteCancelButtonRef} type="button" className="credential-secondary" onClick={closeDeleteConfirmation} disabled={Boolean(deletingId)}>취소</button><button type="button" className="destructive-button" onClick={() => void remove(template.id)} disabled={Boolean(deletingId)}>{deletingId === template.id ? <LoaderCircle className="spin" size={14} /> : <Trash2 size={14} />}삭제</button></div></div> : null}</article>)}</div> : <div className="product-detail-empty compact"><FileText size={24} /><b>저장된 템플릿이 없습니다.</b><small>위에서 자주 쓰는 배송비와 포장·배송 규칙을 먼저 저장하세요.</small></div>}</section>
   </div>;
 }
 
@@ -4833,7 +4981,7 @@ function StoryboardPage({ onNavigate }: { onNavigate: (view: View) => void }) {
     { no: "03", title: "사진으로 상품 등록", desc: "정면·라벨·바코드 사진을 올려 상품 사실정보 추출", view: "publishing" as View, icon: ImagePlus, outcome: "반복 입력 제거" },
     { no: "04", title: "AI 상세·썸네일 제작", desc: "Vercel OIDC 서버 AI 분석, codex-image 연출컷, 3종 썸네일과 편집 가능한 상세페이지 생성", view: "publishing" as View, icon: WandSparkles, outcome: "Puck 블록으로 직접 수정 가능한 초안" },
     { no: "05", title: "채널별 마진 검증", desc: "원가·수수료·환율·광고비를 반영해 목표 마진 판매가를 결정", view: "margin" as View, icon: Calculator, outcome: "팔아도 남는 가격 확정" },
-    { no: "06", title: "7개 판매채널 등록", desc: "한 상품을 Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay 규격으로 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 사전검증과 오류 추적" },
+    { no: "06", title: "8개 판매채널 등록", desc: "한 상품을 Qoo10·Shopee·Lazada·쿠팡·11번가·스마트스토어·eBay·Temu 규격으로 변환", view: "publishing" as View, icon: Globe2, outcome: "채널별 사전검증과 오류 추적" },
     { no: "07", title: "주문 · 재고 통합", desc: "각 채널 주문을 모으고 중앙 재고를 동기화", view: "orders" as View, icon: PackageCheck, outcome: "중복판매·품절 방지" },
     { no: "08", title: "다국어 CS 응대", desc: "문의 자동번역과 주문정보 기반 AI 답변 초안", view: "cs" as View, icon: Bot, outcome: "응답시간 단축" },
     { no: "09", title: "성과 개선", desc: "채널·상품별 매출, 전환율, CS와 오류 데이터를 비교", view: "qoo10" as View, icon: TrendingUp, outcome: "잘 팔리는 상품에 집중" },

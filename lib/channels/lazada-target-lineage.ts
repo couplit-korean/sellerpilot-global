@@ -89,3 +89,27 @@ export function lineageBoundLazadaTargets(
   });
   return lineageBoundTargets.length === expectedByMarket.size ? lineageBoundTargets : [];
 }
+
+export function lineageBoundLazadaTargetForMarket(
+  cachedTargets: ChannelTargetRecord[],
+  activeCredentialSecret: unknown,
+  marketCode: string,
+) {
+  const secretPayload = objectRecord(activeCredentialSecret);
+  const activeAccount = secretPayload ? attestedLazadaAccount(secretPayload) : null;
+  const normalizedMarketCode = marketCode.trim().toUpperCase();
+  if (!activeAccount || !channelMarket("lazada", normalizedMarketCode)) return [];
+
+  const expectedSellerId = activeAccount.countryUserInfo.find(
+    (store) => store.country.toUpperCase() === normalizedMarketCode,
+  )?.seller_id;
+  if (!expectedSellerId) return [];
+
+  const matchingTargets = cachedTargets.filter((target) =>
+    target.targetId.trim() === expectedSellerId
+      && target.marketCode.trim().toUpperCase() === normalizedMarketCode
+      && isCompleteChannelTarget("lazada", target));
+  matchingTargets.sort((left, right) =>
+    Date.parse(right.verifiedAt ?? "") - Date.parse(left.verifiedAt ?? ""));
+  return matchingTargets.length ? [{ ...matchingTargets[0], marketCode: normalizedMarketCode }] : [];
+}

@@ -4,6 +4,7 @@ import {
   fetchChannelTargets,
   pendingChannelTargetRequestCount,
 } from "../app/channel-target-client";
+import { lazadaTargetSyncRequiredCode } from "../lib/channels/lazada-my-contract";
 import {
   createBoundedRequestSignal,
   OperationsSnapshotRequestCoordinator,
@@ -86,6 +87,76 @@ test("channel target timeout clears the pending cache and an explicit retry perf
     assert.deepEqual(await retry.json(), { targets: [{ targetId: "shop-1" }] });
     assert.equal(calls, 2);
     assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada cache miss performs one typed sync and the next read uses the saved target", async () => {
+  const originalFetch = globalThis.fetch;
+  const methods: string[] = [];
+  const bodies: unknown[] = [];
+  let targetSaved = false;
+  let postCalls = 0;
+  const credentialId = "21111111-1111-4111-8111-111111111111";
+  try {
+    globalThis.fetch = (async (_input, init) => {
+      const method = init?.method ?? "GET";
+      methods.push(method);
+      if (method === "POST") {
+        postCalls += 1;
+        bodies.push(JSON.parse(String(init?.body ?? "null")));
+        targetSaved = true;
+        return Response.json({ targets: [{ targetId: "my-seller-1", marketCode: "MY" }] });
+      }
+      return targetSaved
+        ? Response.json({ targets: [{ targetId: "my-seller-1", marketCode: "MY" }] })
+        : Response.json({
+            code: lazadaTargetSyncRequiredCode,
+            channel: "lazada",
+            credentialId,
+            targets: [],
+          }, { status: 409 });
+    }) as typeof fetch;
+
+    const first = await fetchChannelTargets("lazada", "typed-sync-token", { timeoutMs: 100 });
+    assert.equal(first.ok, true);
+    assert.equal(postCalls, 1);
+    const second = await fetchChannelTargets("lazada", "typed-sync-token", { timeoutMs: 100 });
+    assert.equal(second.ok, true);
+    assert.equal(postCalls, 1);
+    assert.deepEqual(methods, ["GET", "POST", "GET"]);
+    assert.deepEqual(bodies, [{ channel: "lazada", credentialId }]);
+    assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("channel target client never turns unrelated 409 or server/read errors into POST", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const testCase of [
+      { status: 409, payload: { code: "LAZADA_MY_TARGET_MISMATCH" } },
+      { status: 409, payload: { code: lazadaTargetSyncRequiredCode, channel: "lazada", targets: [] } },
+      { status: 404, payload: { message: "missing" } },
+      { status: 500, payload: { message: "failed" } },
+      { status: 503, payload: { message: "unavailable" } },
+    ]) {
+      const methods: string[] = [];
+      globalThis.fetch = (async (_input, init) => {
+        methods.push(init?.method ?? "GET");
+        return Response.json(testCase.payload, { status: testCase.status });
+      }) as typeof fetch;
+      const response = await fetchChannelTargets(
+        "lazada",
+        `no-post-${testCase.status}-${testCase.payload.code ?? "error"}`,
+        { timeoutMs: 100 },
+      );
+      assert.equal(response.status, testCase.status);
+      assert.deepEqual(methods, ["GET"]);
+      assert.equal(pendingChannelTargetRequestCount(), 0);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

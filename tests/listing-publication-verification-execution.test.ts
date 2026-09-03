@@ -21,6 +21,7 @@ import {
   ebayRequest,
   ebayTradingRequest,
   naverRequest,
+  temuRequest,
 } from "../lib/channels/protocols";
 
 registerHooks({
@@ -94,7 +95,7 @@ function detailHtml(text: string, urls = detailUrls) {
 }
 
 function sourceContext(input: {
-  channel: Exclude<ActiveChannelKey, "temu">;
+  channel: ActiveChannelKey;
   sourceArguments: Record<string, unknown>;
   providerArguments?: Record<string, unknown>;
   sourceStepName: string;
@@ -140,7 +141,7 @@ function sourceContext(input: {
 }
 
 type Fixture = {
-  channel: Exclude<ActiveChannelKey, "temu">;
+  channel: ActiveChannelKey;
   remoteId: string;
   locale: string;
   market: string;
@@ -270,6 +271,54 @@ const ebayInventory = {
   product: {
     title: "Verified product item",
     imageUrls: ["https://cdn.example.test/gallery.jpg"],
+  },
+};
+const temuGoodsBasic = {
+  externalGoodsId: "TEMU-KR-001",
+  goodsName: "한국어로 확인된 테무 판매 상품",
+  extCatName: "601099",
+  costTemplate: "QA_KR_STANDARD",
+  goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
+  bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
+  goodsCarouselImage: [galleryUrl],
+  detailImage: detailUrls,
+};
+const temuSku = {
+  externalSkuId: "TEMU-KR-001-01",
+  quantity: 2,
+  price: { basePrice: { amount: "5000", currency: "KRW" } },
+};
+const temuDetailData = {
+  success: true,
+  result: {
+    goodsId: "88000001",
+    outGoodsSn: temuGoodsBasic.externalGoodsId,
+    goodsName: temuGoodsBasic.goodsName,
+    goodsDesc: temuGoodsBasic.goodsDesc,
+    bulletPoints: temuGoodsBasic.bulletPoints,
+    goodsGallery: {
+      goodsCarouselImage: temuGoodsBasic.goodsCarouselImage,
+      detailImage: detailUrls,
+    },
+    skuList: [{
+      skuId: "88000002",
+      outSkuSn: temuSku.externalSkuId,
+      price: { retailPrice: temuSku.price.basePrice },
+      retailPrice: temuSku.price.basePrice,
+    }],
+  },
+};
+const temuStockData = {
+  success: true,
+  result: {
+    stockList: [{
+      goodsId: "88000001",
+      skuStockInfoList: [{
+        skuId: "88000002",
+        outSkuSn: temuSku.externalSkuId,
+        selfOrdinaryStock: { stock: temuSku.quantity, stockType: 1 },
+      }],
+    }],
   },
 };
 
@@ -536,6 +585,29 @@ const fixtures: Fixture[] = [
     resources: { originProductNo: "10000001", smartstoreChannelProductNo: "20000001" },
   },
   {
+    channel: "temu",
+    remoteId: "88000001",
+    locale: "ko-KR",
+    market: "KR",
+    targetId: "KR",
+    sourceArguments: publicationArguments({
+      publicationIntent: "live",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationExpectedLocale: "ko-KR",
+      publicationExpectedFingerprint: FINGERPRINT,
+      publicationExpectedImageCount: 8,
+      body: { language: "ko", goodsBasic: temuGoodsBasic, skuList: [temuSku] },
+    }),
+    sourceStepName: "goods-detail-image-readback",
+    remoteData: temuDetailData,
+    credential: {
+      app_key: "temu-app",
+      app_secret: "temu-secret",
+      access_token: "temu-access",
+    },
+    resources: { goodsId: "88000001", externalGoodsId: "TEMU-KR-001" },
+  },
+  {
     channel: "ebay",
     remoteId: "110000000001",
     locale: "en-US",
@@ -656,7 +728,7 @@ function ebayGetItemXml(sku = "SELLERPILOT-001", listingId = "110000000001") {
   return `<?xml version="1.0" encoding="UTF-8"?><GetItemResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><Item><ItemID>${listingId}</ItemID><SKU>${sku}</SKU><Site>US</Site></Item></GetItemResponse>`;
 }
 
-test("all seven real provider executors reverify by read-only GET without opening a provider mutation fence", async () => {
+test("all eight real provider executors reverify read-only state without opening a provider mutation fence", async () => {
   const originalFetch = globalThis.fetch;
   for (const fixture of fixtures) {
     let providerMutationHooks = 0;
@@ -674,7 +746,17 @@ test("all seven real provider executors reverify by read-only GET without openin
       const isExactEbayTradingRead = method === "POST"
         && url.endsWith("/ws/api.dll")
         && ["GetUser", "GetItem"].includes(ebayTradingCall);
-      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead) {
+      const temuRequestBody = fixture.channel === "temu" && typeof init?.body === "string"
+        ? JSON.parse(init.body) as Record<string, unknown>
+        : {};
+      const isExactTemuRead = method === "POST"
+        && [
+          "temu.local.goods.list.retrieve",
+          "bg.local.goods.publish.status.get",
+          "bg.local.goods.detail.query",
+          "temu.local.goods.sku.stock.query",
+        ].includes(String(temuRequestBody.type ?? ""));
+      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead && !isExactTemuRead) {
         providerWriteRequests += 1;
       }
       if (fixture.channel === "elevenst") {
@@ -719,6 +801,28 @@ test("all seven real provider executors reverify by read-only GET without openin
         assert.match(String(init?.body ?? ""), /<ItemID>110000000001<\/ItemID>/u);
         assert.match(String(init?.body ?? ""), /<SKU>SELLERPILOT-001<\/SKU>/u);
         return new Response(ebayGetItemXml(), { status: 200, headers: { "content-type": "text/xml" } });
+      }
+      if (fixture.channel === "temu") {
+        if (temuRequestBody.type === "temu.local.goods.list.retrieve") {
+          return Response.json({
+            success: true,
+            result: { goodsList: [{ goodsId: "88000001", outGoodsSn: "TEMU-KR-001" }] },
+          });
+        }
+        if (temuRequestBody.type === "bg.local.goods.publish.status.get") {
+          return Response.json({
+            success: true,
+            result: { goodsPublishStatusList: [{ goodsId: "88000001", status: 1, subStatus: 2, statusName: "LIVE" }] },
+          });
+        }
+        if (temuRequestBody.type === "bg.local.goods.detail.query") {
+          assert.equal(temuRequestBody.language, "ko");
+          return Response.json(temuDetailData);
+        }
+        if (temuRequestBody.type === "temu.local.goods.sku.stock.query") {
+          assert.equal("language" in temuRequestBody, false);
+          return Response.json(temuStockData);
+        }
       }
       return Response.json(fixture.remoteData);
     };
@@ -1666,6 +1770,14 @@ test("read-only transport blocks mutation methods even on legitimate provider re
         callName: "AddMemberMessageRTQ",
         marketplaceId: "EBAY_US",
         body: "<?xml version=\"1.0\" encoding=\"utf-8\"?><AddMemberMessageRTQRequest xmlns=\"urn:ebay:apis:eBLBaseComponents\"><ItemID>110000000001</ItemID></AddMemberMessageRTQRequest>",
+      }),
+    },
+    {
+      fixture: fixtures.find((item) => item.channel === "temu")!,
+      execute: () => temuRequest({
+        payload: fixtures.find((item) => item.channel === "temu")!.credential,
+        type: "bg.local.goods.sale.status.set",
+        arguments: { goodsId: 88000001, onsale: 0, operationType: 1 },
       }),
     },
   ];

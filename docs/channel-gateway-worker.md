@@ -41,6 +41,14 @@ drain이며, 주문 동기화 route는 문의를 중복 enqueue하지 않는다.
 실제로 일치할 때만 서버리스 실행을 켠다. Static IP는 유료 기능이므로 사용자
 승인 없이 구매하거나 활성화하지 않는다.
 
+네이버 커머스API 공식 FAQ는 내 스토어 애플리케이션에 실제 호출 컴퓨터의
+Outbound IPv4를 등록해야 하며, NAT 환경에서는 NAT 공인 IP를 사용하고
+애플리케이션당 최대 3개까지 등록할 수 있다고 명시한다.
+`GW.IP_NOT_ALLOWED`는 이 등록값과 네이버가 관측한 호출 IP가 다를 때의 정상적인
+fail-closed 응답이다.
+
+- 공식 FAQ: https://github.com/commerce-api-naver/commerce-api/discussions/2291
+
 검증이 끝난 채널만 Production 환경변수
 `SELLERPILOT_SERVERLESS_STATIC_EGRESS_CHANNELS`에 쉼표로 넣고, 같은 채널을
 Supabase의 static-egress 정책에도 활성화한다. 환경변수, DB 정책, 요청 attestation
@@ -54,12 +62,15 @@ worker로 우회하지 않는다. Shopee는 OAuth 토큰 교환부터 같은 게
 1. 정확한 운영 Supabase host와 Vercel 프로젝트를 각각 다시 확인한다.
 2. 전체 테스트와 Vercel production build를 통과시켜 후보 배포를 만든다. 후보에는
    비밀값이 아닌 정확한 커밋 SHA를 `SELLERPILOT_RELEASE_SHA`로 넣는다.
-3. 정확한 후보 URL과 같은 SHA를 지정한 no-work canary로 그 후보 자체를 검증한다.
+3. 정확한 후보 URL에 대해 `vercel curl`로 보호된 no-work canary를 호출해 그 후보
+   자체를 검증한다. Vercel CLI가 Deployment Protection을 통과시키며,
+   `CRON_SECRET`은 후보 함수 안에서만 사용한다.
 
 ```sh
-SELLERPILOT_RUNTIME_ORIGIN=https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
-SELLERPILOT_EXPECTED_RELEASE=<40자리-커밋-SHA> \
-pnpm gateway:serverless:configure --candidate-canary
+pnpm dlx vercel@59.10.0 curl /api/admin/serverless-runtime-release \
+  --deployment https://sellerpilot-global-<deployment>-project-e59d.vercel.app \
+  -X POST -H 'content-type: application/json' \
+  --data '{"action":"candidate_canary"}'
 ```
 
 4. **migration 전에** 현재 운영 gateway cron과 다섯 internal schedule을 명시적으로

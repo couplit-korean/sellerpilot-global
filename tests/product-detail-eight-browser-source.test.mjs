@@ -79,7 +79,11 @@ test("PUT and channel publication validate and byte-bind the approved manifest b
   assert.ok(fingerprint > stableFingerprintBinding);
   assert.ok(claim > fingerprint);
   assert.ok(provider > claim);
-  assert.match(channelRoute, /arguments: fingerprintArguments/);
+  assert.match(channelRoute, /arguments: baseFingerprintArguments/);
+  assert.match(
+    channelRoute,
+    /executeViaChannelGateway\(\{[\s\S]{0,320}arguments: gatewayArguments/,
+  );
   assert.match(channelRoute, /mode: "approved_detail_image_manifest_required"/);
   assert.match(channelRoute, /mode: "approved_detail_image_assets_unavailable"/);
   assert.match(channelRoute, /mode: "approved_detail_image_binding_invalid"/);

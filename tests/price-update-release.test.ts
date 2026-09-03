@@ -57,7 +57,7 @@ test("Qoo10 가격 대상은 게시 원장의 ItemCode와 검증된 판매자 �
     readFile(new URL("../lib/channels/listing-lineage-verification.ts", import.meta.url), "utf8"),
   ]);
 
-  assert.match(adminRoute, /listingBoundOperation = \["listing\.update", "listing\.stop", "price\.update", "inventory\.update"\]/);
+  assert.match(adminRoute, /listingBoundOperation = \["listing\.update", "listing\.stop", "listing\.activate", "price\.update", "inventory\.update"\]/);
   assert.match(writeResource, /channel === "qoo10"\) return text\(params\.ItemCode, argumentsValue\.itemCode, argumentsValue\.remoteId\)/);
   const exactListing = adminRoute.indexOf("const exactListing");
   const lineageFence = adminRoute.indexOf("sellerpilot_service_validate_listing_write_lineage", exactListing);

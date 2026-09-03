@@ -24,6 +24,10 @@ const {
 const {
   verifyShopeeGlobalListingPostPublish,
 } = await import("../lib/channels/provider-shopee-post-publish-runtime");
+const {
+  ebayExactExistingQaRecoveryArgument,
+  ebayExactExistingQaRecoveryIdentity,
+} = await import("../lib/channels/ebay-exact-existing-qa-recovery");
 
 const CRON_SECRET = "serverless-generic-gateway-cron-secret";
 const JOB_ID = "51000000-0000-4000-8000-000000000001";
@@ -35,7 +39,7 @@ const channels: GatewayClaim["channel"][] = [
 
 const expectedWrites: Record<string, GatewayClaim["channel"][]> = {
   "listing.create": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"],
-  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore"],
+  "listing.update": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay"],
   "listing.stop": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore"],
   "inventory.update": ["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"],
   "shipment.acknowledge": ["qoo10", "shopee", "lazada", "coupang", "smartstore"],
@@ -87,7 +91,7 @@ test("generic serverless operation matrix is exact and price updates stay closed
     "categories.attributes": allChannels,
     "categories.validate": allChannels,
     "orders.get": ["qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay"],
-    "listing.publication.verify": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"],
+    "listing.publication.verify": ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"],
   };
   for (const [operation, allowed] of Object.entries(expectedReads)) {
     for (const channel of channels) {
@@ -157,6 +161,94 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
 });
 
+test("generic eBay listing update remains closed without the exact server-owned recovery marker", async () => {
+  const events: string[] = [];
+  const job = genericClaim("ebay", "listing.update");
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("exact eBay update rejects a job whose credential differs from the current bound lineage", async () => {
+  const events: string[] = [];
+  const job = genericClaim("ebay", "listing.update");
+  job.environment = "production";
+  job.request = {
+    arguments: {
+      [ebayExactExistingQaRecoveryArgument]: {
+        contract: "ebay_exact_existing_qa_recovery_v2",
+        phase: "listing.update",
+        productId: ebayExactExistingQaRecoveryIdentity.productId,
+        listingId: ebayExactExistingQaRecoveryIdentity.listingId,
+        sourceAttemptId: ebayExactExistingQaRecoveryIdentity.sourceAttemptId,
+        publicListingId: ebayExactExistingQaRecoveryIdentity.publicListingId,
+        market: ebayExactExistingQaRecoveryIdentity.market,
+        marketplaceId: ebayExactExistingQaRecoveryIdentity.marketplaceId,
+        marketplaceSku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
+        offerId: ebayExactExistingQaRecoveryIdentity.offerId,
+        currency: ebayExactExistingQaRecoveryIdentity.currency,
+        priceUsd: ebayExactExistingQaRecoveryIdentity.priceUsd,
+        stock: 1,
+        credentialId: "11111111-2222-4333-8444-555555555555",
+        sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
+        offerIdSource: "immutable_lineage_attestation_v1",
+        sellerAccountLineage: "validated_by_service_rpc",
+      },
+    },
+  };
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH/,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("Temu safe-test requires the approved localized asset binding before its mutation fence", async () => {
+  const events: string[] = [];
+  const job = genericClaim("temu", "listing.create");
+  job.request = {
+    arguments: {
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "safe_test",
+      publicationExpectedLocale: "ko-KR",
+    },
+  };
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
+});
+
 test("legacy eBay diagnostic stages immutable GetUser identity before privilege read", async () => {
   const originalFetch = globalThis.fetch;
   const events: string[] = [];
@@ -224,7 +316,7 @@ test("legacy eBay diagnostic stages immutable GetUser identity before privilege 
   }
 });
 
-test("publication reverification is allowlisted for the seven release channels and never opens the provider mutation fence", async () => {
+test("publication reverification is allowlisted for the eight release channels and never opens the provider mutation fence", async () => {
   const events: string[] = [];
   const job = {
     ...genericClaim("qoo10", "listing.publication.verify"),

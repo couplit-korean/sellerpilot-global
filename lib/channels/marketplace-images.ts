@@ -7,10 +7,28 @@ import sharp from "sharp";
 import { aiDetailAssetIds } from "../ai-generated-assets";
 import type { ActiveChannelKey } from "./catalog";
 import {
+  buildCoupangExactQaGalleryImages,
+  coupangExactQaRecoveryBinding,
+} from "./coupang-exact-qa-recovery";
+import {
+  ebayExactExistingQaRecoveryBinding,
+  ebayExactV101ContentContractBinding,
+  ebayExactV101RepresentativeUrl,
+} from "./ebay-exact-existing-qa-recovery";
+import {
   marketplaceChannelDetailImageCount,
   marketplaceLocalizedDetailSectionTypes,
 } from "./marketplace-image-contract";
+import { qoo10ExactAdoptedLocalizationBinding } from "./qoo10-exact-localization-identity";
 import { qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
+import {
+  bindShopeeSgExistingPreparedAssetEvidence,
+  shopeeSgExistingUpdateBinding,
+} from "./shopee-sg-existing-update";
+import {
+  bindTemuExactPreservedAssetEvidence,
+  temuExactExistingUpdateArgument,
+} from "./temu-existing-update";
 
 const marketplaceImageBucket = "sellerpilot-marketplace";
 const inputMimeTypes = ["image/jpeg", "image/png", "image/webp"];
@@ -67,6 +85,11 @@ export function buildListingPublicationAssetBinding(input: {
 }) {
   const detailIdentities = input.approvedDetailImageUrls.map(normalizedMarketplaceAssetIdentity);
   const transportIdentities = input.providerTransportUrls.map(normalizedMarketplaceAssetIdentity);
+  const providerTransportCount = input.providerTransportRoles.length;
+  const providerTransportCountValid = input.providerImageSurface === "gallery"
+    ? providerTransportCount === marketplaceChannelDetailImageCount
+      || providerTransportCount === marketplaceChannelDetailImageCount + 1
+    : providerTransportCount === marketplaceChannelDetailImageCount;
   const valid = /^[a-f0-9]{64}$/u.test(input.approvedManifestDigest)
     && Number.isSafeInteger(input.approvedDetailPageVersion)
     && input.approvedDetailPageVersion > 0
@@ -80,11 +103,11 @@ export function buildListingPublicationAssetBinding(input: {
     && detailIdentities.length === marketplaceChannelDetailImageCount
     && detailIdentities.every(Boolean)
     && new Set(detailIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
-    && input.providerTransportRoles.length === marketplaceChannelDetailImageCount
-    && new Set(input.providerTransportRoles).size === marketplaceChannelDetailImageCount
-    && transportIdentities.length === marketplaceChannelDetailImageCount
+    && providerTransportCountValid
+    && new Set(input.providerTransportRoles).size === providerTransportCount
+    && transportIdentities.length === providerTransportCount
     && transportIdentities.every(Boolean)
-    && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === marketplaceChannelDetailImageCount
+    && new Set(transportIdentities.map((identity) => identity?.objectPath)).size === providerTransportCount
     && (input.providerImageSurface === "detail_content" || input.providerImageSurface === "buyer_visible"
       ? input.providerTransportRoles.every((role, index) => role === input.approvedDetailRoles[index])
         && input.providerTransportUrls.every((url, index) => url === input.approvedDetailImageUrls[index])
@@ -625,6 +648,7 @@ function injectMarketplaceDetailImages(value: unknown, urls: string[], altTexts:
 
 export function renderQoo10DetailDescription(value: unknown, urls: string[], altTexts: string[] = [], roles: string[] = []) {
   const source = (typeof value === "string" ? value : "")
+    .replace(/<section\b[^>]*\bdata-sellerpilot-detail-images=(?:"true"|'true')[^>]*>[\s\S]*?<\/section>/gi, "")
     .replace(/<\/?section(?:\s[^>]*)?>/gi, (tag) => tag.startsWith("</") ? "</div>" : "<div>")
     .replace(/<dl(?:\s[^>]*)?>/gi, "<div>")
     .replace(/<\/dl>/gi, "</div>")
@@ -640,7 +664,10 @@ export function qoo10RollbackRecoveryPreservesRepresentativeImage(
   channel: ActiveChannelKey,
   argumentsValue: Record<string, unknown>,
 ) {
-  return channel === "qoo10" && Boolean(qoo10RollbackUpdateRecoveryBinding(argumentsValue));
+  return channel === "qoo10" && Boolean(
+    qoo10RollbackUpdateRecoveryBinding(argumentsValue)
+    || qoo10ExactAdoptedLocalizationBinding(argumentsValue),
+  );
 }
 
 /** Applies already-normalized Qoo10 images without authorizing the recovery. */
@@ -834,11 +861,19 @@ export async function prepareMarketplaceImages(
   }
   const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);
   const approvedDetailImageSha256s = strings(assets?.approvedDetailImageSha256s);
+  const approvedGalleryImagePaths = strings(assets?.approvedGalleryImagePaths);
+  const approvedGalleryImageSha256s = strings(assets?.approvedGalleryImageSha256s);
   const preserveQoo10RepresentativeImage = qoo10RollbackRecoveryPreservesRepresentativeImage(channel, next);
   const gallery = assets
     ? preserveQoo10RepresentativeImage
       ? []
-      : await normalizeList(assets.galleryImageUrls, channel === "qoo10" ? 1 : 12, "gallery-square")
+      : await normalizeList(
+          assets.galleryImageUrls,
+          channel === "qoo10" ? 1 : 12,
+          "gallery-square",
+          approvedGalleryImagePaths,
+          approvedGalleryImageSha256s,
+        )
     : [];
   const details = assets
     ? await normalizeList(
@@ -876,6 +911,15 @@ export async function prepareMarketplaceImages(
       }
       return;
     }
+    if (surface === "gallery"
+        && approvedGalleryImagePaths.length === 1
+        && approvedGalleryImageSha256s.length === 1
+        && binding.providerTransportImages[0]?.role === "gallery-representative") {
+      Object.assign(binding.providerTransportImages[0], {
+        approvedObjectPath: approvedGalleryImagePaths[0],
+        approvedSourceSha256: approvedGalleryImageSha256s[0],
+      });
+    }
     next.sellerpilotPublicationAssetBinding = binding;
   };
   bindPublicationAssets("detail_content", details, detailImageRoles);
@@ -889,15 +933,30 @@ export async function prepareMarketplaceImages(
     const limit = channel === "smartstore" ? 10 : channel === "shopee" ? 9 : 8;
     const sourceGallery = gallery.length ? gallery : await normalizeList(next.imageUrls, limit, "gallery-square");
     const normalizedAssets = uniqueStrings([...sourceGallery, ...details]);
-    const listingImages = channel === "shopee"
+    const listingImages = channel === "shopee" || channel === "smartstore"
       ? uniqueStrings([sourceGallery[0] ?? "", ...details]).slice(0, limit)
       : normalizedAssets.slice(0, limit);
-    if (channel === "shopee" && !manualSourceMode) {
+    if (channel === "smartstore"
+        && approvedGalleryImagePaths.length === 1
+        && approvedGalleryImageSha256s.length === 1) {
       bindPublicationAssets(
-        "buyer_visible",
-        details,
-        detailImageRoles,
+        "gallery",
+        listingImages,
+        ["gallery-representative", ...detailImageRoles],
       );
+    }
+    if (channel === "shopee" && !manualSourceMode) {
+      const exactExisting = shopeeSgExistingUpdateBinding(next, "content");
+      bindPublicationAssets(
+        exactExisting ? "gallery" : "buyer_visible",
+        exactExisting ? listingImages : details,
+        exactExisting
+          ? ["gallery-representative", ...detailImageRoles]
+          : detailImageRoles,
+      );
+      if (exactExisting) {
+        Object.assign(next, bindShopeeSgExistingPreparedAssetEvidence(next));
+      }
     }
     // Lazada rejects any external URL left in description HTML. Keep every
     // normalized detail asset in imageUrls so the local worker migrates all of
@@ -930,6 +989,7 @@ export async function prepareMarketplaceImages(
   if (channel === "coupang") {
     const body = record(next.body);
     const items = Array.isArray(body?.items) ? body.items : [];
+    const exactRecovery = coupangExactQaRecoveryBinding(next, "listing.update");
     const classification = record(assets?.classification);
     const localizedSections = Array.isArray(assets?.localizedDetailSections)
       ? assets.localizedDetailSections.map(record).filter((section): section is Record<string, unknown> => Boolean(section))
@@ -939,8 +999,23 @@ export async function prepareMarketplaceImages(
     for (const itemValue of items) {
       const item = record(itemValue);
       if (item && gallery.length) {
-        const combined = uniqueStrings([...gallery, ...details]).slice(0, 10);
-        item.images = combined.map((url, index) => ({
+        const exactImages = exactRecovery
+          ? buildCoupangExactQaGalleryImages(gallery, details)
+          : null;
+        if (exactRecovery && !exactImages) {
+          throw new Error("COUPANG_EXACT_QA_GALLERY_IMAGES_REQUIRED");
+        }
+        const combined = exactImages
+          ? exactImages.map((image) => image.vendorPath)
+          : uniqueStrings([...gallery, ...details]).slice(0, 10);
+        if (exactImages) {
+          bindPublicationAssets(
+            "gallery",
+            combined,
+            ["gallery-representative", ...detailImageRoles],
+          );
+        }
+        item.images = exactImages ?? combined.map((url, index) => ({
           imageOrder: index,
           imageType: index === 0 ? "REPRESENTATION" : "DETAIL",
           vendorPath: url,
@@ -1021,12 +1096,19 @@ export async function prepareMarketplaceImages(
       ? gallery.slice(0, 10)
       : await normalizeList(goodsBasic.goodsCarouselImage, 10, "gallery-square");
     const normalizedDetails = details.length ? details.slice(0, 10) : normalized;
-    goodsBasic.goodsCarouselImage = normalized;
+    // The verified Temu contract has one buyer-visible representative image
+    // plus eight separately approved detail images. Keeping extra gallery
+    // candidates would make an exact representative readback impossible.
+    const representative = normalized.slice(0, 1);
+    goodsBasic.goodsCarouselImage = representative;
     goodsBasic.detailImage = normalizedDetails;
     const skuList = Array.isArray(body.skuList) ? body.skuList : [];
     for (const skuValue of skuList) {
       const sku = record(skuValue);
-      if (sku) sku.images = normalized;
+      if (sku) sku.images = representative;
+    }
+    if (record(next[temuExactExistingUpdateArgument])) {
+      Object.assign(next, bindTemuExactPreservedAssetEvidence(next));
     }
     return finish();
   }
@@ -1034,9 +1116,41 @@ export async function prepareMarketplaceImages(
   const inventoryItem = record(next.inventoryItem);
   const product = record(inventoryItem?.product);
   if (!product) throw new Error("MARKETPLACE_IMAGE_REQUIRED");
-  const normalized = gallery.length
-    ? uniqueStrings([...gallery, ...details]).slice(0, 12)
-    : await normalizeList(product.imageUrls, 12, "gallery-square");
+  const exactEbayRecovery = ebayExactExistingQaRecoveryBinding(next);
+  if (exactEbayRecovery) {
+    if (gallery.length !== 1
+        || approvedGalleryImagePaths.length !== 1
+        || approvedGalleryImageSha256s.length !== 1
+        || !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(
+          approvedGalleryImagePaths[0],
+        )
+        || !/^[a-f0-9]{64}$/u.test(approvedGalleryImageSha256s[0])) {
+      throw new Error("EBAY_EXACT_V101_ONE_REPRESENTATIVE_REQUIRED");
+    }
+    bindPublicationAssets(
+      "gallery",
+      [gallery[0], ...details],
+      ["gallery-representative", ...detailImageRoles],
+    );
+  }
+  const exactEbayV101Content = exactEbayRecovery
+    ? ebayExactV101ContentContractBinding(next)
+    : null;
+  const normalized = exactEbayRecovery
+    ? uniqueStrings([gallery[0] ?? "", ...details])
+    : gallery.length
+      ? uniqueStrings([...gallery, ...details]).slice(0, 12)
+      : await normalizeList(product.imageUrls, 12, "gallery-square");
+  if (exactEbayRecovery
+      && (!exactEbayV101Content
+        || gallery.length !== 1
+        || details.length !== 8
+        || normalized.length !== 9
+        || normalized[0] !== gallery[0]
+        || !ebayExactV101RepresentativeUrl(normalized[0])
+        || !details.every((url, index) => normalized[index + 1] === url))) {
+    throw new Error("EBAY_EXACT_V101_NINE_IMAGES_REQUIRED");
+  }
   product.imageUrls = normalized;
   product.description = upsertMarketplaceDetailImages(product.description, details, detailImageAltTexts, detailImageRoles);
   const offer = record(next.offer);

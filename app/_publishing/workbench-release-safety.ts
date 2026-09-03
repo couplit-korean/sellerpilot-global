@@ -17,7 +17,7 @@ export type WorkbenchListingSnapshot = {
 
 export type WorkbenchChannelResult = {
   phase: "idle" | "queued" | "running" | "pending_review" | "succeeded" | "failed" | "blocked";
-  operation?: "listing.create" | "listing.update" | "listing.stop";
+  operation?: "listing.create" | "listing.update" | "listing.stop" | "listing.activate";
   message?: string;
   remoteId?: string;
   attemptId?: string;
@@ -42,15 +42,45 @@ export function isPublicationPendingReviewResponse(
     && (payload.publicationPending === true || payload.publicationFulfilled === false);
 }
 
-export async function executeChannelWritesSequentially<T>(
+export type WorkbenchChannelWriteSettlement<T> =
+  | { channel: ActiveChannelKey; status: "fulfilled"; value: T }
+  | { channel: ActiveChannelKey; status: "rejected"; reason: unknown };
+
+export async function executeChannelWritesIndependently<T>(
   channels: readonly ActiveChannelKey[],
   execute: (channel: ActiveChannelKey) => Promise<T>,
+): Promise<WorkbenchChannelWriteSettlement<T>[]> {
+  const settled = await Promise.allSettled(channels.map((channel) => (
+    Promise.resolve().then(() => execute(channel))
+  )));
+  return settled.map((result, index) => result.status === "fulfilled"
+    ? { channel: channels[index]!, status: result.status, value: result.value }
+    : { channel: channels[index]!, status: result.status, reason: result.reason });
+}
+
+/**
+ * The multi-channel QA flow contains Temu immediately after create and proves
+ * the off-shelf readback. A single-channel confirmation remains the explicit
+ * path for an operator-approved live Temu create.
+ */
+export function bulkChannelPublicationIntent(channel: ActiveChannelKey) {
+  return channel === "temu" ? "safe_test" as const : "live" as const;
+}
+
+export type BulkPublicationOutcome = "live" | "safe_test_contained" | false;
+
+export function summarizeBulkPublicationOutcomes(
+  outcomes: readonly BulkPublicationOutcome[],
 ) {
-  const results: T[] = [];
-  for (const channel of channels) {
-    results.push(await execute(channel));
-  }
-  return results;
+  const live = outcomes.filter((outcome) => outcome === "live").length;
+  const safeTestContained = outcomes.filter(
+    (outcome) => outcome === "safe_test_contained",
+  ).length;
+  return {
+    live,
+    safeTestContained,
+    attentionRequired: outcomes.length - live - safeTestContained,
+  };
 }
 
 export function workbenchProductContextMatches(

@@ -71,6 +71,31 @@ function completeProduct(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function completeProcessedFoodProduct(overrides: Record<string, unknown> = {}) {
+  return completeProduct({
+    dispCtgrNo: "1346631",
+    sellerPrdCd: "FOOD-001",
+    prdNm: "롯데샌드 순우유맛 315g",
+    ProductNotification: {
+      type: "891031",
+      item: [
+        { code: "176400445", name: "롯데웰푸드㈜ / 대한민국" },
+        { code: "176398001", name: "제품 별도 표기일까지" },
+        { code: "42154823", name: "해당사항 없음" },
+        { code: "23757260", name: "해당사항 없음" },
+        { code: "23757095", name: "총 내용량 315g, 100g당 500kcal" },
+        { code: "176312674", name: "우유 함유" },
+        { code: "176317774", name: "롯데샌드 순우유맛 315g" },
+        { code: "23756754", name: "080-024-6060" },
+        { code: "23757245", name: "밀가루(밀:미국산), 설탕" },
+        { code: "42155152", name: "315g(6봉입)" },
+        { code: "23757000", name: "과자" },
+      ],
+    },
+    ...overrides,
+  });
+}
+
 function exactProductXml(productNo: string, product: Record<string, unknown>) {
   const escape = (value: unknown) => String(value)
     .replaceAll("&", "&amp;")
@@ -371,6 +396,26 @@ test("11st listing contract fails closed for guessed category, certification, no
   for (const invalid of invalidCases) {
     assert.throws(() => validateElevenstListingProduct(invalid.product), invalid.error);
   }
+});
+
+test("11st listing contract accepts only the exact processed-food leaf and 11-field notice mapping", () => {
+  assert.doesNotThrow(() => validateElevenstListingProduct(completeProcessedFoodProduct()));
+
+  const missingNutrition = completeProcessedFoodProduct();
+  const missingNutritionNotice = missingNutrition.ProductNotification as { item: Array<{ code: string; name: string }> };
+  missingNutritionNotice.item = missingNutritionNotice.item.filter((item) => item.code !== "23757095");
+  assert.throws(() => validateElevenstListingProduct(missingNutrition), /ELEVENST_NOTICE_CONTRACT_UNVERIFIED/);
+
+  const placeholderExpiry = completeProcessedFoodProduct();
+  const placeholderNotice = placeholderExpiry.ProductNotification as { item: Array<{ code: string; name: string }> };
+  const expiry = placeholderNotice.item.find((item) => item.code === "176398001");
+  if (expiry) expiry.name = "TBD";
+  assert.throws(() => validateElevenstListingProduct(placeholderExpiry), /ELEVENST_CONTRACT_PLACEHOLDER_REJECTED:name/);
+
+  assert.throws(
+    () => validateElevenstListingProduct(completeProcessedFoodProduct({ ProductNotification: { type: "891045", item: [] } })),
+    /ELEVENST_NOTICE_CONTRACT_UNVERIFIED/,
+  );
 });
 
 test("11st server contract rejects copied no-certification metadata for another official numeric leaf before any provider request", async () => {
