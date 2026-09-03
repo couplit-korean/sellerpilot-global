@@ -10,6 +10,17 @@ export type AdminApiContext = {
 
 type AdminApiOptions = { timeoutMs?: number };
 
+function isAbortOrTimeoutError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const name = typeof (error as { name?: unknown }).name === "string" ? (error as { name: string }).name : "";
+  const message = typeof (error as { message?: unknown }).message === "string" ? (error as { message: string }).message : "";
+  const code = typeof (error as { code?: unknown }).code === "string" ? (error as { code: string }).code : "";
+  return name === "TimeoutError"
+    || name === "AbortError"
+    || code === "UND_ERR_ABORTED"
+    || /timeout|timed out|abort|aborted|exceeded/i.test(message);
+}
+
 function boundedAdminFetch(timeoutMs: number) {
   return (input: RequestInfo | URL, init?: RequestInit) => {
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
@@ -39,6 +50,9 @@ export async function authenticateAdminRequest(request: Request, options: AdminA
     userClient.auth.getUser(token),
     userClient.rpc("sellerpilot_is_admin"),
   ]);
+  if (isAbortOrTimeoutError(userError) || isAbortOrTimeoutError(adminError)) {
+    return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
+  }
   if (userError || !userData.user || adminError || isAdmin !== true) {
     return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
   }

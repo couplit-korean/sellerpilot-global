@@ -384,9 +384,17 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   }, []);
 
   const loadListingRelease = useCallback(async () => {
-    try {
+    const readListingRelease = async () => {
       const listingReleaseResponse = await authenticatedFetch("/api/admin/listing-publication-release");
       const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
+      return { listingReleaseResponse, listingReleasePayload };
+    };
+    try {
+      let { listingReleaseResponse, listingReleasePayload } = await readListingRelease();
+      if (!listingReleaseResponse.ok && (listingReleaseResponse.status === 403 || listingReleaseResponse.status === 503)) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
+        ({ listingReleaseResponse, listingReleasePayload } = await readListingRelease());
+      }
       setListingRelease({
         status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : "failed",
         message: listingReleasePayload.message ?? (listingReleaseResponse.ok
