@@ -10,6 +10,24 @@
   display: none;
 }
 
+/* iOS Safari zooms focused inputs under 16px. Keep the same contract on Android. */
+@media (max-width: 720px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  .login-card input,
+  .input-wrap input,
+  .command-input input,
+  .search-field input,
+  .credential-form-grid input,
+  .credential-form-grid textarea,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 .dashboard-product-readiness {
   padding: 18px;
 }

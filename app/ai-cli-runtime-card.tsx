@@ -383,19 +383,43 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     });
   }, []);
 
+  const loadListingRelease = useCallback(async () => {
+    try {
+      const listingReleaseResponse = await authenticatedFetch("/api/admin/listing-publication-release");
+      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
+      setListingRelease({
+        status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : "failed",
+        message: listingReleasePayload.message ?? (listingReleaseResponse.ok
+          ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
+          : "게시 릴리스 상태를 불러오지 못했습니다."),
+        currentRelease: listingReleasePayload.runtimeRelease?.currentRelease ?? null,
+        gate: listingReleasePayload.gate ?? null,
+        readyForOpen: listingReleasePayload.readyForOpen === true,
+        readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
+      });
+    } catch {
+      setListingRelease((current) => ({
+        ...current,
+        status: "failed",
+        message: "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
+        readyForOpen: false,
+        readyForQoo10Open: false,
+      }));
+    }
+  }, [authenticatedFetch]);
+
   const load = useCallback(async (preserveGatewaySmoke = false) => {
     setLoading(true);
+    void loadListingRelease();
     try {
-      const [statusResponse, jobsResponse, readinessResponse, listingReleaseResponse] = await Promise.all([
+      const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
         authenticatedFetch("/api/ai/product-studio"),
-        authenticatedFetch("/api/admin/listing-publication-release"),
       ]);
       const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
       const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
-      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
       if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
       const nextReadiness: ServerReadiness = validReadiness(readinessPayload) ? readinessPayload : {
@@ -413,16 +437,6 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       } else {
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
-      setListingRelease({
-        status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : "failed",
-        message: listingReleasePayload.message ?? (listingReleaseResponse.ok
-          ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
-          : "게시 릴리스 상태를 불러오지 못했습니다."),
-        currentRelease: listingReleasePayload.runtimeRelease?.currentRelease ?? null,
-        gate: listingReleasePayload.gate ?? null,
-        readyForOpen: listingReleasePayload.readyForOpen === true,
-        readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
-      });
     } catch (loadError) {
       setReadiness({
         available: false,
@@ -430,18 +444,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         message: "Vercel 서버 AI 준비 상태를 확인할 수 없습니다.",
         checkedAt: new Date().toISOString(),
       });
-      setListingRelease((current) => ({
-        ...current,
-        status: "failed",
-        message: "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
-        readyForOpen: false,
-        readyForQoo10Open: false,
-      }));
       setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [authenticatedFetch]);
+  }, [authenticatedFetch, loadListingRelease]);
 
   const controlJob = async (job: AiJob, action: "retry" | "cancel") => {
     const actionLabel = action === "retry" ? "다시 실행" : "취소";
