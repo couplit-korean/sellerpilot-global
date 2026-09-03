@@ -6399,55 +6399,6 @@ async function executeTemu(input: ExecuteInput) {
     steps.push(detailStep);
     return result(input, steps, remoteId, undefined, publication?.remoteState);
   }
-  if (input.operation === "listing.update") {
-    // bg.local.goods.update replaces the full goods record (same shape as the
-    // V3 create payload), so the caller resends the complete field set plus
-    // the goodsId the provider issued. The argument goodsId always wins over
-    // any goodsId embedded in the body to prevent cross-product writes.
-    const goodsId = integerArgument(input.arguments, "goodsId", { min: 1 });
-    const goodsIdText = String(goodsId);
-    const body = objectValue(input.arguments, "body");
-    const goodsBasic = objectValue(body, "goodsBasic", false);
-    const steps: ChannelOperationStep[] = [];
-    const updateRemote = await temuRequest({
-      payload: input.payload,
-      type: "bg.local.goods.update",
-      arguments: { ...body, goodsId },
-    });
-    const updateStep = step("goods-update", updateRemote);
-    steps.push(updateStep);
-    if (!updateStep.ok) return result(input, steps, goodsIdText);
-    // Temu does not expose an update-specific readback endpoint, so reuse the
-    // same verification level as listing.create: the goods detail query must
-    // still resolve the target goodsId and carry at least the submitted image
-    // counts.
-    const detailRemote = await temuRequest({
-      payload: input.payload,
-      type: "bg.local.goods.detail.query",
-      arguments: { goodsId, versionQueryType: 1 },
-    });
-    const detailStep = step("goods-detail-readback", detailRemote);
-    const detail = temuResultObject(detailRemote.data);
-    const gallery = objectValue(detail, "goodsGallery", false);
-    const expectedCarouselImageCount = temuStringArray(goodsBasic.goodsCarouselImage).length;
-    const expectedDetailImageCount = temuStringArray(goodsBasic.detailImage).length;
-    const actualCarouselImageCount = temuStringArray(gallery.goodsCarouselImage).length;
-    const actualDetailImageCount = temuStringArray(gallery.detailImage).length;
-    const detailMatches = String(detail.goodsId ?? "") === goodsIdText;
-    const imagesMatch = actualCarouselImageCount >= expectedCarouselImageCount
-      && actualDetailImageCount >= expectedDetailImageCount;
-    detailStep.ok = detailStep.ok && detailMatches && imagesMatch;
-    detailStep.data = {
-      ...detailStep.data,
-      expectedCarouselImageCount,
-      actualCarouselImageCount,
-      expectedDetailImageCount,
-      actualDetailImageCount,
-      sellerpilotVerification: detailStep.ok ? "GOODS_UPDATE_READBACK_VERIFIED" : "TEMU_UPDATE_READBACK_MISSING",
-    };
-    steps.push(detailStep);
-    return result(input, steps, goodsIdText);
-  }
   if (input.operation === "price.update") {
     const goodsId = integerArgument(input.arguments, "goodsId", { min: 1 });
     const goodsIdText = String(goodsId);

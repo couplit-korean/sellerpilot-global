@@ -405,7 +405,7 @@ export function parseShopeeMediaSpaceUploadResult(remote: RemoteResponse, expect
     const item = record(itemValue) ?? {};
     const imageInfo = record(item.image_info) ?? {};
     const imageId = String(imageInfo.image_id ?? "").trim();
-    const urlList = Array.isArray(imageInfo.image_url_list) ? imageInfo.image_url_list.map(record).filter(Boolean) : [];
+    const urlList = (Array.isArray(imageInfo.image_url_list) ? imageInfo.image_url_list.map(record) : []).filter((x): x is Record<string, unknown> => Boolean(x));
     const firstUrl = urlList.find((entry) => safeImageUrl(entry.image_url));
     const imageUrl = safeImageUrl(imageInfo.image_url) || (firstUrl ? safeImageUrl(firstUrl.image_url) : "");
     const imageUrlRegion = firstUrl ? String(firstUrl.image_url_region ?? "").trim() : "";
@@ -499,7 +499,7 @@ export function buildLazadaMigrateImageRequest(input: {
 }) {
   const { endpoint, appSecret, common } = lazadaEndpointAndCommon(input.payload);
   const normalizedUrl = assertMigrateImageUrl(input.url);
-  const params = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
+  const params: Record<string, unknown> = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
   params.sign = signLazadaRequest(lazadaMigrateImagePath, params, appSecret);
   return {
     url: `${endpoint}${lazadaMigrateImagePath}`,
@@ -682,7 +682,7 @@ async function runShopeeUpload(
       remote = await readRemoteResponse(await fetchWithTimeout(fetchImpl, request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.body as BodyInit | undefined,
         redirect: "error",
       }, 60_000));
     } catch (error) {
@@ -733,7 +733,7 @@ async function runLazadaUpload(
       const remote = await readRemoteResponse(await fetchWithTimeout(fetchImpl, request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.body as BodyInit | undefined,
         redirect: "error",
       }, 20_000));
       const outcome = parseLazadaImageResult(remote, sourceUrl);
@@ -768,7 +768,7 @@ async function runLazadaUpload(
       const remote = await readRemoteResponse(await fetchWithTimeout(fetchImpl, request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: request.body as BodyInit | undefined,
         redirect: "error",
       }, 60_000));
       const outcome = parseLazadaImageResult(remote, sourceUrl);
