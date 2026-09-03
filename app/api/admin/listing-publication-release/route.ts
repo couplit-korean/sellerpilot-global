@@ -82,7 +82,13 @@ const gateStatusSchema = z.object({
   if (value.effectiveOpen && value.openedChannel !== null) {
     context.addIssue({ code: "custom", message: "global listing release gate cannot have a channel scope" });
   }
-  if (value.qoo10EffectiveOpen && (!value.open || value.openedChannel !== "qoo10")) {
+  if (
+    value.qoo10EffectiveOpen
+    && (!value.open || (value.openedChannel !== "qoo10" && value.openedChannel !== null))
+  ) {
+    // openedChannel is null for the eight-channel global gate, which also
+    // covers Qoo10; it is "qoo10" only for the exact-SHA Qoo10-only gate.
+    // qoo10EffectiveOpen is legitimately true in both cases.
     context.addIssue({ code: "custom", message: "Qoo10 release gate scope mismatch" });
   }
   if (!value.open && value.openedChannel !== null) {
