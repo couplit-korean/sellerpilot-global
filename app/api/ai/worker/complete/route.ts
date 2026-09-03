@@ -28,7 +28,23 @@ const legacyLocalizedMarkets = new Set([
   "shopee:SG", "shopee:MY", "shopee:PH", "shopee:VN", "shopee:TH", "shopee:TW", "shopee:BR", "shopee:MX",
   "lazada:MY", "lazada:SG", "lazada:PH", "lazada:TH", "lazada:VN", "lazada:ID",
 ]);
+const legacyDetailSectionFields = ["imageAsset", "imageAltText"] as const;
+const currentDetailSectionFields = ["type", "buyerQuestion", "evidence", "heading", "body"] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function hasLegacyDetailSectionShape(listing: unknown): boolean {
+  if (!listing || typeof listing !== "object") return false;
+  const entry = listing as Record<string, unknown>;
+  const sections = entry.detailSections;
+  if (!Array.isArray(sections) || sections.length === 0) return false;
+  return sections.every((section) => {
+    if (!section || typeof section !== "object") return false;
+    const record = section as Record<string, unknown>;
+    const hasLegacyFields = legacyDetailSectionFields.every((field) => typeof record[field] === "string");
+    const hasCurrentFields = currentDetailSectionFields.some((field) => field in record);
+    return hasLegacyFields && !hasCurrentFields;
+  });
+}
 
 function isLegacyWorkerSuccess(value: unknown): value is LegacyWorkerSuccess {
   if (!value || typeof value !== "object") return false;
@@ -51,7 +67,8 @@ function isLegacyWorkerSuccess(value: unknown): value is LegacyWorkerSuccess {
     return `${String(entry.channel ?? "")}:${String(entry.market ?? "")}`;
   }));
   return receivedMarkets.size === legacyLocalizedMarkets.size
-    && [...legacyLocalizedMarkets].every((market) => receivedMarkets.has(market));
+    && [...legacyLocalizedMarkets].every((market) => receivedMarkets.has(market))
+    && listings.every(hasLegacyDetailSectionShape);
 }
 
 function normalizeWorkerCompletionPayload(value: unknown): unknown {

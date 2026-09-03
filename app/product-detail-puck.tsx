@@ -520,3 +520,5 @@ export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, sa
     </div>
   );
 }
+
+export { fetchProductDetailData, productDetailDataToHtml, saveProductDetailData } from "./_publishing/product-detail-html";

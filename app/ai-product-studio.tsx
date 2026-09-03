@@ -1375,13 +1375,14 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       );
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상세페이지를 저장하려면 관리자 로그인이 필요합니다.");
+      const persistable = makeValidatedProductDetailPersistable(next, studioAssetUrls);
       const { response, payload } = await fetchJsonWithStudioJobTimeout(
         `/api/admin/products/${sourceProductId}/publish-context`,
         {
           method: "PUT",
           headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
           body: JSON.stringify({
-            data: makeValidatedProductDetailPersistable(next, studioAssetUrls),
+            data: persistable,
             expectedVersion: detailPageVersion,
           }),
         },
@@ -1408,6 +1409,8 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       }
       const saved = parsePersistedProductDetailPage<ProductDetailData>(payload.detailPage);
       if (!saved) throw new Error("저장된 상세페이지 버전을 확인하지 못했습니다.");
+      const { saveProductDetailData } = await import("./product-detail-puck");
+      await saveProductDetailData(sourceProductId, persistable, accessToken);
       setSavedDetailData(saved.data);
       setDetailPageVersion(saved.version);
       setEditorOpen(false);

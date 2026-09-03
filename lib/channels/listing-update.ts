@@ -169,6 +169,13 @@ const releasedListingContent: Partial<Record<ActiveChannelKey, Partial<Record<Pr
     requiredInformation: fieldSupport("partial", "listing.update", ["inventoryItem.product.aspects"], "상품 속성만 기존 inventory item에 병합하며 카테고리·정책·가격·재고는 보존합니다."),
     images: fieldSupport("supported", "listing.update", ["inventoryItem.product.imageUrls", "offer.listingDescription"], "승인된 이미지와 상세 HTML만 병합하고 정확히 같은 offer·SKU·listing에서 다시 확인합니다."),
   },
+  temu: {
+    productName: fieldSupport("supported", "listing.update", ["body.goodsBasic.goodsName"], "Temu goodsId의 상품명을 수정하고 동일 goodsId 상세 조회로 확인합니다."),
+    description: fieldSupport("supported", "listing.update", ["body.goodsBasic.goodsDesc"], "상품 설명을 수정하고 동일 goodsId 상세 조회로 확인합니다."),
+    requiredInformation: fieldSupport("partial", "listing.update", ["body.goodsBasic", "body.skuList"], "상품 기본정보와 SKU 목록을 전체 문서로 전송하되 새 옵션을 추측해서 만들지 않습니다."),
+    images: fieldSupport("supported", "listing.update", ["body.goodsBasic.goodsCarouselImage", "body.goodsBasic.detailImage"], "대표·상세 이미지를 수정하고 상세 이미지 수를 readback합니다."),
+    price: fieldSupport("supported", "price.update", ["skuId", "price", "currency"], "단일 SKU 공급가를 가격관리 API로 수정하고 successSkuList로 확인합니다."),
+  },
 };
 
 function cloneFieldMap(source: Record<ProductEditFieldKey, ProductEditFieldSupport>) {
@@ -185,11 +192,9 @@ export function centralProductEditFieldSupport() {
 export function channelProductEditFieldSupport(channel: ActiveChannelKey) {
   const listingReason = channel === "elevenst"
     ? "중앙 상품 원장 저장값은 유지합니다. 검증된 최초 등록 원본이 없는 기존 상품은 전체 XML을 추측하지 않고 원격 수정을 차단합니다."
-    : channel === "temu"
-      ? "중앙 상품 원장 저장값은 유지합니다. Temu 판매자별 수정 스키마와 SKU 식별값이 원장에 확정되지 않아 원격 상품 수정을 차단하며 외부 채널 수동 반영이 필요합니다."
-      : channel === "ebay"
-        ? "중앙 상품 원장 저장값은 유지합니다. eBay offer ID와 SKU가 상품 원장에 함께 보존되지 않아 게시 listing ID만으로 수정하지 않으며 외부 채널 수동 반영이 필요합니다."
-        : "중앙 상품 원장 저장값은 유지합니다. 이 채널의 안전한 상품 수정 경로가 출시되지 않아 외부 채널 수동 반영이 필요합니다.";
+    : channel === "ebay"
+      ? "중앙 상품 원장 저장값은 유지합니다. eBay offer ID와 SKU가 상품 원장에 함께 보존되지 않아 게시 listing ID만으로 수정하지 않으며 외부 채널 수동 반영이 필요합니다."
+      : "중앙 상품 원장 저장값은 유지합니다. 이 채널의 안전한 상품 수정 경로가 출시되지 않아 외부 채널 수동 반영이 필요합니다.";
   const released = releasedListingContent[channel] ?? {};
   const inventory = verifiedInventoryChannels.has(channel)
     ? fieldSupport("supported", "inventory.update", ["quantity"], "정확한 원격 상품을 지정해 수량을 쓰고 같은 상품의 재고를 readback합니다.")
@@ -533,6 +538,12 @@ function identityValue(value: unknown) {
   return "";
 }
 
+function temuGoodsIdIdentity(value: unknown) {
+  const raw = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  if (!Number.isInteger(raw) || raw < 1) throw new Error("CHANNEL_ARGUMENT_INVALID:goodsId");
+  return String(raw);
+}
+
 export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, argumentsValue: Record<string, unknown>) {
   const params = recordValue(argumentsValue.params);
   const body = recordValue(argumentsValue.body);
@@ -553,7 +564,9 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
               ? [argumentsValue.productNo]
               : channel === "ebay"
                 ? [argumentsValue.listingId]
-                : [];
+                : channel === "temu"
+                  ? [temuGoodsIdIdentity(argumentsValue.goodsId)]
+                  : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
     throw new Error(identities.length ? "LISTING_UPDATE_IDENTITY_MISMATCH" : "LISTING_UPDATE_IDENTITY_REQUIRED");
@@ -824,6 +837,15 @@ export function prepareListingUpdateArguments(
       ...(hasSuppliedPatch && Object.keys(suppliedProduct).length
         ? { product: structuredClone(suppliedProduct) }
         : {}),
+    };
+  }
+
+  if (channel === "temu") {
+    const body = recordValue(createArguments.body);
+    return {
+      ...optionalArgument(createArguments, "sellerpilotAssets"),
+      goodsId: remoteId,
+      ...(Object.keys(body).length ? { body } : {}),
     };
   }
 

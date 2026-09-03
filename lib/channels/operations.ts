@@ -92,6 +92,7 @@ import {
   readSmartstoreListingPublicationState,
 } from "./listing-publication-readback";
 import { executeListingPublicationVerification } from "./listing-publication-verification";
+import { uploadChannelNativeImages } from "./native-image-upload";
 
 export const channelOperationNames = [
   "categories.list",
@@ -2664,6 +2665,82 @@ function shopeeOrderPageWithCredentialIdentity(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Channel-native image upload (Shopee media_space, Lazada MigrateImage /
+// UploadImage). The normalization pipeline leaves public Supabase URLs in
+// arguments.imageUrls; before a listing.create write these URLs are migrated
+// into the channel's own media space and the resulting native references are
+// injected back into the request payload. When native upload is not possible
+// (no source URLs, missing credentials, missing target structure) or fails,
+// the existing URL injection is preserved and the original arguments are used
+// unchanged.
+// ---------------------------------------------------------------------------
+
+function nativeImageSourceUrls(value: unknown) {
+  return Array.isArray(value)
+    ? value.map((item) => String(item ?? "").trim()).filter(Boolean)
+    : [];
+}
+
+function shopeeBodyHasNativeImageIds(body: Record<string, unknown>) {
+  const image = objectValue(body, "image", false);
+  return Array.isArray(image.image_id_list)
+    && image.image_id_list.some((value) => String(value ?? "").trim());
+}
+
+async function prepareShopeeNativeImageBody(input: ExecuteInput): Promise<Record<string, unknown>> {
+  const body = objectValue(input.arguments, "body");
+  // The provider-listing runtime may already have populated native image ids
+  // (for example inside the serverless gateway worker). Re-uploading would
+  // orphan those assets and renumber the gallery, so keep them as-is.
+  if (shopeeBodyHasNativeImageIds(body)) return body;
+  if (!nativeImageSourceUrls(input.arguments.imageUrls).length) return body;
+  try {
+    const uploaded = await uploadChannelNativeImages({
+      channel: "shopee",
+      payload: input.payload,
+      environment: input.environment,
+      argumentsValue: input.arguments,
+    });
+    if (!uploaded.ok) return body;
+    return objectValue(uploaded.argumentsValue, "body");
+  } catch {
+    return body;
+  }
+}
+
+function lazadaRequestHasNativeImages(argumentsValue: Record<string, unknown>) {
+  const request = objectValue(argumentsValue, "request", false);
+  const requestRoot = objectValue(request, "Request", false);
+  const product = objectValue(requestRoot, "Product", false);
+  const images = objectValue(product, "Images", false);
+  const listing = Array.isArray(images.Image)
+    ? images.Image.map((value) => String(value ?? "").trim()).filter(Boolean)
+    : [];
+  return listing.length > 0 && listing.every((url) => url.includes("slatic.net"));
+}
+
+async function prepareLazadaNativeImageArguments(
+  input: ExecuteInput,
+  argumentsValue: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  // The provider-listing runtime migrates Lazada gallery/SKU/description
+  // images into slatic.net media space before execution reaches this point.
+  if (lazadaRequestHasNativeImages(argumentsValue)) return argumentsValue;
+  if (!nativeImageSourceUrls(argumentsValue.imageUrls).length) return argumentsValue;
+  try {
+    const uploaded = await uploadChannelNativeImages({
+      channel: "lazada",
+      payload: input.payload,
+      environment: input.environment,
+      argumentsValue,
+    });
+    return uploaded.ok ? uploaded.argumentsValue : argumentsValue;
+  } catch {
+    return argumentsValue;
+  }
+}
+
 async function executeShopee(input: ExecuteInput) {
   const globalProduct = booleanArgument(input.arguments, "globalProduct");
   const publicationIntent = listingPublicationIntentFromArguments(input.arguments);
@@ -3027,15 +3104,17 @@ async function executeShopee(input: ExecuteInput) {
   };
   const writePath = writePaths[input.operation];
   if (writePath) {
+    const body = input.operation === "listing.create"
+      ? await prepareShopeeNativeImageBody(input)
+      : objectValue(input.arguments, "body");
     const remote = await shopeeRequest({
       payload: input.payload,
       environment: input.environment,
       method: "POST",
       path: writePath,
-      body: objectValue(input.arguments, "body"),
+      body,
     });
     const responseRemoteId = shopeeResponseId(remote.data, input.operation === "listing.create" ? "item_id" : "request_id");
-    const body = objectValue(input.arguments, "body");
     const requestedItemId = input.operation === "listing.stop"
       ? String(body.item_id ?? "").trim()
       : "";
@@ -3425,9 +3504,12 @@ async function executeLazada(input: ExecuteInput) {
   if (!path) throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const write = writeChannelOperations.has(input.operation);
   let effectiveArguments = input.arguments;
+  if (input.operation === "listing.create") {
+    effectiveArguments = await prepareLazadaNativeImageArguments(input, effectiveArguments);
+  }
   if (verifiedPublicationRequested && input.operation === "listing.create") {
     if (!publicationIntent) throw new Error("LAZADA_PUBLICATION_INTENT_REQUIRED");
-    effectiveArguments = lazadaListingArgumentsForPublicationIntent(input.arguments, publicationIntent);
+    effectiveArguments = lazadaListingArgumentsForPublicationIntent(effectiveArguments, publicationIntent);
   }
   if (verifiedPublicationRequested && (input.operation === "listing.update" || input.operation === "listing.stop")) {
     const requestedRemoteId = lazadaListingRemoteIdFromArguments(input.arguments);
@@ -4602,6 +4684,113 @@ async function executeTemu(input: ExecuteInput) {
     };
     steps.push(detailStep);
     return result(input, steps, remoteId);
+  }
+  if (input.operation === "listing.update") {
+    // bg.local.goods.update replaces the full goods record (same shape as the
+    // V3 create payload), so the caller resends the complete field set plus
+    // the goodsId the provider issued. The argument goodsId always wins over
+    // any goodsId embedded in the body to prevent cross-product writes.
+    const goodsId = integerArgument(input.arguments, "goodsId", { min: 1 });
+    const goodsIdText = String(goodsId);
+    const body = objectValue(input.arguments, "body");
+    const goodsBasic = objectValue(body, "goodsBasic", false);
+    const steps: ChannelOperationStep[] = [];
+    const updateRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.update",
+      arguments: { ...body, goodsId },
+    });
+    const updateStep = step("goods-update", updateRemote);
+    steps.push(updateStep);
+    if (!updateStep.ok) return result(input, steps, goodsIdText);
+    // Temu does not expose an update-specific readback endpoint, so reuse the
+    // same verification level as listing.create: the goods detail query must
+    // still resolve the target goodsId and carry at least the submitted image
+    // counts.
+    const detailRemote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.detail.query",
+      arguments: { goodsId, versionQueryType: 1 },
+    });
+    const detailStep = step("goods-detail-readback", detailRemote);
+    const detail = temuResultObject(detailRemote.data);
+    const gallery = objectValue(detail, "goodsGallery", false);
+    const expectedCarouselImageCount = temuStringArray(goodsBasic.goodsCarouselImage).length;
+    const expectedDetailImageCount = temuStringArray(goodsBasic.detailImage).length;
+    const actualCarouselImageCount = temuStringArray(gallery.goodsCarouselImage).length;
+    const actualDetailImageCount = temuStringArray(gallery.detailImage).length;
+    const detailMatches = String(detail.goodsId ?? "") === goodsIdText;
+    const imagesMatch = actualCarouselImageCount >= expectedCarouselImageCount
+      && actualDetailImageCount >= expectedDetailImageCount;
+    detailStep.ok = detailStep.ok && detailMatches && imagesMatch;
+    detailStep.data = {
+      ...detailStep.data,
+      expectedCarouselImageCount,
+      actualCarouselImageCount,
+      expectedDetailImageCount,
+      actualDetailImageCount,
+      sellerpilotVerification: detailStep.ok ? "GOODS_UPDATE_READBACK_VERIFIED" : "TEMU_UPDATE_READBACK_MISSING",
+    };
+    steps.push(detailStep);
+    return result(input, steps, goodsIdText);
+  }
+  if (input.operation === "price.update") {
+    const goodsId = integerArgument(input.arguments, "goodsId", { min: 1 });
+    const goodsIdText = String(goodsId);
+    const skuId = integerArgument(input.arguments, "skuId", { min: 1 });
+    const skuIdText = String(skuId);
+    const price = integerArgument(input.arguments, "price", { min: 1 });
+    const currency = stringArgument(input.arguments, "currency", false) || "KRW";
+    const reason = stringArgument(input.arguments, "reason", false);
+    const rejectSkuPricing = booleanArgument(input.arguments, "rejectSkuPricing");
+    const remote = await temuRequest({
+      payload: input.payload,
+      type: "bg.local.goods.priceorder.change.sku.price",
+      arguments: {
+        goodsId,
+        changeSkuPriceDTOList: [{
+          ...(reason ? { reason } : {}),
+          skuChangePriceBaseDTOList: [{
+            skuId,
+            newSupplierPrice: { amount: String(price), currency },
+          }],
+        }],
+        ...(rejectSkuPricing ? { rejectSkuPricing: true } : {}),
+      },
+    });
+    const priceStep = step("goods-price", remote);
+    // The price-change response is the provider's per-SKU acceptance report.
+    // Temu has no readback for a single pending price order, so verify from
+    // successSkuList and fail closed when the SKU is reported as failed. A
+    // "has not changed" rejection means the SKU already carries the requested
+    // price, which is the idempotent retry outcome and counts as verified.
+    const providerResult = temuResultObject(remote.data);
+    const successSkus = Array.isArray(providerResult.successSkuList)
+      ? providerResult.successSkuList.map((item) => String(item ?? "")).filter(Boolean)
+      : [];
+    const failedSkus = Array.isArray(providerResult.failedSkuList)
+      ? providerResult.failedSkuList.map((item) => String(item ?? "")).filter(Boolean)
+      : [];
+    const failureReasons = providerResult.failedSkuReasonMap && typeof providerResult.failedSkuReasonMap === "object" && !Array.isArray(providerResult.failedSkuReasonMap)
+      ? providerResult.failedSkuReasonMap as Record<string, unknown>
+      : {};
+    const priceAlreadySet = failedSkus.includes(skuIdText)
+      && /has not changed/i.test(String(failureReasons[skuIdText] ?? ""));
+    const verified = priceStep.ok && (successSkus.includes(skuIdText) || priceAlreadySet);
+    const rejectionReasons = failedSkus
+      .map((sku) => String(failureReasons[sku] ?? "").trim())
+      .filter(Boolean)
+      .join(" · ");
+    priceStep.ok = verified;
+    priceStep.data = {
+      ...priceStep.data,
+      reason: rejectionReasons || undefined,
+      requestedSkuId: skuIdText,
+      remoteSuccessSkuList: successSkus,
+      remoteFailedSkuList: failedSkus,
+      sellerpilotVerification: verified ? "SKU_PRICE_VERIFIED" : "TEMU_SKU_PRICE_REJECTED",
+    };
+    return result(input, [priceStep], goodsIdText);
   }
   if (input.operation === "listing.stop") {
     const goodsId = stringArgument(input.arguments, "goodsId");

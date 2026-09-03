@@ -737,6 +737,9 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       COMPETITOR_MATCH_REVIEW_MIGRATION,
       COMPETITOR_PRE_V3_QUEUE_RETIREMENT_MIGRATION,
       COMPETITOR_IDENTITY_LINEAGE_MIGRATION,
+      "20260903100000_inventory_ledger.sql",
+      "20260903110000_settlement_reconciliation.sql",
+      "20260903120000_product_detail_data.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)

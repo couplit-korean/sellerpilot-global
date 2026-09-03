@@ -52,6 +52,8 @@ import { normalizeProductSaleConfiguration, productSaleConfigurations } from "..
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { channels } from "./channel-config";
+import { fetchProductDetailData, productDetailDataToHtml } from "./_publishing/product-detail-html";
+import type { ProductDetailData } from "./product-detail-puck";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import {
   channelTargetOptionValue,
@@ -235,6 +237,7 @@ type PublishContext = {
   sourceImages: Array<{ path: string; url: string | null }>;
   generatedImages: Array<{ id: string; path: string; url: string | null }>;
   localizedListings: LocalizedListing[];
+  detailData: ProductDetailData | null;
   detailPage?: {
     version?: number;
     approvedVersion?: number;
@@ -422,6 +425,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     buildLocalizedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, { classification }),
     legacyQoo10Repair,
   );
+  const puckDetailHtml = productDetailDataToHtml(context.detailData);
   const shopeePlainDescription = replaceLegacyQoo10TitleReferences(
     buildLocalizedBudgetedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, 3_000, { classification }),
     legacyQoo10Repair,
@@ -582,7 +586,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         returnAddress: "",
         returnAddressDetail: "",
         requested: false,
-        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: plainDescription, detailType: "TEXT" }] }] }],
+        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: puckDetailHtml || plainDescription, detailType: "TEXT" }] }] }],
       },
     };
   }
@@ -619,7 +623,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         prdImage02: galleryImageUrls[1] ?? "",
         prdImage03: galleryImageUrls[2] ?? "",
         prdImage04: galleryImageUrls[3] ?? "",
-        htmlDetail: richDescription,
+        htmlDetail: puckDetailHtml || richDescription,
         ProductCertGroup: verifiedCableOrganizerContract ? [
           // This verified non-regulated category has no certificate. Sending a made-up
           // certTypeCd makes 11st validate it as a real certificate and reject it.
@@ -655,7 +659,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           saleType: "NEW",
           leafCategoryId: assignment?.categoryId ?? "",
           name: title,
-          detailContent: richDescription,
+          detailContent: puckDetailHtml || richDescription,
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
           salePrice: channelPrice,
           stockQuantity: quantity,
@@ -968,7 +972,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const { data: sessionData } = await waitForAbortablePromise(supabase.auth.getSession(), bounded.signal);
       const accessToken = sessionData.session?.access_token;
       if (!accessToken) throw new Error("상품 등록 준비 정보를 보려면 다시 로그인해 주세요.");
-      const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse, exchangeRatesResponse] = await Promise.all([
+      const [contextResponse, credentialsResponse, shopeeTargetsResponse, lazadaTargetsResponse, exchangeRatesResponse, detailData] = await Promise.all([
         waitForAbortablePromise(fetch(`/api/admin/products/${productId}/publish-context`, { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store", signal: bounded.signal }), bounded.signal),
         waitForAbortablePromise(supabase.rpc("sellerpilot_list_credentials").abortSignal(bounded.signal), bounded.signal),
         fetchChannelTargets("shopee", accessToken, { signal: bounded.signal }),
@@ -981,13 +985,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             }),
           bounded.signal,
         ),
+        waitForAbortablePromise(fetchProductDetailData(productId, accessToken).catch(() => null), bounded.signal),
       ]);
       const payload = await waitForAbortablePromise(
         contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })),
         bounded.signal,
       ) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
-      const nextPayload = { ...payload, manualFields: normalizeManualFields(payload), imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [] };
+      const nextPayload = { ...payload, detailData, manualFields: normalizeManualFields(payload), imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [] };
       if (nextPayload.product.id !== requestedProductId) {
         throw new Error("요청한 상품과 등록 준비 원장이 일치하지 않습니다.");
       }
