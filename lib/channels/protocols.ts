@@ -837,18 +837,59 @@ export function signLazadaRequest(path: string, params: Record<string, string>, 
   return createHmac("sha256", appSecret).update(signingInput).digest("hex").toUpperCase();
 }
 
+export function resolveLazadaRequestPayload(
+  payload: SecretPayload,
+  path: string,
+): SecretPayload {
+  // IM endpoints require the separate In-house IM Chat app credentials.
+  // Commerce app keys remain the default for product/order/logistics paths.
+  const isImPath = path === "/im/session/list"
+    || path === "/im/message/list"
+    || path === "/im/message/send"
+    || path.startsWith("/im/");
+  if (!isImPath) return payload;
+
+  const imAppKey = textValue(payload, "im_app_key");
+  const imAppSecret = textValue(payload, "im_app_secret");
+  const imAccessToken = textValue(payload, "im_access_token");
+  if (!imAppKey || !imAppSecret || !imAccessToken) {
+    throw new Error("LAZADA_IM_CREDENTIALS_MISSING");
+  }
+
+  return {
+    ...payload,
+    app_key: imAppKey,
+    app_secret: imAppSecret,
+    access_token: imAccessToken,
+    ...(textValue(payload, "im_refresh_token")
+      ? { refresh_token: textValue(payload, "im_refresh_token") }
+      : {}),
+    ...(textValue(payload, "im_access_token_expires_at")
+      ? { access_token_expires_at: textValue(payload, "im_access_token_expires_at") }
+      : {}),
+    ...(textValue(payload, "im_refresh_token_expires_at")
+      ? { refresh_token_expires_at: textValue(payload, "im_refresh_token_expires_at") }
+      : {}),
+  };
+}
+
 export async function lazadaRequest(input: {
   payload: SecretPayload;
   path: string;
   method?: "GET" | "POST";
   params?: Record<string, string>;
 }) {
-  const appKey = textValue(input.payload, "app_key");
-  const appSecret = textValue(input.payload, "app_secret");
-  const accessToken = textValue(input.payload, "access_token");
-  const country = (textValue(input.payload, "country") || "my").toLowerCase();
+  const requestPayload = resolveLazadaRequestPayload(input.payload, input.path);
+  const appKey = textValue(requestPayload, "app_key");
+  const appSecret = textValue(requestPayload, "app_secret");
+  const accessToken = textValue(requestPayload, "access_token");
+  const country = (textValue(requestPayload, "country") || textValue(input.payload, "country") || "my").toLowerCase();
   const endpoint = lazadaApiEndpoints[country];
-  if (!appKey || !appSecret || !accessToken || !endpoint) throw new Error("LAZADA_CREDENTIALS_MISSING");
+  if (!appKey || !appSecret || !accessToken || !endpoint) {
+    throw new Error(input.path.startsWith("/im/")
+      ? "LAZADA_IM_CREDENTIALS_MISSING"
+      : "LAZADA_CREDENTIALS_MISSING");
+  }
   const method = input.method ?? "GET";
   assertProviderReadOnlyTransport(method);
   const send = async () => {
