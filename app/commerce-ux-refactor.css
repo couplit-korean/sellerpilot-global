@@ -439,7 +439,7 @@ button.demo-data-badge.attention {
 
 .exchange-title {
   min-width: 164px;
-  flex: 0 0 164px;
+  flex: 0 0 210px;
 }
 
 .exchange-title > span {
@@ -2147,15 +2147,29 @@ button.demo-data-badge.attention {
     min-height: 106px;
   }
 
+  .briefing-settlement strong {
+    font-size: 19px;
+  }
+
   .publishing-readiness-card {
     grid-template-columns: 1fr;
   }
 
   .publishing-readiness-card > div {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
     text-align: left;
+  }
+
+  .publishing-readiness-card span,
+  .publishing-readiness-card b {
+    min-width: 0;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .publishing-readiness-card b {
@@ -2423,13 +2437,13 @@ button.demo-data-badge.attention {
 .ticket-list-empty small { font-size: 8px; line-height: 1.5; }
 .conversation-empty { grid-column: 2 / -1; min-height: 420px; }
 .conversation-empty .live-empty-state { min-height: 100%; }
-.readiness-inquiry-state { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid #e2e8e5; border-radius: 9px; padding: 10px; color: #65756e; background: #f8faf9; }
+.readiness-inquiry-state { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, auto); align-items: center; gap: 8px; border: 1px solid #e2e8e5; border-radius: 9px; padding: 10px; color: #65756e; background: #f8faf9; }
 .readiness-inquiry-state > span { display: grid; min-width: 0; gap: 2px; }
 .readiness-inquiry-state b { color: #34443d; font-size: 9px; }
 .readiness-inquiry-state small { overflow: hidden; color: #7d8a85; font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .readiness-inquiry-state.failed { border-color: #f0d2b4; color: #a8611f; background: #fff9f1; }
 .readiness-inquiry-state.passed { border-color: #cbe4d9; color: #187455; background: #f3fbf7; }
-.readiness-inquiry-state button { display: inline-flex; min-height: 36px; align-items: center; gap: 4px; border: 1px solid #cfdcd6; border-radius: 8px; padding: 0 9px; color: #315f50; background: white; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.readiness-inquiry-state button { display: inline-flex; min-height: 36px; align-items: center; gap: 4px; border: 1px solid #cfdcd6; border-radius: 8px; padding: 0 9px; color: #315f50; background: white; font-size: 8px; font-weight: 800; white-space: normal; }
 
 .channel-name span.pending,
 .channel-hero em.pending { color: #b54708; }

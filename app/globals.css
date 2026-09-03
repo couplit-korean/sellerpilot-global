@@ -236,7 +236,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .exchange-title { min-width: 92px; }
 .exchange-title span { display: flex; align-items: center; gap: 6px; color: #4d53c6; font-size: 8px; font-weight: 850; }
 .exchange-title span i { width: 6px; height: 6px; border-radius: 50%; background: #20a779; box-shadow: 0 0 0 4px rgb(32 167 121 / 10%); }
-.exchange-title small { display: block; margin-top: 4px; color: #747e91; font-size: 7px; white-space: nowrap; }
+.exchange-title small { display: block; margin-top: 4px; color: #747e91; font-size: 7px; white-space: normal; }
 .exchange-rate-list { display: flex; min-width: 0; flex: 1; align-items: center; }
 .exchange-rate { min-width: 0; flex: 1; padding: 0 10px; border-left: 1px solid #e7e9f1; }
 .exchange-rate small, .exchange-rate strong, .exchange-rate em { display: block; white-space: nowrap; }

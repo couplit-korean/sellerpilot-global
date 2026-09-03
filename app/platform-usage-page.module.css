@@ -502,12 +502,6 @@
   .providerGrid {
     grid-template-columns: minmax(0, 1fr);
   }
-}
-
-@media (max-width: 480px) {
-  .page {
-    gap: 12px;
-  }
 
   .hero {
     align-items: stretch;
@@ -523,6 +517,12 @@
 
   .refreshButton {
     width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .page {
+    gap: 12px;
   }
 
   .providerCard {
