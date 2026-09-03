@@ -499,7 +499,7 @@ export function buildLazadaMigrateImageRequest(input: {
 }) {
   const { endpoint, appSecret, common } = lazadaEndpointAndCommon(input.payload);
   const normalizedUrl = assertMigrateImageUrl(input.url);
-  const params: Record<string, unknown> = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
+  const params: Record<string, string> = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
   params.sign = signLazadaRequest(lazadaMigrateImagePath, params, appSecret);
   return {
     url: `${endpoint}${lazadaMigrateImagePath}`,
