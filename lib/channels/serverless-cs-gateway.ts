@@ -209,6 +209,13 @@ function isEligibleClaim(
   staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
 ) {
   if (!serverlessGatewayOperationAllowed(claim.channel, claim.operation)) return false;
+  // Shopee only actually rejected the OAuth token exchange itself from the
+  // Vercel serverless source address (2026-08-30, job
+  // 177eaf2e-3e28-4757-9521-16a517ee3b93). Every other Shopee operation
+  // reuses the already-active, unexpired credential and is not IP-gated the
+  // same way, so only oauth.exchange keeps requiring the static-egress
+  // attestation; the rest of the fixed-egress channel list is unchanged.
+  if (claim.channel === "shopee" && claim.operation !== "oauth.exchange") return true;
   return !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(claim.channel)
     || staticEgressChannels.includes(claim.channel as ServerlessStaticEgressChannel);
 }
