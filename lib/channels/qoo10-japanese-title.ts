@@ -72,3 +72,77 @@ export function repairLegacyQoo10JapaneseFallbackTitle(value: string, sourceProd
   const repaired = buildReviewedJapaneseFallbackTitle(legacyName);
   return japaneseTitleLanguageVerified(repaired) ? repaired : value;
 }
+
+function escapeQoo10Html(value: string) {
+  return value.replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[char] ?? char));
+}
+
+function japaneseCategoryLeaf(categoryPath: readonly string[]) {
+  return [...categoryPath].reverse().find((part) => {
+    const text = part.normalize("NFKC").trim();
+    return Boolean(text)
+      && !/\p{Script=Hangul}/u.test(text)
+      && /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u.test(text);
+  })?.normalize("NFKC").trim() ?? "";
+}
+
+export type Qoo10JapaneseListingCopy = {
+  title: string;
+  shortDescription: string;
+  description: string;
+};
+
+/**
+ * Qoo10 Japan rejects Hangul in ItemTitle/ItemDescription. When the operator
+ * has confirmed a Japanese leaf category but the localization studio has not
+ * approved channel copy yet, assemble a Japanese-only, operator-editable
+ * fallback from that leaf. Do not copy Korean product facts into the payload.
+ */
+export function qoo10JapaneseListingCopyFromCategory(
+  categoryPath: readonly string[],
+  productName = "",
+): Qoo10JapaneseListingCopy | null {
+  const leaf = japaneseCategoryLeaf(categoryPath);
+  const title = clippedCodePoints(
+    leaf ? `${leaf}の販売者確認済み商品` : "販売者確認済み商品情報・購入前のご案内",
+    100,
+  );
+  if (!japaneseTitleLanguageVerified(title)) return null;
+  const shortDescription = `${leaf || "商品"}の出品情報です。購入前に内容をご確認ください。`;
+  const latinProductName = productName.normalize("NFKC").replace(/\s+/gu, " ").trim();
+  const description = [
+    `販売者が確認した${leaf || "商品"}です。`,
+    "購入前に商品名、内容量、原材料表示をご確認ください。",
+    "価格、在庫、配送条件は出品情報をご覧ください。",
+    latinProductName && !/\p{Script=Hangul}/u.test(latinProductName)
+      ? `確認済み商品名: ${latinProductName}`
+      : "",
+  ].filter(Boolean).join("");
+  if (/\p{Script=Hangul}/u.test(`${shortDescription}${description}`)) return null;
+  return { title, shortDescription, description };
+}
+
+export function qoo10JapaneseFallbackItemDescription(
+  copy: Qoo10JapaneseListingCopy,
+  imageUrls: readonly string[],
+) {
+  const images = imageUrls
+    .filter((url) => url.startsWith("https://"))
+    .slice(0, 8)
+    .map((url) => `<img src="${escapeQoo10Html(url)}">`)
+    .join("");
+  return [
+    `<div lang="ja-JP" data-sellerpilot-qoo10-fallback="category-copy">`,
+    `<h1>${escapeQoo10Html(copy.title)}</h1>`,
+    `<p>${escapeQoo10Html(copy.shortDescription)}</p>`,
+    `<p>${escapeQoo10Html(copy.description)}</p>`,
+    images,
+    "</div>",
+  ].join("");
+}

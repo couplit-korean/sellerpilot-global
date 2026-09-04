@@ -20,6 +20,7 @@ type RequirementSpec = Omit<ListingRequirement, "status"> & {
   path?: Array<string | number>;
   test?: (draft: Record<string, unknown>) => boolean;
   runtime?: boolean;
+  applies?: (draft: Record<string, unknown>) => boolean;
 };
 
 const unknownValue = /^(?:server_managed|seller confirmation required|unknown|not provided|n\/a|tbd|알\s*수\s*없음|모름|미정|미기재|미확인|확인\s*필요|판매자\s*확인\s*필요)$/iu;
@@ -79,9 +80,9 @@ const elevenstFoodExplicitConfirmationCodes = new Set(["176398001", "23757260", 
 const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFoodNotificationFields.map((field) => ({
   key: `food-notice-${field.code}`,
   label: `가공식품 고시 · ${field.label}`,
-  source: "상품 정보",
-  test: (draft) => String(valueAt(draft, ["product", "dispCtgrNo"])) !== elevenstProcessedFoodCategoryId
-    || meaningful(elevenstNotificationValue(draft, field.code)),
+  source: "카테고리",
+  applies: (draft) => String(valueAt(draft, ["product", "dispCtgrNo"])) === elevenstProcessedFoodCategoryId,
+  test: (draft) => meaningful(elevenstNotificationValue(draft, field.code)),
   help: elevenstFoodExplicitConfirmationCodes.has(field.code)
     ? `추정하지 않습니다. 카테고리 속성 notification:${field.code}에 판매자가 확인한 확정값을 입력해 주세요.`
     : `카테고리 속성 notification:${field.code}에 확정값을 입력해 주세요.`,
@@ -90,16 +91,48 @@ const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFo
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
-    { key: "title", label: "상품명", source: "상품 정보", path: ["params", "ItemTitle"] },
+    {
+      key: "title",
+      label: "Qoo10 일본어 상품명",
+      source: "상품 정보",
+      path: ["params", "ItemTitle"],
+      manualPath: ["params", "ItemTitle"],
+      placeholder: "洋菓子の販売者確認済み商品",
+      help: "Qoo10 Japan은 한글이 없는 일본어 상품명이 필요합니다. 확정 카테고리 일본어명으로 채웠으면 확인해 주세요.",
+    },
     { key: "retail-price", label: "Qoo10 정가", source: "상품 정보", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "RetailPrice"])) },
     { key: "origin-type", label: "Qoo10 원산지 유형", source: "상품 정보", test: (draft) => ["1", "2", "3"].includes(String(valueAt(draft, ["params", "ProductionPlaceType"]))) },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["params", "ProductionPlace"] },
     sharedImage(["params", "StandardImage"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["params", "ItemPrice"]) },
     { key: "stock", label: "재고", source: "상품 정보", test: positive(["params", "ItemQty"]) },
-    { key: "shipping", label: "배송비 코드", source: "판매자 계정", test: (draft) => valueAt(draft, ["params", "ShippingNo"]) !== undefined, help: "0은 Qoo10 무료배송 코드로 유효합니다." },
-    { key: "available-date-type", label: "출고 가능일 유형", source: "판매자 계정", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateType"])) },
-    { key: "available-date-value", label: "출고 가능일", source: "판매자 계정", test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateValue"])) },
+    {
+      key: "shipping",
+      label: "배송비 코드",
+      source: "판매자 계정",
+      test: (draft) => valueAt(draft, ["params", "ShippingNo"]) !== undefined,
+      manualPath: ["params", "ShippingNo"],
+      placeholder: "0",
+      help: "QSM 배송비 코드입니다. 0은 Qoo10 무료배송 코드로 유효합니다.",
+    },
+    {
+      key: "available-date-type",
+      label: "출고 가능일 유형",
+      source: "판매자 계정",
+      test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateType"])),
+      manualPath: ["params", "AvailableDateType"],
+      placeholder: "0",
+      help: "Qoo10 지정 enum입니다. 0이 일반 출고입니다.",
+    },
+    {
+      key: "available-date-value",
+      label: "출고 가능일",
+      source: "판매자 계정",
+      test: (draft) => meaningfulIncludingZero(valueAt(draft, ["params", "AvailableDateValue"])),
+      manualPath: ["params", "AvailableDateValue"],
+      placeholder: "3",
+      help: "출고 가능일 유형과 짝이 맞아야 합니다. 유형 0은 일수입니다.",
+    },
   ],
   shopee: [
     { key: "shop", label: "승인 Shop ID", source: "판매자 계정", path: ["shopId"] },
@@ -219,7 +252,9 @@ export function inspectListingDraft(
   const operationSpecs = channel === "ebay" && operation === "listing.update"
     ? specs[channel].filter((spec) => ["title", "description", "images"].includes(spec.key))
     : specs[channel];
-  return operationSpecs.map<ListingRequirement>((spec) => ({
+  return operationSpecs
+    .filter((spec) => !spec.applies || spec.applies(draft))
+    .map<ListingRequirement>((spec) => ({
     key: spec.key,
     label: spec.label,
     source: spec.source,

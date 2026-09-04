@@ -9,7 +9,11 @@ import {
   elevenstProcessedFoodNoticeType,
   elevenstSaleDateRange,
 } from "../lib/channels/elevenst-listing";
-import { repairLegacyQoo10JapaneseFallbackTitle } from "../lib/channels/qoo10-japanese-title";
+import {
+  qoo10JapaneseFallbackItemDescription,
+  qoo10JapaneseListingCopyFromCategory,
+  repairLegacyQoo10JapaneseFallbackTitle,
+} from "../lib/channels/qoo10-japanese-title";
 import {
   qoo10ExactAdoptedLiveListingCandidate,
   qoo10ExactLocalizationLedgerCandidate,
@@ -533,9 +537,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const exactEbayProviderCopyUpdate = channel === "ebay"
     && operation === "listing.update"
     && exactExternalActionWorkbenchRecoveryCandidate(product.id, channel, existingListing);
-  const coreContent = exactEbayProviderCopyUpdate
-    ? { title: "", shortDescription: "", description: "" }
-    : listingCoreContentForOperation({
+  let draftLocalization: "approved" | "missing" | "review_required" = "approved";
+  let coreContent = { title: "", shortDescription: "", description: "" };
+  if (!exactEbayProviderCopyUpdate) {
+    try {
+      coreContent = listingCoreContentForOperation({
         operation,
         central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
         localized,
@@ -546,6 +552,18 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
             context.manualFields.productName,
           ) !== localized?.title,
       });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "";
+      if (message !== "LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED") {
+        throw error;
+      }
+      draftLocalization = "missing";
+      coreContent = listingCoreContentForOperation({
+        operation: "listing.create",
+        central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
+      });
+    }
+  }
   const manual = context.manualFields;
   const { title, description, shortDescription } = coreContent;
   const repairedQoo10Title = channel === "qoo10"
@@ -640,18 +658,36 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       && qoo10RollbackListingUpdateCandidate(channel, existingListing)
     );
     const exactIdentity = qoo10ExactLocalizationRecoveryIdentity;
+    const japaneseCopy = !exactLocalizationUpdate && draftLocalization !== "approved"
+      ? qoo10JapaneseListingCopyFromCategory(assignment?.categoryPath ?? [], marketplaceTitle)
+      : null;
+    const qoo10Title = exactLocalizationUpdate
+      ? exactIdentity.title
+      : japaneseCopy?.title ?? marketplaceTitle;
+    const qoo10Description = exactLocalizationUpdate
+      ? qoo10ExactReviewedJapaneseDetail(detailImageUrls)
+      : japaneseCopy
+        ? qoo10JapaneseFallbackItemDescription(
+          japaneseCopy,
+          (detailImageUrls.length ? detailImageUrls : galleryImageUrls),
+        )
+        : richDescription;
     return {
-      sellerpilotAssets: { ...sellerpilotAssets, integrationRevision: "itemscontents-v3-evidence-detail" },
+      sellerpilotAssets: {
+        ...sellerpilotAssets,
+        integrationRevision: "itemscontents-v3-evidence-detail",
+        draftLocalization,
+      },
       params: {
         SecondSubCat: assignment?.categoryId ?? "",
         OuterSecondSubCat: "",
         Drugtype: "",
         ManufactureNo: qoo10CatalogCode(assignment?.providedAttributes.ManufactureNo),
         BrandNo: qoo10CatalogCode(assignment?.providedAttributes.BrandNo),
-        ItemTitle: exactLocalizationUpdate ? exactIdentity.title : marketplaceTitle,
+        ItemTitle: qoo10Title,
         PromotionName: exactLocalizationUpdate
           ? exactIdentity.promotionName
-          : marketplaceShortDescription.slice(0, 20),
+          : (japaneseCopy?.shortDescription ?? marketplaceShortDescription).slice(0, 20),
         SellerCode: exactLocalizationUpdate
           ? exactIdentity.sellerSku
           : qoo10SellerCode(
@@ -664,9 +700,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         AdultYN: "N",
         ContactTel: "",
         StandardImage: sourceImage,
-        ItemDescription: exactLocalizationUpdate
-          ? qoo10ExactReviewedJapaneseDetail(detailImageUrls)
-          : richDescription,
+        ItemDescription: qoo10Description,
         AdditionalOption: "",
         ItemType: "",
         RetailPrice: String(exactLocalizationUpdate ? exactIdentity.priceJpy : channelPrice),
@@ -679,7 +713,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         AvailableDateValue: "3",
         Keyword: exactLocalizationUpdate
           ? exactIdentity.sourceKeyword
-          : seoKeywords.join(",").slice(0, 300),
+          : (japaneseCopy
+            ? `${japaneseCopy.title},購入前確認`
+            : seoKeywords.join(",")).slice(0, 300),
       },
     };
   }
@@ -975,11 +1011,12 @@ export function missingNativeValues(
   const galleryImages = Array.isArray(assets.galleryImageUrls) ? assets.galleryImageUrls.filter(Boolean) : [];
   const detailImages = Array.isArray(assets.detailImageUrls) ? assets.detailImageUrls.filter(Boolean) : [];
   const manualMvp = assets.contentMode === "manual_mvp" && assets.detailAssetMode === "manual_source";
+  const requireDedicatedDetails = operation !== "listing.update" && !manualMvp;
   const assetRequirements = [
     galleryImages.length === 0 ? "marketplace thumbnail image" : "",
     manualMvp
       ? detailImages.length === 0 ? "manual source detail image" : ""
-      : assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount
+      : requireDedicatedDetails && (assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount)
         ? `dedicated marketplace detail images (${marketplaceChannelDetailImageCount})`
         : "",
   ].filter(Boolean);
@@ -1129,11 +1166,13 @@ export function buildDraftMap(context: PublishContext, price: number, quantity: 
         channel,
         JSON.stringify(buildChannelArguments(channel, context, price, quantity, targets[channel], packageFields, globalBaseUsdPrice, lazadaMyrRate), null, 2),
       ];
-    } catch {
+    } catch (error) {
       // A localization or provider-contract failure belongs to that channel.
-      // Preserve every unrelated draft while keeping the failed one blocked by
-      // the existing required-field checks.
-      return [channel, "{}"];
+      // Keep the failed draft inspectable instead of an empty object that looks
+      // like a missing ledger.
+      return [channel, JSON.stringify({
+        sellerpilotDraftError: error instanceof Error ? error.message : "channel draft build failed",
+      }, null, 2)];
     }
   }));
 }
@@ -1183,11 +1222,13 @@ export function buildSynchronizedDraftMap(
         }
       }
       return [channel, JSON.stringify(nextDraft, null, 2)];
-    } catch {
+    } catch (error) {
       // Keep a hand-edited or previously valid channel draft intact when one
       // provider's localization/contract build fails. The normal validation
       // fence will continue to block that channel without losing user input.
-      return [channel, currentText ?? "{}"];
+      return [channel, currentText ?? JSON.stringify({
+        sellerpilotDraftError: error instanceof Error ? error.message : "channel draft build failed",
+      })];
     }
   }));
 }
@@ -2050,6 +2091,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         listing,
       );
       const hasMissingRequired = !parsedDraft
+        || typeof parsedDraft.sellerpilotDraftError === "string"
         || blockingWorkbenchListingRequirements(
           channel,
           parsedDraft,
@@ -2555,7 +2597,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const lazadaFinalPricePolicy = remoteCommerceUpdate && draftObject
         ? lazadaKrwMyrPricePolicyFromArguments(draftObject)
         : null;
-      const requirements = draftObject
+      const invalidDraft = !draftObject || typeof draftObject.sellerpilotDraftError === "string";
+      const requirements = draftObject && !invalidDraft
         ? inspectWorkbenchListingDraft(
           channel,
           draftObject,
@@ -2564,9 +2607,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         )
         : [];
       const blockingRequirements = requirements.filter((item) => item.status === "manual");
-      const nativeMissing = draftObject ? missingNativeValues(channel, draftObject, operation) : [];
+      const nativeMissing = draftObject && !invalidDraft ? missingNativeValues(channel, draftObject, operation) : [];
       const blockingCount = blockingRequirements.length + nativeMissing.length;
-      const invalidDraft = !draftObject;
       const temuActivationLedgerEligible = channel === "temu"
         && Boolean(listing?.remoteId)
         && listing?.status === "paused"
@@ -2589,7 +2631,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
           {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
           {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
-          {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>채널 JSON 형식 확인 필요</b><small>아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다.</small></div> : <div className="publish-required-fields">
+          {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{typeof draftObject?.sellerpilotDraftError === "string" ? "채널 payload 조립 실패" : "채널 JSON 형식 확인 필요"}</b><small>{typeof draftObject?.sellerpilotDraftError === "string" ? String(draftObject.sellerpilotDraftError) : "아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다."}</small></div> : <div className="publish-required-fields">
             <div className="publish-required-head"><b>채널 필수 입력 체크</b><small>{blockingRequirements.length ? `${blockingRequirements.length}개 수동 입력 필요` : "모든 입력값 준비"}</small></div>
             <div className="publish-required-list">{requirements.map((item) => <div key={item.key} className={`publish-required-item ${item.status}`} title={item.help}>
               <span>{item.status === "ready" ? <CircleCheck size={14} /> : item.status === "runtime" ? <RefreshCw size={14} /> : <AlertTriangle size={14} />}<b>{item.label}</b><small>{item.source}</small></span>

@@ -122,6 +122,39 @@ test("Qoo10 UpdateGoods carrier fields are required before create or update prep
   );
 });
 
+test("Qoo10 unique account fields are editable instead of a dead-end checklist", () => {
+  const requirements = inspectListingDraft("qoo10", {
+    params: {
+      SecondSubCat: "300000536",
+      ItemTitle: "洋菓子の販売者確認済み商品",
+      ProductionPlaceType: "2",
+      ProductionPlace: "KR",
+      StandardImage: "https://example.com/item.jpg",
+      RetailPrice: "12",
+      ItemPrice: "12",
+      ItemQty: "1",
+      ShippingNo: "0",
+      AvailableDateType: "0",
+      AvailableDateValue: "3",
+    },
+  });
+  assert.deepEqual(
+    requirements.filter((item) => item.manualPath).map((item) => item.key),
+    ["title", "shipping", "available-date-type", "available-date-value"],
+  );
+  assert.equal(requirements.every((item) => item.status === "ready"), true);
+});
+
+test("11st processed-food notices stay hidden until that category is selected", () => {
+  const cable = inspectListingDraft("elevenst", { product: { dispCtgrNo: "1341821" } });
+  assert.equal(cable.some((item) => item.key.startsWith("food-notice-")), false);
+  const food = inspectListingDraft("elevenst", {
+    product: { dispCtgrNo: "1346631", ProductNotification: { item: [] } },
+  });
+  assert.equal(food.filter((item) => item.key.startsWith("food-notice-")).length > 0, true);
+  assert.equal(food.find((item) => item.key === "food-notice-176398001")?.status, "manual");
+});
+
 test("Smartstore preflight exposes the official purchase-age and display-status fields", () => {
   const draft = {
     imageUrls: ["https://example.com/storage.jpg"],
