@@ -118,7 +118,7 @@ test("Qoo10 listing.update still assembles a ledger payload when localization is
   assert.equal(draft.params.ProductionPlaceType, "2");
   assert.equal(draft.params.ProductionPlace, "KR");
   assert.equal(draft.params.StandardImage.startsWith("https://"), true);
-  assert.match(draft.params.ItemDescription, /lang="ja-JP"/);
+  assert.match(draft.params.ItemDescription, /data-sellerpilot-localized-detail/);
   assert.equal(/\p{Script=Hangul}/u.test(draft.params.ItemTitle), false);
   assert.deepEqual(
     blockingListingRequirements("qoo10", draft, "listing.update").map((item) => item.key),
@@ -154,9 +154,44 @@ test("Qoo10 review-marked localization still yields Japanese category copy inste
   assert.equal(/\p{Script=Hangul}/u.test(draft.params.ItemTitle), false);
 });
 
-test("channel drafts prefer the saved puck detail page over localization fallback copy", () => {
+test("Qoo10 keeps generated dedicated detail images even without localized sections", () => {
   const context = cookieContext();
-  context.detailData = null;
+  const roles = [
+    "detail-overview", "detail-feature", "detail-context", "detail-package",
+    "detail-contents", "detail-use", "detail-routine", "detail-care",
+  ];
+  context.generatedImages = [
+    ...context.generatedImages,
+    ...roles.map((id) => ({ id, path: `owner/job/output/${id}.jpg`, url: `https://cdn.example.com/${id}.jpg` })),
+  ];
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    3190,
+    1,
+    undefined,
+    { weight: 0.4, length: 28, width: 20, height: 7 },
+    12.9,
+  ) as {
+    params: Record<string, string>;
+    sellerpilotAssets: { detailAssetMode: string; detailImageUrls: string[]; detailImageRoles: string[] };
+  };
+  assert.equal(draft.sellerpilotAssets.detailAssetMode, "dedicated");
+  assert.deepEqual(draft.sellerpilotAssets.detailImageRoles, roles);
+  assert.equal(draft.sellerpilotAssets.detailImageUrls.length, 8);
+  assert.doesNotMatch(draft.params.ItemDescription, /data-sellerpilot-puck-detail/);
+  assert.doesNotMatch(draft.params.ItemDescription, /data-sellerpilot-qoo10-fallback/);
+});
+
+test("Korean channel drafts still read the saved puck detail page", () => {
+  const context = cookieContext();
+  context.assignments = [{
+    ...context.assignments[0],
+    channel: "elevenst",
+    market: "KR",
+    categoryId: "1341821",
+    categoryPath: ["생활용품"],
+  }];
   context.detailPage = {
     version: 2,
     approvedVersion: 2,
@@ -172,20 +207,19 @@ test("channel drafts prefer the saved puck detail page over localization fallbac
         },
       }],
     },
-  } as PublishContext["detailPage"] & { data: NonNullable<PublishContext["detailData"]> };
+  } as PublishContext["detailPage"];
   assert.equal(publishContextDesignedDetailData(context)?.content[0]?.type, "HeroBlock");
   const draft = buildChannelArguments(
-    "qoo10",
+    "elevenst",
     { ...context, detailData: publishContextDesignedDetailData(context) },
     3190,
     1,
     undefined,
     { weight: 0.4, length: 28, width: 20, height: 7 },
     12.9,
-  ) as { params: Record<string, string> };
-  assert.match(draft.params.ItemDescription, /data-sellerpilot-puck-detail/);
-  assert.match(draft.params.ItemDescription, /확인된 정보만, 구매 전에 한 번 더/);
-  assert.doesNotMatch(draft.params.ItemDescription, /data-sellerpilot-qoo10-fallback/);
+  ) as { product: { htmlDetail: string } };
+  assert.match(draft.product.htmlDetail, /data-sellerpilot-puck-detail/);
+  assert.match(draft.product.htmlDetail, /확인된 정보만, 구매 전에 한 번 더/);
 });
 
 test("buildDraftMap no longer swallows a Qoo10 update into an empty object", () => {
