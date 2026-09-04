@@ -1,0 +1,4 @@
+export const SHOPEE_EXACT_DIAGNOSTIC_JOB_ID = "e3ef63f5-cd39-4883-898c-60399dbf449c";
+export const SHOPEE_EXACT_DIAGNOSTIC_SHOP_ID = "1719148844";
+export const SHOPEE_EXACT_DIAGNOSTIC_CHANNEL = "shopee";
+export const SHOPEE_EXACT_DIAGNOSTIC_OPERATION = "diagnostic.test";
