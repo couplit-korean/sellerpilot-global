@@ -174,7 +174,7 @@ test("Shopee static egress migration preserves prior flags and closes both claim
   assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy[\s\S]*shopee/i);
 });
 
-test("Shopee OAuth and channel operations fail before enqueue when runtime readiness is unavailable", async () => {
+test("Shopee OAuth stays gated while authenticated Shopee category work is not blocked by static egress", async () => {
   const [oauthRoute, channelOperationsRoute] = await Promise.all([
     readFile(
       new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url),
@@ -195,7 +195,8 @@ test("Shopee OAuth and channel operations fail before enqueue when runtime readi
     oauthRoute.indexOf("const blocked = await shopeeOAuthGatewayBlocked")
       < oauthRoute.indexOf("exchangeOAuthViaChannelGateway({"),
   );
-  assert.match(channelOperationsRoute, /const staticEgressChannel = channel === "shopee"/);
+  assert.doesNotMatch(channelOperationsRoute, /const staticEgressChannel = channel === "shopee"/);
+  assert.match(channelOperationsRoute, /const staticEgressChannel = channel === "temu"/);
   assert.match(channelOperationsRoute, /databasePolicy\[staticEgressChannel\] !== true/);
   assert.ok(
     channelOperationsRoute.indexOf("const staticEgressChannel")

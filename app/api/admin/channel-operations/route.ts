@@ -1578,9 +1578,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const staticEgressChannel = channel === "shopee"
-    ? "shopee"
-    : channel === "temu" && [
+  // Shopee OAuth token exchange stays gated in the authorize route. Authenticated
+  // Shopee calls (categories.*, shops.get, listing.*, diagnostic.test) are not
+  // IP-restricted the same way and must not block category confirmation.
+  const staticEgressChannel = channel === "temu" && [
         "listing.create",
         "listing.update",
         "listing.stop",
@@ -1611,7 +1612,6 @@ export async function POST(request: NextRequest) {
     if (!environmentReady
         || staticEgressStatus.error
         || databasePolicy[staticEgressChannel] !== true) {
-      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         manualRequired: true,
@@ -1619,18 +1619,17 @@ export async function POST(request: NextRequest) {
         staticEgressReady: false,
         blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
         mode: "static_egress_required",
-        message: `${channelName}에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 작업을 다시 시도해 주세요.`,
+        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 작업을 다시 시도해 주세요.",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
-      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         operatorActionRequired: true,
         workerReady: false,
         blockedReason: "SERVERLESS_WORKER_REQUIRED",
         mode: "serverless_worker_required",
-        message: `${channelName} 상품 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.`,
+        message: "Temu 상품 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
