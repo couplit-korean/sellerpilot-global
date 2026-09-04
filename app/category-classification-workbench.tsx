@@ -1029,7 +1029,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     if (response.status === 202 && payload.inProgress && typeof payload.jobId === "string") {
       for (let attempt = 0; attempt < 36; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 5_000));
-        const statusResponse = await fetch(`/api/admin/channel-operations?jobId=${encodeURIComponent(payload.jobId)}`, {
+        const statusResponse = await fetch(`/api/admin/channel-gateway-job?jobId=${encodeURIComponent(payload.jobId)}`, {
           headers: { authorization: `Bearer ${accessToken}` },
           cache: "no-store",
         });
