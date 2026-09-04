@@ -421,6 +421,7 @@ type PublishContext = {
   localizedListings: LocalizedListing[];
   detailData: ProductDetailData | null;
   detailPage?: {
+    data?: ProductDetailData | null;
     version?: number;
     approvedVersion?: number;
     imageManifest?: unknown;
@@ -465,6 +466,17 @@ const productEditFieldLabels = {
   price: "가격",
   inventory: "재고",
 } as const;
+
+export function publishContextDesignedDetailData(payload: {
+  detailData?: ProductDetailData | null;
+  detailPage?: { data?: ProductDetailData | null } | null;
+}): ProductDetailData | null {
+  const pageData = payload.detailPage?.data;
+  if (pageData && Array.isArray(pageData.content) && pageData.content.length > 0) return pageData;
+  const fallback = payload.detailData;
+  if (fallback && Array.isArray(fallback.content) && fallback.content.length > 0) return fallback;
+  return null;
+}
 
 export function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
@@ -634,7 +646,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     buildLocalizedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, { classification }),
     legacyQoo10Repair,
   );
-  const puckDetailHtml = productDetailDataToHtml(context.detailData);
+  const puckDetailHtml = productDetailDataToHtml(publishContextDesignedDetailData(context));
   const shopeePlainDescription = replaceLegacyQoo10TitleReferences(
     buildLocalizedBudgetedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, 3_000, { classification }),
     legacyQoo10Repair,
@@ -667,12 +679,14 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       : japaneseCopy?.title ?? marketplaceTitle;
     const qoo10Description = exactLocalizationUpdate
       ? qoo10ExactReviewedJapaneseDetail(detailImageUrls)
-      : japaneseCopy
-        ? qoo10JapaneseFallbackItemDescription(
-          japaneseCopy,
-          (detailImageUrls.length ? detailImageUrls : galleryImageUrls),
-        )
-        : richDescription;
+      : puckDetailHtml
+        ? puckDetailHtml
+        : japaneseCopy
+          ? qoo10JapaneseFallbackItemDescription(
+            japaneseCopy,
+            (detailImageUrls.length ? detailImageUrls : galleryImageUrls),
+          )
+          : richDescription;
     return {
       sellerpilotAssets: {
         ...sellerpilotAssets,
@@ -788,7 +802,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
             // repeat core fields such as `name` and `description`. Keep only
             // selected values, then make the listing's verified core content
             // authoritative so an empty category field cannot blank the title.
-            Attributes: { ...providedAttributes, name: title.slice(0, 255), description: richDescription, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
+            Attributes: { ...providedAttributes, name: title.slice(0, 255), description: puckDetailHtml || richDescription, short_description: shortDescription.slice(0, 500), brand: manual.brandName },
             Skus: { Sku: [{ SellerSku: marketSku, price: String(channelPrice), quantity: String(quantity), package_weight: String(packageFields.weight), package_length: String(packageFields.length), package_width: String(packageFields.width), package_height: String(packageFields.height), package_content: title.slice(0, 255), Status: "active", Images: { Image: galleryImageUrls } }] },
           },
         },
@@ -994,8 +1008,8 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     // eBay Inventory Items and Offers must reference the exact same SKU.
     // Keep it market-specific so a later country listing cannot collide with US.
     sku: marketSku,
-    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: englishEbayMaterial(assignment?.providedAttributes.Material || manual.material), "Country/Region of Manufacture": manual.countryOfOrigin }) } },
-    offer: { sku: marketSku, marketplaceId: target?.targetId ?? "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: richDescription, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: target?.currency ?? "USD" } } },
+    inventoryItem: { availability: { shipToLocationAvailability: { quantity } }, condition: manual.condition, product: { title: title.slice(0, 80), description: puckDetailHtml || richDescription, imageUrls: galleryImageUrls, brand: manual.brandName, mpn: marketSku, aspects: normalizeEbayAspects({ ...(assignment?.providedAttributes ?? {}), Material: englishEbayMaterial(assignment?.providedAttributes.Material || manual.material), "Country/Region of Manufacture": manual.countryOfOrigin }) } },
+    offer: { sku: marketSku, marketplaceId: target?.targetId ?? "EBAY_US", format: "FIXED_PRICE", availableQuantity: quantity, categoryId: assignment?.categoryId ?? "", listingDescription: puckDetailHtml || richDescription, listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" }, merchantLocationKey: "SERVER_MANAGED", pricingSummary: { price: { value: String(channelPrice), currency: target?.currency ?? "USD" } } },
     publish: true,
   };
 }
@@ -1526,7 +1540,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         bounded.signal,
       ) as PublishContext & { message?: string };
       if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
-      const nextPayload = { ...payload, detailData, manualFields: normalizeManualFields(payload), imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [] };
+      const nextPayload = {
+        ...payload,
+        detailData: publishContextDesignedDetailData({ ...payload, detailData }),
+        manualFields: normalizeManualFields(payload),
+        imageSpecs: Array.isArray(payload.imageSpecs) ? payload.imageSpecs : [],
+      };
       if (nextPayload.product.id !== requestedProductId) {
         throw new Error("요청한 상품과 등록 준비 원장이 일치하지 않습니다.");
       }

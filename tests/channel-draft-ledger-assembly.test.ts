@@ -4,6 +4,7 @@ import {
   buildChannelArguments,
   buildDraftMap,
   missingNativeValues,
+  publishContextDesignedDetailData,
 } from "../app/product-publish-workbench";
 import {
   qoo10JapaneseListingCopyFromCategory,
@@ -151,6 +152,40 @@ test("Qoo10 review-marked localization still yields Japanese category copy inste
   ) as { params: Record<string, string> };
   assert.equal(draft.params.ItemTitle, "洋菓子の販売者確認済み商品");
   assert.equal(/\p{Script=Hangul}/u.test(draft.params.ItemTitle), false);
+});
+
+test("channel drafts prefer the saved puck detail page over localization fallback copy", () => {
+  const context = cookieContext();
+  context.detailData = null;
+  context.detailPage = {
+    version: 2,
+    approvedVersion: 2,
+    data: {
+      root: {},
+      content: [{
+        type: "HeroBlock",
+        props: {
+          eyebrow: "과자",
+          title: "확인된 정보만, 구매 전에 한 번 더",
+          description: "판매자가 검수한 입력을 기준으로 구성했습니다.",
+          cta: "검수 정보 확인하기",
+        },
+      }],
+    },
+  } as PublishContext["detailPage"] & { data: NonNullable<PublishContext["detailData"]> };
+  assert.equal(publishContextDesignedDetailData(context)?.content[0]?.type, "HeroBlock");
+  const draft = buildChannelArguments(
+    "qoo10",
+    { ...context, detailData: publishContextDesignedDetailData(context) },
+    3190,
+    1,
+    undefined,
+    { weight: 0.4, length: 28, width: 20, height: 7 },
+    12.9,
+  ) as { params: Record<string, string> };
+  assert.match(draft.params.ItemDescription, /data-sellerpilot-puck-detail/);
+  assert.match(draft.params.ItemDescription, /확인된 정보만, 구매 전에 한 번 더/);
+  assert.doesNotMatch(draft.params.ItemDescription, /data-sellerpilot-qoo10-fallback/);
 });
 
 test("buildDraftMap no longer swallows a Qoo10 update into an empty object", () => {
