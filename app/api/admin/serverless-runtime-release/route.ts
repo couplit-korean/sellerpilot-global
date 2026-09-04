@@ -63,7 +63,7 @@ export async function POST(request: Request) {
       }, { status: failure.status, headers: { "cache-control": "no-store" } });
     }
   }
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 30_000 });
   if (isAdminApiError(admin)) return admin;
   const identity = resolveRuntimeReleaseIdentity();
   if (identity.status !== "valid") {

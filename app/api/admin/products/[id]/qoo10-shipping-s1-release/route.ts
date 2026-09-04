@@ -60,7 +60,7 @@ function exactTarget(productId: string, listingId: string) {
 }
 
 export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 30_000 });
   if (isAdminApiError(admin)) return noStoreAdminError(admin);
   const productId = productIdSchema.safeParse((await context.params).id);
   const listingId = new URL(request.url).searchParams.get("listingId") ?? "";
@@ -94,7 +94,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
 }
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 30_000 });
   if (isAdminApiError(admin)) return noStoreAdminError(admin);
   const productId = productIdSchema.safeParse((await context.params).id);
   const body = requestSchema.safeParse(await request.json().catch(() => null));
