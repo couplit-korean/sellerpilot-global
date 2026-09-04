@@ -28,6 +28,12 @@ const requestSchema = z.discriminatedUnion("action", [
     verifierJobId: z.string().uuid(),
   }).strict(),
   z.object({
+    action: z.literal("retry_reverify"),
+    listingId: z.string().uuid(),
+    verifierJobId: z.string().uuid(),
+    failedActivationJobId: z.string().uuid(),
+  }).strict(),
+  z.object({
     action: z.literal("activate"),
     listingId: z.string().uuid(),
     verifierJobId: z.string().uuid(),
@@ -88,8 +94,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const body = requestSchema.safeParse(await request.json().catch(() => null));
   if (!productId.success || !body.success
       || !exactTarget(productId.data, body.data.listingId)
-      || (body.data.action === "reverify"
-        && body.data.verifierJobId !== qoo10LotteShippingS1Identity.verifierJobId)) {
+      || ((body.data.action === "reverify" || body.data.action === "retry_reverify")
+        && body.data.verifierJobId !== qoo10LotteShippingS1Identity.verifierJobId)
+      || (body.data.action === "retry_reverify"
+        && body.data.failedActivationJobId
+          !== qoo10LotteShippingS1Identity.expiredUnclaimedActivationJobId)) {
     return NextResponse.json({
       message: "Qoo10 shipping S1 요청의 상품·게시 원장·작업 식별값을 확인해 주세요.",
     }, noStore(400));
@@ -101,8 +110,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       mode: "runtime_release_required",
     }, noStore(503));
   }
-  if (body.data.action === "reverify") {
+  if (body.data.action === "reverify" || body.data.action === "retry_reverify") {
     const identity = qoo10LotteShippingS1Identity;
+    const retry = body.data.action === "retry_reverify";
     const decrypted = await admin.serviceClient.rpc("sellerpilot_decrypt_credential", {
       p_credential_id: identity.credentialId,
     });
@@ -134,21 +144,34 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
           mode: "qoo10_shipping_s1_direct_reverify_readback_rejected",
         }, noStore(409));
       }
+      const readback = {
+        ResultCode: "0",
+        ResultObject: remote.data.ResultObject ?? null,
+      };
       const recorded = await admin.serviceClient.rpc(
-        "sellerpilot_service_record_qoo10_shipping_s1_direct_reverify",
-        {
-          p_verifier_job_id: body.data.verifierJobId,
-          p_release_sha: runtimeRelease.release,
-          p_readback: {
-            ResultCode: "0",
-            ResultObject: remote.data.ResultObject ?? null,
-          },
-        },
+        retry
+          ? "sellerpilot_service_retry_qoo10_shipping_s1_direct_reverify"
+          : "sellerpilot_service_record_qoo10_shipping_s1_direct_reverify",
+        retry
+          ? {
+              p_failed_activation_job_id: identity.expiredUnclaimedActivationJobId,
+              p_release_sha: runtimeRelease.release,
+              p_readback: readback,
+            }
+          : {
+              p_verifier_job_id: body.data.verifierJobId,
+              p_release_sha: runtimeRelease.release,
+              p_readback: readback,
+            },
       );
       if (recorded.error || !recorded.data) {
         return NextResponse.json({
-          message: "신선 GET이 create 유지 메타데이터·S1·806971과 일치하지 않아 관측과 활성 permit을 만들지 않았습니다.",
-          mode: "qoo10_shipping_s1_direct_reverify_precondition_failed",
+          message: retry
+            ? "첫 활성화가 공급자 호출 전에 만료된 정확한 기록 또는 신선 GET이 일치하지 않아 재시도 작업을 만들지 않았습니다."
+            : "신선 GET이 create 유지 메타데이터·S1·806971과 일치하지 않아 관측과 활성 permit을 만들지 않았습니다.",
+          mode: retry
+            ? "qoo10_shipping_s1_direct_reverify_retry_precondition_failed"
+            : "qoo10_shipping_s1_direct_reverify_precondition_failed",
         }, noStore(409));
       }
       return NextResponse.json(recorded.data, noStore(202));
