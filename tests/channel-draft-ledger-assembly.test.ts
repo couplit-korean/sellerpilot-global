@@ -10,6 +10,7 @@ import {
 } from "../lib/channels/qoo10-japanese-title";
 import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
 import { blockingListingRequirements } from "../lib/channels/listing-preflight";
+import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -126,6 +127,30 @@ test("Qoo10 listing.update still assembles a ledger payload when localization is
     missingNativeValues("qoo10", draft, "listing.update").some((item) => item.includes("dedicated marketplace")),
     false,
   );
+});
+
+test("Qoo10 review-marked localization still yields Japanese category copy instead of an empty draft", () => {
+  const context = cookieContext();
+  context.localizedListings = [{
+    channel: "qoo10",
+    market: "JP",
+    locale: "ja-JP",
+    title: `${unapprovedLocalizationReviewMarker} Lotte cookie`,
+    shortDescription: "Review required",
+    description: "This draft requires localization review.",
+    keywords: [],
+  }];
+  const draft = buildChannelArguments(
+    "qoo10",
+    context,
+    3190,
+    1,
+    undefined,
+    { weight: 0.4, length: 28, width: 20, height: 7 },
+    12.9,
+  ) as { params: Record<string, string> };
+  assert.equal(draft.params.ItemTitle, "洋菓子の販売者確認済み商品");
+  assert.equal(/\p{Script=Hangul}/u.test(draft.params.ItemTitle), false);
 });
 
 test("buildDraftMap no longer swallows a Qoo10 update into an empty object", () => {

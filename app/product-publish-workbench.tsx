@@ -554,7 +554,8 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      if (message !== "LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED") {
+      const qoo10ReviewFallback = channel === "qoo10" && message === "LISTING_LOCALIZATION_REVIEW_REQUIRED";
+      if (message !== "LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED" && !qoo10ReviewFallback) {
         throw error;
       }
       draftLocalization = "missing";
