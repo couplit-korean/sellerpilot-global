@@ -178,11 +178,11 @@ async function readGateStatusOrTimeout(serviceClient: Parameters<typeof readGate
 }
 
 export async function GET(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 12_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 30_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
   const identity = resolveRuntimeReleaseIdentity();
-  const gate = await readGateStatusOrTimeout(admin.serviceClient, 8_000);
+  const gate = await readGateStatusOrTimeout(admin.serviceClient, 20_000);
   if (!gate) {
     return json({
       ok: identity.status === "valid",
@@ -210,7 +210,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 12_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 30_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
   const parsed = actionSchema.safeParse(await request.json().catch(() => null));

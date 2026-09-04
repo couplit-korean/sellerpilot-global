@@ -384,45 +384,46 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
   }, []);
 
   const loadListingRelease = useCallback(async () => {
-    const applyListingRelease = (listingReleaseResponse: Response, listingReleasePayload: ListingReleasePayload) => {
-      const currentRelease = listingReleasePayload.runtimeRelease?.currentRelease ?? null;
-      setListingRelease({
-        status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : currentRelease ? "ready" : "failed",
-        message: listingReleasePayload.message ?? (currentRelease
-          ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
-          : "게시 릴리스 상태를 불러오지 못했습니다."),
-        currentRelease,
-        gate: listingReleasePayload.gate ?? null,
-        readyForOpen: listingReleasePayload.readyForOpen === true,
-        readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
+    // A slow gate RPC or a late 503 must never erase a deploy SHA the server already
+    // confirmed, otherwise attestation buttons flip back to disabled mid-session.
+    const applyListingRelease = (listingReleasePayload: ListingReleasePayload) => {
+      setListingRelease((current) => {
+        const currentRelease = listingReleasePayload.runtimeRelease?.currentRelease ?? current.currentRelease;
+        const gate = listingReleasePayload.gate ?? current.gate;
+        return {
+          status: currentRelease ? "ready" : "failed",
+          message: listingReleasePayload.message ?? (currentRelease
+            ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
+            : "게시 릴리스 상태를 불러오지 못했습니다."),
+          currentRelease,
+          gate,
+          readyForOpen: listingReleasePayload.readyForOpen === true,
+          readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
+        };
       });
     };
     const readListingRelease = async () => {
       const listingReleaseResponse = await authenticatedFetch("/api/admin/listing-publication-release", {
-        signal: AbortSignal.timeout(20_000),
+        signal: AbortSignal.timeout(40_000),
       });
       const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
       return { listingReleaseResponse, listingReleasePayload };
     };
-    try {
-      let { listingReleaseResponse, listingReleasePayload } = await readListingRelease();
-      if (
-        !listingReleasePayload.runtimeRelease?.currentRelease
-        && !listingReleaseResponse.ok
-        && (listingReleaseResponse.status === 403 || listingReleaseResponse.status === 503)
-      ) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3_000));
-        ({ listingReleaseResponse, listingReleasePayload } = await readListingRelease());
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const { listingReleasePayload } = await readListingRelease();
+        applyListingRelease(listingReleasePayload);
+        if (listingReleasePayload.gate) return;
+      } catch {
+        setListingRelease((current) => ({
+          ...current,
+          status: current.currentRelease ? "ready" : "failed",
+          message: current.currentRelease
+            ? current.message
+            : "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
+        }));
       }
-      applyListingRelease(listingReleaseResponse, listingReleasePayload);
-    } catch {
-      setListingRelease((current) => ({
-        ...current,
-        status: current.currentRelease ? "ready" : "failed",
-        message: current.currentRelease ? current.message : "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
-        readyForOpen: false,
-        readyForQoo10Open: false,
-      }));
+      if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 4_000));
     }
   }, [authenticatedFetch]);
 

@@ -59,7 +59,7 @@ test("channel connection UI uses inline two-step confirmations for release write
   const runtimeCard = await readFile(runtimeCardUrl, "utf8");
 
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release"/);
-  assert.match(runtimeCard, /AbortSignal\.timeout\(20_000\)/);
+  assert.match(runtimeCard, /AbortSignal\.timeout\(40_000\)/);
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release", \{\s*method: "POST"/s);
   assert.match(runtimeCard, /role="alertdialog" aria-label=\{copy\.title\}/);
   assert.match(runtimeCard, />취소<\/button>/);
