@@ -55,3 +55,18 @@ test("Shopee category reads can pass an unstarted refresh reconciliation without
   );
   assert.doesNotMatch(migration, /status = 'cancelled'/);
 });
+
+test("serverless claim keeps Shopee category reads for the local gateway worker", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260904195000_keep_shopee_category_reads_on_local_gateway.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /job.operation not in \([\s\S]*'oauth.exchange',[\s\S]*'categories.suggest'/
+  );
+  assert.doesNotMatch(migration, /status = 'cancelled'/);
+});
