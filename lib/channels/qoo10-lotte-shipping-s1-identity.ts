@@ -18,6 +18,7 @@ export const qoo10LotteShippingS1Identity = Object.freeze({
   updateJobId: "089467c1-cadb-4d31-93a8-d5882c46d753",
   verifierJobId: "457b4481-0a66-4a76-89a0-884087d0c22e",
   expiredUnclaimedActivationJobId: "12eaf867-9ee5-45b1-aed0-b5456bc124a3",
+  retryActivationJobId: "e09ab646-19ef-4865-a79e-08baef769086",
   sellerSku: "AUTO-780720401E2D4E4EA45F",
   market: "JP",
   targetId: "Japan · QAPI",
