@@ -163,21 +163,38 @@ function statusPayload(gate: GateStatus, identity: RuntimeReleaseIdentity) {
   };
 }
 
+async function readGateStatusOrTimeout(serviceClient: Parameters<typeof readGateStatus>[0], timeoutMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      readGateStatus(serviceClient),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export async function GET(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 45_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 12_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
-  const [identity, gate] = await Promise.all([
-    Promise.resolve(resolveRuntimeReleaseIdentity()),
-    readGateStatus(admin.serviceClient),
-  ]);
+  const identity = resolveRuntimeReleaseIdentity();
+  const gate = await readGateStatusOrTimeout(admin.serviceClient, 8_000);
   if (!gate) {
     return json({
-      ok: false,
+      ok: identity.status === "valid",
       code: "listing_release_status_unavailable",
       runtimeRelease: publicRuntimeRelease(identity),
-      message: "게시 릴리스 게이트 상태를 안전하게 확인하지 못했습니다.",
-    }, 503);
+      gate: null,
+      readyForOpen: false,
+      readyForQoo10Open: false,
+      message: identity.status === "valid"
+        ? "배포 SHA는 확인했습니다. 게이트 상세는 잠시 후 다시 불러옵니다."
+        : "게시 릴리스 게이트 상태를 안전하게 확인하지 못했습니다.",
+    }, identity.status === "valid" ? 200 : 503);
   }
   if (identity.status !== "valid") {
     return json({
@@ -193,7 +210,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 45_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 12_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
   const parsed = actionSchema.safeParse(await request.json().catch(() => null));

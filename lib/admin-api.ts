@@ -21,12 +21,24 @@ function isAbortOrTimeoutError(error: unknown): boolean {
     || /timeout|timed out|abort|aborted|exceeded/i.test(message);
 }
 
-function boundedAdminFetch(timeoutMs: number) {
-  return (input: RequestInfo | URL, init?: RequestInit) => {
-    const timeoutSignal = AbortSignal.timeout(timeoutMs);
-    const signal = init?.signal ? AbortSignal.any([init.signal, timeoutSignal]) : timeoutSignal;
-    return fetch(input, { ...init, signal });
-  };
+function timeoutError() {
+  const error = new Error("admin auth timed out");
+  error.name = "TimeoutError";
+  return error;
+}
+
+async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(timeoutError()), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function authenticateAdminRequest(request: Request, options: AdminApiOptions = {}): Promise<AdminApiContext | NextResponse> {
@@ -42,26 +54,34 @@ export async function authenticateAdminRequest(request: Request, options: AdminA
   const userClient = createClient(supabaseUrl, supabasePublishableKey, {
     global: {
       headers: { Authorization: `Bearer ${token}` },
-      ...(options.timeoutMs ? { fetch: boundedAdminFetch(options.timeoutMs) } : {}),
     },
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const [{ data: userData, error: userError }, { data: isAdmin, error: adminError }] = await Promise.all([
-    userClient.auth.getUser(token),
-    userClient.rpc("sellerpilot_is_admin"),
-  ]);
-  if (isAbortOrTimeoutError(userError) || isAbortOrTimeoutError(adminError)) {
-    return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
-  }
-  if (userError || !userData.user || adminError || isAdmin !== true) {
-    return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
-  }
+  try {
+    const authWork = Promise.all([
+      userClient.auth.getUser(token),
+      userClient.rpc("sellerpilot_is_admin"),
+    ]);
+    const [{ data: userData, error: userError }, { data: isAdmin, error: adminError }] = options.timeoutMs
+      ? await withTimeout(authWork, options.timeoutMs)
+      : await authWork;
+    if (isAbortOrTimeoutError(userError) || isAbortOrTimeoutError(adminError)) {
+      return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
+    }
+    if (userError || !userData.user || adminError || isAdmin !== true) {
+      return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
+    }
 
-  const serviceClient = createClient(supabaseUrl, secretKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    ...(options.timeoutMs ? { global: { fetch: boundedAdminFetch(options.timeoutMs) } } : {}),
-  });
-  return { user: userData.user, userClient, serviceClient };
+    const serviceClient = createClient(supabaseUrl, secretKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    return { user: userData.user, userClient, serviceClient };
+  } catch (error) {
+    if (isAbortOrTimeoutError(error)) {
+      return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
+    }
+    throw error;
+  }
 }
 
 export function isAdminApiError(value: AdminApiContext | NextResponse): value is NextResponse {
