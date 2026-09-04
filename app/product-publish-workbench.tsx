@@ -565,11 +565,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
-      const qoo10ReviewFallback = channel === "qoo10" && message === "LISTING_LOCALIZATION_REVIEW_REQUIRED";
-      if (message !== "LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED" && !qoo10ReviewFallback) {
+      if (message !== "LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED"
+          && message !== "LISTING_LOCALIZATION_REVIEW_REQUIRED") {
         throw error;
       }
-      draftLocalization = "missing";
+      draftLocalization = message === "LISTING_LOCALIZATION_REVIEW_REQUIRED" ? "review_required" : "missing";
       coreContent = listingCoreContentForOperation({
         operation: "listing.create",
         central: { title: context.manualFields.productName || product.name, description: context.manualFields.description || product.description },
@@ -948,8 +948,8 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           extCatName: assignment?.categoryId ?? "",
           costTemplate: "",
           goodsDesc: temuPlainDescription,
-          goodsCarouselImage: galleryImageUrls.slice(0, 10),
-          detailImage: detailImageUrls.slice(0, 10),
+          goodsCarouselImage: galleryImageUrls.slice(0, 1),
+          detailImage: detailImageUrls.slice(0, 8),
           productType: 1,
           bulletPoints: (temuBulletPoints.length ? temuBulletPoints : [description]).slice(0, 10),
         },
