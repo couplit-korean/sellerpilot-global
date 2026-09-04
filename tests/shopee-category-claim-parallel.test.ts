@@ -24,3 +24,17 @@ test("Shopee category reads can claim beside orders.list without touching oauth 
     /status = 'cancelled'[\s\S]*credential_refresh_in_flight = false/,
   );
 });
+
+test("Shopee category reads can pass a failed orders.list reconciliation without cancelling it", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260904190000_allow_shopee_category_reads_past_failed_orders_reconciliation.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /unresolved.operation is distinct from 'oauth.exchange'/);
+  assert.match(migration, /unresolved.provider_mutation_started_at is null/);
+  assert.match(migration, /not coalesce\(unresolved.credential_refresh_in_flight, false\)/);
+  assert.doesNotMatch(migration, /status = 'cancelled'/);
+});
