@@ -46,6 +46,10 @@ test("Qoo10 shipping S1 release route exposes only the fenced shipping S1 servic
   assert.match(route, /sellerpilot_service_get_qoo10_shipping_s1_release_status/u);
   assert.match(route, /sellerpilot_service_enqueue_qoo10_shipping_s1_verifier/u);
   assert.match(route, /sellerpilot_service_enqueue_qoo10_shipping_s1_activation/u);
+  assert.match(route, /sellerpilot_service_record_qoo10_shipping_s1_direct_reverify/u);
+  assert.match(route, /action: z\.literal\("reverify"\)/u);
+  assert.match(route, /GetItemDetailInfo/u);
+  assert.match(route, /runWithProviderReadOnlyTransport/u);
   assert.match(route, /qoo10LotteShippingS1Target/u);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/u);
   assert.doesNotMatch(route, /process\.env/u);

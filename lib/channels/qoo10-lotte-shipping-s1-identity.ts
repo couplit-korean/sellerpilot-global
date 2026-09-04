@@ -16,6 +16,7 @@ export const qoo10LotteShippingS1Identity = Object.freeze({
   remoteId: "1217536689",
   createJobId: "687852dc-36de-4049-b170-bdf7839ccf2f",
   updateJobId: "089467c1-cadb-4d31-93a8-d5882c46d753",
+  verifierJobId: "457b4481-0a66-4a76-89a0-884087d0c22e",
   sellerSku: "AUTO-780720401E2D4E4EA45F",
   market: "JP",
   targetId: "Japan · QAPI",
@@ -72,4 +73,53 @@ export function qoo10LotteShippingS1ExpectedShippingNo(input: Qoo10LotteShipping
   return qoo10LotteShippingS1OverlayAllowed(input)
     ? qoo10LotteShippingS1Identity.observedShippingNo
     : exactShippingSelector(input.confirmationShippingNo);
+}
+
+function exactCommaTokens(value: string) {
+  if (!value || value !== value.trim()) return null;
+  const tokens = value.split(",");
+  if (tokens.some((token) => !token || token !== token.trim())) return null;
+  if (new Set(tokens).size !== tokens.length) return null;
+  return tokens;
+}
+
+/**
+ * Provider-retained keyword is allowed only as an exact token subset of the
+ * original create Keyword. Order may differ. Empty, padded, or duplicate
+ * tokens stay fail-closed.
+ */
+export function qoo10ShippingS1CreateKeywordContainsRemote(
+  createKeyword: string,
+  remoteKeyword: string,
+) {
+  const createTokens = exactCommaTokens(createKeyword);
+  const remoteTokens = exactCommaTokens(remoteKeyword);
+  if (!createTokens || !remoteTokens || remoteTokens.length === 0) return false;
+  const createSet = new Set(createTokens);
+  return remoteTokens.every((token) => createSet.has(token));
+}
+
+export function qoo10ShippingS1CreateRetainedMetadataMatches(input: {
+  remoteId?: string | null;
+  providerStatus?: string | null;
+  shippingNo?: string | null;
+  remoteTitle?: string | null;
+  updateTitle?: string | null;
+  remoteKeyword?: string | null;
+  createKeyword?: string | null;
+  remotePromotionName?: string | null;
+  createPromotionName?: string | null;
+}) {
+  const identity = qoo10LotteShippingS1Identity;
+  return input.remoteId === identity.remoteId
+    && String(input.providerStatus ?? "").trim().toUpperCase() === "S1"
+    && exactShippingSelector(input.shippingNo) === identity.observedShippingNo
+    && Boolean(input.remoteTitle)
+    && input.remoteTitle === input.updateTitle
+    && Boolean(input.createPromotionName)
+    && input.remotePromotionName === input.createPromotionName
+    && qoo10ShippingS1CreateKeywordContainsRemote(
+      String(input.createKeyword ?? ""),
+      String(input.remoteKeyword ?? ""),
+    );
 }

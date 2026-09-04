@@ -1,7 +1,15 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../../lib/admin-api";
-import { qoo10LotteShippingS1Target } from "../../../../../../lib/channels/qoo10-lotte-shipping-s1-identity";
+import { qoo10ExactSuccessResultCode } from "../../../../../../lib/channels/qoo10-listing-activation";
+import {
+  qoo10LotteShippingS1Identity,
+  qoo10LotteShippingS1Target,
+} from "../../../../../../lib/channels/qoo10-lotte-shipping-s1-identity";
+import {
+  qoo10Request,
+  runWithProviderReadOnlyTransport,
+} from "../../../../../../lib/channels/protocols";
 import { resolveRuntimeReleaseIdentity } from "../../../../../../lib/internal-scheduler-auth";
 
 export const runtime = "nodejs";
@@ -13,6 +21,11 @@ const requestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("verify"),
     listingId: z.string().uuid(),
+  }).strict(),
+  z.object({
+    action: z.literal("reverify"),
+    listingId: z.string().uuid(),
+    verifierJobId: z.string().uuid(),
   }).strict(),
   z.object({
     action: z.literal("activate"),
@@ -74,7 +87,9 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   const productId = productIdSchema.safeParse((await context.params).id);
   const body = requestSchema.safeParse(await request.json().catch(() => null));
   if (!productId.success || !body.success
-      || !exactTarget(productId.data, body.data.listingId)) {
+      || !exactTarget(productId.data, body.data.listingId)
+      || (body.data.action === "reverify"
+        && body.data.verifierJobId !== qoo10LotteShippingS1Identity.verifierJobId)) {
     return NextResponse.json({
       message: "Qoo10 shipping S1 요청의 상품·게시 원장·작업 식별값을 확인해 주세요.",
     }, noStore(400));
@@ -85,6 +100,61 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       message: "현재 서버 릴리스 SHA를 확정하지 못했습니다.",
       mode: "runtime_release_required",
     }, noStore(503));
+  }
+  if (body.data.action === "reverify") {
+    const identity = qoo10LotteShippingS1Identity;
+    const decrypted = await admin.serviceClient.rpc("sellerpilot_decrypt_credential", {
+      p_credential_id: identity.credentialId,
+    });
+    const apiKey = decrypted.data && typeof decrypted.data === "object"
+      && typeof (decrypted.data as { api_key?: unknown }).api_key === "string"
+      ? (decrypted.data as { api_key: string }).api_key.trim()
+      : "";
+    if (decrypted.error || !apiKey) {
+      return NextResponse.json({
+        message: "Qoo10 shipping S1 읽기 전용 GET에 필요한 자격 증명을 확인하지 못했습니다.",
+        mode: "qoo10_shipping_s1_direct_reverify_credential_unavailable",
+      }, noStore(503));
+    }
+    const payload = { api_key: apiKey };
+    try {
+      const remote = await runWithProviderReadOnlyTransport(() => qoo10Request({
+        payload,
+        service: "ItemsLookup",
+        method: "GetItemDetailInfo",
+        version: "1.2",
+        params: {
+          ItemCode: identity.remoteId,
+          SellerCode: identity.sellerSku,
+        },
+      }));
+      if (!qoo10ExactSuccessResultCode(remote.data)) {
+        return NextResponse.json({
+          message: "Qoo10 GetItemDetailInfo 결과가 ResultCode 0이 아니라 관측을 기록하지 않았습니다.",
+          mode: "qoo10_shipping_s1_direct_reverify_readback_rejected",
+        }, noStore(409));
+      }
+      const recorded = await admin.serviceClient.rpc(
+        "sellerpilot_service_record_qoo10_shipping_s1_direct_reverify",
+        {
+          p_verifier_job_id: body.data.verifierJobId,
+          p_release_sha: runtimeRelease.release,
+          p_readback: {
+            ResultCode: "0",
+            ResultObject: remote.data.ResultObject ?? null,
+          },
+        },
+      );
+      if (recorded.error || !recorded.data) {
+        return NextResponse.json({
+          message: "신선 GET이 create 유지 메타데이터·S1·806971과 일치하지 않아 관측과 활성 permit을 만들지 않았습니다.",
+          mode: "qoo10_shipping_s1_direct_reverify_precondition_failed",
+        }, noStore(409));
+      }
+      return NextResponse.json(recorded.data, noStore(202));
+    } finally {
+      payload.api_key = "";
+    }
   }
   const rpc = body.data.action === "verify"
     ? "sellerpilot_service_enqueue_qoo10_shipping_s1_verifier"
