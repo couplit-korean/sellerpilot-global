@@ -536,6 +536,46 @@ test("11st listing stops before create when the stable seller-code idempotency l
   }
 });
 
+test("11st treats only the official namespaced empty products document as an absent seller code", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET") };
+    if (call.url.includes("/rest/cateservice/category")) {
+      return new Response(categoryXml, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
+    }
+    calls.push(call);
+    if (call.url.includes("/rest/prodmarketservice/sellerprodcode/")) {
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><ns2:products xmlns:ns2="http://skt.tmall.business.openapi.spring.service.client.domain"></ns2:products>`,
+        { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } },
+      );
+    }
+    if (call.url.endsWith("/rest/prodservices/product")) {
+      return new Response("<ClientMessage><resultCode>200</resultCode><productNo>777888111</productNo></ClientMessage>", { status: 200 });
+    }
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/777888111")) {
+      return new Response(exactProductXml("777888111", completeProduct({ sellerPrdCd: "QA-EMPTY-001" })), { status: 200 });
+    }
+    throw new Error(`unexpected URL ${call.url}`);
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: { api_key: apiKey },
+      environment: "production",
+      arguments: { product: completeProduct({ sellerPrdCd: "QA-EMPTY-001" }) },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "777888111");
+    assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("11st reconciles an accepted create response without productNo and never repeats the create POST", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];

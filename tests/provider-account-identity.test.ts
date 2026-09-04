@@ -385,7 +385,7 @@ test("legacy Shopee main-account credential fails closed until provider reconnec
   }
 });
 
-test("Shopee shop profile must return the exact requested shop id", () => {
+test("Shopee shop profile validates echoed IDs and explicitly accepts a signed success without an echo", () => {
   assert.equal(assertShopeeShopProfileTarget({ response: { shop_id: 1001 } }, "1001"), "1001");
   assert.throws(
     () => assertShopeeShopProfileTarget({ response: { shop_id: 1002 } }, "1001"),
@@ -394,6 +394,14 @@ test("Shopee shop profile must return the exact requested shop id", () => {
   assert.throws(
     () => assertShopeeShopProfileTarget({ response: { shop_name: "No ID" } }, "1001"),
     /SHOPEE_SHOP_IDENTITY_MISSING/,
+  );
+  assert.equal(
+    assertShopeeShopProfileTarget(
+      { response: { shop_name: "Signed request shop" } },
+      "1001",
+      { acceptSignedRequestBinding: true },
+    ),
+    "1001",
   );
   assert.throws(
     () => assertShopeeShopProfileTarget({ shop_id: 1001, response: { shop_id: 1002 } }, "1001"),
@@ -503,7 +511,10 @@ test("gateway worker removes cross-account Shopee fallback and requires provider
   ]);
   const source = `${worker}\n${oauthRuntime}\n${providerRuntime}`;
   assert.doesNotMatch(source, /get_shops_by_partner|shopeePartnerRequest/);
-  assert.match(providerRuntime, /assertShopeeShopProfileTarget\(remote\.data, shopId\)/);
+  assert.match(
+    providerRuntime,
+    /assertShopeeShopProfileTarget\(remote\.data, shopId, \{ acceptSignedRequestBinding: true \}\)/,
+  );
   assert.match(oauthRuntime, /fetchEbayTradingUserIdentity\(/);
   assert.match(worker, /rememberCredentialRefresh, true\)/);
   assert.match(

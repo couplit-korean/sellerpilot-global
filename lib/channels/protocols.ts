@@ -616,7 +616,7 @@ async function ensureShopeeTargetAccessToken(
       if (!profile.response.ok || textValue(profile.data, "error")) {
         throw new Error("SHOPEE_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
       }
-      assertShopeeShopProfileTarget(profile.data, selectedTargetId);
+      assertShopeeShopProfileTarget(profile.data, selectedTargetId, { acceptSignedRequestBinding: true });
       if (!onExternalMutationStart || !onCredentialRefresh) {
         throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
       }
@@ -694,7 +694,7 @@ async function ensureShopeeTargetAccessToken(
     if (!profile.response.ok || textValue(profile.data, "error")) {
       throw new Error("SHOPEE_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
     }
-    assertShopeeShopProfileTarget(profile.data, targetId);
+    assertShopeeShopProfileTarget(profile.data, targetId, { acceptSignedRequestBinding: true });
   }
   if (onExternalMutationStart && onCredentialRefresh) {
     await onExternalMutationStart();
@@ -1935,6 +1935,7 @@ export async function elevenstSellerXmlRequest(input: {
   } catch {
     xml = new TextDecoder().decode(bytes);
   }
+  const documentRoot = /^(?:\s*<\?xml[^>]*>\s*)?<([A-Za-z_][\w.:-]*)\b/u.exec(xml)?.[1] ?? "";
   const resultCode = elevenstNamespacedXmlValue(xml, "resultCode")
     || elevenstNamespacedXmlValue(xml, "ResultCode")
     || elevenstNamespacedXmlValue(xml, "ErrorCode");
@@ -1993,6 +1994,15 @@ export async function elevenstSellerXmlRequest(input: {
       ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
       ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),
       ...(Object.keys(product).length ? { product } : {}),
+      ...(input.method === "GET"
+        && input.path.startsWith("/rest/prodmarketservice/sellerprodcode/")
+        && !resultCode
+        && !productNo
+        ? {
+            lookupDocumentRoot: documentRoot.slice(0, 80),
+            lookupBodyBytes: bytes.byteLength,
+          }
+        : {}),
       products,
     },
   } satisfies RemoteResponse;

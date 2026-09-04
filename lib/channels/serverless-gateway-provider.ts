@@ -503,7 +503,7 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
     await input.hooks.assertLeaseHealthy();
     const providerError = textValue(remote.data, "error");
     const ok = remote.response.ok && !providerError;
-    if (ok) assertShopeeShopProfileTarget(remote.data, shopId);
+    if (ok) assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
     return {
       ok,
       channel: "shopee" as const,

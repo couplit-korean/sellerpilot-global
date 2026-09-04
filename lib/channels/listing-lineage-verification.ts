@@ -258,7 +258,7 @@ async function verifyShopee(
   });
   throwIfTransientProviderReadback(shopRemote, "shopeeShop");
   if (!successfulRemote(shopRemote)) throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:shopeeShop");
-  assertShopeeShopProfileTarget(shopRemote.data, argumentsValue.targetId);
+  assertShopeeShopProfileTarget(shopRemote.data, argumentsValue.targetId, { acceptSignedRequestBinding: true });
 
   const itemRemote = await dependencies.shopeeRequest({
     payload: ensured.payload,

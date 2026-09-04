@@ -4130,7 +4130,7 @@ async function processGatewayJob(job) {
           path: "/api/v2/shop/get_shop_info",
         });
         if (remote.response.ok && !textValue(remote.data, "error")) {
-          assertShopeeShopProfileTarget(remote.data, shopId);
+          assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
         }
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {

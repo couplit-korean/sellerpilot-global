@@ -187,6 +187,7 @@ export async function GET(request: Request) {
         locale: market?.locale ?? "",
         language: market?.language ?? "",
         currency: market?.currency ?? "",
+        status: textValue(target.status || target.shop_status),
       };
     })
     : (() => {
@@ -201,6 +202,7 @@ export async function GET(request: Request) {
           locale: market?.locale ?? "",
           language: market?.language ?? "",
           currency: market?.currency ?? "",
+          status: textValue(target.status),
         };
       });
       return [];
@@ -215,6 +217,37 @@ export async function GET(request: Request) {
       credentialId: credential.id,
       targets: [],
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+
+  // The OAuth envelope is the authoritative Shopee target lineage. GET used
+  // to show these shops without populating the cache required by the atomic
+  // listing-create fence, so a UI-ready card could still fail at reservation.
+  // Seed only complete targets from the currently active encrypted envelope;
+  // the service RPC independently requires that exact credential to be active.
+  if (channel.data === "shopee") {
+    const stored = await Promise.all(targets.map((target) => serviceClient.rpc(
+      "sellerpilot_service_upsert_channel_market_target",
+      {
+        p_owner_id: userData.user.id,
+        p_credential_id: credential.id,
+        p_channel: "shopee",
+        p_target_id: target.targetId,
+        p_display_name: target.displayName,
+        p_market_code: target.marketCode,
+        p_locale: target.locale,
+        p_language: target.language,
+        p_currency: target.currency,
+        p_remote_status: target.status,
+      },
+    )));
+    if (stored.some(({ data, error }) => error || typeof data !== "string")) {
+      return NextResponse.json({
+        message: "Shopee 숍 계보를 등록 안전 원장에 동기화하지 못했습니다.",
+        channel: "shopee",
+        credentialId: credential.id,
+        targets: [],
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
 
   return NextResponse.json({ channel: channel.data, credentialId: credential.id, targets }, { headers: { "cache-control": "no-store, max-age=0" } });

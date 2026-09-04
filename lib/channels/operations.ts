@@ -1183,8 +1183,28 @@ async function executeElevenst(input: ExecuteInput) {
       });
       const productNo = String(remote.data.productNo ?? "").trim();
       if (productNo) return { remote, productNo };
-      const notFound = remote.response.status === 404 || String(remote.data.resultCode ?? "").trim() === "404";
-      if (!notFound) throw new Error("ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED");
+      const resultCode = String(remote.data.resultCode ?? "").trim();
+      const lookupRoot = String(remote.data.lookupDocumentRoot ?? "").trim();
+      const lookupProducts = Array.isArray(remote.data.products) ? remote.data.products : null;
+      const bodyBytes = Number(remote.data.lookupBodyBytes);
+      const verifiedEmptyCollection = remote.response.status === 200
+        && remote.data.accepted === true
+        && /^(?:[A-Za-z_][\w.-]*:)?products$/iu.test(lookupRoot)
+        && lookupProducts?.length === 0
+        && Number.isSafeInteger(bodyBytes)
+        && bodyBytes > 0
+        && bodyBytes <= 4_096;
+      const notFound = remote.response.status === 404 || resultCode === "404" || verifiedEmptyCollection;
+      if (!notFound) {
+        const safeResultCode = resultCode.toUpperCase()
+          .replace(/[^A-Z0-9]/gu, "_").slice(0, 40) || "NONE";
+        const safeRoot = String(remote.data.lookupDocumentRoot ?? "").toUpperCase()
+          .replace(/[^A-Z0-9]/gu, "_").slice(0, 40) || "NONE";
+        const safeBodyBytes = Number.isSafeInteger(bodyBytes) && bodyBytes >= 0 ? bodyBytes : 0;
+        throw new Error(
+          `ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED:HTTP_${remote.response.status}:CODE_${safeResultCode}:ROOT_${safeRoot}:BYTES_${safeBodyBytes}`,
+        );
+      }
       return null;
     };
 
