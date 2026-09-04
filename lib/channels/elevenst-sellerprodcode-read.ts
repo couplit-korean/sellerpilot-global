@@ -29,8 +29,14 @@ function assertProductNo(value: string) {
   return normalized;
 }
 
-function productRecord(value: unknown) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+function productRecord(value: unknown): {
+  prdNo: string;
+  sellerPrdCd: string;
+  selStatCd: string;
+} {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return { prdNo: "", sellerPrdCd: "", selStatCd: "" };
+  }
   const record = value as Record<string, unknown>;
   return {
     prdNo: typeof record.prdNo === "string" ? record.prdNo.trim() : "",
