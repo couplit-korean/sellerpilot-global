@@ -164,7 +164,7 @@ function statusPayload(gate: GateStatus, identity: RuntimeReleaseIdentity) {
 }
 
 export async function GET(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 25_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 45_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
   const [identity, gate] = await Promise.all([
@@ -193,7 +193,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const admin = await authenticateAdminRequest(request, { timeoutMs: 25_000 });
+  const admin = await authenticateAdminRequest(request, { timeoutMs: 45_000 });
   if (isAdminApiError(admin)) return withNoStore(admin);
 
   const parsed = actionSchema.safeParse(await request.json().catch(() => null));

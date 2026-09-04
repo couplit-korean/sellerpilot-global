@@ -22,7 +22,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /status: "unavailable" as const, currentRelease: null/);
   assert.match(route, /code: "runtime_release_unavailable"/);
   assert.match(route, /headers: noStoreHeaders/);
-  assert.match(route, /timeoutMs: 25_000/);
+  assert.match(route, /timeoutMs: 45_000/);
 });
 
 test("admin auth timeouts are retryable 503s, not permission 403s", async () => {

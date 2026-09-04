@@ -6267,7 +6267,7 @@ export default function Home() {
         const [{ data: isAdmin, error }, { data: latestSession, error: sessionError }] = await withPromiseTimeout(Promise.all([
           supabase.rpc("sellerpilot_is_admin"),
           supabase.auth.getSession(),
-        ]), 12_000, "관리자 권한 확인 시간이 초과되었습니다.");
+        ]), 25_000, "관리자 권한 확인 시간이 초과되었습니다.");
         if (!active || accountSwitchingRef.current || generation !== verificationGeneration) return;
         if (sessionError) {
           failVerification(generation);
@@ -6318,7 +6318,7 @@ export default function Home() {
       void verifyAdmin(session, generation);
     };
     const initialGeneration = ++verificationGeneration;
-    void withPromiseTimeout(supabase.auth.getSession(), 12_000, "로그인 세션 확인 시간이 초과되었습니다.")
+    void withPromiseTimeout(supabase.auth.getSession(), 25_000, "로그인 세션 확인 시간이 초과되었습니다.")
       .then(({ data, error }) => {
         if (!active || initialGeneration !== verificationGeneration) return;
         if (error) {
