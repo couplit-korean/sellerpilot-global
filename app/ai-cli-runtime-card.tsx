@@ -409,7 +409,9 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
       return { listingReleaseResponse, listingReleasePayload };
     };
-    for (let attempt = 0; attempt < 3; attempt += 1) {
+    // The operations database is the scarce resource. Back off instead of
+    // retrying tightly so a degraded database is never amplified by this screen.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
         const { listingReleasePayload } = await readListingRelease();
         applyListingRelease(listingReleasePayload);
@@ -423,7 +425,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
             : "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
         }));
       }
-      if (attempt < 2) await new Promise((resolve) => window.setTimeout(resolve, 4_000));
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 15_000));
     }
   }, [authenticatedFetch]);
 

@@ -21,8 +21,10 @@ const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
 const STALE_AI_RECOVERY_INTERVAL_MS = 5 * 60_000;
 const STALE_AI_RECOVERY_RETRY_MS = 30_000;
 export const operationsSnapshotRequestTimeoutMs = 30_000;
-const OPERATIONS_TIMEOUT_RETRY_LIMIT = 3;
-const OPERATIONS_TIMEOUT_RETRY_MS = 4_000;
+const OPERATIONS_TIMEOUT_RETRY_LIMIT = 2;
+// Exponential backoff keeps a degraded operations database from being retried
+// into a deeper outage by every open browser tab.
+const OPERATIONS_TIMEOUT_RETRY_MS = 15_000;
 
 export type OperationProduct = {
   id: string;
@@ -674,11 +676,12 @@ export function useOperationsSnapshot() {
         });
         const isTimeout = failureMessage.includes("30초를 초과");
         if (isTimeout && timeoutRetryCountRef.current < OPERATIONS_TIMEOUT_RETRY_LIMIT) {
+          const backoffMs = OPERATIONS_TIMEOUT_RETRY_MS * 2 ** timeoutRetryCountRef.current;
           timeoutRetryCountRef.current += 1;
           window.clearTimeout(timeoutRetryTimerRef.current);
           timeoutRetryTimerRef.current = window.setTimeout(() => {
             void load({ force: true });
-          }, OPERATIONS_TIMEOUT_RETRY_MS);
+          }, backoffMs);
         }
       } finally {
         bounded.dispose();
