@@ -38,3 +38,20 @@ test("Shopee category reads can pass a failed orders.list reconciliation without
   assert.match(migration, /not coalesce\(unresolved.credential_refresh_in_flight, false\)/);
   assert.doesNotMatch(migration, /status = 'cancelled'/);
 });
+
+test("Shopee category reads can pass an unstarted refresh reconciliation without cancelling it", async () => {
+  const migration = await readFile(
+    new URL(
+      "../supabase/migrations/20260904193000_allow_shopee_category_reads_past_unstarted_refresh_reconciliation.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(migration, /unresolved.operation is distinct from 'oauth.exchange'/);
+  assert.match(migration, /unresolved.provider_mutation_started_at is null/);
+  assert.doesNotMatch(
+    migration,
+    /not coalesce\(unresolved.credential_refresh_in_flight, false\)/,
+  );
+  assert.doesNotMatch(migration, /status = 'cancelled'/);
+});
