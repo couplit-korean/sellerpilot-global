@@ -1016,12 +1016,34 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const credential = selectActiveProductionCredential(latestCredentialRows, channel)
       ?? activeCredential.get(channel);
     if (!credential) throw new Error("실제 API 키 연결이 필요합니다.");
+    const accessToken = sessionData.session?.access_token ?? "";
     const response = await fetch("/api/admin/channel-operations", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
+      headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({ credentialId: credential.id, channel, operation: name, idempotencyKey: crypto.randomUUID(), confirmWrite: false, arguments: args }),
     });
-    const payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as OperationPayload;
+    let payload = await response.json().catch(() => ({ message: "채널 응답을 읽지 못했습니다." })) as OperationPayload & {
+      inProgress?: boolean;
+      jobId?: string;
+    };
+    if (response.status === 202 && payload.inProgress && typeof payload.jobId === "string") {
+      for (let attempt = 0; attempt < 36; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5_000));
+        const statusResponse = await fetch(`/api/admin/channel-operations?jobId=${encodeURIComponent(payload.jobId)}`, {
+          headers: { authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        const statusPayload = await statusResponse.json().catch(() => ({ message: "채널 작업 상태를 읽지 못했습니다." })) as OperationPayload & {
+          inProgress?: boolean;
+          jobId?: string;
+        };
+        if (statusResponse.ok && statusPayload.ok !== false) return statusPayload;
+        if (statusResponse.status !== 202 || statusPayload.inProgress !== true) {
+          throw new Error(statusPayload.message ?? `${channelCatalog[channel].name} 공식 API가 오류를 반환했습니다.`);
+        }
+        payload = statusPayload;
+      }
+    }
     if (!response.ok || payload.ok === false) throw new Error(payload.message ?? `${channelCatalog[channel].name} 공식 API가 오류를 반환했습니다.`);
     return payload;
   }, [activeCredential]);
