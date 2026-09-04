@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSuggestions, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
@@ -451,4 +451,15 @@ test("eBay normalization blocks provider-score noise and prioritizes the three Q
   assert.deepEqual(normalizeSuggestions("ebay", response, "A5 kraft notebook notepad").map((item) => item.id), ["NOTE"]);
   assert.deepEqual(normalizeSuggestions("ebay", response, "microfiber cleaning cloth").map((item) => item.id), ["CLOTH"]);
   assert.deepEqual(normalizeSuggestions("ebay", response, "adhesive cable clips cord organizer").map((item) => item.id), ["CABLE"]);
+});
+
+test("empty category matches still expose the channel's own top-level groups", () => {
+  const payload = { ok: true, steps: [{ name: "GetCatagoryListAll", ok: true, status: 200, data: { ResultObject: [
+    { CATE_L_CD: "1", CATE_L_NM: "食品", CATE_M_CD: "2", CATE_M_NM: "スイーツ・お菓子", CATE_S_CD: "300000536", CATE_S_NM: "洋菓子" },
+    { CATE_L_CD: "9", CATE_L_NM: "レディース服", CATE_M_CD: "8", CATE_M_NM: "スーツ", CATE_S_CD: "300002246", CATE_S_NM: "パンツスーツ" },
+  ] } }] };
+  assert.deepEqual(normalizeSuggestions("qoo10", payload, "롯데 롯샌 파스퇴르 순우유맛"), []);
+  const groups = officialTopLevelGroups(payload);
+  assert.ok(groups.includes("食品"));
+  assert.ok(groups.includes("レディース服"));
 });

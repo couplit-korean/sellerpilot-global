@@ -649,6 +649,22 @@ function lazadaTreeLeaves(value: unknown, parentPath: string[] = [], depth = 0):
   return [...current, ...Object.values(row).flatMap((item) => lazadaTreeLeaves(item, parentPath, depth + 1))];
 }
 
+// A channel category search that returns nothing is a dead end for the operator:
+// the official tree is in the channel's own language, so a Korean product name
+// never matches. Surface the top-level groups the channel actually returned so
+// the next search can use the channel's own vocabulary. This only improves the
+// error message; selection still runs the official attributes and validate APIs
+// before a category can be saved.
+export function officialTopLevelGroups(payload: OperationPayload, limit = 8) {
+  const groups = new Set<string>();
+  for (const row of records({ steps: payload.steps ?? [] })) {
+    const top = text(row, ["CATE_L_NM", "categoryTreeNodeLevel1Name", "level1Name"]);
+    if (top) groups.add(top);
+    if (groups.size >= limit) break;
+  }
+  return [...groups].slice(0, limit);
+}
+
 export function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPayload, query: string) {
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
@@ -1045,7 +1061,12 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         ebayTreeBinding = binding;
       }
       const suggestions = normalizeSuggestions(channel, payload, textQuery);
-      if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
+      if (!suggestions.length) {
+        const groups = officialTopLevelGroups(payload);
+        throw new Error(groups.length
+          ? `공식 카테고리 응답에서 “${textQuery}”와 일치하는 말단 카테고리를 찾지 못했습니다. 이 채널이 돌려준 상위 분류는 ${groups.join(" · ")} 입니다. 채널 언어로 다시 검색하거나 아래에서 공식 ID를 직접 검증하세요.`
+          : "공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
+      }
       setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions, ebayCategoryTreeBinding: ebayTreeBinding } }));
     } catch (error) {
       setStates((current) => ({ ...current, [key]: {
