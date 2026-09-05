@@ -1356,6 +1356,31 @@ test("a pre-provider localized listing failure keeps its exact safe remediation 
 });
 
 for (const safeReason of [
+  "LISTING_SHIPPING_CONFIRMATION_REQUIRED",
+  "COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED",
+  "SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED",
+]) {
+  for (const mutationStarted of [false, true]) {
+    test(`shipping setup ${safeReason} keeps remediation and mutation boundary ${mutationStarted}`, async () => {
+      const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+      const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+        cronSecret: CRON_SECRET,
+        rpc: baseRpc(claim("qoo10", "listing.create"), calls),
+        executeProvider: async ({ hooks }) => {
+          if (mutationStarted) await hooks.beginProviderMutation();
+          throw new Error(`${safeReason}:private provider diagnostic`);
+        },
+      });
+      assert.equal(response.status, 200);
+      const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+      assert.equal(complete?.arguments_.p_status, mutationStarted ? "reconciliation_required" : "failed");
+      assert.equal(complete?.arguments_.p_error_message, safeReason);
+      assert.doesNotMatch(JSON.stringify(complete), /private provider diagnostic/);
+    });
+  }
+}
+
+for (const safeReason of [
   "NAVER_IP_NOT_ALLOWED",
   "NAVER_AUTH_FAILED",
   "NAVER_PROVIDER_UNAVAILABLE",

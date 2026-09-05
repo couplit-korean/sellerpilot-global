@@ -15,10 +15,6 @@ const migrationUrl = new URL(
   "../supabase/migrations/20260905014800_route_smartstore_reads_to_local_gateway.sql",
   import.meta.url,
 );
-const leftoverOauthUrl = new URL(
-  "../supabase/migrations/20260903150000_unblock_shopee_second_oauth_deadlock.sql",
-  import.meta.url,
-);
 
 function gatewayStatus(
   lastSeenAt: string | null,
@@ -112,11 +108,10 @@ test("local gateway read-ready rejects missing/empty and serverless last_version
 });
 
 test("admin channel-operations only opens the Smartstore static-egress exception for local reads", async () => {
-  const [route, csReply, migration, leftoverOauth] = await Promise.all([
+  const [route, csReply, migration] = await Promise.all([
     readFile(routeUrl, "utf8"),
     readFile(csReplyUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
-    readFile(leftoverOauthUrl, "utf8"),
   ]);
   assert.match(route, /isSmartstoreLocalReadOperation\(operation\)/);
   assert.match(route, /sellerpilot_ai_runtime_status/);
@@ -131,5 +126,8 @@ test("admin channel-operations only opens the Smartstore static-egress exception
   assert.match(migration, /42804/);
   assert.doesNotMatch(migration, /gateway:worker:once/);
   assert.doesNotMatch(migration, /serverless_static_egress_policy/);
-  assert.doesNotMatch(leftoverOauth, /20260905014800/);
+  // Validate the shipped routing migration itself; an unrelated, untracked
+  // operator recovery draft must not be a prerequisite for a clean checkout.
+  assert.doesNotMatch(migration, /update\s+sellerpilot_private\.channel_gateway_jobs\b/i);
+  assert.doesNotMatch(migration, /credential_refresh_in_flight\s*=/i);
 });

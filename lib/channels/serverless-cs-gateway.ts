@@ -247,6 +247,10 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
     if (error.message === "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED") {
       return error.message;
     }
+    const shippingSetupCode = error.message.match(
+      /^(LISTING_SHIPPING_CONFIRMATION_REQUIRED|COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED|SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED)(?::|$)/,
+    );
+    if (shippingSetupCode) return shippingSetupCode[1];
     if (error.message === "SHOPEE_CATEGORY_READ_TOKEN_REFRESH_BLOCKED") {
       return error.message;
     }
