@@ -164,7 +164,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       };
       const recorded = await admin.serviceClient.rpc(
         complete
-          ? "sellerpilot_service_complete_qoo10_shipping_s1_activation_from_get"
+          ? "sellerpilot_service_complete_qoo10_s1_activation_from_get"
           : retry
             ? "sellerpilot_service_retry_qoo10_shipping_s1_direct_reverify"
             : "sellerpilot_service_record_qoo10_shipping_s1_direct_reverify",

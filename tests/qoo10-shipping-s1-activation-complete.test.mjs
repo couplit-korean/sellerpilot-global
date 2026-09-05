@@ -115,7 +115,7 @@ test("admin completion action performs one read-only GET and calls only the pinn
   assert.match(route, /runWithProviderReadOnlyTransport/u);
   assert.match(route, /ItemsLookup/u);
   assert.match(route, /GetItemDetailInfo/u);
-  assert.match(route, /sellerpilot_service_complete_qoo10_shipping_s1_activation_from_get/u);
+  assert.match(route, /sellerpilot_service_complete_qoo10_s1_activation_from_get/u);
   assert.doesNotMatch(route, /EditGoodsStatus/u);
   assert.doesNotMatch(route, /process\.env/u);
 });
