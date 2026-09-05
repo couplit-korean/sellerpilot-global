@@ -11,6 +11,7 @@ import {
   normalizeStudioResultForTerminalValidation,
   studioLocalizedChunkResultSchema,
   studioMasterResultSchema,
+  studioMasterTerminalResultSchema,
   type CliStudioResult,
 } from "./ai-cli-contract";
 import {
@@ -51,9 +52,16 @@ import {
   localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
+  planStudioSegmentRepair,
+  studioIssuesForLocalizedChunk,
   studioMasterDetailImageRoleIssue,
   type StudioLocalizedTarget,
 } from "./studio-segment-generation";
+import {
+  createServerStudioLocalizedRepairBudget,
+  serverStudioContractRepairGuidance,
+} from "./server-studio-contract-recovery";
+import { createServerStudioGatewayCooldown } from "./server-studio-gateway-cooldown";
 import {
   degradedSourcePhotoCatalogAssetIds,
   isServerStudioSourcePhotoCatalogMode,
@@ -68,7 +76,7 @@ import {
   serverStudioIdentityFailureDimensions,
 } from "./server-studio-identity";
 
-export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.3";
+export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.4";
 export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
@@ -703,8 +711,9 @@ function scopedGatewayTimeoutError(error: unknown) {
  * Logical localization and asset waves remain unchanged, but nested lanes can
  * no longer multiply their separate batch widths into one Gateway burst.
  *
- * Image work has an additional per-claim circuit. The first explicit 429 is
- * stored as the authoritative image failure and aborts queued/in-flight image
+ * One short 429 proven to precede any upstream attempt may wait for Retry-After
+ * while all new lanes pause. All other image 429s trip the per-claim circuit:
+ * the 429 remains the authoritative image failure and aborts queued/in-flight image
  * siblings before the gate releases that permit. This prevents another image
  * call from starting during the release/drain microtask. The claim then fails
  * closed with that original safe reason instead of completing a mosaic catalog.
@@ -714,6 +723,7 @@ function withServerStudioRemoteCallScope(
   claimSignal: AbortSignal,
 ): ServerProductStudioDependencies {
   const gate = createAbortableConcurrencyGate(SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY);
+  const cooldown = createServerStudioGatewayCooldown();
   const imageController = new AbortController();
   let imageRateLimitFailure: ServerProductStudioError | null = null;
 
@@ -729,33 +739,44 @@ function withServerStudioRemoteCallScope(
     if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
     try {
       return await gate.run(async () => {
-        if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
-        const operationTimeoutSignal = AbortSignal.timeout(input.timeoutMs);
-        const operationSignal = AbortSignal.any([
-          queueSignal,
-          operationTimeoutSignal,
-        ]);
-        try {
-          const result = await input.call(operationSignal);
-          operationSignal.throwIfAborted();
+        for (let attempt = 0; ; attempt += 1) {
+          // Keep the existing permit while waiting so pending calls cannot form
+          // another burst. The claim deadline includes all wait and retry time.
+          await cooldown.wait(queueSignal);
           if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
-          return result;
-        } catch (error) {
-          const normalizedError = operationTimeoutSignal.aborted
-              && !claimSignal.aborted
-              && !input.signal.aborted
-              && (input.path !== "image" || !imageController.signal.aborted)
-            ? scopedGatewayTimeoutError(error)
-            : error;
-          if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(normalizedError)) {
-            imageRateLimitFailure = normalizedError;
-            imageController.abort(normalizedError);
+          const operationTimeoutSignal = AbortSignal.timeout(input.timeoutMs);
+          const operationSignal = AbortSignal.any([
+            queueSignal,
+            operationTimeoutSignal,
+          ]);
+          try {
+            const result = await input.call(operationSignal);
+            operationSignal.throwIfAborted();
+            if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+            return result;
+          } catch (error) {
+            const normalizedError = operationTimeoutSignal.aborted
+                && !claimSignal.aborted
+                && !input.signal.aborted
+                && (input.path !== "image" || !imageController.signal.aborted)
+              ? scopedGatewayTimeoutError(error)
+              : error;
+            if (attempt === 0 && !queueSignal.aborted
+                && normalizedError instanceof ServerProductStudioError
+                && normalizedError.safeReason === "gateway_rate_limited"
+                && !normalizedError.terminal && cooldown.reserve(normalizedError.diagnostic)) {
+              continue;
+            }
+            if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(normalizedError)) {
+              imageRateLimitFailure = normalizedError;
+              imageController.abort(normalizedError);
+            }
+            if (input.path === "image" && imageRateLimitFailure
+                && isImageCircuitAbort(normalizedError, imageRateLimitFailure)) {
+              throw imageRateLimitFailure;
+            }
+            throw normalizedError;
           }
-          if (input.path === "image" && imageRateLimitFailure
-              && isImageCircuitAbort(normalizedError, imageRateLimitFailure)) {
-            throw imageRateLimitFailure;
-          }
-          throw normalizedError;
         }
       }, queueSignal);
     } catch (error) {
@@ -1704,13 +1725,14 @@ async function generateStudioMaster(
   let master: z.infer<typeof studioMasterResultSchema> | null = null;
   let issue = "";
   let structuralFailure: ServerProductStudioError | null = null;
+  let terminalFailure: z.ZodError | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const prompt = [
       buildServerStudioMasterPrompt(request),
       ...(issue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${issue}`] : []),
     ].join("\n");
     try {
-      master = normalizeServerStudioMasterContract(await generate({
+      const candidate = normalizeServerStudioMasterContract(await generate({
         schema: studioMasterResultSchema,
         prompt,
         images: sources,
@@ -1718,8 +1740,21 @@ async function generateStudioMaster(
         tags: ["feature:product-studio-master", `attempt:${attempt}`],
       }));
       structuralFailure = null;
+      const validated = studioMasterTerminalResultSchema.safeParse(
+        normalizeStudioResultForTerminalValidation(candidate),
+      );
+      if (!validated.success) {
+        master = null;
+        terminalFailure = validated.error;
+        issue = serverStudioContractRepairGuidance(validated.error.issues);
+        continue;
+      }
+      master = validated.data;
+      terminalFailure = null;
     } catch (error) {
       if (error instanceof ServerProductStudioError && error.safeReason === "gateway_result_invalid") {
+        master = null;
+        terminalFailure = null;
         structuralFailure = error;
         issue = "이전 응답이 JSON 스키마를 충족하지 못했습니다. 16개 섹션과 모든 필수 필드를 완전하게 반환하세요.";
         continue;
@@ -1730,6 +1765,10 @@ async function generateStudioMaster(
     if (!issue) break;
   }
   if (!master && structuralFailure) throw structuralFailure;
+  if (!master && terminalFailure) {
+    throw new ServerProductStudioError("studio_terminal_contract_invalid", true, undefined,
+      studioContractIssueLogDetails(terminalFailure));
+  }
   if (!master || issue) throw new ServerProductStudioError("studio_master_contract_invalid", true);
   const missingDedicatedEvidence = missingDedicatedEvidenceAssetIds(
     request.image_specs.map((spec) => spec.role),
@@ -1754,75 +1793,88 @@ async function generateStudioLocalizedResult(
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   const chunks = planStudioLocalizedChunks(4);
   const segments: unknown[] = new Array(chunks.length);
-  const fallbackReasons = new Set<string>();
-  const fallbackDiagnostics: AiGatewayFailureDiagnostic[] = [];
+  const repairBudget = createServerStudioLocalizedRepairBudget();
   if (forceReviewedFallback) {
     throw new ServerProductStudioError(SERVER_STUDIO_REVIEWED_FALLBACK_NOT_COMPLETION, true);
   }
+  const generateChunk = async (index: number, guidance = "") => {
+    signal.throwIfAborted();
+    const targets = chunks[index];
+    const schema = studioLocalizedChunkResultSchema(targets.length);
+    const segment = await generate({
+      schema,
+      prompt: [
+        buildServerStudioLocalizedPrompt(master, targets),
+        `분류 상태 계약: 모든 localizedListings[].classification.verificationStatus는 ${master.product.classification.verificationStatus}, isHealthFunctionalFood는 ${JSON.stringify(master.product.classification.isHealthFunctionalFood)} 값을 마스터에서 그대로 보존하세요.`,
+        ...(guidance ? [
+          "이 청크만 한 번 수정 생성합니다. 마스터의 상품 사실과 exact_targets는 그대로 보존하고 아래 계약 오류를 해결하세요. 다른 국가를 추가하거나 대체 문안을 사용하지 마세요.",
+          guidance,
+        ] : []),
+      ].join("\n"),
+      images: [],
+      signal,
+      tags: ["feature:product-studio-localization", `chunk:${index + 1}`, guidance ? "attempt:2" : "attempt:1"],
+    });
+    const parsed = schema.safeParse(segment);
+    if (!parsed.success) {
+      throw new ServerProductStudioError("studio_localization_contract_invalid", true, undefined,
+        studioContractIssueLogDetails(parsed.error));
+    }
+    const contractIssue = localizedSegmentCoverageIssue(parsed.data, targets)
+      || studioLocalizedClassificationIssue(master, targets, parsed.data);
+    if (contractIssue) {
+      throw new ServerProductStudioError("studio_localization_contract_invalid", true);
+    }
+    segments[index] = reviewedFallbackFields
+      ? normalizeReviewedStudioLocalizedClassification(master, targets, parsed.data, reviewedFallbackFields)
+      : parsed.data;
+  };
+  const contractFailure = (error: unknown) => error instanceof ServerProductStudioError
+    && (error.safeReason === "gateway_result_invalid"
+      || error.safeReason === "studio_localization_contract_invalid");
+
   for (let offset = 0; offset < chunks.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
-    const batchState: {
-      fallback: {
-        reason: string;
-        diagnostic: AiGatewayFailureDiagnostic | null;
-      } | null;
-    } = { fallback: null };
-    const batchController = new AbortController();
-    const batchSignal = AbortSignal.any([signal, batchController.signal]);
-    const chunkSettlements = await Promise.allSettled(chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE).map(async (targets, batchIndex) => {
-      const index = offset + batchIndex;
-      if (batchState.fallback) return;
-      let segment: unknown;
-      try {
-        segment = await generate({
-          schema: studioLocalizedChunkResultSchema(targets.length),
-          prompt: [
-            buildServerStudioLocalizedPrompt(master, targets),
-            `분류 상태 계약: 모든 localizedListings[].classification.verificationStatus는 ${master.product.classification.verificationStatus}, isHealthFunctionalFood는 ${JSON.stringify(master.product.classification.isHealthFunctionalFood)} 값을 마스터에서 그대로 보존하세요.`,
-          ].join("\n"),
-          images: [],
-          signal: batchSignal,
-          tags: ["feature:product-studio-localization", `chunk:${index + 1}`, "attempt:1"],
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        if (batchState.fallback && batchController.signal.aborted) return;
-        throw error;
-      }
-      if (batchState.fallback) return;
-      const contractIssue = localizedSegmentCoverageIssue(segment, targets)
-        || studioLocalizedClassificationIssue(master, targets, segment);
-      if (contractIssue) {
-        throw new ServerProductStudioError("studio_localization_contract_invalid", true);
-      }
-      segments[index] = reviewedFallbackFields
-        ? normalizeReviewedStudioLocalizedClassification(
-          master,
-          targets,
-          segment,
-          reviewedFallbackFields,
-        )
-        : segment;
-    }));
-    const rejected = chunkSettlements.find(
-      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
-    );
-    if (rejected) throw rejected.reason;
-    const batchFallback = batchState.fallback;
-    if (batchFallback) {
-      throw new ServerProductStudioError(
-        batchFallback.reason === "studio_localization_contract_invalid"
-          ? "studio_localization_contract_invalid"
-          : batchFallback.reason,
-        true,
-        batchFallback.diagnostic ?? undefined,
-      );
+    const indexes = chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE)
+      .map((_, index) => offset + index);
+    const settlements = await Promise.allSettled(indexes.map((index) => generateChunk(index)));
+    // Settle the whole wave before considering a repair. A concurrent 429,
+    // timeout, authentication or credit failure must never trigger more calls.
+    const failures = settlements.flatMap((settlement, index) => settlement.status === "rejected"
+      ? [{ index: indexes[index], error: settlement.reason as unknown }]
+      : []);
+    const unavailable = failures.find(({ error }) => !contractFailure(error));
+    if (unavailable) throw unavailable.error;
+    if (failures.length) {
+      if (!repairBudget.take(failures.map(({ index }) => index))) throw failures[0].error;
+      const repaired = await Promise.allSettled(failures.map(({ index }) => generateChunk(
+        index,
+        "이전 응답의 JSON 스키마, 국가·언어·중복 범위 또는 마스터 분류 상태가 일치하지 않았습니다. 모든 필수 필드와 exact_targets를 정확히 반환하세요.",
+      )));
+      const rejected = repaired.find((settlement): settlement is PromiseRejectedResult => settlement.status === "rejected");
+      if (rejected) throw rejected.reason;
     }
   }
-  const merged = mergeStudioSegmentOutputs(master, segments);
-  const parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
-  const terminalContractIssueDetails: Record<string, string | number | boolean> | null = parsed.success
-    ? null
-    : studioContractIssueLogDetails(parsed.error);
+  const validate = () => cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(
+    mergeStudioSegmentOutputs(master, segments),
+  ));
+  let parsed = validate();
+  if (!parsed.success) {
+    const plan = planStudioSegmentRepair(parsed.error.issues, chunks);
+    const indexes = [...plan.localizedChunkIndexes].sort((left, right) => left - right);
+    if (!plan.repairMaster && repairBudget.take(indexes)) {
+      const issues = parsed.error.issues;
+      const repairs = await Promise.allSettled(indexes.map((index) => generateChunk(
+        index,
+        serverStudioContractRepairGuidance(
+          studioIssuesForLocalizedChunk(issues, chunks, index),
+          chunks.slice(0, index).reduce((total, targets) => total + targets.length, 0),
+        ),
+      )));
+      const rejected = repairs.find((settlement): settlement is PromiseRejectedResult => settlement.status === "rejected");
+      if (rejected) throw rejected.reason;
+      parsed = validate();
+    }
+  }
   if (!parsed.success) {
     throw new ServerProductStudioError(
       "studio_terminal_contract_invalid",
@@ -1833,12 +1885,6 @@ async function generateStudioLocalizedResult(
   }
   return {
     result: parsed.data,
-    fallbackReasons: [...fallbackReasons].sort(),
-    fallbackDiagnostics,
-    terminalContractIssueDetails,
-    terminalMasterFallbackReason: terminalContractIssueDetails
-      ? "studio_terminal_contract_invalid"
-      : null,
   } as const;
 }
 
@@ -2706,29 +2752,6 @@ async function runFullStudioClaim(
     (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
   );
   if (imageFailures.length) throw imageFailures[0].reason;
-  gatewayFallbackDiagnostics.push(...localization.fallbackDiagnostics.map((diagnostic) => ({
-    path: "localization" as const,
-    diagnostic,
-  })));
-  if (localization.terminalContractIssueDetails) {
-    try {
-      logError("terminal_contract_fallback", {
-        ...localization.terminalContractIssueDetails,
-        kind: claim.kind,
-      });
-    } catch {
-      // Safe deterministic recovery remains authoritative even if diagnostic
-      // logging is unavailable.
-    }
-  }
-  if (localization.fallbackReasons.length || localization.terminalMasterFallbackReason) {
-    throw new ServerProductStudioError(
-      localization.terminalMasterFallbackReason
-        ?? localization.fallbackReasons[0]
-        ?? SERVER_STUDIO_REVIEWED_FALLBACK_NOT_COMPLETION,
-      true,
-    );
-  }
   const result = localization.result;
   const primaryFallbackDiagnostic = gatewayFallbackDiagnostics[0];
   if (primaryFallbackDiagnostic) {

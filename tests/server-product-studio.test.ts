@@ -61,7 +61,7 @@ const LOCALIZED_SECTION_ASSETS = [
 test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
   assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
-  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.3");
+  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.4");
 });
 
 function testMasterResult() {
@@ -419,7 +419,7 @@ async function firstDraftPreflightFixture(
 
 async function runReviewedTransientPipelineFixture(options: {
   requestMode?: "reviewed" | "marker-mismatch" | "revision-reviewed" | "revision-unattested" | "revision-marker-mismatch" | "revision-manual-mismatch" | "legacy";
-  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "terminal-localization-invalid" | "terminal-master-invalid" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget";
+  providerScenario?: "all-transient" | "segmentation-transient" | "partial-localization-transient" | "localization-scoped-timeout" | "mixed-localization-transient" | "classification-mismatch" | "classification-copy-contradiction" | "terminal-localization-invalid" | "terminal-master-invalid" | "reordered-localization" | "race-contract-and-transient" | "partial-image-transient" | "image-rate-limit-circuit" | "queued-image-timeout-budget" | "terminal-master-repaired" | "terminal-localization-repaired" | "structural-localization-repaired" | "coverage-localization-repaired" | "repaired-localization-invalid-terminal" | "terminal-localization-over-budget" | "image-preprovider-rate-limit-repaired" | "image-preprovider-rate-limit-exhausted" | "text-preprovider-rate-limit-repaired";
   transientReason?: string;
   corruptPreflightAssetId?: (typeof coreFirstDraftAssetIds)[number];
   duplicatePreflightAsset?: boolean;
@@ -665,11 +665,15 @@ async function runReviewedTransientPipelineFixture(options: {
         throw transientError();
       }
       if (input.tags.includes("feature:product-studio-master")) {
+        if (providerScenario === "text-preprovider-rate-limit-repaired" && structuredCalls === 1) {
+          throw transientError();
+        }
         const generatedMaster = input.schema.parse({
           ...buildReviewedServerStudioFallbackMaster(manual),
           warnings: [],
         });
-        if (providerScenario !== "terminal-master-invalid") return generatedMaster;
+        if (providerScenario !== "terminal-master-invalid"
+            && !(providerScenario === "terminal-master-repaired" && input.tags.includes("attempt:1"))) return generatedMaster;
         const [firstSection, secondSection] = generatedMaster.design.sections;
         assert.ok(firstSection);
         assert.ok(secondSection);
@@ -712,6 +716,10 @@ async function runReviewedTransientPipelineFixture(options: {
           || (providerScenario === "race-contract-and-transient" && chunkTag === "chunk:2")) {
         throw transientError();
       }
+      if (providerScenario === "structural-localization-repaired"
+          && chunkTag === "chunk:2" && input.tags.includes("attempt:1")) {
+        throw new ServerProductStudioError("gateway_result_invalid");
+      }
       const targets = planStudioLocalizedChunks(4)[chunkNumber - 1];
       assert.ok(targets);
       const outputTargets = providerScenario === "reordered-localization"
@@ -719,18 +727,24 @@ async function runReviewedTransientPipelineFixture(options: {
         : targets;
       return input.schema.parse({
         localizedListings: outputTargets.map((target, targetIndex) => {
-          const effectiveTarget = providerScenario === "race-contract-and-transient"
+          const duplicateCoverage = providerScenario === "race-contract-and-transient"
+            || ((providerScenario === "coverage-localization-repaired"
+              || providerScenario === "repaired-localization-invalid-terminal") && input.tags.includes("attempt:1"));
+          const effectiveTarget = duplicateCoverage
               && chunkTag === "chunk:1" && targetIndex > 0
             ? targets[0]
             : target;
           assert.ok(effectiveTarget);
           const listing = localizedListing(effectiveTarget);
           if (providerScenario === "classification-mismatch") return listing;
-          if (providerScenario === "terminal-localization-invalid"
-              && chunkTag === "chunk:1" && targetIndex === 0) {
+          if (((providerScenario === "terminal-localization-invalid"
+              || (providerScenario === "terminal-localization-repaired" && input.tags.includes("attempt:1"))
+              || (providerScenario === "repaired-localization-invalid-terminal" && input.tags.includes("attempt:2")))
+              && chunkTag === "chunk:1" && targetIndex === 0)
+              || (providerScenario === "terminal-localization-over-budget" && chunkNumber <= 4 && targetIndex === 0)) {
             return {
               ...listing,
-              title: "seller reviewed product",
+              title: providerScenario === "terminal-localization-over-budget" ? "한국어가 남은 현지 제목" : "seller reviewed product",
               classification: {
                 ...listing.classification,
                 verificationStatus: "needs-review" as const,
@@ -771,6 +785,10 @@ async function runReviewedTransientPipelineFixture(options: {
       if (imageRateLimitObserved) imageCallsStartedAfterRateLimit += 1;
       backgroundCalls += 1;
       backgroundAssetIds.push(asset.id);
+      if ((providerScenario === "image-preprovider-rate-limit-repaired" && backgroundCalls === 1)
+          || providerScenario === "image-preprovider-rate-limit-exhausted") {
+        throw transientError();
+      }
       if (providerScenario === "image-rate-limit-circuit") {
         imageRateLimitObserved = true;
         throw transientError();
@@ -1238,12 +1256,60 @@ test("an attested cable-clip revision fails closed after aggregate-only master c
   await assertFailedClosed(run, "studio_terminal_contract_invalid");
   const executionLog = run.logs.find((entry) => entry.stage === "execution");
   assert.ok(executionLog);
+  assert.equal(run.structuredCalls, 2, "the invalid master has only its original call and one repair");
+  assert.equal(run.structuredChunkCalls.length, 0, "duplicate master copy is rejected before translation");
+  assert.equal(run.backgroundCalls, 0, "rejected master copy never starts final image generation");
   assert.ok(Number(executionLog.details.schemaIssueCount) >= 1);
   assert.match(String(executionLog.details.schemaIssueCodes), /^(?:[a-z_]+,?)+$/u);
   assert.match(String(executionLog.details.schemaIssuePaths), /^[$A-Za-z0-9_.,-]+$/u);
   const serializedLog = JSON.stringify(executionLog);
   assert.equal(serializedLog.includes("상품 식별은 구매 전에 어떻게 확인하나요?"), false);
   assert.equal(serializedLog.includes("부착형 케이블 정리 클립"), false);
+});
+
+test("a semantic master repair completes before localization and preserves the 34-market contract", async () => {
+  const run = await runReviewedTransientPipelineFixture({ providerScenario: "terminal-master-repaired" });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.equal(run.structuredCalls - run.structuredChunkCalls.length, 2);
+  assert.equal(run.structuredChunkCalls.length, 9);
+  const payload = run.completionCalls[0].p_result_payload as { localizedListings: unknown[] };
+  assert.equal(payload.localizedListings.length, 34);
+});
+
+for (const providerScenario of ["terminal-localization-repaired", "structural-localization-repaired", "coverage-localization-repaired"] as const) {
+  test(`${providerScenario} regenerates only the rejected chunk and preserves approved pixels`, async () => {
+    const run = await runReviewedTransientPipelineFixture({ providerScenario });
+    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+    const repairedChunk = providerScenario === "structural-localization-repaired" ? "chunk:2" : "chunk:1";
+    assert.equal(run.structuredChunkCalls.length, 10);
+    assert.equal(run.structuredChunkCalls.filter((chunk) => chunk === repairedChunk).length, 2);
+    assert.equal(run.localizedPrompts.filter((prompt) => prompt.includes("이 청크만 한 번 수정 생성합니다")).length, 1);
+    const payload = run.completionCalls[0].p_result_payload as { localizedListings: unknown[]; deterministic_fallback?: unknown };
+    assert.equal(payload.localizedListings.length, 34);
+    assert.equal(payload.deterministic_fallback, undefined);
+    assert.ok(run.peakRemoteCalls <= 3);
+    for (const assetId of coreFirstDraftAssetIds) {
+      const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+      assert.ok(spec);
+      const bytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
+      assert.ok(bytes);
+      assert.equal(createHash("sha256").update(bytes).digest("hex"), run.preflight.request.preflight_asset_digests[assetId]);
+    }
+  });
+}
+
+test("a chunk repaired for coverage cannot receive a third call for a later terminal-language failure", async () => {
+  const run = await runReviewedTransientPipelineFixture({ providerScenario: "repaired-localization-invalid-terminal" });
+  await assertFailedClosed(run, "studio_terminal_contract_invalid");
+  assert.equal(run.structuredChunkCalls.length, 10);
+  assert.equal(run.structuredChunkCalls.filter((chunk) => chunk === "chunk:1").length, 2);
+});
+
+test("four invalid localized chunks exceed one claim's repair budget without regenerating valid chunks", async () => {
+  const run = await runReviewedTransientPipelineFixture({ providerScenario: "terminal-localization-over-budget" });
+  await assertFailedClosed(run, "studio_terminal_contract_invalid");
+  assert.equal(run.structuredChunkCalls.length, 9);
+  assert.equal(run.localizedPrompts.some((prompt) => prompt.includes("이 청크만 한 번 수정 생성합니다")), false);
 });
 
 test("reviewed transient failure logs the original Gateway diagnostic without another provider attempt or success", async () => {
@@ -1334,12 +1400,12 @@ test("a transient localization batch fails closed and does not schedule later re
   assert.ok(run.structuredChunkCalls.every((tag) => run.structuredChunkCalls.indexOf(tag) === run.structuredChunkCalls.lastIndexOf(tag)));
 });
 
-test("a classification contradiction fails closed instead of relabeling contradictory evidence", async () => {
+test("a classification contradiction fails closed after one bounded repair without relabeling contradictory evidence", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "classification-mismatch",
   });
   await assertFailedClosed(run, "studio_localization_contract_invalid");
-  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:1", "chunk:2", "chunk:2", "chunk:3", "chunk:3"]);
 });
 
 test("a transient sibling and a contract-invalid sibling never launch a provider repair attempt", async () => {
@@ -1450,6 +1516,42 @@ test("the shared remote gate caps all lanes at three and one image 429 cancels q
       `${assetId} must not be overwritten by a failed claim`,
     );
   }
+});
+
+for (const providerScenario of ["image-preprovider-rate-limit-repaired", "text-preprovider-rate-limit-repaired"] as const) {
+  test(`${providerScenario} waits for Retry-After once without weakening image or terminal checks`, async () => {
+    const run = await runReviewedTransientPipelineFixture({
+      providerScenario,
+      transientDiagnostic: {
+        reason: "gateway_rate_limited",
+        httpStatus: 429,
+        limitKind: "concurrency_limit",
+        retryAfterMs: 20,
+        upstreamProviderAttempted: false,
+      },
+    });
+    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+    assert.equal(run.uploaded.size, 16);
+    assert.ok(run.peakRemoteCalls <= 3);
+    assert.ok(run.completionActiveRemoteCounts.every((count) => count === 0));
+    assert.ok(run.wakeActiveRemoteCounts.every((count) => count === 0));
+  });
+}
+
+test("a second explicit pre-provider 429 trips the existing image circuit without more retries", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "image-preprovider-rate-limit-exhausted",
+    transientDiagnostic: {
+      reason: "gateway_rate_limited",
+      httpStatus: 429,
+      limitKind: "concurrency_limit",
+      retryAfterMs: 20,
+      upstreamProviderAttempted: false,
+    },
+  });
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.ok(run.backgroundCalls <= 2);
+  assert.ok(run.completionActiveRemoteCounts.every((count) => count === 0));
 });
 
 test("a queued image receives its full operation timeout only after the shared gate grants a permit", async (context) => {
