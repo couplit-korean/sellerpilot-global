@@ -108,3 +108,25 @@ test("AI worker failure messages preserve only allowlisted studio contract diagn
     "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.",
   );
 });
+
+
+test("AI worker distinguishes the exact gateway rate limit without leaking upstream diagnostics", () => {
+  const expected = "AI 제공자의 요청 한도에 도달했습니다. 연속 재시도하지 말고 잠시 후 같은 작업을 다시 실행해 주세요. [gateway-rate-limited]";
+  for (const value of [
+    "gateway_rate_limited",
+    "Server product studio failed: gateway_rate_limited",
+    "Server product research failed: gateway_rate_limited",
+    new Error("gateway_rate_limited"),
+  ]) {
+    assert.equal(sellerSafeAiJobFailure(value), expected);
+    assert.equal(sellerSafeAiJobFailure(sellerSafeAiJobFailure(value)), expected);
+  }
+  for (const value of [
+    "gateway_rate_limited private provider body",
+    "gateway_rate_limited access_token=do-not-display",
+    "provider says gateway_rate_limited",
+    `${expected} private`,
+  ]) {
+    assert.equal(sellerSafeAiJobFailure(value), "AI 상품 작업을 완료하지 못했습니다. 잠시 후 다시 실행해 주세요.");
+  }
+});
