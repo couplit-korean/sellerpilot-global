@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { normalizeAttributes, normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
@@ -462,4 +462,39 @@ test("empty category matches still expose the channel's own top-level groups", (
   const groups = officialTopLevelGroups(payload);
   assert.ok(groups.includes("食品"));
   assert.ok(groups.includes("レディース服"));
+});
+
+test("category attributes preserve explicit eBay FREE_TEXT semantics with suggested values", () => {
+  const attributes = normalizeAttributes([{
+    ok: true,
+    steps: [{
+      name: "categories.attributes",
+      ok: true,
+      status: 200,
+      data: {
+        aspects: [
+          {
+            localizedAspectName: "Brand",
+            aspectConstraint: { aspectRequired: true, aspectMode: "FREE_TEXT" },
+            aspectValues: [{ localizedValue: "Unbranded" }, { localizedValue: "LOTTE" }],
+          },
+          {
+            localizedAspectName: "Product",
+            aspectConstraint: { aspectRequired: true, aspectMode: "SELECTION_ONLY" },
+            aspectValues: [{ localizedValue: "Cookie & Biscuit" }],
+          },
+          {
+            attributeTypeName: "Color",
+            mandatory: true,
+            attributeValues: [{ name: "Blue" }],
+          },
+        ],
+      },
+    }],
+  }]);
+
+  assert.equal(attributes.find((attribute) => attribute.name === "Brand")?.mode, "FREE_TEXT");
+  assert.deepEqual(attributes.find((attribute) => attribute.name === "Brand")?.values.map((value) => value.name), ["Unbranded", "LOTTE"]);
+  assert.equal(attributes.find((attribute) => attribute.name === "Product")?.mode, "SELECTION_ONLY");
+  assert.equal(attributes.find((attribute) => attribute.name === "Color")?.mode, null);
 });

@@ -45,4 +45,6 @@ test("publish and category workbenches expose the same 15 eBay markets", async (
   assert.match(category, /binding: currentState\.ebayCategoryTreeBinding/);
   assert.match(category, /bootstrap: \(args\) => operation\(channel, "categories\.suggest", args\)/);
   assert.doesNotMatch(category, /categoryTreeId: "0"/);
+  assert.match(category, /const acceptsFreeText = attribute\.mode === "FREE_TEXT"/);
+  assert.match(category, /attribute\.values\.length && !acceptsFreeText \? <select/);
 });
