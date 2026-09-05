@@ -73,6 +73,7 @@ import {
 } from "./shopee-sg-listing-create";
 import { parseCoupangNoticeEnvelope } from "./listing-preflight";
 import { assertListingShippingReady, validatedCoupangShippingFees, validatedSmartstoreShippingInfo } from "./listing-shipping";
+import { prepareQoo10ShippingPreservedUpdate } from "./qoo10-update-shipping";
 
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
@@ -1953,6 +1954,16 @@ export async function prepareMarketplaceListingArguments(
   input: PrepareProviderListingInput,
 ): Promise<PreparedProviderListing> {
   assertListingShippingReady(input.channel, input.arguments, input.operation);
+  if (input.channel === "qoo10" && input.operation === "listing.update") {
+    return {
+      arguments: await prepareQoo10ShippingPreservedUpdate({
+        arguments: input.arguments,
+        credential: input.credential,
+        assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+      }),
+      mediaMutationObserved: false,
+    };
+  }
   if (input.channel === "shopee") {
     if (input.arguments.globalProduct === true) {
       if (input.operation !== "listing.create") {

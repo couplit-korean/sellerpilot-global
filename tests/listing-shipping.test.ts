@@ -151,3 +151,13 @@ test("editing central shipping facts refreshes provider fees and invalidates pri
   assert.equal(next.sellerpilotAssets.shipping.shippingRuleReview, "");
   assert.equal(next.sellerpilotAssets.shipping.packagingRuleReview, "");
 });
+
+test("ordinary Qoo10 update drafts never default to zero or offer a manual shipping override", () => {
+  const input = context();
+  input.listings = [{ id: "listing-shipping", channel: "qoo10", market: "JP", targetId: "", remoteId: "1234567890", status: "published", lastError: null, publishedAt: "2026-09-05T00:00:00Z", remoteVisibility: "live" }];
+  const result = draft("qoo10", input);
+  assert.equal((result.params as Record<string, unknown>).ShippingNo, "SERVER_MANAGED");
+  const shipping = inspectWorkbenchListingDraft("qoo10", result, "listing.update").find((item) => item.key === "shipping");
+  assert.equal(shipping?.status, "runtime");
+  assert.equal(shipping?.manualPath, undefined);
+});

@@ -743,7 +743,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         TaxRate: "S",
         ItemQty: String(exactLocalizationUpdate ? exactIdentity.quantity : quantity),
         ExpireDate: qoo10ExpiryDate(),
-        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : operation === "listing.create" ? "" : "0",
+        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : operation === "listing.create" ? "" : "SERVER_MANAGED",
         AvailableDateType: "0",
         AvailableDateValue: "3",
         Keyword: exactLocalizationUpdate
@@ -1113,6 +1113,14 @@ export function inspectWorkbenchListingDraft(
     ...inspectListingDraft(channel, draft, operation),
     ...listingShippingRequirements(channel, draft, operation),
   ];
+  if (channel === "qoo10" && operation === "listing.update") {
+    return requirements.map((requirement) => requirement.key === "shipping" ? {
+      ...requirement,
+      status: "runtime" as const,
+      manualPath: undefined,
+      help: "현재 원격 상품의 배송그룹을 조회해 보존합니다. 동일 상품·배송그룹을 확인하지 못하면 수정 전에 차단합니다.",
+    } : requirement);
+  }
   const exactEbayProviderCopyUpdate = operation === "listing.update"
     && exactExternalActionWorkbenchRecoveryCandidate(
       recoveryContext?.productId,
