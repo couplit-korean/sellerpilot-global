@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { AiGatewayFailureDiagnostic } from "../lib/ai-gateway-failure";
+import { inspectAiGatewayFailure, type AiGatewayFailureDiagnostic } from "../lib/ai-gateway-failure";
 import {
   createServerStudioLocalizedRepairBudget,
   serverStudioContractRepairGuidance,
@@ -54,6 +54,62 @@ test("only an explicit short pre-provider 429 can reserve one cooldown per claim
   const cooldown = createServerStudioGatewayCooldown();
   assert.equal(cooldown.reserve(retryable), true);
   assert.equal(cooldown.reserve(retryable), false);
+});
+
+function rateLimitWithRouting(routing: Record<string, unknown>) {
+  return {
+    statusCode: 429,
+    responseHeaders: { "retry-after-ms": "1" },
+    providerMetadata: { gateway: { routing } },
+  };
+}
+
+test("Gateway inspection cannot promote partial or truncated per-model zeros to retry authorization", () => {
+  const cases: Array<[string, Record<string, unknown>, boolean | undefined]> = [
+    ["reported P1 partial route", { modelAttempts: [{ providerAttemptCount: 0 }, {}] }, undefined],
+    ["one zero model without global total", { modelAttempts: [{ providerAttemptCount: 0 }] }, undefined],
+    ["all listed models zero without global total", { modelAttempts: [{ providerAttemptCount: 0 }, { providerAttemptCount: 0 }] }, undefined],
+    ["no routing count", {}, undefined],
+    ["explicit zero global total", { totalProviderAttemptCount: 0 }, false],
+    ["explicit zero with matching model total", { totalProviderAttemptCount: 0, modelAttempts: [{ providerAttemptCount: 0, providerAttempts: [] }] }, false],
+    ["positive global total", { totalProviderAttemptCount: 1 }, true],
+    ["positive model overrides global zero", { totalProviderAttemptCount: 0, modelAttempts: [{ providerAttemptCount: 1 }] }, true],
+    ["provider attempt overrides all zero counts", { totalProviderAttemptCount: 0, modelAttempts: [{ providerAttemptCount: 0, providerAttempts: [{ success: false }] }] }, true],
+    ["positive model without global total", { modelAttempts: [{ providerAttemptCount: 1 }] }, true],
+    ["truncated model list cannot certify global zero", { totalProviderAttemptCount: 0, modelAttempts: [...Array.from({ length: 20 }, () => ({ providerAttemptCount: 0 })), { providerAttemptCount: 1 }] }, undefined],
+  ];
+  for (const [label, routing, expected] of cases) {
+    const diagnostic = inspectAiGatewayFailure(rateLimitWithRouting(routing));
+    assert.equal(diagnostic.upstreamProviderAttempted, expected, label);
+    assert.equal(createServerStudioGatewayCooldown().reserve(diagnostic), expected === false, label);
+  }
+});
+
+test("global zero does not override conflicting or omitted linked-route evidence", () => {
+  const globalZero = rateLimitWithRouting({ totalProviderAttemptCount: 0 });
+  for (const [cause, expected] of [
+    [rateLimitWithRouting({ totalProviderAttemptCount: 1 }), true],
+    [rateLimitWithRouting({ modelAttempts: [{ providerAttemptCount: 0 }, {}] }), undefined],
+  ] as const) {
+    const diagnostic = inspectAiGatewayFailure({ ...globalZero, cause });
+    assert.equal(diagnostic.upstreamProviderAttempted, expected);
+    assert.equal(createServerStudioGatewayCooldown().reserve(diagnostic), false);
+  }
+  const truncated = inspectAiGatewayFailure({
+    ...globalZero,
+    errors: [
+      rateLimitWithRouting({ totalProviderAttemptCount: 1 }),
+      {}, {}, {},
+    ],
+  });
+  assert.equal(truncated.upstreamProviderAttempted, undefined);
+  assert.equal(createServerStudioGatewayCooldown().reserve(truncated), false);
+
+  let cause: Record<string, unknown> = rateLimitWithRouting({ totalProviderAttemptCount: 1 });
+  for (let index = 0; index < 15; index += 1) cause = { cause };
+  const capped = inspectAiGatewayFailure({ ...globalZero, cause });
+  assert.equal(capped.upstreamProviderAttempted, undefined);
+  assert.equal(createServerStudioGatewayCooldown().reserve(capped), false);
 });
 
 test("every new lane observes the same Retry-After deadline", async () => {
