@@ -224,6 +224,18 @@ function commandLineValue(flag) {
   return value;
 }
 
+function resolveInstallerConcurrency(args) {
+  const flags = args.filter((arg) => arg === "--max-concurrency" || arg.startsWith("--max-concurrency="));
+  if (flags.length === 0) return 9; // Preserve the existing installer default.
+  if (flags.length !== 1) throw new Error("--max-concurrency는 한 번만 지정해 주세요.");
+  const flag = flags[0];
+  const value = flag.includes("=") ? flag.slice(flag.indexOf("=") + 1) : args[args.indexOf(flag) + 1];
+  if (value !== "1" && value !== "2") {
+    throw new Error("--max-concurrency는 M4 절약 모드의 1 또는 2만 지정할 수 있습니다.");
+  }
+  return Number(value);
+}
+
 function tokenSetProof(tokenSetId, tokenChanges) {
   return {
     tokenSetId,
@@ -336,6 +348,8 @@ if (process.argv.includes("--status")) {
 }
 
 async function install() {
+  // Validate before staging files, reading tokens or changing the LaunchAgent.
+  const maxConcurrency = resolveInstallerConcurrency(process.argv.slice(2));
   const tokenSetId = commandLineValue("--token-set");
   const rotateAll = process.argv.includes("--rotate-token");
   const rotatesOne = workerTokenScopes.some((definition) => process.argv.includes(definition.rotateFlag));
@@ -429,8 +443,8 @@ async function install() {
   <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
   <key>EnvironmentVariables</key><dict>
     <key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string>
-    <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>9</string>
-    <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>9</string>
+    <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>${maxConcurrency}</string>
+    <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>${maxConcurrency}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

@@ -1,0 +1,40 @@
+{
+  "format": "sellerpilot-explicit-ddl-baseline-v1",
+  "projectRef": "sqaoqucxakebqkiygdxb",
+  "capturedAt": "2026-09-05T13:45:03.20792+00:00",
+  "serverVersion": "17.6",
+  "objects": 8531,
+  "ddlBytes": 5210251,
+  "ddlSha256": "22358ecdf7edcc9e35d8665bb05dfb7018609736e4c9ccdb206cf2c26ccc8fbf",
+  "historyCount": 271,
+  "lastHistory": "20260905130000",
+  "unsupported": [],
+  "externalDependencies": [],
+  "literalRiskMatches": 0,
+  "secretScanProvesAbsence": false,
+  "encryptedAtRest": true,
+  "dataRowsExported": 0,
+  "historicalReplayProven": false,
+  "nativeRestoreVerified": false,
+  "dependencyClosureVerified": false,
+  "sourceHead": "974d4cb",
+  "encryptedArtifact": "/Users/kimchangheemac/.aside/u/0/sessions/2026-09-05_qag8yiZBDcqXqOkB/artifacts/db-baseline-974d4cb-v2.enc",
+  "keyFile": "/Users/kimchangheemac/.aside/u/0/sessions/2026-09-05_qag8yiZBDcqXqOkB/tmp/db-baseline-974d4cb-v2.key",
+  "bundleMode": "600",
+  "keyMode": "600",
+  "renderedSqlBytes": 5210342,
+  "dedicatedTests": {
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0
+  },
+  "nativeEnvironment": "No psql/pg_dump/pg_restore/postgres/docker/supabase found on PATH or checked existing installation paths; process enumeration denied",
+  "limitations": [
+    "No native PostgreSQL restore executed",
+    "External dependency scan covers catalog references, not all dynamic SQL or function body references",
+    "Role attributes/membership, enum ownership/ACL, custom collation, identity sequence parameters and security equivalence need native validation and coverage before production use",
+    "No history replay or original 15/14 test resolution claimed",
+    "Extension binaries/preload configuration are required by restore and are not installed by exporter",
+    "Key is in private temporary storage; encrypted artifact requires secure key retention before temporary cleanup"
+  ]
+}

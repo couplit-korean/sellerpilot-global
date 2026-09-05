@@ -22,8 +22,8 @@ test("worker defaults and hard caps reserve nine AI and Codex slots with three l
   assert.match(worker, /const nonProductCodexExecutionGate = createConcurrencyGate\(2\)/);
   assert.match(worker, /const localizedGate = createConcurrencyGate\(3\)/);
   assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.60"/);
-  assert.match(installer, /<key>SELLERPILOT_AI_WORKER_CONCURRENCY<\/key><string>9<\/string>/);
-  assert.match(installer, /<key>SELLERPILOT_CODEX_CONCURRENCY<\/key><string>9<\/string>/);
+  assert.match(installer, /<key>SELLERPILOT_AI_WORKER_CONCURRENCY<\/key><string>\$\{maxConcurrency\}<\/string>/);
+  assert.match(installer, /<key>SELLERPILOT_CODEX_CONCURRENCY<\/key><string>\$\{maxConcurrency\}<\/string>/);
 });
 
 test("support reply and other non-product Codex stages retain the two-slot execution gate", async () => {
@@ -123,4 +123,28 @@ test("a product generates at most three candidates per wave and commits approved
       < imageBatch.indexOf("commitCandidate: async"),
   );
   assert.doesNotMatch(imageBatch, /for \(const preset of imagePresets\)/);
+});
+
+
+test("installer keeps default nine but supports explicit M4 caps of one or two", async () => {
+  const installer = await readFile(installerUrl, "utf8");
+  const match = installer.match(/function resolveInstallerConcurrency\(args\) \{[\s\S]*?\n\}/);
+  assert.ok(match);
+  const resolve = Function(`"use strict"; ${match[0]}; return resolveInstallerConcurrency;`)();
+  assert.equal(resolve([]), 9);
+  assert.equal(resolve(["--product-only-runtime"]), 9);
+  for (const cap of [1, 2]) {
+    assert.equal(resolve(["--product-only-runtime", "--max-concurrency", String(cap)]), cap);
+    assert.equal(resolve([`--max-concurrency=${cap}`, "--product-only-runtime"]), cap);
+  }
+  for (const args of [
+    ["--max-concurrency"], ["--max-concurrency="],
+    ["--max-concurrency", "--product-only-runtime"],
+    ...["0", "3", "9", "-1", "1.5", "01", "2e0", "NaN", " 1"].map((value) => ["--max-concurrency", value]),
+    ["--max-concurrency", "1", "--max-concurrency=2"],
+    ["--max-concurrency=1", "--max-concurrency=1"],
+  ]) assert.throws(() => resolve(args), /--max-concurrency/);
+  const installBody = installer.slice(installer.indexOf("async function install()"));
+  assert.ok(installBody.indexOf("resolveInstallerConcurrency(") < installBody.indexOf("await readFile(plistPath"));
+  assert.ok(installBody.indexOf("resolveInstallerConcurrency(") < installBody.indexOf("keychainToken("));
 });
