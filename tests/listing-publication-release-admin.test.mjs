@@ -12,6 +12,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /export async function POST\(request: Request\)/);
   assert.equal((route.match(/authenticateAdminRequest\(request/g) ?? []).length, 2);
+  assert.equal((route.match(/verifyAsymmetricClaimsLocally: true/g) ?? []).length, 2);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
   assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
@@ -33,6 +34,12 @@ test("admin auth timeouts are retryable 503s, not permission 403s", async () => 
   assert.doesNotMatch(adminApi, /AbortSignal\.timeout/);
   assert.match(adminApi, /관리자 권한 확인이 지연되고 있습니다/);
   assert.match(adminApi, /status: 503/);
+  assert.match(adminApi, /getClaims\(token\)/);
+  assert.match(adminApi, /\["ES256", "RS256"\]\.includes\(algorithm\)/);
+  assert.match(adminApi, /claims\.iss !== issuer/);
+  assert.match(adminApi, /claims\.role !== "authenticated"/);
+  assert.match(adminApi, /uuidPattern\.test\(sessionId\)/);
+  assert.match(adminApi, /expiresAt <= now/);
 });
 
 test("listing publication release actions call only the fenced service RPCs", async () => {
