@@ -87,11 +87,24 @@ async function testCoupang(payload: SecretPayload): Promise<ChannelDiagnostic> {
     path: "/v2/providers/seller_api/apis/api/v1/marketplace/seller-products",
     query,
   });
-  const code = String(remote.data.code ?? "");
-  if (remote.response.ok && !["ERROR", "FAIL"].includes(code.toUpperCase())) {
-    return { status: "passed", message: "쿠팡 서명 인증과 등록상품 목록 읽기가 정상 응답했습니다.", remoteRequestId: remoteRequestId(remote.data) };
+  // HTTP success alone is not evidence of the expected seller or product scope.
+  // Bind to the requested credential vendor, never a hard-coded/default seller.
+  if (!remote.response.ok || remote.data.code !== "SUCCESS") {
+    return { status: "failed", message: "쿠팡 상품 목록 읽기에서 HTTP 성공과 정확한 SUCCESS 코드를 확인하지 못했습니다." };
   }
-  return { status: "failed", message: `쿠팡 HMAC 연결 검사 실패${code ? ` · ${code}` : ` · HTTP ${remote.response.status}`}`, remoteRequestId: remoteRequestId(remote.data) };
+  const rows = remote.data.data;
+  if (!Array.isArray(rows) || rows.length > 1) {
+    return { status: "failed", message: "쿠팡 상품 목록 응답이 maxPerPage=1 요청의 배열 형식과 일치하지 않습니다." };
+  }
+  if (rows.length === 0) {
+    return { status: "manual", message: "쿠팡 HTTP 상품 목록 읽기 범위는 성공했지만 빈 목록이어서 판매자 ID readback은 미확인입니다." };
+  }
+  const row: unknown = rows[0];
+  if (!row || typeof row !== "object" || Array.isArray(row)
+      || !("vendorId" in row) || row.vendorId !== vendorId) {
+    return { status: "failed", message: "쿠팡 반환 상품의 판매자 ID가 요청 credential의 Vendor ID와 일치하는지 확인하지 못했습니다." };
+  }
+  return { status: "passed", message: "쿠팡 HTTP·SUCCESS·상품 목록 1건과 요청 판매자 ID의 일치를 확인했습니다." };
 }
 
 async function testElevenst(payload: SecretPayload): Promise<ChannelDiagnostic> {

@@ -1,8 +1,9 @@
--- Owner semantics are not inferred from an API alias:
--- sellerpilot_service_ingest_orders (20260821102500) selects c.created_by into v_owner.
--- sellerpilot_enqueue_channel_gateway_job (20260817054039) carries c.created_by
--- into channel_gateway_jobs.created_by. Target binding (20260817061650) requires
--- c.created_by = p_owner_id. This read-only proof uses that same private owner.
+-- Legacy RPC name, explicit shared-workspace access contract (not exclusive ownership).
+-- 20260818041000 and 20260820143000 share credentials/operations across approved
+-- administrators. auth.uid() is the authorized actor; created_by is the original
+-- credential lineage owner used by gateway jobs, orders and target storage.
+-- Never rewrite that lineage owner to the actor. Neither metadata aliases nor
+-- possession of a service key can substitute for authenticated actor approval.
 begin;
 
 do $guard$
@@ -42,8 +43,10 @@ begin
 
   select jsonb_build_object(
     'contractVersion', 1,
+    'authorizationModel', 'shared_admin_workspace',
+    'actorId', v_user_id,
     'credentialId', c.id,
-    'ownerId', c.created_by,
+    'credentialOwnerId', c.created_by,
     'channel', c.channel,
     'environment', c.environment,
     'credentialVersion', c.version,
@@ -53,7 +56,7 @@ begin
   where c.id = p_credential_id
     and c.channel = p_channel
     and c.environment = p_environment
-    and c.created_by = v_user_id
+    and c.created_by is not null
     and c.status = 'active'
     and c.version > 0
     and (c.expires_at is null or c.expires_at > clock_timestamp());
@@ -64,6 +67,9 @@ begin
   return v_proof;
 end;
 $function$;
+
+comment on function public.sellerpilot_verify_channel_credential_owner_v1(uuid, text, text) is
+  'Legacy name: proves authenticated actor access to the shared admin workspace, not actor/creator equality. actorId is auth.uid(); credentialOwnerId is immutable-to-this-RPC created_by lineage. No secrets, ownership changes or grants are returned.';
 
 revoke all on function public.sellerpilot_verify_channel_credential_owner_v1(uuid, text, text)
   from public, anon, service_role;

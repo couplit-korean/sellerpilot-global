@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { getSafeSignInError } from "../lib/auth-sign-in-error-safety";
 import {
   Activity,
   AlertCircle,
@@ -793,9 +794,14 @@ function LoginScreen({
     }
     setLoading(true);
     setError("");
-    const loginError = await onLogin(email.trim(), password);
-    setLoading(false);
-    if (loginError) setError(loginError);
+    try {
+      const loginError = await onLogin(email.trim(), password);
+      if (loginError) setError(loginError);
+    } catch (loginError) {
+      setError(getSafeSignInError(loginError));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const requestPasswordReset = async () => {
@@ -2811,6 +2817,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     productResearchGenerationRef.current += 1;
     setResearchingProduct(false);
     window.sessionStorage.removeItem(productResearchPendingStorageKey);
+      window.sessionStorage.removeItem(shopeeExactBrowserKey);
     competitorResearchControllerRef.current?.abort(new DOMException("대표사진이 변경되었습니다.", "AbortError"));
     competitorResearchControllerRef.current = null;
     setResearchResult(null);
@@ -6235,6 +6242,18 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   );
 }
 
+const shopeeExactBrowserKey = "sellerpilot.shopee-exact-session.v1";
+type ShopeeExactBrowserSession = { sessionId: string; credentialId: string; ownerId: string; expiresAt: number };
+function readShopeeExactBrowserSession(ownerId: string): ShopeeExactBrowserSession | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(shopeeExactBrowserKey) ?? "null") as ShopeeExactBrowserSession | null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.ownerId !== ownerId
+      || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
+    return value;
+  } catch { return null; }
+}
+
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userId, setUserId] = useState("");
@@ -6247,8 +6266,53 @@ export default function Home() {
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthToastMessage, setOAuthToastMessage] = useState("");
   const oauthHandled = useRef(false);
+  const exactStarting = useRef(false);
   const accountSwitchingRef = useRef(false);
   const clearOAuthToastMessage = useCallback(() => setOAuthToastMessage(""), []);
+
+  useEffect(() => {
+    if (accessState !== "admin" || !userId) return;
+    const startExact = async (event: Event) => {
+      const credentialId = (event as CustomEvent<{ credentialId?: string }>).detail?.credentialId;
+      if (!credentialId || !/^[0-9a-f-]{36}$/i.test(credentialId) || exactStarting.current) return;
+      exactStarting.current = true;
+      try {
+        const { data, error } = await createSupabaseClient().auth.getSession();
+        if (error || data.session?.user.id !== userId) throw new Error("session_unavailable");
+        const accessToken = data.session.access_token;
+        const postExact = (body: object) => fetch("/api/admin/channel-credentials/shopee/exact", {
+          method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify(body), signal: AbortSignal.timeout(25_000),
+        });
+        let prepared = readShopeeExactBrowserSession(userId);
+        if (!prepared || prepared.credentialId !== credentialId) {
+          const response = await postExact({ action: "prepare", credentialId });
+          const result = await response.json() as { status?: string; sessionId?: string };
+          if (!response.ok || result.status !== "executor_required" || !result.sessionId) throw new Error("prepare_blocked");
+          prepared = { sessionId: result.sessionId, credentialId, ownerId: userId, expiresAt: Date.now() + 9 * 60_000 };
+          window.sessionStorage.setItem(shopeeExactBrowserKey, JSON.stringify(prepared));
+          setOAuthToastMessage(`Shopee exact 세션: ${prepared.sessionId}. 이 세션으로 전용 실행기를 시작한 뒤 OAuth 재연결을 다시 눌러 주세요. 아직 공식 승인·토큰 교환 전입니다.`);
+          return;
+        }
+        const response = await postExact({ action: "start", sessionId: prepared.sessionId, credentialId });
+        const result = await response.json() as { status?: string; authorizationUrl?: string };
+        if (!response.ok || result.status !== "ready" || !result.authorizationUrl) {
+          setOAuthToastMessage(result.status === "callback_integration_required"
+            ? "Shopee exact callback 배포 승인 대기입니다. 일반 authorize로 우회하지 않았습니다."
+            : `Shopee 전용 실행기 준비를 확인해 주세요. 세션: ${prepared.sessionId}. 공식 인가는 시작하지 않았습니다.`);
+          return;
+        }
+        const url = new URL(result.authorizationUrl);
+        if (url.origin !== "https://open.shopee.com" || !url.searchParams.get("state")?.startsWith("sellerpilot-shopee-exact-")) throw new Error("invalid_authorization_url");
+        window.location.assign(url.toString());
+      } catch {
+        setOAuthToastMessage("Shopee exact 시작을 완료하지 못했습니다. 전용 실행기·인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
+      } finally { exactStarting.current = false; }
+    };
+    const listener = (event: Event) => { void startExact(event); };
+    window.addEventListener("sellerpilot:shopee-exact-start", listener);
+    return () => window.removeEventListener("sellerpilot:shopee-exact-start", listener);
+  }, [accessState, userId]);
 
   useEffect(() => {
     const captureCallback = window.setTimeout(() => {
@@ -6376,17 +6440,28 @@ export default function Home() {
     const completeChannelOAuth = async () => {
       try {
         const { data: sessionData } = await createSupabaseClient().auth.getSession();
+        if (!sessionData.session || sessionData.session.user.id !== userId) throw new Error("OAuth 관리자 세션을 확인하지 못했습니다.");
+        if (pendingChannelOAuth.channel === "shopee") {
+          const exact = readShopeeExactBrowserSession(userId);
+          if (!pendingChannelOAuth.state.startsWith("sellerpilot-shopee-exact-") || !exact || !pendingChannelOAuth.mainAccountId) {
+            throw new Error("Shopee exact 세션·state·main account가 없어 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          }
+          const response = await fetch("/api/admin/channel-credentials/shopee/exact", {
+            method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+            body: JSON.stringify({ action: "bind", sessionId: exact.sessionId, credentialId: exact.credentialId,
+              code: pendingChannelOAuth.code, state: pendingChannelOAuth.state, mainAccountId: pendingChannelOAuth.mainAccountId }),
+            signal: AbortSignal.timeout(25_000),
+          });
+          const bound = await response.json() as { status?: string };
+          if (!response.ok || bound.status !== "bound") throw new Error("Shopee exact 결속을 확인하지 못했습니다. 코드 재교환 없이 해당 세션을 확인해 주세요.");
+          setOAuthToastMessage("Shopee 승인을 전용 실행기에 결속했습니다. 연결 완료 전입니다. 토큰 교환·Vault 저장·안전한 읽기 검증 결과를 확인해야 합니다.");
+          window.sessionStorage.removeItem(shopeeExactBrowserKey);
+          return;
+        }
         const response = await fetch(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-          body: JSON.stringify({
-            secretPayload: {
-              authorization_code: pendingChannelOAuth.code,
-              ...(pendingChannelOAuth.shopId ? { shop_id: pendingChannelOAuth.shopId } : {}),
-              ...(pendingChannelOAuth.mainAccountId ? { main_account_id: pendingChannelOAuth.mainAccountId } : {}),
-            },
-            oauthState: pendingChannelOAuth.state,
-          }),
+          method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+          body: JSON.stringify({ secretPayload: { authorization_code: pendingChannelOAuth.code }, oauthState: pendingChannelOAuth.state }),
+          signal: AbortSignal.timeout(25_000),
         });
         const payload = await response.json().catch(() => ({ message: "채널 OAuth 응답을 읽지 못했습니다." })) as { message: string };
         if (!response.ok) throw new Error(payload.message);
@@ -6398,7 +6473,7 @@ export default function Home() {
       }
     };
     void completeChannelOAuth();
-  }, [accessState, pendingChannelOAuth]);
+  }, [accessState, pendingChannelOAuth, userId]);
 
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
@@ -6410,7 +6485,7 @@ export default function Home() {
         ? "sample@couplit-official.test"
         : email.trim();
     const { data, error } = await createSupabaseClient().auth.signInWithPassword({ email: normalizedEmail, password });
-    if (error) return "아이디 또는 비밀번호를 확인해 주세요.";
+    if (error) return getSafeSignInError(error);
     setFreshLoginUserId(data.user.id);
     setLoginNotice("");
     return null;

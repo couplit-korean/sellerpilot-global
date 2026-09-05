@@ -23,17 +23,22 @@ function fixedFailure(error) {
   return codes.has(error?.message) ? error.message : "LIVE_CHANNEL_OPERATION_FAILED";
 }
 
-// Only this versioned authenticated RPC establishes ownership. Metadata aliases do not.
-async function readOwnerProof(userClient, credential, expectedUserId) {
+// Legacy RPC name. Proves the authenticated actor's shared-workspace access;
+// credentialOwnerId is preserved storage lineage, NOT the acting administrator.
+// Never infer either identity from metadata aliases or substitute a service role.
+async function readCredentialAccessProof(userClient, credential, expectedUserId) {
   const { data: proof, error } = await userClient.rpc("sellerpilot_verify_channel_credential_owner_v1", {
     p_credential_id: credential.id, p_channel: credential.channel, p_environment: credential.environment,
   });
   if (error) throw new Error("LIVE_CREDENTIAL_OWNER_PROOF_UNAVAILABLE");
-  const keys = ["channel", "contractVersion", "credentialId", "credentialVersion", "environment", "expiresAt", "ownerId"];
+  const keys = ["actorId", "authorizationModel", "channel", "contractVersion", "credentialId", "credentialOwnerId", "credentialVersion", "environment", "expiresAt"];
   if (!proof || typeof proof !== "object" || Array.isArray(proof)
       || JSON.stringify(Object.keys(proof).sort()) !== JSON.stringify(keys)
       || proof.contractVersion !== 1 || typeof proof.credentialId !== "string" || !UUID.test(proof.credentialId) || proof.credentialId !== credential.id
-      || proof.ownerId !== expectedUserId || proof.channel !== credential.channel
+      || proof.authorizationModel !== "shared_admin_workspace"
+      || proof.actorId !== expectedUserId || !UUID.test(proof.actorId)
+      || typeof proof.credentialOwnerId !== "string" || !UUID.test(proof.credentialOwnerId)
+      || proof.channel !== credential.channel
       || proof.environment !== credential.environment
       || !Number.isSafeInteger(proof.credentialVersion) || proof.credentialVersion < 1
       || proof.credentialVersion !== credential.version
@@ -45,7 +50,8 @@ async function readOwnerProof(userClient, credential, expectedUserId) {
   return proof;
 }
 
-// Never creates, changes or substitutes an account. Explicit existing session required.
+// Legacy export name: authorizes the existing actor, preserving a separate
+// credential lineage owner. Never creates, changes or substitutes an account.
 export async function authorizeLiveChannelOwner({ env = process.env, createClientImpl = createClient, timeoutMs = 30_000 } = {}) {
   validateLiveDestinations(env);
   if (env.LIVE_SHOPEE_GLOBAL_TEST_PRODUCT_ID) throw new Error("LIVE_DISABLED_TEST_MODE");
@@ -93,7 +99,7 @@ export async function authorizeLiveChannelOwner({ env = process.env, createClien
       && (!env.LIVE_CREDENTIAL_ID || item.id === env.LIVE_CREDENTIAL_ID.trim()));
     if (matches.length !== 1 || !matches[0].id) throw new Error("LIVE_ACTIVE_CREDENTIAL_NOT_UNIQUE");
     const credential = matches[0];
-    const proof = await readOwnerProof(userClient, credential, expectedUserId);
+    const proof = await readCredentialAccessProof(userClient, credential, expectedUserId);
     if (controller.signal.aborted) throw new Error("LIVE_ADMIN_VERIFICATION_TIMEOUT");
     return { accessToken, credential, proof };
   };
@@ -164,7 +170,8 @@ const remainingVerificationMs = () => {
   return remaining;
 };
 const { accessToken, credential, proof } = await authorizeLiveChannelOwner({ timeoutMs: remainingVerificationMs() });
-// Privileged decrypt access is created only after existing-owner/admin verification.
+// Privileged decrypt access is created only after existing-actor/admin approval.
+// Downstream resource handlers retain the credential's original lineage owner.
 const decryptController = new AbortController();
 const service = createClient(supabaseUrl, secretKey, {
   global: { fetch: (input, init = {}) => fetch(input, { ...init, redirect: "error",
@@ -186,7 +193,9 @@ async function decryptProvenCredential() {
   if (error) throw new Error("LIVE_CHANNEL_OPERATION_FAILED");
   const verified = await authorizeLiveChannelOwner({ env: { ...process.env, LIVE_CREDENTIAL_ID: credential.id }, timeoutMs: remainingVerificationMs() });
   const after = verified.proof;
-  if (after.credentialId !== proof.credentialId || after.ownerId !== proof.ownerId
+  if (after.credentialId !== proof.credentialId || after.actorId !== proof.actorId
+      || after.authorizationModel !== proof.authorizationModel
+      || after.credentialOwnerId !== proof.credentialOwnerId
       || after.credentialVersion !== proof.credentialVersion || after.expiresAt !== proof.expiresAt
       || after.channel !== proof.channel || after.environment !== proof.environment) {
     throw new Error("LIVE_CREDENTIAL_OWNER_PROOF_CHANGED");
