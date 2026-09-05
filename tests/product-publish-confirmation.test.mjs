@@ -38,15 +38,15 @@ test("Temu contained QA has one explicit immutable final activation confirmation
   assert.match(source, /Temu 실제 판매 공개 승격 실행/);
 });
 
-test("FINAL registration binds live intent and serializes provider writes", async () => {
+test("FINAL registration binds live intent and independently schedules confirmed channels", async () => {
   const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
 
   assert.match(source, /const publicationIntent = operation === "listing\.create"[\s\S]*?"live" as const/);
   assert.match(source, /const mutationContract = \{[\s\S]*?publicationIntent,/);
   assert.match(source, /body: JSON\.stringify\(\{[\s\S]*?channel,[\s\S]*?operation,[\s\S]*?publicationIntent,[\s\S]*?idempotencyKey: `listing:/);
-  assert.match(source, /executeChannelWritesSequentially\([\s\S]*?readyChannels,[\s\S]*?executeChannel\(channel/);
+  assert.match(source, /executeChannelWritesIndependently\([\s\S]*?readyChannels,[\s\S]*?executeChannel\(channel/);
   assert.doesNotMatch(source, /Promise\.all\(readyChannels\.map\([\s\S]*?executeChannel/);
-  assert.match(source, /확인 후 순차 실행/);
+  assert.match(source, /확인 후 병렬 실행/);
   assert.match(source, /판매중지 readback이 확인된 Temu QA는 공개 게시 성공으로 집계하지 않습니다/);
 });
 

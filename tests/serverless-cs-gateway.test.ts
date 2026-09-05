@@ -1359,6 +1359,7 @@ for (const safeReason of [
   "LISTING_SHIPPING_CONFIRMATION_REQUIRED",
   "COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED",
   "SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED",
+  "QOO10_UPDATE_SHIPPING_UNVERIFIED",
 ]) {
   for (const mutationStarted of [false, true]) {
     test(`shipping setup ${safeReason} keeps remediation and mutation boundary ${mutationStarted}`, async () => {

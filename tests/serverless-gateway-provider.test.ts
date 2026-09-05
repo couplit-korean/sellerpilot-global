@@ -493,7 +493,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
         orders: [{
           orderId: "order-1",
           buyer: { username: "private-buyer" },
-          lineItems: [{ title: "private-product", quantity: 2 }],
+          lineItems: [{ lineItemId: "order-line-1", title: "private-product", quantity: 2 }],
           pricingSummary: { total: { value: "17.50", currency: "USD" } },
           orderPaymentStatus: "PAID",
           orderFulfillmentStatus: "NOT_STARTED",
@@ -547,6 +547,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
     amountKrw: 0,
     status: "paid",
     orderedAt: "2026-08-28T02:03:04.000Z",
+    providerContext: { orderId: "order-1", lineItems: [{ lineItemId: "order-line-1", quantity: 2 }] },
   }]);
   assert.deepEqual(completion?.arguments_.p_response_payload, {
     ok: true,

@@ -42,6 +42,7 @@ test("shipping setup failures name the seller information to correct", () => {
     ["COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED", /쿠팡 배송비 유형과 금액/],
     ["SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED", /출고지·반품지/],
     ["LISTING_SHIPPING_CONFIRMATION_REQUIRED:shippingRule,packagingRule", /배송규칙·포장규칙/],
+    ["QOO10_UPDATE_SHIPPING_UNVERIFIED", /현재 배송그룹을 확인하지 못해 수정을 중단/],
   ] as const) {
     const notice = userNotice(new Error(code));
     assert.match(notice.message, expected);

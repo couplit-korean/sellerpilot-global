@@ -77,6 +77,9 @@ export function userFacingErrorMessage(input: unknown, fallback = defaultErrorMe
   if (/EBAY_SHIPMENT_(?:EXISTING_CONFLICT|WRITE_UNCERTAIN|READBACK_UNAVAILABLE|READBACK_MISMATCH)\b/.test(raw)) {
     return "eBay의 송장 반영 결과를 먼저 확인해 주세요. 판매자센터에서 운송사·송장번호·주문 품목과 수량을 대조하기 전에는 다시 전송하지 마세요.";
   }
+  if (/QOO10_UPDATE_SHIPPING_UNVERIFIED\b/.test(raw)) {
+    return "Qoo10 상품의 현재 배송그룹을 확인하지 못해 수정을 중단했습니다. 상품번호·판매자 상품코드·배송정책을 확인한 뒤 다시 조회해 주세요.";
+  }
   if (/COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED\b/.test(raw)) {
     return "쿠팡 배송비 유형과 금액을 확인해 주세요. 무료배송·유료배송·조건부 무료배송 설정과 반품 배송비를 모두 맞춰야 등록할 수 있습니다.";
   }

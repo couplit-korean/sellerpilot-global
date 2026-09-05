@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("one queued product does not serialize another product while final channel writes stay sequential", async () => {
+test("one queued product does not serialize another product and confirmed channels run independently", async () => {
   const studio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
@@ -14,7 +14,7 @@ test("one queued product does not serialize another product while final channel 
   assert.match(studio, /jobMonitors\.abortAll\(\)/);
   assert.match(studio, /처리되는 동안 다른 상품 등록을 바로 시작할 수 있습니다/);
   assert.match(page, /다른 상품 등록/);
-  assert.match(workbench, /executeChannelWritesSequentially\(\s*readyChannels/);
+  assert.match(workbench, /executeChannelWritesIndependently\(\s*readyChannels/);
   assert.doesNotMatch(workbench, /Promise\.all\(readyChannels\.map/);
 });
 
