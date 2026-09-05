@@ -10,8 +10,8 @@ const [page, css, publishWorkbench, categoryWorkbench] = await Promise.all([
 ]);
 
 test("Step 1 labels credentials separately from actual upload readiness", () => {
-  assert.match(page, /운영 키 등록과 실제 업로드 가능은 다릅니다/);
-  assert.match(page, /운영 키 등록 · 3단계 검증 필요/);
+  assert.match(page, /운영 읽기 진단을 통과한 채널만 선택할 수 있습니다/);
+  assert.match(page, /읽기 진단 통과 · 3단계 검증 필요/);
   assert.doesNotMatch(page, /공식 API 등록 가능/);
 });
 
@@ -19,8 +19,9 @@ test("Step 1 exposes a channel-specific handoff for every active marketplace", (
   for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]) {
     assert.match(page, new RegExp(`\\n  ${channel}: "`));
   }
-  assert.match(page, /aria-label="선택 채널별 후속 필수 확인"/);
-  assert.match(page, /selectedChannels\.map\(\(key\) =>/);
+  assert.match(page, /aria-label="전체 채널별 후속 필수 확인"/);
+  assert.match(page, /activeChannelKeys\.map\(\(key\) =>/);
+  assert.match(page, /credentialStatus === "unverified" \? "진단 필요" : "키 필요"/);
   assert.match(css, /\.channel-rule-handoff \{/);
   assert.match(css, /grid-template-columns: minmax\(38px, max-content\) minmax\(0, 1fr\) auto/);
 });
