@@ -4765,3 +4765,79 @@
     grid-column: auto;
   }
 }
+
+
+/* Release QA: close the tablet and compact-desktop gaps without changing the
+   established 280-720px Fold/mobile contracts. */
+@media (min-width: 901px) {
+  .commerce-service-rail {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .commerce-service-rail::-webkit-scrollbar {
+    height: 4px;
+  }
+}
+
+@media (min-width: 1181px) {
+  .order-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1081px) and (max-width: 1366px) {
+  .daily-briefing {
+    grid-template-columns: minmax(260px, .8fr) minmax(520px, 1.4fr);
+  }
+
+  .briefing-settlement {
+    grid-column: 1 / -1;
+    min-height: 86px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 16px;
+  }
+
+  .briefing-settlement strong,
+  .briefing-settlement small,
+  .briefing-settlement button {
+    margin-top: 0;
+  }
+}
+
+@media (min-width: 481px) and (max-width: 720px) {
+  .topbar-actions .global-search {
+    display: inline-flex;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .topbar-actions .global-search span,
+  .topbar-actions .global-search kbd {
+    display: none;
+  }
+}
+
+/* Keep the native table semantics on tablets, but shrink the product identity
+   column enough that a 768px viewport needs only a short, discoverable pan. */
+@media (min-width: 721px) and (max-width: 900px) {
+  .product-table {
+    min-width: 760px;
+  }
+
+  .product-table .product-cell {
+    min-width: 280px;
+  }
+
+  .product-table th,
+  .product-table td {
+    white-space: normal;
+  }
+}

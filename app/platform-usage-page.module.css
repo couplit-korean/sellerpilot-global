@@ -503,6 +503,10 @@
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .apiGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .hero {
     align-items: stretch;
     flex-direction: column;
