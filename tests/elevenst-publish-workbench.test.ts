@@ -188,6 +188,29 @@ test("11st categories outside the two verified leaves cannot inherit guessed not
   assert.throws(() => validateElevenstListingProduct(draft.product), /ELEVENST_CATEGORY_CONTRACT_UNVERIFIED/);
 });
 
+test("missing commerce measurements stay fail-closed instead of receiving invented defaults", () => {
+  const rawContext = publishContext();
+  rawContext.manualFields = {
+    ...rawContext.manualFields,
+    sellingPrice: undefined,
+    currency: "",
+    stock: undefined,
+    weightKg: undefined,
+    packageLengthCm: undefined,
+    packageWidthCm: undefined,
+    packageHeightCm: undefined,
+  } as unknown as WorkbenchContext["manualFields"];
+
+  const normalized = normalizeManualFields(rawContext);
+  assert.equal(normalized.sellingPrice, 0);
+  assert.equal(normalized.currency, "");
+  assert.equal(normalized.stock, 0);
+  assert.equal(normalized.weightKg, 0);
+  assert.equal(normalized.packageLengthCm, 0);
+  assert.equal(normalized.packageWidthCm, 0);
+  assert.equal(normalized.packageHeightCm, 0);
+});
+
 test("11st missing brand stays empty and is blocked by local preflight instead of receiving a placeholder", () => {
   const rawContext = publishContext({ brandName: "   " });
   const manualFields = normalizeManualFields(rawContext);

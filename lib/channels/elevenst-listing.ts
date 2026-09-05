@@ -63,6 +63,7 @@ const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"
 const verifiedSimpleListingCategoryId = "1341821";
 export const elevenstProcessedFoodCategoryId = "1346631";
 export const elevenstProcessedFoodNoticeType = "891031";
+export const elevenstProcessedFoodProductNameNoticeCode = "176317774";
 export const elevenstProcessedFoodNotificationFields = [
   { code: "176400445", label: "생산자 및 소재지 (수입품의 경우 생산자, 수입자 및 제조국)" },
   { code: "176398001", label: "제조연월일, 소비기한 또는 품질유지기한" },
@@ -70,7 +71,7 @@ export const elevenstProcessedFoodNotificationFields = [
   { code: "23757260", label: "유전자변형식품 표시" },
   { code: "23757095", label: "영양성분" },
   { code: "176312674", label: "소비자안전을 위한 주의사항" },
-  { code: "176317774", label: "제품명" },
+  { code: elevenstProcessedFoodProductNameNoticeCode, label: "제품명" },
   { code: "23756754", label: "소비자상담 관련 전화번호" },
   { code: "23757245", label: "원재료명 (원산지 포함) 및 함량" },
   { code: "42155152", label: "포장단위별 내용물의 용량(중량), 수량" },

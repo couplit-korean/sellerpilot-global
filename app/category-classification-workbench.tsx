@@ -5,6 +5,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
 import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
+import {
+  elevenstProcessedFoodCategoryId,
+  elevenstProcessedFoodNotificationFields,
+  elevenstProcessedFoodProductNameNoticeCode,
+} from "../lib/channels/elevenst-listing";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
@@ -159,15 +164,27 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
     return Object.fromEntries(Object.entries(parsed).flatMap(([key, value]) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return [];
       const state = value as Partial<ChannelState>;
-      const phase = state.phase === "suggesting" || state.phase === "inspecting" ? "error" : state.phase;
-      if (!phase || !["idle", "ready", "confirmed", "error"].includes(phase)) return [];
+      const restoredPhase = state.phase === "suggesting" || state.phase === "inspecting" ? "error" : state.phase;
+      if (!restoredPhase || !["idle", "ready", "confirmed", "error"].includes(restoredPhase)) return [];
+      const restoredValues = state.values && typeof state.values === "object" && !Array.isArray(state.values)
+        ? Object.fromEntries(Object.entries(state.values).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
+        : {};
+      const channel = activeChannelKeys.find((candidate) => key.startsWith(`${candidate}:`));
+      const restoredAttributes = Array.isArray(state.attributes) ? state.attributes : [];
+      const attributes = channel && state.selected?.id
+        ? appendChannelRequiredAttributes(channel, state.selected.id, restoredAttributes)
+        : restoredAttributes;
+      const phase = restoredPhase === "confirmed"
+        && attributes.some((attribute) => attribute.required && !restoredValues[attribute.id]?.trim())
+        ? "ready"
+        : restoredPhase;
       return [[key, {
         ...initialState(),
         ...state,
         phase,
         suggestions: Array.isArray(state.suggestions) ? state.suggestions : [],
-        attributes: Array.isArray(state.attributes) ? state.attributes : [],
-        values: state.values && typeof state.values === "object" && !Array.isArray(state.values) ? state.values : {},
+        attributes,
+        values: restoredValues,
         // Taxonomy tree IDs are provider-issued market bindings. Never trust a
         // sessionStorage copy for a later official category validation call.
         ebayCategoryTreeBinding: undefined,
@@ -833,6 +850,33 @@ export function normalizeAttributes(payloads: OperationPayload[]) {
   return [...new Map(found.map((item) => [item.id, item])).values()].sort((left, right) => Number(right.required) - Number(left.required));
 }
 
+function appendChannelRequiredAttributes(
+  channel: ActiveChannelKey,
+  categoryId: string,
+  providerAttributes: CategoryAttribute[],
+) {
+  if (channel !== "elevenst" || categoryId !== elevenstProcessedFoodCategoryId) return providerAttributes;
+  const explicitFoodNotices: CategoryAttribute[] = elevenstProcessedFoodNotificationFields
+    .filter((field) => field.code !== elevenstProcessedFoodProductNameNoticeCode)
+    .map((field) => ({
+      id: `notification:${field.code}`,
+      name: field.label,
+      required: true,
+      values: [],
+      mode: "FREE_TEXT",
+    }));
+  return [...new Map([...providerAttributes, ...explicitFoodNotices].map((item) => [item.id, item])).values()]
+    .sort((left, right) => Number(right.required) - Number(left.required));
+}
+
+export function normalizeChannelAttributes(
+  channel: ActiveChannelKey,
+  categoryId: string,
+  payloads: OperationPayload[],
+) {
+  return appendChannelRequiredAttributes(channel, categoryId, normalizeAttributes(payloads));
+}
+
 function categoryPathLabel(category: CategorySuggestion) {
   return category.path.length > 1 ? category.path.join(" › ") : category.name;
 }
@@ -1117,7 +1161,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         operation(channel, "categories.attributes", common),
         operation(channel, "categories.validate", common),
       ]);
-      const attributes = normalizeAttributes([attributesPayload]);
+      const attributes = normalizeChannelAttributes(channel, selected.id, [attributesPayload]);
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
     } catch (error) {

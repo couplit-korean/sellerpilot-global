@@ -479,6 +479,10 @@ export function publishContextDesignedDetailData(payload: {
 
 export function normalizeManualFields(context: PublishContext): ManualFields {
   const value = context.manualFields ?? {} as ManualFields;
+  const positiveOrZero = (candidate: unknown) => {
+    const number = Number(candidate);
+    return Number.isFinite(number) && number > 0 ? number : 0;
+  };
   return {
     productName: value.productName || context.product.name,
     description: value.description || context.product.description,
@@ -492,13 +496,13 @@ export function normalizeManualFields(context: PublishContext): ManualFields {
     condition: value.condition || "NEW",
     gtinStatus: value.gtinStatus || "NO_GTIN",
     gtin: value.gtin || "",
-    sellingPrice: Number(value.sellingPrice) || 2500,
-    currency: value.currency || "JPY",
-    stock: Number.isInteger(Number(value.stock)) && Number(value.stock) >= 0 ? Number(value.stock) : 1,
-    weightKg: Number(value.weightKg) || 0.35,
-    packageLengthCm: Number(value.packageLengthCm) || 12,
-    packageWidthCm: Number(value.packageWidthCm) || 12,
-    packageHeightCm: Number(value.packageHeightCm) || 10,
+    sellingPrice: positiveOrZero(value.sellingPrice),
+    currency: value.currency?.trim().toUpperCase() ?? "",
+    stock: Number.isInteger(Number(value.stock)) && Number(value.stock) >= 0 ? Number(value.stock) : 0,
+    weightKg: positiveOrZero(value.weightKg),
+    packageLengthCm: positiveOrZero(value.packageLengthCm),
+    packageWidthCm: positiveOrZero(value.packageWidthCm),
+    packageHeightCm: positiveOrZero(value.packageHeightCm),
   };
 }
 
@@ -1375,12 +1379,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [results, setResults] = useState<Partial<Record<ActiveChannelKey, ChannelResult>>>({});
   const [availableTargets, setAvailableTargets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", ChannelTarget[]>>>({});
   const [selectedTargets, setSelectedTargets] = useState<Partial<Record<ActiveChannelKey, ChannelTarget>>>({});
-  const [price, setPrice] = useState(2500);
-  const [globalBaseUsdPrice, setGlobalBaseUsdPrice] = useState(12.9);
+  const [price, setPrice] = useState(0);
+  const [globalBaseUsdPrice, setGlobalBaseUsdPrice] = useState(0);
   const [lazadaMyrRate, setLazadaMyrRate] = useState<LazadaKrwMyrRateEvidence | null>(null);
-  const [quantity, setQuantity] = useState(1);
-  const [currency, setCurrency] = useState("JPY");
-  const [packageFields, setPackageFields] = useState<PackageFields>({ weight: 0.35, length: 12, width: 12, height: 10 });
+  const [quantity, setQuantity] = useState(0);
+  const [currency, setCurrency] = useState("");
+  const [packageFields, setPackageFields] = useState<PackageFields>({ weight: 0, length: 0, width: 0, height: 0 });
   const [loading, setLoading] = useState(Boolean(productId));
   const [bulkRunning, setBulkRunning] = useState(false);
   const [bulkConfirming, setBulkConfirming] = useState(false);

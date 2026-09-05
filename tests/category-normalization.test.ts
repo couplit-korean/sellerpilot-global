@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeAttributes, normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { normalizeAttributes, normalizeChannelAttributes, normalizeSuggestions, officialTopLevelGroups, sanitizeCategoryQuery } from "../app/category-classification-workbench";
+import { elevenstProcessedFoodCategoryId, elevenstProcessedFoodProductNameNoticeCode } from "../lib/channels/elevenst-listing";
 
 test("category queries discard test-only prefixes before provider classification", () => {
   assert.equal(sanitizeCategoryQuery("[API TEST · 판매금지] 메이크업 팔레트 화장품 샘플 등록"), "메이크업 팔레트 화장품");
@@ -497,4 +498,15 @@ test("category attributes preserve explicit eBay FREE_TEXT semantics with sugges
   assert.deepEqual(attributes.find((attribute) => attribute.name === "Brand")?.values.map((value) => value.name), ["Unbranded", "LOTTE"]);
   assert.equal(attributes.find((attribute) => attribute.name === "Product")?.mode, "SELECTION_ONLY");
   assert.equal(attributes.find((attribute) => attribute.name === "Color")?.mode, null);
+});
+
+test("11st processed-food category exposes every non-derived notice as an explicit Step 3 field", () => {
+  const food = normalizeChannelAttributes("elevenst", elevenstProcessedFoodCategoryId, []);
+  assert.equal(food.length, 10);
+  assert.equal(food.every((attribute) => attribute.id.startsWith("notification:") && attribute.required && attribute.mode === "FREE_TEXT"), true);
+  assert.equal(food.some((attribute) => attribute.id === `notification:${elevenstProcessedFoodProductNameNoticeCode}`), false, "the product name is derived from the confirmed title");
+  assert.equal(food.some((attribute) => attribute.id === "notification:176398001"), true, "expiry must be entered explicitly");
+  assert.equal(food.some((attribute) => attribute.id === "notification:23756754"), true, "customer-service phone must be entered explicitly");
+  assert.deepEqual(normalizeChannelAttributes("elevenst", "1341821", []), []);
+  assert.deepEqual(normalizeChannelAttributes("ebay", "20473", []), []);
 });

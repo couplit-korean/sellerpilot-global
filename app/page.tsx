@@ -482,6 +482,16 @@ const ticketChannelCodes: Record<string, string> = {
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
 const productMarginSalesChannels = activeChannelKeys.map((key) => ({ key, code: channels[key].letter }));
+const channelRuleHandoffs: Record<(typeof activeChannelKeys)[number], string> = {
+  qoo10: "일본어 상품명 · 배송코드 · 출고 가능일을 공식 조회와 판매자 확인으로 확정",
+  shopee: "국가별 숍 · 말단 카테고리 · 필수 속성 · 활성 물류를 공식 API로 확인",
+  lazada: "판매 국가 · 말단 카테고리 · 필수 속성 · 배송·보증 정책을 확인",
+  coupang: "말단 카테고리 · 상품고시 · 인증 · 출고지·반품지를 WING API로 확인",
+  elevenst: "말단 카테고리 · 상품정보제공고시 · 인증 · 배송 조건을 확인",
+  smartstore: "말단 카테고리 · 필수 속성 · 상품고시 · A/S·출고·반품 정책을 확인",
+  ebay: "필수 상품 속성 · 배송·결제·반품 정책 · 재고 위치를 Seller Hub와 확인",
+  temu: "Compliance 승인 · 말단 카테고리 · 배송 템플릿을 Partner/Seller Center에서 확인",
+};
 type DisplayProduct = {
   id: string;
   sourceId: string;
@@ -2846,9 +2856,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
   const [commerceTemplates, setCommerceTemplates] = useState<CommerceTemplate[]>([]);
   const [appliedTemplate, setAppliedTemplate] = useState("");
-  const connectedChannelKeys = useMemo(() => channelMetrics
+  const connectedChannelKeys = useMemo<Array<(typeof activeChannelKeys)[number]>>(() => channelMetrics
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
-    .map((metric) => metric.channelKey), [channelMetrics]);
+    .map((metric) => metric.channelKey as (typeof activeChannelKeys)[number]), [channelMetrics]);
   const selectedChannels = useMemo(
     () => connectedChannelKeys.filter((key) => channelSelection[key] !== false),
     [channelSelection, connectedChannelKeys],
@@ -4066,7 +4076,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     isResolvedProductFact(intake.countryOfOrigin),
     isResolvedProductFact(intake.material),
     isResolvedProductFact(intake.packageContents),
+    productConditions.includes(intake.condition),
+    (intake.gtinStatus === "HAS_GTIN" && /^\d{8,14}$/.test(intake.gtin.trim()))
+      || (intake.gtinStatus === "NO_GTIN" && intake.gtin.trim() === ""),
     intake.sellingPrice > 0,
+    productCurrencies.includes(intake.currency),
     intake.stock > 0,
     intake.weightKg > 0,
     intake.packageLengthCm > 0 && intake.packageWidthCm > 0 && intake.packageHeightCm > 0,
@@ -4222,8 +4236,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
-          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
-          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키 등록과 실제 업로드 가능은 다릅니다. 3단계 공식 검증과 게시 게이트를 모두 통과해야 합니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 운영 키 등록 · 3단계 검증 필요</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          {selectedChannels.length > 0 && <section className="channel-rule-handoff" aria-label="선택 채널별 후속 필수 확인"><header><b>채널별 규칙은 3단계에서 확정</b><small>1차는 공통 상품 사실만 저장합니다. 계정 정책과 공식 카테고리 값은 자동 조회 후 확인하며 추측하지 않습니다.</small></header><div>{selectedChannels.map((key) => <article key={key}><ChannelMark code={channels[key].letter} size="sm" /><span><b>{channels[key].name}</b><small>{channelRuleHandoffs[key]}</small></span><em>3단계</em></article>)}</div></section>}
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
           <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>상품 원장 저장</b><small>서버 AI 분석 또는 판매자 확인 원본으로 저장</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
