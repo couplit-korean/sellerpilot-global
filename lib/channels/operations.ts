@@ -70,7 +70,7 @@ import {
 } from "./ebay-exact-existing-qa-recovery";
 import { upsertMarketplaceDetailImages } from "./marketplace-images";
 import { parseListingPublicationAssetBinding } from "./listing-publication-content";
-import { validateElevenstListingProduct } from "./elevenst-listing";
+import { elevenstShippingContractErrorMessage, validateElevenstListingArguments } from "./elevenst-listing";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
 import {
   assertElevenstExactExistingUpdate,
@@ -971,7 +971,7 @@ function elevenstXmlNode(name: string, value: unknown): string {
 }
 
 function elevenstProductPayload(argumentsValue: Record<string, unknown>) {
-  const product = validateElevenstListingProduct(objectValue(argumentsValue, "product"));
+  const product = validateElevenstListingArguments(argumentsValue);
   return `<?xml version="1.0" encoding="UTF-8"?>${elevenstXmlNode("Product", product)}`;
 }
 
@@ -997,6 +997,9 @@ function elevenstPrewriteFailureStep(name: string, error: unknown, status = 422)
     status,
     data: {
       error: safeCode,
+      ...(elevenstShippingContractErrorMessage(safeCode)
+        ? { errorMessage: elevenstShippingContractErrorMessage(safeCode) }
+        : {}),
       sellerpilotVerification: "ELEVENST_PREWRITE_REJECTED",
     },
   };
@@ -1158,7 +1161,7 @@ async function executeElevenst(input: ExecuteInput) {
     }
     let product: Record<string, unknown>;
     try {
-      product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+      product = validateElevenstListingArguments(input.arguments);
     } catch (error) {
       return result(input, [elevenstPrewriteFailureStep("product-contract-validation", error)]);
     }
@@ -1345,7 +1348,7 @@ async function executeElevenst(input: ExecuteInput) {
     let snapshotMutableFingerprint: string;
     const exactExistingPublication = elevenstExactExistingUpdateTarget(input.arguments);
     try {
-      product = validateElevenstListingProduct(objectValue(input.arguments, "product"));
+      product = validateElevenstListingArguments(input.arguments);
       if (exactExistingPublication) assertElevenstExactExistingUpdate(input.arguments);
       snapshotMutableFingerprint = stringArgument(input.arguments, "sellerpilotSnapshotMutableFingerprint");
       if (!/^[a-f0-9]{64}$/u.test(snapshotMutableFingerprint)) {

@@ -70,6 +70,8 @@ import {
   type ShopeeSgExistingUpdateIdentity,
 } from "../../../../lib/channels/shopee-sg-existing-update";
 import {
+  bindElevenstAuthoritativeShippingSource,
+  elevenstShippingContractErrorMessage,
   mergeElevenstListingUpdateProduct,
   validateElevenstListingProduct,
 } from "../../../../lib/channels/elevenst-listing";
@@ -549,6 +551,38 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "활성 키와 채널 정보가 일치하지 않습니다." }, { status: 409 });
   }
 
+  // ELEVENST_AUTHORITATIVE_SHIPPING_BEGIN
+  // Shipping-only server metadata must not turn a legacy update into a new
+  // content mutation. Preserve the original classification before binding.
+  const elevenstRequestedContentAssets = channel === "elevenst"
+    && isRecord(parsed.data.arguments.sellerpilotAssets);
+  // Run before content preparation, identity permits, claims or enqueue. Later
+  // create/update binders copy parsed arguments, so bind the server facts here.
+  if (channel === "elevenst" && (operation === "listing.create" || operation === "listing.update")) {
+    try {
+      const { data: shippingContext, error: shippingContextError } = await userClient.rpc(
+        "sellerpilot_get_product_publish_context",
+        { p_product_id: parsed.data.productId! },
+      );
+      if (shippingContextError) throw new Error("ELEVENST_SHIPPING_SOURCE_CONTEXT_UNAVAILABLE");
+      parsed.data.arguments = bindElevenstAuthoritativeShippingSource(
+        parsed.data.arguments,
+        shippingContext,
+        parsed.data.productId!,
+      );
+    } catch (error) {
+      const code = error instanceof Error && /^ELEVENST_[A-Z0-9_:-]+$/u.test(error.message)
+        ? error.message : "ELEVENST_SHIPPING_SOURCE_CONTEXT_UNAVAILABLE";
+      return NextResponse.json({
+        message: elevenstShippingContractErrorMessage(code)
+          ?? "11번가 상품 원장의 배송 사실을 확인하지 못했습니다. 저장된 상품 ID와 기본 배송비를 확인해 주세요.",
+        mode: "elevenst_authoritative_shipping_required",
+        code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  // ELEVENST_AUTHORITATIVE_SHIPPING_END
+
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const exactTemuExistingContentUpdateRequest = channel === "temu"
     && operation === "listing.update"
@@ -582,7 +616,9 @@ export async function POST(request: NextRequest) {
     && parsed.data.market === qoo10ExactLocalizationRecoveryIdentity.market
     && parsed.data.targetId === qoo10ExactLocalizationRecoveryIdentity.targetId;
   const contentBoundListingOperation = operation === "listing.create"
-    || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
+    || (operation === "listing.update" && (channel === "elevenst"
+      ? elevenstRequestedContentAssets
+      : isRecord(parsed.data.arguments.sellerpilotAssets)))
     || exactSmartstoreContentUpdate
     || exactTemuExistingContentUpdateRequest
     || exactShopeeSgContentUpdate
