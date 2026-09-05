@@ -239,6 +239,13 @@ function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormal
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }
 
+function ebayOrderStatus(row: Record<string, unknown>): NormalizedChannelOrder["status"] {
+  if (row.orderPaymentStatus === "FULLY_REFUNDED") return "refunded";
+  if (object(row.cancelStatus).cancelState === "CANCELED") return "cancelled";
+  if (row.orderFulfillmentStatus === "FULFILLED") return "shipped";
+  return status(`${text(row.orderPaymentStatus)} ${text(row.orderFulfillmentStatus)}`);
+}
+
 function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) {
   return list(data.orders).map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.orderId);
@@ -255,8 +262,14 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       amount,
       currency,
       amountKrw: currency === "KRW" ? amount : 0,
-      status: status(`${text(row.orderPaymentStatus)} ${text(row.orderFulfillmentStatus)}`),
+      status: ebayOrderStatus(row),
       orderedAt: iso(row.creationDate, row.lastModifiedDate),
+      providerContext: {
+        orderId: externalOrderId,
+        // Keep every line, including incomplete ones, so the shipment contract
+        // fails closed instead of silently dropping an unrecognized item.
+        lineItems: items.map((item) => ({ lineItemId: text(item.lineItemId), quantity: item.quantity })),
+      },
     };
   }).filter((row): row is NormalizedChannelOrder => Boolean(row));
 }

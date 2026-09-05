@@ -1,4 +1,5 @@
 import type { ActiveChannelKey } from "./catalog";
+import { ebayShipmentBody } from "./ebay-shipment";
 
 export type ShipmentDraft = {
   channel: ActiveChannelKey;
@@ -155,7 +156,13 @@ export function buildShipmentArguments(input: ShipmentDraft): Record<string, unk
     };
   }
   if (input.channel === "ebay") {
-    return { orderId: externalOrderId, body: { shippingCarrierCode: carrierCode, trackingNumber, shippedDate: shippedAt } };
+    const orderId = exactProviderIdentity(input, externalOrderId, "orderId");
+    return { orderId, body: ebayShipmentBody({
+      lineItems: input.providerContext?.lineItems,
+      shippingCarrierCode: carrierCode,
+      trackingNumber,
+      shippedDate: shippedAt,
+    }) };
   }
   if (input.channel === "temu") {
     return { parentOrderSn: externalOrderId, carrierCode, trackingNumber, providerContext: input.providerContext ?? {} };
