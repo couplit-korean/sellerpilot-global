@@ -48,8 +48,10 @@ async function createDatabase(options = { includeRecovery: true }) {
   const db = new PGlite();
   await db.exec(await compatibilityLayer());
   const { migrationUrl, names } = await migrationNames();
+  assert.ok(names.includes(migrationName));
   for (const name of names) {
-    if (!options.includeRecovery && name >= migrationName) break;
+    // Both variants test this historical migration's own pre/post image.
+    if (name > migrationName || (!options.includeRecovery && name === migrationName)) break;
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     await db.exec(stripUnavailableExtensions(await readFile(new URL(name, migrationUrl), "utf8")));
   }

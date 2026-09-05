@@ -4,6 +4,9 @@ import { readdir, readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
+// Exact schema at this fixture's last verified update (dda5386). Later
+// operational claimant overlays belong to the full migration replay suite.
+const PUBLICATION_FIXTURE_SCHEMA_THROUGH = "20260901174000_require_exact_smartstore_stock_one.sql";
 const RELEASE_SHA = "a".repeat(40);
 const OTHER_RELEASE_SHA = "b".repeat(40);
 const SELLER_ACCOUNT_KEY = "c".repeat(64);
@@ -68,7 +71,9 @@ async function createDatabase() {
   const migrationNames = (await readdir(migrationUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  assert.ok(migrationNames.includes(PUBLICATION_FIXTURE_SCHEMA_THROUGH));
   for (const name of migrationNames) {
+    if (name > PUBLICATION_FIXTURE_SCHEMA_THROUGH) break;
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     await db.exec(stripUnavailableExtensions(
       await readFile(new URL(name, migrationUrl), "utf8"),

@@ -9,6 +9,10 @@ const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.s
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
 const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
 const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql";
+// This reduced CS fixture last passed on dda5386 and intentionally omits
+// the serverless claimant chain. Pin its exact schema horizon; production
+// overlay replay remains covered by the separate full migration suite.
+const CS_FIXTURE_SCHEMA_THROUGH = "20260901174000_require_exact_smartstore_stock_one.sql";
 const FIXTURE_EXCLUDED_MIGRATIONS = new Set([
   "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
   "20260828145700_schedule_serverless_cs_wakeup.sql",
@@ -264,9 +268,11 @@ async function migrationEntries() {
   return { migrationUrl, names };
 }
 
-async function applyMigrations(db, { through } = {}) {
+async function applyMigrations(db, { through = CS_FIXTURE_SCHEMA_THROUGH } = {}) {
   const { migrationUrl, names } = await migrationEntries();
+  assert.ok(names.includes(through), "the exact historical CS fixture schema must exist");
   for (const name of names) {
+    if (name > through) break;
     if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(sql));
