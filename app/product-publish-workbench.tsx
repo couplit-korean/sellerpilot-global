@@ -673,7 +673,13 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     buildLocalizedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, { classification }),
     legacyQoo10Repair,
   );
-  const puckDetailHtml = productDetailDataToHtml(publishContextDesignedDetailData(context));
+  // Only these Korean targets consume the central Puck document. Foreign
+  // targets retain their approved localized rich/plain content, not relabelled Korean facts.
+  const puckDetailLocale = target?.locale ?? writeListing?.locale ?? (listingMarket === "KR" ? "ko-KR" : undefined);
+  const puckDetailHtml = ["coupang", "elevenst", "smartstore"].includes(channel)
+    && puckDetailLocale?.toLowerCase().split("-")[0] === "ko"
+    ? productDetailDataToHtml(publishContextDesignedDetailData(context), puckDetailLocale)
+    : "";
   const shopeePlainDescription = replaceLegacyQoo10TitleReferences(
     buildLocalizedBudgetedPlainDetail(writeListing, marketplaceTitle, marketplaceDescription, 3_000, { classification }),
     legacyQoo10Repair,
