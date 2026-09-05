@@ -86,6 +86,7 @@ test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer message
       priority: 2,
       receivedAt: new Date(1_787_340_000_000).toISOString(),
       remoteMessageId: "message-1",
+      senderRole: "customer",
     }]);
   } finally {
     globalThis.fetch = originalFetch;
@@ -118,12 +119,16 @@ test("Lazada unread state does not masquerade as an answer", () => {
       { message_id: "seller-1", content: JSON.stringify({ txt: "판매자 답변" }), from_account_type: 2, send_time: 1001, status: 0 },
     ] } },
   }]);
-  assert.equal(answered[0]?.status, "resolved");
+  assert.equal(answered.length, 2);
+  assert.equal(answered[0]?.status, "waiting");
+  assert.equal(answered[1]?.status, "resolved");
+  assert.equal(answered[1]?.senderRole, "seller");
+  assert.equal(answered[1]?.remoteMessageId, "seller-1");
   assert.equal(answered[0]?.message, "읽은 고객 문의");
   assert.equal(answered[0]?.remoteMessageId, "buyer-1");
 });
 
-test("Lazada IM follows string cursors and keeps the latest buyer message per session", async () => {
+test("Lazada IM follows string cursors and keeps every buyer message per session", async () => {
   const originalFetch = globalThis.fetch;
   const calls: URL[] = [];
   globalThis.fetch = async (input) => {
@@ -179,9 +184,10 @@ test("Lazada IM follows string cursors and keeps the latest buyer message per se
     assert.equal(calls.filter((url) => url.pathname.endsWith("/im/message/list")).length, 3);
     assert.equal(calls.some((url) => url.searchParams.get("last_session_id") === "session-1"), true);
     assert.equal(calls.some((url) => url.searchParams.get("last_message_id") === "message-new"), true);
-    assert.equal(normalized.length, 2);
-    assert.equal(normalized.find((item) => item.externalTicketId === "lazada-im:session-1")?.message, "최신 문의");
-    assert.equal(normalized.find((item) => item.externalTicketId === "lazada-im:session-1")?.remoteMessageId, "message-new");
+    assert.equal(normalized.length, 3);
+    const sessionHistory = normalized.filter((item) => item.externalTicketId === "lazada-im:session-1");
+    assert.deepEqual(sessionHistory.map((item) => item.remoteMessageId), ["message-old", "message-new"]);
+    assert.deepEqual(sessionHistory.map((item) => item.message), ["이전 문의", "최신 문의"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -192,4 +198,28 @@ test("Lazada IM and Temu after-sales sync use the fixed-egress channel gateway",
   assert.match(route, /gatewayChannels = new Set<ActiveChannelKey>\(\[.*"lazada".*"temu"/);
   assert.equal((route.match(/gatewayChannels\.has\(channel\)/g) ?? []).length, 2);
   assert.match(route, /p_operation: "inquiries\.list"/);
+});
+
+
+test("Lazada history rejects unsequenced seller events without dropping or rewriting their originals", () => {
+  for (const sendTime of [undefined, null, "", " ", 0, "0", -1, "-1", false, true, {}, "invalid", "2026-09-05T09:01:00", "2026-02-30T09:01:00Z"]) {
+    const steps = [{ name: "inquiries-message:s:1", data: {
+      sellerpilotSession: { session_id: "s", last_message_time: 1788600000000 },
+      data: { message_list: [
+        { message_id: "buyer-new", from_account_type: 1, send_time: "2026-09-05T09:02:00Z", content: { txt: "new buyer" } },
+        { message_id: "seller-old", from_account_type: 2, send_time: sendTime, content: { txt: "original seller body" } },
+      ] },
+    } }];
+    const original = structuredClone(steps);
+    assert.throws(() => normalizeLazadaImHistory(steps, "2026-09-05T10:00:00.000Z"), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+    assert.deepEqual(steps, original);
+  }
+});
+
+test("Lazada seller-only history requires a provider timestamp even without a buyer", () => {
+  const steps = [{ name: "inquiries-message:s:1", data: {
+    sellerpilotSession: { session_id: "s" },
+    data: { message_list: [{ message_id: "seller-only", from_account_type: 2, content: { txt: "original" } }] },
+  } }];
+  assert.throws(() => normalizeLazadaImHistory(steps), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
 });

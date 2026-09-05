@@ -3,6 +3,7 @@ import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { firstFiniteNonNegative } from "./normalize-value";
 import { createTimestampNormalizer } from "./normalization-time";
+import { lazadaShipmentItemIds } from "./shipment-draft";
 
 export type NormalizedChannelOrder = {
   externalOrderId: string;
@@ -179,19 +180,71 @@ function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer
 
 function normalizeLazada(data: Record<string, unknown>, iso: TimestampNormalizer, steps: ChannelOperationResult["steps"] = []) {
   const rows = list(object(data.data).orders);
-  const itemDetails = new Map(steps
-    .filter((item) => item.name.startsWith("order-items:") && item.ok)
-    .map((item) => [item.name.slice("order-items:".length), list(item.data.data)] as const));
+  const itemDetails = steps.filter((item) => item.name.startsWith("order-items:"));
+  // Inspect every successful detail page in the received batch, not just the
+  // current order page. An item identity cannot belong to two different orders.
+  const itemOwners = new Map<string, Set<string>>();
+  for (const detail of itemDetails.filter((item) => item.ok)) {
+    const orderId = detail.name.slice("order-items:".length).trim();
+    if (!orderId) continue;
+    for (const item of list(detail.data.data)) {
+      let itemId: string;
+      try {
+        [itemId] = lazadaShipmentItemIds([item.order_item_id]);
+      } catch {
+        continue;
+      }
+      const owners = itemOwners.get(itemId) ?? new Set<string>();
+      owners.add(orderId);
+      itemOwners.set(itemId, owners);
+    }
+  }
+  const conflictingOrders = new Set([...itemOwners.values()]
+    .filter((owners) => owners.size > 1).flatMap((owners) => [...owners]));
   return rows.map((row): NormalizedChannelOrder | null => {
     const externalOrderId = text(row.order_id, row.order_number);
     if (!externalOrderId) return null;
     const amount = number(row.price, row.grand_total);
     const currency = text(row.currency, "MYR").toUpperCase();
     const statuses = Array.isArray(row.statuses) ? row.statuses.join(" ") : row.status;
-    const items = itemDetails.get(externalOrderId) ?? [];
-    const orderItemIds = [...new Set(items.map((item) => text(item.order_item_id)).filter(Boolean))].slice(0, 100);
-    const shippingType = text(items[0]?.shipping_type).toLowerCase();
-    const deliveryType = shippingType.includes("drop") ? "dropship" : shippingType;
+    const details = itemDetails.filter((item) => item.name === `order-items:${externalOrderId}`);
+    const rawItems = details.length === 1 && details[0].ok ? details[0].data.data : undefined;
+    let items = list(rawItems);
+    let orderItemIds: string[] = [];
+    let deliveryType = "";
+    try {
+      // Inspect the unfiltered response. A malformed row must not disappear
+      // before identity validation, including array holes and duplicate IDs.
+      if (conflictingOrders.has(externalOrderId)) throw new Error("conflicting item ownership");
+      if (!Array.isArray(rawItems) || rawItems.length !== items.length) throw new Error("invalid items");
+      orderItemIds = lazadaShipmentItemIds(items.map((item) => item.order_item_id));
+      if (row.items_count !== undefined && row.items_count !== null) {
+        const count = typeof row.items_count === "number" || typeof row.items_count === "string"
+          ? Number(row.items_count) : NaN;
+        if (!Number.isSafeInteger(count) || count !== items.length) throw new Error("incomplete items");
+      }
+      if (items.some((item) => item.order_id !== undefined && text(item.order_id) !== externalOrderId)) {
+        throw new Error("wrong order items");
+      }
+      const deliveryTypes = items.map((item) => {
+        const value = typeof item.shipping_type === "string" ? item.shipping_type.trim().toLowerCase() : "";
+        return value.includes("drop") ? "dropship" : value;
+      });
+      deliveryType = deliveryTypes[0];
+      if (!deliveryType || deliveryTypes.some((value) => value !== deliveryType)) throw new Error("ambiguous delivery type");
+      // JSONB's text form adds separator whitespace. Leave headroom below the
+      // 32768-byte storage guard for this bounded, at-most-100-item object.
+      if (Buffer.byteLength(JSON.stringify({ orderId: externalOrderId, orderItemIds, deliveryType }), "utf8") > 32000) {
+        throw new Error("provider context too large");
+      }
+    } catch {
+      // Persist an explicit, small object so the storage RPC replaces any older
+      // actionable context. Missing/oversized context would retain stale IDs.
+      // Invalid details are also forbidden as display/quantity evidence.
+      items = [];
+      orderItemIds = [];
+      deliveryType = "";
+    }
     return {
       externalOrderId,
       customerName: text([row.customer_first_name, row.customer_last_name].filter(Boolean).join(" "), "Lazada 구매자"),

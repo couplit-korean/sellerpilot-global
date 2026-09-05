@@ -43,3 +43,14 @@ test("records identified seller messages and ignores unidentified or recalled La
   });
   assert.equal(parseLazadaImPush({ data: { ...base, from_account_type: 1, status: 1 } }), null);
 });
+
+
+test("Lazada seller push cannot use collection or envelope time as message send time", () => {
+  const payload = {
+    timestamp: 1788600000000,
+    data: { session_id: "session-1", message_id: "seller-unknown-time", from_account_type: 2, content: { txt: "original seller body" } },
+  };
+  const original = structuredClone(payload);
+  assert.throws(() => parseLazadaImPush(payload), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+  assert.deepEqual(payload, original);
+});

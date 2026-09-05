@@ -159,8 +159,11 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
   });
   const fallbackRoles = [...remainingRoles];
   sectionsInput.forEach((_section, index) => {
+    // Preserve matched roles without consuming a role needed by a later
+    // unmatched section, including its localized alternative text.
+    if (assigned.has(index)) return;
     const fallbackRole = fallbackRoles.shift();
-    if (!assigned.has(index) && fallbackRole) assigned.set(index, fallbackRole);
+    if (fallbackRole) assigned.set(index, fallbackRole);
   });
   const sections: Record<string, unknown>[] = sectionsInput.map((section, index) => ({
     ...section,

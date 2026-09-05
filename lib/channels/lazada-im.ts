@@ -27,17 +27,30 @@ function parsedRecord(value: unknown) {
   }
 }
 
-function iso(value: unknown, fallbackTimestamp: string) {
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
+function providerTimestamp(value: unknown): string | null {
+  const raw = typeof value === "string" ? value.trim() : value;
+  if (typeof raw === "number" || (typeof raw === "string" && /^\d+$/.test(raw))) {
+    const numeric = Number(raw);
+    if (!Number.isSafeInteger(numeric) || numeric <= 0) return null;
     const parsed = new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
-  if (typeof value === "string") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
-  }
-  return fallbackTimestamp;
+  // Do not let Date.parse invent a timezone or turn "0"/"1" into dates.
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) return null;
+  const calendarDate = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== raw.slice(0, 10)) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function messageTimestamp(value: unknown, senderType: number, fallbackTimestamp: string) {
+  const timestamp = providerTimestamp(value);
+  // The existing seller ledger derives answered state from receivedAt alone.
+  // It cannot persist an unordered seller event. Fail the batch before ingest
+  // rather than fabricate ordering, silently drop the original, or return a
+  // success whose collection timestamp closes a newer buyer inquiry.
+  if (senderType === 2 && !timestamp) throw new Error("LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED");
+  return timestamp ?? fallbackTimestamp;
 }
 
 export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInquiry | null {
@@ -60,18 +73,22 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
     message: messageText,
     status: senderType === 2 ? "resolved" : "waiting",
     priority: 3,
-    receivedAt: iso(message.send_time ?? data.send_time ?? payload.timestamp, receivedAt),
+    receivedAt: messageTimestamp(
+      message.send_time ?? data.send_time ?? (senderType === 2 ? undefined : payload.timestamp),
+      senderType,
+      receivedAt,
+    ),
     remoteMessageId: messageId,
     ...(senderType === 2 ? { senderRole: "seller" as const } : {}),
   };
 }
 
 export function normalizeLazadaImHistory(
-  steps: Array<{ name: string; data: Record<string, unknown> }>,
+  steps: Array<{ name: string; data: Record<string, unknown>; ok?: boolean }>,
   fallbackTimestamp = new Date().toISOString(),
 ) {
   const sessions = new Map<string, { session: Record<string, unknown>; messages: Record<string, unknown>[] }>();
-  for (const step of steps.filter((item) => item.name.startsWith("inquiries-message:"))) {
+  for (const step of steps.filter((item) => item.ok !== false && item.name.startsWith("inquiries-message:"))) {
       const root = record(step.data.data);
       const session = record(step.data.sellerpilotSession);
       const nameSessionId = step.name.slice("inquiries-message:".length).split(":")[0];
@@ -87,31 +104,36 @@ export function normalizeLazadaImHistory(
       });
   }
 
-  return [...sessions.entries()]
-    .map(([sessionId, history]): LazadaImInquiry | null => {
-      const { session, messages } = history;
-      const normalMessages = messages.filter((message) => Number(message.status ?? 0) === 0);
-      const buyerMessages = normalMessages.filter((message) => Number(message.from_account_type ?? 1) === 1);
-      const sellerMessages = normalMessages.filter((message) => Number(message.from_account_type ?? 1) === 2);
-      const latest = [...buyerMessages].sort((left, right) => Number(right.send_time ?? 0) - Number(left.send_time ?? 0))[0];
-      const latestSeller = [...sellerMessages].sort((left, right) => Number(right.send_time ?? 0) - Number(left.send_time ?? 0))[0];
-      const content = parsedRecord(latest?.content);
-      const message = text(content.translateTxt, content.txt, latest?.txt, session.summary);
-      if (!message) return null;
-      const unreadCount = Number(session.unread_count ?? 0);
-      return {
+  return [...sessions.entries()].flatMap(([sessionId, { session, messages }]) => {
+    const byMessageId = new Map<string, LazadaImInquiry>();
+    for (const row of messages) {
+      const remoteMessageId = text(row.message_id);
+      const senderType = Number(row.from_account_type);
+      const content = parsedRecord(row.content);
+      const message = text(content.txt, content.text, row.txt, row.text, content.translateTxt);
+      // Session summaries are not message bodies. Never invent an identity or
+      // a sender, and do not ingest recalled/system messages as customer text.
+      if (!remoteMessageId || !message || ![1, 2].includes(senderType)
+          || Number(row.status ?? 0) !== 0) continue;
+      const receivedAt = messageTimestamp(row.send_time, senderType, fallbackTimestamp);
+      if (byMessageId.has(remoteMessageId)) continue;
+      byMessageId.set(remoteMessageId, {
         externalTicketId: `lazada-im:${sessionId}`,
         customerName: text(session.title, session.buyer_name, "Lazada 고객"),
         subject: text(session.product_name, session.site_id ? `Lazada ${session.site_id} IM 문의` : "Lazada IM 문의"),
         message,
-        // unread_count only describes whether the seller has opened the IM.
-        // A conversation is answered only when a seller message is newer than
-        // the latest buyer message.
-        status: Number(latestSeller?.send_time ?? 0) > Number(latest?.send_time ?? 0) ? "resolved" : "waiting",
-        priority: unreadCount > 0 ? 2 : 3,
-        receivedAt: iso(latest?.send_time ?? session.last_message_time, fallbackTimestamp),
-        remoteMessageId: text(latest?.message_id),
-      };
-    })
-    .filter((row): row is LazadaImInquiry => Boolean(row));
+        // These are message events, not a session summary. The ledger keeps
+        // latest_inbound_key on the latest buyer and processes seller events
+        // separately to derive the current conversation's provider status.
+        status: senderType === 2 ? "resolved" : "waiting",
+        priority: Number(session.unread_count ?? 0) > 0 ? 2 : 3,
+        receivedAt,
+        remoteMessageId,
+        senderRole: senderType === 2 ? "seller" : "customer",
+      });
+    }
+    return [...byMessageId.values()].sort((left, right) =>
+      left.receivedAt.localeCompare(right.receivedAt)
+      || left.remoteMessageId.localeCompare(right.remoteMessageId));
+  });
 }

@@ -2201,3 +2201,86 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
     await db.close();
   }
 });
+
+
+test("Lazada normalized full history persists both roles without replacing the latest buyer", async () => {
+  const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
+  const db = await createDatabase();
+  try {
+    await seedAdminAndCredential(db);
+    await setClaims(db, "service_role");
+    const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential(
+      'lazada', 'production', $1::jsonb, now() + interval '180 days', 90, 30, 0
+    )`, [JSON.stringify({
+      app_key: "lazada-cs-app", app_secret: "test-only", country: "my", access_token: "test-only",
+      provider_account_subject: `lazada:v1:${"A".repeat(60)}`, provider_account_identity_version: "v1",
+    })]);
+    const session = { session_id: "full-history", title: "test buyer", unread_count: 0 };
+    const event = (id, sender, minute) => ({
+      message_id: id, from_account_type: sender, send_time: `2026-08-25T09:0${minute}:00.000Z`,
+      content: { txt: id }, status: 0,
+    });
+    const buyer1 = event("buyer-1", 1, 0);
+    const seller1 = event("seller-1", 2, 1);
+    const buyer2 = event("buyer-2", 1, 2);
+    const seller2 = event("seller-2", 2, 3);
+    const normalize = (pages) => normalizeLazadaImHistory(pages.map((messages, index) => ({
+      name: `inquiries-message:full-history:${index + 1}`,
+      data: { sellerpilotSession: session, data: { message_list: messages } },
+    })), "2026-08-25T10:00:00.000Z");
+    const ingest = (rows) => scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'lazada', $2::jsonb)",
+      [credentialId, JSON.stringify(rows)]);
+    const state = async () => (await db.query(`
+      select t.provider_status, t.message, latest.remote_message_id as latest_buyer,
+             count(*)::integer as messages,
+             count(*) filter (where m.sender_role = 'seller')::integer as seller_messages,
+             count(*) filter (where m.sender_role = 'customer')::integer as customer_messages
+        from sellerpilot_private.support_tickets t
+        join sellerpilot_private.support_inbound_messages m on m.ticket_id = t.id
+        join sellerpilot_private.support_inbound_messages latest
+          on latest.ticket_id = t.id and latest.inbound_key = t.latest_inbound_key
+       where t.source_credential_id = $1
+       group by t.id, latest.remote_message_id`, [credentialId])).rows;
+    const history = normalize([[buyer2, seller1], [seller1, buyer1]]);
+    assert.equal(history.length, 3);
+    await ingest(history);
+    assert.deepEqual(await state(), [{ provider_status: "waiting", message: "buyer-2", latest_buyer: "buyer-2", messages: 3, seller_messages: 1, customer_messages: 2 }]);
+    await ingest(history);
+    assert.equal((await state())[0].messages, 3);
+    // A missing old seller timestamp must not become the 10:00 collection
+    // timestamp and resolve the newer 09:02 buyer. Reject the whole unsafe
+    // batch rather than dropping its body or inventing a sortable timestamp.
+    const missingTimePages = [[buyer2, { ...seller1, send_time: undefined }]];
+    const originalMissingTimePages = structuredClone(missingTimePages);
+    let timestampError;
+    try {
+      await ingest(normalize(missingTimePages));
+    } catch (error) {
+      timestampError = error;
+    }
+    assert.equal((await state())[0].provider_status, "waiting");
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    assert.equal((await state())[0].messages, 3);
+    assert.match(timestampError?.message ?? "", /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+    assert.deepEqual(missingTimePages, originalMissingTimePages);
+    assert.deepEqual((await db.query(`select body from sellerpilot_private.support_inbound_messages
+      where remote_message_id = 'seller-1'`)).rows, [{ body: "seller-1" }]);
+    await ingest(normalize([[seller2, buyer2], [seller1, buyer1]]));
+    assert.deepEqual(await state(), [{ provider_status: "answered", message: "buyer-2", latest_buyer: "buyer-2", messages: 4, seller_messages: 2, customer_messages: 2 }]);
+    await ingest(normalize([[seller1, buyer1]]));
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    assert.equal((await state())[0].provider_status, "answered");
+    assert.deepEqual((await db.query(`select remote_message_id, sender_role, body
+      from sellerpilot_private.support_inbound_messages order by received_at`)).rows, [
+      { remote_message_id: "buyer-1", sender_role: "customer", body: "buyer-1" },
+      { remote_message_id: "seller-1", sender_role: "seller", body: "seller-1" },
+      { remote_message_id: "buyer-2", sender_role: "customer", body: "buyer-2" },
+      { remote_message_id: "seller-2", sender_role: "seller", body: "seller-2" },
+    ]);
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.support_reply_deliveries"), 0);
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation = 'inquiries.reply'"), 0);
+  } finally {
+    await db.close();
+  }
+});
