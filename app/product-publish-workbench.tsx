@@ -81,6 +81,16 @@ import {
 } from "../lib/channel-listing-handoff";
 import type { StudioResultQuality } from "../lib/studio-result-quality";
 import { inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import {
+  coupangShippingFeeDraft,
+  listingShippingDraftSource,
+  listingShippingRequirements,
+  listingShippingSourceChanged,
+  normalizeListingShippingSource,
+  shippingRequirementDependsOnSource,
+  smartstoreShippingDraft,
+  type ListingShippingSource,
+} from "../lib/channels/listing-shipping";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
@@ -387,7 +397,7 @@ function replaceLegacyQoo10ListingReferences(
 }
 const publishContextRequestTimeoutMs = 30_000;
 const publicationSelectableChannelKeys = activeChannelKeys;
-type ManualFields = {
+type ManualFields = ListingShippingSource & {
   productName: string;
   description: string;
   sellerSku: string;
@@ -501,6 +511,7 @@ export function normalizeManualFields(context: PublishContext): ManualFields {
     return Number.isFinite(number) && number > 0 ? number : 0;
   };
   return {
+    ...normalizeListingShippingSource(value),
     productName: value.productName || context.product.name,
     description: value.description || context.product.description,
     sellerSku: value.sellerSku || context.product.sku,
@@ -642,6 +653,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       : [generatedImage("portrait"), generatedImage("wide"), generatedImage("hero")]);
   const sourceImage = galleryImageUrls[0] ?? "";
   const sellerpilotAssets = {
+    ...(operation === "listing.create" ? { shipping: listingShippingDraftSource(manual) } : {}),
     contentMode: manualMvp ? "manual_mvp" : "ai_generated",
     galleryImageUrls,
     detailImageUrls,
@@ -731,7 +743,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         TaxRate: "S",
         ItemQty: String(exactLocalizationUpdate ? exactIdentity.quantity : quantity),
         ExpireDate: qoo10ExpiryDate(),
-        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : "0",
+        ShippingNo: exactLocalizationUpdate ? exactIdentity.shippingNo : operation === "listing.create" ? "" : "0",
         AvailableDateType: "0",
         AvailableDateValue: "3",
         Keyword: exactLocalizationUpdate
@@ -843,9 +855,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         generalProductName: manual.categoryHint,
         deliveryMethod: "SEQUENCIAL",
         deliveryCompanyCode: "",
-        deliveryChargeType: "FREE",
-        deliveryCharge: 0,
-        freeShipOverAmount: 0,
+        ...(operation === "listing.create" ? coupangShippingFeeDraft(manual) : {
+          deliveryChargeType: "FREE",
+          deliveryCharge: 0,
+          freeShipOverAmount: 0,
+        }),
         deliveryChargeOnReturn: 0,
         returnCharge: 0,
         outboundShippingPlaceCode: "",
@@ -946,6 +960,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
           salePrice: channelPrice,
           stockQuantity: quantity,
+          ...(operation === "listing.create" ? { deliveryInfo: smartstoreShippingDraft(manual) } : {}),
           detailAttribute: { minorPurchasable: true, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: title.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
         },
@@ -1094,7 +1109,10 @@ export function inspectWorkbenchListingDraft(
     listing: Listing | null | undefined;
   },
 ) {
-  const requirements = inspectListingDraft(channel, draft, operation);
+  const requirements = [
+    ...inspectListingDraft(channel, draft, operation),
+    ...listingShippingRequirements(channel, draft, operation),
+  ];
   const exactEbayProviderCopyUpdate = operation === "listing.update"
     && exactExternalActionWorkbenchRecoveryCandidate(
       recoveryContext?.productId,
@@ -1236,6 +1254,7 @@ export function buildSynchronizedDraftMap(
         listingHandoffs?.[channel],
       );
       if (currentDraft) {
+        const shippingSourceChanged = listingShippingSourceChanged(currentDraft, nextDraft);
         for (const requirement of inspectWorkbenchListingDraft(
           channel,
           nextDraft,
@@ -1243,6 +1262,7 @@ export function buildSynchronizedDraftMap(
           { productId: context.product.id, listing },
         )) {
           if (!requirement.manualPath) continue;
+          if (shippingSourceChanged && shippingRequirementDependsOnSource(requirement)) continue;
           nextDraft = setListingDraftValue(
             nextDraft,
             requirement.manualPath,

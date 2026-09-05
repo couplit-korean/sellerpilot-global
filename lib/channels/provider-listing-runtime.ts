@@ -72,6 +72,7 @@ import {
   shopeeSgListingCreateRequested,
 } from "./shopee-sg-listing-create";
 import { parseCoupangNoticeEnvelope } from "./listing-preflight";
+import { assertListingShippingReady, validatedCoupangShippingFees, validatedSmartstoreShippingInfo } from "./listing-shipping";
 
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
@@ -1206,6 +1207,11 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     throw new Error("SMARTSTORE_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
   }
   const sourceBody = structuredClone(recordValue(input.arguments.body) ?? {});
+  if (input.operation === "listing.create") {
+    const originProduct = recordValue(sourceBody.originProduct) ?? {};
+    originProduct.deliveryInfo = validatedSmartstoreShippingInfo(originProduct.deliveryInfo);
+    sourceBody.originProduct = originProduct;
+  }
   const imagePlan = smartstoreImageUploadPlan({
     imageUrls: input.arguments.imageUrls,
     body: sourceBody,
@@ -1803,6 +1809,9 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     : input.arguments;
   const requested = coupangRequestedPublication(strictArguments.publicationIntent);
   const body = structuredClone(recordValue(strictArguments.body) ?? {});
+  const shippingFees = recovery
+    ? { deliveryChargeType: "FREE", deliveryCharge: 0, freeShipOverAmount: 0 }
+    : validatedCoupangShippingFees(body);
   const categoryCode = Number(body.displayCategoryCode);
   if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) {
     throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
@@ -1849,14 +1858,18 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   const returnCenters = nestedContent(returnRemote.data)
     .map(recordValue)
     .filter((row): row is UnknownRecord => Boolean(row));
+  const requestedOutboundCode = recovery ? "" : String(body.outboundShippingPlaceCode ?? "").trim();
+  const requestedReturnCenterCode = recovery ? "" : String(body.returnCenterCode ?? "").trim();
   const outbound = outboundCenters.find((center) =>
     coupangUsable(center.usable)
     && preferredKoreanAddress(center.placeAddresses)
+    && (!requestedOutboundCode || String(center.outboundShippingPlaceCode ?? "").trim() === requestedOutboundCode)
     && (!recovery || (Number.isSafeInteger(Number(center.outboundShippingPlaceCode))
       && Number(center.outboundShippingPlaceCode) > 0)));
   const returnCenter = returnCenters.find((center) =>
     coupangUsable(center.usable)
     && preferredKoreanAddress(center.placeAddresses)
+    && (!requestedReturnCenterCode || String(center.returnCenterCode ?? "").trim() === requestedReturnCenterCode)
     && (!recovery || (String(center.returnCenterCode ?? "").trim()
       && String(center.deliverCode ?? "").trim()
       && positiveFee(center))));
@@ -1917,12 +1930,10 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
         || new Date(Date.now() - 60_000).toISOString().slice(0, 19),
       saleEndedAt: body.saleEndedAt || "2099-01-01T23:59:59",
       deliveryCompanyCode: contractedDeliveryCode,
-      deliveryChargeType: "FREE",
-      deliveryCharge: 0,
-      freeShipOverAmount: 0,
-      deliveryChargeOnReturn: returnFee,
-      remoteAreaDeliverable: "N",
-      unionDeliveryType: "UNION_DELIVERY",
+      ...shippingFees,
+      deliveryChargeOnReturn: shippingFees.deliveryChargeType === "FREE" ? returnFee : 0,
+      remoteAreaDeliverable: recovery ? "N" : body.remoteAreaDeliverable ?? "N",
+      unionDeliveryType: recovery ? "UNION_DELIVERY" : body.unionDeliveryType ?? "UNION_DELIVERY",
       outboundShippingPlaceCode: Number(outbound.outboundShippingPlaceCode),
       returnCenterCode,
       returnChargeName: String(returnCenter.shippingPlaceName ?? ""),
@@ -1941,6 +1952,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
 export async function prepareMarketplaceListingArguments(
   input: PrepareProviderListingInput,
 ): Promise<PreparedProviderListing> {
+  assertListingShippingReady(input.channel, input.arguments, input.operation);
   if (input.channel === "shopee") {
     if (input.arguments.globalProduct === true) {
       if (input.operation !== "listing.create") {
