@@ -17,6 +17,7 @@ type BaseNormalizedChannelInquiry = {
   receivedAt: string;
   remoteMessageId?: string;
   senderRole?: "customer" | "seller";
+  orderingStatus?: "unverified" | "conflict";
   providerContext?: Record<string, unknown>;
   externalOrderReference?: string;
   ticketKind?: "conversation" | "after_sales";
@@ -273,7 +274,9 @@ export function normalizeChannelInquiries(
   if (channel === "lazada") {
     const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp)
       .map((inquiry) => finalizeInquiry(channel, inquiry));
-    return [...new Map(normalized.map((inquiry) => [inquiry.inboundKey, inquiry])).values()];
+    return [...new Map(normalized.map((inquiry) => [inquiry.orderingStatus === "conflict"
+      ? `${inquiry.inboundKey}:${inquiry.senderRole}:${createHash("sha256").update(inquiry.message).digest("hex")}`
+      : inquiry.inboundKey, inquiry])).values()];
   }
   const inquirySteps = result.steps.filter((item) => item.ok && /^inquiries(?::\d+)?$/.test(item.name));
   const pageData = inquirySteps.length

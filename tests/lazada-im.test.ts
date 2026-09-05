@@ -51,6 +51,10 @@ test("Lazada seller push cannot use collection or envelope time as message send 
     data: { session_id: "session-1", message_id: "seller-unknown-time", from_account_type: 2, content: { txt: "original seller body" } },
   };
   const original = structuredClone(payload);
-  assert.throws(() => parseLazadaImPush(payload), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+  const inquiry = parseLazadaImPush(payload)!;
+  assert.equal(inquiry.orderingStatus, "unverified");
+  assert.equal(inquiry.receivedAt, "");
+  assert.equal(inquiry.status, "waiting");
+  assert.equal(inquiry.message, "original seller body");
   assert.deepEqual(payload, original);
 });

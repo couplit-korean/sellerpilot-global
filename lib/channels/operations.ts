@@ -4097,6 +4097,14 @@ async function executeLazada(input: ExecuteInput) {
       shipment_provider_code: shipmentProviderCode,
       shipping_allocate_type: shippingAllocateType,
     };
+    const shipmentHooks = input.providerMutationHooks;
+    if (!shipmentHooks) throw new Error("LAZADA_SHIPMENT_MUTATION_HOOKS_REQUIRED");
+    const authorizeShipmentWrite = async () => {
+      await shipmentHooks.assertLeaseHealthy();
+      await shipmentHooks.begin();
+      await shipmentHooks.assertLeaseHealthy();
+    };
+    await authorizeShipmentWrite();
     const packRemote = await lazadaRequest({
       payload: input.payload,
       path: "/order/fulfill/pack",
@@ -4114,6 +4122,9 @@ async function executeLazada(input: ExecuteInput) {
           data: { ...basePackStep.data, sellerpilotVerification: "LAZADA_PACKAGE_ID_MISSING" },
         };
     if (!packStep.ok) return result(input, [providerStep, packStep]);
+    // Pack and RTS are separate mutations. A pack success never authorizes RTS
+    // after cancellation, ownership conflict, context change or a lost lease.
+    await authorizeShipmentWrite();
     const readyRemote = await lazadaRequest({
       payload: input.payload,
       path: "/order/package/rts",

@@ -43,10 +43,10 @@ export async function POST(request: Request) {
   if (!inquiry) return NextResponse.json({ ok: true, ignored: true });
   const credentialId = context && typeof context.credential_id === "string" ? context.credential_id : "";
   const ingestResult = await persistLazadaImInquiry(credentialId, inquiry, (arguments_) => (
-    serviceClient.rpc("sellerpilot_service_ingest_inquiries", arguments_)
-  ));
+    serviceClient.rpc("sellerpilot_service_ingest_lazada_inquiries_v2", { p_credential_id: arguments_.p_credential_id, p_inquiries: arguments_.p_inquiries })
+  ), () => serviceClient.rpc("sellerpilot_service_lazada_quarantine_ready"));
   if (ingestResult.ok === false) {
-    return NextResponse.json({ message: "server unavailable" }, { status: ingestResult.status });
+    return NextResponse.json({ message: ingestResult.partial ? "Lazada partial ingestion: quarantine storage/review pending" : "server unavailable", partial: ingestResult.partial === true, retryAfterSeconds: 300 }, { status: ingestResult.status, headers: { "retry-after": "300" } });
   }
   return NextResponse.json({ ok: true });
 }

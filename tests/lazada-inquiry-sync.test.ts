@@ -201,7 +201,7 @@ test("Lazada IM and Temu after-sales sync use the fixed-egress channel gateway",
 });
 
 
-test("Lazada history rejects unsequenced seller events without dropping or rewriting their originals", () => {
+test("Lazada history marks unsequenced seller events for quarantine without losing confirmed buyers", () => {
   for (const sendTime of [undefined, null, "", " ", 0, "0", -1, "-1", false, true, {}, "invalid", "2026-09-05T09:01:00", "2026-02-30T09:01:00Z"]) {
     const steps = [{ name: "inquiries-message:s:1", data: {
       sellerpilotSession: { session_id: "s", last_message_time: 1788600000000 },
@@ -211,15 +211,24 @@ test("Lazada history rejects unsequenced seller events without dropping or rewri
       ] },
     } }];
     const original = structuredClone(steps);
-    assert.throws(() => normalizeLazadaImHistory(steps, "2026-09-05T10:00:00.000Z"), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+    const normalized = normalizeLazadaImHistory(steps, "2026-09-05T10:00:00.000Z");
+    assert.equal(normalized.length, 2);
+    const seller = normalized.find(row => row.senderRole === "seller")!;
+    assert.equal(seller.receivedAt, "");
+    assert.equal(seller.orderingStatus, "unverified");
+    assert.equal(seller.status, "waiting");
+    assert.equal(seller.message, "original seller body");
     assert.deepEqual(steps, original);
   }
 });
 
-test("Lazada seller-only history requires a provider timestamp even without a buyer", () => {
+test("Lazada seller-only history is quarantinable without inventing a buyer", () => {
   const steps = [{ name: "inquiries-message:s:1", data: {
     sellerpilotSession: { session_id: "s" },
     data: { message_list: [{ message_id: "seller-only", from_account_type: 2, content: { txt: "original" } }] },
   } }];
-  assert.throws(() => normalizeLazadaImHistory(steps), /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+  const [seller] = normalizeLazadaImHistory(steps);
+  assert.equal(seller.orderingStatus, "unverified");
+  assert.equal(seller.receivedAt, "");
+  assert.equal(seller.message, "original");
 });

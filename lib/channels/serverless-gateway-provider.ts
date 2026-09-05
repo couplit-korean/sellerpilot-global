@@ -868,6 +868,8 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     await input.hooks.assertLeaseHealthy();
+    const delayedLazadaShipmentBoundary = input.job.channel === "lazada"
+      && input.job.operation === "shipment.confirm";
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
     const delayedTemuExactUpdateBoundary = input.job.channel === "temu"
@@ -888,6 +890,7 @@ export async function executeServerlessGatewayProviderJob(
       && input.job.operation === "listing.update"
       && Boolean(coupangExactQaRecoveryBinding(operationArguments, "listing.update"));
     if (writeChannelOperations.has(input.job.operation)
+        && !delayedLazadaShipmentBoundary
         && !delayedTemuActivationBoundary
         && !delayedTemuExactUpdateBoundary
         && !delayedEbayExactUpdateBoundary
@@ -903,7 +906,8 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedTemuActivationBoundary
+      ...(delayedLazadaShipmentBoundary
+          || delayedTemuActivationBoundary
           || delayedTemuExactUpdateBoundary
           || delayedEbayExactUpdateBoundary
           || delayedShopeeExactInventoryBoundary

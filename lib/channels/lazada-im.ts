@@ -8,6 +8,7 @@ export type LazadaImInquiry = {
   receivedAt: string;
   remoteMessageId: string;
   senderRole?: "customer" | "seller";
+  orderingStatus?: "unverified" | "conflict";
 };
 
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value)
@@ -17,6 +18,9 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
+
+// Store only the original text body, not provider envelopes or customer names.
+const messageBody = (...values: unknown[]) => (values.find((value) => typeof value === "string" && value.trim()) as string | undefined) ?? "";
 
 function parsedRecord(value: unknown) {
   if (typeof value !== "string") return record(value);
@@ -45,12 +49,9 @@ function providerTimestamp(value: unknown): string | null {
 
 function messageTimestamp(value: unknown, senderType: number, fallbackTimestamp: string) {
   const timestamp = providerTimestamp(value);
-  // The existing seller ledger derives answered state from receivedAt alone.
-  // It cannot persist an unordered seller event. Fail the batch before ingest
-  // rather than fabricate ordering, silently drop the original, or return a
-  // success whose collection timestamp closes a newer buyer inquiry.
-  if (senderType === 2 && !timestamp) throw new Error("LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED");
-  return timestamp ?? fallbackTimestamp;
+  // Empty means unordered, never collection time. The v2 ingestion boundary
+  // quarantines this event before the ordinary seller state machine.
+  return timestamp ?? (senderType === 2 ? "" : fallbackTimestamp);
 }
 
 export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInquiry | null {
@@ -61,23 +62,21 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
   const content = parsedRecord(message.content ?? data.content);
   const sessionId = text(data.session_id, data.sessionId, message.session_id, payload.session_id);
   const messageId = text(message.message_id, data.message_id, payload.message_id, payload.uuid);
-  const messageText = text(content.translateTxt, content.txt, content.text, message.txt, message.text, data.txt);
+  const messageText = messageBody(content.txt, content.text, message.txt, message.text, data.txt, content.translateTxt);
   const senderType = Number(message.from_account_type ?? data.from_account_type ?? 1);
   const messageStatus = Number(message.status ?? data.status ?? 0);
   if (!sessionId || !messageId || !messageText || ![1, 2].includes(senderType) || messageStatus === 1) return null;
 
+  const timestamp = messageTimestamp(message.send_time ?? data.send_time ?? (senderType === 2 ? undefined : payload.timestamp), senderType, receivedAt);
   return {
     externalTicketId: `lazada-im:${sessionId}`,
-    customerName: text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객"),
-    subject: text(data.product_name, data.title, data.site_id ? `Lazada ${data.site_id} IM 문의` : "Lazada IM 문의"),
+    customerName: timestamp ? text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객") : "Lazada 판매자",
+    subject: timestamp ? text(data.product_name, data.title, data.site_id ? `Lazada ${data.site_id} IM 문의` : "Lazada IM 문의") : "Lazada 시각 미확정 메시지",
     message: messageText,
-    status: senderType === 2 ? "resolved" : "waiting",
+    status: senderType === 2 && timestamp ? "resolved" : "waiting",
     priority: 3,
-    receivedAt: messageTimestamp(
-      message.send_time ?? data.send_time ?? (senderType === 2 ? undefined : payload.timestamp),
-      senderType,
-      receivedAt,
-    ),
+    receivedAt: timestamp,
+    ...(!timestamp ? { orderingStatus: "unverified" as const } : {}),
     remoteMessageId: messageId,
     ...(senderType === 2 ? { senderRole: "seller" as const } : {}),
   };
@@ -106,33 +105,48 @@ export function normalizeLazadaImHistory(
 
   return [...sessions.entries()].flatMap(([sessionId, { session, messages }]) => {
     const byMessageId = new Map<string, LazadaImInquiry>();
+    const conflicts = new Map<string, LazadaImInquiry[]>();
     for (const row of messages) {
       const remoteMessageId = text(row.message_id);
       const senderType = Number(row.from_account_type);
       const content = parsedRecord(row.content);
-      const message = text(content.txt, content.text, row.txt, row.text, content.translateTxt);
+      const message = messageBody(content.txt, content.text, row.txt, row.text, content.translateTxt);
       // Session summaries are not message bodies. Never invent an identity or
       // a sender, and do not ingest recalled/system messages as customer text.
       if (!remoteMessageId || !message || ![1, 2].includes(senderType)
           || Number(row.status ?? 0) !== 0) continue;
       const receivedAt = messageTimestamp(row.send_time, senderType, fallbackTimestamp);
-      if (byMessageId.has(remoteMessageId)) continue;
-      byMessageId.set(remoteMessageId, {
+      const previous = byMessageId.get(remoteMessageId);
+      const candidate: LazadaImInquiry = {
         externalTicketId: `lazada-im:${sessionId}`,
-        customerName: text(session.title, session.buyer_name, "Lazada 고객"),
-        subject: text(session.product_name, session.site_id ? `Lazada ${session.site_id} IM 문의` : "Lazada IM 문의"),
+        customerName: receivedAt ? text(session.title, session.buyer_name, "Lazada 고객") : "Lazada 판매자",
+        subject: receivedAt ? text(session.product_name, session.site_id ? `Lazada ${session.site_id} IM 문의` : "Lazada IM 문의") : "Lazada 시각 미확정 메시지",
         message,
         // These are message events, not a session summary. The ledger keeps
         // latest_inbound_key on the latest buyer and processes seller events
         // separately to derive the current conversation's provider status.
-        status: senderType === 2 ? "resolved" : "waiting",
+        status: senderType === 2 && receivedAt ? "resolved" : "waiting",
         priority: Number(session.unread_count ?? 0) > 0 ? 2 : 3,
         receivedAt,
+        ...(!receivedAt ? { orderingStatus: "unverified" as const } : {}),
         remoteMessageId,
         senderRole: senderType === 2 ? "seller" : "customer",
-      });
+      };
+      const variants = conflicts.get(remoteMessageId);
+      if (variants || (previous && (previous.message !== message || previous.senderRole !== candidate.senderRole))) {
+        const all = variants ?? [previous!];
+        if (!all.some(value => value.message === message && value.senderRole === candidate.senderRole)) all.push(candidate);
+        conflicts.set(remoteMessageId, all);
+        byMessageId.delete(remoteMessageId);
+      } else if (!previous || (!previous.receivedAt && receivedAt)) {
+        byMessageId.set(remoteMessageId, candidate);
+      }
     }
-    return [...byMessageId.values()].sort((left, right) =>
+    const quarantined = [...conflicts.values()].flat().map((value): LazadaImInquiry => ({
+      ...value, orderingStatus: "conflict", receivedAt: "", status: "waiting",
+      customerName: "Lazada 메시지", subject: "Lazada 식별 충돌",
+    }));
+    return [...byMessageId.values(), ...quarantined].sort((left, right) =>
       left.receivedAt.localeCompare(right.receivedAt)
       || left.remoteMessageId.localeCompare(right.remoteMessageId));
   });

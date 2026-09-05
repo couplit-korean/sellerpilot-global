@@ -3,7 +3,7 @@ import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { registerHooks } from "node:module";
 import test from "node:test";
-import type { ChannelOperationResult } from "../lib/channels/operations";
+import type { ChannelOperationName, ChannelOperationResult } from "../lib/channels/operations";
 import {
   coupangRequest,
   runWithChannelRequestSignal,
@@ -48,8 +48,8 @@ function authorizedRequest(extraHeaders: Record<string, string> = {}) {
 }
 
 function claim(
-  channel: "ebay" | "coupang" | "smartstore" | "qoo10" = "ebay",
-  operation: "inquiries.list" | "inquiries.reply" = "inquiries.list",
+  channel: "ebay" | "coupang" | "smartstore" | "qoo10" | "lazada" = "ebay",
+  operation: ChannelOperationName = "inquiries.list",
 ) {
   return {
     id: JOB_ID,
@@ -1528,4 +1528,81 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(provider, /if \(operation === "price\.update"\) return channelPriceUpdateRelease\(channel\)\.available/);
   assert.match(protocols, /AsyncLocalStorage<AbortSignal>/);
   assert.match(protocols, /AbortSignal\.any\(\[ownerSignal, timeoutSignal\]\)/);
+});
+
+
+test("Lazada partial V2 ingestion does not complete a gateway job; complete retries avoid double ingestion", async () => {
+  for (const status of ["partial", "complete"]) {
+    const calls: Array<{name:string;arguments_:Record<string,unknown>}> = [];
+    const lazadaJob = { ...claim("lazada"), request: { arguments: { bootstrap: true } } };
+    const response = await runOneServerlessCsGatewayJob({
+      rpc: baseRpc(lazadaJob, calls, {
+        sellerpilot_service_lazada_quarantine_ready: () => ({ data: true, error: null }),
+        sellerpilot_service_ingest_lazada_gateway_v2: () => ({ data: { contract: "lazada_ingest_v2", status, normalCount: 1, pendingCount: status === "partial" ? 1 : 0 }, error: null }),
+      }),
+      executeProvider: async () => ({ ok: true, channel: "lazada", operation: "inquiries.list", safeMessage: "fixture", steps: [{ name: "inquiries-message:s:1", ok: true, status: 200, data: { sellerpilotSession: { session_id: "s" }, data: { message_list: [
+        { message_id: "buyer", from_account_type: 1, send_time: "2026-09-05T09:01:00Z", content: { txt: "buyer" } },
+        { message_id: "seller", from_account_type: 2, content: { txt: "unordered original" } },
+      ] } } }] }),
+    }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+    const ingest = calls.find(call => call.name === "sellerpilot_service_ingest_lazada_gateway_v2");
+    assert.ok(ingest);
+    assert.equal(ingest.arguments_.p_job_id, JOB_ID);
+    assert.equal(ingest.arguments_.p_claim_token, CLAIM_TOKEN);
+    assert.equal((ingest.arguments_.p_inquiries as unknown[]).length, 2);
+    const completion = calls.find(call => call.name === "sellerpilot_service_complete_serverless_cs_transaction");
+    if (status === "partial") {
+      assert.equal(completion, undefined);
+      assert.equal(response.status, 503);
+    } else {
+      assert.ok(completion);
+      assert.deepEqual(completion.arguments_.p_normalized_inquiries, []);
+      assert.equal(response.status, 200);
+    }
+  }
+});
+
+
+for (const allowSecondWrite of [true, false]) {
+  test(`Lazada shipment repeats the durable fence before every write: second allowed=${allowSecondWrite}`, async () => {
+    const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+    let fenceCalls = 0;
+    let providerWrites = 0;
+    const response = await runOneServerlessCsGatewayJob({
+      staticEgressChannels: ["lazada"],
+      rpc: baseRpc(claim("lazada", "shipment.confirm"), calls, {
+        sellerpilot_service_begin_serverless_gateway_provider_mutation: () => ({
+          data: ++fenceCalls === 1 || allowSecondWrite,
+          error: null,
+        }),
+      }),
+      executeProvider: async ({ hooks }) => {
+        await hooks.beginProviderMutation();
+        providerWrites += 1; // Pack has already changed remote state.
+        await hooks.beginProviderMutation();
+        providerWrites += 1; // RTS must not run after a newly denied fence.
+        return { ok: true, channel: "lazada", operation: "shipment.confirm", steps: [{ name: "shipment", ok: true, status: 200, data: { accepted: true } }], remoteId: "test-order-1", safeMessage: "Test shipment complete." };
+      },
+    }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+    assert.equal(response.status, 200);
+    assert.equal(fenceCalls, 2);
+    assert.equal(providerWrites, allowSecondWrite ? 2 : 1);
+    const completion = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+    assert.equal(completion?.arguments_.p_status, allowSecondWrite ? "succeeded" : "reconciliation_required");
+  });
+}
+
+test("non-shipment operations retain their existing one-time provider fence", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(claim("qoo10", "inquiries.reply"), calls),
+    executeProvider: async ({ hooks }) => {
+      await hooks.beginProviderMutation();
+      await hooks.beginProviderMutation();
+      return inquiryReplyResult("qoo10");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json() as { status: string }).status, "succeeded");
+  assert.equal(calls.filter(({ name }) => name === "sellerpilot_service_begin_serverless_gateway_provider_mutation").length, 1);
 });

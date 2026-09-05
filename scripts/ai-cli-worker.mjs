@@ -4302,7 +4302,8 @@ async function processGatewayJob(job) {
         console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
       }
       await assertGatewayLeaseHealthy();
-      if (writeChannelOperations.has(job.operation)) {
+      const lazadaShipmentBoundary = job.channel === "lazada" && job.operation === "shipment.confirm";
+      if (writeChannelOperations.has(job.operation) && !lazadaShipmentBoundary) {
         await markExternalWriteStarted();
       }
       result = await executeChannelOperation({
@@ -4311,6 +4312,12 @@ async function processGatewayJob(job) {
         payload: credential,
         arguments: operationArguments,
         environment: job.environment,
+        ...(lazadaShipmentBoundary ? {
+          providerMutationHooks: {
+            begin: markExternalWriteStarted,
+            assertLeaseHealthy: assertGatewayLeaseHealthy,
+          },
+        } : {}),
       });
       if (listingMediaWriteObserved) {
         result.steps.unshift({

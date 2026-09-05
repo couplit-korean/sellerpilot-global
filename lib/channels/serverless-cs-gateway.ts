@@ -8,6 +8,7 @@ import {
   type GatewayWorkerCompletion,
 } from "./gateway-contract";
 import { inquirySyncRequests, normalizeChannelInquiries } from "./inquiry-sync";
+import { lazadaQuarantineReady } from "./lazada-im-webhook";
 import { normalizeChannelOrders } from "./order-sync";
 import {
   executeChannelOperation,
@@ -901,6 +902,17 @@ async function completeClaim(
   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
     storedResponse = parsed.data.result;
   }
+  const acceptedInquiryCount = normalizedInquiries?.length ?? 0;
+  if (job.channel === "lazada" && normalizedInquiries) {
+    if (!await lazadaQuarantineReady(normalizedInquiries, () => callRpc(dependencies, "sellerpilot_service_lazada_quarantine_ready", {}))) return "unavailable";
+    const ingestion = await callRpc(dependencies, "sellerpilot_service_ingest_lazada_gateway_v2", {
+      p_token_hash: gatewayTokenHash, p_job_id: job.id, p_claim_token: job.claim_token,
+      p_inquiries: normalizedInquiries,
+    });
+    const receipt = recordValue(ingestion.data);
+    if (ingestion.error || receipt?.contract !== "lazada_ingest_v2" || receipt.status !== "complete") return "unavailable";
+    normalizedInquiries = []; // Already committed; the job itself is still ownership/receipt checked below.
+  }
   if (job.operation === "orders.list" && storedResponse) {
     storedResponse = sanitizedOrderListResult(
       storedResponse as ChannelOperationResult,
@@ -910,7 +922,7 @@ async function completeClaim(
   if (job.operation === "inquiries.list" && storedResponse) {
     storedResponse = sanitizedInquiryListResult(
       storedResponse as ChannelOperationResult,
-      normalizedInquiries?.length ?? 0,
+      acceptedInquiryCount,
     );
   }
 
@@ -1068,7 +1080,10 @@ export async function runOneServerlessCsGatewayJob(
     },
     beginProviderMutation: async () => {
       await assertLeaseHealthy();
-      if (!providerMutationFenced) {
+      // Lazada pack and RTS are separate external writes. An earlier success
+      // cannot authorize RTS after ownership or cancellation changes.
+      const requiresFreshShipmentFence = job.channel === "lazada" && job.operation === "shipment.confirm";
+      if (requiresFreshShipmentFence || !providerMutationFenced) {
         await beginProviderMutation(dependencies, gatewayTokenHash, job);
         providerMutationFenced = true;
       }

@@ -2207,6 +2207,7 @@ test("Lazada normalized full history persists both roles without replacing the l
   const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
   const db = await createDatabase();
   try {
+    await db.exec(await readFile(new URL("../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql", import.meta.url), "utf8"));
     await seedAdminAndCredential(db);
     await setClaims(db, "service_role");
     const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential(
@@ -2248,26 +2249,43 @@ test("Lazada normalized full history persists both roles without replacing the l
     assert.deepEqual(await state(), [{ provider_status: "waiting", message: "buyer-2", latest_buyer: "buyer-2", messages: 3, seller_messages: 1, customer_messages: 2 }]);
     await ingest(history);
     assert.equal((await state())[0].messages, 3);
-    // A missing old seller timestamp must not become the 10:00 collection
-    // timestamp and resolve the newer 09:02 buyer. Reject the whole unsafe
-    // batch rather than dropping its body or inventing a sortable timestamp.
+    // Quarantine the unordered seller text while ingesting confirmed buyers.
+    // The observation clock is not a seller send time.
     const missingTimePages = [[buyer2, { ...seller1, send_time: undefined }]];
     const originalMissingTimePages = structuredClone(missingTimePages);
-    let timestampError;
-    try {
-      await ingest(normalize(missingTimePages));
-    } catch (error) {
-      timestampError = error;
+    await ingest(normalize(missingTimePages));
+    const quarantineBefore = (await db.query("select * from sellerpilot_private.lazada_unordered_messages")).rows;
+    assert.equal(quarantineBefore.length, 1);
+    assert.equal(quarantineBefore[0].body, "seller-1");
+    assert.equal(Object.hasOwn(quarantineBefore[0], "customer_name"), false);
+    assert.equal(Object.hasOwn(quarantineBefore[0], "received_at"), false);
+    await ingest(normalize(missingTimePages));
+    assert.deepEqual((await db.query("select * from sellerpilot_private.lazada_unordered_messages")).rows, quarantineBefore);
+    const ticketBeforeQuarantineOnly = await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]);
+    await ingest(normalize([[{ ...seller1, send_time: undefined }]]));
+    assert.deepEqual(await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]), ticketBeforeQuarantineOnly, "quarantine-only writes must not change any ticket, draft, approval, or latest buyer field");
+    const conflict = normalize([[{ ...seller1, send_time: undefined, content: { txt: "different original" } }]]);
+    await assert.rejects(ingest(conflict), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(await scalar(db, "select has_table_privilege($1, 'sellerpilot_private.lazada_unordered_messages', 'SELECT')", [role]), false);
+      assert.equal(await scalar(db, "select has_function_privilege($1, 'public.sellerpilot_202609051400_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')", [role]), false);
     }
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(await scalar(db, "select has_function_privilege($1, 'public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')", [role]), false);
+    }
+    assert.equal(await scalar(db, "select has_function_privilege('service_role', 'public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')"), true);
     assert.equal((await state())[0].provider_status, "waiting");
     assert.equal((await state())[0].latest_buyer, "buyer-2");
     assert.equal((await state())[0].messages, 3);
-    assert.match(timestampError?.message ?? "", /LAZADA_IM_SELLER_TIMESTAMP_UNVERIFIED/);
+    assert.equal(normalize(missingTimePages).find(row => row.senderRole === "seller").receivedAt, "");
     assert.deepEqual(missingTimePages, originalMissingTimePages);
     assert.deepEqual((await db.query(`select body from sellerpilot_private.support_inbound_messages
       where remote_message_id = 'seller-1'`)).rows, [{ body: "seller-1" }]);
     await ingest(normalize([[seller2, buyer2], [seller1, buyer1]]));
     assert.deepEqual(await state(), [{ provider_status: "answered", message: "buyer-2", latest_buyer: "buyer-2", messages: 4, seller_messages: 2, customer_messages: 2 }]);
+    const answeredBeforeQuarantine = await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]);
+    await ingest(normalize([[{ ...seller1, send_time: undefined }]]));
+    assert.deepEqual(await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]), answeredBeforeQuarantine);
     await ingest(normalize([[seller1, buyer1]]));
     assert.equal((await state())[0].latest_buyer, "buyer-2");
     assert.equal((await state())[0].provider_status, "answered");
@@ -2280,7 +2298,108 @@ test("Lazada normalized full history persists both roles without replacing the l
     ]);
     assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.support_reply_deliveries"), 0);
     assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation = 'inquiries.reply'"), 0);
+    const tooLarge = normalize([[{ ...seller1, message_id: "oversized", send_time: undefined, content: { txt: "x".repeat(20001) } }]]);
+    await assert.rejects(ingest(tooLarge), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    const forged = normalize([[{ ...seller1, message_id: "forged-time", send_time: undefined }]]);
+    forged[0].receivedAt = "2026-08-25T11:00:00Z";
+    await assert.rejects(ingest(forged), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    const wrongSender = normalize([[{ ...seller1, message_id: "forged-role", send_time: undefined }]]);
+    wrongSender[0].senderRole = "customer";
+    await assert.rejects(ingest(wrongSender), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select owner_id,seller_account_key,external_ticket_id,'capacity-'||n,body_digest,sender_role,'minimal'
+      from sellerpilot_private.lazada_unordered_messages cross join generate_series(1,999) n`);
+    await assert.rejects(ingest(normalize([[{ ...seller1, message_id: "over-capacity", send_time: undefined }]])), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    await ingest(normalize([[buyer2]])); // Ordinary messages do not need a free quarantine slot.
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id like 'capacity-%'");
+    await db.query("update sellerpilot_private.lazada_unordered_dedup set first_observed_at=now()-interval '8 days'");
+    await db.query("update sellerpilot_private.lazada_unordered_messages set observed_at=now()-interval '8 days', expires_at=now()-interval '1 day'");
+    await scalar(db, "select public.sellerpilot_prune_personal_data(now()-interval '7 days')");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_messages"), 0);
+    await ingest(normalize(missingTimePages));
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_messages"), 0, "expired replay must not resurrect original body");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_dedup"), 1);
+    await db.query("update sellerpilot_private.lazada_unordered_dedup set first_observed_at=now()-interval '91 days'");
+    await scalar(db, "select public.sellerpilot_prune_personal_data(now()-interval '7 days')");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_dedup"), 0);
   } finally {
     await db.close();
   }
+});
+
+
+test("Lazada V2 commits buyers on quarantine overflow and isolates conflicting bodies and roles", async () => {
+  const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
+  const db = await createDatabase();
+  try {
+    await db.exec(await readFile(new URL("../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql", import.meta.url), "utf8"));
+    await seedAdminAndCredential(db);
+    await setClaims(db, "service_role");
+    const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:"test",app_secret:"test",country:"my",access_token:"test",provider_account_subject:`lazada:v1:${"A".repeat(60)}`,provider_account_identity_version:"v1"})]);
+    const account = await scalar(db, "select seller_account_key from sellerpilot_private.channel_credentials where id=$1", [credentialId]);
+    const normalize = (session, messages) => normalizeLazadaImHistory([{name:`inquiries-message:${session}:1`,data:{sellerpilotSession:{session_id:session},data:{message_list:messages}}}], "2026-09-05T10:00:00Z");
+    const message = (id, body, sender=1, time="2026-09-05T09:01:00Z") => ({message_id:id,content:{txt:body},from_account_type:sender,send_time:time});
+    const ingest = rows => scalar(db,"select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)",[credentialId,JSON.stringify(rows)]);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select $1,$2,'lazada-im:cap','cap-'||n,repeat('a',64),'seller','minimal' from generate_series(1,1000)n`,[ADMIN_ID,account]);
+    const mixed=normalize("overflow",[message("buyer-1","buyer"),message("seller-1"," ORIGINAL \n",2,null)]);
+    const partial=await ingest(mixed);
+    assert.equal(partial.status,"partial"); assert.equal(partial.normalCount,1); assert.equal(partial.pendingCount,1);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages"),1);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets"),"waiting");
+    assert.equal(await scalar(db,"select storage_status from sellerpilot_private.lazada_unordered_dedup"),"pending");
+    const observed=await scalar(db,"select first_observed_at from sellerpilot_private.lazada_unordered_dedup");
+    await ingest(mixed);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages"),1);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id='cap-1'");
+    const retried=await ingest(mixed); assert.equal(retried.status,"complete"); assert.equal(retried.pendingCount,0);
+    assert.equal(await scalar(db,"select body from sellerpilot_private.lazada_unordered_messages where remote_message_id='seller-1'")," ORIGINAL \n");
+    assert.deepEqual(await scalar(db,"select first_observed_at from sellerpilot_private.lazada_unordered_dedup"),observed);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:cap'");
+    const conflicting=normalize("conflict",[message("buyer","buyer"),message("same-id","ORIGINAL",2,null),message("same-id","CONFLICTING",2,"2026-09-05T09:02:00Z")]);
+    assert.equal(conflicting.length,3);
+    assert.equal(conflicting.filter(e=>e.orderingStatus==='conflict').length,2);
+    const conflict=await ingest(conflicting); assert.equal(conflict.status,"partial"); assert.equal(conflict.normalCount,1); assert.equal(conflict.conflictCount,2); assert.equal(conflict.quarantinedCount,2);
+    assert.deepEqual((await db.query("select body,sender_role from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:conflict' order by body")).rows,[{body:"CONFLICTING",sender_role:"seller"},{body:"ORIGINAL",sender_role:"seller"}]);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id='lazada-im:conflict'"),"waiting");
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages where sender_role='seller'"),0);
+    // A later verified event cannot bypass the earlier durable original.
+    await ingest(normalize("durable",[message("seller","DURABLE ORIGINAL",2,null)]));
+    const bypass=await ingest(normalize("durable",[message("buyer","new buyer"),message("seller","CHANGED",2,"2026-09-05T09:02:00Z")]));
+    assert.equal(bypass.status,"partial"); assert.equal(bypass.normalCount,1); assert.equal(bypass.conflictCount,1);
+    assert.deepEqual((await db.query("select body from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:durable' order by body")).rows,[{body:"CHANGED"},{body:"DURABLE ORIGINAL"}]);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id='lazada-im:durable'"),"waiting");
+    const roles=normalize("roles",[message("unrelated","normal buyer"),message("same","same body",1),message("same","same body",2,"2026-09-05T09:02:00Z")]);
+    const roleConflict=await ingest(roles); assert.equal(roleConflict.normalCount,1); assert.equal(roleConflict.conflictCount,2);
+    assert.deepEqual((await db.query("select sender_role from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:roles' order by sender_role")).rows,[{sender_role:"customer"},{sender_role:"seller"}]);
+    for(const fn of ['public.sellerpilot_service_ingest_lazada_inquiries_v2(uuid,jsonb)','public.sellerpilot_service_ingest_lazada_gateway_v2(text,uuid,uuid,jsonb)']) {
+      for(const role of ['anon','authenticated']) assert.equal(await scalar(db,"select has_function_privilege($1,$2,'EXECUTE')",[role,fn]),false);
+    }
+    await assert.rejects(scalar(db,"select public.sellerpilot_service_ingest_lazada_gateway_v2($1,$2,$3,$4::jsonb)",['bad','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002',JSON.stringify(mixed)]),/LAZADA_INGEST_CLAIM_REQUIRED/);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_reply_deliveries"),0);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='inquiries.reply'"),0);
+    // Exercise persisted retry obligations in isolation after the real bad-token
+    // rejection above. Stub only ownership lookup for this fixture job.
+    const readJob=await scalar(db,`insert into sellerpilot_private.channel_gateway_jobs(credential_id,channel,operation,environment,created_by,status,claim_token)
+      values($1,'lazada','inquiries.list','production',$2,'running','00000000-0000-4000-8000-000000000002') returning id`,[credentialId,ADMIN_ID]);
+    await db.exec(`create or replace function public.sellerpilot_service_gateway_completion_context(p_token_hash text,p_job_id uuid,p_claim_token uuid)
+      returns jsonb language sql security definer set search_path='' as $$
+      select jsonb_build_object('status',status,'channel',channel,'operation',operation,'credential_id',credential_id)
+      from sellerpilot_private.channel_gateway_jobs where id=p_job_id and status='running' $$`);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select $1,$2,'lazada-im:cap2','cap2-'||n,repeat('a',64),'seller','minimal'
+      from generate_series(1,1000-(select count(*)::integer from sellerpilot_private.lazada_unordered_messages))n`,[ADMIN_ID,account]);
+    const originalBatch=normalize('job-retry',[message('buyer','new buyer'),message('seller','UNSTORED ORIGINAL',2,null)]);
+    const gatewayIngest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_gateway_v2($1,$2,$3,$4::jsonb)', ['fixture',readJob,'00000000-0000-4000-8000-000000000002',JSON.stringify(rows)]);
+    assert.equal((await gatewayIngest(originalBatch)).status,'partial');
+    const retryReceipt=await scalar(db,"select response_payload from sellerpilot_private.channel_gateway_jobs where id=$1",[readJob]);
+    assert.match(retryReceipt.lazadaIngestionPending.fingerprint,/^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(retryReceipt).includes('UNSTORED ORIGINAL'),false);
+    const omitted=await gatewayIngest([]);
+    assert.equal(omitted.status,'partial'); assert.equal(omitted.originalBatchRequired,true);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id='cap2-1'");
+    assert.equal((await gatewayIngest(originalBatch)).status,'complete');
+    assert.equal(await scalar(db,"select status from sellerpilot_private.channel_gateway_jobs where id=$1",[readJob]),'running','ingestion must not complete the job itself');
+  } finally { await db.close(); }
 });

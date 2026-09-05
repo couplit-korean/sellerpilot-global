@@ -8,11 +8,23 @@ type LazadaInquiryIngestArguments = {
 
 type LazadaInquiryIngestRpc = (
   arguments_: LazadaInquiryIngestArguments,
-) => PromiseLike<{ error: unknown }>;
+) => PromiseLike<{ data?: unknown; error: unknown }>;
 
 export type LazadaInquiryIngestResult =
   | { ok: true }
-  | { ok: false; status: 500 | 503 };
+  | { ok: false; status: 500 | 503; partial?: boolean };
+
+export async function lazadaQuarantineReady(
+  inquiries: ReadonlyArray<{ orderingStatus?: "unverified" | "conflict" }>,
+  verify?: () => PromiseLike<{ data: unknown; error: unknown }>,
+): Promise<boolean> {
+  if (!inquiries.some((inquiry) => inquiry.orderingStatus)) return true;
+  if (!verify) return false;
+  try {
+    const result = await verify();
+    return !result.error && result.data === true;
+  } catch { return false; }
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -41,15 +53,18 @@ export async function persistLazadaImInquiry(
   credentialId: string,
   inquiry: LazadaImInquiry,
   ingest: LazadaInquiryIngestRpc,
+  verifyQuarantine?: () => PromiseLike<{ data: unknown; error: unknown }>,
 ): Promise<LazadaInquiryIngestResult> {
   if (!credentialId.trim()) return { ok: false, status: 503 };
   try {
-    const { error } = await ingest({
+    if (!await lazadaQuarantineReady([inquiry], verifyQuarantine)) return { ok: false, status: 503 };
+    const { data, error } = await ingest({
       p_credential_id: credentialId,
       p_channel: "lazada",
       p_inquiries: [inquiry],
     });
-    return error ? { ok: false, status: 500 } : { ok: true };
+    if (error || !record(data) || data.contract !== "lazada_ingest_v2") return { ok: false, status: 500 };
+    return data.status === "complete" ? { ok: true } : { ok: false, status: 503, partial: true };
   } catch {
     return { ok: false, status: 500 };
   }
