@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { listMigrationSourceFiles as readdir } from "./migration-source-files.mjs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 
@@ -958,6 +959,37 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260903100000_inventory_ledger.sql",
       "20260903110000_settlement_reconciliation.sql",
       "20260903120000_product_detail_data.sql",
+      "20260903130000_extend_qoo10_create_rollback_publication_readback.sql",
+      "20260903140000_scope_shopee_static_egress_to_oauth_exchange.sql",
+      "20260904044000_allow_enabled_elevenst_smartstore_egress_without_header.sql",
+      "20260904181000_allow_shopee_category_reads_beside_orders.sql",
+      "20260904190000_allow_shopee_category_reads_past_failed_orders_reconciliation.sql",
+      "20260904193000_allow_shopee_category_reads_past_unstarted_refresh_reconciliation.sql",
+      "20260904195000_keep_shopee_category_reads_on_local_gateway.sql",
+      "20260904211500_allow_local_shopee_category_and_diagnostic_claims.sql",
+      "20260904213000_allow_ebay_and_shopee_diagnostic_category_parallelism.sql",
+      "20260904222000_extend_qoo10_rollback_identity_to_pattern_b.sql",
+      "20260904232000_persist_live_gateway_claim_routing.sql",
+      "20260905003000_recover_exact_qoo10_shipping_normalization_s1.sql",
+      "20260905003100_accept_qoo10_shipping_s1_failed_ok_readback.sql",
+      "20260905011000_claim_exact_queued_shopee_diagnostic.sql",
+      "20260905011100_fix_shopee_exact_claim_vault_cast.sql",
+      "20260905012000_recover_exact_elevenst_cookie_create_get_only.sql",
+      "20260905012100_remove_elevenst_cookie_create_legacy_jwt_guards.sql",
+      "20260905013000_allow_qoo10_shipping_s1_closed_gate_release.sql",
+      "20260905013100_fix_qoo10_shipping_s1_serverless_claim_orderby.sql",
+      "20260905014000_archive_reused_serverless_cs_wake_request_ids.sql",
+      "20260905014100_allow_qoo10_shipping_s1_failed_verifier_complete.sql",
+      "20260905014200_record_qoo10_shipping_s1_direct_reverify.sql",
+      "20260905014300_retry_qoo10_shipping_s1_after_unclaimed_expiry.sql",
+      "20260905014400_allow_qoo10_shipping_s1_activation_complete.sql",
+      "20260905014500_allow_exact_qoo10_completion_before_runtime_reactivation.sql",
+      "20260905014600_expose_qoo10_completion_rpc_with_short_name.sql",
+      "20260905014700_extend_exact_elevenst_get_bind_rpc_timeout.sql",
+      "20260905014800_route_smartstore_reads_to_local_gateway.sql",
+      "20260905014900_persist_operator_listing_handoffs.sql",
+      "20260905015000_scope_local_gateway_recovery_lane.sql",
+      "20260905130000_reject_inventory_idempotency_conflicts.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -15838,7 +15870,10 @@ test("static egress gate closes history and pre-gate reads without touching repl
     await db.exec(supabaseCompatibilityLayer);
     const migrationUrl = new URL("../supabase/migrations/", import.meta.url);
     const migrationNames = (await readdir(migrationUrl))
+      // Historical pre-gate fixture. Later live-overlay migrations depend on
+      // the gate deliberately withheld below and cannot be part of its preimage.
       .filter((name) => name.endsWith(".sql")
+        && name <= "20260903120000_product_detail_data.sql"
         && name !== migrationName
         && name !== cleanupMigrationName
         && name !== finalMigrationName
