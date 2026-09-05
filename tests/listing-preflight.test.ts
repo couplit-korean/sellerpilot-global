@@ -57,6 +57,65 @@ test("Coupang account fields are explicit runtime checks while unknown product f
   assert.equal(requirements.find((item) => item.key === "manufacturer")?.status, "manual");
   assert.equal(requirements.find((item) => item.key === "outbound")?.status, "runtime");
   assert.equal(requirements.find((item) => item.key === "return")?.status, "runtime");
+  assert.equal(requirements.find((item) => item.key === "notices")?.status, "manual");
+  assert.equal(requirements.find((item) => item.key === "certification")?.status, "runtime");
+  assert.equal(requirements.find((item) => item.key === "quantity-attribute")?.status, "runtime");
+  assert.deepEqual(requirements.find((item) => item.key === "notices")?.manualPath, ["facts", "noticeContent"]);
+  assert.ok(blockingListingRequirements("coupang", draft).some((item) => item.key === "notices"));
+});
+
+test("Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content", () => {
+  const draft = {
+    facts: { manufacturer: "롯데", countryOfOrigin: "대한민국", material: "밀가루" },
+    body: {
+      displayCategoryCode: 76890,
+      sellerProductName: "롯데샌드 쿠키",
+      brand: "롯데",
+      items: [{
+        salePrice: 10000,
+        maximumBuyCount: 1,
+        images: [{ vendorPath: "https://example.com/cookie.jpg" }],
+        notices: [{ noticeCategoryName: "식품", noticeCategoryDetailName: "원재료", content: "상품상세 참조" }],
+      }],
+    },
+  };
+  const envelope = JSON.stringify({
+    noticeCategoryName: "식품",
+    details: {
+      제품명: "롯데샌드 쿠키",
+      원재료: "밀가루, 설탕, 유지",
+    },
+  });
+
+  assert.equal(inspectListingDraft("coupang", draft).find((item) => item.key === "notices")?.status, "manual");
+  assert.equal(
+    inspectListingDraft("coupang", setListingDraftValue(draft, ["facts", "noticeContent"], "밀가루, 설탕, 유지"))
+      .find((item) => item.key === "notices")?.status,
+    "manual",
+  );
+  const withFact = setListingDraftValue(draft, ["facts", "noticeContent"], envelope);
+  assert.equal(inspectListingDraft("coupang", withFact).find((item) => item.key === "notices")?.status, "ready");
+  assert.equal(
+    inspectListingDraft("coupang", setListingDraftValue(draft, ["facts", "noticeContent"], "상품상세 참조"))
+      .find((item) => item.key === "notices")?.status,
+    "manual",
+  );
+  assert.equal(
+    inspectListingDraft("coupang", {
+      ...draft,
+      body: {
+        ...draft.body,
+        items: [{
+          ...draft.body.items[0],
+          notices: [
+            { noticeCategoryName: "식품", noticeCategoryDetailName: "제품명", content: "롯데샌드 쿠키" },
+            { noticeCategoryName: "식품", noticeCategoryDetailName: "원재료", content: "밀가루, 설탕, 유지" },
+          ],
+        }],
+      },
+    }).find((item) => item.key === "notices")?.status,
+    "ready",
+  );
 });
 
 test("zero price and stock are rejected before a write", () => {

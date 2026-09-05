@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { gatewayClaimSchema } from "../../../../../lib/channels/gateway-contract";
+import {
+  isLocalGatewayRecoveryAllowedTuple,
+  LOCAL_GATEWAY_RECOVERY_RPC_NAME,
+  parseChannelGatewayClaimMode,
+} from "../../../../../lib/channels/local-gateway-recovery-lane";
 import { channelPriceUpdateRelease } from "../../../../../lib/channels/price-update-release";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
 import {
@@ -26,13 +31,20 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
-  const body = await request.json().catch(() => ({})) as { version?: unknown };
+  const body = await request.json().catch(() => ({})) as { version?: unknown; mode?: unknown };
+  const claimMode = parseChannelGatewayClaimMode(body.mode);
+  if (claimMode === "invalid") {
+    return NextResponse.json({ message: "채널 작업 수신 모드가 올바르지 않습니다." }, { status: 400 });
+  }
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
-  const { data, error } = await serviceClient.rpc("sellerpilot_claim_channel_gateway_job", {
+  const claimRpcName = claimMode === "local_recovery"
+    ? LOCAL_GATEWAY_RECOVERY_RPC_NAME
+    : "sellerpilot_claim_channel_gateway_job";
+  const { data, error } = await serviceClient.rpc(claimRpcName, {
     p_token_hash: tokenHash,
     p_worker_version: typeof body.version === "string" ? body.version.slice(0, 80) : "unknown",
   });
@@ -44,6 +56,12 @@ export async function POST(request: Request) {
   if (!data) return new NextResponse(null, { status: 204 });
   const parsed = gatewayClaimSchema.safeParse(data);
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 형식이 올바르지 않습니다." }, { status: 500 });
+  if (
+    claimMode === "local_recovery"
+    && !isLocalGatewayRecoveryAllowedTuple(parsed.data.channel, parsed.data.operation)
+  ) {
+    return NextResponse.json({ message: "채널 작업 범위가 올바르지 않습니다." }, { status: 409 });
+  }
   if (parsed.data.operation === "price.update") {
     const release = channelPriceUpdateRelease(parsed.data.channel);
     if (!release.available) {

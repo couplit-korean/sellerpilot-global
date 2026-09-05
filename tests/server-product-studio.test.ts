@@ -23,6 +23,7 @@ import {
   runOneServerProductStudio,
   SERVER_PRODUCT_STUDIO_IMAGE_MODEL,
   SERVER_PRODUCT_STUDIO_TEXT_MODEL,
+  SERVER_PRODUCT_STUDIO_VERSION,
   ServerProductStudioError,
   serverStudioAllowsReviewedTransientFallback,
   serverStudioRequestMode,
@@ -30,10 +31,11 @@ import {
   serverStudioRemoteWorkPlan,
   type ServerStudioSource,
 } from "../lib/server-product-studio";
+import { sourcePhotoCatalogRenderRejectedReason } from "../lib/server-studio-fail-closed";
 import {
-  hasPrescriptiveIntakeInstruction,
-  hasUnsupportedGeneralFoodEfficacyClaim,
-} from "../lib/product-classification";
+  serverStudioIdentitySpec,
+} from "../lib/server-studio-identity";
+import { repairMissingIdentitySupportSurface } from "../lib/product-identity-protection";
 import {
   buildDifferenceHash,
   MINIMUM_SHOT_HASH_DISTANCE,
@@ -44,8 +46,6 @@ import {
   studioMasterDetailImageRoleIssue,
   type StudioLocalizedTarget,
 } from "../lib/studio-segment-generation";
-import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
-import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
 
 const MASTER_SECTION_TYPES = [
   "benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice",
@@ -61,6 +61,7 @@ const LOCALIZED_SECTION_ASSETS = [
 test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
   assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
+  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.3");
 });
 
 function testMasterResult() {
@@ -344,11 +345,33 @@ async function patternedBackground(
   )).png().toBuffer();
 }
 
+async function quietSettingPlate(
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  attempt = 1,
+) {
+  const digest = createHash("sha256").update(`quiet-plate:${asset.id}:${attempt}`).digest();
+  const luminance = 28 + (digest[0] % 190);
+  const solid = await sharp({
+    create: {
+      width: asset.width,
+      height: asset.height,
+      channels: 3,
+      background: {
+        r: luminance,
+        g: Math.min(230, luminance + (digest[1] % 20) - 10),
+        b: Math.min(230, luminance + (digest[2] % 20) - 10),
+      },
+    },
+  }).png().toBuffer();
+  return repairMissingIdentitySupportSurface(solid, serverStudioIdentitySpec(asset));
+}
+
 async function firstDraftPreflightFixture(
   researchJobId: string,
   claimToken: string,
   sourcePhotoSha256: string,
   overrides: Partial<Record<(typeof coreFirstDraftAssetIds)[number], Uint8Array>> = {},
+  auditMode: "segmented-source-composite" | "source-photo-catalog" = "segmented-source-composite",
 ) {
   const paths: Record<string, string> = {};
   const digests: Record<string, string> = {};
@@ -376,7 +399,7 @@ async function firstDraftPreflightFixture(
     lineage[assetId] = {
       digest,
       role: asset.role,
-      auditMode: "segmented-source-composite",
+      auditMode,
       sourceRole: "main",
     };
     bytesByPath.set(path, new Uint8Array(bytes));
@@ -406,6 +429,7 @@ async function runReviewedTransientPipelineFixture(options: {
   remoteCallDelayMs?: number;
   transientDiagnostic?: AiGatewayFailureDiagnostic;
   manualFields?: ReturnType<typeof reviewedFallbackManualFields>;
+  preflightAuditMode?: "segmented-source-composite" | "source-photo-catalog";
 } = {}) {
   const jobId = "41414141-4141-4141-8141-414141414141";
   const claimToken = "42424242-4242-4242-8242-424242424242";
@@ -427,11 +451,22 @@ async function runReviewedTransientPipelineFixture(options: {
     "#d7462f",
     true,
   );
+  const backBytes = await patternedBackground(
+    1200,
+    1200,
+    "reviewed-transient-back",
+    "#2d6ac9",
+    true,
+  );
+  const normalizedBackPath = `${userId}/${jobId}/input/002.jpg`;
+  const originalBackPath = `${userId}/${jobId}/original/002.source`;
   const sourceDigest = createHash("sha256").update(sourceBytes).digest("hex");
   const preflight = await firstDraftPreflightFixture(
     researchJobId,
     researchClaimToken,
     sourceDigest,
+    {},
+    options.preflightAuditMode ?? "segmented-source-composite",
   );
   if (options.duplicatePreflightAsset) {
     const sourceAssetId = "detail-overview" as const;
@@ -467,7 +502,7 @@ async function runReviewedTransientPipelineFixture(options: {
       ? `${manual.researchInput} 불일치`
       : manual.researchInput,
     manual_fields: manual,
-    image_paths: [normalizedPath],
+    image_paths: [normalizedPath, normalizedBackPath],
     image_specs: [{
       name: "001.jpg",
       role: "main",
@@ -480,6 +515,20 @@ async function runReviewedTransientPipelineFixture(options: {
       width: 1200,
       height: 1200,
       bytes: Math.min(sourceBytes.byteLength, 3 * 1024 * 1024),
+      mediaType: "image/jpeg",
+      fit: "contain",
+    }, {
+      name: "002.jpg",
+      role: "back",
+      originalName: "back.png",
+      originalBytes: backBytes.byteLength,
+      originalMediaType: "image/png",
+      originalPath: originalBackPath,
+      originalWidth: 1200,
+      originalHeight: 1200,
+      width: 1200,
+      height: 1200,
+      bytes: Math.min(backBytes.byteLength, 3 * 1024 * 1024),
       mediaType: "image/jpeg",
       fit: "contain",
     }],
@@ -594,6 +643,7 @@ async function runReviewedTransientPipelineFixture(options: {
     },
     download: async (path) => {
       if (path === originalPath) return sourceBytes;
+      if (path === originalBackPath) return backBytes;
       const bytes = preflight.bytesByPath.get(path);
       if (!bytes) return assert.fail(`unexpected source path: ${path}`);
       if (options.corruptPreflightAssetId
@@ -711,14 +761,12 @@ async function runReviewedTransientPipelineFixture(options: {
     }),
     segmentSource: async () => observeRemoteCall(async () => {
       segmentationCalls += 1;
-      if (providerScenario !== "partial-image-transient"
-          && providerScenario !== "image-rate-limit-circuit"
-          && providerScenario !== "queued-image-timeout-budget") {
+      if (providerScenario === "all-transient" || providerScenario === "segmentation-transient") {
         throw transientError();
       }
       return { segmentation: validSegmentation, segmentationSource: sourceBytes };
     }),
-    generateBackground: async ({ asset, signal }) => observeRemoteCall(async () => {
+    generateBackground: async ({ asset, prompt, signal }) => observeRemoteCall(async () => {
       backgroundSignalsAbortedOnEntry.push(signal.aborted);
       if (imageRateLimitObserved) imageCallsStartedAfterRateLimit += 1;
       backgroundCalls += 1;
@@ -730,24 +778,19 @@ async function runReviewedTransientPipelineFixture(options: {
       if (providerScenario === "queued-image-timeout-budget") {
         throw transientError();
       }
-      if (providerScenario !== "partial-image-transient") {
-        return assert.fail("reviewed segmentation fallback must not invoke image generation");
-      }
-      return patternedBackground(asset.width, asset.height, `partial:${asset.id}`, "#d7462f", true);
+      const attemptMatch = /distinct retry=(\d+)/u.exec(prompt);
+      return quietSettingPlate(asset, Number(attemptMatch?.[1] ?? 1));
     }),
     auditImage: async ({ assetId, candidate }) => observeRemoteCall(async () => {
       if (imageRateLimitObserved) imageCallsStartedAfterRateLimit += 1;
       auditCalls += 1;
-      if (providerScenario === "image-rate-limit-circuit"
-          || providerScenario === "queued-image-timeout-budget") return passingPortableAudit();
-      if (providerScenario !== "partial-image-transient") {
-        return assert.fail("deterministic source-photo assets must not invoke remote vision audit");
-      }
       auditedCandidateDigests.set(assetId, [
         ...(auditedCandidateDigests.get(assetId) ?? []),
         createHash("sha256").update(candidate).digest("hex"),
       ]);
-      if (assetId === "detail-material") throw transientError();
+      if (providerScenario === "partial-image-transient" && assetId === "detail-material") {
+        throw transientError();
+      }
       return passingPortableAudit();
     }),
     wakeNext: async () => {
@@ -786,6 +829,23 @@ async function runReviewedTransientPipelineFixture(options: {
     wakeCalls,
     auditedCandidateDigests,
   };
+}
+
+async function assertFailedClosed(
+  run: Awaited<ReturnType<typeof runReviewedTransientPipelineFixture>>,
+  reason: string,
+) {
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: false, status: "failed", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
+  assert.equal(run.completionCalls.length, 1);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.equal(run.completionCalls[0].p_error_message, reason);
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls[0].p_result_payload, null);
 }
 
 test("final server Studio restores six assets and plans only the remaining 2+8 roles", () => {
@@ -1016,7 +1076,20 @@ test("source catalog requires natural cutout edges without pretending it is an e
   );
 });
 
-test("source-photo catalog fallback is limited to deterministic segmentation quality failures", () => {
+test("source-photo catalog is not a completed Studio result; segmentation quality only retries the next source", async () => {
+  const packageAsset = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-package");
+  assert.ok(packageAsset);
+  const source: ServerStudioSource = {
+    path: "source",
+    role: "main",
+    name: "source.png",
+    mediaType: "image/png",
+    bytes: await patternedBackground(1200, 1200, "catalog-reject"),
+  };
+  await assert.rejects(
+    buildServerSourceDerivedAsset(packageAsset, source, source.bytes, 1, "source-photo-catalog"),
+    new RegExp(sourcePhotoCatalogRenderRejectedReason(), "u"),
+  );
   assert.equal(
     serverStudioSegmentationAllowsCatalogFallback(
       new ServerProductStudioError("product_segmentation_low_confidence", true),
@@ -1076,245 +1149,104 @@ test("source-photo catalog fallback is limited to deterministic segmentation qua
   }
 });
 
-test("reviewed transient gateway failure completes an exact 16-asset deterministic Studio result and preserves the approved first six bytes", async () => {
-  const run = await runReviewedTransientPipelineFixture();
-  assert.equal(run.response.status, 200);
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
-  assert.equal(run.logs.length, 0);
-  assert.equal(run.structuredCalls, 1, "only the master provider call should be attempted before deterministic localization");
-  assert.equal(run.segmentationCalls, 1);
+test("preflight source-photo-catalog lineage fails closed before any provider work and keeps first-six originals", async () => {
+  const run = await runReviewedTransientPipelineFixture({
+    preflightAuditMode: "source-photo-catalog",
+  });
+  await assertFailedClosed(run, "preflight_assets_require_regeneration");
+  assert.equal(run.structuredCalls, 0);
+  assert.equal(run.segmentationCalls, 0);
   assert.equal(run.backgroundCalls, 0);
   assert.equal(run.auditCalls, 0);
-  assert.equal(run.completionCalls.length, 1);
-  assert.equal(run.completionCalls[0].p_status, "succeeded");
-  const resultPayload = run.completionCalls[0].p_result_payload as Record<string, unknown>;
-  const parsed = cliStudioResultSchema.safeParse(resultPayload);
-  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
-  assert.ok(parsed.data.design.sections.length >= 16 && parsed.data.design.sections.length <= 20);
-  assert.equal(parsed.data.localizedListings.length, 34);
-  assert.equal(parsed.data.product.name, run.manual.productName);
-  const koreanListing = parsed.data.localizedListings.find((listing) => listing.locale === "ko-KR");
-  assert.ok(koreanListing);
-  const koreanCopy = JSON.stringify(koreanListing);
-  assert.match(koreanCopy, new RegExp(run.manual.productName, "u"));
-  assert.match(koreanCopy, new RegExp(run.manual.brandName, "u"));
-  assert.match(koreanCopy, new RegExp(run.manual.packageContents, "u"));
-  parsed.data.localizedListings.forEach((listing) => {
-    const copy = JSON.stringify(listing);
-    assert.ok(
-      listing.title.startsWith(unapprovedLocalizationReviewMarker),
-      `${listing.channel}:${listing.market} deterministic localization must stay review-only`,
-    );
-    assert.match(copy, /5000 KRW/u, `${listing.channel}:${listing.market} must preserve the reviewed price`);
-    assert.match(copy, /20 x 15 x 5 cm \/ 0\.1 kg/u, `${listing.channel}:${listing.market} must preserve reviewed dimensions`);
-    assert.match(copy, /QA-LOTTE-SAND/u, `${listing.channel}:${listing.market} must preserve the reviewed product identity`);
-  });
-  assert.ok(parsed.data.warnings.some((warning) => /gateway_rate_limited.*검수한 입력만 사용해 16개 상세 섹션/u.test(warning)));
-  assert.ok(parsed.data.warnings.some((warning) => /사람이 승인한 1차 이미지 6장은 그대로 보존/u.test(warning)));
-  assert.equal(hasUnsupportedGeneralFoodEfficacyClaim(JSON.stringify(parsed.data)), false);
-  assert.equal(hasPrescriptiveIntakeInstruction(JSON.stringify(parsed.data)), false);
-  const sectionAssetsByTitle = Object.fromEntries(parsed.data.design.sections.map((section) => [
-    section.title,
-    section.imageAsset,
-  ]));
-  assert.deepEqual({
-    "검수된 상품명부터 대조": sectionAssetsByTitle["검수된 상품명부터 대조"],
-    "판매 구성과 촬영 소품 구별": sectionAssetsByTitle["판매 구성과 촬영 소품 구별"],
-    "소재·성분은 실물 표시 우선": sectionAssetsByTitle["소재·성분은 실물 표시 우선"],
-    "포장 단위 수치 한눈에 확인": sectionAssetsByTitle["포장 단위 수치 한눈에 확인"],
-  }, {
-    "검수된 상품명부터 대조": "detail-overview",
-    "판매 구성과 촬영 소품 구별": "detail-contents",
-    "소재·성분은 실물 표시 우선": "detail-material",
-    "포장 단위 수치 한눈에 확인": "detail-dimensions",
-  });
-  assert.equal(run.uploaded.size, aiGeneratedAssetSpecs.length);
-  assert.equal(Object.keys(resultPayload.asset_storage_paths as Record<string, string>).length, 16);
-
-  const auditModes = resultPayload.asset_audit_modes as Record<string, string>;
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.rpcNames.includes("sellerpilot_service_stage_ai_result_uploads"), false);
   for (const assetId of coreFirstDraftAssetIds) {
     const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
     assert.ok(spec);
     const sourcePath = run.preflight.request.preflight_asset_storage_paths[assetId];
-    const finalPath = aiGeneratedAssetPath(run.jobId, spec, run.claimToken);
     const sourceBytes = run.preflight.bytesByPath.get(sourcePath);
-    const finalBytes = run.uploaded.get(finalPath);
-    assert.ok(sourceBytes && finalBytes);
-    assert.deepEqual(finalBytes, sourceBytes, `${assetId} must remain byte-identical after final upload`);
+    assert.ok(sourceBytes);
     assert.equal(
-      createHash("sha256").update(finalBytes).digest("hex"),
+      createHash("sha256").update(sourceBytes).digest("hex"),
       run.preflight.request.preflight_asset_digests[assetId],
     );
-    assert.equal(auditModes[assetId], "segmented-source-composite");
-  }
-  for (const assetId of remainingFinalAssetIds) {
-    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
-    assert.ok(spec);
-    const finalBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
-    assert.ok(finalBytes);
-    const metadata = await sharp(finalBytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
-    assert.deepEqual(
-      { width: metadata.width, height: metadata.height, format: metadata.format },
-      { width: spec.width, height: spec.height, format: "png" },
+    assert.equal(run.preflight.request.preflight_asset_audit_lineage[assetId].auditMode, "source-photo-catalog");
+    assert.equal(
+      run.uploaded.has(aiGeneratedAssetPath(run.jobId, spec, run.claimToken)),
+      false,
+      `${assetId} originals must not be rewritten by the failed claim`,
     );
-    assert.equal(auditModes[assetId], "source-photo-catalog");
   }
-  const uploadedDigests = [...run.uploaded.values()].map((bytes) => (
-    createHash("sha256").update(bytes).digest("hex")
-  ));
-  assert.equal(new Set(uploadedDigests).size, 16, "fallback must not accept exact duplicate output assets");
-  const uploadedHashes = new Map(await Promise.all(aiGeneratedAssetSpecs.map(async (spec) => {
-    const bytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
-    assert.ok(bytes);
-    return [spec.id, buildDifferenceHash(
-      await sharp(bytes).resize(17, 16, { fit: "fill" }).grayscale().raw().toBuffer(),
-      17,
-      16,
-    )] as const;
-  })));
-  for (const finalAssetId of remainingFinalAssetIds) {
-    const finalHash = uploadedHashes.get(finalAssetId);
-    assert.ok(finalHash);
-    for (const [otherAssetId, otherHash] of uploadedHashes) {
-      if (otherAssetId === finalAssetId) continue;
-      assert.ok(
-        visualHashDistance(finalHash, otherHash) >= MINIMUM_SHOT_HASH_DISTANCE,
-        `${finalAssetId} must remain visually distinct from ${otherAssetId}`,
-      );
-    }
-  }
-  assert.deepEqual(resultPayload.deterministic_fallback, {
-    reviewedInputOnly: true,
-    masterReason: "gateway_rate_limited",
-    localizationReasons: ["master_transient_fallback"],
-    imageReason: "gateway_rate_limited",
-  });
 });
 
-test("authenticated product revision uses the exact 16-asset deterministic fallback without publishing", async () => {
-  const run = await runReviewedTransientPipelineFixture({ requestMode: "revision-reviewed" });
-  assert.equal(run.response.status, 200);
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
-  assert.equal(run.completionCalls.length, 1);
-  assert.equal(run.completionCalls[0].p_status, "succeeded");
-  const payload = run.completionCalls[0].p_result_payload as {
-    asset_storage_paths: Record<string, string>;
-    asset_storage_sha256s: Record<string, string>;
-    asset_audit_modes: Record<string, string>;
-    localizedListings: unknown[];
-    warnings: string[];
-    deterministic_fallback: {
-      reviewedInputOnly: boolean;
-      masterReason: string | null;
-      localizationReasons: string[];
-      imageReason: string | null;
-    };
-  };
-  assert.equal(run.manual.stock, 0, "revision fallback must use productEditSchema instead of the stock>=1 intake gate");
-  assert.equal(run.uploaded.size, 16);
-  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
-  assert.equal(Object.keys(payload.asset_storage_sha256s).length, 16);
-  assert.equal(Object.keys(payload.asset_audit_modes).length, 16);
-  assert.equal(new Set(Object.values(payload.asset_storage_sha256s)).size, 16);
-  assert.equal(Object.values(payload.asset_audit_modes).every((mode) => mode === "source-photo-catalog"), true);
-  assert.equal(payload.localizedListings.length, 34);
-  for (const spec of aiGeneratedAssetSpecs) {
-    const bytes = run.uploaded.get(payload.asset_storage_paths[spec.id]);
-    assert.ok(bytes);
-    assert.equal(createHash("sha256").update(bytes).digest("hex"), payload.asset_storage_sha256s[spec.id]);
+test("reviewed transient gateway failure fails closed without mosaic catalog or boilerplate copy", async () => {
+  const run = await runReviewedTransientPipelineFixture();
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.equal(run.structuredCalls, 1, "only the master provider call should be attempted");
+  assert.equal(run.segmentationCalls, 1);
+  assert.equal(run.backgroundCalls, 0, "fail closed must not start setting-shot generation");
+  assert.equal(run.auditCalls, 0);
+  for (const assetId of coreFirstDraftAssetIds) {
+    const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
+    assert.ok(spec);
+    const sourcePath = run.preflight.request.preflight_asset_storage_paths[assetId];
+    const sourceBytes = run.preflight.bytesByPath.get(sourcePath);
+    assert.ok(sourceBytes);
+    assert.equal(
+      createHash("sha256").update(sourceBytes).digest("hex"),
+      run.preflight.request.preflight_asset_digests[assetId],
+      `${assetId} first-six digest stays on the reviewed preflight object`,
+    );
+    assert.equal(
+      run.uploaded.has(aiGeneratedAssetPath(run.jobId, spec, run.claimToken)),
+      false,
+      `${assetId} must not be replaced by a failed job upload`,
+    );
   }
-  assert.ok(payload.warnings.some((warning) => /역할별 이미지 16장을 모두 원본 사진 기반/u.test(warning)));
-  assert.equal(payload.warnings.some((warning) => /1차 이미지 6장은 그대로 보존/u.test(warning)), false);
-  assert.deepEqual(payload.deterministic_fallback, {
-    reviewedInputOnly: true,
-    masterReason: "gateway_rate_limited",
-    localizationReasons: ["master_transient_fallback"],
-    imageReason: "gateway_rate_limited",
-  });
+});
+
+test("authenticated product revision fails closed instead of succeeding with a 16-asset mosaic catalog", async () => {
+  const run = await runReviewedTransientPipelineFixture({ requestMode: "revision-reviewed" });
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.equal(run.manual.stock, 0, "revision fail-closed still uses productEditSchema instead of the stock>=1 intake gate");
   assert.equal(run.backgroundCalls, 0);
   assert.equal(run.auditCalls, 0);
   assert.equal(run.rpcNames.some((name) => /channel|listing|publish/iu.test(name)), false);
 });
 
-test("the production cable-clip revision shape recovers a terminal-only localization contract failure", async () => {
+test("the production cable-clip revision shape fails closed on a terminal localization contract failure", async () => {
   const run = await runReviewedTransientPipelineFixture({
     requestMode: "revision-reviewed",
     manualFields: productionRevisionQaManualFields(),
     providerScenario: "terminal-localization-invalid",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
-  assert.equal(run.completionCalls.length, 1);
-  assert.equal(run.completionCalls[0].p_status, "succeeded");
-  const payload = run.completionCalls[0].p_result_payload as {
-    localizedListings: unknown[];
-    asset_storage_paths: Record<string, string>;
-  };
-  assert.equal(payload.localizedListings.length, 34);
-  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
-  assert.ok((run.completionCalls[0].p_result_payload as {
-    deterministic_fallback: { masterReason: string | null; localizationReasons: string[] };
-  }).deterministic_fallback.localizationReasons.includes("studio_terminal_contract_invalid"));
-  assert.equal((run.completionCalls[0].p_result_payload as {
-    deterministic_fallback: { masterReason: string | null };
-  }).deterministic_fallback.masterReason, "studio_terminal_contract_invalid");
-  assert.ok((run.completionCalls[0].p_result_payload as {
-    warnings: string[];
-  }).warnings.some((warning) => /최종 상세페이지 계약 불일치/u.test(warning)));
-  const terminalLog = run.logs.find((entry) => entry.stage === "terminal_contract_fallback");
-  assert.deepEqual(terminalLog, {
-    stage: "terminal_contract_fallback",
-    details: {
-      schemaIssueCount: 1,
-      schemaIssueCodes: "custom",
-      schemaIssuePaths: "localizedListings.0.title",
-      kind: "product_studio",
-    },
-  });
-  const serializedLog = JSON.stringify(terminalLog);
+  await assertFailedClosed(run, "studio_terminal_contract_invalid");
+  const executionLog = run.logs.find((entry) => entry.stage === "execution");
+  assert.ok(executionLog);
+  assert.equal(executionLog.details.reason, "studio_terminal_contract_invalid");
+  const serializedLog = JSON.stringify(executionLog);
   assert.equal(serializedLog.includes("seller reviewed product"), false);
   assert.equal(serializedLog.includes("부착형 케이블 정리 클립"), false);
 });
 
-test("an attested cable-clip revision rebuilds the full master and localizations after aggregate-only failure", async () => {
+test("an attested cable-clip revision fails closed after aggregate-only master contract failure", async () => {
   const run = await runReviewedTransientPipelineFixture({
     requestMode: "revision-reviewed",
     manualFields: productionRevisionQaManualFields(),
     providerScenario: "terminal-master-invalid",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
-  const payload = run.completionCalls[0].p_result_payload as {
-    design: { sections: Array<{ buyerQuestion: string }> };
-    localizedListings: unknown[];
-    deterministic_fallback: { masterReason: string | null; localizationReasons: string[] };
-  };
-  assert.equal(payload.localizedListings.length, 34);
-  assert.notEqual(
-    payload.design.sections[0]?.buyerQuestion,
-    payload.design.sections[1]?.buyerQuestion,
-    "the terminal repair must replace the invalid provider master, not only its localizations",
-  );
-  assert.ok(payload.deterministic_fallback.localizationReasons.includes("studio_terminal_contract_invalid"));
-  assert.equal(payload.deterministic_fallback.masterReason, "studio_terminal_contract_invalid");
-  const terminalLog = run.logs.find((entry) => entry.stage === "terminal_contract_fallback");
-  assert.ok(terminalLog);
-  assert.ok(Number(terminalLog.details.schemaIssueCount) >= 1);
-  assert.match(String(terminalLog.details.schemaIssueCodes), /^(?:[a-z_]+,?)+$/u);
-  assert.match(String(terminalLog.details.schemaIssuePaths), /^[$A-Za-z0-9_.,-]+$/u);
-  assert.match(String(terminalLog.details.schemaIssuePaths), /design\.sections\.1/u);
-  const serializedLog = JSON.stringify(terminalLog);
+  await assertFailedClosed(run, "studio_terminal_contract_invalid");
+  const executionLog = run.logs.find((entry) => entry.stage === "execution");
+  assert.ok(executionLog);
+  assert.ok(Number(executionLog.details.schemaIssueCount) >= 1);
+  assert.match(String(executionLog.details.schemaIssueCodes), /^(?:[a-z_]+,?)+$/u);
+  assert.match(String(executionLog.details.schemaIssuePaths), /^[$A-Za-z0-9_.,-]+$/u);
+  const serializedLog = JSON.stringify(executionLog);
   assert.equal(serializedLog.includes("상품 식별은 구매 전에 어떻게 확인하나요?"), false);
   assert.equal(serializedLog.includes("부착형 케이블 정리 클립"), false);
 });
 
-test("successful reviewed fallback logs one bounded Gateway diagnostic without another provider attempt", async () => {
+test("reviewed transient failure logs the original Gateway diagnostic without another provider attempt or success", async () => {
   const diagnostic: AiGatewayFailureDiagnostic = {
     reason: "gateway_rate_limited",
     httpStatus: 429,
@@ -1325,96 +1257,40 @@ test("successful reviewed fallback logs one bounded Gateway diagnostic without a
     upstreamProviderAttempted: true,
   };
   const run = await runReviewedTransientPipelineFixture({ transientDiagnostic: diagnostic });
-  assert.equal(run.response.status, 200);
+  await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.structuredCalls, 1, "the diagnostic path must not add a provider retry");
   assert.equal(run.segmentationCalls, 1, "the existing parallel segmentation attempt remains the only other provider call");
-  assert.deepEqual(run.logs, [{
-    stage: "gateway_fallback",
-    details: {
-      reason: "gateway_rate_limited",
-      status: 429,
-      limitKind: "provider_image_rate_limit",
-      retryAfterMs: 12_000,
-      generationId: "gen_01SAFEFALLBACK",
-      requestId: "req_safe_fallback",
-      upstreamProviderAttempted: true,
-      kind: "product_studio",
-      fallbackPath: "master",
-      fallbackCount: 2,
-    },
-  }]);
-  assert.equal(run.completionCalls.length, 1);
-  assert.equal(run.completionCalls[0].p_status, "succeeded");
+  const executionLog = run.logs.find((entry) => entry.stage === "execution");
+  assert.ok(executionLog);
+  assert.equal(executionLog.details.reason, "gateway_rate_limited");
+  assert.equal(executionLog.details.status, 429);
+  assert.equal(executionLog.details.limitKind, "provider_image_rate_limit");
+  assert.equal(executionLog.details.retryAfterMs, 12_000);
+  assert.equal(executionLog.details.generationId, "gen_01SAFEFALLBACK");
+  assert.equal(executionLog.details.requestId, "req_safe_fallback");
+  assert.equal(executionLog.details.upstreamProviderAttempted, true);
 });
 
-test("master success plus a transient segmentation outage keeps normal text and exposes the deterministic ten-image warning", async () => {
+test("master success plus a transient segmentation outage fails closed instead of a ten-image catalog", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "segmentation-transient",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
+  await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.backgroundCalls, 0);
   assert.equal(run.auditCalls, 0);
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    warnings: string[];
-    deterministic_fallback: Record<string, unknown>;
-    asset_audit_modes: Record<string, string>;
-    localizedListings: Array<{
-      classification: { verificationStatus: string; isHealthFunctionalFood: boolean | null };
-    }>;
-  };
-  assert.equal(payload.deterministic_fallback.masterReason, null);
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
-  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
-  assert.ok(payload.warnings.some((warning) => /gateway_rate_limited.*나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반/u.test(warning)));
-  assert.equal(run.localizedPrompts.length, 9);
-  run.localizedPrompts.forEach((prompt) => {
-    assert.match(prompt, /verificationStatus는 needs-review, isHealthFunctionalFood는 null/u);
-  });
-  payload.localizedListings.forEach((listing) => {
-    assert.equal(listing.classification.verificationStatus, "needs-review");
-    assert.equal(listing.classification.isHealthFunctionalFood, null);
-  });
-  remainingFinalAssetIds.forEach((assetId) => assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog"));
+  assert.equal(run.localizedPrompts.length, 0, "localization must not run after cutout failure");
 });
 
-test("one transient localization chunk atomically replaces all countries from reviewed facts", async () => {
+test("one transient localization chunk fails closed instead of replacing countries with boilerplate", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "partial-localization-transient",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    warnings: string[];
-    localizedListings: Array<{ channel: string; market: string; locale: string; title: string; description: string }>;
-    deterministic_fallback: { localizationReasons: string[] };
-  };
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
-  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체/u.test(warning)));
-  assert.equal(payload.localizedListings.length, 34);
-  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
-  const qoo10Japan = payload.localizedListings.find((listing) => listing.channel === "qoo10" && listing.market === "JP");
-  assert.ok(qoo10Japan);
-  assert.equal(qoo10Japan.locale, "ja-JP");
-  assert.equal(
-    listingPublicationLanguageVerified("ja-JP", qoo10Japan.title, "title"),
-    false,
-    "review-only deterministic copy must not satisfy the publication language gate",
-  );
-  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.ok(run.structuredChunkCalls.includes("chunk:2"));
+  assert.ok(run.structuredChunkCalls.every((tag) => run.structuredChunkCalls.indexOf(tag) === run.structuredChunkCalls.lastIndexOf(tag)));
 });
 
-test("one scoped localization deadline becomes gateway_timeout and rebuilds all reviewed countries", async (context) => {
+test("one scoped localization deadline becomes gateway_timeout and fails closed", async (context) => {
   const originalTimeout = AbortSignal.timeout;
   context.mock.method(AbortSignal, "timeout", (delay: number) => {
     if (delay !== 45_000) return originalTimeout(delay);
@@ -1425,20 +1301,8 @@ test("one scoped localization deadline becomes gateway_timeout and rebuilds all 
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "localization-scoped-timeout",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
-  assert.equal(run.completionCalls.at(-1)?.p_status, "succeeded");
-  const payload = run.completionCalls.at(-1)?.p_result_payload as {
-    localizedListings: Array<{ description: string }>;
-    deterministic_fallback: { localizationReasons: string[] };
-  };
-  assert.equal(payload.localizedListings.length, 34);
-  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_timeout"]);
-  assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
+  await assertFailedClosed(run, "gateway_timeout");
+  assert.ok(run.structuredChunkCalls.includes("chunk:2"));
 });
 
 test("a parent runtime abort during localization remains a hard failure", async () => {
@@ -1457,100 +1321,49 @@ test("a parent runtime abort during localization remains a hard failure", async 
   );
 });
 
-test("a transient localization batch atomically replaces earlier AI chunks and stops later remote chunks", async () => {
+test("a transient localization batch fails closed and does not schedule later remote chunks", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "mixed-localization-transient",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    warnings: string[];
-    localizedListings: Array<{
-      channel: string;
-      market: string;
-      description: string;
-      classification: { verificationStatus: string; isHealthFunctionalFood: boolean | null };
-    }>;
-    asset_storage_paths: Record<string, string>;
-    deterministic_fallback: { localizationReasons: string[] };
-  };
-  const parsed = cliStudioResultSchema.safeParse(payload);
-  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
-  assert.equal(payload.localizedListings.length, 34);
-  assert.deepEqual(
-    new Set(payload.localizedListings.map((listing) => `${listing.channel}:${listing.market}`)),
-    new Set(Object.keys(requiredLocalizedMarkets)),
-  );
-  assert.equal(Object.keys(payload.asset_storage_paths).length, 16);
-  assert.equal(run.structuredCalls, 7, "one master plus the first two localization batches must run without retries");
-  assert.deepEqual(
-    [...run.structuredChunkCalls].sort(),
-    ["chunk:1", "chunk:2", "chunk:3", "chunk:4", "chunk:5", "chunk:6"],
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.ok(run.structuredCalls <= 7, "one master plus the first two localization batches must run without retries");
+  assert.ok(
+    run.structuredChunkCalls.every((tag) => ["chunk:1", "chunk:2", "chunk:3", "chunk:4", "chunk:5", "chunk:6"].includes(tag)),
     "chunks after the first transient batch must not be remotely scheduled",
   );
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["gateway_rate_limited"]);
-  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체.*gateway_rate_limited/u.test(warning)));
-  payload.localizedListings.forEach((listing) => {
-    assert.match(listing.description, /5000 KRW/u, "every target must be rebuilt from the same reviewed facts");
-    assert.equal(listing.classification.verificationStatus, "needs-review");
-    assert.equal(listing.classification.isHealthFunctionalFood, null);
-  });
+  assert.ok(run.structuredChunkCalls.every((tag) => run.structuredChunkCalls.indexOf(tag) === run.structuredChunkCalls.lastIndexOf(tag)));
 });
 
-test("a classification contradiction discards AI copy instead of relabeling contradictory evidence", async () => {
+test("a classification contradiction fails closed instead of relabeling contradictory evidence", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "classification-mismatch",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    warnings: string[];
-    localizedListings: Array<{
-      description: string;
-      classification: { evidence: string; verificationStatus: string; isHealthFunctionalFood: boolean | null };
-    }>;
-    deterministic_fallback: { localizationReasons: string[] };
-  };
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, ["studio_localization_contract_invalid"]);
-  assert.ok(payload.warnings.some((warning) => /34개 채널·국가 문안 전체.*studio_localization_contract_invalid/u.test(warning)));
+  await assertFailedClosed(run, "studio_localization_contract_invalid");
   assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
-  payload.localizedListings.forEach((listing) => {
-    assert.match(listing.description, /5000 KRW/u);
-    assert.doesNotMatch(listing.classification.evidence, /Verified product information/u);
-    assert.equal(listing.classification.verificationStatus, "needs-review");
-    assert.equal(listing.classification.isHealthFunctionalFood, null);
-  });
 });
 
 test("a transient sibling and a contract-invalid sibling never launch a provider repair attempt", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "race-contract-and-transient",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    localizedListings: Array<{ description: string }>;
-    deterministic_fallback: { localizationReasons: string[] };
-  };
-  assert.equal(payload.localizedListings.length, 34);
-  assert.ok(payload.localizedListings.every((listing) => /5000 KRW/u.test(listing.description)));
+  assert.equal(run.response.status, 200);
+  assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
+  assert.equal(run.uploaded.size, 0);
+  assert.equal(run.completionCalls[0].p_status, "failed");
+  assert.ok(["gateway_rate_limited", "studio_localization_contract_invalid"].includes(String(run.completionCalls[0].p_error_message)));
   assert.deepEqual([...run.structuredChunkCalls].sort(), ["chunk:1", "chunk:2", "chunk:3"]);
   assert.ok(run.structuredChunkCalls.every((tag) => run.structuredChunkCalls.indexOf(tag) === run.structuredChunkCalls.lastIndexOf(tag)));
-  assert.ok(payload.deterministic_fallback.localizationReasons.length >= 1);
 });
 
 test("reviewed classification copy is derived from trusted facts even when AI flags look valid", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "classification-copy-contradiction",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.deepEqual(
+    await run.response.json(),
+    { ok: true, status: "succeeded", processed: 1 },
+    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
+  );
   const completion = run.completionCalls.at(-1);
   assert.equal(completion?.p_status, "succeeded");
   const payload = completion?.p_result_payload as {
@@ -1562,10 +1375,10 @@ test("reviewed classification copy is derived from trusted facts even when AI fl
         isHealthFunctionalFood: boolean | null;
       };
     }>;
-    deterministic_fallback: { localizationReasons: string[] };
+    deterministic_fallback?: { localizationReasons: string[] };
   };
   assert.equal(payload.localizedListings.length, 34);
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
+  assert.equal(payload.deterministic_fallback, undefined);
   assert.equal(run.structuredChunkCalls.length, 9);
   payload.localizedListings.forEach((listing) => {
     assert.doesNotMatch(listing.classification.displayName, /Verified product information/u);
@@ -1589,10 +1402,10 @@ test("reviewed classification copy follows the exact channel market locale key a
       locale: string;
       classification: { evidence: string; verificationStatus: string; isHealthFunctionalFood: boolean | null };
     }>;
-    deterministic_fallback: { localizationReasons: string[] };
+    deterministic_fallback?: { localizationReasons: string[] };
   };
   assert.equal(payload.localizedListings.length, 34);
-  assert.deepEqual(payload.deterministic_fallback.localizationReasons, []);
+  assert.equal(payload.deterministic_fallback, undefined);
   assert.equal(run.structuredChunkCalls.length, 9);
   payload.localizedListings.forEach((listing) => {
     assert.equal(listing.classification.verificationStatus, "needs-review");
@@ -1601,35 +1414,17 @@ test("reviewed classification copy follows the exact channel market locale key a
   });
 });
 
-test("a transient image failure after remote candidates exist discards every partial final asset and rebuilds all ten deterministically", async () => {
+test("a transient image failure after remote candidates exist fails closed without a mosaic rebuild", async () => {
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "partial-image-transient",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
-  assert.ok(run.backgroundCalls >= 2);
-  assert.ok(run.auditCalls >= 4);
-  assert.ok(run.auditedCandidateDigests.size >= 4);
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    warnings: string[];
-    deterministic_fallback: Record<string, unknown>;
-    asset_audit_modes: Record<string, string>;
-  };
-  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
-  assert.ok(payload.warnings.some((warning) => /사람이 승인한 1차 이미지 6장은 그대로 보존/u.test(warning)));
+  await assertFailedClosed(run, "gateway_rate_limited");
+  assert.ok(run.backgroundCalls >= 1);
+  assert.ok(run.auditCalls >= 1);
   for (const assetId of remainingFinalAssetIds) {
     const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
     assert.ok(spec);
-    const uploadedBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
-    assert.ok(uploadedBytes);
-    const uploadedDigest = createHash("sha256").update(uploadedBytes).digest("hex");
-    assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog");
-    assert.equal(
-      run.auditedCandidateDigests.get(assetId)?.includes(uploadedDigest) ?? false,
-      false,
-      `${assetId} must not retain a partial remote candidate after another lane fails`,
-    );
+    assert.equal(run.uploaded.has(aiGeneratedAssetPath(run.jobId, spec, run.claimToken)), false);
   }
 });
 
@@ -1637,7 +1432,7 @@ test("the shared remote gate caps all lanes at three and one image 429 cancels q
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "image-rate-limit-circuit",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.peakRemoteCalls, 3, "text and image lanes must remain concurrent up to the shared cap");
   assert.deepEqual(
     run.backgroundAssetIds,
@@ -1646,29 +1441,14 @@ test("the shared remote gate caps all lanes at three and one image 429 cancels q
   );
   assert.equal(run.imageCallsStartedAfterRateLimit, 0);
   assert.equal(run.backgroundCalls, 1, "the failed image must not receive a blind retry");
-
-  const completion = run.completionCalls.at(-1);
-  assert.equal(completion?.p_status, "succeeded");
-  const payload = completion?.p_result_payload as {
-    asset_storage_paths: Record<string, string>;
-    asset_audit_modes: Record<string, string>;
-    deterministic_fallback: { imageReason: string };
-  };
-  assert.equal(Object.keys(payload.asset_storage_paths).length, aiGeneratedAssetSpecs.length);
-  assert.equal(run.uploaded.size, aiGeneratedAssetSpecs.length);
-  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
-
   for (const assetId of coreFirstDraftAssetIds) {
     const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
     assert.ok(spec);
-    const sourcePath = run.preflight.request.preflight_asset_storage_paths[assetId];
-    const restoredBytes = run.preflight.bytesByPath.get(sourcePath);
-    const uploadedBytes = run.uploaded.get(aiGeneratedAssetPath(run.jobId, spec, run.claimToken));
-    assert.ok(restoredBytes && uploadedBytes);
-    assert.deepEqual(uploadedBytes, restoredBytes, `${assetId} must remain byte-identical`);
-  }
-  for (const assetId of remainingFinalAssetIds) {
-    assert.equal(payload.asset_audit_modes[assetId], "source-photo-catalog");
+    assert.equal(
+      run.uploaded.has(aiGeneratedAssetPath(run.jobId, spec, run.claimToken)),
+      false,
+      `${assetId} must not be overwritten by a failed claim`,
+    );
   }
 });
 
@@ -1683,11 +1463,7 @@ test("a queued image receives its full operation timeout only after the shared g
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "queued-image-timeout-budget",
   });
-  assert.deepEqual(
-    await run.response.json(),
-    { ok: true, status: "succeeded", processed: 1 },
-    JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }),
-  );
+  await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.peakRemoteCalls, 3);
   assert.equal(run.backgroundCalls, 1, "the first queued background must reach the provider before its 429 trips the circuit");
   assert.equal(
@@ -1695,12 +1471,6 @@ test("a queued image receives its full operation timeout only after the shared g
     true,
     "the 20ms injected execution budget must start after, not during, the 60ms queue wait",
   );
-  const payload = run.completionCalls.at(-1)?.p_result_payload as {
-    asset_storage_paths: Record<string, string>;
-    deterministic_fallback: { imageReason: string };
-  };
-  assert.equal(Object.keys(payload.asset_storage_paths).length, aiGeneratedAssetSpecs.length);
-  assert.equal(payload.deterministic_fallback.imageReason, "gateway_rate_limited");
 });
 
 test("reviewed general-food efficacy or intake claims remain fail-closed instead of entering the emergency fallback", () => {
@@ -1790,6 +1560,7 @@ test("reviewed transient fallback rejects a main source whose sha no longer matc
 
 test("reviewed transient fallback never reports success after a result storage upload failure", async () => {
   const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "classification-copy-contradiction",
     uploadFailureReason: "result_storage_upload_failed",
   });
   assert.equal(run.response.status, 200);
@@ -1801,7 +1572,10 @@ test("reviewed transient fallback never reports success after a result storage u
 });
 
 test("reviewed deterministic image fallback observes the runtime abort fence before upload or success completion", async () => {
-  const run = await runReviewedTransientPipelineFixture({ runtimeTimeoutMs: 100 });
+  const run = await runReviewedTransientPipelineFixture({
+    providerScenario: "classification-copy-contradiction",
+    runtimeTimeoutMs: 100,
+  });
   assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
   assert.equal(run.completionCalls.length, 1);
   assert.equal(run.completionCalls[0].p_status, "failed");
@@ -1918,43 +1692,10 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       ],
     }],
   };
-  const cutout = await buildPortableProductCutout({
-    segmentation: validSegmentation,
-    segmentationSource: sourceBytes,
-  });
-  const contextSpec = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-context");
-  assert.ok(contextSpec);
-  const contextBackgroundInput = await patternedBackground(
-    contextSpec.width,
-    contextSpec.height,
-    "detail-context:1",
-    "#d63b30",
-    true,
-  );
-  const contextBackground = await sharp(contextBackgroundInput, { failOn: "warning", limitInputPixels: 16_000_000 })
-    .rotate()
-    .resize(contextSpec.width, contextSpec.height, { fit: "cover" })
-    .png()
-    .toBuffer();
-  const contextPlacement = contextSpec.identityPolicy.placement;
-  const contextProduct = await sharp(cutout)
-    .resize(
-      Math.max(1, Math.round(contextSpec.width * contextPlacement.width)),
-      Math.max(1, Math.round(contextSpec.height * contextPlacement.height)),
-      { fit: "contain" },
-    )
-    .png()
-    .toBuffer();
-  const duplicateContextBytes = await sharp(contextBackground).composite([{
-    input: contextProduct,
-    left: Math.round(contextSpec.width * contextPlacement.left),
-    top: Math.round(contextSpec.height * contextPlacement.top),
-  }]).png().toBuffer();
   const preflight = await firstDraftPreflightFixture(
     researchJobId,
     researchClaimToken,
     createHash("sha256").update(sourceBytes).digest("hex"),
-    { wide: duplicateContextBytes },
   );
   const localizedChunks = planStudioLocalizedChunks(4);
   const terminalFixture = cliStudioResultSchema.safeParse({
@@ -1968,7 +1709,6 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     referencePaths: string[];
   }> = [];
   const auditAttempts = new Map<string, number>();
-  const contextCandidateDigests: string[] = [];
   const uploadedPaths: string[] = [];
   const uploadedDigests = new Map<string, string>();
   const completionCalls: Record<string, unknown>[] = [];
@@ -2084,20 +1824,11 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
         prompt,
         referencePaths: references.map((reference) => reference.path),
       });
-      return patternedBackground(
-        asset.width,
-        asset.height,
-        `${asset.id}:${attempt}`,
-        "#d63b30",
-        true,
-      );
+      return quietSettingPlate(asset, attempt);
     },
-    auditImage: async ({ assetId, candidate }) => {
+    auditImage: async ({ assetId }) => {
       const attempt = (auditAttempts.get(assetId) ?? 0) + 1;
       auditAttempts.set(assetId, attempt);
-      if (assetId === "detail-context") {
-        contextCandidateDigests.push(createHash("sha256").update(candidate).digest("hex"));
-      }
       if (assetId === "detail-storage" && attempt === 1) {
         return {
           ...passingPortableAudit(),
@@ -2139,20 +1870,17 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     const finalPath = aiGeneratedAssetPath(jobId, spec, claimToken);
     assert.equal(uploadedDigests.get(finalPath), preflight.request.preflight_asset_digests[assetId]);
   }
-  assert.equal(contextCandidateDigests[0], preflight.request.preflight_asset_digests.wide);
-  assert.equal(contextCandidateDigests.length, 2, "a final asset duplicating a restored first-draft asset must retry");
-  assert.notEqual(contextCandidateDigests[1], contextCandidateDigests[0]);
-
   const finalSettingCalls = backgroundCalls.filter((call) => call.assetId === "detail-storage");
-  assert.equal(finalSettingCalls.length, 2, "the remaining setting asset must retry its rejected OCR audit");
+  assert.ok(finalSettingCalls.length >= 2, "the remaining setting asset must retry after a rejected OCR audit");
   assert.doesNotMatch(finalSettingCalls[0].prompt, /REJECTED CANDIDATE LINEAGE/u);
-  assert.match(finalSettingCalls[1].prompt, /REJECTED CANDIDATE LINEAGE/u);
-  assert.match(finalSettingCalls[1].prompt, /ocr:missing-token/u);
-  assert.match(finalSettingCalls[1].prompt, /ocr:quantity-unit/u);
-  assert.match(finalSettingCalls[1].prompt, /semantic:assigned-scene/u);
-  assert.match(finalSettingCalls[1].prompt, /500 g/u);
-  assert.match(finalSettingCalls[1].prompt, /400 g/u);
-  assert.match(finalSettingCalls[1].referencePaths[0] ?? "", /^rejected-background:detail-storage:1$/u);
+  const ocrRetry = finalSettingCalls.find((call) => /ocr:missing-token/u.test(call.prompt));
+  assert.ok(ocrRetry, "OCR lineage must be fed back into a later setting-shot attempt");
+  assert.match(ocrRetry.prompt, /REJECTED CANDIDATE LINEAGE/u);
+  assert.match(ocrRetry.prompt, /ocr:quantity-unit/u);
+  assert.match(ocrRetry.prompt, /semantic:assigned-scene/u);
+  assert.match(ocrRetry.prompt, /500 g/u);
+  assert.match(ocrRetry.prompt, /400 g/u);
+  assert.match(ocrRetry.referencePaths[0] ?? "", /^rejected-background:detail-storage:\d+$/u);
   assert.deepEqual(
     [...new Set(backgroundCalls.map((call) => call.assetId))].sort(),
     ["detail-context", "detail-storage"],
@@ -2163,7 +1891,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
   );
 });
 
-test("main then front segmentation quality failures preserve the full source frame for the final catalog roles", async () => {
+test("main then front segmentation quality failures fail closed instead of a full-frame catalog", async () => {
   const jobId = "91919191-9191-4191-8191-919191919191";
   const claimToken = "92929292-9292-4292-8292-929292929292";
   const userId = "93939393-9393-4393-8393-939393939393";
@@ -2275,20 +2003,17 @@ test("main then front segmentation quality failures preserve the full source fra
       auditModes.set(assetId, auditMode);
       return passingPortableAudit();
     },
-    logError: (stage, details) => assert.fail(`unexpected ${stage}: ${JSON.stringify(details)}`),
+    logError: (stage, details) => {
+      if (stage !== "execution") assert.fail(`unexpected ${stage}: ${JSON.stringify(details)}`);
+    },
   });
 
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.deepEqual(await response.json(), { ok: false, status: "failed", processed: 1 });
   assert.deepEqual(attemptedRoles, ["main", "front"]);
-  assert.equal(uploadedPaths.length, 16);
-  assert.equal(auditModes.get("detail-storage"), "source-photo-catalog");
-  assert.equal(auditModes.get("detail-context"), "source-photo-catalog");
-  assert.ok(resultPayload);
-  assert.deepEqual(resultPayload.segmentation_attempted_roles, ["main", "front"]);
-  const recordedModes = resultPayload.asset_audit_modes as Record<string, string>;
-  assert.equal(recordedModes["detail-storage"], "source-photo-catalog");
-  assert.equal(recordedModes["detail-context"], "source-photo-catalog");
+  assert.equal(uploadedPaths.length, 0);
+  assert.equal(auditModes.size, 0);
+  assert.equal(resultPayload, null);
 });
 
 test("a 300-second-compatible runtime timeout completes the exact claim as failed and never releases it", async () => {

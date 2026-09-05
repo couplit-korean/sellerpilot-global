@@ -60,6 +60,77 @@ function itemHasAttribute(draft: Record<string, unknown>, name: string) {
   return Array.isArray(values) && values.some(meaningful);
 }
 
+const coupangPlaceholderNotice = /^(?:상품\s*상세\s*참조|상세(?:페이지)?\s*참조|상품정보\s*참조)$/iu;
+
+function coupangMeaningfulNoticeContent(value: unknown) {
+  if (typeof value !== "string") return false;
+  const text = value.trim();
+  return text.length > 0 && !unknownValue.test(text) && !coupangPlaceholderNotice.test(text);
+}
+
+export type CoupangNoticeEnvelope = {
+  noticeCategoryName: string;
+  details: Record<string, string>;
+};
+
+export function parseCoupangNoticeEnvelope(value: unknown): CoupangNoticeEnvelope | null {
+  let parsed = value;
+  if (typeof value === "string") {
+    const text = value.trim();
+    if (!text) return null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      return null;
+    }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const record = parsed as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 2 || !keys.includes("noticeCategoryName") || !keys.includes("details")) {
+    return null;
+  }
+  const noticeCategoryName = coupangMeaningfulNoticeContent(record.noticeCategoryName)
+    ? String(record.noticeCategoryName).trim()
+    : "";
+  if (!noticeCategoryName) return null;
+  if (!record.details || typeof record.details !== "object" || Array.isArray(record.details)) {
+    return null;
+  }
+  const details: Record<string, string> = {};
+  for (const [key, content] of Object.entries(record.details as Record<string, unknown>)) {
+    const name = key.trim();
+    if (!name || !coupangMeaningfulNoticeContent(content) || Object.hasOwn(details, name)) return null;
+    details[name] = String(content).trim();
+  }
+  return Object.keys(details).length > 0 ? { noticeCategoryName, details } : null;
+}
+
+function coupangNativeNoticesConfirmed(value: unknown) {
+  if (!Array.isArray(value) || value.length === 0) return false;
+  const categories = new Set<string>();
+  for (const notice of value) {
+    if (!notice || typeof notice !== "object") return false;
+    const row = notice as Record<string, unknown>;
+    const noticeCategoryName = coupangMeaningfulNoticeContent(row.noticeCategoryName)
+      ? String(row.noticeCategoryName).trim()
+      : "";
+    const noticeCategoryDetailName = coupangMeaningfulNoticeContent(row.noticeCategoryDetailName)
+      ? String(row.noticeCategoryDetailName).trim()
+      : "";
+    if (!noticeCategoryName || !noticeCategoryDetailName || !coupangMeaningfulNoticeContent(row.content)) {
+      return false;
+    }
+    categories.add(noticeCategoryName);
+  }
+  return categories.size === 1;
+}
+
+function coupangNoticesConfirmed(draft: Record<string, unknown>) {
+  return Boolean(parseCoupangNoticeEnvelope(valueAt(draft, ["facts", "noticeContent"])))
+    || coupangNativeNoticesConfirmed(valueAt(draft, ["body", "items", 0, "notices"]));
+}
+
 const sharedImage = (path: Array<string | number>): RequirementSpec => ({
   key: "images",
   label: "공개 상품 이미지",
@@ -169,8 +240,34 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["body", "items", 0, "salePrice"]) },
     { key: "stock", label: "구매 가능 수량", source: "상품 정보", test: positive(["body", "items", 0, "maximumBuyCount"]) },
     { key: "outbound", label: "사용 가능 국내 출고지", source: "판매자 계정", runtime: true, help: "WING 출고지 API에서 사용 가능 상태를 확인합니다." },
-    { key: "return", label: "반품지·택배사·반품비", source: "판매자 계정", runtime: true, help: "WING 반품지 API의 실제 주소와 요금을 사용합니다." },
-    { key: "notices", label: "카테고리 고시정보", source: "카테고리", runtime: true, help: "쿠팡 카테고리 메타 API에서 필수 고시 항목을 생성합니다." },
+    { key: "return", label: "반품지·택배사·반품비", source: "판매자 계정", runtime: true, help: "WING 반품지 API의 실제 주소와 요금을 사용합니다. 계약 택배사·반품비가 없으면 추정하지 않고 등록 전에 차단합니다." },
+    {
+      key: "notices",
+      label: "카테고리 고시정보",
+      source: "카테고리",
+      test: coupangNoticesConfirmed,
+      manualPath: ["facts", "noticeContent"],
+      placeholder: "{\"noticeCategoryName\":\"고시군\",\"details\":{\"항목명\":\"판매자 확인값\"}}",
+      help: "고시는 JSON 객체만 허용합니다. noticeCategoryName과 details의 항목별 확정값이 필요하고, 한 문장을 모든 필드에 복사하지 않습니다. 상품상세 참조나 스칼라 문자열은 준비 완료가 아닙니다.",
+    },
+    {
+      key: "certification",
+      label: "인증·허가 정보",
+      source: "카테고리",
+      runtime: true,
+      manualPath: ["facts", "certificationEvidence"],
+      placeholder: "필수 인증코드",
+      help: "카테고리 메타에서 필수 인증이 확인되면 판매자 확인 코드가 필요합니다. 문서화되지 않은 dataType은 면책이 아니며, 코드 없이 빈 인증을 만들지 않습니다.",
+    },
+    {
+      key: "quantity-attribute",
+      label: "수량·구성 속성",
+      source: "상품 정보",
+      runtime: true,
+      manualPath: ["facts", "quantityAttribute"],
+      placeholder: "예: 6개",
+      help: "카테고리 필수 수량 속성은 판매자가 확인한 값만 사용합니다. 1개처럼 추정하지 않고, 필수가 아니면 메타 조회로 통과합니다.",
+    },
   ],
   elevenst: [
     { key: "category", label: "11번가 말단 카테고리", source: "카테고리", path: ["product", "dispCtgrNo"] },

@@ -15,6 +15,69 @@ import {
   mergeImageLabelFidelityReports,
 } from "../lib/image-label-fidelity";
 
+// ISO/IEC 15417 Code 128 patterns. Stop (106) is 13 modules; all others are 11.
+const CODE128_PATTERNS = [
+  "212222", "222122", "222221", "121223", "121322", "131222", "122213", "122312", "132212", "221213",
+  "221312", "231212", "112232", "122132", "122231", "113222", "123122", "123221", "223211", "221132",
+  "221231", "213212", "223112", "312131", "311222", "321122", "321221", "312212", "322112", "322211",
+  "212123", "212321", "232121", "111323", "131123", "131321", "112313", "132113", "132311", "211313",
+  "231113", "231311", "112133", "112331", "132131", "113123", "113321", "133121", "313121", "211331",
+  "231131", "213113", "213311", "213131", "311123", "311321", "331121", "312113", "312311", "332111",
+  "314111", "221411", "431111", "111224", "111422", "121124", "121421", "141122", "141221", "112214",
+  "112412", "122114", "122411", "142112", "142211", "241211", "221114", "413111", "241112", "134111",
+  "111242", "121142", "121241", "114212", "124112", "124211", "411212", "421112", "421211", "212141",
+  "214121", "412121", "111143", "111341", "131141", "114113", "114311", "411113", "411311", "113141",
+  "114131", "311141", "411131", "211412", "211214", "211232", "2331112",
+] as const;
+
+function code128ModuleBits(payload: string): number[] {
+  const codes = [104];
+  for (const character of payload) {
+    const code = character.charCodeAt(0) - 32;
+    if (code < 0 || code > 94) {
+      throw new Error(`unsupported Code 128 character ${character}`);
+    }
+    codes.push(code);
+  }
+  let checksum = codes[0];
+  for (let index = 1; index < codes.length; index += 1) checksum += codes[index] * index;
+  codes.push(checksum % 103, 106);
+  const modules: number[] = [];
+  const quiet = 12;
+  for (let index = 0; index < quiet; index += 1) modules.push(0);
+  for (const code of codes) {
+    const pattern = CODE128_PATTERNS[code];
+    let bar = 1;
+    for (const digit of pattern) {
+      const run = Number(digit);
+      for (let index = 0; index < run; index += 1) modules.push(bar);
+      bar ^= 1;
+    }
+  }
+  for (let index = 0; index < quiet; index += 1) modules.push(0);
+  return modules;
+}
+
+async function writeCode128Png(outputPath: string, payload: string) {
+  const modules = code128ModuleBits(payload);
+  const moduleWidth = 5;
+  const height = 160;
+  const width = modules.length * moduleWidth;
+  const raw = Buffer.alloc(width * height * 3, 255);
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < modules.length; x += 1) {
+      if (!modules[x]) continue;
+      for (let k = 0; k < moduleWidth; k += 1) {
+        const offset = (y * width + x * moduleWidth + k) * 3;
+        raw[offset] = 0;
+        raw[offset + 1] = 0;
+        raw[offset + 2] = 0;
+      }
+    }
+  }
+  await sharp(raw, { raw: { width, height, channels: 3 } }).png().toFile(outputPath);
+}
+
 test("source-protected assets require a byte-identical target-scale label baseline", () => {
   const baseline = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02]);
   const expectedDigest = imageLabelPixelDigest(baseline);
@@ -268,28 +331,8 @@ test("final package evidence rejects an exact source barcode that became unreada
   const required = join(directory, "required.png");
   const unreadable = join(directory, "unreadable.png");
   const payload = "8801234567890";
-  const generator = `
-import AppKit
-import CoreImage
-import Foundation
-let output = URL(fileURLWithPath: CommandLine.arguments[1])
-let payload = CommandLine.arguments[2].data(using: .ascii)!
-let filter = CIFilter(name: "CICode128BarcodeGenerator")!
-filter.setValue(payload, forKey: "inputMessage")
-filter.setValue(12, forKey: "inputQuietSpace")
-let image = filter.outputImage!.transformed(by: CGAffineTransform(scaleX: 5, y: 5))
-let context = CIContext()
-let cgImage = context.createCGImage(image, from: image.extent)!
-let representation = NSBitmapImageRep(cgImage: cgImage)
-try representation.representation(using: .png, properties: [:])!.write(to: output)
-`;
   try {
-    const generated = spawnSync("/usr/bin/swift", ["-e", generator, required, payload], {
-      encoding: "utf8",
-      timeout: 30_000,
-      maxBuffer: 1_000_000,
-    });
-    assert.equal(generated.status, 0, generated.stderr);
+    await writeCode128Png(required, payload);
     const crushed = await sharp(required)
       .resize(4, 2, { fit: "fill" })
       .png()

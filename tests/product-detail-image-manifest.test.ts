@@ -195,3 +195,17 @@ test("channel arguments replace client detail URLs with approved signed manifest
     "ephemeral signed URLs must not change the idempotency fingerprint input",
   );
 });
+
+
+test("byte-approved historical fallback is not an eligible publication manifest", () => {
+  const context = {
+    ...approvedContext(),
+    studioResult: {
+      warnings: ["나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다."],
+    },
+  };
+  assert.deepEqual(approvedProductDetailManifestFromPublishContext(context), {
+    ok: false,
+    code: "STUDIO_DEGRADED_RESULT_REGENERATION_REQUIRED",
+  });
+});

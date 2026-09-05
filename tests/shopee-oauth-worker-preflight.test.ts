@@ -94,6 +94,7 @@ function assertWorkerBlocked(
   assert.equal(body.mode, "serverless_worker_required");
   assert.equal(typeof body.message, "string");
   assert.equal(calls.includes("/rest/v1/rpc/sellerpilot_service_serverless_cs_wakeup_status"), true);
+  assert.equal(calls.includes("/rest/v1/rpc/sellerpilot_ai_runtime_status"), false);
   assert.equal(calls.includes("/rest/v1/rpc/sellerpilot_enqueue_channel_gateway_job"), false);
 }
 

@@ -166,6 +166,10 @@ import {
   hasServerlessStaticEgressFor,
   SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "../../../../lib/channels/serverless-static-egress";
+import {
+  isSmartstoreLocalReadOperation,
+  resolveLocalGatewayReadReady,
+} from "../../../../lib/channels/smartstore-local-read-routing";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import {
@@ -1522,7 +1526,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (channel === "smartstore") {
+  if (channel === "smartstore" && isSmartstoreLocalReadOperation(operation)) {
+    const { data: localGatewayRuntime, error: localGatewayRuntimeError } = await userClient.rpc(
+      "sellerpilot_ai_runtime_status",
+    );
+    const localGatewayReady = resolveLocalGatewayReadReady(localGatewayRuntime, {
+      statusAvailable: !localGatewayRuntimeError,
+    });
+    if (!localGatewayReady.available) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "LOCAL_GATEWAY_WORKER_REQUIRED",
+        mode: "local_gateway_worker_required",
+        message: localGatewayReady.message,
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  } else if (channel === "smartstore") {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),

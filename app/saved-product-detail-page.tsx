@@ -11,6 +11,9 @@ import {
 } from "../lib/product-detail-image-manifest";
 import { makeValidatedProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
 import type { ProductDetailData, ProductDetailImageLoadState, ProductDetailSource } from "./product-detail-puck";
+import { inspectStudioResultQuality, type StudioResultQuality } from "../lib/studio-result-quality";
+
+type QualityAwareDetailSource = ProductDetailSource & { studioQuality?: StudioResultQuality };
 
 const ProductDetailRender = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailRender), { ssr: false });
 const ProductDetailEditor = dynamic(() => import("./product-detail-puck").then((module) => module.ProductDetailEditor), { ssr: false });
@@ -43,7 +46,7 @@ export function parseProductDetailPageEnvelope(value: unknown): ProductDetailPag
   };
 }
 
-export function parseProductDetailSource(value: unknown): ProductDetailSource | null {
+export function parseProductDetailSource(value: unknown): QualityAwareDetailSource | null {
   if (!isRecord(value) || !isRecord(value.product) || !isRecord(value.design) || !isRecord(value.design.palette)) return null;
   const product = value.product as Record<string, unknown>;
   const design = value.design as Record<string, unknown>;
@@ -63,7 +66,8 @@ export function parseProductDetailSource(value: unknown): ProductDetailSource | 
     product,
     design,
     ...(Array.isArray(value.localizedListings) ? { localizedListings: value.localizedListings } : {}),
-  } as ProductDetailSource;
+    studioQuality: inspectStudioResultQuality(value),
+  } as QualityAwareDetailSource;
 }
 
 export function SavedProductDetailPage({
@@ -75,7 +79,7 @@ export function SavedProductDetailPage({
   notify,
 }: {
   productId: string;
-  source: ProductDetailSource | null;
+  source: QualityAwareDetailSource | null;
   initialDetailPage: ProductDetailPageEnvelope | null;
   assetUrls: Record<string, string>;
   authenticatedFetch: AuthenticatedFetch;
@@ -117,7 +121,9 @@ export function SavedProductDetailPage({
   const manifestRoles = detailPage?.imageManifest?.images.map((image) => image.role) ?? [];
   const manifestMatchesDocument = manifestRoles.length === productDetailImageCount
     && manifestRoles.every((role, index) => role === expectedRoles[index]);
+  const qualityBlocked = source?.studioQuality?.blockedForPublication === true;
   const detailImagesReady = Boolean(detailPage
+    && !qualityBlocked
     && detailInspection?.ok
     && detailPage.approvedVersion === detailPage.version
     && manifestMatchesDocument
@@ -135,6 +141,10 @@ export function SavedProductDetailPage({
   };
 
   const save = async (next: ProductDetailData) => {
+    if (qualityBlocked) {
+      notify(source?.studioQuality?.message ?? "대체본은 다시 제작한 뒤 검수해 주세요.");
+      return;
+    }
     if (saveInFlight.current) return;
     saveInFlight.current = true;
     setSaving(true);
@@ -174,10 +184,11 @@ export function SavedProductDetailPage({
       <div><span className="panel-kicker">PUCK DETAIL PAGE</span><h3>저장된 상세페이지 편집</h3></div>
       <button type="button" className="publish-execute" disabled={!canEdit || saving} onClick={() => setEditorOpen(true)}>{saving ? <LoaderCircle className="spin" size={15} /> : <PencilRuler size={15} />}{detailPage ? "상세페이지 다시 편집" : "상세페이지 편집 시작"}</button>
     </div>
+    {qualityBlocked ? <div className="saved-detail-image-readiness error" role="alert" data-studio-quality="degraded"><AlertTriangle size={15} /><span><b>대체 제작 결과 · 재제작 필요</b><small>{source?.studioQuality?.message}</small></span></div> : null}
     {canEdit ? <>
       <div className={`saved-detail-image-readiness ${detailImagesReady ? "ready" : failedImageCount > 0 ? "error" : "pending"}`} role="status" data-detail-images-ready={detailImagesReady ? "true" : "false"}>
         {detailImagesReady ? <CircleCheck size={15} /> : failedImageCount > 0 ? <AlertTriangle size={15} /> : <LoaderCircle className={detailPage ? "spin" : undefined} size={15} />}
-        <span><b>상세 이미지 {loadedImageCount} / {productDetailImageCount}장</b><small>{detailImagesReady ? `저장 버전 ${detailPage?.version} · 운영 게시 준비 완료` : failedImageCount > 0 ? `불러오기 오류 ${failedImageCount}장 · 오류가 해소될 때까지 게시 준비 아님` : detailPage ? "저장된 역할·경로와 이미지 로드를 확인하는 중" : "원장 저장 후 8장 로드를 확인합니다."}</small></span>
+        <span><b>상세 이미지 {loadedImageCount} / {productDetailImageCount}장</b><small>{qualityBlocked ? "이미지가 모두 열려도 대체본은 게시 준비 상태가 아닙니다." : detailImagesReady ? `저장 버전 ${detailPage?.version} · 이미지 연결 확인 완료 · 문안·채널 조건 별도 검수` : failedImageCount > 0 ? `불러오기 오류 ${failedImageCount}장 · 오류가 해소될 때까지 게시 준비 아님` : detailPage ? "저장된 역할·경로와 이미지 로드를 확인하는 중" : "원장 저장 후 8장 로드를 확인합니다."}</small></span>
       </div>
       <div className="detail-preview-scroll"><div className="detail-preview-canvas"><ProductDetailRender key={`detail-image-load-${detailImageLoadCycle}`} result={source} imageUrl={heroUrl} assetUrls={assetUrls} data={detailPage?.data ?? null} onDetailImageLoadState={reportImageLoadState} /></div></div>
       <p className="saved-detail-meta"><Clock3 size={13} />{detailPage ? `저장 버전 ${detailPage.version} · ${detailPage.updatedAt ? new Date(detailPage.updatedAt).toLocaleString("ko-KR") : "저장 시각 확인 중"}` : "아직 원장에 저장되지 않은 AI 초안입니다. 편집기의 발행 버튼을 누르면 영구 저장됩니다."}</p>

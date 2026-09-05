@@ -11,6 +11,7 @@ import {
   type ProductDetailImagePathEntry,
 } from "./product-detail-image-manifest";
 import { validateStoredProductGeneratedAssetPaths } from "./studio-result-assets";
+import { inspectStudioResultQuality } from "./studio-result-quality";
 
 type ApprovedProductDetailManifest = {
   version: number;
@@ -56,6 +57,11 @@ export function resolveProductDetailDocumentAssetPaths(
 export function approvedProductDetailManifestFromPublishContext(
   context: Record<string, unknown>,
 ): ApprovedProductDetailManifestResult {
+  // Approval binds exact bytes, not production quality. Historical emergency
+  // catalog/copy results must not become publishable merely by saving them.
+  if (inspectStudioResultQuality(context.studioResult).blockedForPublication) {
+    return { ok: false, code: "STUDIO_DEGRADED_RESULT_REGENERATION_REQUIRED" };
+  }
   const detailPage = recordValue(context.detailPage);
   const version = Number(detailPage?.version);
   const approvedVersion = Number(detailPage?.approvedVersion);

@@ -12,6 +12,7 @@ import {
   validateDetailAnimatedGif,
 } from "../../../../../../lib/product-media-contract";
 import { validateStoredProductGeneratedAssetPaths } from "../../../../../../lib/studio-result-assets";
+import { inspectStudioResultQuality } from "../../../../../../lib/studio-result-quality";
 
 export const runtime = "nodejs";
 
@@ -134,6 +135,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   return NextResponse.json({
     ...payload,
     studioResult,
+    studioQuality: inspectStudioResultQuality(studioResult),
     commerceOperations: operationsError ? null : commerceOperations,
     sourceImages,
     generatedImages,
@@ -194,6 +196,13 @@ export async function PUT(request: Request, context: { params: Promise<{ id: str
     { p_product_id: productId.data },
   );
   const contextRecord = isRecord(currentContext) ? currentContext : null;
+  const studioQuality = inspectStudioResultQuality(contextRecord?.studioResult);
+  if (!currentContextError && contextRecord && studioQuality.blockedForPublication) {
+    return NextResponse.json({
+      code: "STUDIO_DEGRADED_RESULT_REGENERATION_REQUIRED",
+      message: studioQuality.message,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   const resolvedAssets = contextRecord
     ? resolveProductDetailDocumentAssetPaths(body.data.data, contextRecord.generatedImagePaths)
     : null;

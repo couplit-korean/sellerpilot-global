@@ -57,7 +57,9 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
     assert.equal(remote.inventory.state, "supported", channel);
   }
 
-  assert.equal(channelProductEditFieldSupport("temu").productName.state, "blocked");
+  // The field mapper exists, but this is not a generic Temu release permit.
+  assert.equal(channelProductEditFieldSupport("temu").productName.state, "supported");
+  assert.equal(channelOperationAvailable("temu", "listing.update"), false);
   assert.equal(channelProductEditFieldSupport("temu").inventory.state, "supported");
   assert.equal(channelProductEditFieldSupport("ebay").inventory.state, "blocked");
   assert.match(channelProductEditFieldSupport("ebay").inventory.reason, /SKU/);
@@ -104,7 +106,10 @@ test("중앙 저장과 원격 전체 수정의 수동 반영 필드를 구조적
   assert.equal(elevenst.listingUpdateAvailable, true);
   assert.deepEqual(elevenst.remotelyWritableFields, ["productName", "description", "images"]);
   assert.deepEqual(elevenst.partiallyWritableFields, ["requiredInformation"]);
-  assert.deepEqual(productEditRemotePlan("temu", false).remotelyWritableFields, ["inventory"]);
+  // Like eBay below, this list describes implemented field support separately
+  // from the manual_external_update_required execution state asserted above.
+  assert.deepEqual(productEditRemotePlan("temu", false).remotelyWritableFields, ["productName", "description", "images", "price", "inventory"]);
+  assert.equal(channelOperationAvailable("temu", "price.update"), false);
   assert.deepEqual(productEditRemotePlan("ebay", false).remotelyWritableFields, ["productName", "description", "images"]);
 });
 

@@ -4,11 +4,37 @@ import test from "node:test";
 import { normalizeLazadaImHistory } from "../lib/channels/lazada-im";
 import { executeChannelOperation } from "../lib/channels/operations";
 
+const lazadaCommerceCredentials = {
+  app_key: "commerce-app-key",
+  app_secret: "commerce-app-secret",
+  access_token: "commerce-access-token",
+  country: "my",
+} as const;
+
+const lazadaImOverlay = {
+  im_app_key: "im-app-key",
+  im_app_secret: "im-app-secret",
+  im_access_token: "im-access-token",
+} as const;
+
+const lazadaDualAppPayload = {
+  ...lazadaCommerceCredentials,
+  ...lazadaImOverlay,
+};
+
+function assertLazadaImRequestParams(params: URLSearchParams) {
+  assert.equal(params.get("app_key"), lazadaImOverlay.im_app_key);
+  assert.equal(params.get("access_token"), lazadaImOverlay.im_access_token);
+  assert.notEqual(params.get("app_key"), lazadaCommerceCredentials.app_key);
+  assert.notEqual(params.get("access_token"), lazadaCommerceCredentials.access_token);
+}
+
 test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer messages", async () => {
   const originalFetch = globalThis.fetch;
   const calledPaths: string[] = [];
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
+    assertLazadaImRequestParams(url.searchParams);
     calledPaths.push(url.pathname);
     if (url.pathname.endsWith("/im/session/list")) {
       return Response.json({
@@ -45,7 +71,7 @@ test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer message
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "inquiries.list",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      payload: lazadaDualAppPayload,
       arguments: { bootstrap: true, startTime: 1_787_340_100_000, pageSize: 20, sessionLimit: 20 },
       environment: "production",
     });
@@ -71,7 +97,7 @@ test("Lazada IM history cannot be turned into a periodic poll", async () => {
     executeChannelOperation({
       channel: "lazada",
       operation: "inquiries.list",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      payload: lazadaDualAppPayload,
       arguments: {},
       environment: "production",
     }),
@@ -102,6 +128,7 @@ test("Lazada IM follows string cursors and keeps the latest buyer message per se
   const calls: URL[] = [];
   globalThis.fetch = async (input) => {
     const url = new URL(String(input));
+    assertLazadaImRequestParams(url.searchParams);
     calls.push(url);
     if (url.pathname.endsWith("/im/session/list")) {
       if (!url.searchParams.has("last_session_id")) {
@@ -142,7 +169,7 @@ test("Lazada IM follows string cursors and keeps the latest buyer message per se
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "inquiries.list",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      payload: lazadaDualAppPayload,
       arguments: { bootstrap: true, startTime: 3_000, pageSize: 20, sessionLimit: 20, messageLimit: 100 },
       environment: "production",
     });

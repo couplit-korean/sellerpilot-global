@@ -174,7 +174,7 @@ test("Shopee static egress migration preserves prior flags and closes both claim
   assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy[\s\S]*shopee/i);
 });
 
-test("Shopee OAuth stays gated while authenticated Shopee category work is not blocked by static egress", async () => {
+test("Shopee OAuth requires an attested serverless or exclusive local executor while category reads stay separate", async () => {
   const [oauthRoute, channelOperationsRoute] = await Promise.all([
     readFile(
       new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url),
@@ -189,7 +189,10 @@ test("Shopee OAuth stays gated while authenticated Shopee category work is not b
   assert.match(oauthRoute, /runtimeState\.configured === true[\s\S]*runtimeState\.active === true/);
   assert.match(oauthRoute, /if \(oauthCode\) {[\s\S]*shopeeOAuthGatewayBlocked\(serviceClient/);
   assert.match(oauthRoute, /if \(parsed\.data\.startOAuth\) {[\s\S]*shopeeOAuthGatewayBlocked\(serviceClient/);
-  assert.match(oauthRoute, /blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED/);
+  assert.match(oauthRoute, /resolveShopeeOAuthExecutorReadiness/);
+  assert.match(oauthRoute, /sellerpilot_ai_runtime_status/);
+  assert.match(oauthRoute, /executor_exclusive_unproven/);
+  assert.match(oauthRoute, /static_egress_status_unavailable/);
   assert.match(oauthRoute, /blockedReason: "SERVERLESS_WORKER_REQUIRED"/);
   assert.ok(
     oauthRoute.indexOf("const blocked = await shopeeOAuthGatewayBlocked")

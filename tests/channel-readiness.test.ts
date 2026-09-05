@@ -5,6 +5,8 @@ import {
   channelReadinessObservedAt,
   resolveChannelGatewayActivity,
   resolveChannelReadiness,
+  temuHistoricComplianceRejectedOn,
+  TEMU_EXTERNAL_APPROVAL_UNKNOWN,
   type ChannelReadinessLiveMetric,
 } from "../app/channel-readiness-data";
 
@@ -53,44 +55,54 @@ test("국내 채널은 운영 키 읽기 통과만으로 남은 기능 차단을
   }
 });
 
-test("Temu 정적 스냅샷은 과거 보완 요청을 현재 반려 상태처럼 표시하지 않는다", () => {
+test("Temu 정적 스냅샷은 최신 이력을 날짜와 함께 외부 차단으로 표시하고 재제출 행동 루프를 만들지 않는다", () => {
   const temu = temuReadiness();
 
   assert.equal(channelReadinessObservedAt, "2026.08.24");
-  assert.equal(temu.overall, "partial");
+  assert.equal(temu.overall, "blocked");
+  assert.equal(temu.apiReadPassed, false);
   assert.match(temu.summary, /2026-08-24/);
   assert.match(temu.summary, /재제출 전 마지막 스냅샷/);
   assert.match(temu.summary, /현재 심사 결과를 뜻하지 않습니다/);
-  assert.doesNotMatch(temu.appState, /Rejected/);
-  assert.doesNotMatch(temu.summary, /반려돼 앱이 비활성/);
-  assert.equal(temu.checks.find((check) => check.label === "컴플라이언스 설문")?.state, "partial");
-  assert.match(temu.nextAction, /현재 심사 결과 확인/);
-  assert.match(temu.nextAction, /App Key·Secret/);
-  assert.match(temu.nextAction, /한국 Seller Center 수동 승인/);
-  assert.match(temu.nextAction, /Access Token/);
-  assert.doesNotMatch(temu.nextAction, /승인·발행/);
+  assert.match(temu.appState, new RegExp(temuHistoricComplianceRejectedOn));
+  assert.match(temu.appState, /Rejected/);
+  assert.match(temu.summary, /Inactive/);
+  assert.match(temu.summary, /Rejected/);
+  assert.match(temu.summary, /gateway job 0건/);
+  assert.equal(temu.checks.find((check) => check.label === "Partner App")?.state, "blocked");
+  assert.equal(temu.checks.find((check) => check.label === "컴플라이언스 설문")?.state, "blocked");
+  assert.equal(temu.checks.find((check) => check.label === "V3 상품 발행 구현")?.state, "verified");
+  assert.match(temu.nextAction, /외부 확인/);
+  assert.doesNotMatch(temu.nextAction, /View\s*Details|Create\s*App|설문 수정|Vault 저장|Access Token 발급/i);
+  assert.equal(temu.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
   assert.equal(temu.blockers.some((blocker) => /앱 발행/.test(blocker)), false);
+  assert.doesNotMatch(temu.summary, /생성 불가|구현 없음|발행 능력 없음/);
 });
 
-test("Temu live API 통과는 summary, checks, blockers, nextAction 전체에 같은 현재 상태로 투영된다", () => {
+test("Temu live API 통과는 발행·CS 완료나 현재 승인으로 승격하지 않는다", () => {
   const resolved = resolveChannelReadiness(temuReadiness(), liveMetric());
 
-  assert.equal(resolved.overall, "verified");
+  assert.equal(resolved.overall, "partial");
   assert.equal(resolved.apiReadPassed, true);
   assert.match(resolved.appState, /운영 DB 실시간/);
   assert.match(resolved.appState, /API 읽기 진단 통과/);
+  assert.doesNotMatch(resolved.appState, /Rejected/);
   assert.match(resolved.summary, /현재 운영 DB에서 유효한 자격증명/);
+  assert.match(resolved.summary, /상품 발행이나 CS 전체 연결과 같지 않습니다/);
   assert.match(resolved.summary, new RegExp(`마지막 콘솔 스냅샷\\(${channelReadinessObservedAt.replaceAll(".", "\\.")}\\)`));
+  assert.match(resolved.summary, new RegExp(temuHistoricComplianceRejectedOn));
+  assert.match(resolved.summary, /Rejected/);
   assert.equal(resolved.checks.find((check) => check.label === "현재 운영 API 읽기")?.state, "verified");
-  assert.equal(resolved.checks.find((check) => check.label === "컴플라이언스 설문")?.state, "partial");
+  assert.equal(resolved.checks.find((check) => check.label === "컴플라이언스 설문")?.state, "blocked");
+  assert.equal(resolved.checks.find((check) => check.label === "V3 상품 발행 구현")?.state, "verified");
   assert.equal(resolved.checks.some((check) => check.label === "실계정 E2E"), false);
-  assert.equal(resolved.blockers.some((blocker) => /Access Token 연결/.test(blocker)), false);
-  assert.match(resolved.nextAction, /현재 API 읽기 진단 유지/);
-  assert.match(resolved.nextAction, /Partner Platform 현재 심사 결과 대조/);
-  assert.doesNotMatch(`${resolved.appState} ${resolved.summary} ${resolved.nextAction}`, /Rejected/);
+  assert.equal(resolved.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
+  assert.match(resolved.nextAction, /상품 발행·CS 전체 준비와 같지 않습니다/);
+  assert.match(resolved.nextAction, /외부 확인/);
+  assert.doesNotMatch(resolved.nextAction, /View\s*Details|Create\s*App|재제출|설문 수정|Vault 저장|Access Token 발급/i);
 });
 
-test("Temu live credential 누락은 과거 콘솔 이력 대신 현재 미연결 상태와 복구 순서를 표시한다", () => {
+test("Temu live credential 누락은 키 미등록으로 두고 과거 Rejected를 현재 승인처럼 쓰지 않는다", () => {
   const resolved = resolveChannelReadiness(temuReadiness(), liveMetric({
     credentialStatus: "missing",
     credentialLastCheckStatus: null,
@@ -100,14 +112,18 @@ test("Temu live credential 누락은 과거 콘솔 이력 대신 현재 미연�
   assert.equal(resolved.overall, "not_configured");
   assert.equal(resolved.apiReadPassed, false);
   assert.match(resolved.appState, /Vault 운영 키 미등록/);
+  assert.doesNotMatch(resolved.appState, /Rejected/);
   assert.match(resolved.summary, /활성 production 자격증명이 없습니다/);
+  assert.match(resolved.summary, new RegExp(temuHistoricComplianceRejectedOn));
+  assert.match(resolved.summary, /Rejected/);
   assert.equal(resolved.checks.find((check) => check.label === "현재 운영 API 읽기")?.state, "not_configured");
-  assert.equal(resolved.blockers.some((blocker) => /App Key·Secret.*Access Token 연결/.test(blocker)), true);
-  assert.match(resolved.nextAction, /현재 심사 결과 확인/);
-  assert.match(resolved.nextAction, /Vault 저장.*상품 목록 읽기 진단/);
+  assert.equal(resolved.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
+  assert.equal(resolved.blockers.some((blocker) => /App Key·Secret.*Access Token 연결/.test(blocker)), false);
+  assert.match(resolved.nextAction, /외부 확인/);
+  assert.doesNotMatch(resolved.nextAction, /View\s*Details|Create\s*App|Vault 저장|Access Token 발급|설문 수정/i);
 });
 
-test("Temu live read 실패는 verified로 승격하지 않고 동일 실패를 복구 동선에 유지한다", () => {
+test("Temu live read 실패는 verified로 승격하지 않고 재제출 CTA 없이 실패를 유지한다", () => {
   const resolved = resolveChannelReadiness(temuReadiness(), liveMetric({
     credentialStatus: "unverified",
     credentialLastCheckStatus: "failed",
@@ -116,10 +132,13 @@ test("Temu live read 실패는 verified로 승격하지 않고 동일 실패를 
   assert.equal(resolved.overall, "blocked");
   assert.equal(resolved.apiReadPassed, false);
   assert.match(resolved.appState, /최근 API 읽기 진단 실패/);
+  assert.doesNotMatch(resolved.appState, /Rejected/);
   assert.match(resolved.summary, /읽기 진단은 실패했습니다/);
   assert.equal(resolved.checks.find((check) => check.label === "현재 운영 API 읽기")?.state, "blocked");
   assert.equal(resolved.blockers.some((blocker) => /API 읽기 진단 실패 원인 해소/.test(blocker)), true);
+  assert.equal(resolved.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
   assert.match(resolved.nextAction, /오류 확인.*API 읽기 진단 재실행/);
+  assert.doesNotMatch(resolved.nextAction, /View\s*Details|Create\s*App|재제출|설문 수정|Vault 저장/i);
 });
 
 test("게이트웨이 대기·실행 상태는 자격증명 읽기 통과와 분리해 일부 준비로 표시한다", () => {
