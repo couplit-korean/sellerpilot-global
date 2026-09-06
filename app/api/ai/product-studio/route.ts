@@ -217,6 +217,20 @@ export async function POST(request: Request) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  const sourceEvidence = sourcePreflight.preflight.sourcePhotoEvidence;
+  if (sourceEvidence) {
+    let matches = sourceEvidence.length === parsed.data.imageSpecs.length;
+    for (let index = 0; matches && index < sourceEvidence.length; index += 1) {
+      const expected = sourceEvidence[index];
+      const digest = download ? await sha256PreservedStudioOriginalImage(preservedPaths.originalPaths[index], parsed.data.imageSpecs[index], download) : null;
+      matches = expected.sourceIndex === index && expected.inputRole === parsed.data.imageSpecs[index].role && expected.sourceSha256 === digest;
+    }
+    if (!matches) {
+      await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
+      return NextResponse.json({ code: "SOURCE_PHOTO_SET_MISMATCH", message: "1차 검수 후 사진 구성이 바뀌었습니다. 현재 사진 전체로 1차 자동생성을 다시 실행해 주세요." }, { status: 409 });
+    }
+  }
+
   const requestPayload = {
     source_research_job_id: parsed.data.sourceResearchJobId,
     source_research_input_sha256: lineageReceiptVerification.researchInputSha256,

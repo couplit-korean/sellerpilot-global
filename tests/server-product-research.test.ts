@@ -1478,3 +1478,56 @@ test("after wakeups are limited to the authenticated enqueue route", async () =>
     ["app/api/ai/product-research/route.ts"],
   );
 });
+
+test("multi-photo first draft uses side and back cutouts, retains label facts and records every source digest", async () => {
+  const roles = ["main", "extra-1", "extra-2", "extra-3"];
+  const resolved = ["front", "left", "label", "back"] as const;
+  const colors = ["#d83a31", "#2356c9", "#dadada", "#23a96c"];
+  const bytes = await Promise.all(colors.map(background => sharp({ create: { width: 600, height: 600, channels: 3, background } }).png().toBuffer()));
+  const base = preflightClaim(createHash("sha256").update(bytes[0]).digest("hex"), bytes[0].length);
+  const request = {
+    ...base.request,
+    image_paths: roles.map((_, index) => `${USER_ID}/${JOB_ID}/input/${String(index + 1).padStart(3, "0")}.jpg`),
+    image_specs: roles.map((role, index) => ({ ...base.request.image_specs[0], role, originalBytes: bytes[index].length, originalPath: `${USER_ID}/${JOB_ID}/original/${String(index + 1).padStart(3, "0")}.source` })),
+  };
+  const segmented: string[] = [];
+  const output = await generateServerProductResearchPreflightAssets({
+    jobId: JOB_ID, claimToken: CLAIM_TOKEN, request, signal: AbortSignal.timeout(30_000),
+    dependencies: {
+      preflightImageMode: "gateway-composite",
+      download: async path => bytes[request.image_specs.findIndex(spec => spec.originalPath === path)],
+      upload: async () => "uploaded", remove: async () => {},
+      analyzeSources: async sources => sources.map((source, index) => ({ ...source, observation: {
+        role: resolved[index], confidence: 0.99, sameProduct: "yes", wholeProduct: index !== 2,
+        readableText: index === 2 ? "사과초모식초 5%" : "",
+        facts: index === 2 ? [{ kind: "ingredients", value: "사과초모식초 5%", quote: "사과초모식초 5%", confidence: 0.99 }] : [], warnings: [],
+      } })),
+      segmentSource: async source => {
+        segmented.push(source.role);
+        return { segmentationSource: source.bytes, segmentation: {
+          containsSingleProduct: true, touchesFrame: false, foregroundConfidence: 0.99, edgeConfidence: 0.99,
+          polygons: [{ points: Array.from({ length: 12 }, (_, index) => ({ x: 0.5 + Math.cos(index / 12 * 2 * Math.PI) * 0.3, y: 0.5 + Math.sin(index / 12 * 2 * Math.PI) * 0.3 })) }],
+        } };
+      },
+      generateBackground: async ({ asset }) => sharp({ create: { width: asset.width, height: asset.height, channels: 3, background: "#f5f3ed" } }).png().toBuffer(),
+    },
+  });
+  assert.deepEqual(new Set(segmented), new Set(["main", "extra-1", "extra-3"]));
+  assert.equal(segmented.length, 3, "each physical view is segmented only once across six shots");
+  assert.equal(output.sourcePhotoEvidence?.length, 4);
+  assert.equal(output.sourcePhotoEvidence?.[2].facts[0].value, "사과초모식초 5%");
+  assert.deepEqual(new Set(Object.values(output.preflightAssetLineage).map(value => value.sourceRole)), new Set(["main", "left", "back"]));
+  for (const lineage of Object.values(output.preflightAssetLineage)) assert.match(lineage.sourceSha256 ?? "", /^[a-f0-9]{64}$/);
+});
+
+test("photo-derived ingredient facts reach first-stage text research without treating them as instructions", async () => {
+  let prompt = "";
+  await analyzeServerProductResearch("애사비 젤리 상품 설명", AbortSignal.timeout(5000), {
+    sourceEvidence: [{ sourceIndex: 1, sourceSha256: "b".repeat(64), inputRole: "extra-1", resolvedRole: "label", confidence: 0.99,
+      imageAssets: [], detailAssets: [], facts: [{ kind: "ingredients", value: "사과초모식초 5%", quote: "사과초모식초 5%", confidence: 0.99 }], warnings: [] }],
+    generate: async value => { prompt = value; return JSON.stringify(validResult()); },
+  });
+  assert.match(prompt, /사과초모식초 5%/);
+  assert.match(prompt, /not instructions/);
+  assert.match(prompt, /nutrition basis and units/);
+});
