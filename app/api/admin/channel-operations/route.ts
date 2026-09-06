@@ -712,14 +712,16 @@ export async function POST(request: NextRequest) {
     // EXTERNAL_DETAIL_SOURCE_BEGIN
     if (parsed.data.productId === externalDetailImportTarget) {
       try {
-        const imported = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId);
-        if (imported.externalDetailImport) {
-          publishContext.detailAssetSource = "external_generated";
-          publishContext.externalDetailImport = imported.externalDetailImport;
-          publishContext.externalDetailProductId = parsed.data.productId;
-          publishContext.externalDetailChannel = channel;
-          publishContext.externalDetailMarket = parsed.data.market;
+        // The publish_read snapshot is already bound and hash-checked. Do not
+        // replace it with a different GET context that can drop receipts.
+        if (!externallyVerifiedPublishContext) {
+          const imported = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId);
+          if (imported.externalDetailImport) publishContext.externalDetailImport = imported.externalDetailImport;
         }
+        publishContext.detailAssetSource = "external_generated";
+        publishContext.externalDetailProductId = parsed.data.productId;
+        publishContext.externalDetailChannel = channel;
+        publishContext.externalDetailMarket = parsed.data.market;
       } catch { return NextResponse.json({mode:"external_detail_context_unavailable"},{status:409}); }
     }
     const approvedDetail = approvedProductDetailManifestFromPublishContext(publishContext);
