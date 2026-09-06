@@ -399,12 +399,12 @@ async function enqueueDuePublicationReviews(
 ) {
   const result = await callRpc(
     dependencies,
-    "sellerpilot_service_enqueue_due_listing_publication_verifications",
+    "sellerpilot_service_enqueue_due_publication_reviews",
     { p_limit: 14 },
   );
-  // Code-first and database-first rolling deployments can briefly lack the
-  // counterpart RPC. The next minute wake retries after both halves converge.
-  return result.error && !isMissingRpc(result.error)
+  // Missing RPCs must remain visible: an oversized identifier previously made
+  // every publication review enqueue fail while this step reported success.
+  return result.error
     ? { ok: false as const, code: safeRpcCode(result.error) }
     : { ok: true as const };
 }

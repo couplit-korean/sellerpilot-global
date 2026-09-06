@@ -280,6 +280,22 @@ test("serverless CS derivation matches the Supabase HMAC bootstrap contract", ()
   );
 });
 
+test("a missing publication review RPC is reported even while other reads continue", async () => {
+  const logged: unknown[] = [];
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    rpc: baseRpc(claim("qoo10"),calls,{
+      sellerpilot_service_enqueue_due_publication_reviews: () => ({data:null,error:{code:"PGRST202"}}),
+    }),
+    logError: (...values) => logged.push(values),
+    executeProvider: async () => inquiryListResult("qoo10"),
+  });
+  assert.equal(response.status,200);
+  assert.ok(calls.some((call) => call.name === "sellerpilot_service_enqueue_due_publication_reviews"));
+  assert.deepEqual(logged[0],["publication_review_enqueue",{status:503,code:"PGRST202"}]);
+});
+
 test("derived wake authentication fails before any database claim", async () => {
   let rpcCalls = 0;
   const response = await runServerlessCsGatewayDrain(

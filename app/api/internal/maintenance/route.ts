@@ -160,7 +160,7 @@ async function cleanupPrunedMarketplaceStorage(serviceClient: SupabaseClient) {
   const { error: removeError } = await serviceClient.storage.from(claim.bucket).remove(claim.paths);
   const removedPaths = removeError ? [] : claim.paths;
   const { data: completion, error: completionError } = await serviceClient.rpc(
-    "sellerpilot_service_complete_marketplace_normalized_asset_cleanup",
+    "sellerpilot_service_complete_normalized_asset_cleanup",
     {
       p_claim_token: claim.claimToken,
       p_removed_paths: removedPaths,
