@@ -16,12 +16,22 @@ const migration = await readFile(
   ),
   "utf8",
 );
+const duplicateSourceHashMigration = await readFile(
+  new URL(
+    "../supabase/migrations/20260907053000_allow_duplicate_external_source_hashes.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 const OWNER = "10000000-0000-4000-8000-000000000001";
 const OTHER_OWNER = "10000000-0000-4000-8000-000000000002";
+const CREDENTIAL_CREATOR = "10000000-0000-4000-8000-000000000003";
 const PRODUCT = "1ed4acfc-7603-48ec-a638-241131e59358";
 const IMPORT = "20000000-0000-4000-8000-000000000001";
 const JOB = "30000000-0000-4000-8000-000000000001";
+const CREDENTIAL = "50000000-0000-4000-8000-000000000001";
+const ATTEMPT = "60000000-0000-4000-8000-000000000001";
 const APPROVED_AT = "2026-09-06T03:19:01.757195+00:00";
 const CURRENT_AT = "2026-09-06T13:08:23.846181+00:00";
 const ORIGINAL_SHA = "f".repeat(64);
@@ -175,11 +185,19 @@ async function fixture({ status = "approved" } = {}) {
       id uuid primary key, owner_id uuid not null, product_id uuid not null,
       channel_key text not null, market text not null, target_id text not null
     );
+    create table sellerpilot_private.channel_credentials(
+      id uuid primary key, created_by uuid not null references auth.users(id)
+    );
+    create table sellerpilot_private.channel_operation_attempts(
+      id uuid primary key, owner_id uuid not null references auth.users(id),
+      credential_id uuid not null references sellerpilot_private.channel_credentials(id),
+      channel text not null, operation text not null
+    );
     create table sellerpilot_private.channel_gateway_jobs(
       id uuid primary key default gen_random_uuid(), created_by uuid,
       channel text, operation text, status text,
       provider_mutation_started_at timestamptz, request_payload jsonb,
-      request_fingerprint text
+      request_fingerprint text, attempt_id uuid, credential_id uuid
     );
     create function sellerpilot_private.request_has_unambiguous_service_role_claim()
     returns boolean language plpgsql stable set search_path='' as $$
@@ -215,8 +233,15 @@ async function fixture({ status = "approved" } = {}) {
     create function public.sellerpilot_service_external_detail_import(text,uuid,uuid,uuid,jsonb)
     returns jsonb language sql as $$select '{}'::jsonb$$;
 
-    insert into auth.users values ('${OWNER}'),('${OTHER_OWNER}');
+    insert into auth.users values
+      ('${OWNER}'),('${OTHER_OWNER}'),('${CREDENTIAL_CREATOR}');
     insert into sellerpilot_private.admin_users values ('${OWNER}');
+    insert into sellerpilot_private.channel_credentials values (
+      '${CREDENTIAL}','${CREDENTIAL_CREATOR}'
+    );
+    insert into sellerpilot_private.channel_operation_attempts values (
+      '${ATTEMPT}','${OWNER}','${CREDENTIAL}','qoo10','listing.update'
+    );
     insert into sellerpilot_private.ai_cli_jobs values (
       '${JOB}','product_studio','failed',
       ${sqlJson({
@@ -418,6 +443,7 @@ test("rebind is owner/service/CAS guarded and the ledger is immutable", async ()
 test("gateway and readback source require both exact revision binding fields", async () => {
   const db = await fixture();
   try {
+    await db.exec(duplicateSourceHashMigration);
     const expected = await candidate(db);
     await rebind(db, 0, expected.hash);
     const rendered = {
@@ -462,10 +488,17 @@ test("gateway and readback source require both exact revision binding fields", a
 
     const inserted = await db.query(
       `insert into sellerpilot_private.channel_gateway_jobs(
-         created_by,channel,operation,status,request_payload,request_fingerprint
-       ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3)
+         created_by,channel,operation,status,request_payload,request_fingerprint,
+         attempt_id,credential_id
+       ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3,$4,$5)
        returning id`,
-      [OWNER, JSON.stringify(request(binding)), "fixture-fingerprint"],
+      [
+        CREDENTIAL_CREATOR,
+        JSON.stringify(request(binding)),
+        "fixture-fingerprint",
+        ATTEMPT,
+        CREDENTIAL,
+      ],
     );
     const manifest = await scalar(
       db,
@@ -484,13 +517,81 @@ test("gateway and readback source require both exact revision binding fields", a
       await assert.rejects(
         db.query(
           `insert into sellerpilot_private.channel_gateway_jobs(
-             created_by,channel,operation,status,request_payload,request_fingerprint
-           ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3)`,
-          [OWNER, JSON.stringify(request(incomplete)), "fixture-fingerprint"],
+             created_by,channel,operation,status,request_payload,request_fingerprint,
+             attempt_id,credential_id
+           ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3,$4,$5)`,
+          [
+            CREDENTIAL_CREATOR,
+            JSON.stringify(request(incomplete)),
+            "fixture-fingerprint",
+            ATTEMPT,
+            CREDENTIAL,
+          ],
         ),
         /EXTERNAL_DETAIL_JOB_(?:SOURCE_STALE|IMAGE_MISMATCH|LOCALE_INVALID)/,
       );
     }
+
+    await db.exec(
+      `update sellerpilot_private.channel_operation_attempts
+       set owner_id='${OTHER_OWNER}' where id='${ATTEMPT}'`,
+    );
+    await assert.rejects(
+      db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs(
+           created_by,channel,operation,status,request_payload,request_fingerprint,
+           attempt_id,credential_id
+         ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3,$4,$5)`,
+        [
+          CREDENTIAL_CREATOR,
+          JSON.stringify(request(binding)),
+          "fixture-fingerprint",
+          ATTEMPT,
+          CREDENTIAL,
+        ],
+      ),
+      /EXTERNAL_DETAIL_JOB_SOURCE_STALE/,
+    );
+    await db.exec(
+      `update sellerpilot_private.channel_operation_attempts
+       set owner_id='${OWNER}' where id='${ATTEMPT}'`,
+    );
+    await assert.rejects(
+      db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs(
+           created_by,channel,operation,status,request_payload,request_fingerprint,
+           attempt_id,credential_id
+         ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3,$4,$5)`,
+        [
+          OTHER_OWNER,
+          JSON.stringify(request(binding)),
+          "fixture-fingerprint",
+          ATTEMPT,
+          CREDENTIAL,
+        ],
+      ),
+      /EXTERNAL_DETAIL_JOB_SOURCE_STALE/,
+    );
+    await db.exec(
+      `update sellerpilot_private.channel_credentials
+       set created_by='${OTHER_OWNER}' where id='${CREDENTIAL}'`,
+    );
+    await assert.rejects(
+      db.query(
+        `insert into sellerpilot_private.channel_gateway_jobs(
+           created_by,channel,operation,status,request_payload,request_fingerprint,
+           attempt_id,credential_id
+         ) values($1,'qoo10','listing.update','queued',$2::jsonb,$3,$4,$5)`,
+        [
+          CREDENTIAL_CREATOR,
+          JSON.stringify(request(binding)),
+          "fixture-fingerprint",
+          ATTEMPT,
+          CREDENTIAL,
+        ],
+      ),
+      /EXTERNAL_DETAIL_JOB_SOURCE_STALE/,
+    );
   } finally {
     await db.close();
   }
@@ -518,6 +619,88 @@ test("missing JSON arrays and paths fail closed", async () => {
     } finally {
       await db.close();
     }
+  }
+});
+
+test("distinct owned paths may preserve duplicate source bytes", async () => {
+  const db = await fixture();
+  try {
+    const sourceHashes = ["a".repeat(64), "b".repeat(64), "c".repeat(64)];
+    const paths = Array.from(
+      { length: 6 },
+      (_, index) => `${OWNER}/${JOB}/input/${index + 1}.png`,
+    );
+    const evidence = paths.map((path, index) => ({
+      path,
+      sha256: sourceHashes[Math.floor(index / 2)],
+    }));
+    await db.query(
+      `update sellerpilot_private.ai_cli_jobs
+       set request_payload=jsonb_set(request_payload,'{image_paths}',$1::jsonb)`,
+      [JSON.stringify(paths)],
+    );
+    await db.query(
+      `update sellerpilot_private.external_detail_imports
+       set payload=jsonb_set(
+         jsonb_set(payload-'requestSha256','{originalEvidence}',$1::jsonb),
+         '{source,referenceSha256s}',$2::jsonb
+       )`,
+      [JSON.stringify(evidence), JSON.stringify(sourceHashes)],
+    );
+    const requestHash = await scalar(
+      db,
+      `select sellerpilot_private.external_detail_hash(
+         payload-'requestSha256'
+       ) from sellerpilot_private.external_detail_imports`,
+    );
+    await db.query(
+      `update sellerpilot_private.external_detail_imports
+       set request_sha256=$1,
+           payload=jsonb_set(payload,'{requestSha256}',to_jsonb($1::text))`,
+      [requestHash],
+    );
+
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.external_detail_approval_source_is_valid($1)",
+        [IMPORT],
+      ),
+      false,
+      "the applied predecessor over-constrains repeated source bytes",
+    );
+
+    await db.exec(duplicateSourceHashMigration);
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.external_detail_approval_source_is_valid($1)",
+        [IMPORT],
+      ),
+      true,
+      "duplicate hashes are valid when each owned path remains exactly evidenced",
+    );
+
+    await db.query(
+      `update sellerpilot_private.external_detail_imports
+       set payload=jsonb_set(
+         payload,
+         '{originalEvidence,1,path}',
+         to_jsonb($1::text)
+       )`,
+      [paths[0]],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        "select sellerpilot_private.external_detail_approval_source_is_valid($1)",
+        [IMPORT],
+      ),
+      false,
+      "duplicate paths and a missing per-path evidence entry stay rejected",
+    );
+  } finally {
+    await db.close();
   }
 });
 
