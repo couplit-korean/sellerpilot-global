@@ -32,5 +32,5 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 # Git remotes
 
 - `origin` = `Kimchanghee/sellerpilot-global` (이 환경에서 push 가능)
-- `couplit` = `couplit-korean/sellerpilot-global` (Vercel Git 연결 대상일 수 있음, 이 Mac push 403)
+- `couplit` = `couplit-korean/sellerpilot-global` (현재 Vercel Git 연결, public). 2026-09-06 현재 GitHub 사용자의 push 권한을 API로 재확인했고 사용자가 신규 코드·문서·이력 공개를 명시 승인했다. 이전 Mac push 403은 역사 기록이다. 비밀검사 후 integration만 정상 동기화하며 main/Production 변경은 별도 통제한다.
 - 유료 Vercel Static IP는 쓰지 않는다. 채널 화이트리스트에 관측 IP를 등록한다.
