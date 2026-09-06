@@ -1468,6 +1468,7 @@ export function ProductPublishWorkbench(props: ProductPublishWorkbenchProps) {
 
 function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVersion, notify, onChanged }: ProductPublishWorkbenchProps) {
   const [context, setContext] = useState<PublishContext | null>(null);
+  const [registrationLoadError, setRegistrationLoadError] = useState<string | null>(null);
   const [credentials, setCredentials] = useState<CredentialRow[]>([]);
   const [remoteEditAvailability, setRemoteEditAvailability] = useState<
     Record<string, RemoteEditListingAvailability>
@@ -1636,6 +1637,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       && loadRequestRef.current?.generation === generation
       && sessionProductIdRef.current === requestedProductId;
     setLoading(true);
+    setRegistrationLoadError(null);
     registrationLoadedRef.current = false;
     try {
       const supabase = createClient();
@@ -1680,8 +1682,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const payload = await waitForAbortablePromise(
         contextResponse.json().catch(() => ({ message: "상품 준비 응답을 읽지 못했습니다." })),
         bounded.signal,
-      ) as PublishContext & { message?: string };
-      if (!contextResponse.ok) throw new Error(payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다.");
+      ) as PublishContext & { message?: string; code?: string };
+      if (!contextResponse.ok) throw new Error(`${payload.message ?? "상품 등록 준비 정보를 불러오지 못했습니다."}${payload.code ? ` (${payload.code})` : ""}`);
       const nextPayload = {
         ...payload,
         detailData: publishContextDesignedDetailData({ ...payload, detailData }),
@@ -1832,7 +1834,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       setDrafts(restoredDrafts);
     } catch (error) {
       if (!isLatestRequest() || controller.signal.aborted) return;
-      notify(error instanceof Error ? error.message : "상품 등록 준비 정보를 불러오지 못했습니다.");
+      const message = error instanceof Error ? error.message : "상품 등록 준비 정보를 불러오지 못했습니다.";
+      setRegistrationLoadError(message);
+      notify(message);
     } finally {
       bounded.dispose();
       if (isLatestRequest()) {
@@ -2822,7 +2826,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
 
   if (!productId) return <section className="panel product-publish-workbench disabled"><PackageCheck size={28} /><b>실제 채널 등록은 상품 원장 생성 후 열립니다.</b><small>대표사진 분석을 완료하면 상품 UUID와 채널 등록 초안이 자동으로 연결됩니다.</small></section>;
   if (loading && !context) return <section className="panel product-publish-workbench disabled"><LoaderCircle className="spin" size={26} /><b>상품·카테고리·이미지 원장 확인 중</b></section>;
-  if (!context || !workbenchProductContextMatches(productId, context.product.id)) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b><button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
+  if (!context || !workbenchProductContextMatches(productId, context.product.id)) return <section className="panel product-publish-workbench disabled"><AlertTriangle size={26} /><b>상품 등록 준비 정보를 불러오지 못했습니다.</b>{registrationLoadError && <small role="alert">{registrationLoadError}</small>}<button type="button" onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></section>;
 
   const remoteUpdateChannelCount = visibleChannels.filter((channel) => {
     const target = selectedTargets[channel];
