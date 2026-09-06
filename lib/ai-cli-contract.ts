@@ -1,3 +1,4 @@
+import { studioSourceEvidenceSchema } from "./studio-source-planning";
 import { z, type RefinementCtx } from "zod";
 import {
   aiDetailAssetIds,
@@ -83,6 +84,7 @@ export const productResearchPreflightAssetLineageSchema = z.object({
   role: z.enum(["creative", "detail"]),
   auditMode: z.enum(["segmented-source-composite", "source-photo-catalog"]),
   sourceRole: z.string().trim().min(1).max(40),
+  sourceSha256: preflightSha256Schema.optional(),
 }).strict();
 
 export const productResearchPreflightStoragePathsSchema = exactCoreFirstDraftRecord(
@@ -168,6 +170,7 @@ export const serverProductResearchResultSchema = productResearchResultBaseSchema
   sourcePhotoSha256: preflightSha256Schema.optional(),
   asset_storage_paths: productResearchPreflightStoragePathsSchema.optional(),
   preflightAssetLineage: productResearchPreflightLineageSchema.optional(),
+  sourcePhotoEvidence: z.array(studioSourceEvidenceSchema).max(10).optional(),
 }).superRefine((value, context) => {
   const fields = [
     value.preflightVersion,

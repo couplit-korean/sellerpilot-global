@@ -12,6 +12,7 @@ export type PendingProductResearch = {
   researchInput: string;
   ownerId: string;
   sourcePhotoSha256: string;
+  sourceSelectionSha256?: string;
   lineageReceipt: string;
   imagePaths: string[];
   imageSpecs: SourcePreservingProductImageSpec[];
@@ -30,6 +31,7 @@ export function pendingProductResearchForOwner(
   ownerId: string,
   researchInput: string,
   sourcePhotoSha256: string,
+  sourceSelectionSha256?: string,
 ): PendingProductResearch | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const record = value as Record<string, unknown>;
@@ -53,6 +55,7 @@ export function pendingProductResearchForOwner(
       || record.ownerId !== ownerId
       || record.researchInput !== researchInput
       || record.sourcePhotoSha256 !== sourcePhotoSha256
+      || (sourceSelectionSha256 !== undefined && record.sourceSelectionSha256 !== sourceSelectionSha256)
       || typeof record.lineageReceipt !== "string"
       || (record.lineageReceipt.length > 0 && (record.lineageReceipt.length < 32 || record.lineageReceipt.length > 2_000))
       || !imagePaths.length
@@ -68,6 +71,7 @@ export function pendingProductResearchForOwner(
     researchInput,
     ownerId,
     sourcePhotoSha256,
+    ...(sourceSelectionSha256 ? { sourceSelectionSha256 } : {}),
     lineageReceipt: record.lineageReceipt,
     imagePaths,
     imageSpecs,

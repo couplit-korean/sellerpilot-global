@@ -2684,7 +2684,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const mainPhotoRef = useRef<UploadedPhoto | null>(null);
   const previousMainPhotoFileRef = useRef<File | null>(null);
   const restoredMainPhotoFileRef = useRef<File | null>(null);
-  const previousSupportingPhotoSelectionsRef = useRef<string[] | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
   const [extraPhotosProcessing, setExtraPhotosProcessing] = useState(false);
@@ -3053,19 +3052,28 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     sourceResearchPhotoSha256,
   ]);
 
-  useEffect(() => {
-    const nextSelections = [...Object.values(slotPhotos), ...extraPhotos]
-      .map((photo) => `${photo.role}\u0000${photo.file.name}\u0000${photo.file.size}\u0000${photo.file.type}\u0000${photo.file.lastModified}`);
-    const previousSelections = previousSupportingPhotoSelectionsRef.current;
-    previousSupportingPhotoSelectionsRef.current = nextSelections;
-    if (!previousSelections) return;
-    const changed = previousSelections.length !== nextSelections.length
-      || previousSelections.some((selection, index) => selection !== nextSelections[index]);
-    if (!changed || !firstDraftGenerated) return;
+  const invalidateSupportingPhotoResearch = () => {
+    const hadResearch = Boolean(productResearchControllerRef.current) || firstDraftGenerated || Boolean(sourceResearchJobId);
+    productResearchControllerRef.current?.abort(new DOMException("사진 구성이 변경되었습니다.", "AbortError"));
+    productResearchControllerRef.current = null;
+    productResearchGenerationRef.current += 1;
+    window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    setResearchingProduct(false);
+    if (!hadResearch) return;
+    const nextIntake = clearUnchangedResearchAppliedValues(intakeRef.current, emptyProductIntake, researchAppliedValuesRef.current);
+    researchAppliedValuesRef.current = {};
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
+    setResearchResult(null);
     setFirstDraftReviewed(false);
+    setFirstDraftGenerated(false);
+    setFirstDraftImages([]);
+    setSourceResearchJobId("");
+    setSourceResearchPhotoSha256("");
+    setSourceResearchLineageReceipt("");
     closeGeneratedProductRegistration();
-    notify("상세페이지에 사용할 역할별·추가 사진이 변경되어 사람 검토 승인과 기존 채널 업로드 준비를 해제했습니다. 1차 정보와 이미지 6개는 그대로 유지합니다.");
-  }, [closeGeneratedProductRegistration, extraPhotos, firstDraftGenerated, notify, slotPhotos]);
+    notify("사진 구성이 변경되었습니다. 새 사진 전체를 분석하도록 1차 자동생성을 다시 실행해 주세요.");
+  };
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
@@ -3834,7 +3842,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setFirstDraftImages([]);
     setFirstDraftReviewed(false);
     try {
-      const sourcePhotoSha256 = await productSourcePhotoSha256(sourceMainPhoto.file);
+      const sourcePhotos = [sourceMainPhoto, ...Object.values(slotPhotos), ...extraPhotos];
+      if (sourcePhotos.length > 10) throw new Error("한 번의 제작에는 대표·옆면·성분표 등 서로 다른 사진을 최대 10장 선택해 주세요.");
+      const sourceHashes: string[] = [];
+      for (const photo of sourcePhotos) sourceHashes.push(await productSourcePhotoSha256(photo.file));
+      const sourcePhotoSha256 = sourceHashes[0];
+      const sourceSelectionSha256 = await productSourcePhotoSha256(new File([JSON.stringify(sourcePhotos.map((photo, index) => [photo.role, sourceHashes[index]]))], "source-selection.json"));
       if (!productSourcePhotoSha256Pattern.test(sourcePhotoSha256)) {
         throw new Error("대표사진 원본 확인값을 만들지 못했습니다. 사진을 다시 선택해 주세요.");
       }
@@ -3852,7 +3865,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       let pendingResearch: PendingProductResearch | null = null;
       try {
         const stored = JSON.parse(window.sessionStorage.getItem(productResearchPendingStorageKey) ?? "null") as unknown;
-        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256);
+        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256);
         if (stored !== null && !pendingResearch) window.sessionStorage.removeItem(productResearchPendingStorageKey);
       } catch {
         window.sessionStorage.removeItem(productResearchPendingStorageKey);
@@ -3866,7 +3879,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify("이전에 접수한 1차 정보·6개 이미지 작업 상태를 다시 확인합니다.");
       } else {
         if (!pendingResearch) {
-          const sourcePhotos = [sourceMainPhoto];
           const uploaded = await optimizeAndUploadStudioPhotos(
             sourcePhotos,
             ownerId,
@@ -3885,6 +3897,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           researchInput,
           ownerId,
           sourcePhotoSha256,
+          sourceSelectionSha256,
           lineageReceipt,
           imagePaths,
           imageSpecs,
@@ -3947,6 +3960,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             researchInput,
             ownerId,
             sourcePhotoSha256,
+            sourceSelectionSha256,
             lineageReceipt,
             imagePaths,
             imageSpecs,
@@ -4052,6 +4066,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         releasePhotoUrl(photo.url);
         throw error;
       }
+      invalidateSupportingPhotoResearch();
       setSlotPhotos((current) => {
         if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
@@ -4144,6 +4159,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         throw error;
       }
       for (const acceptedPhoto of accepted) photoBudgetKeyByUrlRef.current.set(acceptedPhoto.photo.url, acceptedPhoto.key);
+      if (accepted.length) invalidateSupportingPhotoResearch();
       if (accepted.length) setExtraPhotos((current) => {
         const next = [...current, ...accepted.map((acceptedPhoto) => acceptedPhoto.photo)];
         const capacity = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(slotPhotos).length);
@@ -4182,6 +4198,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const removeSlotPhoto = (slotId: string) => {
+    invalidateSupportingPhotoResearch();
     photoSelectionFence.invalidateRole(slotId);
     abortPhotoDecodeScope(`role:${slotId}`, "역할별 사진을 제거해 확인을 취소했습니다.");
     photoSelectionBudget.remove(`role:${slotId}`);
@@ -4195,6 +4212,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const removeExtraPhoto = (index: number) => {
+    invalidateSupportingPhotoResearch();
     photoSelectionFence.invalidateExtras();
     abortPhotoDecodeScope("extras", "추가 사진을 제거해 확인을 취소했습니다.");
     extraPhotoBatchRef.current = false;
@@ -4419,9 +4437,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </section>
 
           <section className="extra-photo-section">
-            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>1차 생성 뒤 사람이 확인하며, 상세컷·구성품·포장 근거로 상세페이지 제작에 사용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
+            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>대표사진과 함께 분석해 연출컷·성분표·구성품·포장 설명에 활용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
             <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotoInputDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 보관 · 1차는 대표사진 1장 · 추가 사진은 상세페이지 제작에 사용"}</small></span></label>
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 보관 · 제작 시 최대 10장 분석 · 옆면·성분표·구성품을 함께 활용"}</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식" aria-disabled={extraPhotoInputDisabled || undefined}>
               <label htmlFor="extra-product-photo-camera" aria-disabled={extraPhotoInputDisabled || undefined}><Camera size={18} /><span><b>사진 촬영</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "한 장씩 바로 추가"}</small></span></label>
               <label htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined}><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "여러 장 한 번에 첨부"}</small></span></label>
