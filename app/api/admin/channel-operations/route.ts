@@ -118,6 +118,14 @@ import {
   bindSmartstoreExactQaRepresentativeFromStorage,
 } from "../../../../lib/server-smartstore-exact-representative";
 import {
+  bindSmartstoreManualAdoptionUpdateArguments,
+  hasClientSmartstoreManualAdoptionUpdateMarker,
+  isSmartstoreManualAdoptionListing,
+  readSmartstoreManualAdoptionUpdateBinding,
+  SmartstoreManualAdoptionUpdateBindingError,
+  type SmartstoreManualAdoptionUpdateBinding,
+} from "../../../../lib/server-smartstore-adoption-update-binding";
+import {
   bindShopeeSgExactRepresentativeFromStorage,
 } from "../../../../lib/server-shopee-sg-exact-representative";
 import {
@@ -455,6 +463,14 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 요청 형식이 올바르지 않습니다." }, { status: 400 });
 
   const { channel, operation } = parsed.data;
+  if (channel === "smartstore"
+      && operation === "listing.update"
+      && hasClientSmartstoreManualAdoptionUpdateMarker(parsed.data.arguments)) {
+    return NextResponse.json({
+      message: "스마트스토어 기존 상품 연결 증거는 서버 원장에서만 추가할 수 있습니다.",
+      mode: "smartstore_manual_adoption_marker_server_owned",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (channel === "coupang"
       && operation === "listing.create"
       && coupangExactQaCreateForbidden({
@@ -834,6 +850,8 @@ export async function POST(request: NextRequest) {
   let boundCoupangExactQaRecoveryPhase: CoupangExactQaRecoveryPhase | null = null;
   let boundElevenstExactExistingPublication = false;
   let boundSmartstoreExactQaRecovery = false;
+  let boundSmartstoreManualAdoptionUpdate:
+    SmartstoreManualAdoptionUpdateBinding | null = null;
   let boundShopeeSgExistingUpdate: ShopeeSgExistingUpdateIdentity | null = null;
   let shopeeSgExistingUpdatePermitArmed = false;
   if (listingBoundOperation) {
@@ -891,6 +909,33 @@ export async function POST(request: NextRequest) {
         message: "요청한 원격 상품 ID가 이 상품의 게시 원장과 일치하지 않아 수정을 차단했습니다.",
         mode: "listing_identity_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (channel === "smartstore"
+        && operation === "listing.update"
+        && isSmartstoreManualAdoptionListing(exactListing)) {
+      try {
+        boundSmartstoreManualAdoptionUpdate = await readSmartstoreManualAdoptionUpdateBinding({
+          serviceClient,
+          actorId: userData.user.id,
+          productId,
+          credentialId: parsed.data.credentialId,
+          listing: exactListing,
+        });
+      } catch (error) {
+        const unavailable = error instanceof SmartstoreManualAdoptionUpdateBindingError
+          && error.unavailable;
+        return NextResponse.json({
+          message: unavailable
+            ? "스마트스토어 기존 상품 연결 원장을 확인하지 못해 수정을 시작하지 않았습니다."
+            : "현재 스마트스토어 상품·인증정보·원격 ID가 확인된 기존 상품 연결 원장과 일치하지 않아 수정을 시작하지 않았습니다.",
+          mode: unavailable
+            ? "smartstore_manual_adoption_binding_unavailable"
+            : "smartstore_manual_adoption_binding_stale",
+        }, {
+          status: unavailable ? 503 : 409,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
     }
     if (channel === "temu" && (operation === "listing.stop" || operation === "listing.activate")) {
       const immutableIdentity = temuImmutableListingIdentityFromPublishContext(
@@ -2244,6 +2289,19 @@ export async function POST(request: NextRequest) {
       ...effectiveArguments,
       sellerpilotQoo10CreateContext: qoo10CreateContext,
     };
+  }
+  if (boundSmartstoreManualAdoptionUpdate) {
+    try {
+      effectiveArguments = bindSmartstoreManualAdoptionUpdateArguments(
+        effectiveArguments,
+        boundSmartstoreManualAdoptionUpdate,
+      );
+    } catch {
+      return NextResponse.json({
+        message: "스마트스토어 기존 상품 연결 증거를 서버 요청에 결속하지 못해 수정을 시작하지 않았습니다.",
+        mode: "smartstore_manual_adoption_binding_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
   const manifestFingerprintArguments = approvedDetailBinding
     ? marketplaceArgumentsForApprovedDetailFingerprint(effectiveArguments, approvedDetailBinding)

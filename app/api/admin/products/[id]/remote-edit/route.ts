@@ -41,6 +41,7 @@ import {
   configuredServerlessStaticEgressChannels,
   hasServerlessStaticEgressFor,
 } from "../../../../../../lib/channels/serverless-static-egress";
+import { hasClientSmartstoreManualAdoptionUpdateMarker } from "../../../../../../lib/server-smartstore-adoption-update-binding";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -430,6 +431,14 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return NextResponse.json({
       message,
     }, { status: 400 });
+  }
+  if (hasClientSmartstoreManualAdoptionUpdateMarker(body.data.arguments)) {
+    return NextResponse.json({
+      ok: false,
+      status: "blocked",
+      mode: "smartstore_manual_adoption_marker_server_owned",
+      message: "스마트스토어 기존 상품 연결 증거는 서버 원장에서만 추가할 수 있습니다.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
   const loaded = await productContext(request, productId.data);
