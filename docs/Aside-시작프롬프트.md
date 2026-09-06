@@ -21,7 +21,7 @@
 4. AUTO-04: Smartstore와 11번가는 이미 존재하는 원격 상품을 정확히 채택하고 자동 UPDATE 복구를 완성한다. 단순 receipt 저장이 정상 update lineage까지 복구하는지 별도 확인한다. 11번가 유료배송3000 지원과 full snapshot 보존은 미구현 범위다.
 5. AUTO-05: Shopee v80 인증은 복구됐으므로 재인가를 반복하지 않는다. 미전송 old recon의 증거/정상 successor를 처리한다. eBay v151·카테고리는 준비됐고 상품별 정책4종 handoff가 없다. Qoo10은 기존상품의 v2 update만 검토한다.
 6. AUTO-06/07: Lazada 기존 티켓58021·OAuth short-code 문제, Temu Rejected/Inactive를 별도 병렬 추적한다. 상태 화면에서 처리종료율100을 업로드 성공률로 오인하게 하는 표시도 고친다. CS/재고/배송 기존 수정은 보존하고 자동 업로드보다 먼저 새 작업을 벌이지 않는다.
-7. AUTO-08: 기능코드78c9cd3은 Preview만 Ready, Production/runtime/gate는 d409055다. 검증한 동일 판본을 DB·실행기·운영에 반영한 뒤 프로그램에서 실동작으로 마감한다. Preview/빌드/테스트/queue만으로 완료라고 하지 않는다.
+7. AUTO-08: 통합 입력/권한 보정·상세·CS를 포함한832c128 Preview Ready이며 실제 로그인 저장/복원 확인을 완료했다. 과거 운영/runtime/gate d409055 기록을 현재값으로 단정하지 말고 담당 상세페이지 작업의 운영 승격 상태와 현재 SHA를 먼저 대조한다. 검증한 동일 판본을 DB·실행기·운영에 반영한 뒤 프로그램에서 실동작으로 마감한다. Preview/빌드/테스트/queue만으로 완료라고 하지 않는다.
 
 ## 병렬 실행과 기록
 
