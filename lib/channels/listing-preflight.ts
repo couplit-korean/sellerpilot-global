@@ -444,7 +444,16 @@ export function inspectListingDraft(
 ) {
   const operationSpecs = channel === "ebay" && operation === "listing.update"
     ? specs[channel].filter((spec) => ["title", "description", "images"].includes(spec.key))
-    : specs[channel];
+    : channel === "smartstore" && operation === "listing.update"
+      ? specs[channel].filter((spec) => [
+        "category",
+        "title",
+        "description",
+        "images",
+        "origin",
+        "uploaded-image",
+      ].includes(spec.key))
+      : specs[channel];
   return operationSpecs
     .filter((spec) => !spec.applies || spec.applies(draft))
     .map<ListingRequirement>((spec) => ({

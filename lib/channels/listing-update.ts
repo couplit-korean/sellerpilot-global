@@ -25,6 +25,7 @@ import {
 } from "./qoo10-exact-localization-identity";
 import {
   smartstoreExactQaRecoveryArgument,
+  smartstoreExactQaRecoveryBinding,
   smartstoreExactQaRecoveryCandidate,
 } from "./smartstore-exact-qa-recovery";
 import {
@@ -782,16 +783,25 @@ function safeCoupangItems(value: unknown) {
     : [];
 }
 
-function safeSmartstoreBody(value: unknown) {
+function safeSmartstoreBody(value: unknown, options: {
+  preserveExactQaCommerce?: boolean;
+} = {}) {
   const body = recordValue(value);
   const originProduct = recordValue(body.originProduct);
   const detailAttribute = recordValue(originProduct.detailAttribute);
   const smartstoreChannelProduct = recordValue(body.smartstoreChannelProduct);
+  const unitCapacity = definedEntries(recordValue(detailAttribute.unitCapacity), [
+    "unitPriceYn",
+    "totalCapacityValue",
+    "unitCapacity",
+    "indicationUnit",
+  ]);
   const sellerCodeInfo = definedEntries(recordValue(detailAttribute.sellerCodeInfo), [
     "sellerManagementCode",
   ]);
   const safeDetailAttribute = {
     ...definedEntries(detailAttribute, ["originAreaInfo"]),
+    ...(Object.hasOwn(detailAttribute, "unitCapacity") ? { unitCapacity } : {}),
     ...(Object.keys(sellerCodeInfo).length ? { sellerCodeInfo } : {}),
   };
   const safeOriginProduct = {
@@ -800,8 +810,7 @@ function safeSmartstoreBody(value: unknown) {
       "name",
       "detailContent",
       "images",
-      "salePrice",
-      "stockQuantity",
+      ...(options.preserveExactQaCommerce ? ["salePrice", "stockQuantity"] : []),
     ]),
     ...(Object.keys(safeDetailAttribute).length ? { detailAttribute: safeDetailAttribute } : {}),
   };
@@ -957,12 +966,24 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "smartstore") {
+    const preserveExactQaCommerce = Boolean(smartstoreExactQaRecoveryBinding(createArguments))
+      || smartstoreExactQaRecoveryCandidate({
+        channel,
+        listingId: listing.listingId,
+        remoteId: listing.remoteId,
+        status: listing.status,
+        requestedPublicationIntent: listing.requestedPublicationIntent,
+        remoteVisibility: listing.remoteVisibility,
+        providerStatus: listing.providerStatus,
+        publishedAt: listing.publishedAt,
+        failureClass: listing.failureClass,
+      });
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
       ...optionalArgument(createArguments, smartstoreExactQaRecoveryArgument),
       originProductNo: remoteId,
-      body: safeSmartstoreBody(createArguments.body),
+      body: safeSmartstoreBody(createArguments.body, { preserveExactQaCommerce }),
     };
   }
 
@@ -1414,7 +1435,9 @@ function expectedListingUpdateProjection(channel: ActiveChannelKey, argumentsVal
       : [];
     return { ...definedEntries(body, coupangMutableProductFields), ...(items.length ? { items } : {}) };
   }
-  if (channel === "smartstore") return safeSmartstoreBody(argumentsValue.body);
+  if (channel === "smartstore") return safeSmartstoreBody(argumentsValue.body, {
+    preserveExactQaCommerce: Boolean(smartstoreExactQaRecoveryBinding(argumentsValue)),
+  });
   if (channel === "elevenst") return recordValue(argumentsValue.productPatch);
   if (channel === "ebay") return {
     ...optionalArgument(argumentsValue, "inventoryItem"),

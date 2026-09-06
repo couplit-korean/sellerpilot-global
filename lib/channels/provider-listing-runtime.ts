@@ -50,7 +50,10 @@ import {
   finalizeSmartstoreListingBody,
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
-import { assertSmartstoreUnitCapacity } from "./smartstore-unit-capacity";
+import {
+  assertSmartstoreUnitCapacity,
+  smartstoreUpdateOriginProductWithPreservedUnitCapacity,
+} from "./smartstore-unit-capacity";
 import {
   smartstoreExactQaRecoveryArgument,
   smartstoreExactQaRecoveryBinding,
@@ -1377,8 +1380,14 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
     }
     // Validate the category of the actual replacement body, not the old title
-    // or shipping weight. Do not copy historical capacity over approved input.
-    const categoryId = String(requestedOriginProduct.leafCategoryId ?? "").trim();
+    // or shipping weight. A supplied capacity remains the approved request;
+    // otherwise the exact current provider value copied above is preserved.
+    const effectiveOriginProduct = smartstoreUpdateOriginProductWithPreservedUnitCapacity(
+      requestedOriginProduct,
+      currentOriginProduct,
+    );
+    sourceBody.originProduct = effectiveOriginProduct;
+    const categoryId = String(effectiveOriginProduct.leafCategoryId ?? "").trim();
     if (!/^\d+$/.test(categoryId)) throw new Error("NAVER_LEAF_CATEGORY_MISSING");
     await input.hooks.assertLeaseHealthy();
     const categoryRemote = await naverRequest({
@@ -1388,7 +1397,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     });
     if (!categoryRemote.response.ok) throw new Error("NAVER_UNIT_CAPACITY_CATEGORY_UNVERIFIED");
     assertSmartstoreUnitCapacity({
-      originProduct: requestedOriginProduct,
+      originProduct: effectiveOriginProduct,
       category: categoryRemote.data,
     });
   }

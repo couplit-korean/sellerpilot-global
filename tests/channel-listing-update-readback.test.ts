@@ -131,6 +131,7 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
         stockQuantity: 9,
         deliveryInfo: { deliveryType: "DELIVERY" },
         detailAttribute: {
+          unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
           productInfoProvidedNotice: {
             productInfoProvidedNoticeType: "ETC",
             etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },
@@ -175,10 +176,11 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
       originProduct: {
         leafCategoryId: "50001578",
         name: "수정 상품",
-        salePrice: 1_000,
-        stockQuantity: 999,
+        salePrice: 77_770,
+        stockQuantity: 9,
         deliveryInfo: { deliveryType: "DELIVERY" },
         detailAttribute: {
+          unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
           productInfoProvidedNotice: {
             productInfoProvidedNoticeType: "ETC",
             etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },

@@ -989,6 +989,11 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     };
   }
   if (channel === "smartstore") {
+    const preserveExactQaCommerce = smartstoreExactQaWorkbenchRecoveryCandidate(
+      context.product.id,
+      channel,
+      existingListing,
+    );
     return {
       sellerpilotAssets,
       imageUrls: galleryImageUrls,
@@ -1000,8 +1005,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           name: title,
           detailContent: puckDetailHtml || richDescription,
           images: { representativeImage: { url: "PROGRAM_UPLOAD_PENDING" }, optionalImages: [] },
-          salePrice: channelPrice,
-          stockQuantity: quantity,
+          ...(operation === "listing.create" || preserveExactQaCommerce
+            ? { salePrice: channelPrice, stockQuantity: quantity }
+            : {}),
           ...(operation === "listing.create" ? { deliveryInfo: smartstoreShippingDraft(manual) } : {}),
           detailAttribute: { minorPurchasable: true, productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: { returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조", qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조", troubleShootingContents: "상품상세 참조", itemName: title.slice(0, 50), modelName: (manual.sellerSku || product.sku).slice(0, 50), certificateDetails: "해당사항 없음", manufacturer: manual.manufacturer.slice(0, 200), customerServicePhoneNumber: "SERVER_MANAGED" } }, afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" }, originAreaInfo: { originAreaCode: "04", content: manual.countryOfOrigin }, sellerCodeInfo: { sellerManagementCode: manual.sellerSku || product.sku }, optionInfo: {}, supplementaryProductInfo: {}, purchaseReviewInfo: { purchaseReviewExposure: true } },
           customerBenefit: {},
@@ -1155,6 +1161,15 @@ export function inspectWorkbenchListingDraft(
     ...inspectListingDraft(channel, draft, operation),
     ...listingShippingRequirements(channel, draft, operation),
   ];
+  if (channel === "smartstore" && operation === "listing.update") {
+    requirements.unshift({
+      key: "unit-capacity-preserved",
+      label: "현재 원격 단위가격 설정",
+      source: "판매자 계정",
+      status: "runtime",
+      help: "기존 원상품의 단위가격 설정을 공식 API로 조회해 그대로 보존합니다. 현재 값이 카테고리 계약에 맞지 않으면 이미지 업로드와 상품 수정 전에 차단합니다.",
+    });
+  }
   if (channel === "qoo10" && operation === "listing.update") {
     return requirements.map((requirement) => requirement.key === "shipping" ? {
       ...requirement,

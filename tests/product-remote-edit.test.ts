@@ -306,16 +306,26 @@ test("상품 수정 payload는 원격 identity를 고정하고 Lazada 단일 SKU
         detailContent: "수정 설명",
         salePrice: 999999,
         stockQuantity: 999,
-        detailAttribute: { originAreaInfo: { originAreaCode: "04" }, optionInfo: { optionSimple: [] } },
+        detailAttribute: {
+          originAreaInfo: { originAreaCode: "04" },
+          unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g", unsafe: true },
+          optionInfo: { optionSimple: [] },
+        },
       },
       smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "OFF" },
     },
   }, publishedListing);
   const smartstoreBody = smartstore.body as Record<string, unknown>;
   const originProduct = smartstoreBody.originProduct as Record<string, unknown>;
-  assert.equal(originProduct.salePrice, 999999);
-  assert.equal(originProduct.stockQuantity, 999);
+  assert.equal(Object.hasOwn(originProduct, "salePrice"), false);
+  assert.equal(Object.hasOwn(originProduct, "stockQuantity"), false);
   assert.equal(Object.hasOwn(originProduct.detailAttribute as object, "optionInfo"), false);
+  assert.deepEqual((originProduct.detailAttribute as Record<string, unknown>).unitCapacity, {
+    unitPriceYn: true,
+    totalCapacityValue: 315,
+    unitCapacity: 10,
+    indicationUnit: "g",
+  });
   assert.deepEqual(smartstoreBody.smartstoreChannelProduct, { channelProductName: "수정 상품" });
 });
 

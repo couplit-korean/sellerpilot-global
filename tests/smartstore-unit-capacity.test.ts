@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { registerHooks } from "node:module";
 import test from "node:test";
-import { assertSmartstoreUnitCapacity, smartstoreIndicationUnits } from "../lib/channels/smartstore-unit-capacity";
+import {
+  assertSmartstoreUnitCapacity,
+  smartstoreIndicationUnits,
+  smartstoreUpdateOriginProductWithPreservedUnitCapacity,
+} from "../lib/channels/smartstore-unit-capacity";
 
 const category = { id: "50000001", last: true, exceptionalCategories: ["UNIT_PRICE"] };
 // Explicit fixture choice of 100g is NOT an approval/default for the real SKU.
@@ -60,6 +64,29 @@ test("confirmed nontarget category permits omission, but malformed explicit deci
   assertSmartstoreUnitCapacity({ originProduct: product({ unitPriceYn: false }), category: nonTarget });
   assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: product({ ...capacity, unitPriceYn: false }), category: nonTarget }), /NAVER_UNIT_CAPACITY_DISABLED_WITH_VALUES/);
   assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: product({ unitPriceYn: "false" }), category: nonTarget }), /NAVER_UNIT_PRICE_YN_REQUIRED/);
+});
+
+test("content update preserves current remote capacity only when the request omits it", () => {
+  const current = product(capacity);
+  const requested = { leafCategoryId: category.id, detailAttribute: { sellerCodeInfo: { sellerManagementCode: "SKU" } } };
+  const preserved = smartstoreUpdateOriginProductWithPreservedUnitCapacity(requested, current);
+  assert.deepEqual((preserved.detailAttribute as Record<string, unknown>).unitCapacity, capacity);
+  assert.doesNotThrow(() => assertSmartstoreUnitCapacity({ originProduct: preserved, category }));
+  assert.equal(Object.hasOwn(requested.detailAttribute, "unitCapacity"), false);
+
+  const explicitPartial = smartstoreUpdateOriginProductWithPreservedUnitCapacity({
+    ...requested,
+    detailAttribute: { ...requested.detailAttribute, unitCapacity: { unitPriceYn: true } },
+  }, current);
+  assert.deepEqual((explicitPartial.detailAttribute as Record<string, unknown>).unitCapacity, { unitPriceYn: true });
+  assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: explicitPartial, category }), /NAVER_UNIT_TOTAL_CAPACITY_INVALID/);
+
+  const unavailable = smartstoreUpdateOriginProductWithPreservedUnitCapacity(requested, {
+    leafCategoryId: category.id,
+    detailAttribute: {},
+  });
+  assert.equal(Object.hasOwn(unavailable.detailAttribute as object, "unitCapacity"), false);
+  assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: unavailable, category }), /NAVER_UNIT_PRICE_YN_REQUIRED/);
 });
 
 registerHooks({ resolve(specifier, context, nextResolve) {

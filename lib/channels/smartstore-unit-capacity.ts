@@ -14,6 +14,29 @@ export const smartstoreIndicationUnits = [
   "g", "kg", "ml", "L", "cm", "m", "개", "개입", "매", "매입", "정", "캡슐", "구미", "포", "구",
 ] as const;
 
+/**
+ * Preserve the exact provider declaration for a content-only update when the
+ * request does not replace it. An explicitly supplied value always wins,
+ * including malformed or partial input, so the category validator can reject
+ * it instead of silently repairing it from the current remote product.
+ */
+export function smartstoreUpdateOriginProductWithPreservedUnitCapacity(
+  requestedValue: unknown,
+  currentValue: unknown,
+) {
+  const requested = structuredClone(record(requestedValue));
+  const requestedDetail = record(requested.detailAttribute);
+  if (Object.hasOwn(requestedDetail, "unitCapacity")) return requested;
+  const current = record(currentValue);
+  const currentDetail = record(current.detailAttribute);
+  if (!Object.hasOwn(currentDetail, "unitCapacity")) return requested;
+  requested.detailAttribute = {
+    ...requestedDetail,
+    unitCapacity: structuredClone(currentDetail.unitCapacity),
+  };
+  return requested;
+}
+
 /** Validate the approved body against a fresh exact provider category GET.
  * No title parsing, shipping-weight substitution, price calculation, or defaults.
  * This intentionally blocks unknown category metadata rather than declaring an

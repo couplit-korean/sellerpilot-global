@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { inspectListingDraft, setSmartstoreCapacityDraftValue, preserveSmartstoreCapacityDraft, editSmartstoreCapacityDraftValue } from "../lib/channels/listing-preflight";
 import { assertSmartstoreUnitCapacity } from "../lib/channels/smartstore-unit-capacity";
-import { buildChannelArguments, buildSynchronizedDraftMap } from "../app/product-publish-workbench";
+import { smartstoreExactQaRecoveryIdentity } from "../lib/channels/smartstore-exact-qa-recovery";
+import { buildChannelArguments, buildSynchronizedDraftMap, inspectWorkbenchListingDraft } from "../app/product-publish-workbench";
 
 const path = ["body", "originProduct", "detailAttribute", "unitCapacity"];
 const exact = { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" };
@@ -30,6 +31,28 @@ test("missing capacity and hand-edited string booleans/numbers cannot appear rea
     assert.ok(blockingCapacity(draft(value)).length > 0);
   }
   assert.equal(blockingCapacity({ body: { originProduct: { detailAttribute: {} } } }).length, 4);
+});
+
+test("existing-product update reads current remote capacity at runtime and does not repeat create-only checks", () => {
+  const updateRequirements = inspectWorkbenchListingDraft("smartstore", draft({}), "listing.update");
+  const updateKeys = new Set(updateRequirements.map((item) => item.key));
+  assert.equal(updateRequirements.find((item) => item.key === "unit-capacity-preserved")?.status, "runtime");
+  for (const key of [
+    "unit-price-enabled",
+    "unit-total-capacity",
+    "unit-display-capacity",
+    "unit-indication",
+    "price",
+    "stock",
+    "minor-purchasable",
+    "provided-notice",
+    "display-status",
+    "phone",
+  ]) assert.equal(updateKeys.has(key), false, key);
+  for (const key of ["category", "title", "description", "images", "origin", "uploaded-image"]) {
+    assert.equal(updateKeys.has(key), true, key);
+  }
+  assert.equal(inspectListingDraft("smartstore", draft({}), "listing.create").some((item) => item.key === "unit-price-enabled"), true);
 });
 
 test("invalid typed entries remain blocking rather than being inferred or defaulted", () => {
@@ -80,6 +103,59 @@ test("actual common price/stock/packaging synchronization preserves exact entere
   assert.equal(next.body.originProduct.stockQuantity, 2);
   assert.deepEqual(next.sellerpilotAssets, JSON.parse(JSON.stringify((buildChannelArguments("smartstore", input, 3290, 2, undefined, { ...packageFields, weight: 0.4 }, 10) as Record<string, unknown>).sellerpilotAssets)));
   assert.deepEqual(capacity(entered), exact);
+});
+
+test("normal existing-product content draft excludes price, stock and create shipping while keeping an entered capacity", () => {
+  const input = context();
+  input.listings = [{
+    id: "smartstore-listing",
+    channel: "smartstore",
+    market: "KR",
+    targetId: "",
+    remoteId: "13688607602",
+    status: "published",
+    lastError: null,
+    publishedAt: "2026-09-07T00:00:00.000Z",
+    requestedPublicationIntent: "live",
+    remoteVisibility: "live",
+  }];
+  const initial = buildChannelArguments("smartstore", input, 3190, 1, undefined, packageFields, 10) as Record<string, unknown>;
+  const originProduct = (initial.body as { originProduct: Record<string, unknown> }).originProduct;
+  assert.equal(Object.hasOwn(originProduct, "salePrice"), false);
+  assert.equal(Object.hasOwn(originProduct, "stockQuantity"), false);
+  assert.equal(Object.hasOwn(originProduct, "deliveryInfo"), false);
+  const preserved = preserveSmartstoreCapacityDraft(draft(), initial);
+  assert.deepEqual(capacity(preserved), exact);
+});
+
+test("the exact QA recovery draft keeps its fixed commerce values for the legacy recovery guard", () => {
+  const input = context();
+  input.product.id = smartstoreExactQaRecoveryIdentity.productId;
+  input.listings = [{
+    id: smartstoreExactQaRecoveryIdentity.listingId,
+    channel: "smartstore",
+    market: "KR",
+    targetId: "",
+    remoteId: smartstoreExactQaRecoveryIdentity.originProductNo,
+    status: "failed",
+    lastError: "exact recovery fixture",
+    failureClass: "external_action",
+    publishedAt: null,
+    requestedPublicationIntent: "live",
+    remoteVisibility: "unknown",
+  }];
+  const draftValue = buildChannelArguments(
+    "smartstore",
+    input,
+    smartstoreExactQaRecoveryIdentity.priceKrw,
+    smartstoreExactQaRecoveryIdentity.stock,
+    undefined,
+    packageFields,
+    10,
+  ) as Record<string, unknown>;
+  const originProduct = (draftValue.body as { originProduct: Record<string, unknown> }).originProduct;
+  assert.equal(originProduct.salePrice, smartstoreExactQaRecoveryIdentity.priceKrw);
+  assert.equal(originProduct.stockQuantity, smartstoreExactQaRecoveryIdentity.stock);
 });
 
 test("actual common synchronization neither invents absent capacity nor repairs raw invalid capacity", () => {
