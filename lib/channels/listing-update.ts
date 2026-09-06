@@ -1,3 +1,4 @@
+import { smartstoreContentRepairArgument, smartstoreContentRepairBinding, smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import type { ActiveChannelKey } from "./catalog";
 import {
   coupangExactQaRecoveryArgument,
@@ -966,6 +967,18 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "smartstore") {
+    const repair = smartstoreContentRepairBinding(createArguments);
+    if (repair) {
+      if (repair.originProductNo !== remoteId) throw new Error("SMARTSTORE_CONTENT_REPAIR_TARGET_MISMATCH");
+      const evidence = smartstoreContentRepairTransmissionImagesSchema.parse(createArguments[smartstoreContentRepairTransmissionArgument]);
+      return {
+        ...optionalArgument(createArguments, "imageUrls"),
+        [smartstoreContentRepairArgument]: structuredClone(repair),
+        [smartstoreContentRepairTransmissionArgument]: structuredClone(evidence),
+        originProductNo: remoteId,
+        body: structuredClone(recordValue(createArguments.body)),
+      };
+    }
     const preserveExactQaCommerce = Boolean(smartstoreExactQaRecoveryBinding(createArguments))
       || smartstoreExactQaRecoveryCandidate({
         channel,

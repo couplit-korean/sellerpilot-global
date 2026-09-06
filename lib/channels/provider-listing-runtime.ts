@@ -1,3 +1,5 @@
+import { smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema, type SmartstoreContentRepairTransmissionImages } from "./smartstore-content-repair-contract";
+import { prepareSmartstoreContentRepairBody, smartstoreContentRepairBinding, smartstoreContentRepairBodyHashes, inspectSmartstoreContentRepairTransmission } from "./smartstore-content-repair";
 import { readSmartstoreUpdateIdentity } from "./smartstore-update-identity";
 import { assertPublicReferenceUrl } from "../public-reference-fetch";
 import type { GatewayClaim } from "./gateway-contract";
@@ -1207,6 +1209,8 @@ export async function prepareLazadaListing(
 }
 
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
+  const contentRepair = smartstoreContentRepairBinding(input.arguments);
+  if (contentRepair && input.operation !== "listing.update") throw new Error("SMARTSTORE_CONTENT_REPAIR_UPDATE_ONLY");
   const exactRecovery = smartstoreExactQaRecoveryBinding(input.arguments);
   if (Object.hasOwn(input.arguments, smartstoreExactQaRecoveryArgument)
       && !exactRecovery) {
@@ -1294,7 +1298,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     const requestedDetailAttribute = recordValue(requestedOriginProduct.detailAttribute) ?? {};
     const requestedSellerCodeInfo = recordValue(requestedDetailAttribute.sellerCodeInfo) ?? {};
     const expectedSellerManagementCode = String(
-      requestedSellerCodeInfo.sellerManagementCode ?? "",
+      contentRepair?.sellerSku ?? requestedSellerCodeInfo.sellerManagementCode ?? "",
     ).trim();
     if (!expectedSellerManagementCode) {
       throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
@@ -1317,20 +1321,27 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
         throw new Error("SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH");
       }
     }
-    const { currentOriginProduct } = await readSmartstoreUpdateIdentity({
+    const { currentOriginProduct, currentChannelProduct } = await readSmartstoreUpdateIdentity({
       request: async (request) => {
         await input.hooks.assertLeaseHealthy();
         return naverRequest({ ...request, accessToken: token.accessToken });
       },
       originProductNo: remoteId,
       sellerSku: expectedSellerManagementCode,
-      expectedChannelProductNo: exactRecovery?.channelProductNo,
+      expectedChannelProductNo: contentRepair?.channelProductNo ?? exactRecovery?.channelProductNo,
     });
+    if (contentRepair) {
+      const repairBody = prepareSmartstoreContentRepairBody({
+        argumentsValue: input.arguments, currentOriginProduct, currentChannelProduct,
+      });
+      sourceBody.originProduct = repairBody.originProduct;
+      sourceBody.smartstoreChannelProduct = repairBody.smartstoreChannelProduct;
+    }
     // Validate the category of the actual replacement body, not the old title
     // or shipping weight. A supplied capacity remains the approved request;
     // otherwise the exact current provider value copied above is preserved.
     const effectiveOriginProduct = smartstoreUpdateOriginProductWithPreservedUnitCapacity(
-      requestedOriginProduct,
+      contentRepair ? recordValue(sourceBody.originProduct) ?? {} : requestedOriginProduct,
       currentOriginProduct,
     );
     sourceBody.originProduct = effectiveOriginProduct;
@@ -1349,10 +1360,15 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     });
   }
 
+  const transmissionImages: SmartstoreContentRepairTransmissionImages = [];
   const form = new FormData();
   for (let index = 0; index < imageUrls.length; index += 1) {
     await input.hooks.assertLeaseHealthy();
     const image = await publicImage(imageUrls[index], input.signal);
+    if (contentRepair) {
+      const evidence = await inspectSmartstoreContentRepairTransmission(imageUrls[index], image.bytes, index);
+      if (evidence) transmissionImages.push(evidence);
+    }
     const extension = image.contentType === "image/png"
       ? "png"
       : image.contentType === "image/webp"
@@ -1364,6 +1380,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
       `sellerpilot-${index + 1}.${extension}`,
     );
   }
+  if (contentRepair) smartstoreContentRepairTransmissionImagesSchema.parse(transmissionImages);
   await input.hooks.assertLeaseHealthy();
   await input.hooks.beginProviderMutation();
   const uploadResponse = await fetch(
@@ -1395,13 +1412,21 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     sourceUrls: imageUrls,
     uploadedUrls,
   });
-  const body = finalizeSmartstoreListingBody({
+  const body = contentRepair ? providerImageBody : finalizeSmartstoreListingBody({
     body: providerImageBody,
     operation: input.operation,
     publicationIntent: input.arguments.publicationIntent,
     afterServicePhone: phone,
   });
-  return { ...input.arguments, imageUrls: uploadedUrls, body };
+  if (contentRepair && smartstoreContentRepairBodyHashes({
+    originProduct: recordValue(body.originProduct) ?? {},
+    smartstoreChannelProduct: recordValue(body.smartstoreChannelProduct) ?? {},
+  }).protectedBodySha256 !== contentRepair.protectedBodySha256) {
+    throw new Error("SMARTSTORE_CONTENT_REPAIR_PROTECTED_FIELDS_CHANGED");
+  }
+  return { ...input.arguments, imageUrls: uploadedUrls, body,
+    ...(contentRepair ? { [smartstoreContentRepairTransmissionArgument]: transmissionImages } : {}),
+  };
 }
 
 function nestedContent(data: UnknownRecord) {
