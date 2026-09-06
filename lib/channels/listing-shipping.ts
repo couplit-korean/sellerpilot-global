@@ -171,9 +171,9 @@ export function listingShippingRequirements(
     const body = record(draft.body);
     const confirmation = coupangLeadTimeConfirmation(shipping.coupangLeadTimeConfirmation);
     const leadTime = resolveCoupangShippingLeadTime(shipping.shippingRule, confirmation);
-    add("lead-time-confirmation", "쿠팡 출고일 명시 확인 JSON", leadTime.status === "resolved",
+    add("lead-time-confirmation", "쿠팡 출고 기준 확인", leadTime.status === "resolved",
       ["sellerpilotAssets", "shipping", "coupangLeadTimeConfirmation"],
-      "정확한 JSON 객체로 shippingRule(현재 승인 문구), outboundShippingTimeDay(직접 확인한 API 일수), source=\"coupang-wing\", orderDateAndCalendarConfirmed=true, approvedPromiseMatched=true, sameDayShipping=false를 입력하세요. 주문/결제 기준·마감시간·실제 판매자 배송달력과 승인 약속을 대조해야 합니다. 일반 배송 규칙 '확인'이나 기본값은 대체 근거가 아닙니다.");
+      "아래 쿠팡 출고 설정에서 실제 출고 소요일을 입력하고 세 가지 확인 항목을 체크하세요. WING의 주문 기준·마감시간·판매자 배송달력을 승인된 출고 약속과 대조한 결과가 초안에 함께 저장됩니다.");
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) add("lead-time-items", "쿠팡 출고일 검증 대상 상품", false, undefined,
       "body.items는 비어 있지 않은 배열이어야 합니다. 객체나 빈 배열로 바꾸어 출고일 검사를 생략할 수 없습니다.");
@@ -191,7 +191,7 @@ export function listingShippingRequirements(
         leadTime.status === "resolved" && actual.status === "resolved"
           && actual.outboundShippingTimeDay === leadTime.outboundShippingTimeDay && normalShipping,
         ["body", "items", String(index), "outboundShippingTimeDay"],
-        "WING에서 현재 승인 문구와 주문일·배송달력 기준을 대조한 양의 정수 API 일수를 직접 입력하세요. 명시 확인 JSON의 일수와 같아야 합니다. null·기본 3일·1~2영업일의 임의 2일 변환은 허용하지 않습니다. 당일출고는 별도 계약 검증이 필요합니다.");
+        "WING에서 확인한 실제 출고 소요일을 1일 이상의 정수로 입력하세요. 주문 기준·배송달력과 승인된 출고 약속이 일치하는지도 아래에서 확인하세요. 당일출고는 별도 계약 확인이 필요합니다.");
     }
     for (const [key, label] of [["deliveryChargeType", "배송비 유형 FREE / NOT_FREE / CONDITIONAL_FREE"], ["deliveryCharge", "기본 배송비 KRW"], ["freeShipOverAmount", "조건부 무료배송 기준 KRW"]]) {
       add(key, label, key === "deliveryChargeType" ? ["FREE", "NOT_FREE", "CONDITIONAL_FREE"].includes(text(body[key])) : listingShippingAmount(body[key]) !== null, ["body", key]);
