@@ -181,6 +181,10 @@ test("Smartstore update rejects an origin or seller-code mismatch before image m
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "13671684696", channelProducts: [{ channelProductNo: "13732202182", sellerManagementCode }] }],
+    });
     if (url.endsWith("/v2/products/origin-products/13671684696")) {
       return Response.json({
         originProductNo: 13671684696,
@@ -215,6 +219,10 @@ test("Smartstore update rejects a channel-to-origin mismatch before image mutati
   globalThis.fetch = async (input) => {
     const url = String(input);
     calls.push(url);
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "13671684696", channelProducts: [{ channelProductNo: "13732202182", sellerManagementCode }] }],
+    });
     if (url.endsWith("/v2/products/origin-products/13671684696")) {
       return Response.json({
         originProductNo: 13671684696,
@@ -247,6 +255,7 @@ test("Smartstore update rejects a channel-to-origin mismatch before image mutati
     assert.deepEqual(
       calls.map((url) => new URL(url).pathname),
       [
+        "/external/v1/products/search",
         "/external/v2/products/origin-products/13671684696",
         "/external/v2/products/channel-products/13732202182",
       ],

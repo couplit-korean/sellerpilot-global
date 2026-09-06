@@ -158,11 +158,16 @@ test("runtime update preserves readback identity checks then blocks required omi
   const input = { ...base, operation: "listing.update" as const, arguments: { ...base.arguments, originProductNo: "13671684696" } };
   globalThis.fetch = async (request) => {
     const url = String(request); calls.push(url);
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "13671684696", channelProducts: [{ channelProductNo: "13732202182", sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" }] }],
+    });
     if (url.endsWith("/v2/products/origin-products/13671684696")) return Response.json({
       originProductNo: "13671684696", smartstoreChannelProductNo: "13732202182",
       originProduct: { detailAttribute: { sellerCodeInfo: { sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" } } },
     });
     if (url.endsWith("/v2/products/channel-products/13732202182")) return Response.json({
+      originProduct: { detailAttribute: { sellerCodeInfo: { sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" } } },
       smartstoreChannelProduct: { channelProductNo: "13732202182", originProductNo: "13671684696", sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" },
     });
     assert.ok(url.endsWith(`/v1/categories/${category.id}`));
@@ -170,7 +175,7 @@ test("runtime update preserves readback identity checks then blocks required omi
   };
   try {
     await assert.rejects(prepareMarketplaceListingArguments(input), /NAVER_UNIT_PRICE_YN_REQUIRED/);
-    assert.equal(calls.length, 3); assert.deepEqual(mutations, []);
+    assert.equal(calls.length, 4); assert.deepEqual(mutations, []);
     assert.equal(calls.some(url => url.includes("upload") || url.includes("images.example")), false);
   } finally { globalThis.fetch = originalFetch; }
 });

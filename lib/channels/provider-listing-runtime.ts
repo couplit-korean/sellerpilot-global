@@ -1,3 +1,4 @@
+import { readSmartstoreUpdateIdentity } from "./smartstore-update-identity";
 import { assertPublicReferenceUrl } from "../public-reference-fetch";
 import type { GatewayClaim } from "./gateway-contract";
 import {
@@ -1316,69 +1317,15 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
         throw new Error("SMARTSTORE_EXACT_QA_PATCH_CONTRACT_MISMATCH");
       }
     }
-    await input.hooks.assertLeaseHealthy();
-    const originRemote = await naverRequest({
-      accessToken: token.accessToken,
-      method: "GET",
-      path: `/v2/products/origin-products/${encodeURIComponent(remoteId)}`,
+    const { currentOriginProduct } = await readSmartstoreUpdateIdentity({
+      request: async (request) => {
+        await input.hooks.assertLeaseHealthy();
+        return naverRequest({ ...request, accessToken: token.accessToken });
+      },
+      originProductNo: remoteId,
+      sellerSku: expectedSellerManagementCode,
+      expectedChannelProductNo: exactRecovery?.channelProductNo,
     });
-    const currentOriginProduct = recordValue(originRemote.data.originProduct) ?? {};
-    const embeddedChannelProduct = recordValue(originRemote.data.smartstoreChannelProduct) ?? {};
-    const responseOriginProductNo = String(
-      originRemote.data.originProductNo ?? currentOriginProduct.originProductNo ?? "",
-    ).trim();
-    const responseChannelProductNo = String(
-      originRemote.data.smartstoreChannelProductNo
-        ?? embeddedChannelProduct.channelProductNo
-        ?? "",
-    ).trim();
-    const currentDetailAttribute = recordValue(currentOriginProduct.detailAttribute) ?? {};
-    const currentSellerCodeInfo = recordValue(currentDetailAttribute.sellerCodeInfo) ?? {};
-    const originSellerManagementCode = String(
-      currentSellerCodeInfo.sellerManagementCode
-        ?? currentOriginProduct.sellerManagementCode
-        ?? "",
-    ).trim();
-    if (!originRemote.response.ok
-        || !Object.keys(currentOriginProduct).length
-        || (responseOriginProductNo && responseOriginProductNo !== remoteId)
-        || !/^\d+$/.test(responseChannelProductNo)
-        || (exactRecovery
-          && responseChannelProductNo !== exactRecovery.channelProductNo)
-        || originSellerManagementCode !== expectedSellerManagementCode) {
-      throw new Error("NAVER_UPDATE_ORIGIN_PREFLIGHT_FAILED");
-    }
-
-    await input.hooks.assertLeaseHealthy();
-    const channelRemote = await naverRequest({
-      accessToken: token.accessToken,
-      method: "GET",
-      path: `/v2/products/channel-products/${encodeURIComponent(responseChannelProductNo)}`,
-    });
-    const currentChannelProduct = recordValue(channelRemote.data.smartstoreChannelProduct) ?? {};
-    const authoritativeChannelProductNo = String(
-      currentChannelProduct.channelProductNo
-        ?? currentChannelProduct.smartstoreChannelProductNo
-        ?? channelRemote.data.smartstoreChannelProductNo
-        ?? "",
-    ).trim();
-    const authoritativeOriginProductNo = String(
-      currentChannelProduct.originProductNo
-        ?? channelRemote.data.originProductNo
-        ?? "",
-    ).trim();
-    const channelSellerManagementCode = String(
-      currentChannelProduct.sellerManagementCode ?? expectedSellerManagementCode,
-    ).trim();
-    if (!channelRemote.response.ok
-        || !Object.keys(currentChannelProduct).length
-        || authoritativeChannelProductNo !== responseChannelProductNo
-        || authoritativeOriginProductNo !== remoteId
-        || (exactRecovery
-          && authoritativeChannelProductNo !== exactRecovery.channelProductNo)
-        || channelSellerManagementCode !== expectedSellerManagementCode) {
-      throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
-    }
     // Validate the category of the actual replacement body, not the old title
     // or shipping weight. A supplied capacity remains the approved request;
     // otherwise the exact current provider value copied above is preserved.
