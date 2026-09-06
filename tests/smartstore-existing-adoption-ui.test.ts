@@ -4,12 +4,15 @@ import test from "node:test";
 
 import {
   isSmartstoreExistingAdoptionActivity,
+  parsePendingSmartstoreExistingAdoption,
   parseVerifiedSmartstoreExistingAdoption,
   smartstoreExistingAdoptionErrorMessage,
   smartstoreExistingAdoptionState,
 } from "../app/_products/smartstore-existing-adoption-ui";
 
 const productId = "1ed4acfc-7603-48ec-a638-241131e59358";
+const listingId = "44444444-4444-4444-8444-444444444444";
+const jobId = "55555555-5555-4555-8555-555555555555";
 
 test("failed or reconciliation Smartstore listings require verified existing-product review", () => {
   assert.equal(smartstoreExistingAdoptionState([
@@ -48,7 +51,7 @@ test("verified response requires exact product binding and explicit no-create/no
     receiptId: "22222222-2222-4222-8222-222222222222",
     attestationId: "33333333-3333-4333-8333-333333333333",
     productId,
-    listingId: "44444444-4444-4444-8444-444444444444",
+    listingId,
     originProductNo: "13688607602",
     channelProductNo: "13749310594",
     normalUpdateEligible: true,
@@ -72,6 +75,34 @@ test("verified response requires exact product binding and explicit no-create/no
   assert.equal(parseVerifiedSmartstoreExistingAdoption({ ...verified, productId: "55555555-5555-4555-8555-555555555555" }, productId), null);
 });
 
+test("queued and running responses remain working only with exact read-only identities", () => {
+  const pending = {
+    ok: true,
+    status: "queued",
+    productId,
+    listingId,
+    jobId,
+    reused: false,
+    apiCreateSucceeded: false,
+    providerMutationPerformed: false,
+    contentVerified: false,
+    normalUpdateEligible: false,
+    message: "로컬 채널 작업기에 등록했습니다.",
+  };
+  assert.deepEqual(parsePendingSmartstoreExistingAdoption(pending, productId), {
+    status: "queued",
+    productId,
+    listingId,
+    jobId,
+    reused: false,
+    message: pending.message,
+  });
+  assert.equal(parsePendingSmartstoreExistingAdoption({ ...pending, status: "verified" }, productId), null);
+  assert.equal(parsePendingSmartstoreExistingAdoption({ ...pending, contentVerified: true }, productId), null);
+  assert.equal(parsePendingSmartstoreExistingAdoption({ ...pending, providerMutationPerformed: true }, productId), null);
+  assert.equal(parsePendingSmartstoreExistingAdoption({ ...pending, jobId: listingId, productId: jobId }, productId), null);
+});
+
 test("error copy accepts only bounded server messages", () => {
   assert.equal(smartstoreExistingAdoptionErrorMessage({ message: "공식 조회 결과가 일치하지 않습니다." }), "공식 조회 결과가 일치하지 않습니다.");
   assert.equal(smartstoreExistingAdoptionErrorMessage({ message: "x".repeat(501) }), "기존 스마트스토어 상품의 공식 조회 결과를 확인하지 못했습니다.");
@@ -84,6 +115,11 @@ test("product and runtime UI expose safe Smartstore actions without browser-supp
   ]);
   assert.match(page, /smartstore-manual-adoption/);
   assert.match(page, /JSON\.stringify\(\{ confirmReadOnlyAdoption: true \}\)/);
+  assert.match(page, /response\.status !== 202/);
+  assert.match(page, /parsePendingSmartstoreExistingAdoption/);
+  assert.match(page, /\{ method: "GET", cache: "no-store" \}/);
+  assert.match(page, /pending\.jobId !== readbackJobId/);
+  assert.match(page, /smartstoreAdoptionControllerRef\.current\?\.abort/);
   assert.match(page, /기존 스마트스토어 상품 연결 확인/);
   assert.match(page, /신규 상품 등록 요청 없음/);
   assert.match(page, /!isSmartstoreAdoptionReview && <button[^>]+onClick=\{\(\) => onRetryProduct\(product\)\}/);

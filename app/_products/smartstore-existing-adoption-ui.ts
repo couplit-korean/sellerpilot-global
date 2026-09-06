@@ -65,6 +65,51 @@ export type VerifiedSmartstoreExistingAdoption = {
   message: string;
 };
 
+export type PendingSmartstoreExistingAdoption = {
+  status: "queued" | "running";
+  productId: string;
+  listingId: string;
+  jobId: string;
+  reused: boolean;
+  message: string;
+};
+
+/**
+ * A queued readback is still working. Keep its exact product, listing, and job
+ * identities while polling so an unrelated 202 response cannot be adopted.
+ */
+export function parsePendingSmartstoreExistingAdoption(
+  value: unknown,
+  expectedProductId: string,
+): PendingSmartstoreExistingAdoption | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  const productId = text(result.productId);
+  const listingId = text(result.listingId);
+  const jobId = text(result.jobId);
+  if (result.ok !== true
+      || (result.status !== "queued" && result.status !== "running")
+      || result.apiCreateSucceeded !== false
+      || result.providerMutationPerformed !== false
+      || result.contentVerified !== false
+      || result.normalUpdateEligible !== false
+      || typeof result.reused !== "boolean"
+      || !uuidPattern.test(expectedProductId)
+      || productId !== expectedProductId
+      || !uuidPattern.test(listingId)
+      || !uuidPattern.test(jobId)) return null;
+  return {
+    status: result.status,
+    productId,
+    listingId,
+    jobId,
+    reused: result.reused,
+    message: text(result.message) || (result.status === "running"
+      ? "로컬 채널 작업기가 스마트스토어 기존 상품을 공식 조회하고 있습니다."
+      : "스마트스토어 기존 상품 공식 조회 작업을 로컬 채널 작업기에 등록했습니다."),
+  };
+}
+
 /**
  * A 2xx response is not enough. The UI only reports a verified existing
  * binding when the response explicitly proves no provider mutation or create.

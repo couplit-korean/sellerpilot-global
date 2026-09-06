@@ -229,6 +229,7 @@ import { operationEventNotifications, operationEventState, type OperationEventSt
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   isSmartstoreExistingAdoptionActivity,
+  parsePendingSmartstoreExistingAdoption,
   parseVerifiedSmartstoreExistingAdoption,
   smartstoreExistingAdoptionErrorMessage,
   smartstoreExistingAdoptionState,
@@ -1566,6 +1567,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     });
   }, [detailChannelKeys, editDraft, product.sourceId, productMarginData.scenarios]);
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
+  const smartstoreAdoptionControllerRef = useRef<AbortController | null>(null);
   const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
   const revisionCompletionAnnouncedRef = useRef(new Set<string>());
   const editDialogOpenRef = useRef(false);
@@ -1583,6 +1585,8 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     return () => {
       detailRegenerationControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
       detailRegenerationControllerRef.current = null;
+      smartstoreAdoptionControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
+      smartstoreAdoptionControllerRef.current = null;
       revisionSubmissionControllerRef.current?.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
       revisionSubmissionControllerRef.current = null;
       lifecycleController.abort(new DOMException("상품 상세 화면이 닫혔습니다.", "AbortError"));
@@ -2321,13 +2325,21 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 
   const verifySmartstoreExistingAdoption = async () => {
     if (smartstoreAdoptionStatus === "working") return;
-    const scope = createPageAbortScope([getProductDetailSignal()], 120_000, "스마트스토어 공식 조회 시간이 초과되었습니다.");
+    smartstoreAdoptionControllerRef.current?.abort(new DOMException("새 스마트스토어 확인 요청으로 교체됐습니다.", "AbortError"));
+    const controller = new AbortController();
+    smartstoreAdoptionControllerRef.current = controller;
+    const scope = createPageAbortScope(
+      [getProductDetailSignal(), controller.signal],
+      120_000,
+      "스마트스토어 공식 조회 시간이 초과되었습니다.",
+    );
     setSmartstoreAdoptionStatus("working");
     setSmartstoreAdoptionMessage("스마트스토어 공식 조회로 기존 상품과 판매자 계보를 확인하고 있습니다.");
     try {
-      const { response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
+      const endpoint = `/api/admin/products/${product.sourceId}/smartstore-manual-adoption`;
+      let { response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
         authenticatedFetch,
-        `/api/admin/products/${product.sourceId}/smartstore-manual-adoption`,
+        endpoint,
         {
           method: "POST",
           body: JSON.stringify({ confirmReadOnlyAdoption: true }),
@@ -2336,18 +2348,41 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
         120_000,
         { message: "기존 스마트스토어 상품 연결 응답을 읽지 못했습니다." },
       );
-      if (!response.ok) throw new Error(smartstoreExistingAdoptionErrorMessage(payload));
-      const verified = parseVerifiedSmartstoreExistingAdoption(payload, product.sourceId);
-      if (!verified) {
-        throw new Error("기존 상품 결속 결과에 신규 등록 없음과 공식 내용 검증 증거가 모두 포함되지 않았습니다.");
+      let readbackJobId = "";
+      for (;;) {
+        if (response.status === 200 && response.ok) {
+          const verified = parseVerifiedSmartstoreExistingAdoption(payload, product.sourceId);
+          if (!verified) {
+            throw new Error("기존 상품 결속 결과에 신규 등록 없음과 공식 내용 검증 증거가 모두 포함되지 않았습니다.");
+          }
+          const message = `${verified.message} · 신규 상품 등록 요청 없음`;
+          setSmartstoreAdoptionStatus("verified");
+          setSmartstoreAdoptionMessage(message);
+          notify(message);
+          await onChanged().catch(() => null);
+          return;
+        }
+        if (response.status !== 202 || !response.ok) {
+          throw new Error(smartstoreExistingAdoptionErrorMessage(payload));
+        }
+        const pending = parsePendingSmartstoreExistingAdoption(payload, product.sourceId);
+        if (!pending || (readbackJobId && pending.jobId !== readbackJobId)) {
+          throw new Error("스마트스토어 공식 조회 작업의 상품·작업 식별값을 확인하지 못했습니다.");
+        }
+        readbackJobId = pending.jobId;
+        setSmartstoreAdoptionMessage(pending.message);
+        await abortableBrowserDelay(2_000, scope.signal);
+        ({ response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
+          authenticatedFetch,
+          endpoint,
+          { method: "GET", cache: "no-store" },
+          scope.signal,
+          15_000,
+          { message: "스마트스토어 공식 조회 작업 상태를 읽지 못했습니다." },
+        ));
       }
-      const message = `${verified.message} · 신규 상품 등록 요청 없음`;
-      setSmartstoreAdoptionStatus("verified");
-      setSmartstoreAdoptionMessage(message);
-      notify(message);
-      await onChanged().catch(() => null);
     } catch (error) {
-      if (scope.signal.aborted && scope.signal.reason instanceof DOMException && scope.signal.reason.name === "AbortError") return;
+      if (controller.signal.aborted) return;
       const message = error instanceof Error
         ? error.message
         : "기존 스마트스토어 상품의 공식 조회와 원장 연결을 확인하지 못했습니다.";
@@ -2356,7 +2391,12 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       notify(message);
     } finally {
       scope.dispose();
-      setSmartstoreAdoptionStatus((current) => current === "working" ? "idle" : current);
+      if (smartstoreAdoptionControllerRef.current === controller) {
+        smartstoreAdoptionControllerRef.current = null;
+        if (!controller.signal.aborted) {
+          setSmartstoreAdoptionStatus((current) => current === "working" ? "idle" : current);
+        }
+      }
     }
   };
 
