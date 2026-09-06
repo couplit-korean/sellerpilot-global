@@ -11,13 +11,15 @@
       "id": "BASE-01",
       "area": "common",
       "title": "범위·완료 원장 확정",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "analysis",
       "change": "8채널의 실제 활성 계정·국가·shop·문의 유형·메시지 형식·조회기간·지원 API·권한을 행 단위로 등록. 미확정과 제공불가를 구분한다.",
       "acceptance": "모든 요청 범위가 목록에 있고 출처·확인일·소유계정·필수 읽기/답변 scope가 기록된다. 미승인 기능을 분모에서 숨기지 않는다.",
       "depends_on": [],
       "target_modules": [],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "BASE-02",
@@ -83,7 +85,7 @@
       "id": "CORE-03",
       "area": "common",
       "title": "정규화·전체 대화 원장 통합",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "기존 support_* 원장을 재사용한다. 원격 계정/대화/메시지/답변 ID, 방향, 원래 시각, 관측시각, 출처, 수정 이력을 구분하고 outgoing delivery와 provider echo를 결속한다.",
       "acceptance": "재수집·push와 답변 echo가 같은 대화를 중복 생성하지 않는다. 새 고객 턴만 재개방하며 외부 작성 답변도 보존한다.",
@@ -97,13 +99,15 @@
         "support_reply_deliveries",
         "support_pending_seller_messages"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "CORE-04",
       "area": "common",
       "title": "답변 수락·원격 확인 분리",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "queued/running/provider_accepted/remote_verified/reconciliation 상태를 기존 계약과 호환되게 확장한다. 공급자 ACK 뒤 원격 내용·상태 또는 검증 가능한 조회/화면 영수증을 결속한다.",
       "acceptance": "202나 공급자 ACK만으로 remote_verified가 되지 않는다. 응답 유실은 먼저 원격 대조하며 중복 발송 0건.",
@@ -116,7 +120,9 @@
         "lib/channels/gateway-contract.ts",
         "support_reply_deliveries 및 완료 RPC"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "CORE-05",
@@ -221,7 +227,7 @@
       "id": "Q10-01",
       "area": "qoo10",
       "title": "문의 유형·조회 범위 확정과 이력 수집",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "MSG/HELP/ITEM별 API 조회기간·완료상태·원격 순번 계약을 확인하고 답변 포함 이력 수집을 구현한다.",
       "acceptance": "지원 유형마다 원격 ID/건수 대조, 기간 경계/페이지 누락 0, 같은 문의 재수집 중복 0.",
@@ -237,7 +243,9 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "Q10-02",
@@ -287,7 +295,7 @@
       "id": "NAV-01",
       "area": "smartstore",
       "title": "두 문의 유형의 과거 데이터 독립 복구",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "쿠팡과 분리한 backfill에 상품문의·고객문의의 미답변/답변완료를 포함하고 외부 답변을 대화 원장에 저장한다.",
       "acceptance": "쿠팡을 차단한 상태에서 두 유형의 스마트스토어 과거 수집이 독립 완료되고 원격 원본과 일치.",
@@ -303,13 +311,15 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "NAV-02",
       "area": "smartstore",
       "title": "상품/고객 답변·수정·재문의",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "문의 종류에 맞는 ID와 POST/PUT 계약을 유지한다. 고객문의 답변 수정은 공식 별도 API를 검토하여 필요한 경우 별도 작업으로 연결한다.",
       "acceptance": "각 유형의 최초/기존답변/수정/재문의/답변 권한 없음이 정확한 결과와 UI로 이어진다.",
@@ -327,7 +337,9 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "NAV-03",
@@ -376,7 +388,7 @@
       "id": "COU-02",
       "area": "coupang",
       "title": "상품·콜센터 이력·답변 복구",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "상품 문의, 콜센터 NO_ANSWER와 TRANSFER를 기간 분할하여 복구하고 requested_by/parentAnswerId를 보존한다.",
       "acceptance": "각 유형의 과거/신규/이관 문의가 누락 없이 수집되고 정확한 부모 답변에 전달된다.",
@@ -394,7 +406,9 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "COU-03",
@@ -805,7 +819,7 @@
       "id": "REL-01",
       "area": "common",
       "title": "기능별 배포·DB 적용·실행 버전 결속",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "release",
       "change": "준비된 채널과 공통 UI/DB를 호환 migration→API/worker→기능 활성 순서로 단계 배포한다. 미준비 채널은 계속 차단하고 version·function hash·실제 route를 검증한다.",
       "acceptance": "각 채널 live test 전에 그 채널 구현과 필수 QA/DB 적용/릴리스 일치가 확인된다. 다른 채널을 기다릴 필요 없이 단계 승격 가능. 롤백은 신규 enqueue 중지·진행/불확실 작업 보존. QA-01/02 공통 통과 외에 배포 대상 채널의 필수 오프라인 계약 시나리오도 모두 통과해야 한다. 이 게이트는 채널마다 별도 증거로 반복한다.",
@@ -814,7 +828,9 @@
         "QA-02"
       ],
       "target_modules": [],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "OPS-01",
@@ -864,5 +880,14 @@
     "20260907101000",
     "20260907102000"
   ],
-  "production_cs_completion_verified": false
+  "production_cs_completion_verified": false,
+  "implementation_checkpoint": "third_cs_archive_and_history_state",
+  "applied_cs_migrations": [
+    "20260907100000",
+    "20260907101000",
+    "20260907102000",
+    "20260907103000",
+    "20260907104000"
+  ],
+  "last_verified_runtime_release": "83032085d947e58fe0c71b56044b8b9120441e33"
 }

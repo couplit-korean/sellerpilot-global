@@ -85,6 +85,7 @@ export function normalizeSmartstoreInquiries(data: Record<string, unknown>, iso:
           ...inquiry.providerContext,
           ...(nativeId ? { answerContentId: nativeId } : {}),
           identitySource: "answer_observation_digest",
+          historyOnly: true,
           answerScope: sourceKind === "customer" ? "latest_answer" : "returned_answer_list",
         },
       });
@@ -96,4 +97,3 @@ export function normalizeSmartstoreInquiries(data: Record<string, unknown>, iso:
     return [inquiry, ...history];
   });
 }
-

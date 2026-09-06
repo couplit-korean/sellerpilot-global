@@ -503,7 +503,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
         completedEnqueues += 1;
         return { data: { status: "already_pending" }, error: null };
       }
-      assert.equal(completedEnqueues, 2);
+      assert.equal(completedEnqueues, 4);
       return { data: null, error: null };
     },
   });
@@ -515,9 +515,9 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
-      pending: 2,
+      pending: 4,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -527,7 +527,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     jobs: [],
   });
   const enqueues = calls.filter(({ name }) => name === "sellerpilot_service_enqueue_periodic_sync");
-  assert.equal(enqueues.length, 2);
+  assert.equal(enqueues.length, 4);
   assert.equal(maxActiveEnqueues, Math.min(SERVERLESS_CS_ENQUEUE_CONCURRENCY, enqueues.length));
   assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
   assert.equal(
@@ -538,7 +538,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     SERVERLESS_CS_DRAIN_CONCURRENCY * 5 > serverlessCsCurrentInquiryEnqueues(fixedNow).length,
     true,
   );
-  assert.equal(SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES, 25);
+  assert.equal(SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES, 27);
   assert.ok(
     SERVERLESS_CS_DRAIN_CONCURRENCY * 5
       > SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
@@ -546,7 +546,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
   assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
   assert.deepEqual(
     enqueues.map(({ arguments_ }) => arguments_.p_channel).sort(),
-    ["ebay", "qoo10"],
+    ["ebay", "qoo10", "qoo10", "qoo10"],
   );
   assert.ok(enqueues.every(({ arguments_ }) =>
     arguments_.p_operation === "inquiries.list"
@@ -559,6 +559,8 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     [
       "ebay:inquiries:0",
       "qoo10:inquiries:0",
+      "qoo10:inquiries:1",
+      "qoo10:inquiries:2",
     ],
   );
   const serializedEnqueues = JSON.stringify(enqueues);
@@ -596,10 +598,10 @@ test("Smartstore and Coupang current reads require explicit static egress", () =
     new Date("2026-08-28T07:00:00.000Z"),
     ["coupang", "smartstore"],
   );
-  assert.equal(enqueues.length, 7);
+  assert.equal(enqueues.length, 9);
   assert.deepEqual(
     enqueues.map(({ channel }) => channel).sort(),
-    ["coupang", "coupang", "coupang", "ebay", "qoo10", "smartstore", "smartstore"],
+    ["coupang", "coupang", "coupang", "ebay", "qoo10", "qoo10", "qoo10", "smartstore", "smartstore"],
   );
 });
 
@@ -608,10 +610,10 @@ test("explicit Temu static egress enables its current inquiry read", () => {
     new Date("2026-08-28T07:00:00.000Z"),
     ["temu"],
   );
-  assert.equal(enqueues.length, 3);
+  assert.equal(enqueues.length, 5);
   assert.deepEqual(
     enqueues.map(({ channel }) => channel).sort(),
-    ["ebay", "qoo10", "temu"],
+    ["ebay", "qoo10", "qoo10", "qoo10", "temu"],
   );
   const temu = enqueues.find(({ channel }) => channel === "temu");
   assert.equal(temu?.operation, "inquiries.list");
@@ -724,6 +726,7 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
     rpc: baseRpc(claim("qoo10", "inquiries.list"), calls, {
       sellerpilot_service_enqueue_periodic_sync: (arguments_) =>
         arguments_.p_channel === "qoo10"
+          && (arguments_.p_request_payload as { periodicKey: string }).periodicKey === "inquiries:0"
           ? { data: null, error: { code: "private_provider_body_must_not_escape" } }
           : { data: { status: "already_pending" }, error: null },
     }),
@@ -747,9 +750,9 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(body.processed, 1);
   assert.equal(body.needsAttention, true);
   assert.deepEqual(body.enqueue, {
-    attempted: 2,
+    attempted: 4,
     queued: 0,
-    pending: 1,
+    pending: 3,
     notConnected: 0,
     reconnectRequired: 0,
     reconciliationRequired: 0,
@@ -759,7 +762,7 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(providerCalls, 1);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 1, total: 2 }],
+    ["enqueue", { status: 503, failed: 1, total: 4 }],
   ]);
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|private_provider_body/);
   assert.doesNotMatch(JSON.stringify(logged), /private_provider_body/);
@@ -791,14 +794,14 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
       pending: 0,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
       fixedEgressRequired: 0,
-      failed: 2,
+      failed: 4,
     },
     needsAttention: true,
     jobs: [],
@@ -806,7 +809,7 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
   assert.equal(claimCalls, SERVERLESS_CS_DRAIN_CONCURRENCY);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 2, total: 2 }],
+    ["enqueue", { status: 503, failed: 4, total: 4 }],
   ]);
 });
 
@@ -900,9 +903,9 @@ test("inquiry list completion normalizes provider data in the atomic transaction
     processed: 1,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 2,
+      attempted: 4,
       queued: 0,
-      pending: 2,
+      pending: 4,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -1059,7 +1062,7 @@ test("Qoo10 inquiry list keeps the verified one-call contract and stores only no
     priority: 3,
     receivedAt: "2026-08-28T01:23:45.000Z",
     remoteMessageId: "87654321",
-    providerContext: { inquiryType: "MSG", questionNo: "12345678", sequenceNo: "87654321" },
+    providerContext: { inquiryType: "MSG", questionNo: "12345678", sequenceNo: "87654321", processingStatus: "S1" },
     replyContext: { inquiryType: "MSG", questionNo: "12345678", sequenceNo: "87654321" },
     providerStatus: "waiting",
     ticketKind: "conversation",
@@ -1514,7 +1517,7 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(gateway, /serverlessGatewayExecutionTimeoutMs\(/);
   assert.match(gateway, /SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3/);
   assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 8/);
-  assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 25/);
+  assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 27/);
   assert.match(gatewayRuntime, /releaseId: process\.env\.SELLERPILOT_RELEASE_SHA/);
   assert.match(gatewayRuntime, /vercelGitCommitSha: process\.env\.VERCEL_GIT_COMMIT_SHA/);
   assert.match(gatewayRuntime, /requireActiveRuntime: true/);

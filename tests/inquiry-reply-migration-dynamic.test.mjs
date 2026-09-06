@@ -2529,3 +2529,34 @@ test('Smartstore answer history persists on the actual ledger without replacing 
   assert.deepEqual(result.messages[2].unsequencedAnswers,[{body:'  undated original\n',reason:'provider_timestamp_unavailable'}]);
  }finally{await db.close();}
 });
+
+test('CS archive search runs over the reviewed production ledger schema',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedAdminAndCredential(db);
+  const ticket=await ingestTicket(db,credential,'archive-original');
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907103000_search_cs_archive.sql',import.meta.url),'utf8'));
+  const page=await scalar(db,"select public.sellerpilot_search_cs_archive('archive-original')");
+  assert.equal(page.tickets.length,1);assert.equal(page.tickets[0].id,ticket);
+  assert.equal(page.tickets[0].preview,'문의 내용 archive-original');
+ }finally{await db.close();}
+});
+
+test('historical seller snapshots never resolve a newer unanswered request and ordinary observations still work',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedAdminAndCredential(db);
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql',import.meta.url),'utf8'));
+  const ticket='qoo10:history-only';
+  const buyer=cs140Event('question','customer','2026-09-01T00:00:00Z',ticket);
+  const history={...cs140Event('history','seller','2026-09-01T00:01:00Z',ticket),providerContext:{historyOnly:true}};
+  const ingest=rows=>scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",[credential,JSON.stringify(rows)]);
+  await ingest([buyer,history]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'waiting');
+  assert.equal(await scalar(db,"select count(*)::int from sellerpilot_private.support_inbound_messages where channel_key='qoo10'"),2);
+  const ordinary=cs140Event('delivered','seller','2026-09-01T00:02:00Z',ticket);await ingest([ordinary]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'answered');
+  const newer={...buyer,inboundKey:'synthetic:new-question',remoteMessageId:'new-question',receivedAt:'2026-09-01T00:03:00Z'};
+  await ingest([newer,history]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'waiting');
+  assert.equal(await scalar(db,"select latest_inbound_key from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'synthetic:new-question');
+ }finally{await db.close();}
+});

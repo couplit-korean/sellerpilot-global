@@ -69,6 +69,26 @@ test("Smartstore changed answer observations retain separate revisions and rejec
   assert.throws(() => normalizeChannelInquiries("smartstore", result("smartstore", [make("x".repeat(20001))]), timestamp), /SMARTSTORE_ANSWER_BODY_LIMIT/);
 });
 
+test("Coupang product answer history preserves originals, IDs and true order references",()=>{
+ const row={inquiryId:901,content:'  question\n',inquiryAt:'2026-09-01T00:00:00Z',vendorItemId:1234,orderIds:[4567],
+  commentDtoList:[{inquiryCommentId:902,content:'  answer\n',inquiryCommentAt:'2026-09-01T00:01:00.123456+09:00'}]};
+ const rows=normalizeChannelInquiries('coupang',result('coupang',[{data:{content:[row]}}]),timestamp);
+ assert.equal(rows.length,2);assert.equal(rows[0].externalOrderReference,'4567');assert.equal(rows[1].message,'  answer\n');
+ assert.equal(rows[1].senderRole,'seller');assert.equal(rows[1].providerContext.historyOnly,true);assert.equal(rows[1].providerContext.answerId,'902');
+ const noOrder=normalizeChannelInquiries('coupang',result('coupang',[{data:{content:[{...row,orderIds:[]}]}}]),timestamp);
+ assert.equal(noOrder[0].externalOrderReference,undefined);
+});
+
+test("Coupang center notices and seller replies retain distinct roles and current request status",()=>{
+ const row={inquiryId:901,content:'center inquiry',inquiryAt:'2026-09-01T00:00:00Z',csPartnerCounselingStatus:'requestAnswer',
+  replies:[{answerId:902,content:'old seller answer',answerType:'vendor',replyAt:'2026-09-01T00:01:00Z'},
+   {answerId:903,content:'new transfer',answerType:'csAgent',needAnswer:true,partnerTransferStatus:'requestAnswer',replyAt:'2026-09-01T00:02:00Z'}]};
+ const rows=normalizeChannelInquiries('coupang',result('coupang',[{sellerpilotInquiryKind:'call-center',data:{content:[row]}}]),timestamp);
+ assert.equal(rows.length,3);assert.deepEqual(rows.map(row=>row.senderRole??'customer'),['customer','seller','system']);
+ assert.equal(rows[0].providerStatus,'waiting');assert.equal(rows[1].providerContext.historyOnly,true);
+ assert.equal(rows[0].providerContext.parentAnswerId,'903');
+});
+
 function result(channel: ChannelOperationResult["channel"], pages: Record<string, unknown>[]): ChannelOperationResult {
   return {
     ok: true, channel, operation: "inquiries.list", safeMessage: "local fixture",
