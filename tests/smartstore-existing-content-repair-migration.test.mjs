@@ -26,6 +26,10 @@ const repairMigration = await readFile(new URL(
   '../supabase/migrations/20260907174000_smartstore_existing_remote_content_repair.sql',
   import.meta.url,
 ), 'utf8');
+const repairTransportProvenanceMigration = await readFile(new URL(
+  '../supabase/migrations/20260907175000_smartstore_repair_transport_provenance.sql',
+  import.meta.url,
+), 'utf8');
 const sellerLineageMigration = await readFile(new URL(
   '../supabase/migrations/20260825111800_bind_listing_seller_accounts.sql',
   import.meta.url,
@@ -93,7 +97,7 @@ function detailHtml(urls, title = '승인된 상품 설명') {
     urls.map((url) => `<img src="${url}" alt="detail">`).join('')}</section>`;
 }
 
-function exactAssetBinding() {
+function exactAssetBinding(providerImageSurface = 'detail_content') {
   const approvedDetailImages = approvedDetailUrls.map((publicUrl, index) => ({
     role: `detail-${index + 1}`,
     approvedObjectPath: `approved/detail-${index + 1}.png`,
@@ -104,22 +108,37 @@ function exactAssetBinding() {
     objectPath: `normalized/${normalizedContentSha256s[index + 1].slice(0, 2)}/${normalizedContentSha256s[index + 1]}.jpg`,
     contentSha256: normalizedContentSha256s[index + 1],
   }));
+  const representative = {
+    role: 'gallery-representative',
+    approvedObjectPath: 'approved/representative.png',
+    approvedSourceSha256: '9'.repeat(64),
+    sourceObjectPath: 'approved/representative.png',
+    sourceSha256: '9'.repeat(64),
+    publicUrl: representativeUrl,
+    objectPath: `normalized/${normalizedContentSha256s[0].slice(0, 2)}/${normalizedContentSha256s[0]}.jpg`,
+    contentSha256: normalizedContentSha256s[0],
+  };
+  const transportDetails = approvedDetailImages.map((image) => ({
+    role: image.role,
+    publicUrl: image.publicUrl,
+    objectPath: image.objectPath,
+    contentSha256: image.contentSha256,
+  }));
   return {
     contract: 'sellerpilot_publication_asset_binding_v1',
     approvedDetailPageVersion: 2,
     approvedManifestDigest: null,
     approvedDetailImages,
-    providerImageSurface: 'gallery',
-    providerTransportImages: [{
-      role: 'gallery-representative',
-      approvedObjectPath: 'approved/representative.png',
-      approvedSourceSha256: '9'.repeat(64),
-      sourceObjectPath: 'approved/representative.png',
-      sourceSha256: '9'.repeat(64),
-      publicUrl: representativeUrl,
-      objectPath: `normalized/${normalizedContentSha256s[0].slice(0, 2)}/${normalizedContentSha256s[0]}.jpg`,
-      contentSha256: normalizedContentSha256s[0],
-    }, ...approvedDetailImages],
+    providerImageSurface,
+    providerTransportImages: providerImageSurface === 'gallery'
+      ? [{
+        role: representative.role,
+        publicUrl: representative.publicUrl,
+        objectPath: representative.objectPath,
+        contentSha256: representative.contentSha256,
+      }, ...transportDetails]
+      : transportDetails,
+    representative,
   };
 }
 
@@ -251,7 +270,7 @@ function providerReadback(transmissionPixels) {
   };
 }
 
-async function createRepairDatabase() {
+async function createRepairDatabase({ providerImageSurface = 'detail_content' } = {}) {
   const db = await createDatabase();
   await db.exec(`
     alter table sellerpilot_private.channel_gateway_jobs add column started_at timestamptz;
@@ -273,17 +292,54 @@ async function createRepairDatabase() {
       p_binding jsonb,p_manifest jsonb,p_version bigint,p_attempt uuid
     ) returns boolean language sql stable security definer set search_path='' as $$
       select p_binding->>'contract'='sellerpilot_publication_asset_binding_v1'
-        and p_binding->>'providerImageSurface'='gallery'
+        and p_binding->>'providerImageSurface' in ('detail_content','gallery')
         and p_binding->>'approvedManifestDigest'=p_manifest->>'digest'
         and p_binding->>'approvedDetailPageVersion'=p_version::text
         and jsonb_array_length(p_binding->'approvedDetailImages')=8
-        and jsonb_array_length(p_binding->'providerTransportImages')=9
-        and p_binding#>>'{providerTransportImages,0,role}'='gallery-representative'
-        and p_binding->'approvedDetailImages'=(
-          select jsonb_agg(value order by ordinal)
-          from jsonb_array_elements(p_binding->'providerTransportImages')
-            with ordinality image(value,ordinal)
-          where ordinal>1
+        and (
+          (p_binding->>'providerImageSurface'='detail_content'
+            and jsonb_array_length(p_binding->'providerTransportImages')=8)
+          or
+          (p_binding->>'providerImageSurface'='gallery'
+            and jsonb_array_length(p_binding->'providerTransportImages')=9
+            and p_binding#>>'{providerTransportImages,0,role}'='gallery-representative')
+        )
+        and not exists (
+          select 1
+          from jsonb_array_elements(p_binding->'approvedDetailImages')
+            with ordinality approved(value,ordinal)
+          where approved.value->>'role' is distinct from
+              p_binding#>>array['providerTransportImages',
+                (ordinal-1+case when p_binding->>'providerImageSurface'='gallery' then 1 else 0 end)::text,
+                'role']
+             or approved.value->>'publicUrl' is distinct from
+              p_binding#>>array['providerTransportImages',
+                (ordinal-1+case when p_binding->>'providerImageSurface'='gallery' then 1 else 0 end)::text,
+                'publicUrl']
+             or approved.value->>'objectPath' is distinct from
+              p_binding#>>array['providerTransportImages',
+                (ordinal-1+case when p_binding->>'providerImageSurface'='gallery' then 1 else 0 end)::text,
+                'objectPath']
+             or approved.value->>'contentSha256' is distinct from
+              p_binding#>>array['providerTransportImages',
+                (ordinal-1+case when p_binding->>'providerImageSurface'='gallery' then 1 else 0 end)::text,
+                'contentSha256']
+        )
+        and not exists (
+          select 1 from jsonb_array_elements(p_binding->'approvedDetailImages') image(value)
+          where not exists (
+            select 1 from sellerpilot_private.marketplace_normalized_asset_refs ref
+            join sellerpilot_private.marketplace_normalized_assets asset
+              on asset.object_path=ref.object_path
+            where ref.attempt_id=p_attempt
+              and ref.object_path=image.value->>'objectPath'
+              and ref.canonical_public_url=image.value->>'publicUrl'
+              and ref.source_object_path=image.value->>'approvedObjectPath'
+              and ref.source_content_sha256=image.value->>'approvedSourceSha256'
+              and ref.upload_confirmed_at is not null
+              and asset.content_sha256=image.value->>'contentSha256'
+              and asset.status='available'
+          )
         )
         and not exists (
           select 1 from jsonb_array_elements(p_binding->'providerTransportImages') image(value)
@@ -294,8 +350,6 @@ async function createRepairDatabase() {
             where ref.attempt_id=p_attempt
               and ref.object_path=image.value->>'objectPath'
               and ref.canonical_public_url=image.value->>'publicUrl'
-              and ref.source_object_path=image.value->>'approvedObjectPath'
-              and ref.source_content_sha256=image.value->>'approvedSourceSha256'
               and ref.upload_confirmed_at is not null
               and asset.content_sha256=image.value->>'contentSha256'
               and asset.status='available'
@@ -372,11 +426,13 @@ async function createRepairDatabase() {
     'select sellerpilot_private.smartstore_current_approved_manifest($1) value',
     [ids.import],
   )).rows[0].value;
-  const binding = exactAssetBinding();
+  const binding = exactAssetBinding(providerImageSurface);
   binding.approvedManifestDigest = manifest.digest;
   const source = await job(db, ids.sourceJob);
   const request = structuredClone(source.request_payload);
   request.arguments.imageUrls = [representativeUrl, ...approvedDetailUrls];
+  const representative = binding.representative;
+  delete binding.representative;
   request.arguments.sellerpilotPublicationAssetBinding = binding;
   request.arguments.body.originProduct.stockQuantity = 1;
   request.arguments.body.originProduct.name = '롯샌 파인애플 315g';
@@ -389,7 +445,7 @@ async function createRepairDatabase() {
   await db.query('update sellerpilot_private.channel_gateway_jobs set request_payload=$2 where id=$1', [
     ids.sourceJob, JSON.stringify(request),
   ]);
-  const assetRows = binding.providerTransportImages;
+  const assetRows = [representative, ...binding.approvedDetailImages];
   for (const row of assetRows) {
     await db.query(`insert into sellerpilot_private.marketplace_normalized_assets(
       object_path,content_sha256,status,uploaded_at
@@ -402,9 +458,15 @@ async function createRepairDatabase() {
       row.approvedObjectPath, row.approvedSourceSha256,
     ]);
   }
+  assert.equal((await db.query(`select
+    sellerpilot_private.external_detail_asset_binding_is_current(
+      $1::jsonb,$2::jsonb,2,$3
+    ) value`, [JSON.stringify(binding), JSON.stringify(manifest), ids.sourceAttempt])).rows[0].value,
+  true, 'fixture asset binding must model a current publication binding');
   await db.exec(statusNameMigration);
   await db.exec(officialIdentityMigration);
   await db.exec(repairMigration);
+  await db.exec(repairTransportProvenanceMigration);
   return db;
 }
 
@@ -505,6 +567,17 @@ test('identity-only mismatch records an immutable repair baseline for reordered 
   const db = await createRepairDatabase();
   try {
     const sourceBefore = await job(db, ids.sourceJob);
+    const publicationBinding = sourceBefore.request_payload.arguments
+      .sellerpilotPublicationAssetBinding;
+    assert.equal(publicationBinding.providerImageSurface, 'detail_content');
+    assert.equal(publicationBinding.providerTransportImages.length, 8);
+    assert.ok(publicationBinding.providerTransportImages.every((image) =>
+      Object.keys(image).sort().join(',') === 'contentSha256,objectPath,publicUrl,role'
+      && !Object.hasOwn(image, 'approvedObjectPath')
+      && !Object.hasOwn(image, 'approvedSourceSha256')));
+    assert.ok(publicationBinding.approvedDetailImages.every((image) =>
+      typeof image.approvedObjectPath === 'string'
+      && /^[a-f0-9]{64}$/u.test(image.approvedSourceSha256)));
     const listingBefore = (await db.query(
       'select to_jsonb(value) snapshot from sellerpilot_private.product_listings value where id=$1',
       [ids.listing],
@@ -535,6 +608,38 @@ test('identity-only mismatch records an immutable repair baseline for reordered 
       db.query('update sellerpilot_private.smartstore_existing_remote_repair_baselines set mismatch_code=mismatch_code where id=$1', [result.baselineId]),
       /SMARTSTORE_EXISTING_CONTENT_REPAIR_EVIDENCE_IMMUTABLE/u,
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test('gallery binding skips the representative and binds detail provenance from approved images', async () => {
+  const db = await createRepairDatabase({ providerImageSurface: 'gallery' });
+  try {
+    const source = await job(db, ids.sourceJob);
+    const binding = source.request_payload.arguments.sellerpilotPublicationAssetBinding;
+    assert.equal(binding.providerImageSurface, 'gallery');
+    assert.equal(binding.providerTransportImages.length, 9);
+    assert.ok(binding.providerTransportImages.every((image) =>
+      !Object.hasOwn(image, 'approvedObjectPath')
+      && !Object.hasOwn(image, 'approvedSourceSha256')));
+    const { result } = await createBaseline(db);
+    assert.equal(result.status, 'repair_required');
+    const baseline = (await db.query(`select approved_transport_images
+      from sellerpilot_private.smartstore_existing_remote_repair_baselines where id=$1`,
+    [result.baselineId])).rows[0];
+    assert.equal(baseline.approved_transport_images.length, 8);
+    assert.deepEqual(
+      baseline.approved_transport_images.map((image) => image.url),
+      approvedDetailUrls,
+    );
+    assert.deepEqual(
+      baseline.approved_transport_images.map((image) => image.approvedObjectPath),
+      approvedSourceSha256s.map((_, index) => `approved/detail-${index + 1}.png`),
+    );
+    assert.ok(baseline.approved_transport_images.every(
+      (image) => image.url !== representativeUrl,
+    ));
   } finally {
     await db.close();
   }
