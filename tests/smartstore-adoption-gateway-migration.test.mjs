@@ -50,7 +50,7 @@ const lineageCompletionGuardDefinition = extractDefinition(
   '\n$$;',
 );
 
-const ids = {
+export const ids = {
   owner: '10000000-0000-4000-8000-000000000001',
   manager: '11000000-0000-4000-8000-000000000011',
   product: '20000000-0000-4000-8000-000000000002',
@@ -66,8 +66,8 @@ const egress = 'a'.repeat(64);
 const sellerAccountKey = 'c'.repeat(64);
 const contentSha = 'b'.repeat(64);
 const requestFingerprint = 'd'.repeat(64);
-const tokenHash = 'e'.repeat(64);
-const workerVersion = `sellerpilot-cli-worker/1.61+${release}.${egress.slice(0, 11)}`;
+export const tokenHash = 'e'.repeat(64);
+export const workerVersion = `sellerpilot-cli-worker/1.61+${release}.${egress.slice(0, 11)}`;
 const sku = 'AUTO-GENERIC-SMARTSTORE-001';
 const originNo = '13688607602';
 const channelNo = '13749310594';
@@ -140,7 +140,7 @@ const sourceRequest = {
   },
 };
 
-function officialReadback() {
+export function officialReadback() {
   return {
     contract: 'smartstore_official_manual_adoption_readback_v1',
     source: 'smartstore_official_api_readback_v1',
@@ -204,7 +204,7 @@ function officialReadback() {
   };
 }
 
-async function createDatabase() {
+export async function createDatabase() {
   const db = new PGlite();
   await db.exec(`
     create role anon;
@@ -577,7 +577,7 @@ async function createDatabase() {
   return db;
 }
 
-async function enqueue(db) {
+export async function enqueue(db) {
   return (await db.query(
     'select public.sellerpilot_service_enqueue_smartstore_manual_adoption_readback($1,$2) result',
     [ids.owner, ids.product],
@@ -591,7 +591,7 @@ async function status(db) {
   )).rows[0].result;
 }
 
-async function claim(db, mode = 'general', version = workerVersion) {
+export async function claim(db, mode = 'general', version = workerVersion) {
   const functionName = mode === 'recovery'
     ? 'sellerpilot_claim_local_gateway_recovery_job'
     : 'sellerpilot_11820_claim_gateway_unsafe';
@@ -601,7 +601,7 @@ async function claim(db, mode = 'general', version = workerVersion) {
   )).rows[0].result;
 }
 
-async function complete(db, claimed, completionStatus, readback = null, error = null) {
+export async function complete(db, claimed, completionStatus, readback = null, error = null) {
   return (await db.query(`select public.sellerpilot_complete_smartstore_manual_adoption_readback(
       $1,$2,$3,$4,$5::jsonb,$6
     ) result`, [
@@ -617,10 +617,10 @@ async function claimAllowed(db, jobId, version = workerVersion) {
       ) value`, [jobId, ids.credential, ids.worker, version])).rows[0].value;
 }
 
-async function job(db, id) {
+export async function job(db, id) {
   return (await db.query(`select id,status,attempt_count,worker_token_id,claim_token,
       lease_expires_at,response_payload,error_message,request_payload,listing_id,
-      credential_id,seller_account_key,created_by
+      credential_id,attempt_id,seller_account_key,created_by,provider_mutation_started_at
     from sellerpilot_private.channel_gateway_jobs where id=$1`, [id])).rows[0];
 }
 
