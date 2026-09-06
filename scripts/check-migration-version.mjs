@@ -22,7 +22,7 @@ if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){
     // Read filenames only. Never load or execute migration bodies here.
     const names=await readdir(new URL('../supabase/migrations/',import.meta.url));
     const result=checkMigrationVersion(process.argv[2],names);
-    console.log(`Available local version: ${result.version} (${result.name}). Also compare production history by version, name and source hash before applying.`);
+    console.log(`No local filename collision: ${result.version} (${result.name}). Also compare production history by version, name and source hash before applying.`);
   }catch(error){
     console.error(error instanceof Error?error.message:'Migration version check failed.');
     process.exitCode=1;
