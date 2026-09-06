@@ -661,7 +661,7 @@ async function runReviewedTransientPipelineFixture(options: {
     },
     generateStructured: async (input) => observeRemoteCall(async () => {
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
-        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
       });
       structuredCalls += 1;
@@ -1902,7 +1902,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
     },
     generateStructured: async (input) => {
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
-        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
       });
       if (input.tags.includes("feature:product-studio-master")) {
@@ -2096,7 +2096,7 @@ test("main then front segmentation quality failures fail closed instead of a ful
     },
     generateStructured: async (input) => {
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
-        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
       });
       if (input.tags.includes("feature:product-studio-master")) {
