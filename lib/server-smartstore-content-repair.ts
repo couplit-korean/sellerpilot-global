@@ -103,6 +103,7 @@ export const smartstoreContentRepairStateSchema = z.union([
     reason: z.enum([
       "REPAIR_BASELINE_REQUIRED",
       "REPAIR_BASELINE_STALE",
+      "REPAIR_JOB_EXPIRED",
       "REPAIR_JOB_FAILED",
       "PREPARE_BLOCKED",
     ]),

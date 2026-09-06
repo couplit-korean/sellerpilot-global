@@ -112,6 +112,8 @@ function stateResponse(state: SmartstoreContentRepairState) {
     ? "먼저 기존 스마트스토어 상품의 신원을 읽기 전용으로 확인해 주세요."
     : state.reason === "REPAIR_BASELINE_STALE"
       ? "상품 또는 승인 내용이 달라져 이전 확인 결과를 사용할 수 없습니다. 기존 상품 연결 확인부터 다시 진행해 주세요."
+      : state.reason === "REPAIR_JOB_EXPIRED"
+        ? "복구 작업이 실행되기 전에 대기 시간이 만료됐습니다. 승인 내용으로 복구를 다시 선택해 새 작업을 등록해 주세요."
       : state.reason === "REPAIR_JOB_FAILED"
         ? "승인 내용 복구 작업을 완료하지 못했습니다. 채널 작업 기록을 확인해 주세요."
         : state.reason === "STRICT_READBACK_FAILED"

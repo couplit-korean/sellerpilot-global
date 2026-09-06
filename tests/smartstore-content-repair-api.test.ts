@@ -126,6 +126,7 @@ test("repair state contract keeps repair, mutation, and strict verification phas
     { ...stateBase, status: "verification_running", reason: "STRICT_READBACK_RUNNING", verificationJobId, providerMutationPerformed: true },
     { ...stateBase, status: "verification_reconciliation_required", reason: "STRICT_READBACK_RECONCILIATION_REQUIRED", verificationJobId, providerMutationPerformed: true },
     { ...stateBase, status: "verified", reason: "ADOPTION_ALREADY_VERIFIED", verificationJobId, contentVerified: true, providerMutationPerformed: true, normalUpdateEligible: true },
+    { ...stateBase, status: "blocked", reason: "REPAIR_JOB_EXPIRED", jobId: null },
     { ...stateBase, status: "blocked", reason: "STRICT_READBACK_FAILED", verificationJobId, providerMutationPerformed: true },
   ];
   for (const value of values) assert.equal(smartstoreContentRepairStateSchema.safeParse(value).success, true);
@@ -227,6 +228,20 @@ test("uncertain mutation and strict readback never become automatic retry or ver
     assert.notEqual(body.status, "verified");
     assert.doesNotMatch(JSON.stringify(body), /SMARTSTORE_|readback|credential|providerRaw/u);
   }
+});
+
+test("an expired pre-mutation permit gives a safe explicit re-enqueue instruction", async () => {
+  const expired = await callRoute({ rpcData: {
+    ...stateBase,
+    status: "blocked",
+    reason: "REPAIR_JOB_EXPIRED",
+    jobId: null,
+  } });
+  assert.equal(expired.routeResponse.status, 409);
+  const body = await expired.routeResponse.json();
+  assert.equal(body.ok, false);
+  assert.match(body.message, /다시 선택해 새 작업을 등록/u);
+  assert.doesNotMatch(JSON.stringify(body), /REPAIR_JOB_EXPIRED|SMARTSTORE_/u);
 });
 
 test("invalid browser input and backend failures are bounded and no-store", async () => {
