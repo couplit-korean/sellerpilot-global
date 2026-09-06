@@ -1877,20 +1877,21 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       method: "GET",
       path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${categoryCode}`,
     }),
-    recovery ? coupangRequest({
+    coupangRequest({
       payload: input.credential,
       method: "GET",
       path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryCode}/status`,
-    }) : Promise.resolve(null),
+    }),
   ]);
   if (!outboundRemote.response.ok) throw new Error("COUPANG_OUTBOUND_QUERY_FAILED");
   if (!returnRemote.response.ok) throw new Error("COUPANG_RETURN_CENTER_QUERY_FAILED");
   if (!metadataRemote.response.ok) throw new Error("COUPANG_CATEGORY_METADATA_FAILED");
-  if (recovery && (!categoryStatusRemote
-      || !categoryStatusRemote.response.ok
+  if (!categoryStatusRemote.response.ok
       || categoryStatusRemote.data.code !== "SUCCESS"
-      || categoryStatusRemote.data.data !== true)) {
-    throw new Error("COUPANG_EXACT_QA_CATEGORY_INACTIVE");
+      || categoryStatusRemote.data.data !== true) {
+    throw new Error(recovery
+      ? "COUPANG_EXACT_QA_CATEGORY_INACTIVE"
+      : "COUPANG_CATEGORY_INACTIVE");
   }
 
   const outboundCenters = nestedContent(outboundRemote.data)
