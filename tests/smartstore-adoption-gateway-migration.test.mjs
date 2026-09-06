@@ -21,6 +21,10 @@ const globalCounterMigration = await readFile(new URL(
   '../supabase/migrations/20260906070000_evidence_based_global_publication_gate_counters.sql',
   import.meta.url,
 ), 'utf8');
+const providerLineageMigration = await readFile(new URL(
+  '../supabase/migrations/20260825111840_provider_listing_readback_rebind.sql',
+  import.meta.url,
+), 'utf8');
 
 function extractDefinition(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -39,6 +43,11 @@ const currentGlobalSetterDefinition = extractDefinition(
   globalCounterMigration,
   'CREATE OR REPLACE FUNCTION public.sellerpilot_service_set_listing_mutation_release_gate(p_open boolean, p_release_sha text)',
   '\n$function$;',
+);
+const lineageCompletionGuardDefinition = extractDefinition(
+  providerLineageMigration,
+  'create or replace function sellerpilot_private.guard_listing_lineage_verification_job_completion()',
+  '\n$$;',
 );
 
 const ids = {
@@ -232,7 +241,7 @@ async function createDatabase() {
       environment text not null, status text not null, version integer not null,
       expires_at timestamptz, seller_account_key text,
       seller_account_key_source text, last_check_status text,
-      last_checked_at timestamptz
+      last_checked_at timestamptz, seller_account_verified_at timestamptz
     );
     create table sellerpilot_private.channel_operation_attempts(
       id uuid primary key, owner_id uuid not null, credential_id uuid,
@@ -492,7 +501,10 @@ async function createDatabase() {
     insert into sellerpilot_private.products values(
       '${ids.product}','${ids.owner}','${sku}','active',false,'${ids.import}',10
     );
-    insert into sellerpilot_private.channel_credentials values(
+    insert into sellerpilot_private.channel_credentials(
+      id,created_by,channel,environment,status,version,expires_at,
+      seller_account_key,seller_account_key_source,last_check_status,last_checked_at
+    ) values(
       '${ids.credential}','${ids.manager}','smartstore','production','active',3,null,
       '${sellerAccountKey}','credential_incarnation_v1','failed',clock_timestamp()-interval '1 day'
     );
@@ -554,6 +566,13 @@ async function createDatabase() {
     select set_config('request.jwt.claim.sub','${ids.owner}',false);
   `);
   await db.exec(adoptionMigration);
+  await db.exec(`
+    ${lineageCompletionGuardDefinition}
+    create trigger guard_listing_lineage_verification_job_completion
+    before update on sellerpilot_private.channel_gateway_jobs
+    for each row execute function
+      sellerpilot_private.guard_listing_lineage_verification_job_completion();
+  `);
   await db.exec(gatewayMigration);
   return db;
 }
@@ -626,13 +645,23 @@ test('enqueue derives one shared-admin marker and reuses every non-terminal job'
     assert.equal(duplicate.status, 'queued');
     assert.equal(duplicate.reused, true);
     assert.equal(duplicate.jobId, first.jobId);
+    await assert.rejects(
+      db.query(`update sellerpilot_private.channel_gateway_jobs
+        set status='failed' where id=$1`, [first.jobId]),
+      /dedicated lineage verification completion required/u,
+    );
+    assert.equal((await job(db, first.jobId)).status, 'queued');
     await db.query(`update sellerpilot_private.channel_gateway_jobs
       set status='running',worker_token_id=$2,claim_token=gen_random_uuid(),
           lease_expires_at=clock_timestamp()+interval '5 minutes' where id=$1`,
     [first.jobId, ids.worker]);
     assert.equal((await enqueue(db)).jobId, first.jobId);
-    await db.query(`update sellerpilot_private.channel_gateway_jobs
-      set status='reconciliation_required',lease_expires_at=null where id=$1`, [first.jobId]);
+    await db.exec(`
+      select set_config('sellerpilot.provider_listing_lineage_rebind','${first.jobId}',false);
+      update sellerpilot_private.channel_gateway_jobs
+      set status='reconciliation_required',lease_expires_at=null where id='${first.jobId}';
+      select set_config('sellerpilot.provider_listing_lineage_rebind','',false);
+    `);
     const reconciliation = await enqueue(db);
     assert.equal(reconciliation.status, 'reconciliation_required');
     assert.equal(reconciliation.jobId, first.jobId);
@@ -744,10 +773,14 @@ test('successful completion commits atomically, stores only safe response data, 
     const claimed = await claim(db);
     const sourceBefore = await job(db, ids.sourceJob);
     const evidence = officialReadback();
+    await db.exec("select set_config('sellerpilot.provider_listing_lineage_rebind','caller-sentinel',false)");
     const result = await complete(db, claimed, 'succeeded', evidence);
     assert.equal(result.status, 'verified');
     assert.equal(result.reused, false);
     assert.match(result.readbackSha256, /^[a-f0-9]{64}$/u);
+    assert.equal((await db.query(
+      "select current_setting('sellerpilot.provider_listing_lineage_rebind',true) value",
+    )).rows[0].value, 'caller-sentinel');
     const verifiedJob = await job(db, queued.jobId);
     assert.equal(verifiedJob.status, 'succeeded');
     assert.equal(verifiedJob.response_payload.contract,
