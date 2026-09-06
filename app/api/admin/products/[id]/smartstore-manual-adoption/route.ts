@@ -11,6 +11,7 @@ import {
   smartstoreManualAdoptionPreparationSchema,
   smartstoreManualAdoptionRequestSchema,
   SmartstoreManualAdoptionError,
+  type SmartstoreManualAdoptionCredentialCauseCode,
 } from "../../../../../../lib/server-smartstore-manual-adoption";
 
 export const runtime = "nodejs";
@@ -152,19 +153,110 @@ function rpcFailure(error: { message?: string } | null) {
   );
 }
 
-function providerFailure(error: unknown) {
-  const code = error instanceof SmartstoreManualAdoptionError
-    ? error.code
+type SmartstoreCredentialFailureCauseCode =
+  | SmartstoreManualAdoptionCredentialCauseCode
+  | "SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED"
+  | "SMARTSTORE_CREDENTIAL_PAYLOAD_INVALID";
+
+const credentialFailurePresentation: Record<
+  SmartstoreCredentialFailureCauseCode,
+  { mode: string; message: string }
+> = {
+  SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED: {
+    mode: "smartstore_manual_adoption_credential_decrypt_failed",
+    message: "스마트스토어 인증정보를 서버에서 불러오는 단계가 실패했습니다. 인증정보 저장 상태와 서비스 연결을 확인해 주세요.",
+  },
+  SMARTSTORE_CREDENTIAL_PAYLOAD_INVALID: {
+    mode: "smartstore_manual_adoption_credential_payload_invalid",
+    message: "저장된 스마트스토어 인증정보의 구조를 토큰 발급 입력으로 확인하지 못했습니다. 채널 인증정보를 다시 확인해 주세요.",
+  },
+  NAVER_CREDENTIALS_MISSING: {
+    mode: "smartstore_manual_adoption_credentials_missing",
+    message: "저장된 스마트스토어 인증정보에 토큰 발급에 필요한 값이 없습니다. 커머스API 인증 유형과 판매자 계정 연결을 확인해 주세요.",
+  },
+  NAVER_AUTH_FAILED: {
+    mode: "smartstore_manual_adoption_auth_failed",
+    message: "네이버가 커머스API 앱 인증을 거부했습니다. 앱 ID·비밀키와 인증 유형·판매자 계정 연결을 확인해 주세요.",
+  },
+  NAVER_IP_NOT_ALLOWED: {
+    mode: "smartstore_manual_adoption_ip_not_allowed",
+    message: "네이버가 이 배포 서버의 접속 IP를 허용하지 않았습니다. 커머스API 허용 IP와 현재 실행 경로의 고정 외부 IP를 확인해 주세요.",
+  },
+  NAVER_PROVIDER_UNAVAILABLE: {
+    mode: "smartstore_manual_adoption_provider_unavailable",
+    message: "네이버 토큰 발급 서비스가 서버 오류를 반환했습니다. 잠시 후 공급자 상태를 다시 확인해 주세요.",
+  },
+  NAVER_TOKEN_EXCHANGE_FAILED: {
+    mode: "smartstore_manual_adoption_token_exchange_failed",
+    message: "네이버 토큰 발급 응답을 정상 액세스 토큰으로 확인하지 못했습니다. 채널 인증 상태를 확인해 주세요.",
+  },
+  NAVER_TOKEN_EXCHANGE_NETWORK_FAILED: {
+    mode: "smartstore_manual_adoption_token_network_failed",
+    message: "이 배포 함수에서 네이버 토큰 발급 서버 연결을 완료하지 못했습니다. 네트워크와 고정 외부 연결 경로를 확인해 주세요.",
+  },
+  NAVER_TOKEN_EXCHANGE_POLICY_BLOCKED: {
+    mode: "smartstore_manual_adoption_token_policy_blocked",
+    message: "서버의 읽기 전용 전송 정책이 토큰 발급 요청을 차단했습니다. 상품 연결 확인 실행 경로를 점검해 주세요.",
+  },
+  NAVER_TOKEN_EXCHANGE_TIMEOUT: {
+    mode: "smartstore_manual_adoption_token_timeout",
+    message: "네이버 토큰 발급 요청이 제한 시간 안에 완료되지 않았습니다. 외부 연결 상태를 확인한 뒤 다시 시도해 주세요.",
+  },
+  NAVER_TOKEN_EXCHANGE_UNKNOWN: {
+    mode: "smartstore_manual_adoption_credential_unavailable",
+    message: "스마트스토어 토큰 발급 단계를 완료하지 못했습니다. 서버 로그의 안전한 원인 코드를 확인해 주세요.",
+  },
+};
+
+function safeProviderFailureCode(value: unknown) {
+  return typeof value === "string"
+      && /^SMARTSTORE_MANUAL_[A-Z0-9_]{1,96}$/u.test(value)
+    ? value
     : "SMARTSTORE_MANUAL_PROVIDER_READBACK_FAILED";
-  const credentialFailure = code === "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE";
+}
+
+function safeRpcDiagnosticCode(error: unknown) {
+  if (!error || typeof error !== "object" || Array.isArray(error)) return "unknown";
+  const code = (error as Record<string, unknown>).code;
+  return typeof code === "string" && /^[A-Z0-9_]{1,48}$/iu.test(code)
+    ? code
+    : "unknown";
+}
+
+function credentialFailureResponse(
+  causeCode: SmartstoreCredentialFailureCauseCode,
+  diagnostic: { rpcCode?: string; rpcState?: "error" | "threw" } = {},
+) {
+  const presentation = credentialFailurePresentation[causeCode];
+  console.error("smartstore_manual_adoption_provider_failure", {
+    failureCode: "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+    causeCode,
+    ...diagnostic,
+  });
+  return response({
+    ok: false,
+    status: "blocked",
+    mode: presentation.mode,
+    causeCode,
+    message: presentation.message,
+  }, 503);
+}
+
+function providerFailure(error: unknown) {
+  const code = safeProviderFailureCode(
+    error instanceof SmartstoreManualAdoptionError ? error.code : null,
+  );
+  const isCredentialFailure = code === "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE";
+  const causeCode = isCredentialFailure && error instanceof SmartstoreManualAdoptionError
+    ? error.causeCode ?? "NAVER_TOKEN_EXCHANGE_UNKNOWN"
+    : null;
+  if (isCredentialFailure && causeCode) {
+    return credentialFailureResponse(causeCode);
+  }
+  console.error("smartstore_manual_adoption_provider_failure", { failureCode: code });
   return blocked(
-    credentialFailure
-      ? "smartstore_manual_adoption_credential_unavailable"
-      : "smartstore_manual_adoption_provider_readback_unverified",
-    credentialFailure
-      ? "활성 스마트스토어 인증정보로 공식 상품 조회를 시작하지 못했습니다. 채널 연결 상태를 확인해 주세요."
-      : "스마트스토어 공식 검색·원상품·채널상품·상세 이미지 결과를 하나의 기존 상품으로 확인하지 못했습니다.",
-    credentialFailure ? 503 : 409,
+    "smartstore_manual_adoption_provider_readback_unverified",
+    "스마트스토어 공식 검색·원상품·채널상품·상세 이미지 결과를 하나의 기존 상품으로 확인하지 못했습니다.",
   );
 }
 
@@ -223,16 +315,27 @@ export async function POST(
     });
   }
 
-  const credentialRpc = await admin.serviceClient.rpc("sellerpilot_decrypt_credential", {
-    p_credential_id: prepared.data.credentialId,
-  });
-  if (credentialRpc.error
-      || !credentialRpc.data
+  let credentialRpc: { data: unknown; error: unknown };
+  try {
+    const result = await admin.serviceClient.rpc("sellerpilot_decrypt_credential", {
+      p_credential_id: prepared.data.credentialId,
+    });
+    credentialRpc = { data: result.data, error: result.error };
+  } catch {
+    return credentialFailureResponse("SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED", {
+      rpcState: "threw",
+    });
+  }
+  if (credentialRpc.error) {
+    return credentialFailureResponse("SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED", {
+      rpcCode: safeRpcDiagnosticCode(credentialRpc.error),
+      rpcState: "error",
+    });
+  }
+  if (!credentialRpc.data
       || typeof credentialRpc.data !== "object"
       || Array.isArray(credentialRpc.data)) {
-    return providerFailure(new SmartstoreManualAdoptionError(
-      "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
-    ));
+    return credentialFailureResponse("SMARTSTORE_CREDENTIAL_PAYLOAD_INVALID");
   }
 
   let readback;

@@ -189,13 +189,67 @@ export type SmartstoreManualAdoptionReadback = {
   detailImagePixelSha256s: string[];
 };
 
+const naverCredentialFailureCodes = [
+  "NAVER_CREDENTIALS_MISSING",
+  "NAVER_AUTH_FAILED",
+  "NAVER_IP_NOT_ALLOWED",
+  "NAVER_PROVIDER_UNAVAILABLE",
+  "NAVER_TOKEN_EXCHANGE_FAILED",
+] as const;
+
+export type SmartstoreManualAdoptionCredentialCauseCode =
+  | (typeof naverCredentialFailureCodes)[number]
+  | "NAVER_TOKEN_EXCHANGE_NETWORK_FAILED"
+  | "NAVER_TOKEN_EXCHANGE_POLICY_BLOCKED"
+  | "NAVER_TOKEN_EXCHANGE_TIMEOUT"
+  | "NAVER_TOKEN_EXCHANGE_UNKNOWN";
+
+const naverCredentialFailureCodeSet = new Set<string>(naverCredentialFailureCodes);
+
+/**
+ * Converts only protocol-owned errors and standard transport failure classes
+ * into administrator-safe codes. Provider response text, credential values,
+ * stack traces, and arbitrary nested messages never cross this boundary.
+ */
+export function smartstoreManualAdoptionCredentialCauseCode(
+  error: unknown,
+): SmartstoreManualAdoptionCredentialCauseCode {
+  let current = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    const value = record(current);
+    const message = typeof value.message === "string" ? value.message.trim() : "";
+    if (naverCredentialFailureCodeSet.has(message)) {
+      return message as (typeof naverCredentialFailureCodes)[number];
+    }
+    if (message === "LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED") {
+      return "NAVER_TOKEN_EXCHANGE_POLICY_BLOCKED";
+    }
+    const name = typeof value.name === "string" ? value.name : "";
+    if (name === "AbortError" || name === "TimeoutError") {
+      return "NAVER_TOKEN_EXCHANGE_TIMEOUT";
+    }
+    if (name === "TypeError") {
+      return "NAVER_TOKEN_EXCHANGE_NETWORK_FAILED";
+    }
+    if (!("cause" in value)) break;
+    current = value.cause;
+  }
+  return "NAVER_TOKEN_EXCHANGE_UNKNOWN";
+}
+
 export class SmartstoreManualAdoptionError extends Error {
   readonly code: string;
+  readonly causeCode: SmartstoreManualAdoptionCredentialCauseCode | null;
 
-  constructor(code: string, cause?: unknown) {
+  constructor(
+    code: string,
+    cause?: unknown,
+    causeCode: SmartstoreManualAdoptionCredentialCauseCode | null = null,
+  ) {
     super(code, cause === undefined ? undefined : { cause });
     this.name = "SmartstoreManualAdoptionError";
     this.code = code;
+    this.causeCode = causeCode;
   }
 }
 
@@ -371,10 +425,18 @@ export async function collectSmartstoreManualAdoptionReadback(
   try {
     accessToken = await dependencies.accessToken(input.credential);
   } catch (cause) {
-    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE", cause);
+    throw new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+      cause,
+      smartstoreManualAdoptionCredentialCauseCode(cause),
+    );
   }
   if (!accessToken) {
-    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE");
+    throw new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+      undefined,
+      "NAVER_TOKEN_EXCHANGE_FAILED",
+    );
   }
 
   const request = (requestInput: Omit<Parameters<SmartstoreProviderRequest>[0], "accessToken">) => (

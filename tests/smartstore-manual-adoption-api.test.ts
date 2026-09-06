@@ -10,6 +10,7 @@ import * as zod from "zod";
 import {
   collectSmartstoreManualAdoptionReadback,
   smartstoreManualAdoptionCommitSchema,
+  smartstoreManualAdoptionCredentialCauseCode,
   smartstoreManualAdoptionPreparationSchema,
   smartstoreManualAdoptionRequestSchema,
   SmartstoreManualAdoptionError,
@@ -28,6 +29,7 @@ const credentialId = "55555555-5555-4555-8555-555555555555";
 const receiptId = "66666666-6666-4666-8666-666666666666";
 const attestationId = "77777777-7777-4777-8777-777777777777";
 const digest = "a".repeat(64);
+const privateMarker = "PRIVATE_CREDENTIAL_OR_PROVIDER_TEXT";
 const routeSource = await readFile(
   new URL("../app/api/admin/products/[id]/smartstore-manual-adoption/route.ts", import.meta.url),
   "utf8",
@@ -71,11 +73,37 @@ function blockedPreparation(reason: string, overrides: Record<string, unknown> =
   };
 }
 
+function readyPreparation() {
+  return {
+    ...prepareBase,
+    status: "ready",
+    reason: null,
+    listingId,
+    sourceJobId,
+    sourceAttemptId,
+    credentialId,
+    originProductNo: null,
+    channelProductNo: null,
+    approvalRevision: 1,
+    contentSha256: digest,
+    manifestDigest: digest,
+    receiptId: null,
+    attestationId: null,
+    provenance: null,
+    contentVerified: false,
+    normalUpdateEligible: false,
+    reused: false,
+  };
+}
+
 async function callRoute(
   preparedData: unknown,
   preparedError: { message: string } | null = null,
+  providerError?: unknown,
+  credentialMode: "ok" | "error" | "throw" | "invalid" = "ok",
 ) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  const logs: Array<{ message: string; details: Record<string, unknown> }> = [];
   let providerCollections = 0;
   const context = vm.createContext({
     AbortSignal,
@@ -95,6 +123,26 @@ async function callRoute(
                 if (rpcName === "sellerpilot_service_prepare_smartstore_manual_adoption") {
                   return { data: preparedData, error: preparedError };
                 }
+                if (rpcName === "sellerpilot_decrypt_credential") {
+                  if (credentialMode === "throw") throw new Error(privateMarker);
+                  if (credentialMode === "error") {
+                    return {
+                      data: null,
+                      error: { code: "PGRST202", message: privateMarker },
+                    };
+                  }
+                  if (credentialMode === "invalid") {
+                    return { data: null, error: null };
+                  }
+                  return {
+                    data: {
+                      client_id: privateMarker,
+                      client_secret: privateMarker,
+                      token_type: "SELLER",
+                    },
+                    error: null,
+                  };
+                }
                 throw new Error(`unexpected RPC ${rpcName}`);
               },
             },
@@ -107,11 +155,17 @@ async function callRoute(
           ...manualAdoptionContract,
           collectSmartstoreManualAdoptionReadback: async () => {
             providerCollections += 1;
+            if (providerError !== undefined) throw providerError;
             throw new Error("blocked preparation must not reach provider readback");
           },
         };
       }
       throw new Error(`unexpected module ${name}`);
+    },
+    console: {
+      error(message: string, details: Record<string, unknown>) {
+        logs.push({ message, details });
+      },
     },
   });
   vm.runInContext(compiledRoute, context, { timeout: 1_000 });
@@ -123,7 +177,7 @@ async function callRoute(
   const routeResponse = await context.exports.POST(request, {
     params: Promise.resolve({ id: productId }),
   });
-  return { calls, providerCollections, routeResponse };
+  return { calls, logs, providerCollections, routeResponse };
 }
 
 function imageUrl(index: number) {
@@ -211,6 +265,92 @@ test("browser request accepts only an explicit read-only adoption confirmation",
     { confirmReadOnlyAdoption: true, normalUpdateEligible: true },
   ]) {
     assert.equal(smartstoreManualAdoptionRequestSchema.safeParse(request).success, false);
+  }
+});
+
+test("token exchange failures become only allowlisted credential cause codes", async () => {
+  for (const code of [
+    "NAVER_CREDENTIALS_MISSING",
+    "NAVER_AUTH_FAILED",
+    "NAVER_IP_NOT_ALLOWED",
+    "NAVER_PROVIDER_UNAVAILABLE",
+    "NAVER_TOKEN_EXCHANGE_FAILED",
+  ]) {
+    assert.equal(
+      smartstoreManualAdoptionCredentialCauseCode(new Error(code)),
+      code,
+    );
+  }
+  assert.equal(
+    smartstoreManualAdoptionCredentialCauseCode(new TypeError(privateMarker)),
+    "NAVER_TOKEN_EXCHANGE_NETWORK_FAILED",
+  );
+  assert.equal(
+    smartstoreManualAdoptionCredentialCauseCode({ name: "TimeoutError", message: privateMarker }),
+    "NAVER_TOKEN_EXCHANGE_TIMEOUT",
+  );
+  assert.equal(
+    smartstoreManualAdoptionCredentialCauseCode(new Error(privateMarker)),
+    "NAVER_TOKEN_EXCHANGE_UNKNOWN",
+  );
+  await assert.rejects(
+    collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
+      accessToken: async () => {
+        throw new Error("NAVER_CREDENTIALS_MISSING");
+      },
+    }),
+    (error: unknown) => error instanceof SmartstoreManualAdoptionError
+      && error.code === "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE"
+      && error.causeCode === "NAVER_CREDENTIALS_MISSING",
+  );
+});
+
+test("credential decrypt RPC, invalid payload, and token exchange failures remain distinct and secret-free", async () => {
+  const cases = [
+    {
+      credentialMode: "error" as const,
+      providerError: undefined,
+      causeCode: "SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED",
+      mode: "smartstore_manual_adoption_credential_decrypt_failed",
+    },
+    {
+      credentialMode: "invalid" as const,
+      providerError: undefined,
+      causeCode: "SMARTSTORE_CREDENTIAL_PAYLOAD_INVALID",
+      mode: "smartstore_manual_adoption_credential_payload_invalid",
+    },
+    {
+      credentialMode: "throw" as const,
+      providerError: undefined,
+      causeCode: "SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED",
+      mode: "smartstore_manual_adoption_credential_decrypt_failed",
+    },
+    {
+      credentialMode: "ok" as const,
+      providerError: new SmartstoreManualAdoptionError(
+        "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+        new Error(privateMarker),
+        "NAVER_IP_NOT_ALLOWED",
+      ),
+      causeCode: "NAVER_IP_NOT_ALLOWED",
+      mode: "smartstore_manual_adoption_ip_not_allowed",
+    },
+  ];
+  for (const expected of cases) {
+    const result = await callRoute(
+      readyPreparation(),
+      null,
+      expected.providerError,
+      expected.credentialMode,
+    );
+    assert.equal(result.routeResponse.status, 503);
+    assert.equal(result.routeResponse.headers.get("cache-control"), "no-store, max-age=0");
+    const body = await result.routeResponse.json();
+    assert.equal(body.causeCode, expected.causeCode);
+    assert.equal(body.mode, expected.mode);
+    assert.equal(result.logs.length, 1);
+    assert.equal(result.logs[0]?.details.causeCode, expected.causeCode);
+    assert.doesNotMatch(JSON.stringify({ body, logs: result.logs }), new RegExp(privateMarker, "u"));
   }
 });
 
