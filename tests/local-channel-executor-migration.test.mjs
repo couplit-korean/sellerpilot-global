@@ -8,6 +8,10 @@ const migrationUrl = new URL(
   import.meta.url,
 );
 const migration = await readFile(migrationUrl, "utf8");
+const smartstoreUpdateMigration = await readFile(new URL(
+  "../supabase/migrations/20260907161000_smartstore_local_update_executor.sql",
+  import.meta.url,
+), "utf8");
 
 const release = "8".repeat(40);
 const egress = "a".repeat(64);
@@ -247,6 +251,57 @@ test("different admin identities remain explicitly bound while current approval 
     );
     assert.equal(claimed.rows[0].result.id, ids.job);
     assert.equal(claimed.rows[0].result.operation, "listing.create");
+  } finally {
+    await db.close();
+  }
+});
+
+test("SmartStore UPDATE uses the existing origin and keeps release, approval and gate fences", async () => {
+  const db = await createDatabase();
+  try {
+    await seedAllowedListing(db);
+    await db.exec(`
+      alter table sellerpilot_private.product_listings add column remote_id text;
+      create function sellerpilot_private.smartstore_manual_adoption_reconciliation_resolved(uuid)
+      returns boolean language sql stable as $$select false$$;
+    `);
+    await db.exec(smartstoreUpdateMigration);
+    await db.exec(`
+      update sellerpilot_private.channel_credentials set channel='smartstore';
+      update sellerpilot_private.serverless_static_egress_policy set channel='smartstore';
+      update sellerpilot_private.channel_operation_attempts set channel='smartstore',operation='listing.update';
+      update sellerpilot_private.product_listings set channel_key='smartstore',remote_id='13688607602';
+      update sellerpilot_private.channel_gateway_jobs set channel='smartstore',operation='listing.update',
+        request_payload=jsonb_set(jsonb_set(request_payload,
+          '{arguments,sellerpilotExternalDetail,channel}','"smartstore"'::jsonb),
+          '{arguments,originProductNo}','"13688607602"'::jsonb);
+      update sellerpilot_private.local_channel_executor_routes set channel='smartstore',operation='listing.update';
+    `);
+    const claim = async () => (await db.query(
+      "select public.sellerpilot_claim_local_channel_executor_job($1,$2,$3,$4) as result",
+      [tokenHash, version, release, egress],
+    )).rows[0].result;
+    assert.equal((await claim()).operation, "listing.update");
+
+    await db.exec(`update sellerpilot_private.channel_gateway_jobs set request_payload=
+      jsonb_set(request_payload,'{arguments,originProductNo}','"13688607603"'::jsonb)`);
+    assert.equal(await claim(), null, "a different remote origin cannot be modified");
+    await db.exec(`update sellerpilot_private.channel_gateway_jobs set request_payload=
+      jsonb_set(request_payload,'{arguments,originProductNo}','"13688607602"'::jsonb)`);
+    await db.exec(`select set_config('test.listing_gate','closed',false)`);
+    assert.equal(await claim(), null, "the update route never opens its own gate");
+    await db.exec(`select set_config('test.listing_gate','open',false)`);
+    await db.exec(`update sellerpilot_private.local_channel_executor_routes set release_sha='${"f".repeat(40)}'`);
+    assert.equal(await claim(), null, "a route from another release cannot claim");
+    await db.exec(`update sellerpilot_private.local_channel_executor_routes set release_sha='${release}'`);
+    await db.exec(`delete from sellerpilot_private.external_detail_approval_revisions`);
+    assert.equal(await claim(), null, "stale content approval cannot claim an update");
+    const access = (await db.query(`select
+      sellerpilot_private.local_channel_executor_access('coupang','listing.update') as coupang_update,
+      sellerpilot_private.local_channel_executor_access('smartstore','listing.stop') as smartstore_stop,
+      sellerpilot_private.local_channel_executor_access('smartstore','listing.create') as smartstore_create`
+    )).rows[0];
+    assert.deepEqual(access, { coupang_update: null, smartstore_stop: null, smartstore_create: "write" });
   } finally {
     await db.close();
   }
