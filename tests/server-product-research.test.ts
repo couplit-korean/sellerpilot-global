@@ -1531,3 +1531,32 @@ test("photo-derived ingredient facts reach first-stage text research without tre
   assert.match(prompt, /not instructions/);
   assert.match(prompt, /nutrition basis and units/);
 });
+
+
+test("configured analyzer receives label evidence through the claimed multi-photo worker path", async () => {
+  const job = preflightClaim();
+  const request = { ...job.request,
+    image_paths: [...job.request.image_paths, `${USER_ID}/${JOB_ID}/input/002.jpg`],
+    image_specs: [...job.request.image_specs, { ...job.request.image_specs[0], role: "extra-1", originalPath: `${USER_ID}/${JOB_ID}/original/002.source` }],
+  };
+  const sourcePhotoEvidence = [{ sourceIndex: 1, sourceSha256: "b".repeat(64), inputRole: "extra-1", resolvedRole: "label", confidence: 0.99,
+    imageAssets: [], detailAssets: [], facts: [{ kind: "ingredients" as const, value: "사과초모식초 5%", quote: "사과초모식초 5%", confidence: 0.99 }], warnings: [] }];
+  let prompt = "";
+  let preflightFinished = false;
+  const response = await runOneServerProductResearch({
+    generatePreflight: async () => { preflightFinished = true; return { ...validPreflightResult(), sourcePhotoEvidence }; },
+    analyze: async (input, signal, options) => {
+      assert.equal(preflightFinished, true);
+      assert.deepEqual(options?.sourceEvidence, sourcePhotoEvidence);
+      return analyzeServerProductResearch(input, signal, { ...options, generate: async value => { prompt = value; return JSON.stringify(validResult()); } });
+    },
+    rpc: async name => {
+      if (name === "sellerpilot_service_claim_product_research_ai_job") return { data: { ...job, request }, error: null };
+      if (name === "sellerpilot_service_touch_product_research_ai_job") return { data: "running", error: null };
+      if (name === "sellerpilot_service_complete_product_research_ai_job") return { data: true, error: null };
+      return { data: null, error: { code: "unexpected_rpc" } };
+    },
+  });
+  assert.deepEqual(await response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.match(prompt, /사과초모식초 5%/);
+});
