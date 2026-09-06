@@ -41,7 +41,7 @@ function activity(id: string, productName: string, status: RegistrationActivity[
     completedAt: null,
     elapsedSeconds: 0,
     channelCount: 1,
-    publishedCount: 0,
+    publishedCount: status === "completed" ? 1 : 0,
     failedCount: 0,
     blockedCount: 0,
     channels: [],
@@ -219,7 +219,7 @@ test("failed AI cards expose the exact retryable job while only orphan studio jo
   assert.equal(retryableRegistrationActivityJobId({ ...revision, id: `product:${jobId}` }), null);
 });
 
-test("registration progress uses terminal channel results and never invents an AI percentage", () => {
+test("registration success excludes failed and blocked channels and never invents an AI percentage", () => {
   const analyzing = activity("analysis", "분석 상품", "analyzing");
   analyzing.channelCount = 0;
   assert.deepEqual(registrationActivityProgress(analyzing), {
@@ -259,7 +259,7 @@ test("registration progress uses terminal channel results and never invents an A
   blocked.channelCount = 0;
   assert.deepEqual(registrationActivityProgress(blocked), {
     percent: 0,
-    label: "외부 권한 또는 필수값 보완이 필요해 작업이 중단되었습니다.",
+    label: "오류·필수값·승인 또는 권한 확인이 필요해 작업이 중단되었습니다.",
   });
 
   const publishingWithoutChannel = activity("publishing", "채널 없는 등록 상품", "publishing");
@@ -275,8 +275,8 @@ test("registration progress uses terminal channel results and never invents an A
   publishing.failedCount = 1;
   publishing.blockedCount = 1;
   assert.deepEqual(registrationActivityProgress(publishing), {
-    percent: 50,
-    label: "8개 채널 중 4개 처리 결과를 확인했습니다.",
+    percent: 25,
+    label: "등록 성공 2/8개 · 처리 결과 4/8개 (50%). 실패·확인 필요는 등록 성공에 포함하지 않습니다.",
   });
   const completedImageOperation = activity("revision:done", "완료 상품 수정", "completed");
   completedImageOperation.channelCount = 0;
@@ -605,4 +605,16 @@ test("Fold secondary controls keep a real 44px touch target", async () => {
   assert.match(mobileStyles, /\.acceptance-search input \{\s*min-height: 44px;\s*\}/);
   assert.match(interactionStyles, /\.template-form-grid \.template-default,[\s\S]{0,100}\.master-notification-toggle \{\s*min-height: 44px;\s*\}/);
   assert.match(interactionStyles, /\.master-notification-toggle input \{\s*flex: 0 0 auto;\s*\}/);
+});
+
+// A terminal aggregate may include provider failures; it is not evidence of publication.
+test("terminal failures do not display a completed upload bar", () => {
+  const mixed = activity("mixed", "부분 등록", "completed");
+  Object.assign(mixed, { channelCount: 4, publishedCount: 1, failedCount: 1, blockedCount: 2 });
+  assert.equal(registrationActivityProgress(mixed).percent, 25);
+  assert.match(registrationActivityProgress(mixed).label, /처리 결과 4\/4개 \(100%\)/);
+  mixed.publishedCount = 0;
+  mixed.failedCount = 2;
+  assert.equal(registrationActivityProgress(mixed).percent, 0);
+  assert.equal(registrationChannelStatusLabel("blocked"), "확인");
 });
