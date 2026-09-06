@@ -1,6 +1,8 @@
 # 구매자 중심 상세페이지 출력
 
-2026-09-07: 최신 main의 서버 생성 경로에 적용. 기본 프롬프트는 `contentDensity=concise`, 본문 8~12개(기본 8개), 20~120자 중심(최대 240자), 포인트 0~3개를 요청한다. spec과 caution은 필수다. 8개 이미지 역할을 현지화 전체와 동일하게 유지한다. 기존 long/deep-dive 문서 및 장애 시 검수 입력으로 만드는 16개 섹션의 안전한 fallback은 계속 지원한다.
+2026-09-07: 최신 등록 기능과 통합한 서버 생성 경로에 적용하고 Production `83032085d947e58fe0c71b56044b8b9120441e33`으로 배포했다. 기본 프롬프트는 `contentDensity=concise`, 본문 8~12개(기본 8개), 20~120자 중심(최대 240자), 포인트 0~3개를 요청한다. spec과 caution은 필수다. 8개 이미지 역할을 현지화 전체와 동일하게 유지한다. 기존 long/deep-dive 문서 및 장애 시 검수 입력으로 만드는 16개 섹션의 안전한 fallback은 계속 지원한다.
+
+JEONGHUN Chrome Vercel의 Production 배포 `dpl_GpfYA2idoWjRcXjVXLkySSTjkdJ2`는 READY이며 공용 운영 도메인, 환경 SHA, 활성 runtime SHA 일치를 확인했다. 운영 관리자 화면의 무작업 점검 6개·일정 재시작도 성공했다. 배포 이력과 CS 변경 제외 범위는 [현재 상태](./현재상태.md)의 상세페이지 배포 절을 따른다.
 
 ## 생성과 출력
 

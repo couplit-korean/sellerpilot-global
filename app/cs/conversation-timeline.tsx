@@ -50,6 +50,10 @@ export function ConversationTimeline({ ticketId, refreshKey, authenticatedFetch 
       {messages.map((message) => <li key={message.key} className={`${styles.message} ${message.role === "seller" ? styles.seller : ""}`}>
         <div><small className={styles.meta}>{message.role === "customer" ? "고객" : message.role === "seller" ? "판매자" : "시스템"} · <time dateTime={message.occurredAt}>{new Date(message.occurredAt).toLocaleString("ko-KR")}</time></small>
           <p className={styles.body}>{message.body ?? "답변 본문 보관 여부를 확인해 주세요."}</p>
+          {message.unsequencedAnswers.map((answer, index) => <aside key={index} aria-label="등록 시각 미확인 판매자 답변">
+            <small className={styles.meta}>판매자 답변 · 채널에서 등록 시각을 제공하지 않아 대화 순서 미확정</small>
+            <p className={styles.body}>{answer.body}</p>
+          </aside>)}
           <span className={styles.state}>{deliveryLabels[message.deliveryStatus]}</span>
         </div>
       </li>)}

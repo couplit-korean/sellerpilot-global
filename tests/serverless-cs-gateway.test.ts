@@ -1008,7 +1008,7 @@ test("Smartstore customer inquiry arguments and reply lineage survive direct exe
     priority: 3,
     receivedAt: "2026-08-28T01:23:45.000Z",
     remoteMessageId: "987654321",
-    providerContext: { kind: "customer", inquiryNo: "987654321" },
+    providerContext: { kind: "customer", inquiryNo: "987654321", unsequencedAnswers: [] },
     replyContext: { kind: "customer", inquiryNo: "987654321" },
     providerStatus: "waiting",
     ticketKind: "conversation",

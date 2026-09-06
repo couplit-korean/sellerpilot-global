@@ -58,3 +58,24 @@ test("Lazada seller push cannot use collection or envelope time as message send 
   assert.equal(inquiry.message, "original seller body");
   assert.deepEqual(payload, original);
 });
+
+test("Lazada blocked delivery is retained unordered and never resolves the conversation", () => {
+  const inquiry = parseLazadaImPush({ data: {
+    session_id: "session-1", message_id: "blocked-seller", from_account_type: 2,
+    type: 1, status: 0, send_time: 1788600000000,
+    process_msg: "message not sent", content: { txt: "  original blocked reply\n" },
+  } })!;
+  assert.equal(inquiry.message, "  original blocked reply\n");
+  assert.equal(inquiry.senderRole, "seller");
+  assert.equal(inquiry.status, "waiting");
+  assert.equal(inquiry.receivedAt, "");
+  assert.equal(inquiry.orderingStatus, "unverified");
+});
+
+test("Lazada never infers a buyer from missing sender, system notices, or translated-only content", () => {
+  const base = { session_id: "session-1", message_id: "unknown", from_account_type: 1, content: { txt: "original" } };
+  for (const data of [{ ...base, from_account_type: undefined }, { ...base, type: 2 },
+    { ...base, content: { translateTxt: "translated only" } }, { ...base, status: 7 }]) {
+    assert.equal(parseLazadaImPush({ data }), null);
+  }
+});
