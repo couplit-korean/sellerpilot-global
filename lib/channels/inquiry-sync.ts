@@ -6,8 +6,10 @@ import { normalizeLazadaImHistory } from "./lazada-im";
 import { coupangContactCenterParentAnswerId } from "./inquiry-reply";
 import { ebayAsqMarketplaceId } from "./ebay-asq";
 import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time";
+import { originalMessageBody } from "./cs-history-values";
+import { normalizeSmartstoreInquiries } from "./smartstore-inquiry-history";
 
-type BaseNormalizedChannelInquiry = {
+export type BaseNormalizedChannelInquiry = {
   externalTicketId: string;
   customerName: string;
   subject: string;
@@ -63,7 +65,7 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
     const sourceKind = text(data.sellerpilotInquiryKind, "product");
     const remoteTicketId = text(row.inquiryId, row.counselingId);
     const externalTicketId = remoteTicketId ? `${sourceKind}:${remoteTicketId}` : "";
-    const message = text(row.content, row.inquiryContent, row.question, row.inquiry);
+    const message = originalMessageBody(row.content, row.inquiryContent, row.question, row.inquiry);
     if (!externalTicketId || !message) return null;
     const answered = list(row.commentDtoList).length > 0
       || /ANSWER/.test(text(row.partnerCounselingStatus, row.answeredType).toUpperCase()) && !/NO_ANSWER|NOANSWER/.test(text(row.partnerCounselingStatus, row.answeredType).toUpperCase());
@@ -92,54 +94,6 @@ function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalize
   }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
 
-function normalizeSmartstore(data: Record<string, unknown>, iso: TimestampNormalizer) {
-  const sourceKind = text(data.sellerpilotInquiryKind, "product");
-  const nested = object(data.data);
-  const root = Object.keys(nested).length ? nested : data;
-  const rows = list(root.contents).length ? list(root.contents)
-    : list(root.content).length ? list(root.content)
-      : list(data.data).length ? list(data.data)
-        : list(data.contents);
-  return rows.map((row): BaseNormalizedChannelInquiry | null => {
-    const remoteTicketId = sourceKind === "customer"
-      ? text(row.inquiryNo)
-      : text(row.questionId);
-    const externalTicketId = sourceKind === "customer" && remoteTicketId
-      ? `customer:${remoteTicketId}`
-      : remoteTicketId
-        ? `smartstore:product-qna:${remoteTicketId}`
-        : "";
-    const message = sourceKind === "customer"
-      ? text(row.inquiryContent)
-      : text(row.question);
-    if (!externalTicketId || !message) return null;
-    return {
-      externalTicketId,
-      customerName: sourceKind === "customer"
-        ? text(row.customerName, row.customerId, "네이버 고객")
-        : text(row.maskedWriterId, "네이버 고객"),
-      subject: sourceKind === "customer"
-        ? text(row.title, row.category, row.productName, "스마트스토어 고객 문의")
-        : text(row.productName, "스마트스토어 상품 문의"),
-      message,
-      status: row.answered === true || text(row.answer, row.answerContent) ? "resolved" : "waiting",
-      priority: 3,
-      receivedAt: sourceKind === "customer"
-        ? iso(row.inquiryRegistrationDateTime)
-        : iso(row.createDate),
-      remoteMessageId: remoteTicketId,
-      ...(text(row.orderId, row.productOrderId)
-        ? { externalOrderReference: text(row.orderId, row.productOrderId) }
-        : {}),
-      providerContext: sourceKind === "customer"
-        ? { kind: "customer", inquiryNo: remoteTicketId }
-        : { kind: "product", namespace: "product-qna", questionId: remoteTicketId },
-      replyContext: sourceKind === "customer"
-        ? { kind: "customer", inquiryNo: remoteTicketId }
-        : { kind: "product", questionId: remoteTicketId },
-    };
-  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
-}
 
 function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
   const result = data.ResultObject;
@@ -150,7 +104,7 @@ function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer)
     const inquiryType = text(row.INQ_TYPE, row.inq_type).toUpperCase();
     const questionNo = text(row.QUESTION_NO, row.question_no);
     const sequenceNo = text(row.SEQ_NO, row.seq_no);
-    const message = text(row.CONTENTS, row.contents, row.InquiryContent, row.Message, row.Content, row.Question);
+    const message = originalMessageBody(row.CONTENTS, row.contents, row.InquiryContent, row.Message, row.Content, row.Question);
     if (!(["MSG", "HELP", "ITEM"] as const).includes(inquiryType as "MSG" | "HELP" | "ITEM") || !questionNo || !sequenceNo || !message) return null;
     return {
       externalTicketId: `qoo10:${inquiryType}:${questionNo}:${sequenceNo}`,
@@ -245,7 +199,7 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
     const messageId = text(row.messageId);
     const itemId = text(row.itemId);
     const recipientId = text(row.senderId);
-    const message = text(row.body);
+    const message = originalMessageBody(row.body);
     if (!messageId || !/^[1-9]\d{0,18}$/.test(itemId) || !recipientId || !message) return null;
     const messageStatus = text(row.messageStatus).toLowerCase();
     return {
@@ -283,7 +237,7 @@ export function normalizeChannelInquiries(
     ? inquirySteps.map((item) => item.data)
     : [result.steps.at(-1)?.data ?? {}];
   const normalized = pageData.flatMap((data) => channel === "coupang" ? normalizeCoupang(data, iso)
-    : channel === "smartstore" ? normalizeSmartstore(data, iso)
+    : channel === "smartstore" ? normalizeSmartstoreInquiries(data, iso)
       : channel === "qoo10" ? normalizeQoo10(data, iso)
         : channel === "temu" ? normalizeTemu(data, iso, referenceTimeMs)
           : channel === "ebay" ? normalizeEbay(data, iso)

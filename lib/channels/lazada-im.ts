@@ -1,3 +1,5 @@
+import { originalMessageBody as messageBody, providerMessageTimestamp as providerTimestamp } from "./cs-history-values";
+
 export type LazadaImInquiry = {
   externalTicketId: string;
   customerName: string;
@@ -19,8 +21,6 @@ const list = (value: unknown): Record<string, unknown>[] => Array.isArray(value)
   : [];
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 
-// Store only the original text body, not provider envelopes or customer names.
-const messageBody = (...values: unknown[]) => (values.find((value) => typeof value === "string" && value.trim()) as string | undefined) ?? "";
 
 function parsedRecord(value: unknown) {
   if (typeof value !== "string") return record(value);
@@ -31,21 +31,6 @@ function parsedRecord(value: unknown) {
   }
 }
 
-function providerTimestamp(value: unknown): string | null {
-  const raw = typeof value === "string" ? value.trim() : value;
-  if (typeof raw === "number" || (typeof raw === "string" && /^\d+$/.test(raw))) {
-    const numeric = Number(raw);
-    if (!Number.isSafeInteger(numeric) || numeric <= 0) return null;
-    const parsed = new Date(numeric < 10_000_000_000 ? numeric * 1000 : numeric);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-  }
-  // Do not let Date.parse invent a timezone or turn "0"/"1" into dates.
-  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(raw)) return null;
-  const calendarDate = new Date(`${raw.slice(0, 10)}T00:00:00Z`);
-  if (Number.isNaN(calendarDate.getTime()) || calendarDate.toISOString().slice(0, 10) !== raw.slice(0, 10)) return null;
-  const parsed = new Date(raw);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
-}
 
 function messageTimestamp(value: unknown, senderType: number, fallbackTimestamp: string) {
   const timestamp = providerTimestamp(value);
@@ -62,12 +47,13 @@ export function parseLazadaImPush(payload: Record<string, unknown>): LazadaImInq
   const content = parsedRecord(message.content ?? data.content);
   const sessionId = text(data.session_id, data.sessionId, message.session_id, payload.session_id);
   const messageId = text(message.message_id, data.message_id, payload.message_id, payload.uuid);
-  const messageText = messageBody(content.txt, content.text, message.txt, message.text, data.txt, content.translateTxt);
-  const senderType = Number(message.from_account_type ?? data.from_account_type ?? 1);
+  const messageText = messageBody(content.txt, content.text, message.txt, message.text, data.txt);
+  const senderType = Number(message.from_account_type ?? data.from_account_type);
   const messageStatus = Number(message.status ?? data.status ?? 0);
-  if (!sessionId || !messageId || !messageText || ![1, 2].includes(senderType) || messageStatus === 1) return null;
+  if (!sessionId || !messageId || !messageText || ![1, 2].includes(senderType) || messageStatus !== 0 || Number(message.type ?? data.type ?? 1) !== 1) return null;
 
-  const timestamp = messageTimestamp(message.send_time ?? data.send_time ?? (senderType === 2 ? undefined : payload.timestamp), senderType, receivedAt);
+  const blocked = Boolean(text(message.process_msg, data.process_msg));
+  const timestamp = blocked ? "" : messageTimestamp(message.send_time ?? data.send_time ?? (senderType === 2 ? undefined : payload.timestamp), senderType, receivedAt);
   return {
     externalTicketId: `lazada-im:${sessionId}`,
     customerName: timestamp ? text(data.buyer_name, data.from_account_name, message.from_name, "Lazada 고객") : "Lazada 판매자",
@@ -110,12 +96,14 @@ export function normalizeLazadaImHistory(
       const remoteMessageId = text(row.message_id);
       const senderType = Number(row.from_account_type);
       const content = parsedRecord(row.content);
-      const message = messageBody(content.txt, content.text, row.txt, row.text, content.translateTxt);
+      const message = messageBody(content.txt, content.text, row.txt, row.text);
       // Session summaries are not message bodies. Never invent an identity or
       // a sender, and do not ingest recalled/system messages as customer text.
       if (!remoteMessageId || !message || ![1, 2].includes(senderType)
-          || Number(row.status ?? 0) !== 0) continue;
-      const receivedAt = messageTimestamp(row.send_time, senderType, fallbackTimestamp);
+          || Number(row.status ?? 0) !== 0 || Number(row.type ?? 1) !== 1) continue;
+      // A nonempty process_msg means blocked delivery. Retain its original in
+      // quarantine, never mark the conversation answered or allow readback ACK.
+      const receivedAt = text(row.process_msg) ? "" : messageTimestamp(row.send_time, senderType, fallbackTimestamp);
       const previous = byMessageId.get(remoteMessageId);
       const candidate: LazadaImInquiry = {
         externalTicketId: `lazada-im:${sessionId}`,

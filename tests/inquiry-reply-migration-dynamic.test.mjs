@@ -2498,3 +2498,34 @@ test('CS conversation read model runs on the reviewed production ledger schema',
   assert.equal(page.messages[0].source,'channel');
  }finally{await db.close();}
 });
+
+test('Smartstore answer history persists on the actual ledger without replacing the latest buyer',async()=>{
+ const { normalizeSmartstoreInquiries }=await import('../lib/channels/smartstore-inquiry-history.ts');
+ const { createTimestampNormalizer }=await import('../lib/channels/normalization-time.ts');
+ const { createHash }=await import('node:crypto');
+ const normalize=data=>normalizeSmartstoreInquiries(data,createTimestampNormalizer('2026-09-07T00:00:00Z')).map(row=>({
+  ...row,inboundKey:`smartstore:${createHash('sha256').update(['v2','smartstore',row.externalTicketId,row.remoteMessageId].join('\u001f')).digest('hex')}`,
+  providerStatus:row.status==='resolved'?'answered':'waiting',ticketKind:'conversation'
+ }));
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);await seedAdminAndCredential(db);await setClaims(db,'service_role');
+  const credential=await scalar(db,`select public.sellerpilot_rotate_credential('smartstore','production',$1::jsonb,now()+interval '180 days',90,30,0)`,[JSON.stringify({client_id:'synthetic',client_secret:'test-only'})]);
+  const page={contents:[{questionId:987654,question:'  buyer original\n',createDate:'2026-09-01T00:00:00Z',answered:true,answers:[
+    {answer:'  seller first\n',createDate:'2026-09-01T00:01:00Z'},
+    {answer:'seller second',createDate:'2026-09-01T00:02:00Z'},
+    {answer:'  undated original\n'}
+  ]}]};
+  const rows=normalize(page);
+  const ingest=()=>scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",[credential,JSON.stringify(rows)]);
+  await ingest();await ingest();
+  assert.equal(await scalar(db,"select count(*)::int from sellerpilot_private.support_inbound_messages where channel_key='smartstore'"),3);
+  const ticket=await scalar(db,"select id from sellerpilot_private.support_tickets where channel_key='smartstore'");
+  assert.equal(await scalar(db,'select latest_inbound_key from sellerpilot_private.support_tickets where id=$1',[ticket]),rows[0].inboundKey);
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907101000_read_cs_conversation_timeline.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907102000_project_unsequenced_cs_answers.sql',import.meta.url),'utf8'));
+  await setClaims(db);
+  const result=await scalar(db,'select public.sellerpilot_get_cs_conversation($1)',[ticket]);
+  assert.deepEqual(result.messages.map(row=>row.body),['seller second','  seller first\n','  buyer original\n']);
+  assert.deepEqual(result.messages[2].unsequencedAnswers,[{body:'  undated original\n',reason:'provider_timestamp_unavailable'}]);
+ }finally{await db.close();}
+});

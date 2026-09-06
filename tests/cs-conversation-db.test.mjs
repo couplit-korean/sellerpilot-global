@@ -17,7 +17,10 @@ async function fixture(){
  create table sellerpilot_private.channel_gateway_jobs(id uuid primary key,channel text,operation text,request_payload jsonb);
  insert into sellerpilot_private.support_tickets(id,owner_id,channel_key,message) values('${ticket}','${owner}','smartstore','legacy original');
  select set_config('request.jwt.claim.sub','${owner}',false);
- `);await db.exec(migration);return db;
+ `);await db.exec(migration);
+ await db.exec('alter table sellerpilot_private.support_inbound_messages add column provider_context jsonb default \'{}\'::jsonb');
+ await db.exec(await readFile(new URL('../supabase/migrations/20260907102000_project_unsequenced_cs_answers.sql',import.meta.url),'utf8'));
+ return db;
 }
 async function page(db,{limit=50,cursor=null}={}){return (await db.query('select public.sellerpilot_get_cs_conversation($1,$2,$3,$4,$5) as result',[ticket,limit,cursor?.beforeTime??null,cursor?.beforeKey??null,cursor?.asOf??null])).rows[0].result;}
 async function inbound(db,role,body,at='2026-09-01T12:00:00Z',remote=null){return db.query(`insert into sellerpilot_private.support_inbound_messages(ticket_id,owner_id,channel_key,sender_role,body,received_at,remote_message_id) values($1,$2,'smartstore',$3,$4,$5,$6)`,[ticket,owner,role,body,at,remote]);}
@@ -75,5 +78,20 @@ test('invalid pagination is rejected and missing outbound bodies are not invente
  await assert.rejects(page(db,{cursor:{beforeTime:'2026-01-01T00:00:00Z',beforeKey:null}}),/invalid conversation cursor/);
  await delivery(db,'failed');await db.exec("update sellerpilot_private.channel_gateway_jobs set request_payload=jsonb_build_object('sellerpilotTicketId',request_payload->>'sellerpilotTicketId')");
  assert.equal((await page(db)).messages.find(m=>m.source==='sellerpilot').body,null);
+ }finally{await db.close();}
+});
+
+test('undated answers expose only original text with no fabricated timestamp or provider envelope',async()=>{
+ const db=await fixture();try{
+ await inbound(db,'customer','question');
+ await db.query(`update sellerpilot_private.support_inbound_messages set provider_context=$1`,[{
+   token:'must-not-expose',unsequencedAnswers:[{body:'  original answer\n',reason:'provider_timestamp_unavailable',secret:'must-not-expose'},{body:'wrong reason',reason:'unexpected'}]
+ }]);
+ const p=await page(db);
+ assert.deepEqual(p.messages[0].unsequencedAnswers,[{body:'  original answer\n',reason:'provider_timestamp_unavailable'}]);
+ assert.equal(p.messages[0].role,'customer');
+ assert.equal(JSON.stringify(p).includes('must-not-expose'),false);
+ await db.query("update sellerpilot_private.support_inbound_messages set provider_context='{}'");
+ assert.deepEqual((await page(db)).messages[0].unsequencedAnswers,[]);
  }finally{await db.close();}
 });

@@ -41,7 +41,7 @@
       "id": "CORE-01",
       "area": "common",
       "title": "CS 어댑터 경계 분리",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "기존 문의 분기를 lib/cs/adapters/<channel>.ts로 점진 추출. 기존 operations dispatcher는 호환 호출을 유지하고 인증·서명·HTTP만 공통 재사용한다.",
       "acceptance": "등록/배송 호출 계약은 유지되고 CS만으로 실행·검증 가능하다. imports 검사 및 기존 게시/배송 핵심 회귀 통과.",
@@ -54,7 +54,9 @@
         "lib/channels/protocols.ts",
         "lib/cs/adapters/ (신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "CORE-02",
@@ -331,7 +333,7 @@
       "id": "NAV-03",
       "area": "smartstore",
       "title": "스마트스토어 실제 왕복·과거 이력 검증",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "live_verification",
       "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
       "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
@@ -345,7 +347,9 @@
         "CS 웹 UI",
         "릴리스 증거 원장"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "COU-01",
@@ -853,5 +857,12 @@
     "evidence_path"
   ],
   "implementation_branch": "codex/cs-completion-20260907",
-  "implementation_progress_note": "1차: 한국 채널별 7~30일 이력 요청 분리 및 기존 원장 전체 대화 조회·표시 구현. 운영 적용 및 실제 채널 왕복 미완료."
+  "implementation_progress_note": "1차: 한국 채널별 7~30일 이력 요청 분리 및 기존 원장 전체 대화 조회·표시 구현. 운영 적용 및 실제 채널 왕복 미완료.",
+  "latest_implementation_evidence": "docs/CS-구현진행-20260907.md",
+  "production_cs_migrations_applied": [
+    "20260907100000",
+    "20260907101000",
+    "20260907102000"
+  ],
+  "production_cs_completion_verified": false
 }
