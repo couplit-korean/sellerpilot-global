@@ -199,7 +199,7 @@ async function readRpcState(
   productId: string,
   rpcName:
     | "sellerpilot_service_enqueue_smartstore_manual_adoption_readback"
-    | "sellerpilot_service_get_smartstore_manual_adoption_readback_status",
+    | "sellerpilot_service_get_smartstore_adoption_readback_status",
 ) {
   const admin = await authenticateAdminRequest(request, { timeoutMs: 10_000 });
   if (isAdminApiError(admin)) return admin;
@@ -235,7 +235,7 @@ export async function GET(
   return readRpcState(
     request,
     productId.data,
-    "sellerpilot_service_get_smartstore_manual_adoption_readback_status",
+    "sellerpilot_service_get_smartstore_adoption_readback_status",
   );
 }
 

@@ -367,10 +367,9 @@ function exactRemoteId(value: unknown) {
   return parsed.success ? parsed.data : "";
 }
 
-function allPresentRemoteIdsMatch(values: unknown[], expected: string) {
+function allRemoteIdsIfPresentMatch(values: unknown[], expected: string) {
   const present = values.filter((value) => value !== null && value !== undefined && value !== "");
-  return present.length > 0
-    && present.every((value) => exactRemoteId(value) === expected);
+  return present.every((value) => exactRemoteId(value) === expected);
 }
 
 function sellerCodeFromOriginProduct(value: unknown) {
@@ -381,6 +380,22 @@ function sellerCodeFromOriginProduct(value: unknown) {
 
 function sellerCodeFromChannelProduct(value: unknown) {
   return String(record(value).sellerManagementCode ?? "").trim();
+}
+
+function criticalOriginProductEvidence(value: unknown) {
+  const originProduct = record(value);
+  const images = record(originProduct.images);
+  const optionalImages = Array.isArray(images.optionalImages)
+    ? images.optionalImages.map((image) => record(image).url)
+    : images.optionalImages;
+  return JSON.stringify({
+    name: originProduct.name,
+    salePrice: originProduct.salePrice,
+    stockQuantity: originProduct.stockQuantity,
+    detailContent: originProduct.detailContent,
+    representativeImageUrl: record(images.representativeImage).url,
+    optionalImageUrls: optionalImages,
+  });
 }
 
 function accepted(remote: RemoteResponse) {
@@ -594,64 +609,95 @@ export async function collectSmartstoreManualAdoptionReadback(
   assertProviderResponseNotTransient(channel);
   const originProduct = record(origin.data.originProduct);
   const embeddedChannelProduct = record(origin.data.smartstoreChannelProduct);
+  const channelOriginProduct = record(channel.data.originProduct);
   const channelProduct = record(channel.data.smartstoreChannelProduct);
-  const originResponseId = exactRemoteId(
-    origin.data.originProductNo ?? originProduct.originProductNo,
-  );
-  const originChannelId = exactRemoteId(
-    origin.data.smartstoreChannelProductNo
-      ?? embeddedChannelProduct.channelProductNo,
-  );
-  const channelResponseId = exactRemoteId(
-    channel.data.smartstoreChannelProductNo ?? channelProduct.channelProductNo,
-  );
-  const channelOriginId = exactRemoteId(
-    channel.data.originProductNo ?? channelProduct.originProductNo,
-  );
   const originStatus = String(originProduct.statusType ?? "").trim().toUpperCase();
+  const channelOriginStatus = String(
+    channelOriginProduct.statusType ?? "",
+  ).trim().toUpperCase();
   const channelStatus = String(
     channelProduct.channelProductDisplayStatusType
       ?? channelProduct.displayStatusType
       ?? "",
   ).trim().toUpperCase();
-  if (!accepted(origin)
-      || !accepted(channel)
-      || !Object.keys(originProduct).length
-      || !Object.keys(channelProduct).length
-      || originResponseId !== originProductNo
-      || originChannelId !== channelProductNo
-      || channelResponseId !== channelProductNo
-      || channelOriginId !== originProductNo
-      || !allPresentRemoteIdsMatch(
-        [origin.data.originProductNo, originProduct.originProductNo],
-        originProductNo,
-      )
-      || !allPresentRemoteIdsMatch(
-        [
-          origin.data.smartstoreChannelProductNo,
-          embeddedChannelProduct.channelProductNo,
-          embeddedChannelProduct.smartstoreChannelProductNo,
-        ],
-        channelProductNo,
-      )
-      || !allPresentRemoteIdsMatch(
-        [
-          channel.data.smartstoreChannelProductNo,
-          channelProduct.channelProductNo,
-          channelProduct.smartstoreChannelProductNo,
-        ],
-        channelProductNo,
-      )
-      || !allPresentRemoteIdsMatch(
-        [channel.data.originProductNo, channelProduct.originProductNo],
-        originProductNo,
-      )
-      || sellerCodeFromOriginProduct(originProduct) !== sellerSku
-      || (sellerCodeFromChannelProduct(channelProduct)
-        && sellerCodeFromChannelProduct(channelProduct) !== sellerSku)
-      || originStatus !== "SALE"
-      || channelStatus !== "ON") {
-    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_PROVIDER_IDENTITY_MISMATCH");
+  if (origin.response.status !== 200) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_HTTP_STATUS_INVALID");
+  }
+  if (String(origin.data.code ?? "").trim()) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_PROVIDER_REJECTED");
+  }
+  if (channel.response.status !== 200) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_HTTP_STATUS_INVALID");
+  }
+  if (String(channel.data.code ?? "").trim()) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_PROVIDER_REJECTED");
+  }
+  if (!Object.keys(originProduct).length) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_PAYLOAD_INVALID");
+  }
+  if (!Object.keys(channelProduct).length) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_PAYLOAD_INVALID");
+  }
+  if (!Object.keys(channelOriginProduct).length) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_ORIGIN_PAYLOAD_INVALID");
+  }
+
+  // The current official v2 GET response schemas do not require product-number
+  // fields in the response body. Search establishes the unique number pair and
+  // each GET path binds one member of that pair. If an implementation returns
+  // redundant identity fields, every supplied value must still match.
+  if (!allRemoteIdsIfPresentMatch(
+    [origin.data.originProductNo, originProduct.originProductNo],
+    originProductNo,
+  ) || !allRemoteIdsIfPresentMatch(
+    [
+      origin.data.smartstoreChannelProductNo,
+      embeddedChannelProduct.channelProductNo,
+      embeddedChannelProduct.smartstoreChannelProductNo,
+    ],
+    channelProductNo,
+  )) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_IDENTITY_MISMATCH");
+  }
+  if (!allRemoteIdsIfPresentMatch(
+    [
+      channel.data.smartstoreChannelProductNo,
+      channelProduct.channelProductNo,
+      channelProduct.smartstoreChannelProductNo,
+    ],
+    channelProductNo,
+  ) || !allRemoteIdsIfPresentMatch(
+    [channel.data.originProductNo, channelProduct.originProductNo],
+    originProductNo,
+  )) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH");
+  }
+  if (sellerCodeFromOriginProduct(originProduct) !== sellerSku) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_SELLER_SKU_MISMATCH");
+  }
+  if (sellerCodeFromOriginProduct(channelOriginProduct) !== sellerSku) {
+    throw new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_SELLER_SKU_MISMATCH",
+    );
+  }
+  const channelSellerSku = sellerCodeFromChannelProduct(channelProduct);
+  if (channelSellerSku && channelSellerSku !== sellerSku) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_SELLER_SKU_MISMATCH");
+  }
+  if (originStatus !== "SALE") {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_ORIGIN_STATUS_MISMATCH");
+  }
+  if (channelOriginStatus !== "SALE") {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_ORIGIN_STATUS_MISMATCH");
+  }
+  if (criticalOriginProductEvidence(channelOriginProduct)
+      !== criticalOriginProductEvidence(originProduct)) {
+    throw new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_PRODUCT_MISMATCH",
+    );
+  }
+  if (channelStatus !== "ON") {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_STATUS_MISMATCH");
   }
 
   const images = smartstoreReadbackImageProjection(originProduct);

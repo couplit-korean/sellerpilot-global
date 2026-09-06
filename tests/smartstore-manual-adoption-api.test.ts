@@ -198,8 +198,6 @@ function providerFixture() {
     last: true,
   };
   const origin = {
-    originProductNo: Number(originProductNo),
-    smartstoreChannelProductNo: Number(channelProductNo),
     originProduct: {
       name: "검증된 수동 등록 상품",
       statusType: "SALE",
@@ -214,16 +212,18 @@ function providerFixture() {
         sellerCodeInfo: { sellerManagementCode: sellerSku },
       },
     },
-  };
-  const channel = {
-    originProductNo: Number(originProductNo),
-    smartstoreChannelProductNo: Number(channelProductNo),
     smartstoreChannelProduct: {
-      originProductNo: Number(originProductNo),
-      channelProductNo: Number(channelProductNo),
       channelProductName: "검증된 수동 등록 상품",
       channelProductDisplayStatusType: "ON",
-      sellerManagementCode: sellerSku,
+      naverShoppingRegistration: true,
+    },
+  };
+  const channel = {
+    originProduct: structuredClone(origin.originProduct),
+    smartstoreChannelProduct: {
+      channelProductName: "검증된 수동 등록 상품",
+      channelProductDisplayStatusType: "ON",
+      naverShoppingRegistration: true,
     },
   };
   return { channel, detailImageUrls, origin, search };
@@ -344,7 +344,7 @@ test("GET polls product-scoped status without accepting browser job or credentia
   const result = await callRoute({ method: "GET", rpcData: runningState() });
   assert.equal(result.routeResponse.status, 202);
   assert.deepEqual(structuredClone(result.calls), [{
-    name: "sellerpilot_service_get_smartstore_manual_adoption_readback_status",
+    name: "sellerpilot_service_get_smartstore_adoption_readback_status",
     args: {
       p_actor: "88888888-8888-4888-8888-888888888888",
       p_product_id: productId,
@@ -358,6 +358,16 @@ test("GET polls product-scoped status without accepting browser job or credentia
   });
   assert.equal(forgedIdentity.routeResponse.status, 400);
   assert.equal(forgedIdentity.calls.length, 0);
+});
+
+test("every adoption route RPC identifier fits PostgreSQL NAMEDATALEN", () => {
+  const rpcNames = [...routeSource.matchAll(/"(sellerpilot_[a-z0-9_]+)"/gu)]
+    .map((match) => match[1]!);
+  assert.ok(rpcNames.length >= 2);
+  for (const rpcName of rpcNames) {
+    assert.ok(Buffer.byteLength(rpcName, "utf8") <= 63, `${rpcName} exceeds 63 bytes`);
+  }
+  assert.ok(rpcNames.includes("sellerpilot_service_get_smartstore_adoption_readback_status"));
 });
 
 test("verified queue status preserves the existing UI-safe success contract", async () => {
@@ -385,7 +395,7 @@ test("verified queue status preserves the existing UI-safe success contract", as
 test("reconciliation stops polling and never re-enqueues", async () => {
   const result = await callRoute({ method: "GET", rpcData: reconciliationState() });
   assert.equal(result.routeResponse.status, 409);
-  assert.equal(result.calls[0]?.name, "sellerpilot_service_get_smartstore_manual_adoption_readback_status");
+  assert.equal(result.calls[0]?.name, "sellerpilot_service_get_smartstore_adoption_readback_status");
   const body = await result.routeResponse.json();
   assert.equal(body.status, "reconciliation_required");
   assert.equal(body.jobId, readbackJobId);
@@ -566,8 +576,8 @@ for (const [label, mutate] of [
 
 for (const [label, changedPath, changedStatus, expectedCode] of [
   ["search 201", "/v1/products/search", 201, "SMARTSTORE_MANUAL_SEARCH_UNVERIFIED"],
-  ["origin 202", `/v2/products/origin-products/${originProductNo}`, 202, "SMARTSTORE_MANUAL_PROVIDER_IDENTITY_MISMATCH"],
-  ["channel 206", `/v2/products/channel-products/${channelProductNo}`, 206, "SMARTSTORE_MANUAL_PROVIDER_IDENTITY_MISMATCH"],
+  ["origin 202", `/v2/products/origin-products/${originProductNo}`, 202, "SMARTSTORE_MANUAL_ORIGIN_HTTP_STATUS_INVALID"],
+  ["channel 206", `/v2/products/channel-products/${channelProductNo}`, 206, "SMARTSTORE_MANUAL_CHANNEL_HTTP_STATUS_INVALID"],
 ] as const) {
   test(`official ${label} never becomes HTTP 200 evidence`, async () => {
     const fixture = providerFixture();
@@ -593,9 +603,129 @@ for (const [label, changedPath, changedStatus, expectedCode] of [
   });
 }
 
+for (const [label, changedPath, expectedCode] of [
+  ["origin", `/v2/products/origin-products/${originProductNo}`, "SMARTSTORE_MANUAL_ORIGIN_PROVIDER_REJECTED"],
+  ["channel", `/v2/products/channel-products/${channelProductNo}`, "SMARTSTORE_MANUAL_CHANNEL_PROVIDER_REJECTED"],
+] as const) {
+  test(`official ${label} 200 response with a provider error code is rejected safely`, async () => {
+    const fixture = providerFixture();
+    let downloads = 0;
+    await assert.rejects(
+      collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
+        accessToken: async () => "token",
+        request: async (input) => {
+          const data = input.path === "/v1/products/search"
+            ? fixture.search
+            : input.path.endsWith(originProductNo)
+              ? fixture.origin
+              : fixture.channel;
+          return remote(
+            input.path === changedPath ? { ...data, code: "PROVIDER_REJECTED" } : data,
+          );
+        },
+        downloadImage: async () => {
+          downloads += 1;
+          return { bytes: await imageBytes(1), contentType: "image/png" };
+        },
+      }),
+      (error: unknown) => error instanceof SmartstoreManualAdoptionError
+        && error.code === expectedCode,
+    );
+    assert.equal(downloads, 0);
+  });
+}
+
+test("official v2 GET bodies need no undocumented product-number echoes", async () => {
+  const fixture = providerFixture();
+  let downloads = 0;
+  const result = await collectSmartstoreManualAdoptionReadback(
+    { credential: {}, target: { sellerSku } },
+    {
+      accessToken: async () => "token",
+      request: async (input) => input.path === "/v1/products/search"
+        ? remote(fixture.search)
+        : input.path.endsWith(originProductNo)
+          ? remote(fixture.origin)
+          : remote(fixture.channel),
+      downloadImage: async (url) => {
+        downloads += 1;
+        return {
+          bytes: await imageBytes(fixture.detailImageUrls.indexOf(url) + 1),
+          contentType: "image/png",
+        };
+      },
+    },
+  );
+  assert.equal(result.originReadback.path, `/v2/products/origin-products/${originProductNo}`);
+  assert.equal(result.channelReadback.path, `/v2/products/channel-products/${channelProductNo}`);
+  assert.equal(downloads, 8);
+});
+
+for (const [label, mutate, expectedCode] of [
+  ["missing originProduct", (fixture: ReturnType<typeof providerFixture>) => {
+    delete (fixture.origin as Record<string, unknown>).originProduct;
+  }, "SMARTSTORE_MANUAL_ORIGIN_PAYLOAD_INVALID"],
+  ["missing smartstoreChannelProduct", (fixture: ReturnType<typeof providerFixture>) => {
+    delete (fixture.channel as Record<string, unknown>).smartstoreChannelProduct;
+  }, "SMARTSTORE_MANUAL_CHANNEL_PAYLOAD_INVALID"],
+  ["missing channel originProduct", (fixture: ReturnType<typeof providerFixture>) => {
+    delete (fixture.channel as Record<string, unknown>).originProduct;
+  }, "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_PAYLOAD_INVALID"],
+  ["origin response ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.origin as Record<string, unknown>).originProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_ORIGIN_IDENTITY_MISMATCH"],
+  ["channel response ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.channel.smartstoreChannelProduct as Record<string, unknown>).originProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH"],
+  ["origin seller code drift", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.origin.originProduct.detailAttribute.sellerCodeInfo.sellerManagementCode = "OTHER-SKU";
+  }, "SMARTSTORE_MANUAL_ORIGIN_SELLER_SKU_MISMATCH"],
+  ["channel seller code drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.channel.smartstoreChannelProduct as Record<string, unknown>).sellerManagementCode = "OTHER-SKU";
+  }, "SMARTSTORE_MANUAL_CHANNEL_SELLER_SKU_MISMATCH"],
+  ["origin is not on sale", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.origin.originProduct.statusType = "OUTOFSTOCK";
+  }, "SMARTSTORE_MANUAL_ORIGIN_STATUS_MISMATCH"],
+  ["channel is not displayed", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.channel.smartstoreChannelProduct.channelProductDisplayStatusType = "SUSPENSION";
+  }, "SMARTSTORE_MANUAL_CHANNEL_STATUS_MISMATCH"],
+  ["channel origin seller code drift", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.channel.originProduct.detailAttribute.sellerCodeInfo.sellerManagementCode = "OTHER-SKU";
+  }, "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_SELLER_SKU_MISMATCH"],
+  ["channel origin is not on sale", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.channel.originProduct.statusType = "OUTOFSTOCK";
+  }, "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_STATUS_MISMATCH"],
+  ["channel origin critical content drift", (fixture: ReturnType<typeof providerFixture>) => {
+    fixture.channel.originProduct.name = "다른 상품";
+  }, "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_PRODUCT_MISMATCH"],
+] as const) {
+  test(`${label} has a safe granular failure before image verification`, async () => {
+    const fixture = providerFixture();
+    mutate(fixture);
+    let downloads = 0;
+    await assert.rejects(
+      collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
+        accessToken: async () => "token",
+        request: async (input) => input.path === "/v1/products/search"
+          ? remote(fixture.search)
+          : input.path.endsWith(originProductNo)
+            ? remote(fixture.origin)
+            : remote(fixture.channel),
+        downloadImage: async () => {
+          downloads += 1;
+          return { bytes: await imageBytes(1), contentType: "image/png" };
+        },
+      }),
+      (error: unknown) => error instanceof SmartstoreManualAdoptionError
+        && error.code === expectedCode,
+    );
+    assert.equal(downloads, 0);
+  });
+}
+
 test("cross-bound origin/channel identity fails closed before image verification", async () => {
   const fixture = providerFixture();
-  fixture.channel.smartstoreChannelProduct.originProductNo = 99999999999;
+  (fixture.channel.smartstoreChannelProduct as Record<string, unknown>).originProductNo = 99999999999;
   let downloads = 0;
   await assert.rejects(
     collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
@@ -611,7 +741,7 @@ test("cross-bound origin/channel identity fails closed before image verification
       },
     }),
     (error: unknown) => error instanceof SmartstoreManualAdoptionError
-      && error.code === "SMARTSTORE_MANUAL_PROVIDER_IDENTITY_MISMATCH",
+      && error.code === "SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH",
   );
   assert.equal(downloads, 0);
 });
