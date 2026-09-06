@@ -1,3 +1,4 @@
+import { externalDetailPreparedSectionsMatch, externalDetailChannelPayloadMatches } from "../server-external-detail-channel";
 import { createHash } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { request as httpsRequest } from "node:https";
@@ -829,6 +830,7 @@ export async function prepareMarketplaceImages(
     return normalized;
   };
   const finish = async () => {
+    if (!externalDetailChannelPayloadMatches(next)) throw Error("EXTERNAL_DETAIL_PREPARED_COPY_MISMATCH");
     if (preparedAssets.length) {
       if (!lifecycle) throw new Error("MARKETPLACE_IMAGE_LIFECYCLE_REQUIRED");
       await persistMarketplaceNormalizedAssets(serviceClient, channel, lifecycle, preparedAssets);
@@ -856,7 +858,9 @@ export async function prepareMarketplaceImages(
       || new Set(strings(assets.detailImageUrls)).size < 1
     : assets.detailAssetMode !== "dedicated"
       || new Set(strings(assets.detailImageUrls)).size < marketplaceChannelDetailImageCount
-      || !hasCompleteLocalizedDetailSections(assets))) {
+      || !(assets.detailSource === "external_generated"
+        ? externalDetailPreparedSectionsMatch(next, assets)
+        : hasCompleteLocalizedDetailSections(assets)))) {
     throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED");
   }
   const approvedDetailImagePaths = strings(assets?.approvedDetailImagePaths);

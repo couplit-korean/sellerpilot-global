@@ -1,3 +1,8 @@
+import { readApprovedExternalDetailPublishContext } from "../../../../lib/server-external-detail-publish-context";
+import { readExternalDetailImportContext, externalDetailImportTarget, verifyExternalDetailOriginalSnapshot } from "../../../../lib/server-external-detail-import-api";
+import { inspectExternalDetailImportPng } from "../../../../lib/server-external-detail-import";
+import { externalDetailDigest } from "../../../../lib/external-detail-copy";
+import type { ApprovedProductDetailManifest } from "../../../../lib/server-product-detail-manifest";
 import { createHash } from "node:crypto";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -287,7 +292,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-type ProductContentMode = "ai_generated" | "manual_mvp";
+type ProductContentMode = "ai_generated" | "manual_mvp" | "external_generated";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -342,6 +347,11 @@ function marketplaceContentModeMatchesProduct(
   const assets = isRecord(argumentsValue.sellerpilotAssets)
     ? argumentsValue.sellerpilotAssets
     : null;
+  if (productContentMode === "external_generated") {
+    // Only the independently authenticated server DTO can select this branch.
+    // Browser copy/assets are overwritten by the exact approved import binder.
+    return Boolean(assets && assets.detailAssetMode !== "manual_source" && argumentsValue.sellerpilotContentMode === undefined);
+  }
   if (!assets || assets.contentMode !== productContentMode) return false;
 
   const preparedMarker = argumentsValue.sellerpilotContentMode;
@@ -626,12 +636,21 @@ export async function POST(request: NextRequest) {
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
-  let approvedDetailBinding: { version: number; manifest: ProductDetailImageManifest } | null = null;
+  let approvedDetailBinding: ApprovedProductDetailManifest | null = null;
   let approvedDetailSignedUrls: string[] = [];
   let temuActivationSourceArguments: Record<string, unknown> | null = null;
   let temuActivationClaimIdempotencyKey: string | null = null;
+  let externallyVerifiedPublishContext: Record<string, unknown> | null = null;
+  if (contentBoundListingOperation && parsed.data.productId === externalDetailImportTarget) {
+    try {
+      const external = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient},parsed.data.productId);
+      if (isRecord(external.externalDetailImport) && external.externalDetailImport.status === "approved") {
+        externallyVerifiedPublishContext = await readApprovedExternalDetailPublishContext({user:userData.user,userClient,serviceClient},parsed.data.productId);
+      }
+    } catch { return NextResponse.json({mode:"external_detail_context_unavailable"},{status:409}); }
+  }
   if (contentBoundListingOperation) {
-    const { data: publishContext, error: contextError } = await userClient.rpc(
+    const { data: publishContext, error: contextError } = externallyVerifiedPublishContext ? {data:externallyVerifiedPublishContext,error:null} : await userClient.rpc(
       "sellerpilot_get_product_publish_context",
       { p_product_id: parsed.data.productId! },
     );
@@ -642,7 +661,7 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     const contentMode = publishContext.contentMode;
-    if (contentMode !== "manual_mvp" && contentMode !== "ai_generated") {
+    if (contentMode !== "manual_mvp" && contentMode !== "ai_generated" && !(contentMode === "external_generated" && externallyVerifiedPublishContext)) {
       return NextResponse.json({
         message: "상품 원장의 제작 방식을 확인하지 못해 판매채널 전송을 차단했습니다.",
         mode: "product_content_lineage_unverified",
@@ -690,6 +709,19 @@ export async function POST(request: NextRequest) {
         mode: "product_content_mode_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    // EXTERNAL_DETAIL_SOURCE_BEGIN
+    if (parsed.data.productId === externalDetailImportTarget) {
+      try {
+        const imported = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId);
+        if (imported.externalDetailImport) {
+          publishContext.detailAssetSource = "external_generated";
+          publishContext.externalDetailImport = imported.externalDetailImport;
+          publishContext.externalDetailProductId = parsed.data.productId;
+          publishContext.externalDetailChannel = channel;
+          publishContext.externalDetailMarket = parsed.data.market;
+        }
+      } catch { return NextResponse.json({mode:"external_detail_context_unavailable"},{status:409}); }
+    }
     const approvedDetail = approvedProductDetailManifestFromPublishContext(publishContext);
     if (!approvedDetail.ok) {
       return NextResponse.json({
@@ -711,9 +743,19 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     const detailPaths = approvedDetail.value.manifest.images.map((image) => image.path);
-    const detailBucket = serviceClient.storage.from("sellerpilot-ai");
+    const detailBucket = serviceClient.storage.from(approvedDetail.value.external ? "sellerpilot-detail-imports" : "sellerpilot-ai");
     let resolvedSignedUrls: string[] | null = null;
     try {
+      if (approvedDetail.value.external) {
+        const row = publishContext.externalDetailImport as {payload:{assets:({storagePath:string}&Record<string,unknown>)[]};receipts:{decodedRgbaSha256:string}[]};
+        for (const [index, asset] of row.payload.assets.entries()) {
+          const blob = await detailBucket.download(asset.storagePath);
+          if (blob.error || !blob.data || blob.data.size !== asset.byteLength) throw Error("EXTERNAL_DETAIL_BYTES_UNAVAILABLE");
+          const {storagePath,...declared} = asset; void storagePath;
+          const receipt = await inspectExternalDetailImportPng(declared, Buffer.from(await blob.data.arrayBuffer()));
+          if (receipt.decodedRgbaSha256 !== row.receipts[index].decodedRgbaSha256) throw Error("EXTERNAL_DETAIL_PIXELS_CHANGED");
+        }
+      }
       const [detailExistence, detailSigning] = await Promise.all([
         Promise.all(detailPaths.map((path) => detailBucket.exists(path))),
         detailBucket.createSignedUrls(detailPaths, 2 * 60 * 60),
@@ -2523,6 +2565,14 @@ export async function POST(request: NextRequest) {
         mode: "shopee_sg_existing_inventory_permit_required",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+  }
+  if (approvedDetailBinding?.external) {
+    try {
+      const fresh = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId!);
+      await verifyExternalDetailOriginalSnapshot({user:userData.user,userClient,serviceClient}, fresh);
+      const selected = approvedProductDetailManifestFromPublishContext({detailAssetSource:"external_generated",externalDetailImport:fresh.externalDetailImport,externalDetailProductId:parsed.data.productId,externalDetailChannel:channel,externalDetailMarket:parsed.data.market});
+      if (!selected.ok || externalDetailDigest(selected.value.external) !== externalDetailDigest(approvedDetailBinding.external)) throw Error("EXTERNAL_DETAIL_VERSION_CONFLICT");
+    } catch { return NextResponse.json({mode:"external_detail_changed_before_claim"},{status:409}); }
   }
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,

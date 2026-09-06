@@ -1,3 +1,4 @@
+import { selectExternalDetailChannel, bindExternalDetailChannelCopy, type ExternalDetailChannelSelection } from "./server-external-detail-channel";
 import { createHash } from "node:crypto";
 import {
   canonicalProductDetailImageManifestInput,
@@ -13,7 +14,8 @@ import {
 import { validateStoredProductGeneratedAssetPaths } from "./studio-result-assets";
 import { inspectStudioResultQuality } from "./studio-result-quality";
 
-type ApprovedProductDetailManifest = {
+export type ApprovedProductDetailManifest = {
+  external?: ExternalDetailChannelSelection;
   version: number;
   manifest: ProductDetailImageManifest;
 };
@@ -57,6 +59,11 @@ export function resolveProductDetailDocumentAssetPaths(
 export function approvedProductDetailManifestFromPublishContext(
   context: Record<string, unknown>,
 ): ApprovedProductDetailManifestResult {
+  // External documents have their own approval source. Legacy channel adapters must
+  // not combine their images with old Studio/localized copy.
+  if (context.detailAssetSource === "external_generated") {
+    try { return {ok:true,value:selectExternalDetailChannel(context)}; } catch(error) { return {ok:false,code:error instanceof Error?error.message:"EXTERNAL_DETAIL_APPROVAL_MISMATCH"}; }
+  }
   // Approval binds exact bytes, not production quality. Historical emergency
   // catalog/copy results must not become publishable merely by saving them.
   if (inspectStudioResultQuality(context.studioResult).blockedForPublication) {
@@ -136,7 +143,8 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
       || new Set(signedUrls).size !== productDetailImageCount) {
     throw new Error("DETAIL_PAGE_MANIFEST_SIGNING_FAILED");
   }
-  const next = stripClientImageTokens(structuredClone(argumentsValue)) as Record<string, unknown>;
+  const sourceArguments = approved.external ? bindExternalDetailChannelCopy(stripClientImageTokens(structuredClone(argumentsValue)) as Record<string, unknown>, approved.external) : argumentsValue;
+  const next = (approved.external ? sourceArguments : stripClientImageTokens(structuredClone(sourceArguments))) as Record<string, unknown>;
   const assets = recordValue(next.sellerpilotAssets);
   if (!assets) throw new Error("DETAIL_PAGE_MARKETPLACE_ASSETS_REQUIRED");
 
@@ -187,7 +195,7 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
           ],
         }
       : {}),
-    contentMode: "ai_generated",
+    contentMode: approved.external ? "external_generated" : "ai_generated",
     detailAssetMode: "dedicated",
     detailImageUrls: [...signedUrls],
     detailImageRoles: roles,

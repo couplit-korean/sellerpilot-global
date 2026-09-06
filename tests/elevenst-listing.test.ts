@@ -1026,7 +1026,7 @@ async function runElevenstShippingRouteBranch(input: {
   const contentStart = route.indexOf('const contentBoundListingOperation = operation === "listing.create"');
   const contentEnd = route.indexOf("let verifiedPublishContext", contentStart);
   const modeStart = route.indexOf("if (contentBoundListingOperation)", contentEnd);
-  const modeEnd = route.indexOf("const approvedDetail = approvedProductDetailManifestFromPublishContext(publishContext)", modeStart);
+  const modeEnd = route.indexOf("// EXTERNAL_DETAIL_SOURCE_BEGIN", modeStart);
   const helperStart = route.indexOf("function marketplaceContentModeMatchesProduct(");
   const helperEnd = route.indexOf("function errorMessage(", helperStart);
   assert.ok(contentEnd > contentStart && modeEnd > modeStart && helperEnd > helperStart);
@@ -1036,6 +1036,7 @@ async function runElevenstShippingRouteBranch(input: {
     const exactShopeeSgContentUpdate = false;
     const exactQoo10AdoptedContentUpdateRequest = false;
     let temuActivationSourceArguments = null;
+    const externallyVerifiedPublishContext = null;
     ${route.slice(helperStart, helperEnd)}
     ${route.slice(contentStart, contentEnd)}
     observations.contentBound = contentBoundListingOperation;

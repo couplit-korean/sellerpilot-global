@@ -1,3 +1,6 @@
+import { readApprovedExternalDetailPublishContext } from "../../../../../../lib/server-external-detail-publish-context";
+import { readExternalDetailImportContext, externalDetailImportTarget } from "../../../../../../lib/server-external-detail-import-api";
+import { approvedExternalDetailManifest } from "../../../../../../lib/server-external-detail-manifest";
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -78,8 +81,28 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const productId = productIdSchema.safeParse(params.id);
   if (!productId.success) return NextResponse.json({ message: "상품 ID 형식이 올바르지 않습니다." }, { status: 400 });
 
+  let approvedExternalContext: Awaited<ReturnType<typeof readApprovedExternalDetailPublishContext>> | null = null;
+  let inspectedExternalContext: Record<string, unknown> | null = null;
+  let externalReadUnavailable = false;
+  if (productId.data === externalDetailImportTarget) {
+    try {
+      inspectedExternalContext = await readExternalDetailImportContext(admin, productId.data);
+      const externalRow = isRecord(inspectedExternalContext?.externalDetailImport) ? inspectedExternalContext.externalDetailImport : null;
+      if (externalRow?.status === "approved") {
+        // This is an independent approved source, not a retry of an unchecked
+        // predecessor to the Studio lineage guard.
+        approvedExternalContext = await readApprovedExternalDetailPublishContext(admin, productId.data);
+        inspectedExternalContext = {externalDetailImport:approvedExternalContext.externalDetailImport};
+      }
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "EXTERNAL_DETAIL_PUBLISH_READ_FAILED";
+      if (code.includes("OWNER")) return NextResponse.json({code,message:"상품 소유자 권한이 필요합니다."},{status:403});
+      if (isRecord(inspectedExternalContext?.externalDetailImport)) return NextResponse.json({code,message:"현재 외부 승인 source의 상품·버전·해시를 확인하지 못했습니다."},{status:409});
+      externalReadUnavailable = true;
+    }
+  }
   const [{ data, error }, { data: commerceOperations, error: operationsError }] = await Promise.all([
-    admin.userClient.rpc("sellerpilot_get_product_publish_context", { p_product_id: productId.data }),
+    approvedExternalContext ? Promise.resolve({data:approvedExternalContext,error:null}) : admin.userClient.rpc("sellerpilot_get_product_publish_context", { p_product_id: productId.data }),
     admin.userClient.rpc("sellerpilot_get_product_operations_v2", { p_product_id: productId.data }),
   ]);
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
@@ -87,6 +110,22 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   }
 
   const payload = data as Record<string, unknown>;
+  let externalDetailImport: unknown = null;
+  let externalDetailImportStatus = "not_applicable";
+  if (productId.data === externalDetailImportTarget) {
+    try {
+      if (externalReadUnavailable || !inspectedExternalContext) throw Error("external context unavailable");
+      const externalContext = inspectedExternalContext;
+      externalDetailImportStatus = "available";
+      const importedRecord = isRecord(externalContext.externalDetailImport) ? externalContext.externalDetailImport : null;
+      const externalManifest = approvedExternalDetailManifest(importedRecord);
+      if (externalManifest && importedRecord) {
+        const signed = await admin.serviceClient.storage.from("sellerpilot-detail-imports").createSignedUrls(externalManifest.images.map(image => image.path), 3600);
+        if (signed.error || signed.data?.length !== 8 || signed.data.some(image => !image.signedUrl)) throw Error("signing failed");
+        externalDetailImport = { ...importedRecord, manifest: externalManifest, signedImages: externalManifest.images.map((image,index) => ({...image,url:signed.data![index].signedUrl})) };
+      } else { externalDetailImport = externalContext.externalDetailImport; }
+    } catch { externalDetailImportStatus = "unavailable"; }
+  }
   const productOwnerId = typeof payload.ownerId === "string" ? payload.ownerId : admin.user.id;
   const sourcePaths = stringList(payload.sourceImagePaths)
     .filter((path) => path.startsWith(`${productOwnerId}/`) && !path.includes(".."));
@@ -134,6 +173,8 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     : payload.studioResult;
   return NextResponse.json({
     ...payload,
+    externalDetailImport,
+    externalDetailImportStatus,
     studioResult,
     studioQuality: inspectStudioResultQuality(studioResult),
     commerceOperations: operationsError ? null : commerceOperations,

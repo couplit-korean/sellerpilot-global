@@ -1,3 +1,4 @@
+import { externalDetailChannelPayloadMatches } from "../server-external-detail-channel";
 import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
@@ -995,6 +996,7 @@ export function verifyListingPublicationContent(input: {
   const remoteImageDigest = digest(remote.detailImageIdentities);
   const contentDigestVerified = sourceContentDigest === remoteContentDigest;
   const mismatchFields = [
+    ...(externalDetailChannelPayloadMatches(input.sourceArguments) ? [] : ["externalApprovedCopy"]),
     ...(titleVerified ? [] : ["title"]),
     ...(descriptionVerified ? [] : ["description"]),
     ...(titleLanguageVerified ? [] : ["titleLanguage"]),
