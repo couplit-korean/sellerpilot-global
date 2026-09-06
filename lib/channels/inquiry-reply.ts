@@ -37,12 +37,13 @@ export function coupangContactCenterParentAnswerId(value: unknown) {
       : "";
     const needAnswer = reply.needAnswer === true || String(reply.needAnswer ?? "").toLowerCase() === "true";
     const transferStatus = String(reply.partnerTransferStatus ?? "").trim().toLowerCase();
-    return /^\d+$/.test(answerId)
+    // Never select an arbitrary array tail when several transfers need an
+    // answer. The provider does not promise this array is chronologically sorted.
+    return /^[1-9]\d*$/.test(answerId)
       && (needAnswer || transferStatus === "requestanswer");
-  }).at(-1);
-  return actionable && (typeof actionable.answerId === "string" || typeof actionable.answerId === "number")
-    ? String(actionable.answerId).trim()
-    : "";
+  });
+  const ids = [...new Set(actionable.map((reply) => String(reply.answerId).trim()))];
+  return ids.length === 1 ? ids[0] : "";
 }
 
 function requiredText(value: string, name: string) {

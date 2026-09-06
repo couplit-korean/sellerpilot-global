@@ -252,7 +252,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   const [showAudit, setShowAudit] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [oauthStartingId, setOauthStartingId] = useState("");
-  const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string } | null>(null);
+  const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string; includesMessages?: boolean } | null>(null);
   const [operationTarget, setOperationTarget] = useState<{ channel: ChannelDefinition; credential: Credential } | null>(null);
   const [tracxOperationTarget, setTracxOperationTarget] = useState<Credential | null>(null);
 
@@ -347,7 +347,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
     }
   };
 
-  const startOAuth = async (credential: Credential) => {
+  const startOAuth = async (credential: Credential, includeMessages = false) => {
     if (credential.channel === "shopee") {
       setPendingOAuth(null);
       setError("");
@@ -372,12 +372,13 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
           environment: credential.environment,
           secretPayload: {},
           startOAuth: true,
+          ...(credential.channel === "ebay" && includeMessages ? { includeMessages: true } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({ message: `${definition.name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
       setError("");
-      setPendingOAuth({ channelName: definition.name, authorizationUrl: payload.authorizationUrl });
+      setPendingOAuth({ channelName: definition.name, authorizationUrl: payload.authorizationUrl, includesMessages: includeMessages });
       notify(`${definition.name} 판매자 승인 링크를 준비했습니다.`);
     } catch (oauthError) {
       const message = oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.";
@@ -405,7 +406,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
       </section>
 
       {error && <div className="credential-alert"><AlertTriangle size={16} /><span><b>연결 설정 확인</b>{error}</span><button onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></div>}
-      {pendingOAuth && <div className="credential-alert"><KeyRound size={16} /><span><b>{pendingOAuth.channelName} 판매자 승인 준비 완료</b>승인 화면에서 로그인하고 연결을 허용해 주세요.</span><button onClick={() => window.location.assign(pendingOAuth.authorizationUrl)}><KeyRound size={14} />판매자 승인 화면 열기</button><button aria-label="승인 링크 닫기" onClick={() => setPendingOAuth(null)}><X size={14} /></button></div>}
+      {pendingOAuth && <div className="credential-alert"><KeyRound size={16} /><span><b>{pendingOAuth.channelName} 판매자 승인 준비 완료</b>{pendingOAuth.includesMessages ? "일반 대화 조회·전송·관리 권한을 요청합니다. 실제 대화 수집 완료는 승인 후 별도로 확인합니다." : "승인 화면에서 로그인하고 연결을 허용해 주세요."}</span><button onClick={() => window.location.assign(pendingOAuth.authorizationUrl)}><KeyRound size={14} />판매자 승인 화면 열기</button><button aria-label="승인 링크 닫기" onClick={() => setPendingOAuth(null)}><X size={14} /></button></div>}
 
       <section className="credential-channel-grid">
         {channelDefinitions.map((channel) => {
@@ -433,7 +434,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
             {shopeeStatusUnavailable && <p className="last-check failed"><AlertTriangle size={13} />판매자 계정 확인 상태를 불러오지 못했습니다. 주문 자동 동기화 상태를 정상으로 간주하지 않습니다. 다시 확인해 주세요.</p>}
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}{channel.key === "ebay" && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential, true)} disabled={oauthStartingId === credential.id}><KeyRound size={14} />일반 대화 권한 연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>

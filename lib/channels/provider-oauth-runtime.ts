@@ -1,4 +1,5 @@
 import type { GatewayClaim } from "./gateway-contract";
+import { ebayOAuthScopes } from "./ebay-oauth-scopes";
 import {
   assertProviderAccountIdentity,
   shopeeProviderAccountIdentity,
@@ -540,6 +541,7 @@ async function exchangeEbayOAuth(
   const refreshExpiresAt = futureExpiry(remote.data.refresh_token_expires_in, 47_304_000);
   const recoveryPayload = {
     ...job.credential,
+    scopes: ebayOAuthScopes(job.credential, job.request.includeMessages === true).join(" "),
     access_token: accessToken,
     refresh_token: refreshToken,
     access_token_expires_at: accessExpiresAt,

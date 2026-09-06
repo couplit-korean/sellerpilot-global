@@ -73,6 +73,8 @@ test("channel verification separates inquiry receiving from remote reply capabil
   assert.equal(csChannelVerification("qoo10", "queued").tone, "unsupported");
   assert.match(csChannelVerification("shopee", null).readLabel, /API 미연동/);
   assert.match(csChannelVerification("lazada", "passed").replyLabel, /보안 게이트웨이/);
+  assert.equal(csChannelVerification("lazada", "unsupported").badge, "연결 확인 필요");
+  assert.match(csChannelVerification("lazada", "unsupported").readLabel, /연결 조건 미충족/);
   assert.match(csChannelVerification("temu", "passed").readLabel, /반품·환불 작업/);
   assert.match(csChannelVerification("elevenst", "unsupported").readLabel, /상품 Q&A·긴급알리미 수신 연동 전/);
   assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /상세 계약·서비스 권한 검증 전/);

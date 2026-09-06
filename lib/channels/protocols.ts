@@ -1,5 +1,7 @@
 import { createHash, createHmac } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ebayDefaultScopes, ebayOAuthScopes } from "./ebay-oauth-scopes";
+export { ebayDefaultScopes } from "./ebay-oauth-scopes";
 import { hashSync as bcryptHashSync } from "bcryptjs";
 import {
   assertProviderAccountIdentity,
@@ -1286,13 +1288,6 @@ export async function elevenstOrderRequest(input: {
   } satisfies RemoteResponse;
 }
 
-export const ebayDefaultScopes = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.account",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-] as const;
-
 export function ebayEnvironment(environment: "sandbox" | "production") {
   return environment === "sandbox"
     ? { auth: "https://auth.sandbox.ebay.com", api: "https://api.sandbox.ebay.com" }
@@ -1884,7 +1879,7 @@ export async function ensureEbayAccessToken(
     clientSecret,
     ruName,
     refreshToken,
-    scopes: ebayDefaultScopes,
+    scopes: ebayOAuthScopes(payload),
   });
   const nextAccessToken = textValue(remote.data, "access_token");
   if (!remote.response.ok || !nextAccessToken) throw new Error("EBAY_TOKEN_REFRESH_FAILED");
