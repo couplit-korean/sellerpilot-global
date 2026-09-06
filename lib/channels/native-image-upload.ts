@@ -406,7 +406,7 @@ export function parseShopeeMediaSpaceUploadResult(remote: RemoteResponse, expect
     const imageInfo = record(item.image_info) ?? {};
     const imageId = String(imageInfo.image_id ?? "").trim();
     const urlList = Array.isArray(imageInfo.image_url_list) ? imageInfo.image_url_list.map(record).filter(Boolean) : [];
-    const firstUrl = urlList.find((entry) => safeImageUrl(entry.image_url));
+    const firstUrl = urlList.find((entry) => safeImageUrl(entry?.image_url));
     const imageUrl = safeImageUrl(imageInfo.image_url) || (firstUrl ? safeImageUrl(firstUrl.image_url) : "");
     const imageUrlRegion = firstUrl ? String(firstUrl.image_url_region ?? "").trim() : "";
     const error = String(item.error ?? "").trim();
@@ -499,7 +499,7 @@ export function buildLazadaMigrateImageRequest(input: {
 }) {
   const { endpoint, appSecret, common } = lazadaEndpointAndCommon(input.payload);
   const normalizedUrl = assertMigrateImageUrl(input.url);
-  const params = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
+  const params: Record<string, string> = { ...common, timestamp: String(input.nowMs ?? Date.now()), url: normalizedUrl };
   params.sign = signLazadaRequest(lazadaMigrateImagePath, params, appSecret);
   return {
     url: `${endpoint}${lazadaMigrateImagePath}`,
@@ -682,7 +682,7 @@ async function runShopeeUpload(
       remote = await readRemoteResponse(await fetchWithTimeout(fetchImpl, request.url, {
         method: request.method,
         headers: request.headers,
-        body: request.body,
+        body: new Uint8Array(request.body),
         redirect: "error",
       }, 60_000));
     } catch (error) {

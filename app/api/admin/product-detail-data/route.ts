@@ -1,23 +1,10 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { productDetailDataBodySchema, productDetailDataQuerySchema } from "../../../../lib/product-detail-data-contract";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 
 export const runtime = "nodejs";
 
 const noStoreHeaders = { "cache-control": "no-store, max-age=0" };
-
-export const productDetailDataQuerySchema = z.object({
-  productId: z.string().uuid(),
-});
-
-export const productDetailDataBodySchema = z.object({
-  productId: z.string().uuid(),
-  detailData: z.object({
-    root: z.record(z.string(), z.unknown()).optional(),
-    content: z.array(z.object({ type: z.string().min(1).max(80) }).passthrough()).max(200),
-    zones: z.record(z.string(), z.unknown()).optional(),
-  }).passthrough(),
-});
 
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
