@@ -11,6 +11,11 @@ import {
   isSmartstoreLocalReadOperation,
   SMARTSTORE_LOCAL_READ_OPERATIONS,
 } from "../lib/channels/smartstore-local-read-routing";
+import {
+  collectSmartstoreManualAdoptionReadback,
+  isRetryableSmartstoreManualAdoptionReadbackError,
+  SmartstoreManualAdoptionError,
+} from "../lib/server-smartstore-manual-adoption";
 
 const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
 const completionRouteUrl = new URL(
@@ -152,8 +157,76 @@ test("the Mac worker uses the dedicated collector without opening a provider mut
   assert.doesNotMatch(branch, /markExternalWriteStarted|markExternalMutationStarted|begin-mutation/);
   assert.match(
     worker,
-    /retryableLineageReadback[\s\S]*effectiveError instanceof SmartstoreManualAdoptionError/,
+    /retryableLineageReadback[\s\S]*isRetryableSmartstoreManualAdoptionReadbackError/,
   );
+});
+
+test("only transient SmartStore read failures can reuse the bounded job", () => {
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_PROVIDER_TRANSIENT"),
+  ), true);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_DETAIL_IMAGE_DOWNLOAD_FAILED",
+      new Error("read ECONNRESET"),
+    ),
+  ), true);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_DETAIL_IMAGE_DOWNLOAD_FAILED",
+      new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED"),
+    ),
+  ), false);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+      undefined,
+      "NAVER_TOKEN_EXCHANGE_TIMEOUT",
+    ),
+  ), true);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError(
+      "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
+      undefined,
+      "NAVER_IP_NOT_ALLOWED",
+    ),
+  ), false);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_PROVIDER_IDENTITY_MISMATCH"),
+  ), false);
+  assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
+    new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_DETAIL_IMAGES_UNVERIFIED"),
+  ), false);
+});
+
+test("official 429/5xx readback responses are transient while provider rejection is terminal", async () => {
+  const collectForStatus = (status: number) => collectSmartstoreManualAdoptionReadback(
+    { credential: {}, target: { sellerSku: marker.sellerSku } },
+    {
+      accessToken: async () => "test-token",
+      now: () => new Date("2026-09-07T07:00:00.000Z"),
+      request: async () => ({
+        response: new Response("{}", { status }),
+        data: {},
+        text: "",
+      }),
+      downloadImage: async () => {
+        throw new Error("unexpected image download");
+      },
+    },
+  );
+
+  await assert.rejects(collectForStatus(429), (error) => (
+    isRetryableSmartstoreManualAdoptionReadbackError(error)
+  ));
+  await assert.rejects(collectForStatus(503), (error) => (
+    isRetryableSmartstoreManualAdoptionReadbackError(error)
+  ));
+  await assert.rejects(collectForStatus(401), (error) => (
+    error instanceof SmartstoreManualAdoptionError
+      && error.code === "SMARTSTORE_MANUAL_SEARCH_UNVERIFIED"
+      && !isRetryableSmartstoreManualAdoptionReadbackError(error)
+  ));
 });
 
 test("the completion route sends full readback only to the dedicated atomic RPC", async () => {

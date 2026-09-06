@@ -323,6 +323,39 @@ export class SmartstoreManualAdoptionError extends Error {
   }
 }
 
+const retryableCredentialCauseCodes = new Set<SmartstoreManualAdoptionCredentialCauseCode>([
+  "NAVER_PROVIDER_UNAVAILABLE",
+  "NAVER_TOKEN_EXCHANGE_NETWORK_FAILED",
+  "NAVER_TOKEN_EXCHANGE_TIMEOUT",
+]);
+
+function hasRetryableReadTransportCause(error: SmartstoreManualAdoptionError) {
+  let cause = error.cause;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (!cause || typeof cause !== "object") return false;
+    const value = cause as { name?: unknown; message?: unknown; cause?: unknown };
+    const name = typeof value.name === "string" ? value.name : "";
+    const message = typeof value.message === "string" ? value.message : "";
+    if (name === "TimeoutError"
+        || /fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|network/i.test(message)) {
+      return true;
+    }
+    cause = value.cause;
+  }
+  return false;
+}
+
+/** Only read-only transport failures may reuse the same bounded gateway job. */
+export function isRetryableSmartstoreManualAdoptionReadbackError(error: unknown) {
+  return error instanceof SmartstoreManualAdoptionError
+    && (error.code === "SMARTSTORE_MANUAL_PROVIDER_TRANSIENT"
+      || (error.code === "SMARTSTORE_MANUAL_DETAIL_IMAGE_DOWNLOAD_FAILED"
+        && hasRetryableReadTransportCause(error))
+      || (error.code === "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE"
+        && error.causeCode !== null
+        && retryableCredentialCauseCodes.has(error.causeCode)));
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -353,6 +386,12 @@ function sellerCodeFromChannelProduct(value: unknown) {
 function accepted(remote: RemoteResponse) {
   const code = String(remote.data.code ?? "").trim().toUpperCase();
   return remote.response.status === 200 && !code;
+}
+
+function assertProviderResponseNotTransient(remote: RemoteResponse) {
+  if (remote.response.status === 429 || remote.response.status >= 500) {
+    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_PROVIDER_TRANSIENT");
+  }
 }
 
 function completeFirstSearchPage(
@@ -524,6 +563,7 @@ export async function collectSmartstoreManualAdoptionReadback(
     path: "/v1/products/search",
     body: searchRequest,
   });
+  assertProviderResponseNotTransient(search);
   if (!accepted(search)
       || !Array.isArray(search.data.contents)
       || !completeFirstSearchPage(search.data, search.data.contents, searchRequest.size)) {
@@ -550,6 +590,8 @@ export async function collectSmartstoreManualAdoptionReadback(
     request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` }),
     request({ method: "GET", path: `/v2/products/channel-products/${channelProductNo}` }),
   ]);
+  assertProviderResponseNotTransient(origin);
+  assertProviderResponseNotTransient(channel);
   const originProduct = record(origin.data.originProduct);
   const embeddedChannelProduct = record(origin.data.smartstoreChannelProduct);
   const channelProduct = record(channel.data.smartstoreChannelProduct);

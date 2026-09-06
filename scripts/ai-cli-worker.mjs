@@ -95,6 +95,7 @@ import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import { executeProviderListingLineageVerification } from "../lib/channels/listing-lineage-verification.ts";
 import {
   collectSmartstoreManualAdoptionReadback,
+  isRetryableSmartstoreManualAdoptionReadbackError,
   SmartstoreManualAdoptionError,
 } from "../lib/server-smartstore-manual-adoption.ts";
 import {
@@ -4488,8 +4489,9 @@ async function processGatewayJob(job) {
     const terminalOwnershipLoss = effectiveError instanceof WorkerRequestTerminalError
       && [401, 404, 409].includes(effectiveError.status);
     const retryableLineageReadback = job.operation === "listing.lineage.verify"
-      && (effectiveError instanceof SmartstoreManualAdoptionError
-        || /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(message));
+      && (isRetryableSmartstoreManualAdoptionReadbackError(effectiveError)
+        || (!(effectiveError instanceof SmartstoreManualAdoptionError)
+          && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(message)));
     if (externalWriteStarted || retryableLineageReadback) {
       if (!terminalOwnershipLoss) {
         await persistWorkerCompletion(
