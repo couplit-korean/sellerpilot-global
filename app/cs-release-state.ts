@@ -99,7 +99,9 @@ export function csChannelVerification(
     };
   }
   if (!capability.integrated || status === "unsupported") {
-    return { readLabel: `${capability.subject} 수신 API 미연동`, replyLabel: capability.replyLabel, badge: "수신 미지원", tone: "unsupported" };
+    return capability.integrated
+      ? { readLabel: `${capability.subject} 수신 연결 조건 미충족`, replyLabel: capability.replyLabel, badge: "연결 확인 필요", tone: "unsupported" }
+      : { readLabel: `${capability.subject} 수신 API 미연동`, replyLabel: capability.replyLabel, badge: "수신 미연결", tone: "unsupported" };
   }
   if (status === "passed") return {
     readLabel: `${capability.subject} 최근 조회 작업 통과 · 누적 원장 ${Math.max(0, importedCount)}건`,

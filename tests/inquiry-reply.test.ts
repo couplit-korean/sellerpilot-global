@@ -58,6 +58,18 @@ test("Coupang contact-center normalization preserves only an actionable parent a
   ]), "");
 });
 
+test("Coupang does not guess among multiple actionable transfers or accept zero IDs", () => {
+  const first = { answerId: 11, needAnswer: true, partnerTransferStatus: "requestAnswer" };
+  const second = { answerId: 12, needAnswer: true, partnerTransferStatus: "requestAnswer" };
+  assert.equal(coupangContactCenterParentAnswerId([first, second]), "");
+  assert.equal(coupangContactCenterParentAnswerId([second, first]), "");
+  assert.equal(coupangContactCenterParentAnswerId([first, { ...first }]), "11");
+  assert.equal(coupangContactCenterParentAnswerId([{ answerId: 0, needAnswer: true }]), "");
+  assert.throws(() => buildInquiryReplyArguments("coupang", "call-center:98765", "확인했습니다.", {
+    parentAnswerId: coupangContactCenterParentAnswerId([first, second]),
+  }), /coupangParentAnswerId/);
+});
+
 test("Qoo10 reply calls CSCenter.SetInquiryMessage with the official fields", async () => {
   const originalFetch = globalThis.fetch;
   let calledUrl = "";

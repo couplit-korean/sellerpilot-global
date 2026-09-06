@@ -875,15 +875,18 @@
     "evidence_path"
   ],
   "implementation_branch": "codex/cs-completion-20260907",
-  "implementation_progress_note": "1차: 한국 채널별 7~30일 이력 요청 분리 및 기존 원장 전체 대화 조회·표시 구현. 운영 적용 및 실제 채널 왕복 미완료.",
+  "implementation_progress_note": "1~5차 구현 및 CS SQL6개 운영 적용. 스마트스토어 단독30일 2/2 성공. 6차 일반 메시지 접근 진단 및 쿠팡 모호한 답변 대상 차단; 전체 채널 100%는 미완료.",
   "latest_implementation_evidence": "docs/CS-구현진행-20260907.md",
   "production_cs_migrations_applied": [
     "20260907100000",
     "20260907101000",
-    "20260907102000"
+    "20260907102000",
+    "20260907103000",
+    "20260907104000",
+    "20260907105000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "fifth_past_window_and_smartstore_live_backfill",
+  "implementation_checkpoint": "sixth_ebay_message_access_and_coupang_parent_guard",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",
@@ -898,6 +901,13 @@
     "successful_read_jobs": 2,
     "failed_read_jobs": 0,
     "stored_smartstore_tickets": 0,
-    "customer_reply_sent": false
+    "customer_reply_sent": false,
+    "ebay_general_message_probe": {
+      "checked_at": "2026-09-06T19:29:20.019Z",
+      "http_status": 403,
+      "recorded_scope": false,
+      "status": "authorization_required",
+      "general_history_imported": false
+    }
   }
 }
