@@ -2481,3 +2481,20 @@ test('CS140 native 500-row and exact 1MB caps reject before writes while accepte
   assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.lazada_unordered_messages'),0);
  }finally{await db.close();}
 });
+
+// New read model exercised over the existing migrations and reviewed live
+// ingestion/deletion chain, not only the small pagination fixture.
+test('CS conversation read model runs on the reviewed production ledger schema', async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);
+  const credential=await seedAdminAndCredential(db);
+  const ticketId=await ingestTicket(db,credential,'timeline-1');
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907101000_read_cs_conversation_timeline.sql',import.meta.url),'utf8'));
+  const page=await scalar(db,'select public.sellerpilot_get_cs_conversation($1)',[ticketId]);
+  assert.equal(page.ticketId,ticketId);
+  assert.equal(page.messages.length,1);
+  assert.equal(page.messages[0].body,'문의 내용 timeline-1');
+  assert.equal(page.messages[0].role,'customer');
+  assert.equal(page.messages[0].source,'channel');
+ }finally{await db.close();}
+});
