@@ -886,7 +886,7 @@
     "20260907105000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "sixth_ebay_message_access_and_coupang_parent_guard",
+  "implementation_checkpoint": "seventh_explicit_ebay_message_consent",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",
@@ -909,5 +909,12 @@
       "status": "authorization_required",
       "general_history_imported": false
     }
-  }
+  },
+  "pending_ebay_general_history": [
+    "Production deploy 6-7",
+    "seller consent for commerce.message",
+    "successful GET recheck",
+    "general conversation pagination/media and independent ledger",
+    "exact reply and remote readback"
+  ]
 }

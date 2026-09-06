@@ -1,13 +1,9 @@
 import { ebayRequest, runWithProviderReadOnlyTransport, type SecretPayload } from "./protocols";
+import { hasRecordedEbayMessageScope } from "./ebay-oauth-scopes";
+export { ebayMessageScope, hasRecordedEbayMessageScope } from "./ebay-oauth-scopes";
 
 // Contract: https://developer.ebay.com/develop/api/spec/message_api.json
 // Separate from Trading ASQ. A successful read is not a reply certification.
-export const ebayMessageScope = "https://api.ebay.com/oauth/api_scope/commerce.message";
-
-export function hasRecordedEbayMessageScope(payload: SecretPayload) {
-  return typeof payload.scopes === "string" && payload.scopes.split(/\s+/).includes(ebayMessageScope);
-}
-
 export type EbayMessageAccessEvidence = {
   recordedScope: boolean;
   httpStatus: number;
