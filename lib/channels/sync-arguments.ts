@@ -178,9 +178,11 @@ export function inquirySyncArguments(
       },
     },
   ];
-  if (channel === "qoo10") return [{
-    params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: "S1" },
-  }];
+  // QAPI exposes S1 (unanswered), S2 (processing), S3 (completed) separately.
+  // Read all three so transitions and already-answered inquiries are retained.
+  if (channel === "qoo10") return ["S1", "S2", "S3"].map((status) => ({
+    params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: status },
+  }));
   if (channel === "temu") {
     const temuFrom = new Date(now.getTime() - 14 * 86_400_000);
     return [{

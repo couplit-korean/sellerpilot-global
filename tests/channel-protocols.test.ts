@@ -186,10 +186,12 @@ test("11st periodic windows keep stable dedupe keys while advancing provider dat
   assert.notDeepEqual(first.map((request) => request.arguments), second.map((request) => request.arguments));
 });
 
-test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
-  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
-    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
-  }]);
+test("Qoo10 inquiry sync covers every documented state with disjoint periodic identities", () => {
+  const now=new Date("2026-08-20T07:00:00.000Z");
+  assert.deepEqual(inquirySyncArguments("qoo10", now), ["S1","S2","S3"].map(status=>({
+    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: status },
+  })));
+  assert.deepEqual(inquirySyncRequests("qoo10",now).map(request=>request.periodicKey),["inquiries:0","inquiries:1","inquiries:2"]);
 });
 
 test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {

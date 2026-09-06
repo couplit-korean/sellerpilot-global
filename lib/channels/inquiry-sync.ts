@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
 import type { ChannelOperationResult } from "./operations";
 import { normalizeLazadaImHistory } from "./lazada-im";
-import { coupangContactCenterParentAnswerId } from "./inquiry-reply";
+import { normalizeCoupangInquiries } from "./coupang-inquiry-history";
 import { ebayAsqMarketplaceId } from "./ebay-asq";
 import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time";
 import { originalMessageBody } from "./cs-history-values";
@@ -18,7 +18,7 @@ export type BaseNormalizedChannelInquiry = {
   priority: number;
   receivedAt: string;
   remoteMessageId?: string;
-  senderRole?: "customer" | "seller";
+  senderRole?: "customer" | "seller" | "system";
   orderingStatus?: "unverified" | "conflict";
   providerContext?: Record<string, unknown>;
   externalOrderReference?: string;
@@ -58,41 +58,6 @@ function finalizeInquiry(channel: ActiveChannelKey, inquiry: BaseNormalizedChann
   };
 }
 
-function normalizeCoupang(data: Record<string, unknown>, iso: TimestampNormalizer) {
-  const root = object(data.data);
-  const rows = list(root.content).length ? list(root.content) : list(data.data);
-  return rows.map((row): BaseNormalizedChannelInquiry | null => {
-    const sourceKind = text(data.sellerpilotInquiryKind, "product");
-    const remoteTicketId = text(row.inquiryId, row.counselingId);
-    const externalTicketId = remoteTicketId ? `${sourceKind}:${remoteTicketId}` : "";
-    const message = originalMessageBody(row.content, row.inquiryContent, row.question, row.inquiry);
-    if (!externalTicketId || !message) return null;
-    const answered = list(row.commentDtoList).length > 0
-      || /ANSWER/.test(text(row.partnerCounselingStatus, row.answeredType).toUpperCase()) && !/NO_ANSWER|NOANSWER/.test(text(row.partnerCounselingStatus, row.answeredType).toUpperCase());
-    const parentAnswerId = sourceKind === "call-center"
-      ? coupangContactCenterParentAnswerId(row.replies)
-      : "";
-    return {
-      externalTicketId,
-      customerName: text(row.customerName, row.customerId, "쿠팡 고객"),
-      subject: text(row.productName, row.title, "쿠팡 고객 문의"),
-      message,
-      status: answered ? "resolved" : "waiting",
-      priority: /URGENT|TRANSFER/.test(text(row.partnerCounselingStatus).toUpperCase()) ? 2 : 3,
-      receivedAt: iso(row.inquiryAt, row.createdAt, row.receivedAt),
-      remoteMessageId: remoteTicketId,
-      ...(text(row.orderId, row.orderItemId, row.vendorItemId)
-        ? { externalOrderReference: text(row.orderId, row.orderItemId, row.vendorItemId) }
-        : {}),
-      providerContext: {
-        kind: sourceKind,
-        inquiryId: remoteTicketId,
-        ...(parentAnswerId ? { parentAnswerId } : {}),
-      },
-      replyContext: parentAnswerId ? { parentAnswerId } : {},
-    };
-  }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
-}
 
 
 function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer) {
@@ -115,7 +80,8 @@ function normalizeQoo10(data: Record<string, unknown>, iso: TimestampNormalizer)
       priority: 3,
       receivedAt: iso(row.INQ_DT, row.InquiryDate, row.CreatedDate, row.RegDate),
       remoteMessageId: text(row.MESSAGE_ID, row.MessageId, sequenceNo),
-      providerContext: { inquiryType, questionNo, sequenceNo },
+      providerContext: { inquiryType, questionNo, sequenceNo, processingStatus: text(row.STATUS, row.Status) },
+      replyContext: { inquiryType, questionNo, sequenceNo },
     };
   }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
 }
@@ -236,7 +202,7 @@ export function normalizeChannelInquiries(
   const pageData = inquirySteps.length
     ? inquirySteps.map((item) => item.data)
     : [result.steps.at(-1)?.data ?? {}];
-  const normalized = pageData.flatMap((data) => channel === "coupang" ? normalizeCoupang(data, iso)
+  const normalized = pageData.flatMap((data) => channel === "coupang" ? normalizeCoupangInquiries(data, iso)
     : channel === "smartstore" ? normalizeSmartstoreInquiries(data, iso)
       : channel === "qoo10" ? normalizeQoo10(data, iso)
         : channel === "temu" ? normalizeTemu(data, iso, referenceTimeMs)
