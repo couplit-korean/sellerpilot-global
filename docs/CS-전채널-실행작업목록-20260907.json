@@ -434,7 +434,7 @@
       "id": "EBY-01",
       "area": "ebay",
       "title": "ASQ 전체 이력·답변 확인 완성",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "ASQ 페이지/기간/사이트 식별자 및 완료 답변을 보존하고 provider ACK 이후 실제 답변을 확인한다.",
       "acceptance": "ASQ 부모 문의·수신자·상품·market 일치, 판매자센터 원본과 누락/중복 없는 대화 표시.",
@@ -450,7 +450,9 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
     },
     {
       "id": "EBY-02",
@@ -881,7 +883,7 @@
     "20260907102000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "third_cs_archive_and_history_state",
+  "implementation_checkpoint": "fourth_ebay_original_answers",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",

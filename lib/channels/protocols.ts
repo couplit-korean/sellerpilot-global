@@ -1576,6 +1576,16 @@ function ebayXmlNodeText(node: EbayXmlNode | null) {
   return node.textParts.join("").trim();
 }
 
+function ebayXmlMessageBody(node: EbayXmlNode | null, maxLength: number) {
+  if (!node) return "";
+  if (node.children.length) invalidEbayTradingResponse();
+  const body = node.textParts.join("");
+  // Message content must survive parsing unchanged. Reject oversized content
+  // visibly rather than saving a silently truncated original.
+  if (body.length > maxLength) throw new Error("EBAY_MESSAGE_BODY_LIMIT");
+  return body;
+}
+
 function ebayXmlText(node: EbayXmlNode, name: string) {
   return ebayXmlNodeText(ebayXmlChild(node, name));
 }
@@ -1631,16 +1641,18 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetIte
   const memberMessages = exchanges.map((exchange) => {
     const item = ebayXmlChild(exchange, "Item");
     const question = ebayXmlChild(exchange, "Question");
+    const responses = ebayXmlChildren(exchange, "Response");
+    if (responses.length > 100) throw new Error("EBAY_ANSWER_CONTEXT_LIMIT");
     return {
       itemId: item ? ebayXmlText(item, "ItemID").slice(0, 240) : "",
       itemTitle: item ? ebayXmlText(item, "Title").slice(0, 500) : "",
       messageId: question ? ebayXmlText(question, "MessageID").slice(0, 230) : "",
       senderId: question ? ebayXmlText(question, "SenderID").slice(0, 240) : "",
       subject: question ? ebayXmlText(question, "Subject").slice(0, 500) : "",
-      // eBay documents Question.Body as at most 4,000 characters for schema
-      // versions >=653. Keeping that bound also keeps each durable page below
-      // the gateway transaction payload ceiling.
-      body: question ? ebayXmlText(question, "Body").slice(0, 4_000) : "",
+      body: question ? ebayXmlMessageBody(ebayXmlChild(question, "Body"), 4_000) : "",
+      // GetMemberMessages returns repeated response bodies without per-answer
+      // timestamps or native response IDs. Never infer those from exchange dates.
+      responses: responses.map((response) => ebayXmlMessageBody(response, 20_000)),
       messageStatus: ebayXmlText(exchange, "MessageStatus").slice(0, 80),
       creationDate: ebayXmlText(exchange, "CreationDate").slice(0, 80),
       lastModifiedDate: ebayXmlText(exchange, "LastModifiedDate").slice(0, 80),

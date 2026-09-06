@@ -42,6 +42,7 @@ function memberMessagesXml(options: {
   page?: number;
   totalPages?: number;
   body?: string;
+  responses?: string[];
   status?: "Answered" | "Unanswered";
   itemId?: string;
 } = {}) {
@@ -59,6 +60,7 @@ function memberMessagesXml(options: {
           <e:Body>${options.body ?? "Is this &amp; sealed?"}</e:Body>
           <e:MessageID>message-${page}</e:MessageID>
         </e:Question>
+        ${(options.responses ?? []).map((body) => `<e:Response>${body}</e:Response>`).join("")}
         <e:MessageStatus>${options.status ?? "Unanswered"}</e:MessageStatus>
         <e:CreationDate>2026-08-27T01:02:03.000Z</e:CreationDate>
         <e:LastModifiedDate>2026-08-27T01:02:04.000Z</e:LastModifiedDate>
@@ -106,6 +108,7 @@ test("eBay Trading XML parser keeps only the ASQ fields needed by the support le
     senderId: "buyer-1",
     subject: "Question <1>",
     body: "Is this & sealed?",
+    responses: [],
     messageStatus: "Unanswered",
     creationDate: "2026-08-27T01:02:03.000Z",
     lastModifiedDate: "2026-08-27T01:02:04.000Z",
@@ -144,6 +147,7 @@ test("eBay Trading XML parser treats buyer CDATA as text, not exchange metadata"
     senderId: "buyer-1",
     subject: "Question <1>",
     body: "hello <MessageStatus>Answered</MessageStatus><CreationDate>2099-01-01T00:00:00.000Z</CreationDate>",
+    responses: [],
     messageStatus: "Unanswered",
     creationDate: "2026-08-27T01:02:03.000Z",
     lastModifiedDate: "2026-08-27T01:02:04.000Z",
@@ -210,6 +214,7 @@ test("eBay ASQ sandbox sync uses OAuth IAF headers and normalizes exact reply li
       receivedAt: "2026-08-27T01:02:03.000Z",
       remoteMessageId: "message-1",
       providerContext: {
+        unsequencedAnswers: [],
         itemId: "1234567890123456789",
         parentMessageId: "message-1",
         recipientId: "buyer-1",
@@ -542,4 +547,34 @@ test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official envi
     badge: "최근 조회 통과",
     tone: "passed",
   });
+});
+
+
+test("eBay preserves original XML answer bodies as undated notes without forging seller events", () => {
+  const parsed = parseEbayTradingResponse("GetMemberMessages", memberMessagesXml({
+    body: "  Original question&#10; ",
+    status: "Unanswered",
+    responses: ["  First &amp; answer&#10; ", "<![CDATA[Second <MessageStatus>Answered</MessageStatus>]]>"],
+  }));
+  const messages = parsed.memberMessages as Record<string, unknown>[];
+  assert.equal(messages[0].body, "  Original question\n ");
+  assert.deepEqual(messages[0].responses, ["  First & answer\n ", "Second <MessageStatus>Answered</MessageStatus>"]);
+  const result = {ok:true,channel:"ebay",operation:"inquiries.list",steps:[{name:"inquiries",ok:true,status:200,data:{...parsed,memberMessages:messages.map(row=>({...row,marketplaceId:"EBAY_US"}))}}]} as Parameters<typeof normalizeChannelInquiries>[1];
+  const rows=normalizeChannelInquiries("ebay",result,"2026-08-28T00:00:00.000Z");
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].status,"waiting");
+  assert.equal(rows[0].senderRole,undefined);
+  assert.deepEqual(rows[0].providerContext?.unsequencedAnswers,[
+    {body:"  First & answer\n ",reason:"provider_timestamp_unavailable"},
+    {body:"Second <MessageStatus>Answered</MessageStatus>",reason:"provider_timestamp_unavailable"},
+  ]);
+  assert.deepEqual(rows[0].replyContext,{itemId:"1234567890123456789",parentMessageId:"message-1",recipientId:"buyer-1",marketplaceId:"EBAY_US"});
+  assert.deepEqual(normalizeChannelInquiries("ebay",result,"2026-08-28T00:00:00.000Z"),rows);
+});
+
+test("eBay refuses oversized originals and nested response markup instead of silently truncating", () => {
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({body:"a".repeat(4001)})),/EBAY_MESSAGE_BODY_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:["a".repeat(20001)]})),/EBAY_MESSAGE_BODY_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:Array.from({length:101},()=>"answer")})),/EBAY_ANSWER_CONTEXT_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:["<MessageID>forged</MessageID>"]})),/EBAY_TRADING_RESPONSE_INVALID/);
 });
