@@ -33,7 +33,7 @@ const SELLER_CLAIM_ID = "fcff92e9-fd02-476f-8ea5-fecfd1c8a770";
 const COMPLETION_FINGERPRINT =
   "00d682385677bf3f888e8b565f1c3530049b58d1cf0f55d3023bfcbfbbb65fc8";
 
-test("fresh authoritative OAuth preserves all three old blockers until exact same-account readback", async () => {
+test("500 prerequisite preserves blockers without 600 immutable exact-session receipts", async () => {
   const source = await readFile(dualMigrationUrl, "utf8");
   const recoverySource = await readFile(recoveryMigrationUrl, "utf8");
   const db = new PGlite();
@@ -648,67 +648,12 @@ test("fresh authoritative OAuth preserves all three old blockers until exact sam
       [TARGET_ROW_ID],
     );
 
-    const afterProof = await db.query(`
-      select id,status,error_message,credential_refresh_in_flight,
-             credential_refresh_started_at
-        from sellerpilot_private.channel_gateway_jobs
-       where id in ($1,$2,$3) order by id
-    `, [OAUTH_BLOCKER_ID, READ_BLOCKER_ID, PROVIDER_FAILURE_BLOCKER_ID]);
-    assert.deepEqual(afterProof.rows.map((row) => [
-      row.id, row.status, row.error_message,
-      row.credential_refresh_in_flight, row.credential_refresh_started_at,
-    ]), [
-      [
-        READ_BLOCKER_ID,
-        "cancelled",
-        "LAZADA_REFRESH_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH_AND_SELLER_READBACK",
-        false,
-        null,
-      ],
-      [
-        PROVIDER_FAILURE_BLOCKER_ID,
-        "cancelled",
-        "LAZADA_PROVIDER_FAILURE_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH_AND_SELLER_READBACK",
-        false,
-        null,
-      ],
-      [
-        OAUTH_BLOCKER_ID,
-        "cancelled",
-        "LAZADA_OAUTH_RECONCILIATION_SUPERSEDED_BY_CERTIFIED_OAUTH_AND_SELLER_READBACK",
-        false,
-        null,
-      ],
-    ]);
-    const audits = await db.query(`
-      select action,entity_id,safe_detail->>'seller_id' seller_id
-        from sellerpilot_private.operation_audit order by entity_id
-    `);
-    assert.deepEqual(audits.rows, [
-      {
-        action: "lazada_refresh_reconciliation_superseded_after_seller_readback",
-        entity_id: READ_BLOCKER_ID,
-        seller_id: "300872000183",
-      },
-      {
-        action: "lazada_provider_failure_reconciliation_superseded_after_seller_readback",
-        entity_id: PROVIDER_FAILURE_BLOCKER_ID,
-        seller_id: "300872000183",
-      },
-      {
-        action: "lazada_oauth_reconciliation_superseded_after_seller_readback",
-        entity_id: OAUTH_BLOCKER_ID,
-        seller_id: "300872000183",
-      },
-    ]);
-    await db.query(
-      "update sellerpilot_private.channel_market_targets set updated_at=clock_timestamp() where id=$1",
-      [TARGET_ROW_ID],
-    );
-    const auditCount = await db.query(
-      "select count(*)::integer value from sellerpilot_private.operation_audit",
-    );
-    assert.equal(auditCount.rows[0].value, 3);
+    // 500 alone must never attest synthetic terminal job fields. Completion
+    // cleanup and immutable exact-session receipts are exercised by the full
+    // current-preimage controller fixture in lazada-oauth-exact-preimage.
+    await assertThreeBlockersIntact('without 600 exact allocation evidence, even plausible OAuth/readback rows fail closed');
+    assert.equal((await db.query('select sellerpilot_private.exact_lazada_three_readback_proof($1) proof',[TARGET_ROW_ID])).rows[0].proof,null);
+    assert.equal((await db.query('select count(*)::integer value from sellerpilot_private.operation_audit')).rows[0].value,0);
     await assert.rejects(db.exec(patch),/LAZADA_SAME_ACCOUNT_PROOF_ALREADY_DEFINED/);
     await db.exec('rollback');
   } finally {

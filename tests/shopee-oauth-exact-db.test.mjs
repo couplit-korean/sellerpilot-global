@@ -2,15 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import {PGlite} from '@electric-sql/pglite';
+import {unseal} from '../scripts/db-baseline-export.mjs';
+const baselineFolder=process.env.SELLERPILOT_BASELINE_FOLDER??'/Users/kimchangheemac/.aside/u/0/backups/sellerpilot/20260905-974d4cb-v4/';
+const preimage=unseal(await readFile(baselineFolder+'baseline.enc','utf8'),await readFile(baselineFolder+'baseline.key'));
+const reaperPreimage=preimage.objects.find(o=>o.kind==='function'&&o.ddl.startsWith('CREATE OR REPLACE FUNCTION public.sellerpilot_service_reap_stale_channel_gateway_jobs(')).ddl;
 const owner='11111111-1111-4111-8111-111111111111', credential='22222222-2222-4222-8222-222222222222', session='33333333-3333-4333-8333-333333333333', token='44444444-4444-4444-8444-444444444444', hash='a'.repeat(64);
 const migration=await readFile(new URL('../supabase/migrations/20260906030000_shopee_exact_oauth_executor.sql',import.meta.url),'utf8');
 async function fixture(){const db=new PGlite();await db.exec(`
 create role anon;create role authenticated;create role service_role;create schema auth;create schema vault;create schema sellerpilot_private;
 create table auth.users(id uuid primary key);create table sellerpilot_private.admin_users(user_id uuid primary key);
 create table vault.decrypted_secrets(id uuid primary key,decrypted_secret text);
+create table sellerpilot_private.operation_audit(owner_id uuid,action text,entity_type text,entity_id text,safe_detail jsonb,occurred_at timestamptz);
 create table sellerpilot_private.channel_credentials(id uuid primary key,created_by uuid,channel text,environment text,status text,vault_secret_id uuid,seller_account_key text,expires_at timestamptz default (now()+interval '30 days'));
 create table sellerpilot_private.ai_cli_worker_tokens(id uuid primary key,created_by uuid,token_hash text,scope text,status text,expires_at timestamptz);
-create table sellerpilot_private.channel_gateway_jobs(id uuid primary key default gen_random_uuid(),credential_id uuid,created_by uuid,channel text,operation text,environment text,status text,attempt_count integer default 0,provider_mutation_started_at timestamptz,worker_token_id uuid,claim_token uuid,lease_expires_at timestamptz,started_at timestamptz,updated_at timestamptz,request_payload jsonb,oauth_request_vault_id uuid,oauth_source_credential_id uuid);
+create table sellerpilot_private.channel_gateway_jobs(id uuid primary key default gen_random_uuid(),credential_id uuid,created_by uuid,channel text,operation text,environment text,status text,attempt_count integer default 0,provider_mutation_started_at timestamptz,worker_token_id uuid,claim_token uuid,lease_expires_at timestamptz,started_at timestamptz,updated_at timestamptz,request_payload jsonb,oauth_request_vault_id uuid,oauth_source_credential_id uuid,completed_at timestamptz,error_message text);
 create function public.sellerpilot_enqueue_channel_gateway_job(c uuid,a uuid,ch text,op text,p jsonb) returns uuid language plpgsql as $$declare result uuid;v uuid:=gen_random_uuid();begin
 if exists(select 1 from sellerpilot_private.channel_gateway_jobs where credential_id=c and operation='oauth.exchange' and status='reconciliation_required') then raise exception 'EXISTING_RECON_FENCE';end if;
 insert into vault.decrypted_secrets values(v,p::text);
@@ -20,7 +25,7 @@ insert into sellerpilot_private.ai_cli_worker_tokens values('${token}','${owner}
 insert into sellerpilot_private.channel_credentials values('${credential}','${owner}','shopee','production','active','${credential}',repeat('b',64),now()+interval '30 days');
 insert into vault.decrypted_secrets values('${credential}','{"partner_id":"2031489","shop_id":"1719148844","main_account_id":"123456","shop_ids":["1719148844","2","3","4","5","6","7","8"]}');
 insert into sellerpilot_private.channel_gateway_jobs(credential_id,created_by,channel,operation,environment,status,request_payload) values('${credential}','${owner}','shopee','diagnostic.test','production','queued','{}'),('${credential}','${owner}','shopee','listing.create','production','reconciliation_required','{}'),('${credential}','${owner}','smartstore','inquiries.list','production','queued','{}');
-`);await db.exec(migration);return db;}
+`);await db.exec(reaperPreimage);await db.exec("revoke all on function public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer) from public;grant execute on function public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer) to service_role");await db.exec(preimage.objects.find(o=>o.kind==='function'&&o.ddl.startsWith('CREATE OR REPLACE FUNCTION sellerpilot_private.worker_token_has_scope(')).ddl);await db.exec(migration);return db;}
 async function scalar(db,sql,p=[]){return Object.values((await db.query(sql,p)).rows[0])[0];}
 const admin=(db,action,request={},state=hash,who=owner)=>scalar(db,'select public.sellerpilot_shopee_exact_oauth_admin($1,$2,$3,$4,$5,$6::jsonb)',[action,who,session,credential,state,JSON.stringify(request)]);
 const worker=(db,action,key=hash)=>scalar(db,'select public.sellerpilot_shopee_exact_oauth_worker($1,$2,$3)',[action,session,key]);

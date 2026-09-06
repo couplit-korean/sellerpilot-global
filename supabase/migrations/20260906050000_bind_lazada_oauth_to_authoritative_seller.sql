@@ -59,6 +59,12 @@ end;
 $$;
 revoke all on function sellerpilot_private.lazada_same_account_oauth_evidence_v1(jsonb,jsonb,jsonb) from public,anon,authenticated,service_role;
 
+-- No receipt can attest an unreserved job. 600 installs the exact-session
+-- implementation; until then this prerequisite deliberately fails closed.
+create function sellerpilot_private.lazada_exact_completed_job_bound(uuid)
+returns boolean language sql stable security definer set search_path='' as $$ select false $$;
+revoke all on function sellerpilot_private.lazada_exact_completed_job_bound(uuid) from public,anon,authenticated,service_role;
+
 create or replace function sellerpilot_private.exact_lazada_three_readback_proof(
   p_target_id uuid
 )
@@ -269,8 +275,7 @@ begin
       from sellerpilot_private.channel_gateway_jobs job
       join sellerpilot_private.gateway_completion_receipts receipt
         on receipt.job_id = job.id
-       and receipt.claim_token = job.claim_token
-       and receipt.worker_token_id = job.worker_token_id
+       and sellerpilot_private.lazada_exact_completed_job_bound(job.id)
      where job.oauth_source_credential_id = v_source.id
        and job.credential_id = v_active.id
        and job.prepared_credential_id = v_active.id
@@ -283,8 +288,8 @@ begin
        and job.attempt_count = 1
        and job.attempt_id is null
        and job.listing_id is null
-       and job.worker_token_id is not null
-       and job.claim_token is not null
+       and job.worker_token_id is null
+       and job.claim_token is null
        and job.lease_expires_at is null
        and job.created_at >= v_boundary
        and job.created_at > v_failed.completed_at
@@ -348,8 +353,7 @@ begin
       from sellerpilot_private.channel_gateway_jobs job
       join sellerpilot_private.gateway_completion_receipts receipt
         on receipt.job_id = job.id
-       and receipt.claim_token = job.claim_token
-       and receipt.worker_token_id = job.worker_token_id
+       and sellerpilot_private.lazada_exact_completed_job_bound(job.id)
      where job.credential_id = v_active.id
        and job.created_by = v_target.owner_id
        and job.channel = 'lazada'
@@ -360,8 +364,8 @@ begin
        and job.attempt_count = 1
        and job.attempt_id is null
        and job.listing_id is null
-       and job.worker_token_id is not null
-       and job.claim_token is not null
+       and job.worker_token_id is null
+       and job.claim_token is null
        and job.lease_expires_at is null
        and job.started_at is not null
        and job.seller_account_key = v_active.seller_account_key
