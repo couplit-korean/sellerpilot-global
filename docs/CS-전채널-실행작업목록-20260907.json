@@ -883,13 +883,21 @@
     "20260907102000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "fourth_ebay_original_answers",
+  "implementation_checkpoint": "fifth_past_window_and_smartstore_live_backfill",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",
     "20260907102000",
     "20260907103000",
-    "20260907104000"
+    "20260907104000",
+    "20260907105000"
   ],
-  "last_verified_runtime_release": "83032085d947e58fe0c71b56044b8b9120441e33"
+  "last_verified_runtime_release": "e44c61d2649dad98cba36f3028b6fa5e0a93f206",
+  "operational_evidence": {
+    "smartstore_30_day_run": "2c72a09e-ba40-4218-a2ce-f686d1bd5679",
+    "successful_read_jobs": 2,
+    "failed_read_jobs": 0,
+    "stored_smartstore_tickets": 0,
+    "customer_reply_sent": false
+  }
 }

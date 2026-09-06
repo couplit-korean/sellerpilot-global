@@ -21,6 +21,12 @@ const schema = z.object({
   channels: z.array(z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"])).max(8).optional(),
   includeImBootstrap: z.boolean().default(false),
   historyDays: z.number().int().min(7).max(30).optional(),
+  historyEndDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine((value) => {
+    const date = new Date(`${value}T00:00:00Z`);
+    const today = new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10);
+    return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value
+      && value >= "2000-01-30" && value <= today;
+  }).optional(),
 });
 
 const historyBackfillResultSchema = z.object({
@@ -108,15 +114,15 @@ function historyBackfillMessage(result: HistoryBackfillResult) {
     return `${label} 문의 조회에는 승인된 송신 경로 설정이 필요합니다. 설정 전에는 선택한 채널의 과거 문의 작업을 접수하거나 재시도하지 않습니다.`;
   }
   if (result.status === "succeeded") {
-    return `${label} 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
+    return `${label} ${result.fromDate}~${result.toDate}의 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
   }
   if (result.status === "failed") {
-    return `${label} 최근 ${result.historyDays}일 문의 작업 중 ${result.failedJobs}건이 실패했습니다. 완료로 표시하지 않았으며 상태를 확인해 주세요.`;
+    return `${label} ${result.fromDate}~${result.toDate}의 ${result.historyDays}일 문의 작업 중 ${result.failedJobs}건이 실패했습니다. 완료로 표시하지 않았으며 상태를 확인해 주세요.`;
   }
   if ((result.retriedJobs ?? 0) > 0) {
-    return `${label} 최근 ${result.historyDays}일 문의의 안전한 읽기 실패 ${result.retriedJobs}건을 다시 접수했습니다. ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+    return `${label} ${result.fromDate}~${result.toDate}의 ${result.historyDays}일 문의의 안전한 읽기 실패 ${result.retriedJobs}건을 다시 접수했습니다. ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
   }
-  return `${label} 최근 ${result.historyDays}일 문의 읽기 작업 ${result.totalJobs}건을 접수했습니다. 서버에서 순차 처리되며 ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+  return `${label} ${result.fromDate}~${result.toDate}의 ${result.historyDays}일 문의 읽기 작업 ${result.totalJobs}건을 접수했습니다. 서버에서 순차 처리되며 ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
 }
 
 export async function GET(request: Request) {
@@ -157,7 +163,7 @@ export async function POST(request: Request) {
   if (isAdminApiError(admin)) return admin;
 
   const parsed = schema.safeParse(await request.json().catch(() => ({})));
-  if (!parsed.success) return NextResponse.json({ message: "동기화 채널 요청을 확인해 주세요." }, { status: 400 });
+  if (!parsed.success || (parsed.data.historyEndDate !== undefined && parsed.data.historyDays === undefined)) return NextResponse.json({ message: "동기화 채널과 과거 문의 종료일을 확인해 주세요." }, { status: 400 });
   if (!parsed.data.includeImBootstrap && parsed.data.historyDays === undefined) {
     return NextResponse.json({
       ok: false,
@@ -197,7 +203,7 @@ export async function POST(request: Request) {
         year: "numeric",
         month: "2-digit",
         day: "2-digit",
-      }).format(new Date(blockedAt.getTime() - daysAgo * 86_400_000));
+      }).format(new Date((parsed.data.historyEndDate ? Date.parse(`${parsed.data.historyEndDate}T12:00:00+09:00`) : blockedAt.getTime()) - daysAgo * 86_400_000));
       return NextResponse.json({
         ok: false,
         staticEgressReady: false,
@@ -269,8 +275,8 @@ export async function POST(request: Request) {
   }
   if (parsed.data.historyDays !== undefined) {
     const { data, error } = await admin.userClient.rpc(
-      "sellerpilot_start_inquiry_history_backfill_v2",
-      { p_channels: historyChannels, p_history_days: parsed.data.historyDays },
+      parsed.data.historyEndDate ? "sellerpilot_start_inquiry_history_backfill_v3" : "sellerpilot_start_inquiry_history_backfill_v2",
+      { p_channels: historyChannels, p_history_days: parsed.data.historyDays, ...(parsed.data.historyEndDate ? { p_end_date: parsed.data.historyEndDate } : {}) },
     );
     if (error) {
       return NextResponse.json({
