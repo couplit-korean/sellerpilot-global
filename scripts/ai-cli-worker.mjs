@@ -78,7 +78,10 @@ import {
 } from "../lib/ai-cli-contract.ts";
 import { buildMarketplaceMasterStyleBrief } from "../lib/marketplace-style-learning.ts";
 import { runChannelDiagnostic } from "../lib/channel-diagnostics.ts";
-import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract.ts";
+import {
+  gatewayJobCompletionStatus,
+  smartstoreManualAdoptionReadbackJobSchema,
+} from "../lib/channels/gateway-contract.ts";
 import {
   qoo10S1ActivationArgument,
   qoo10S1ActivationArgumentsValid,
@@ -90,6 +93,10 @@ import { prepareMarketplaceListingArguments } from "../lib/channels/provider-lis
 import { verifyShopeeGlobalListingPostPublish } from "../lib/channels/provider-shopee-post-publish-runtime.ts";
 import { searchElevenstProductVariants } from "../lib/competitor-prices.ts";
 import { executeProviderListingLineageVerification } from "../lib/channels/listing-lineage-verification.ts";
+import {
+  collectSmartstoreManualAdoptionReadback,
+  SmartstoreManualAdoptionError,
+} from "../lib/server-smartstore-manual-adoption.ts";
 import {
   buildDifferenceHash,
   buildDuplicateRetryGuidance,
@@ -4230,9 +4237,6 @@ async function processGatewayJob(job) {
       const items = await searchElevenstProductVariants(primary, aliases, { apiKey: textValue(job.credential, "api_key") }, displayPerQuery);
       result = { ok: true, channel: "elevenst", operation: "competitor.search", items, safeMessage: `11번가 공식 상품검색에서 후보 ${items.length}건을 확인했습니다.` };
     } else if (job.operation === "listing.lineage.verify") {
-      if (!["qoo10", "shopee", "lazada", "ebay"].includes(job.channel)) {
-        throw new Error("이 채널은 공급자 상품 계보 재검증을 지원하지 않습니다.");
-      }
       if (job.request?.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
         throw new Error("상품 계보 재검증 버전이 올바르지 않습니다.");
       }
@@ -4240,15 +4244,57 @@ async function processGatewayJob(job) {
       if (!operationArguments || typeof operationArguments !== "object" || Array.isArray(operationArguments)) {
         throw new Error("상품 계보 재검증 인자가 올바르지 않습니다.");
       }
-      await assertGatewayLeaseHealthy();
-      result = await executeProviderListingLineageVerification({
-        channel: job.channel,
-        payload: job.credential,
-        arguments: operationArguments,
-        environment: job.environment,
-        onExternalMutationStart: markExternalMutationStarted,
-        onCredentialRefresh: rememberCredentialRefresh,
-      });
+      if (job.channel === "smartstore") {
+        const adoptionJob = smartstoreManualAdoptionReadbackJobSchema.safeParse(
+          operationArguments.sellerpilotSmartstoreManualAdoptionReadback,
+        );
+        if (!adoptionJob.success
+            || job.environment !== "production"
+            || adoptionJob.data.credentialId !== job.credential_id) {
+          throw new Error("SMARTSTORE_MANUAL_ADOPTION_READBACK_JOB_INVALID");
+        }
+        await assertGatewayLeaseHealthy();
+        const readback = await collectSmartstoreManualAdoptionReadback({
+          credential: job.credential,
+          target: { sellerSku: adoptionJob.data.sellerSku },
+          signal: gatewayExecutionSignal,
+        });
+        await assertGatewayLeaseHealthy();
+        result = {
+          ok: true,
+          channel: "smartstore",
+          operation: "listing.lineage.verify",
+          verificationStatus: "verified",
+          evidence: {
+            contract: "smartstore_manual_adoption_readback_result_v1",
+            readback,
+          },
+          steps: [{
+            name: "smartstore-manual-adoption-readback",
+            ok: true,
+            status: 200,
+            data: {
+              sellerpilotVerification: "SMARTSTORE_MANUAL_ADOPTION_READBACK_VERIFIED",
+              providerMutationPerformed: false,
+              detailImageCount: readback.detailImageUrls.length,
+            },
+          }],
+          safeMessage: "스마트스토어 공식 API에서 기존 상품과 상세 이미지 8개를 읽기 전용으로 확인했습니다.",
+        };
+      } else {
+        if (!["qoo10", "shopee", "lazada", "ebay"].includes(job.channel)) {
+          throw new Error("이 채널은 공급자 상품 계보 재검증을 지원하지 않습니다.");
+        }
+        await assertGatewayLeaseHealthy();
+        result = await executeProviderListingLineageVerification({
+          channel: job.channel,
+          payload: job.credential,
+          arguments: operationArguments,
+          environment: job.environment,
+          onExternalMutationStart: markExternalMutationStarted,
+          onCredentialRefresh: rememberCredentialRefresh,
+        });
+      }
     } else if (job.operation === "diagnostic.test") {
       let diagnosticCredential = job.credential;
       if (job.channel === "shopee") {
@@ -4433,11 +4479,17 @@ async function processGatewayJob(job) {
         effectiveError = heartbeatError;
       }
     }
-    const message = effectiveError instanceof Error ? effectiveError.message.slice(0, 500) : "채널 작업 처리 오류";
+    const message = effectiveError instanceof SmartstoreManualAdoptionError
+      && effectiveError.causeCode
+      ? `${effectiveError.message}:${effectiveError.causeCode}`.slice(0, 500)
+      : effectiveError instanceof Error
+        ? effectiveError.message.slice(0, 500)
+        : "채널 작업 처리 오류";
     const terminalOwnershipLoss = effectiveError instanceof WorkerRequestTerminalError
       && [401, 404, 409].includes(effectiveError.status);
     const retryableLineageReadback = job.operation === "listing.lineage.verify"
-      && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(message);
+      && (effectiveError instanceof SmartstoreManualAdoptionError
+        || /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(message));
     if (externalWriteStarted || retryableLineageReadback) {
       if (!terminalOwnershipLoss) {
         await persistWorkerCompletion(

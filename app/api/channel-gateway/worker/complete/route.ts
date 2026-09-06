@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   gatewayJobCompletionStatusAtJobBoundary,
   gatewayWorkerCompletionSchema,
+  smartstoreManualAdoptionLineageResultSchema,
 } from "../../../../../lib/channels/gateway-contract";
 import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
 import { lazadaQuarantineReady } from "../../../../../lib/channels/lazada-im-webhook";
@@ -22,6 +23,22 @@ import {
 export const runtime = "nodejs";
 
 const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
+const smartstoreManualAdoptionCompletionSchema = z.object({
+  contract: z.literal("smartstore_manual_adoption_readback_completion_v1"),
+  status: z.enum([
+    "verified",
+    "queued",
+    "failed",
+    "reconciliation_required",
+    "lease_lost",
+  ]),
+  jobId: z.string().uuid(),
+  receiptId: z.string().uuid().nullable(),
+  attestationId: z.string().uuid().nullable(),
+  readbackSha256: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
+  reused: z.boolean(),
+  reason: z.string().min(1).max(160).nullable(),
+}).strict();
 const listingLineageCompletionSchema = z.object({
   status: z.enum(["bound", "queued", "manual_required", "lease_lost"]),
   job_id: z.string().uuid(),
@@ -197,6 +214,57 @@ export async function POST(request: Request) {
       && job.channel !== "lazada"
       && job.channel !== "ebay") {
     return NextResponse.json({ message: "이 채널에는 OAuth 인증값 갱신을 적용할 수 없습니다." }, { status: 409 });
+  }
+
+  if (job.channel === "smartstore" && job.operation === "listing.lineage.verify") {
+    const verifiedResult = parsed.data.status === "succeeded"
+      ? smartstoreManualAdoptionLineageResultSchema.safeParse(parsed.data.result)
+      : null;
+    if (verifiedResult && !verifiedResult.success) {
+      return NextResponse.json({ message: "스마트스토어 기존 상품 조회 결과 형식이 올바르지 않습니다." }, { status: 409 });
+    }
+    const adoptionStatus = parsed.data.status === "succeeded"
+      ? "succeeded"
+      : parsed.data.status === "reconciliation_required"
+        ? "retryable"
+        : "failed";
+    const { data: adoptionData, error: adoptionCompletionError } = await serviceClient.rpc(
+      "sellerpilot_complete_smartstore_manual_adoption_readback",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: parsed.data.jobId,
+        p_claim_token: parsed.data.claimToken,
+        p_status: adoptionStatus,
+        p_readback: verifiedResult?.success
+          ? verifiedResult.data.evidence.readback
+          : null,
+        p_error_message: parsed.data.status === "succeeded" ? null : parsed.data.error,
+      },
+    );
+    const adoptionCompletion = smartstoreManualAdoptionCompletionSchema.safeParse(adoptionData);
+    if (adoptionCompletionError || !adoptionCompletion.success
+        || adoptionCompletion.data.jobId !== parsed.data.jobId) {
+      const status = adoptionCompletionError
+        ? workerRpcErrorStatus(adoptionCompletionError)
+        : 503;
+      console.error("smartstore manual adoption readback completion RPC failed", {
+        code: adoptionCompletionError?.code ?? "invalid_contract",
+        status,
+      });
+      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    }
+    if (adoptionCompletion.data.status === "lease_lost") {
+      return NextResponse.json({ message: "실행 중인 스마트스토어 기존 상품 조회 claim이 만료됐습니다." }, { status: 409 });
+    }
+    return NextResponse.json({
+      message: adoptionCompletion.data.status === "verified"
+        ? "스마트스토어 기존 상품을 공식 조회하고 SellerPilot 원장에 안전하게 연결했습니다."
+        : adoptionCompletion.data.status === "queued"
+          ? "스마트스토어 기존 상품 읽기 검증을 동일 작업으로 다시 대기시켰습니다."
+        : adoptionCompletion.data.status === "reconciliation_required"
+          ? "스마트스토어 읽기 결과를 재전송하지 않고 확인 필요 상태로 보존했습니다."
+          : "스마트스토어 기존 상품을 연결하지 않고 조회 실패 상태를 저장했습니다.",
+    });
   }
 
   if (parsed.data.status === "succeeded") {

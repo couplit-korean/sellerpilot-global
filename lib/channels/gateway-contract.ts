@@ -348,6 +348,89 @@ const listingLineageStepDataSchema = z.object({
   exactOfferUnique: z.boolean().optional(),
 }).strict();
 
+const smartstoreManualAdoptionDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+export const smartstoreManualAdoptionReadbackJobSchema = z.object({
+  contract: z.literal("smartstore_manual_adoption_readback_job_v1"),
+  ownerId: z.string().uuid(),
+  productId: z.string().uuid(),
+  listingId: z.string().uuid(),
+  sourceJobId: z.string().uuid(),
+  sourceAttemptId: z.string().uuid(),
+  credentialId: z.string().uuid(),
+  sellerAccountKey: smartstoreManualAdoptionDigestSchema,
+  sellerSku: z.string().trim().min(1).max(100),
+  approvalRevision: z.number().int().positive(),
+  contentSha256: smartstoreManualAdoptionDigestSchema,
+  manifestDigest: smartstoreManualAdoptionDigestSchema,
+}).strict();
+
+const smartstoreManualAdoptionReadbackSchema = z.object({
+  contract: z.literal("smartstore_official_manual_adoption_readback_v1"),
+  source: z.literal("smartstore_official_api_readback_v1"),
+  observedAt: z.string().datetime({ offset: true }),
+  providerMutationPerformed: z.literal(false),
+  searchReadback: z.object({
+    method: z.literal("POST"),
+    path: z.literal("/v1/products/search"),
+    httpStatus: z.literal(200),
+    request: z.record(z.string(), z.unknown()),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  originReadback: z.object({
+    method: z.literal("GET"),
+    path: z.string().regex(/^\/v2\/products\/origin-products\/[1-9]\d{5,19}$/u),
+    httpStatus: z.literal(200),
+    request: z.null(),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  channelReadback: z.object({
+    method: z.literal("GET"),
+    path: z.string().regex(/^\/v2\/products\/channel-products\/[1-9]\d{5,19}$/u),
+    httpStatus: z.literal(200),
+    request: z.null(),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  detailImageUrls: z.array(z.string().url().max(4_000)).length(8),
+  detailImagePixelSha256s: z.array(smartstoreManualAdoptionDigestSchema).length(8),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.detailImageUrls).size !== 8) {
+    context.addIssue({ code: "custom", path: ["detailImageUrls"], message: "SmartStore adoption image URLs must be distinct" });
+  }
+  if (new Set(value.detailImagePixelSha256s).size !== 8) {
+    context.addIssue({ code: "custom", path: ["detailImagePixelSha256s"], message: "SmartStore adoption image pixels must be distinct" });
+  }
+  try {
+    if (Buffer.byteLength(JSON.stringify(value), "utf8") > 2 * 1024 * 1024) {
+      context.addIssue({ code: "custom", message: "SmartStore adoption readback is too large" });
+    }
+  } catch {
+    context.addIssue({ code: "custom", message: "SmartStore adoption readback must be serializable" });
+  }
+});
+
+export const smartstoreManualAdoptionLineageResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("smartstore"),
+  operation: z.literal("listing.lineage.verify"),
+  verificationStatus: z.literal("verified"),
+  evidence: z.object({
+    contract: z.literal("smartstore_manual_adoption_readback_result_v1"),
+    readback: smartstoreManualAdoptionReadbackSchema,
+  }).strict(),
+  steps: z.array(z.object({
+    name: z.literal("smartstore-manual-adoption-readback"),
+    ok: z.literal(true),
+    status: z.literal(200),
+    data: z.object({
+      sellerpilotVerification: z.literal("SMARTSTORE_MANUAL_ADOPTION_READBACK_VERIFIED"),
+      providerMutationPerformed: z.literal(false),
+      detailImageCount: z.literal(8),
+    }).strict(),
+  }).strict()).length(1),
+  safeMessage: z.string().min(1).max(1_000),
+}).strict();
+
 const listingLineageVerificationResultSchema = z.discriminatedUnion("verificationStatus", [
   z.object({
     ok: z.literal(true),
@@ -423,6 +506,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       operationResultSchema,
       diagnosticResultSchema,
       competitorSearchResultSchema,
+      smartstoreManualAdoptionLineageResultSchema,
       listingLineageVerificationResultSchema,
       z.object({
         ok: z.literal(true),

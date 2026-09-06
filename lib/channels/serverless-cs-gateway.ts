@@ -674,6 +674,12 @@ function listingLineageFailurePayload(channel: string, reason: string) {
 
 function listingLineageSuccessPayload(result: ListingLineageResult) {
   const evidence = result.evidence;
+  if (!("expectedRemoteId" in evidence)
+      || !("verifiedRemoteId" in evidence)
+      || !("market" in evidence)
+      || !("targetId" in evidence)) {
+    return null;
+  }
   return {
     ok: true,
     channel: result.channel,
@@ -715,9 +721,14 @@ async function completeListingLineageClaim(
       return "ownership_lost";
     }
     const result = completion.result;
+    if (result.channel === "smartstore") {
+      return "ownership_lost";
+    }
     if (result.verificationStatus === "verified") {
       status = "succeeded";
-      responsePayload = listingLineageSuccessPayload(result);
+      const successPayload = listingLineageSuccessPayload(result);
+      if (!successPayload) return "ownership_lost";
+      responsePayload = successPayload;
     } else {
       const reason = result.evidence.reasonCode === "EBAY_MARKETPLACE_SKU_MISSING"
         ? "marketplace_sku_missing"

@@ -45,6 +45,7 @@ test("smartstore local-read tuple is exclusive and does not include writes", () 
     "categories.attributes",
     "categories.validate",
     "inquiries.list",
+    "listing.lineage.verify",
     "listing.publication.verify",
   ]);
   for (const operation of SMARTSTORE_LOCAL_READ_OPERATIONS) {
@@ -116,7 +117,7 @@ test("admin channel-operations only opens the Smartstore static-egress exception
   assert.match(route, /isSmartstoreLocalReadOperation\(operation\)/);
   assert.match(route, /sellerpilot_ai_runtime_status/);
   assert.match(route, /LOCAL_GATEWAY_WORKER_REQUIRED/);
-  assert.match(route, /else if \(channel === "smartstore"\)/);
+  assert.match(route, /else if \(channel === "smartstore" && !localChannelExecutorReady\)/);
   assert.match(route, /mode: "static_egress_required"/);
   assert.doesNotMatch(route, /gateway:worker:once/);
   assert.doesNotMatch(route, /Static IP/);
