@@ -67,6 +67,7 @@ function genericDraft(overrides: Record<string, unknown> = {}) {
       returnCharge: 0,
       items: [{
         itemName: "롯데샌드 쿠키",
+        externalVendorSku: "GENERIC-COOKIE-SKU",
         salePrice: 10000,
         maximumBuyCount: 1,
         outboundShippingTimeDay: 2,
@@ -165,6 +166,9 @@ async function prepareGeneric(options: {
   globalThis.fetch = async (input, init) => {
     const pathname = new URL(String(input)).pathname;
     calls.push({ method: init?.method ?? "GET", pathname });
+    if (pathname.includes("/external-vendor-sku-codes/")) {
+      return Response.json({ code: "SUCCESS", data: [] });
+    }
     if (pathname.endsWith("/shipping-place/outbound")) return Response.json(options.outbound ?? outboundResponse());
     if (pathname.includes("/returnShippingCenters")) {
       return Response.json(options.returnCenter ?? returnCenterResponse());
@@ -228,7 +232,7 @@ test("generic Coupang prepare uses seller-confirmed notices and contracted shipp
   const { prepared, calls } = await prepareGeneric();
   const body = prepared.arguments.body as Record<string, unknown>;
   const item = (body.items as Array<Record<string, unknown>>)[0];
-  assert.deepEqual(calls.map((call) => call.method), ["GET", "GET", "GET", "GET"]);
+  assert.deepEqual(calls.map((call) => call.method), ["GET", "GET", "GET", "GET", "GET"]);
   assert.ok(calls.some((call) => call.pathname.endsWith("/display-categories/76890/status")));
   assert.equal(body.vendorId, "A00098765");
   assert.equal(body.deliveryCompanyCode, "HANJIN");

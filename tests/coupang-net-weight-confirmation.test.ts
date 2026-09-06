@@ -32,7 +32,7 @@ async function prepare(facts: Record<string, unknown>, attributes: Attribute[] =
     body: {
       displayCategoryCode: 59631, sellerProductName: "테스트 샌드 비스킷", brand: "테스트", vendorId: "SERVER_MANAGED",
       deliveryCompanyCode: "", deliveryChargeType: "FREE", deliveryCharge: 0, freeShipOverAmount: 0, deliveryChargeOnReturn: 0, returnCharge: 0,
-      items: [{ itemName: "테스트 샌드 비스킷", salePrice: 3190, maximumBuyCount: 1, outboundShippingTimeDay: 2,
+      items: [{ itemName: "테스트 샌드 비스킷", externalVendorSku: "NET-WEIGHT-TEST-SKU", salePrice: 3190, maximumBuyCount: 1, outboundShippingTimeDay: 2,
         images: [{ vendorPath: "https://example.com/cookie.jpg" }],
         notices: [{ noticeCategoryName: "식품", noticeCategoryDetailName: "제품명", content: "테스트 샌드 비스킷" }], attributes, certifications: [] }],
     },
@@ -44,8 +44,10 @@ async function prepare(facts: Record<string, unknown>, attributes: Attribute[] =
     assert.equal(init?.method ?? "GET", "GET", "preparation must never publish");
     calls++;
     const path = new URL(String(input)).pathname;
+    if (path.includes("/external-vendor-sku-codes/")) return Response.json({ code: "SUCCESS", data: [] });
     if (path.endsWith("/shipping-place/outbound")) return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, outboundShippingPlaceCode: 11111111, placeAddresses: [address] }] } });
     if (path.includes("/returnShippingCenters")) return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, returnCenterCode: "RET-TEST", deliverCode: "HANJIN", shippingPlaceName: "테스트 반품지", returnFee02kg: 3000, placeAddresses: [address] }] } });
+    if (path.endsWith("/status")) return Response.json({ code: "SUCCESS", data: true });
     assert.match(path, /display-category-codes\/59631$/);
     return Response.json({ code: "SUCCESS", data: metadata });
   };
@@ -59,7 +61,7 @@ async function prepare(facts: Record<string, unknown>, attributes: Attribute[] =
     return (result.arguments.body as { items: Array<{ attributes: Attribute[] }> }).items[0].attributes;
   } finally {
     globalThis.fetch = originalFetch;
-    assert.equal(calls, 3);
+    assert.equal(calls, 5);
     assert.deepEqual(original, before, "preparation must preserve the source draft");
   }
 }
