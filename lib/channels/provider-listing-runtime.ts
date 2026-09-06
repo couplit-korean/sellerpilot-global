@@ -1646,10 +1646,20 @@ function prepareGenericCoupangNotices(
     }
   }
 
-  const mandatoryDetails = coupangNoticeDetails(noticeCategory)
-    .filter((detail) => detail.required === "MANDATORY");
+  const officialDetails = coupangNoticeDetails(noticeCategory);
+  const officialDetailNames = new Set(officialDetails.map((detail) =>
+    String(detail.noticeCategoryDetailName ?? "").trim()).filter(Boolean));
+  for (const detailName of contents.keys()) {
+    if (!officialDetailNames.has(detailName)) {
+      throw new Error("COUPANG_NOTICE_CONFIRMATION_REQUIRED");
+    }
+  }
+  const mandatoryDetails = officialDetails.filter((detail) => detail.required === "MANDATORY");
   if (!mandatoryDetails.length) throw new Error("COUPANG_NOTICE_METADATA_MISSING");
-  return mandatoryDetails.map((detail) => {
+  return officialDetails.filter((detail) => {
+    const detailName = String(detail.noticeCategoryDetailName ?? "").trim();
+    return detail.required === "MANDATORY" || contents.has(detailName);
+  }).map((detail) => {
     const noticeCategoryDetailName = String(detail.noticeCategoryDetailName ?? "").trim();
     const content = contents.get(noticeCategoryDetailName) ?? "";
     if (!noticeCategoryDetailName || !content) {
@@ -1664,29 +1674,32 @@ function prepareGenericCoupangCertifications(
   metadata: UnknownRecord,
   facts: UnknownRecord,
 ) {
-  const mandatoryCertifications = Array.isArray(metadata.certifications)
+  const officialCertifications = Array.isArray(metadata.certifications)
     ? metadata.certifications
       .map(recordValue)
       .filter((row): row is UnknownRecord => Boolean(row))
-      .filter((certification) => certification.required === "MANDATORY")
     : [];
+  const mandatoryCertifications = officialCertifications
+    .filter((certification) => certification.required === "MANDATORY");
   const sellerCerts = Array.isArray(item.certifications)
     ? item.certifications.map(recordValue).filter((row): row is UnknownRecord => Boolean(row))
     : [];
-  const sellerByType = new Map(sellerCerts.map((certification) => [
-    String(certification.certificationType ?? "").trim(),
-    coupangConfirmedText(certification.certificationCode),
-  ]));
-  if (!mandatoryCertifications.length) {
-    return sellerCerts
-      .map((certification) => {
-        const certificationType = String(certification.certificationType ?? "").trim();
-        const certificationCode = coupangConfirmedText(certification.certificationCode);
-        return certificationType && certificationCode
-          ? { certificationType, certificationCode }
-          : null;
-      })
-      .filter((row): row is { certificationType: string; certificationCode: string } => Boolean(row));
+  const officialByType = new Map<string, UnknownRecord>(officialCertifications.flatMap((certification) => {
+    const certificationType = String(certification.certificationType ?? "").trim();
+    return certificationType ? [[certificationType, certification] as const] : [];
+  }));
+  const sellerByType = new Map<string, string>();
+  for (const certification of sellerCerts) {
+    const certificationType = String(certification.certificationType ?? "").trim();
+    const certificationCode = coupangConfirmedText(certification.certificationCode);
+    if (!certificationType || !certificationCode || !officialByType.has(certificationType)) {
+      throw new Error("COUPANG_CERTIFICATION_EXEMPTION_UNVERIFIED");
+    }
+    const previous = sellerByType.get(certificationType);
+    if (previous && previous !== certificationCode) {
+      throw new Error("COUPANG_CERTIFICATION_EXEMPTION_UNVERIFIED");
+    }
+    sellerByType.set(certificationType, certificationCode);
   }
 
   const coded = mandatoryCertifications.filter((certification) =>
@@ -1700,12 +1713,13 @@ function prepareGenericCoupangCertifications(
     throw new Error("COUPANG_CERTIFICATION_REQUIRED");
   }
 
-  return mandatoryCertifications.map((certification) => {
+  return officialCertifications.flatMap((certification) => {
     const certificationType = String(certification.certificationType ?? "").trim();
     const dataType = String(certification.dataType ?? "").trim().toUpperCase();
     const certificationCode = sellerByType.get(certificationType) ?? "";
     if (!certificationType) throw new Error("COUPANG_CERTIFICATION_REQUIRED");
-    if (certificationCode) return { certificationType, certificationCode };
+    if (certificationCode) return [{ certificationType, certificationCode }];
+    if (certification.required !== "MANDATORY") return [];
     if (dataType === "CODE") throw new Error("COUPANG_CERTIFICATION_REQUIRED");
     throw new Error("COUPANG_CERTIFICATION_EXEMPTION_UNVERIFIED");
   });

@@ -115,7 +115,25 @@ import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
-import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import {
+  emptyProductIntake,
+  emptyProductIntakeDraftDecisions,
+  isProductIntakePublicationReady,
+  productConditions,
+  productCurrencies,
+  productEditSchema,
+  productIntakeDraftSchema,
+  productIntakeSchema,
+  productRegistrationIntakeDraftSchema,
+  type ProductIntakeDraft,
+  type ProductIntakeDraftDecisions,
+  type ProductRegistrationIntakeDraft,
+} from "../lib/product-intake";
+import {
+  getProductRegistrationDraft,
+  putProductRegistrationDraft,
+  ProductRegistrationDraftClientError,
+} from "../lib/product-registration-draft-client";
 import { isResolvedProductFact } from "../lib/product-facts";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
@@ -2420,6 +2438,23 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 
 type UploadedPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
 const productSourcePhotoSha256Pattern = /^[a-f0-9]{64}$/;
+const productRegistrationDraftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type RegistrationDraftSaveState = "initializing" | "ready" | "saving" | "saved" | "conflict" | "unavailable";
+
+function productRegistrationDraftImageSelections(photos: readonly UploadedPhoto[]) {
+  return photos.map((photo) => ({
+    role: photo.role,
+    name: photo.name,
+    mediaType: photo.file.type,
+    bytes: photo.file.size,
+    originalWidth: photo.originalWidth,
+    originalHeight: photo.originalHeight,
+    // File/blob URLs are browser-local and must never be presented as a
+    // restored server asset. A later upload ledger may replace this null.
+    uploadedPath: null,
+  }));
+}
 
 async function productSourcePhotoSha256(file: File) {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
@@ -2641,7 +2676,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
 
 function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
   const existingProductEdit = Boolean(initialProduct?.id);
-  const draftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
+  const legacyDraftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
   const [running, setRunning] = useState(false);
   const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
@@ -2670,7 +2705,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const productResearchRecoveryGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const intakeRef = useRef(intake);
-  const [hydratedDraftStorageKey, setHydratedDraftStorageKey] = useState("");
+  const [intakeDecisions, setIntakeDecisions] = useState<ProductIntakeDraftDecisions>(() => ({ ...emptyProductIntakeDraftDecisions }));
+  const intakeDecisionsRef = useRef(intakeDecisions);
+  const [userEditedFields, setUserEditedFields] = useState<Array<keyof ProductIntakeDraft>>([]);
+  const userEditedFieldsRef = useRef(new Set<keyof ProductIntakeDraft>());
+  const [registrationDraftId, setRegistrationDraftId] = useState("");
+  const [registrationDraftHydrated, setRegistrationDraftHydrated] = useState(existingProductEdit);
+  const [registrationDraftSaveState, setRegistrationDraftSaveState] = useState<RegistrationDraftSaveState>(existingProductEdit ? "ready" : "initializing");
+  const [registrationDraftMessage, setRegistrationDraftMessage] = useState(existingProductEdit ? "" : "서버에서 이어쓰기 초안을 확인하고 있습니다.");
+  const [registrationDraftLoadVersion, setRegistrationDraftLoadVersion] = useState(0);
+  const [restoredLocalPhotoCount, setRestoredLocalPhotoCount] = useState(0);
+  const [retainedDraftImageSelections, setRetainedDraftImageSelections] = useState<ProductRegistrationIntakeDraft["imageSelections"]>([]);
+  const registrationDraftVersionRef = useRef(0);
+  const registrationDraftLastSavedRef = useRef("");
+  const registrationDraftCurrentRef = useRef<{ serialized: string; data: ProductRegistrationIntakeDraft } | null>(null);
+  const registrationDraftPendingRef = useRef<{ serialized: string; data: ProductRegistrationIntakeDraft } | null>(null);
+  const registrationDraftSaveInFlightRef = useRef(false);
   const [activeStage, setActiveStage] = useState<1 | 2 | 3>(initialProduct?.id ? 3 : 1);
   const productResearchInputRef = useRef(intake.researchInput);
   const researchAppliedValuesRef = useRef<Partial<ProductIntakeDraft>>({});
@@ -2723,49 +2773,199 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   }, [intake]);
 
   useEffect(() => {
-    const restoreTimer = window.setTimeout(() => {
-      try {
-        const stored = window.sessionStorage.getItem(draftStorageKey);
-        if (stored) {
-          const parsed = JSON.parse(stored) as unknown;
-          if (isRecord(parsed)) {
-            const restored = { ...emptyProductIntake } as ProductIntakeDraft;
-            for (const key of Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>) {
-              const candidate = parsed[key];
-              if (typeof candidate === typeof emptyProductIntake[key]) {
-                (restored as Record<keyof ProductIntakeDraft, unknown>)[key] = candidate;
-              }
-            }
-            restored.condition = productConditions.includes(restored.condition) ? restored.condition : "NEW";
-            restored.currency = productCurrencies.includes(restored.currency) ? restored.currency : "KRW";
-            restored.gtinStatus = restored.gtinStatus === "HAS_GTIN" ? "HAS_GTIN" : "NO_GTIN";
-            restored.imageRightsConfirmed = false;
-            restored.productFactsConfirmed = false;
-            intakeRef.current = restored;
-            setIntake(restored);
-          }
-        }
-      } catch {
-        window.sessionStorage.removeItem(draftStorageKey);
-      } finally {
-        setActiveStage(initialProduct?.id ? 3 : 1);
-        setHydratedDraftStorageKey(draftStorageKey);
-      }
-    }, 0);
-    return () => window.clearTimeout(restoreTimer);
-  }, [draftStorageKey, initialProduct?.id]);
+    intakeDecisionsRef.current = intakeDecisions;
+  }, [intakeDecisions]);
 
   useEffect(() => {
-    if (hydratedDraftStorageKey !== draftStorageKey) return;
-    if (queuedJobId) {
-      window.sessionStorage.removeItem(draftStorageKey);
-      return;
+    if (existingProductEdit) return;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const requestedDraftId = params.get("registrationDraftId")?.trim() ?? "";
+      const nextDraftId = productRegistrationDraftIdPattern.test(requestedDraftId)
+        ? requestedDraftId
+        : crypto.randomUUID();
+      setRegistrationDraftId(nextDraftId);
+      if (requestedDraftId !== nextDraftId) {
+        params.set("view", "publishing");
+        params.set("registrationDraftId", nextDraftId);
+        window.history.replaceState(
+          { ...(isRecord(window.history.state) ? window.history.state : {}), view: "publishing", registrationDraftId: nextDraftId },
+          "",
+          `${window.location.pathname}?${params.toString()}`,
+        );
+      }
+      try {
+        const legacy = JSON.parse(window.sessionStorage.getItem(legacyDraftStorageKey) ?? "null") as unknown;
+        const parsedLegacy = productIntakeDraftSchema.safeParse(legacy);
+        if (parsedLegacy.success) {
+          const restoredLegacy = { ...parsedLegacy.data, imageRightsConfirmed: false, productFactsConfirmed: false };
+          const restoredFields = (Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>).filter((field) => (
+            field !== "imageRightsConfirmed"
+            && field !== "productFactsConfirmed"
+            && !Object.is(restoredLegacy[field], emptyProductIntake[field])
+          ));
+          intakeRef.current = restoredLegacy;
+          userEditedFieldsRef.current = new Set(restoredFields);
+          setIntake(restoredLegacy);
+          setUserEditedFields(restoredFields);
+          setRegistrationDraftMessage("기존 브라우저 초안을 읽었습니다. 서버 저장이 확인될 때까지 이 화면을 유지해 주세요.");
+        }
+      } catch {
+        // Invalid legacy data is never promoted to the authenticated server draft.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [existingProductEdit, legacyDraftStorageKey]);
+
+  const registrationDraftFetch = useCallback((input: RequestInfo | URL, init?: RequestInit) => (
+    authenticatedFetch(typeof input === "string" ? input : input.toString(), init)
+  ), [authenticatedFetch]);
+
+  useEffect(() => {
+    if (existingProductEdit || !registrationDraftId) return;
+    const controller = new AbortController();
+    void getProductRegistrationDraft<ProductRegistrationIntakeDraft>(registrationDraftFetch, {
+      draftId: registrationDraftId,
+      kind: "intake",
+      signal: controller.signal,
+    }).then((savedDraft) => {
+      if (controller.signal.aborted) return;
+      registrationDraftVersionRef.current = savedDraft?.version ?? 0;
+      registrationDraftPendingRef.current = null;
+      if (!savedDraft) {
+        registrationDraftLastSavedRef.current = "";
+        setRegistrationDraftSaveState("ready");
+        setRegistrationDraftMessage("새 서버 초안을 준비했습니다. 필수정보가 부족해도 자동 저장됩니다.");
+        setRegistrationDraftHydrated(true);
+        return;
+      }
+      const parsed = productRegistrationIntakeDraftSchema.safeParse(savedDraft.data);
+      if (!parsed.success) {
+        setRegistrationDraftSaveState("unavailable");
+        setRegistrationDraftMessage("저장된 초안 형식을 확인하지 못했습니다. 현재 입력은 덮어쓰지 않았습니다.");
+        setRegistrationDraftHydrated(true);
+        return;
+      }
+      const restoredIntake: ProductIntakeDraft = {
+        ...parsed.data.intake,
+        imageRightsConfirmed: false,
+        productFactsConfirmed: false,
+      };
+      const restoredFields = parsed.data.userEditedFields.filter((field) => (
+        field !== "imageRightsConfirmed" && field !== "productFactsConfirmed"
+      ));
+      intakeRef.current = restoredIntake;
+      intakeDecisionsRef.current = parsed.data.decisions;
+      userEditedFieldsRef.current = new Set(restoredFields);
+      setIntake(restoredIntake);
+      setIntakeDecisions(parsed.data.decisions);
+      setUserEditedFields(restoredFields);
+      setRestoredLocalPhotoCount(parsed.data.imageSelections.filter((image) => image.uploadedPath === null).length);
+      setRetainedDraftImageSelections(parsed.data.imageSelections);
+      if (parsed.data.researchJobId) setResearchRecoveryJobId(parsed.data.researchJobId);
+      registrationDraftLastSavedRef.current = JSON.stringify(parsed.data);
+      window.sessionStorage.removeItem(legacyDraftStorageKey);
+      setActiveStage(1);
+      setRegistrationDraftSaveState("saved");
+      setRegistrationDraftMessage(`서버 초안 v${savedDraft.version}을 복원했습니다. 확인 체크는 안전을 위해 다시 받아야 합니다.`);
+      setRegistrationDraftHydrated(true);
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      const migrationMissing = error instanceof ProductRegistrationDraftClientError && error.status === 503;
+      setRegistrationDraftSaveState("unavailable");
+      setRegistrationDraftMessage(migrationMissing
+        ? "서버 초안 저장소가 아직 준비되지 않았습니다. 현재 화면을 닫기 전에 준비 상태를 다시 확인해 주세요."
+        : error instanceof Error ? error.message : "서버 초안을 불러오지 못했습니다. 현재 입력은 덮어쓰지 않았습니다.");
+      setRegistrationDraftHydrated(true);
+    });
+    return () => controller.abort();
+  }, [existingProductEdit, legacyDraftStorageKey, registrationDraftFetch, registrationDraftId, registrationDraftLoadVersion]);
+
+  const registrationDraftData = useMemo<ProductRegistrationIntakeDraft>(() => {
+    const localSelections = productRegistrationDraftImageSelections([
+      ...(mainPhoto ? [mainPhoto] : []),
+      ...Object.values(slotPhotos),
+      ...extraPhotos,
+    ]);
+    const replacedRoles = new Set(localSelections.map((selection) => selection.role));
+    return {
+      schemaVersion: 1,
+      intake: {
+        ...intake,
+        // A resumed draft must be checked against the physical product and the
+        // currently selected files again. These are publication approvals, not
+        // editable draft values.
+        imageRightsConfirmed: false,
+        productFactsConfirmed: false,
+      },
+      decisions: intakeDecisions,
+      userEditedFields,
+      imageSelections: [
+        ...localSelections,
+        ...retainedDraftImageSelections.filter((selection) => !replacedRoles.has(selection.role)),
+      ].slice(0, 100),
+      researchJobId: isProductResearchJobId(sourceResearchJobId)
+        ? sourceResearchJobId
+        : isProductResearchJobId(researchRecoveryJobId.trim()) ? researchRecoveryJobId.trim() : null,
+    };
+  }, [extraPhotos, intake, intakeDecisions, mainPhoto, researchRecoveryJobId, retainedDraftImageSelections, slotPhotos, sourceResearchJobId, userEditedFields]);
+
+  const persistRegistrationDraft = useCallback(async (candidate: { serialized: string; data: ProductRegistrationIntakeDraft }) => {
+    registrationDraftPendingRef.current = candidate;
+    if (registrationDraftSaveInFlightRef.current || !registrationDraftId) return;
+    registrationDraftSaveInFlightRef.current = true;
+    try {
+      while (registrationDraftPendingRef.current) {
+        const next = registrationDraftPendingRef.current;
+        registrationDraftPendingRef.current = null;
+        if (next.serialized === registrationDraftLastSavedRef.current) continue;
+        setRegistrationDraftSaveState("saving");
+        setRegistrationDraftMessage("미완성 입력을 서버 초안에 저장하고 있습니다.");
+        try {
+          const saved = await putProductRegistrationDraft<ProductRegistrationIntakeDraft>(registrationDraftFetch, {
+            draftId: registrationDraftId,
+            kind: "intake",
+            productId: resolvedProductId,
+            expectedVersion: registrationDraftVersionRef.current,
+            data: next.data,
+          });
+          registrationDraftVersionRef.current = saved.version;
+          registrationDraftLastSavedRef.current = next.serialized;
+          window.sessionStorage.removeItem(legacyDraftStorageKey);
+          if (!registrationDraftPendingRef.current) {
+            setRegistrationDraftSaveState("saved");
+            setRegistrationDraftMessage(`서버 초안 v${saved.version}에 저장했습니다. 로컬 사진 원본은 다시 열 때 재선택해야 합니다.`);
+          }
+        } catch (error) {
+          registrationDraftPendingRef.current = null;
+          if (error instanceof ProductRegistrationDraftClientError && error.status === 409) {
+            setRegistrationDraftSaveState("conflict");
+            setRegistrationDraftMessage("다른 탭에서 같은 초안이 변경되었습니다. 현재 화면 입력은 유지했으며 자동으로 덮어쓰지 않았습니다.");
+          } else {
+            setRegistrationDraftSaveState("unavailable");
+            setRegistrationDraftMessage(error instanceof ProductRegistrationDraftClientError && error.status === 503
+              ? "서버 초안 저장소가 아직 준비되지 않았습니다. 저장 완료로 표시하지 않았습니다."
+              : error instanceof Error ? error.message : "서버 초안을 저장하지 못했습니다. 현재 화면 입력은 유지됩니다.");
+          }
+          return;
+        }
+      }
+    } finally {
+      registrationDraftSaveInFlightRef.current = false;
     }
-    const saveTimer = window.setTimeout(() => {
-      window.sessionStorage.setItem(draftStorageKey, JSON.stringify(intake));
-    }, 250);
-    return () => window.clearTimeout(saveTimer);
-  }, [draftStorageKey, hydratedDraftStorageKey, intake, queuedJobId]);
+  }, [legacyDraftStorageKey, registrationDraftFetch, registrationDraftId, resolvedProductId]);
+
+  useEffect(() => {
+    const parsed = productRegistrationIntakeDraftSchema.safeParse(registrationDraftData);
+    if (!parsed.success) return;
+    const current = { serialized: JSON.stringify(parsed.data), data: parsed.data };
+    registrationDraftCurrentRef.current = current;
+    if (existingProductEdit || !registrationDraftHydrated || !registrationDraftId || queuedJobId
+        || registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable"
+        || current.serialized === registrationDraftLastSavedRef.current) return;
+    const timer = window.setTimeout(() => void persistRegistrationDraft(current), 500);
+    return () => window.clearTimeout(timer);
+  }, [existingProductEdit, persistRegistrationDraft, queuedJobId, registrationDraftData, registrationDraftHydrated, registrationDraftId, registrationDraftSaveState]);
 
   useEffect(() => {
     const hasIntakeChanges = (Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>)
@@ -2773,14 +2973,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         && key !== "productFactsConfirmed"
         && !Object.is(intake[key], emptyProductIntake[key]));
     const hasDraft = Boolean(mainPhoto || Object.keys(slotPhotos).length || extraPhotos.length || hasIntakeChanges);
-    if (!hasDraft || queuedJobId) return;
+    const currentServerDraft = registrationDraftCurrentRef.current?.serialized ?? "";
+    const serverDraftUnsaved = currentServerDraft !== registrationDraftLastSavedRef.current;
+    const hasBrowserOnlyPhotos = Boolean(mainPhoto || Object.keys(slotPhotos).length || extraPhotos.length);
+    if (!hasDraft || queuedJobId || (!serverDraftUnsaved && !hasBrowserOnlyPhotos)) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [extraPhotos.length, intake, mainPhoto, queuedJobId, slotPhotos]);
+  }, [extraPhotos.length, intake, mainPhoto, queuedJobId, registrationDraftSaveState, slotPhotos]);
 
   useEffect(() => {
     const previousFile = previousMainPhotoFileRef.current;
@@ -2972,12 +3175,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const historyState = isRecord(window.history.state) ? window.history.state : {};
     const params = new URLSearchParams({ view: "publishing" });
     if (initialProduct?.id) params.set("productId", initialProduct.id);
+    if (!initialProduct?.id && registrationDraftId) params.set("registrationDraftId", registrationDraftId);
     window.history.replaceState(
-      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}) },
+      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}), ...(!initialProduct?.id && registrationDraftId ? { registrationDraftId } : {}) },
       "",
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [initialProduct]);
+  }, [initialProduct, registrationDraftId]);
 
   useEffect(() => {
     void authenticatedFetch("/api/admin/templates").then(async (response) => {
@@ -2986,6 +3190,19 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setCommerceTemplates(Array.isArray(payload.templates) ? payload.templates : []);
     }).catch(() => null);
   }, [authenticatedFetch]);
+
+  const markIntakeFieldsEdited = (fields: readonly (keyof ProductIntakeDraft)[]) => {
+    const next = new Set(userEditedFieldsRef.current);
+    for (const field of fields) next.add(field);
+    userEditedFieldsRef.current = next;
+    setUserEditedFields((Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>).filter((field) => next.has(field)));
+  };
+
+  const setIntakeDecision = <Key extends keyof ProductIntakeDraftDecisions>(key: Key, confirmed: boolean) => {
+    const next = { ...intakeDecisionsRef.current, [key]: confirmed };
+    intakeDecisionsRef.current = next;
+    setIntakeDecisions(next);
+  };
 
   const applyCommerceTemplate = (template: CommerceTemplate) => {
     const numeric = (key: string, fallback: number) => typeof template.values[key] === "number" ? Number(template.values[key]) : fallback;
@@ -3000,6 +3217,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     };
     intakeRef.current = nextTemplateIntake;
     setIntake(nextTemplateIntake);
+    setIntakeDecision("shippingFeeKrw", true);
+    markIntakeFieldsEdited(["weightKg", "packageLengthCm", "packageWidthCm", "packageHeightCm", "shippingFeeKrw", "shippingRule", "packagingRule"]);
     if (firstDraftGenerated) {
       setFirstDraftReviewed(false);
       closeGeneratedProductRegistration();
@@ -3010,6 +3229,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     const currentIntake = intakeRef.current;
+    if (key !== "imageRightsConfirmed" && key !== "productFactsConfirmed") markIntakeFieldsEdited([key]);
     let nextIntake: ProductIntakeDraft = { ...currentIntake, [key]: value };
     if (key !== "imageRightsConfirmed" && key !== "productFactsConfirmed" && !Object.is(currentIntake[key], value)) {
       nextIntake.productFactsConfirmed = false;
@@ -3302,21 +3522,26 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       )
       : intakeRef.current;
     if (recovery) researchAppliedValuesRef.current = {};
+    const sellerEdited = userEditedFieldsRef.current;
+    const suggestedText = <Key extends "productName" | "sellerSku" | "categoryHint" | "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents" | "description" | "productUrl">(
+      key: Key,
+      suggestionValue: string,
+    ) => sellerEdited.has(key) || currentIntake[key].trim() ? currentIntake[key] : suggestionValue;
     const nextIntake: ProductIntakeDraft = {
       ...currentIntake,
       researchInput,
-      productName: currentIntake.productName.trim() || suggestion.productName || "",
-      sellerSku: currentIntake.sellerSku.trim() || `AUTO-${jobId.replaceAll("-", "").slice(0, 20).toUpperCase()}`,
-      categoryHint: currentIntake.categoryHint.trim() || suggestion.categoryHint || "",
-      brandName: currentIntake.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
-      manufacturer: currentIntake.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
-      countryOfOrigin: currentIntake.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
-      material: currentIntake.material.trim() || confirmedProductResearchValue(suggestion.material),
-      packageContents: currentIntake.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
-      description: currentIntake.description.trim() || confirmedProductResearchValue(suggestion.description),
-      productUrl: currentIntake.productUrl.trim() || firstReadableSource,
-      gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
-      gtin: currentIntake.gtin || suggestion.gtin || "",
+      productName: suggestedText("productName", suggestion.productName || ""),
+      sellerSku: suggestedText("sellerSku", `AUTO-${jobId.replaceAll("-", "").slice(0, 20).toUpperCase()}`),
+      categoryHint: suggestedText("categoryHint", suggestion.categoryHint || ""),
+      brandName: suggestedText("brandName", confirmedProductResearchValue(suggestion.brandName)),
+      manufacturer: suggestedText("manufacturer", confirmedProductResearchValue(suggestion.manufacturer)),
+      countryOfOrigin: suggestedText("countryOfOrigin", confirmedProductResearchValue(suggestion.countryOfOrigin)),
+      material: suggestedText("material", confirmedProductResearchValue(suggestion.material)),
+      packageContents: suggestedText("packageContents", normalizeProductSaleConfiguration(suggestion.packageContents)),
+      description: suggestedText("description", confirmedProductResearchValue(suggestion.description)),
+      productUrl: suggestedText("productUrl", firstReadableSource),
+      gtinStatus: sellerEdited.has("gtinStatus") || currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
+      gtin: sellerEdited.has("gtin") || currentIntake.gtin ? currentIntake.gtin : suggestion.gtin || "",
       productFactsConfirmed: false,
     };
     researchAppliedValuesRef.current = collectResearchAppliedValues(
@@ -4029,6 +4254,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
       return;
     }
+    const decisionErrors: Record<string, string> = {};
+    if (!intakeDecisionsRef.current.condition) decisionErrors.condition = "상품 상태를 직접 선택해 주세요.";
+    if (!intakeDecisionsRef.current.gtinStatus) decisionErrors.gtinStatus = "GTIN 유무를 직접 확인해 주세요.";
+    if (!intakeDecisionsRef.current.currency) decisionErrors.currency = "판매 통화를 직접 선택해 주세요.";
+    if (!intakeDecisionsRef.current.shippingFeeKrw) decisionErrors.shippingFeeKrw = "무료배송이면 0원, 유료배송이면 실제 금액을 입력해 주세요.";
+    if (Object.keys(decisionErrors).length) {
+      setManualErrors((current) => ({ ...current, ...decisionErrors }));
+      const message = Object.values(decisionErrors)[0] ?? "기본 선택값을 직접 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     const parsed = productIntakeSchema.safeParse(intakeRef.current);
     if (!parsed.success) {
       const errors: Record<string, string> = {};
@@ -4075,7 +4312,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     && Boolean(sourceResearchLineageReceipt)
     && firstDraftImages.length === coreFirstDraftAssetIds.length;
   const firstDraftReady = firstDraftContentReady && firstDraftReviewed;
-  const intakeReady = productIntakeSchema.safeParse(intake).success;
+  const intakeReady = isProductIntakePublicationReady(intake, intakeDecisions);
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
     Boolean(mainPhoto),
@@ -4087,14 +4324,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     isResolvedProductFact(intake.countryOfOrigin),
     isResolvedProductFact(intake.material),
     isResolvedProductFact(intake.packageContents),
-    productConditions.includes(intake.condition),
-    (intake.gtinStatus === "HAS_GTIN" && /^\d{8,14}$/.test(intake.gtin.trim()))
-      || (intake.gtinStatus === "NO_GTIN" && intake.gtin.trim() === ""),
+    intakeDecisions.condition && productConditions.includes(intake.condition),
+    intakeDecisions.gtinStatus && ((intake.gtinStatus === "HAS_GTIN" && /^\d{8,14}$/.test(intake.gtin.trim()))
+      || (intake.gtinStatus === "NO_GTIN" && intake.gtin.trim() === "")),
     intake.sellingPrice > 0,
-    productCurrencies.includes(intake.currency),
+    intakeDecisions.currency && productCurrencies.includes(intake.currency),
     intake.stock > 0,
     intake.weightKg > 0,
     intake.packageLengthCm > 0 && intake.packageWidthCm > 0 && intake.packageHeightCm > 0,
+    intakeDecisions.shippingFeeKrw,
     intake.description.trim().length >= 20,
     intake.imageRightsConfirmed,
     intake.productFactsConfirmed,
@@ -4128,6 +4366,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       <section className="publishing-layout">
         <article className="panel upload-panel">
           <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
+          <div className={`analysis-context-note registration-draft-state ${registrationDraftSaveState}`} role={registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable" ? "alert" : "status"}>
+            {registrationDraftSaveState === "saving" || registrationDraftSaveState === "initializing" ? <LoaderCircle className="spin" size={16} /> : registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable" ? <AlertTriangle size={16} /> : <CloudUpload size={16} />}
+            <span><b>{registrationDraftSaveState === "saved" ? "서버 초안 저장됨" : registrationDraftSaveState === "saving" ? "서버 초안 저장 중" : registrationDraftSaveState === "conflict" ? "서버 초안 충돌" : registrationDraftSaveState === "unavailable" ? "서버 초안 저장 확인 필요" : "서버 초안 준비"}</b><small>{registrationDraftMessage}{registrationDraftId ? ` · 초안 ${registrationDraftId.slice(0, 8)}` : ""}</small></span>
+            {registrationDraftSaveState === "unavailable" && <button type="button" className="credential-secondary" onClick={() => {
+              const hasLocalWork = userEditedFields.length > 0 || Boolean(mainPhoto) || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0;
+              const current = registrationDraftCurrentRef.current;
+              if (hasLocalWork && current) void persistRegistrationDraft(current);
+              else setRegistrationDraftLoadVersion((version) => version + 1);
+            }}>{userEditedFields.length > 0 || mainPhoto || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0 ? "저장 다시 시도" : "서버 상태 다시 확인"}</button>}
+          </div>
+          {restoredLocalPhotoCount > 0 && <p className="upload-error"><AlertCircle size={14} />이 초안에서 이전에 선택한 로컬 사진 {restoredLocalPhotoCount}장은 브라우저 보안상 복원할 수 없습니다. 상품정보는 복원됐으며 사진만 다시 선택해 주세요.</p>}
+          {(mainPhoto || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0) && <p className="product-research-help">현재 선택한 사진의 파일명·크기·역할은 서버 초안에 기록하지만 원본 File은 이 브라우저에만 있습니다. 분석 작업에 업로드되기 전에 화면을 다시 열면 사진을 재선택해야 합니다.</p>}
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
@@ -4216,12 +4466,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>라벨과 실물 기준으로 소재, 구성품, 바코드를 확인합니다.</small></div></div>
               <label className={manualErrors.material ? "field-error" : ""}><span>소재·성분 <i>필수</i></span><input required value={intake.material} maxLength={500} onChange={(event) => setIntakeField("material", event.target.value)} placeholder="예: 도자기 100%" />{manualErrors.material && <small>{manualErrors.material}</small>}</label>
               <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><select required value={intake.packageContents} onChange={(event) => setIntakeField("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select>{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
-              <label><span>상품 상태 <i>필수</i></span><select value={intake.condition} onChange={(event) => setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
-              <label><span>바코드 상태 <i>필수</i></span><select value={intake.gtinStatus} onChange={(event) => setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
+              <label className={manualErrors.condition ? "field-error" : ""}><span>상품 상태 <i>필수</i></span><select value={intakeDecisions.condition ? intake.condition : ""} onChange={(event) => { setIntakeDecision("condition", true); setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"]); }}><option value="" disabled>상태를 직접 선택하세요</option>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select>{manualErrors.condition && <small>{manualErrors.condition}</small>}</label>
+              <label className={manualErrors.gtinStatus ? "field-error" : ""}><span>바코드 상태 <i>필수</i></span><select value={intakeDecisions.gtinStatus ? intake.gtinStatus : ""} onChange={(event) => { setIntakeDecision("gtinStatus", true); setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"]); }}><option value="" disabled>GTIN 유무를 직접 확인하세요</option><option value="NO_GTIN">GTIN 없음 확인</option><option value="HAS_GTIN">GTIN 있음</option></select>{manualErrors.gtinStatus && <small>{manualErrors.gtinStatus}</small>}</label>
               {intake.gtinStatus === "HAS_GTIN" && <label className={manualErrors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC <i>필수</i></span><input inputMode="numeric" required value={intake.gtin} maxLength={14} onChange={(event) => setIntakeField("gtin", event.target.value.replace(/\D/g, ""))} placeholder="8~14자리 숫자" />{manualErrors.gtin && <small>{manualErrors.gtin}</small>}</label>}
               <div className="intake-group-heading"><span>03</span><div><b>판매·재고</b><small>기준 통화의 판매가와 실제 가용 재고를 입력합니다.</small></div></div>
               <label className={manualErrors.sellingPrice ? "field-error" : ""}><span>판매가 <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.sellingPrice || ""} onChange={(event) => setIntakeField("sellingPrice", Number(event.target.value))} placeholder="0" />{manualErrors.sellingPrice && <small>{manualErrors.sellingPrice}</small>}</label>
-              <label><span>통화 <i>필수</i></span><select value={intake.currency} onChange={(event) => setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+              <label className={manualErrors.currency ? "field-error" : ""}><span>통화 <i>필수</i></span><select value={intakeDecisions.currency ? intake.currency : ""} onChange={(event) => { setIntakeDecision("currency", true); setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"]); }}><option value="" disabled>판매 통화를 선택하세요</option>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select>{manualErrors.currency && <small>{manualErrors.currency}</small>}</label>
               <label className={manualErrors.stock ? "field-error" : ""}><span>재고 <i>필수</i></span><input type="number" required min="1" step="1" value={intake.stock || ""} onChange={(event) => setIntakeField("stock", Number(event.target.value))} placeholder="1" />{manualErrors.stock && <small>{manualErrors.stock}</small>}</label>
               <div className="intake-group-heading"><span>04</span><div><b>포장·배송 규격</b><small>운임 계산과 채널 배송 제한 검증에 사용합니다.</small></div></div>
               {commerceTemplates.length > 0 && <div className="intake-template-picker"><span><FileText size={14} />저장한 템플릿{appliedTemplate ? <em>적용: {appliedTemplate}</em> : null}</span><div>{commerceTemplates.map((template) => <button type="button" key={template.id} onClick={() => applyCommerceTemplate(template)}>{template.name}{template.is_default ? <small>기본</small> : null}</button>)}</div></div>}
@@ -4229,7 +4479,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <label className={manualErrors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageLengthCm || ""} onChange={(event) => setIntakeField("packageLengthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageLengthCm && <small>{manualErrors.packageLengthCm}</small>}</label>
               <label className={manualErrors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageWidthCm || ""} onChange={(event) => setIntakeField("packageWidthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageWidthCm && <small>{manualErrors.packageWidthCm}</small>}</label>
               <label className={manualErrors.packageHeightCm ? "field-error" : ""}><span>포장 높이 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageHeightCm || ""} onChange={(event) => setIntakeField("packageHeightCm", Number(event.target.value))} placeholder="10" />{manualErrors.packageHeightCm && <small>{manualErrors.packageHeightCm}</small>}</label>
-              <label><span>기본 배송비 KRW</span><input type="number" min="0" step="100" value={intake.shippingFeeKrw} onChange={(event) => setIntakeField("shippingFeeKrw", Number(event.target.value))} placeholder="0" /></label>
+              <label className={manualErrors.shippingFeeKrw ? "field-error" : ""}><span>기본 배송비 KRW <i>필수</i></span><input type="number" min="0" step="100" value={intakeDecisions.shippingFeeKrw ? intake.shippingFeeKrw : ""} onChange={(event) => { const entered = event.target.value; setIntakeDecision("shippingFeeKrw", entered !== ""); setIntakeField("shippingFeeKrw", entered === "" ? 0 : Number(entered)); }} placeholder="무료배송이면 0을 직접 입력" />{manualErrors.shippingFeeKrw ? <small>{manualErrors.shippingFeeKrw}</small> : <small>0원도 판매자가 직접 확인한 경우에만 무료배송으로 사용합니다.</small>}</label>
               <label><span>배송 규칙</span><input value={intake.shippingRule} maxLength={1000} onChange={(event) => setIntakeField("shippingRule", event.target.value)} placeholder="예: 결제 후 1–2영업일 내 출고" /></label>
               <label><span>포장 규칙</span><input value={intake.packagingRule} maxLength={1000} onChange={(event) => setIntakeField("packagingRule", event.target.value)} placeholder="예: 완충재 이중 포장" /></label>
             </div>
@@ -4276,7 +4526,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         onJobQueued={(jobId) => {
           setQueuedJobId(jobId);
           setActiveStage(2);
-          window.sessionStorage.removeItem(draftStorageKey);
+          window.sessionStorage.removeItem(legacyDraftStorageKey);
         }}
         onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(studioResult.product.name);

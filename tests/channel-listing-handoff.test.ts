@@ -431,7 +431,7 @@ test("workbench persists eBay policies with explicit 정책 저장 and keeps fir
   assert.doesNotMatch(source, /287802829015|287802924015|287803006015|sellerpilot-seoul/);
   assert.match(source, /normalizeEbayAspects/);
   assert.match(source, /elevenstProcessedFoodNotificationFields/);
-  assert.match(source, /채널 전송용 공통 초안/);
+  assert.match(source, /공통정보 확인 · 채널별 자동 등록/);
   assert.match(source, /국내 기준 판매가 KRW/);
   assert.doesNotMatch(source, /sell\/inventory\/v1\/inventory_item/);
   assert.doesNotMatch(source, /\/offer"/);

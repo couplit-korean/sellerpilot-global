@@ -1,3 +1,4 @@
+import { readProductRegistrationContext } from "../../../../../../lib/server-product-registration-context";
 import { readApprovedExternalDetailPublishContext } from "../../../../../../lib/server-external-detail-publish-context";
 import { readExternalDetailImportContext, externalDetailImportTarget } from "../../../../../../lib/server-external-detail-import-api";
 import { approvedExternalDetailManifest } from "../../../../../../lib/server-external-detail-manifest";
@@ -81,6 +82,17 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const productId = productIdSchema.safeParse(params.id);
   if (!productId.success) return NextResponse.json({ message: "상품 ID 형식이 올바르지 않습니다." }, { status: 400 });
 
+  const draftMode = new URL(request.url).searchParams.get("mode") === "draft";
+  let registrationContext: Record<string,unknown> | null = null;
+  let publicationBlocker: {code:string;message:string} | null = null;
+  if (draftMode) {
+    try { registrationContext = await readProductRegistrationContext(admin, productId.data); }
+    catch (error) {
+      const code = error instanceof Error ? error.message : "PRODUCT_REGISTRATION_CONTEXT_UNAVAILABLE";
+      const status = code.includes("NOT_FOUND") ? 404 : code.includes("OWNER") || code.includes("ACCESS") || code.includes("ADMIN") ? 403 : 503;
+      return NextResponse.json({code,message:"상품 편집 정보를 불러오지 못했습니다. 초안 저장소와 상품 접근 권한을 확인해 주세요."},{status,headers:{"cache-control":"no-store"}});
+    }
+  }
   let approvedExternalContext: Awaited<ReturnType<typeof readApprovedExternalDetailPublishContext>> | null = null;
   let inspectedExternalContext: Record<string, unknown> | null = null;
   let externalReadUnavailable = false;
@@ -97,19 +109,35 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     } catch (error) {
       const code = error instanceof Error ? error.message : "EXTERNAL_DETAIL_PUBLISH_READ_FAILED";
       if (code.includes("OWNER")) return NextResponse.json({code,message:"상품 소유자 권한이 필요합니다."},{status:403});
-      if (isRecord(inspectedExternalContext?.externalDetailImport)) return NextResponse.json({code,message:"현재 외부 승인 source의 상품·버전·해시를 확인하지 못했습니다."},{status:409});
+      if (isRecord(inspectedExternalContext?.externalDetailImport)) {
+        if (!draftMode) return NextResponse.json({code,message:"현재 외부 승인 source의 상품·버전·해시를 확인하지 못했습니다."},{status:409});
+        publicationBlocker = {code,message:"저장된 상세 승인과 현재 상품 정보의 연결을 확인해야 합니다. 상품 정보 입력·초안 저장은 계속할 수 있으며, 승인 연결이 복구되기 전에는 채널로 전송하지 않습니다."};
+      }
       externalReadUnavailable = true;
     }
   }
-  const [{ data, error }, { data: commerceOperations, error: operationsError }] = await Promise.all([
+  const [{ data: publishedData, error: publishedError }, { data: commerceOperations, error: operationsError }] = await Promise.all([
     approvedExternalContext ? Promise.resolve({data:approvedExternalContext,error:null}) : admin.userClient.rpc("sellerpilot_get_product_publish_context", { p_product_id: productId.data }),
     admin.userClient.rpc("sellerpilot_get_product_operations_v2", { p_product_id: productId.data }),
   ]);
+  const publishReadValid = !publishedError && isRecord(publishedData);
+  if (draftMode && !publishReadValid && !publicationBlocker) publicationBlocker = {code:"PRODUCT_PUBLICATION_REVIEW_REQUIRED",message:"상품 초안을 편집할 수 있습니다. 채널 전송 전에 AI 결과·상세 승인·필수정보 검토를 완료해 주세요."};
+  const data = registrationContext ? { ...registrationContext, ...(publishReadValid ? publishedData : {}), assignments: registrationContext.assignments } : publishedData;
+  const error = registrationContext ? null : publishedError;
   if (error || !data || typeof data !== "object" || Array.isArray(data)) {
     return NextResponse.json({ message: "상품 등록 준비 정보를 불러오지 못했습니다." }, { status: 404 });
   }
 
   const payload = data as Record<string, unknown>;
+  if (!draftMode) {
+    try { const editable = await readProductRegistrationContext(admin, productId.data); payload.assignments = editable.assignments; }
+    catch { /* Older databases retain the validated publish DTO; draft mode explicitly requires the new storage contract. */ }
+  }
+  if (registrationContext) {
+    payload.ownerId = registrationContext.ownerId;
+    payload.sourceImagePaths = registrationContext.sourceImagePaths;
+    payload.generatedImagePaths = registrationContext.generatedImagePaths;
+  }
   let externalDetailImport: unknown = null;
   let externalDetailImportStatus = "not_applicable";
   if (productId.data === externalDetailImportTarget) {
@@ -173,6 +201,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
     : payload.studioResult;
   return NextResponse.json({
     ...payload,
+    ...(draftMode ? { publicationBlocker } : {}),
     externalDetailImport,
     externalDetailImportStatus,
     studioResult,
