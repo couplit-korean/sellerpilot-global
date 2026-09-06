@@ -875,7 +875,7 @@
     "evidence_path"
   ],
   "implementation_branch": "codex/cs-completion-20260907",
-  "implementation_progress_note": "1~5차 구현 및 CS SQL6개 운영 적용. 스마트스토어 단독30일 2/2 성공. 6차 일반 메시지 접근 진단 및 쿠팡 모호한 답변 대상 차단; 전체 채널 100%는 미완료.",
+  "implementation_progress_note": "CS1~8차 구현 진행 및 신규 CS SQL7개 적용. 웹 운영은5차까지. 스마트스토어 두30일 구간 각각2/2 읽기 성공. eBay 일반 대화 페이지 원문 열람 추가, 실제권한403/자동수집·보관·답변은미완료. 전체8채널100%미완료.",
   "latest_implementation_evidence": "docs/CS-구현진행-20260907.md",
   "production_cs_migrations_applied": [
     "20260907100000",
@@ -883,19 +883,21 @@
     "20260907102000",
     "20260907103000",
     "20260907104000",
-    "20260907105000"
+    "20260907105000",
+    "20260907120000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "seventh_explicit_ebay_message_consent",
+  "implementation_checkpoint": "eighth_owned_ebay_native_message_viewer",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",
     "20260907102000",
     "20260907103000",
     "20260907104000",
-    "20260907105000"
+    "20260907105000",
+    "20260907120000"
   ],
-  "last_verified_runtime_release": "e44c61d2649dad98cba36f3028b6fa5e0a93f206",
+  "last_verified_runtime_release": "b23dc33f55352ccf886de0d49a77f2a725ace09b",
   "operational_evidence": {
     "smartstore_30_day_run": "2c72a09e-ba40-4218-a2ce-f686d1bd5679",
     "successful_read_jobs": 2,
@@ -908,13 +910,28 @@
       "recorded_scope": false,
       "status": "authorization_required",
       "general_history_imported": false
+    },
+    "smartstore_previous_30_day_run": {
+      "run_id": "4adcfc55-8765-4bd8-a7ac-f335c05b1274",
+      "range_start": "2026-07-10",
+      "range_end": "2026-08-08",
+      "successful_read_jobs": 2,
+      "failed_read_jobs": 0,
+      "remote_count": 0
+    },
+    "seventh_candidate": {
+      "release": "20c86231547c011bbd44d297f6045465bb1f76e4",
+      "deployment_id": "dpl_5XT3PLC5XQ9G9oTEAbpDkXVzQp7i",
+      "state": "BLOCKED",
+      "reason": "commit_author_deployment_permission",
+      "production_promoted": false
     }
   },
   "pending_ebay_general_history": [
-    "Production deploy 6-7",
+    "Production deploy 6-8",
     "seller consent for commerce.message",
-    "successful GET recheck",
-    "general conversation pagination/media and independent ledger",
+    "successful GET recheck with real message",
+    "automatic complete history collection and independent durable ledger",
     "exact reply and remote readback"
   ]
 }
