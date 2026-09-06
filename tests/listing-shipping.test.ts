@@ -79,6 +79,17 @@ test("shipping policy inspection prevents free/paying fee drift and unimplemente
   input.manualFields.shippingRule = "";
   input.manualFields.packagingRule = "";
   const coupang = draft("coupang", input);
+  // New Coupang-only lead-time contract; other-channel fixtures remain unchanged.
+  const coupangRule = "판매자가 확인한 주문 기준 2영업일 출고";
+  Object.assign((coupang.sellerpilotAssets as { shipping: Record<string, unknown> }).shipping, {
+    shippingRule: coupangRule,
+    shippingRuleReview: "확인",
+    coupangLeadTimeConfirmation: JSON.stringify({
+      shippingRule: coupangRule, outboundShippingTimeDay: 2, source: "coupang-wing",
+      orderDateAndCalendarConfirmed: true, approvedPromiseMatched: true, sameDayShipping: false,
+    }),
+  });
+  ((coupang.body as { items: Record<string, unknown>[] }).items[0]).outboundShippingTimeDay = 2;
   assert.doesNotThrow(() => assertListingShippingReady("coupang", coupang, "listing.create"));
   Object.assign(coupang.body as Record<string, unknown>, { deliveryChargeType: "FREE", deliveryCharge: 0 });
   assert.throws(() => assertListingShippingReady("coupang", coupang, "listing.create"), /shipping-fee-contract/);

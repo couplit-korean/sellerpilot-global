@@ -313,15 +313,17 @@ export function inventoryLedgerSnapshot(ledger: InventoryLedger): InventoryLedge
 }
 
 export function cloneInventoryLedger(ledger: InventoryLedger): InventoryLedger {
+  const reservations = ledger.reservations.map((reservation) => ({ ...reservation }));
   const cloned: InventoryLedger = {
     sku: ledger.sku,
     onHand: ledger.onHand,
     reserved: ledger.reserved,
     safetyStock: ledger.safetyStock,
     events: ledger.events.map((event) => ({ ...event })),
-    reservations: ledger.reservations.map((reservation) => ({ ...reservation })),
+    reservations,
     seenKeys: new Map(ledger.seenKeys),
-    reservationIndex: new Map(ledger.reservationIndex),
+    // Both views must reference the branch's records, never the source ledger.
+    reservationIndex: new Map(reservations.map((reservation) => [reservation.orderKey, reservation])),
   };
   return cloned;
 }

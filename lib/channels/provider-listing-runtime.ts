@@ -50,6 +50,7 @@ import {
   finalizeSmartstoreListingBody,
   smartstoreImageUploadPlan,
 } from "./smartstore-image-contract";
+import { assertSmartstoreUnitCapacity } from "./smartstore-unit-capacity";
 import {
   smartstoreExactQaRecoveryArgument,
   smartstoreExactQaRecoveryBinding,
@@ -1260,6 +1261,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
         || category.last !== true) {
       throw new Error("NAVER_LEAF_CATEGORY_PREFLIGHT_FAILED");
     }
+    assertSmartstoreUnitCapacity({ originProduct, category });
 
     const detailAttribute = recordValue(originProduct.detailAttribute) ?? {};
     const sellerCodeInfo = recordValue(detailAttribute.sellerCodeInfo) ?? {};
@@ -1374,6 +1376,21 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
         || channelSellerManagementCode !== expectedSellerManagementCode) {
       throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
     }
+    // Validate the category of the actual replacement body, not the old title
+    // or shipping weight. Do not copy historical capacity over approved input.
+    const categoryId = String(requestedOriginProduct.leafCategoryId ?? "").trim();
+    if (!/^\d+$/.test(categoryId)) throw new Error("NAVER_LEAF_CATEGORY_MISSING");
+    await input.hooks.assertLeaseHealthy();
+    const categoryRemote = await naverRequest({
+      accessToken: token.accessToken,
+      method: "GET",
+      path: `/v1/categories/${encodeURIComponent(categoryId)}`,
+    });
+    if (!categoryRemote.response.ok) throw new Error("NAVER_UNIT_CAPACITY_CATEGORY_UNVERIFIED");
+    assertSmartstoreUnitCapacity({
+      originProduct: requestedOriginProduct,
+      category: categoryRemote.data,
+    });
   }
 
   const form = new FormData();

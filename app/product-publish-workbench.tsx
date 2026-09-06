@@ -91,6 +91,7 @@ import {
   smartstoreShippingDraft,
   type ListingShippingSource,
 } from "../lib/channels/listing-shipping";
+import { resolveCoupangShippingLeadTime } from "../lib/channels/coupang-shipping-lead-time";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import {
@@ -469,7 +470,11 @@ export function workbenchExternalPublicationReady(
     && context?.externalDetailImport?.status === "approved"
     && Array.isArray(images)
     && images.length === productDetailImageCount
-    && images.every((image) => typeof image.path === "string" && image.path.length > 0 && typeof image.url === "string" && image.url.length > 0);
+    && images.every((image) => image != null
+      && typeof image.path === "string" && image.path.trim().length > 0
+      && typeof image.url === "string" && image.url.trim().length > 0)
+    && new Set(images.map((image) => image.path!.trim())).size === productDetailImageCount
+    && new Set(images.map((image) => image.url!.trim())).size === productDetailImageCount;
 }
 
 export function workbenchStudioPublicationBlocked(
@@ -904,7 +909,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         returnAddress: "",
         returnAddressDetail: "",
         requested: false,
-        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: 3, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: puckDetailHtml || plainDescription, detailType: "TEXT" }] }] }],
+        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: resolveCoupangShippingLeadTime(manual.shippingRule).outboundShippingTimeDay, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: [], attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: puckDetailHtml || plainDescription, detailType: "TEXT" }] }] }],
       },
     };
   }

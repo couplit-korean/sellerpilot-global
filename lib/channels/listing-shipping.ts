@@ -1,5 +1,6 @@
 import type { ActiveChannelKey } from "./catalog";
 import type { ListingRequirement } from "./listing-preflight";
+import { resolveCoupangShippingLeadTime } from "./coupang-shipping-lead-time";
 
 type RecordValue = Record<string, unknown>;
 export type ListingShippingSource = {
@@ -48,6 +49,7 @@ export function shippingRequirementDependsOnSource(requirement: Pick<ListingRequ
   const path = requirement.manualPath?.join(".") ?? "";
   return path.startsWith("sellerpilotAssets.shipping.")
     || /^body\.(deliveryChargeType|deliveryCharge|freeShipOverAmount)$/.test(path)
+    || /^body\.items\.\d+\.outboundShippingTimeDay$/.test(path)
     || /^body\.originProduct\.deliveryInfo\.deliveryFee\.(deliveryFeeType|baseFee|freeConditionalAmount)$/.test(path);
 }
 
@@ -126,16 +128,34 @@ function valid(run: () => unknown) {
   try { run(); return true; } catch { return false; }
 }
 
+const coupangLeadTimeConfirmationKeys = [
+  "shippingRule", "outboundShippingTimeDay", "source", "orderDateAndCalendarConfirmed",
+  "approvedPromiseMatched", "sameDayShipping",
+] as const;
+
+function coupangLeadTimeConfirmation(value: unknown): RecordValue | null {
+  let parsed = value;
+  if (typeof parsed === "string") {
+    try { parsed = JSON.parse(parsed); } catch { return null; }
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const confirmation = parsed as RecordValue;
+  const keys = Object.keys(confirmation);
+  if (keys.length !== coupangLeadTimeConfirmationKeys.length
+      || !coupangLeadTimeConfirmationKeys.every((key) => Object.hasOwn(confirmation, key))) return null;
+  return confirmation;
+}
+
 export function listingShippingRequirements(
   channel: ActiveChannelKey,
   draft: RecordValue,
   operation: "listing.create" | "listing.update",
 ): ListingRequirement[] {
   // Existing remote updates preserve provider shipping and exact recovery hashes.
-  // This metadata is only attached by new-create drafts; legacy reviewed requests
-  // are not silently rewritten or reinterpreted here.
+  // Other channels retain their legacy metadata-free contract. Coupang create
+  // cannot bypass explicit lead-time confirmation by removing shipping metadata.
   const shipping = record(at(draft, ["sellerpilotAssets", "shipping"]));
-  if (operation !== "listing.create" || !Object.keys(shipping).length) return [];
+  if (operation !== "listing.create" || (channel !== "coupang" && !Object.keys(shipping).length)) return [];
   const requirements: ListingRequirement[] = [];
   const add = (key: string, label: string, ready: boolean, manualPath?: string[], help?: string) => {
     requirements.push({ key: `shipping-${key}`, label, source: "판매자 계정", status: ready ? "ready" : "manual", manualPath, help });
@@ -149,6 +169,30 @@ export function listingShippingRequirements(
   }
   if (channel === "coupang") {
     const body = record(draft.body);
+    const confirmation = coupangLeadTimeConfirmation(shipping.coupangLeadTimeConfirmation);
+    const leadTime = resolveCoupangShippingLeadTime(shipping.shippingRule, confirmation);
+    add("lead-time-confirmation", "쿠팡 출고일 명시 확인 JSON", leadTime.status === "resolved",
+      ["sellerpilotAssets", "shipping", "coupangLeadTimeConfirmation"],
+      "정확한 JSON 객체로 shippingRule(현재 승인 문구), outboundShippingTimeDay(직접 확인한 API 일수), source=\"coupang-wing\", orderDateAndCalendarConfirmed=true, approvedPromiseMatched=true, sameDayShipping=false를 입력하세요. 주문/결제 기준·마감시간·실제 판매자 배송달력과 승인 약속을 대조해야 합니다. 일반 배송 규칙 '확인'이나 기본값은 대체 근거가 아닙니다.");
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!items.length) add("lead-time-items", "쿠팡 출고일 검증 대상 상품", false, undefined,
+      "body.items는 비어 있지 않은 배열이어야 합니다. 객체나 빈 배열로 바꾸어 출고일 검사를 생략할 수 없습니다.");
+    for (let index = 0; index < items.length; index += 1) {
+      const item = record(items[index]);
+      // Validate the actual payload field with the same helper, then compare to
+      // the separately entered receipt. Never copy the receipt's days into it.
+      const actual = resolveCoupangShippingLeadTime(shipping.shippingRule, confirmation
+        ? { ...confirmation, outboundShippingTimeDay: item.outboundShippingTimeDay }
+        : null);
+      const normalShipping = item.sameDayShipping === undefined
+        || (item.sameDayShipping !== null && typeof item.sameDayShipping === "object"
+          && !Array.isArray(item.sameDayShipping) && record(item.sameDayShipping).active === false);
+      add(`lead-time-${index}`, `쿠팡 상품 ${index + 1} 출고소요일`,
+        leadTime.status === "resolved" && actual.status === "resolved"
+          && actual.outboundShippingTimeDay === leadTime.outboundShippingTimeDay && normalShipping,
+        ["body", "items", String(index), "outboundShippingTimeDay"],
+        "WING에서 현재 승인 문구와 주문일·배송달력 기준을 대조한 양의 정수 API 일수를 직접 입력하세요. 명시 확인 JSON의 일수와 같아야 합니다. null·기본 3일·1~2영업일의 임의 2일 변환은 허용하지 않습니다. 당일출고는 별도 계약 검증이 필요합니다.");
+    }
     for (const [key, label] of [["deliveryChargeType", "배송비 유형 FREE / NOT_FREE / CONDITIONAL_FREE"], ["deliveryCharge", "기본 배송비 KRW"], ["freeShipOverAmount", "조건부 무료배송 기준 KRW"]]) {
       add(key, label, key === "deliveryChargeType" ? ["FREE", "NOT_FREE", "CONDITIONAL_FREE"].includes(text(body[key])) : listingShippingAmount(body[key]) !== null, ["body", key]);
     }

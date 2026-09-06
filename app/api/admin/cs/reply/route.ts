@@ -54,9 +54,12 @@ async function loadTicketReplyContext(
     admin.userClient.rpc("sellerpilot_get_ticket_reply_context_v2", { p_id: ticketId }),
     admin.userClient.rpc("sellerpilot_get_ticket_reply_dispatch_context", { p_id: ticketId }),
   ]);
-  const currentRecord = current.error ? null : contextRecord(current.data);
-  const dispatchRecord = dispatch.error ? null : contextRecord(dispatch.data);
-  if (!currentRecord && !dispatchRecord) return null;
+  // Dispatch data enriches provider arguments, but cannot replace the current
+  // inbound/status read. Never enqueue from a partial or failed preflight.
+  if (current.error || dispatch.error) throw new Error("CS_REPLY_CONTEXT_UNAVAILABLE");
+  const currentRecord = contextRecord(current.data);
+  const dispatchRecord = contextRecord(dispatch.data);
+  if (!currentRecord) return null;
 
   const currentProvider = objectRecord(currentRecord?.provider_context)
     ?? objectRecord(currentRecord?.reply_context);
@@ -125,7 +128,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "CS 답변 내용을 확인해 주세요." }, { status: 400, headers: noStoreHeaders });
   }
 
-  const ticket = await loadTicketReplyContext(admin, parsed.data.ticketId);
+  let ticket: Record<string, unknown> | null;
+  try {
+    ticket = await loadTicketReplyContext(admin, parsed.data.ticketId);
+  } catch {
+    return NextResponse.json(
+      { message: "최신 문의 상태를 확인하지 못했습니다. 답변은 접수하지 않았습니다. 잠시 후 문의를 새로고침해 주세요." },
+      { status: 503, headers: noStoreHeaders },
+    );
+  }
   const channel = typeof ticket?.channel_key === "string" ? ticket.channel_key as ActiveChannelKey : null;
   const environment = ticket?.environment === "sandbox" || ticket?.environment === "production"
     ? ticket.environment

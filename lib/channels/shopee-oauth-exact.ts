@@ -18,8 +18,10 @@ export function parseShopeeExactClaim(value: unknown, sessionId: string) {
   if (job.channel !== "shopee" || job.operation !== "oauth.exchange" || job.environment !== "production"
       || job.attempt_count !== 1 || job.request.shopeeExactSession !== sessionId
       || String(job.credential.partner_id) !== "2031489" || String(job.credential.shop_id) !== "1719148844"
+      || !/^\d+$/.test(String(job.request.mainAccountId))
       || String(job.request.mainAccountId) !== String(job.credential.main_account_id)
-      || !Array.isArray(job.credential.shop_ids) || new Set(job.credential.shop_ids.map(String)).size !== 8
+      || !Array.isArray(job.credential.shop_ids) || job.credential.shop_ids.length !== 8
+      || new Set(job.credential.shop_ids.map(String)).size !== 8
       || !job.credential.shop_ids.map(String).includes("1719148844")
       || job.credential.shop_ids.some((id) => !/^\d+$/.test(String(id)))) {
     throw new Error("SHOPEE_EXACT_CLAIM_INVALID");

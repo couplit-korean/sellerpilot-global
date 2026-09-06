@@ -148,7 +148,7 @@ test("Smartstore create rejects an unavailable duplicate search before image mut
     const url = String(input);
     calls.push(url);
     if (url.endsWith("/v1/categories/50001578")) {
-      return Response.json({ id: "50001578", name: "케이블 정리", last: true });
+      return Response.json({ id: "50001578", name: "케이블 정리", last: true, exceptionalCategories: [] });
     }
     if (url.endsWith("/v1/products/search")) {
       return Response.json({ code: "TEMPORARY_UNAVAILABLE" }, { status: 503 });

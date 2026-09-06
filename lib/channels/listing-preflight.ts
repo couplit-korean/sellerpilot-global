@@ -365,18 +365,52 @@ export function inspectListingDraft(
 }
 
 export function setListingDraftValue(draft: Record<string, unknown>, path: string[], value: string) {
+  const invalid = () => { throw new Error("LISTING_DRAFT_PATH_INVALID"); };
+  const isRecord = (input: unknown): input is Record<string, unknown> => {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+    const prototype = Object.getPrototypeOf(input);
+    return prototype === Object.prototype || prototype === null;
+  };
+  const isIndex = (part: string) => /^(0|[1-9]\d*)$/.test(part)
+    && Number.isSafeInteger(Number(part)) && Number(part) < 0xffff_ffff;
+  if (!isRecord(draft) || !Array.isArray(path) || !path.length) return invalid();
+  if (typeof value !== "string") throw new Error("LISTING_DRAFT_VALUE_INVALID");
+  // Validate the entire path before cloning or assigning. Never traverse an
+  // inherited property, prototype key, blank token or noncanonical index.
+  for (const part of path) {
+    if (typeof part !== "string" || !part.trim() || part !== part.trim()
+        || ["__proto__", "prototype", "constructor"].includes(part)
+        || (!Number.isNaN(Number(part)) && !isIndex(part))) return invalid();
+  }
   const clone = structuredClone(draft);
-  let current: Record<string, unknown> = clone;
-  path.forEach((part, index) => {
-    if (index === path.length - 1) {
-      current[part] = value;
-      return;
+  let current: Record<string, unknown> | unknown[] = clone;
+  for (let index = 0; index < path.length; index += 1) {
+    const part = path[index];
+    if (Array.isArray(current)) {
+      // Only existing indices or one contiguous append are supported. No sparse
+      // growth, array length mutation, or arbitrary named array properties.
+      if (!isIndex(part) || Number(part) > current.length
+          || (Number(part) < current.length && !Object.hasOwn(current, part))) return invalid();
+    } else if (!isRecord(current) || isIndex(part)) {
+      // A numeric-keyed object is not an array; do not silently repair/drop it.
+      return invalid();
     }
-    const next = current[part];
-    if (!next || typeof next !== "object" || Array.isArray(next)) current[part] = {};
-    current = current[part] as Record<string, unknown>;
-  });
-  return clone;
+    const container = current as Record<string, unknown>;
+    if (index === path.length - 1) {
+      container[part] = value;
+      return clone;
+    }
+    const nextMustBeArray = isIndex(path[index + 1]);
+    const next = Object.hasOwn(container, part) ? container[part] : undefined;
+    if (next === undefined || next === null) {
+      container[part] = nextMustBeArray ? [] : {};
+    } else if (nextMustBeArray ? !Array.isArray(next) : !isRecord(next)) {
+      // Refuse to erase a primitive, array or non-JSON container on descent.
+      return invalid();
+    }
+    current = container[part] as Record<string, unknown> | unknown[];
+  }
+  return invalid();
 }
 
 export function listingDraftValue(draft: Record<string, unknown>, path: string[]) {

@@ -170,6 +170,7 @@ const productOnly = process.argv.includes("--product-only");
 const gatewayOnly = process.argv.includes("--gateway-only");
 const aiOnly = process.argv.includes("--ai-only") || productOnly;
 const localRecoveryOnly = process.argv.includes("--local-recovery-only");
+const noScheduler = process.argv.includes("--no-scheduler");
 if (gatewayOnly && aiOnly) {
   throw new Error("--gateway-only cannot be combined with --ai-only or --product-only.");
 }
@@ -198,7 +199,8 @@ function loadWorkerToken(environmentName, keychainService) {
 
 const aiWorkerToken = gatewayOnly ? "" : loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
 const gatewayWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
-const schedulerWorkerToken = (aiOnly || localRecoveryOnly) ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
+// Opt out before reading either the environment token or Keychain. Gateway claims stay enabled.
+const schedulerWorkerToken = (aiOnly || localRecoveryOnly || noScheduler) ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
 const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
 const gatewayWorkerConfigured = isWorkerTokenConfigured(gatewayWorkerToken);
 const schedulerWorkerConfigured = isWorkerTokenConfigured(schedulerWorkerToken);
