@@ -591,7 +591,16 @@ export async function collectSmartstoreManualAdoptionReadback(
     return row.channelProducts.flatMap((candidate) => {
       const channelProduct = record(candidate);
       const channelProductNo = exactRemoteId(channelProduct.channelProductNo);
-      return channelProductNo && sellerCodeFromChannelProduct(channelProduct) === sellerSku
+      return channelProductNo
+        && allRemoteIdsIfPresentMatch(
+          [channelProduct.smartstoreChannelProductNo],
+          channelProductNo,
+        )
+        && allRemoteIdsIfPresentMatch(
+          [channelProduct.originProductNo],
+          originProductNo,
+        )
+        && sellerCodeFromChannelProduct(channelProduct) === sellerSku
         ? [{ originProductNo, channelProductNo }]
         : [];
     });
@@ -647,11 +656,16 @@ export async function collectSmartstoreManualAdoptionReadback(
   // each GET path binds one member of that pair. If an implementation returns
   // redundant identity fields, every supplied value must still match.
   if (!allRemoteIdsIfPresentMatch(
-    [origin.data.originProductNo, originProduct.originProductNo],
+    [
+      origin.data.originProductNo,
+      originProduct.originProductNo,
+      embeddedChannelProduct.originProductNo,
+    ],
     originProductNo,
   ) || !allRemoteIdsIfPresentMatch(
     [
       origin.data.smartstoreChannelProductNo,
+      origin.data.channelProductNo,
       embeddedChannelProduct.channelProductNo,
       embeddedChannelProduct.smartstoreChannelProductNo,
     ],
@@ -662,12 +676,17 @@ export async function collectSmartstoreManualAdoptionReadback(
   if (!allRemoteIdsIfPresentMatch(
     [
       channel.data.smartstoreChannelProductNo,
+      channel.data.channelProductNo,
       channelProduct.channelProductNo,
       channelProduct.smartstoreChannelProductNo,
     ],
     channelProductNo,
   ) || !allRemoteIdsIfPresentMatch(
-    [channel.data.originProductNo, channelProduct.originProductNo],
+    [
+      channel.data.originProductNo,
+      channelOriginProduct.originProductNo,
+      channelProduct.originProductNo,
+    ],
     originProductNo,
   )) {
     throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH");

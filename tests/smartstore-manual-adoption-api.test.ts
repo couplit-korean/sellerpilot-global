@@ -186,6 +186,7 @@ function providerFixture() {
     contents: [{
       originProductNo: Number(originProductNo),
       channelProducts: [{
+        originProductNo: Number(originProductNo),
         channelProductNo: Number(channelProductNo),
         sellerManagementCode: sellerSku,
       }],
@@ -674,8 +675,20 @@ for (const [label, mutate, expectedCode] of [
   ["origin response ID drift", (fixture: ReturnType<typeof providerFixture>) => {
     (fixture.origin as Record<string, unknown>).originProductNo = 99999999999;
   }, "SMARTSTORE_MANUAL_ORIGIN_IDENTITY_MISMATCH"],
+  ["origin embedded origin ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.origin.smartstoreChannelProduct as Record<string, unknown>).originProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_ORIGIN_IDENTITY_MISMATCH"],
+  ["origin top channel ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.origin as Record<string, unknown>).channelProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_ORIGIN_IDENTITY_MISMATCH"],
   ["channel response ID drift", (fixture: ReturnType<typeof providerFixture>) => {
     (fixture.channel.smartstoreChannelProduct as Record<string, unknown>).originProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH"],
+  ["channel top channel ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.channel as Record<string, unknown>).channelProductNo = 99999999999;
+  }, "SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH"],
+  ["channel origin product ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.channel.originProduct as Record<string, unknown>).originProductNo = 99999999999;
   }, "SMARTSTORE_MANUAL_CHANNEL_IDENTITY_MISMATCH"],
   ["origin seller code drift", (fixture: ReturnType<typeof providerFixture>) => {
     fixture.origin.originProduct.detailAttribute.sellerCodeInfo.sellerManagementCode = "OTHER-SKU";
@@ -720,6 +733,38 @@ for (const [label, mutate, expectedCode] of [
         && error.code === expectedCode,
     );
     assert.equal(downloads, 0);
+  });
+}
+
+for (const [label, mutate] of [
+  ["search channel origin ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.search.contents[0]!.channelProducts[0] as Record<string, unknown>).originProductNo =
+      99999999999;
+  }],
+  ["search alternate channel ID drift", (fixture: ReturnType<typeof providerFixture>) => {
+    (fixture.search.contents[0]!.channelProducts[0] as Record<string, unknown>)
+      .smartstoreChannelProductNo = 99999999999;
+  }],
+] as const) {
+  test(`${label} cannot establish the unique SELLER_CODE identity`, async () => {
+    const fixture = providerFixture();
+    mutate(fixture);
+    const calls: string[] = [];
+    await assert.rejects(
+      collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
+        accessToken: async () => "token",
+        request: async (input) => {
+          calls.push(input.path);
+          return remote(fixture.search);
+        },
+        downloadImage: async () => {
+          throw new Error("invalid search identity must not download images");
+        },
+      }),
+      (error: unknown) => error instanceof SmartstoreManualAdoptionError
+        && error.code === "SMARTSTORE_MANUAL_SEARCH_IDENTITY_MISMATCH",
+    );
+    assert.deepEqual(calls, ["/v1/products/search"]);
   });
 }
 
