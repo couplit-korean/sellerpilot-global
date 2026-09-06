@@ -114,7 +114,7 @@ function optionRows(row: Record<string, unknown>) {
     const id = option ? text(option, ["value_id", "id", "option_id"]) || name : name;
     if (id && name && !deduplicated.has(id)) deduplicated.set(id, { id, name });
   }
-  return [...deduplicated.values()].slice(0, 250);
+  return [...deduplicated.values()];
 }
 
 function attributeUnits(row: Record<string, unknown>) {

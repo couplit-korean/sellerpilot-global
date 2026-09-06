@@ -107,6 +107,35 @@ const initialState = (): ChannelState => ({
   manualCategoryPath: "",
 });
 
+const fixedCategoryMarketCodes: Record<Exclude<ActiveChannelKey, "shopee" | "lazada" | "ebay">, string> = {
+  qoo10: "JP",
+  coupang: "KR",
+  elevenst: "KR",
+  smartstore: "KR",
+  temu: "KR",
+};
+
+const fixedCategoryMarketAliases: Record<keyof typeof fixedCategoryMarketCodes, string[]> = {
+  qoo10: ["JP", "Japan", "일본", channelCatalog.qoo10.market],
+  coupang: ["KR", "Korea", "South Korea", "Republic of Korea", "한국", "대한민국", channelCatalog.coupang.market],
+  elevenst: ["KR", "Korea", "South Korea", "Republic of Korea", "한국", "대한민국", channelCatalog.elevenst.market],
+  smartstore: ["KR", "Korea", "South Korea", "Republic of Korea", "한국", "대한민국", channelCatalog.smartstore.market],
+  temu: ["KR", "Korea", "South Korea", "Republic of Korea", "한국", "대한민국", channelCatalog.temu.market],
+};
+
+export function categoryMarketCode(channel: ActiveChannelKey, market?: string) {
+  const supplied = market?.trim() ?? "";
+  if (channel === "shopee" || channel === "lazada" || channel === "ebay") {
+    return supplied.toUpperCase();
+  }
+  const canonical = fixedCategoryMarketCodes[channel];
+  if (!supplied) return canonical;
+  const normalized = supplied.toLocaleLowerCase();
+  return fixedCategoryMarketAliases[channel].some((alias) => alias.toLocaleLowerCase() === normalized)
+    ? canonical
+    : supplied.toUpperCase();
+}
+
 const categoryStateStorageKey = (productId: string) => `sellerpilot:category-workbench:${productId}:v1`;
 
 function isCredentialRow(value: unknown): value is CredentialRow {
@@ -331,7 +360,7 @@ export function categoryStatesFromAssignments(rows: unknown) {
       && assignment.is_leaf
       && hasTypedDescriptors
       && missingCategoryInputIssues(attributes, values).length === 0;
-    return [[`${assignment.channel}:${assignment.market}`, {
+    return [[`${assignment.channel}:${categoryMarketCode(assignment.channel, assignment.market)}`, {
       ...initialState(),
       phase: confirmed ? "confirmed" : "ready",
       selected,
@@ -1179,7 +1208,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
 
   const stateKey = useCallback((channel: ActiveChannelKey) => {
     const target = selectedTarget(channel);
-    return `${channel}:${target?.marketCode ?? channelCatalog[channel].market}`;
+    return `${channel}:${categoryMarketCode(channel, target?.marketCode)}`;
   }, [selectedTarget]);
 
   const marketArguments = useCallback((channel: ActiveChannelKey) => {
@@ -1418,7 +1447,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_product_name: productName,
       p_channel: channel,
       p_environment: credential.environment,
-      p_market: assignmentTarget?.marketCode ?? channelCatalog[channel].market,
+      p_market: categoryMarketCode(channel, assignmentTarget?.marketCode),
       p_category_id: selectedCategory.id,
       p_category_path: selectedCategory.path,
       p_is_leaf: state.verifiedLeaf,
@@ -1449,7 +1478,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
-    notify(`${channelCatalog[channel].name} ${assignmentTargets[0]?.marketCode ?? channelCatalog[channel].market} 카테고리와 입력한 전체 속성을 확정했습니다.`);
+    notify(`${channelCatalog[channel].name} ${categoryMarketCode(channel, assignmentTargets[0]?.marketCode)} 카테고리와 입력한 전체 속성을 확정했습니다.`);
   };
 
   return <section className="panel category-workbench">
