@@ -22,6 +22,6 @@ export function createBoundedSupabaseFetch(timeoutMs = WORKER_RPC_TIMEOUT_MS) {
     const signal = init?.signal
       ? AbortSignal.any([init.signal, timeoutSignal])
       : timeoutSignal;
-    return fetch(input, { ...init, signal });
+    return fetch(input, { ...init, redirect: "error", signal });
   };
 }

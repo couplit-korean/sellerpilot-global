@@ -92,31 +92,56 @@ async function withTimeout<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
   }
 }
 
+// Only explicit Auth rejection proves an invalid session. Network/server/JWKS
+// failures leave verification unknown; never promote unknown into permission.
+function isConfirmedInvalidSession(error: unknown): boolean {
+  const value = record(error);
+  const status = typeof value.status === "number" ? value.status : 0;
+  if (status >= 500 || status === 429 || isAbortOrTimeoutError(error)
+      || value.name === "AuthRetryableFetchError") return false;
+  if (status === 401 || status === 403) return true;
+  return value.name === "AuthSessionMissingError" || value.name === "AuthInvalidJwtError"
+    || ["bad_jwt", "invalid_jwt", "no_authorization", "session_not_found", "session_expired", "user_not_found", "user_banned"].includes(String(value.code ?? ""));
+}
+
+function authFailure(status: 401 | 403 | 503) {
+  const code = status === 401 ? "ADMIN_SESSION_INVALID"
+    : status === 403 ? "ADMIN_ACCESS_DENIED" : "ADMIN_VERIFICATION_UNAVAILABLE";
+  const message = status === 401 ? "로그인이 필요하거나 로그인 정보가 유효하지 않습니다."
+    : status === 403 ? "관리자 권한이 필요합니다."
+      : "관리자 권한 확인이 지연되고 있습니다. 권한은 아직 검증되지 않았습니다. 잠시 후 다시 확인해 주세요.";
+  return NextResponse.json({ message, code }, {
+    status, headers: { "cache-control": "no-store, max-age=0" },
+  });
+}
+
 export async function authenticateAdminRequest(request: Request, options: AdminApiOptions = {}): Promise<AdminApiContext | NextResponse> {
   const authorization = request.headers.get("authorization") ?? "";
-  const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+  const token = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
 
-  if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
+  if (!token) return authFailure(401);
   if (!supabaseUrl || !supabasePublishableKey || !secretKey) {
     return NextResponse.json({ message: "서버 보안 연결이 완료되지 않았습니다." }, { status: 503 });
   }
 
-  const userClient = createClient(supabaseUrl, supabasePublishableKey, {
-    global: {
-      headers: { Authorization: `Bearer ${token}` },
-    },
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
   try {
+    const userClient = createClient(supabaseUrl, supabasePublishableKey, {
+      global: {
+        headers: { Authorization: `Bearer ${token}` },
+      },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
     let user: User | null = null;
-    let isAdmin: unknown = false;
+    let isAdmin: unknown = null;
+    let adminHttpStatus = 0;
+    let invalidVerifiedClaims = false;
     let userError: unknown = null;
     let adminError: unknown = null;
     if (options.verifyAsymmetricClaimsLocally) {
       const authWork = Promise.all([
-        userClient.auth.getClaims(token),
-        userClient.rpc("sellerpilot_is_admin"),
+        Promise.resolve().then(() => userClient.auth.getClaims(token)).catch(error => ({ data: null, error })),
+        Promise.resolve().then(() => userClient.rpc("sellerpilot_is_admin")).catch(error => ({ data: null, error, status: 0 })),
       ]);
       const [claimsResult, adminResult] = options.timeoutMs
         ? await withTimeout(authWork, options.timeoutMs)
@@ -124,11 +149,13 @@ export async function authenticateAdminRequest(request: Request, options: AdminA
       userError = claimsResult.error;
       adminError = adminResult.error;
       isAdmin = adminResult.data;
+      adminHttpStatus = adminResult.status;
       user = claimsResult.error ? null : verifiedClaimsUser(claimsResult.data);
+      invalidVerifiedClaims = !claimsResult.error && claimsResult.data !== null && !user;
     } else {
       const authWork = Promise.all([
-        userClient.auth.getUser(token),
-        userClient.rpc("sellerpilot_is_admin"),
+        Promise.resolve().then(() => userClient.auth.getUser(token)).catch(error => ({ data: null, error })),
+        Promise.resolve().then(() => userClient.rpc("sellerpilot_is_admin")).catch(error => ({ data: null, error, status: 0 })),
       ]);
       const [userResult, adminResult] = options.timeoutMs
         ? await withTimeout(authWork, options.timeoutMs)
@@ -136,24 +163,27 @@ export async function authenticateAdminRequest(request: Request, options: AdminA
       userError = userResult.error;
       adminError = adminResult.error;
       isAdmin = adminResult.data;
-      user = userResult.data.user;
+      adminHttpStatus = adminResult.status;
+      user = userResult.data?.user ?? null;
     }
-    if (isAbortOrTimeoutError(userError) || isAbortOrTimeoutError(adminError)) {
-      return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
-    }
-    if (userError || !user || adminError || isAdmin !== true) {
-      return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
-    }
+    // Identity failure takes precedence over permission evaluation. The RPC may
+    // fail concurrently, but it must not turn a known-invalid token into a grant.
+    if (userError) return authFailure(isConfirmedInvalidSession(userError) ? 401 : 503);
+    if (invalidVerifiedClaims) return authFailure(401);
+    if (!user || !uuidPattern.test(user.id)) return authFailure(503);
+    // PGRST002/schema-cache errors, HTTP failures and malformed boolean data
+    // are unverified, even if a stale/contradictory data field says true/false.
+    if (adminError || !Number.isInteger(adminHttpStatus) || adminHttpStatus < 200 || adminHttpStatus >= 300) return authFailure(503);
+    if (isAdmin === false) return authFailure(403);
+    if (isAdmin !== true) return authFailure(503);
 
     const serviceClient = createClient(supabaseUrl, secretKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
     return { user, userClient, serviceClient };
-  } catch (error) {
-    if (isAbortOrTimeoutError(error)) {
-      return NextResponse.json({ message: "관리자 권한 확인이 지연되고 있습니다. 잠시 후 다시 확인해 주세요." }, { status: 503 });
-    }
-    throw error;
+  } catch {
+    // Fixed response only: no SDK messages, token aliases or raw exceptions.
+    return authFailure(503);
   }
 }
 
