@@ -174,6 +174,13 @@ import {
   SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "../../../../lib/channels/serverless-static-egress";
 import {
+  externalDetailApprovalBindingFromPublishContext,
+  localChannelExecutorAccess,
+  LOCAL_CHANNEL_EXECUTOR_READINESS_RPC,
+  normalizeReleaseSha,
+  parseLocalChannelExecutorReadiness,
+} from "../../../../lib/channels/local-channel-executor";
+import {
   isSmartstoreLocalReadOperation,
   resolveLocalGatewayReadReady,
 } from "../../../../lib/channels/smartstore-local-read-routing";
@@ -1547,11 +1554,71 @@ export async function POST(request: NextRequest) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  const localExecutorAccess = localChannelExecutorAccess(channel, operation);
+  let localChannelExecutorReady = false;
+  if (localExecutorAccess) {
+    const runtimeRelease = resolveRuntimeReleaseIdentity();
+    let approvalRevision: number | null = null;
+    let contentSha256: string | null = null;
+    if (localExecutorAccess === "write") {
+      try {
+        ({ approvalRevision, contentSha256 } = externalDetailApprovalBindingFromPublishContext(
+          verifiedPublishContext,
+        ));
+      } catch {
+        return NextResponse.json({
+          ok: false,
+          blockedReason: "EXTERNAL_DETAIL_APPROVAL_REVISION_INVALID",
+          mode: "external_detail_approval_revision_invalid",
+          message: "승인된 상세페이지 리비전 결속이 일치하지 않아 로컬 채널 작업을 예약하지 않았습니다.",
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+    }
+    if (runtimeRelease.status === "valid") {
+      const { data: readinessData, error: readinessError } = await serviceClient.rpc(
+        LOCAL_CHANNEL_EXECUTOR_READINESS_RPC,
+        {
+          p_owner_id: userData.user.id,
+          p_channel: channel,
+          p_operation: operation,
+          p_credential_id: parsed.data.credentialId,
+          p_product_id: parsed.data.productId ?? null,
+          p_release_sha: runtimeRelease.release,
+          p_approval_revision: approvalRevision,
+          p_content_sha256: contentSha256,
+        },
+      );
+      localChannelExecutorReady = !readinessError && Boolean(parseLocalChannelExecutorReadiness(
+        readinessData,
+        {
+          access: localExecutorAccess,
+          channel,
+          operation,
+          credentialId: parsed.data.credentialId,
+          productId: parsed.data.productId ?? null,
+          releaseSha: normalizeReleaseSha(runtimeRelease.release)!,
+          approvalRevision,
+          contentSha256,
+        },
+      ));
+    }
+    if (localExecutorAccess === "read" && !localChannelExecutorReady) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "LOCAL_CHANNEL_EXECUTOR_REQUIRED",
+        mode: "local_channel_executor_required",
+        message: "현재 릴리스·판매자·egress에 결속된 로컬 채널 작업자를 확인한 뒤 공식 카테고리 정보를 다시 조회해 주세요.",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+
   const providerMutationStaticEgressChannel = writeChannelOperations.has(operation)
     && (channel === "coupang" || channel === "elevenst")
     ? channel
     : null;
-  if (providerMutationStaticEgressChannel) {
+  if (providerMutationStaticEgressChannel && !localChannelExecutorReady) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -1623,7 +1690,7 @@ export async function POST(request: NextRequest) {
         message: localGatewayReady.message,
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-  } else if (channel === "smartstore") {
+  } else if (channel === "smartstore" && !localChannelExecutorReady) {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -2280,6 +2347,17 @@ export async function POST(request: NextRequest) {
       && releaseGateStatus.openedRelease === runtimeRelease.release
       && releaseGateStatus.qoo10AttestedRelease === runtimeRelease.release
       && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release;
+    const coupangScopedReleaseGateIsExact = !releaseGateError
+      && isRecord(releaseGateStatus)
+      && releaseGateStatus.contract === "verified_publication_release_gate_v1"
+      && typeof releaseGateStatus.coupangEffectiveOpen === "boolean"
+      && releaseGateStatus.open === true
+      && releaseGateStatus.state === "open"
+      && releaseGateStatus.openedChannel === "coupang"
+      && runtimeRelease.status === "valid"
+      && releaseGateStatus.openedRelease === runtimeRelease.release
+      && releaseGateStatus.coupangAttestedRelease === runtimeRelease.release
+      && releaseGateStatus.activeRuntimeRelease === runtimeRelease.release;
     const closedReleaseGateIsExact = !releaseGateError
       && isRecord(releaseGateStatus)
       && releaseGateStatus.contract === "verified_publication_release_gate_v1"
@@ -2288,6 +2366,7 @@ export async function POST(request: NextRequest) {
       && releaseGateStatus.openedChannel === null;
     const releaseGateStateIsExact = globalReleaseGateIsExact
       || qoo10ScopedReleaseGateIsExact
+      || coupangScopedReleaseGateIsExact
       || closedReleaseGateIsExact;
     if (!releaseGateStateIsExact) {
       return NextResponse.json({
@@ -2495,11 +2574,14 @@ export async function POST(request: NextRequest) {
       }
     }
     const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels.has(channel)
-      && (globalReleaseGateIsExact
-        ? releaseGateStatus.effectiveOpen === true
-        : channel === "qoo10"
-          && qoo10ScopedReleaseGateIsExact
-          && releaseGateStatus.qoo10EffectiveOpen === true);
+      && ((globalReleaseGateIsExact
+          ? releaseGateStatus.effectiveOpen === true
+          : channel === "qoo10"
+            && qoo10ScopedReleaseGateIsExact
+            && releaseGateStatus.qoo10EffectiveOpen === true)
+        || (channel === "coupang"
+          && coupangScopedReleaseGateIsExact
+          && releaseGateStatus.coupangEffectiveOpen === true));
     if (!channelReleaseGateIsEffective
         && !qoo10ExactLocalizationUpdatePermitArmed
         && !smartstoreExactQaUpdatePermitArmed

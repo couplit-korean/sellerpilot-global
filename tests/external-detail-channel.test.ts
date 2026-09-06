@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {bindExternalDetailChannelCopy,type ExternalDetailChannelSelection} from '../lib/server-external-detail-channel';
+import {bindExternalDetailChannelCopy,selectExternalDetailChannel,type ExternalDetailChannelSelection} from '../lib/server-external-detail-channel';
 import {listingExpectedPublicationLocale} from '../lib/channels/listing-publication-state';
 const selected=(channel:string)=>({channel,title:'Reviewed title',plain:'Reviewed plain body',html:'<p>Reviewed rich body</p>',language:'en',locale:'en-SG',sections:[{heading:'Reviewed section',body:'Reviewed body',imageAsset:'detail-overview',imageAltText:'Reviewed alt'}]} as ExternalDetailChannelSelection);
 const base=()=>({sellerpilotAssets:{classification:{displayName:'OLD DEGRADED'},localizedDetailSections:[{body:'OLD DEGRADED'}]}});
@@ -10,6 +10,18 @@ for(const channel of ['qoo10','shopee','lazada','coupang','elevenst','smartstore
 });
 test('existing market locale requirements remain authoritative, never English fallback for MY',()=>{assert.equal(listingExpectedPublicationLocale('shopee','MY'),'ms-MY');assert.equal(listingExpectedPublicationLocale('qoo10','JP'),'ja-JP');assert.equal(listingExpectedPublicationLocale('ebay','DE'),'de-DE');});
 test('long approved plain copy is rejected instead of silently dropping reviewed disclosures',()=>{assert.throws(()=>bindExternalDetailChannelCopy({...base(),body:{}},{...selected('shopee'),plain:'x'.repeat(3001)}),/CHANNEL_LIMIT/);});
+test('immutable approval revision reaches the final gateway payload and partial bindings fail closed',()=>{
+ const context=approval();
+ Object.assign(context.externalDetailImport,{approvalRevision:3,contentSha256:'b'.repeat(64)});
+ const selection=selectExternalDetailChannel(context).external;
+ assert.equal(selection.approvalRevision,3);
+ assert.equal(selection.contentSha256,'b'.repeat(64));
+ const bound=bindExternalDetailChannelCopy({...base(),params:{}},selection);
+ assert.equal((bound.sellerpilotExternalDetail as Record<string,unknown>).approvalRevision,3);
+ assert.equal((bound.sellerpilotExternalDetail as Record<string,unknown>).contentSha256,'b'.repeat(64));
+ delete context.externalDetailImport.contentSha256;
+ assert.throws(()=>selectExternalDetailChannel(context),/APPROVAL_REVISION_INVALID/);
+});
 
 import {bindExternalDetailImportRequest} from '../lib/server-external-detail-import';
 import {bindExternalDetailCopy,externalDetailDigest} from '../lib/external-detail-copy';

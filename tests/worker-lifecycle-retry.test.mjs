@@ -145,12 +145,12 @@ test("continuous transient failures stop inside the configured grace window", as
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
   const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
 
-  assert.match(source, /const workerVersion = "sellerpilot-cli-worker\/1\.60"/);
+  assert.match(source, /const workerVersion = localChannelExecutorAttestation[\s\S]*sellerpilot-cli-worker\/1\.61/);
   assert.match(source, /runVisionCutoutWithTransientRetry\(\{[\s\S]*signal: leaseSignal/);
   assert.match(source, /\[원본 픽셀 보호 재시도\] mode=\$\{retryMode\} attempt=\$\{attempt\}/);
   assert.match(source, /const aiOnly = process\.argv\.includes\("--ai-only"\)/);
   assert.match(source, /const gatewayWorkerToken = aiOnly \? "" : loadWorkerToken/);
-  assert.match(source, /const schedulerWorkerToken = \(aiOnly \|\| localRecoveryOnly\) \? "" : loadWorkerToken/);
+  assert.match(source, /const schedulerWorkerToken = \(aiOnly \|\| localRecoveryOnly \|\| noScheduler\) \? "" : loadWorkerToken/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /stage: "studio-master-repair"/);
@@ -199,7 +199,9 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(gatewayProcess, /await gatewayHeartbeat\.start\(\)/);
   assert.match(gatewayProcess, /if \(job\.channel === "temu"\) \{\s*throw new Error\("TEMU_SERVERLESS_ONLY:/);
   assert.ok(gatewayProcess.indexOf("TEMU_SERVERLESS_ONLY") < gatewayProcess.indexOf("let result;"));
-  assert.doesNotMatch(source, /api\.ipify\.org|checkip\.amazonaws\.com|SELLERPILOT_TEMU_EGRESS_IPS|SellerPilot Temu Egress IPs/);
+  assert.match(source, /captureLocalChannelExecutorAttestation[\s\S]*https:\/\/api\.ipify\.org/);
+  assert.match(source, /git[\s\S]*diff[\s\S]*--quiet[\s\S]*HEAD/);
+  assert.doesNotMatch(source, /checkip\.amazonaws\.com|SELLERPILOT_TEMU_EGRESS_IPS|SellerPilot Temu Egress IPs/);
   assert.ok((gatewayProcess.match(/await assertGatewayLeaseHealthy\(\)/g) ?? []).length >= 10);
   assert.match(gatewayProcess, /prepareMarketplaceListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: markExternalWriteStarted/);
   assert.match(listingRuntime, /prepareShopeeGlobalListing\(input\)[\s\S]*mediaMutationObserved: true/);
@@ -220,7 +222,7 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
     gatewayProcess.slice(activationContextFence, credentialPreparation),
     /activationMarkerSupplied !== \(job\.operation === "listing\.activate"\)[\s\S]*job\.channel !== "qoo10"[\s\S]*qoo10S1ActivationArgumentsValid\(operationArguments\)[\s\S]*QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED/,
   );
-  assert.match(gatewayProcess, /if \(writeChannelOperations\.has\(job\.operation\)\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeChannelOperation/);
+  assert.match(gatewayProcess, /if \(writeChannelOperations\.has\(job\.operation\)[^\n]*\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeChannelOperation/);
   assert.doesNotMatch(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
   assert.match(gatewayProcess, /status: "reconciliation_required"/);
   assert.match(gatewayProcess, /"\/api\/channel-gateway\/worker\/credential-refresh"/);

@@ -58,11 +58,12 @@ test("no-scheduler skips the actual periodic sync, competitor refresh and Kakao 
   assert.deepEqual(await periodicCalls(state), []);
   assert.equal(canRunGatewayClaim({ configured: state.gatewayWorkerConfigured, activeGatewayJobs: 0,
     maxGatewayConcurrency: 1, now: 1, claimBackoffUntil: 0, authBackoffUntil: 0 }), true);
-  const body = section('const gatewayResponse = await api("/api/channel-gateway/worker/claim", {', '        gatewayWorkerHealth?.markGatewayResponse');
+  const body = section('let gatewayResponse = await api("/api/channel-gateway/worker/claim", {', '        gatewayWorkerHealth?.markGatewayResponse');
   const requests = [];
   await vm.runInNewContext(`(async () => { ${body} })()`, {
     workerVersion: "sellerpilot-cli-worker/1.60", localRecoveryOnly: state.localRecoveryOnly,
-    api: async (path, init) => { requests.push({ path, body: JSON.parse(init.body) }); },
+    localChannelExecutorAttestation: null, localChannelExecutorClaimMode: "local_channel_executor",
+    api: async (path, init) => { requests.push({ path, body: JSON.parse(init.body) }); return { status: 204 }; },
   });
   assert.deepEqual(requests, [{ path: "/api/channel-gateway/worker/claim", body: { version: "sellerpilot-cli-worker/1.60" } }]);
 });
