@@ -2335,6 +2335,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     );
     setSmartstoreAdoptionStatus("working");
     setSmartstoreAdoptionMessage("스마트스토어 공식 조회로 기존 상품과 판매자 계보를 확인하고 있습니다.");
+    let readbackJobId = "";
     try {
       const endpoint = `/api/admin/products/${product.sourceId}/smartstore-manual-adoption`;
       let { response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
@@ -2348,7 +2349,6 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
         120_000,
         { message: "기존 스마트스토어 상품 연결 응답을 읽지 못했습니다." },
       );
-      let readbackJobId = "";
       for (;;) {
         if (response.status === 200 && response.ok) {
           const verified = parseVerifiedSmartstoreExistingAdoption(payload, product.sourceId);
@@ -2383,6 +2383,16 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       }
     } catch (error) {
       if (controller.signal.aborted) return;
+      if (scope.signal.aborted
+          && scope.signal.reason instanceof DOMException
+          && scope.signal.reason.name === "TimeoutError"
+          && readbackJobId) {
+        const message = `스마트스토어 공식 조회 작업 ${readbackJobId.slice(0, 8)}이 로컬 채널 작업기에서 계속 진행 중입니다. 연결 확인을 다시 선택하면 같은 작업 상태부터 이어서 확인합니다.`;
+        setSmartstoreAdoptionStatus("idle");
+        setSmartstoreAdoptionMessage(message);
+        notify(message);
+        return;
+      }
       const message = error instanceof Error
         ? error.message
         : "기존 스마트스토어 상품의 공식 조회와 원장 연결을 확인하지 못했습니다.";

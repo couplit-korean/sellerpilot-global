@@ -119,6 +119,7 @@ test("product and runtime UI expose safe Smartstore actions without browser-supp
   assert.match(page, /parsePendingSmartstoreExistingAdoption/);
   assert.match(page, /\{ method: "GET", cache: "no-store" \}/);
   assert.match(page, /pending\.jobId !== readbackJobId/);
+  assert.match(page, /같은 작업 상태부터 이어서 확인합니다/);
   assert.match(page, /smartstoreAdoptionControllerRef\.current\?\.abort/);
   assert.match(page, /기존 스마트스토어 상품 연결 확인/);
   assert.match(page, /신규 상품 등록 요청 없음/);
