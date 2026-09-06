@@ -12,6 +12,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /export async function GET\(request: Request\)/);
   assert.match(route, /export async function POST\(request: Request\)/);
   assert.equal((route.match(/authenticateAdminRequest\(request/g) ?? []).length, 2);
+  assert.equal((route.match(/verifyAsymmetricClaimsLocally: true/g) ?? []).length, 2);
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
   assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
@@ -22,6 +23,23 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /status: "unavailable" as const, currentRelease: null/);
   assert.match(route, /code: "runtime_release_unavailable"/);
   assert.match(route, /headers: noStoreHeaders/);
+  assert.match(route, /readGateStatusOrTimeout/);
+  assert.match(route, /배포 SHA는 확인했습니다/);
+});
+
+test("admin auth timeouts are retryable 503s, not permission 403s", async () => {
+  const adminApi = await readFile(new URL("../lib/admin-api.ts", import.meta.url), "utf8");
+  assert.match(adminApi, /function isAbortOrTimeoutError/);
+  assert.match(adminApi, /async function withTimeout/);
+  assert.doesNotMatch(adminApi, /AbortSignal\.timeout/);
+  assert.match(adminApi, /관리자 권한 확인이 지연되고 있습니다/);
+  assert.match(adminApi, /status: 503/);
+  assert.match(adminApi, /getClaims\(token\)/);
+  assert.match(adminApi, /\["ES256", "RS256"\]\.includes\(algorithm\)/);
+  assert.match(adminApi, /claims\.iss !== issuer/);
+  assert.match(adminApi, /claims\.role !== "authenticated"/);
+  assert.match(adminApi, /uuidPattern\.test\(sessionId\)/);
+  assert.match(adminApi, /expiresAt <= now/);
 });
 
 test("listing publication release actions call only the fenced service RPCs", async () => {
@@ -47,7 +65,8 @@ test("listing publication release actions call only the fenced service RPCs", as
 test("channel connection UI uses inline two-step confirmations for release writes", async () => {
   const runtimeCard = await readFile(runtimeCardUrl, "utf8");
 
-  assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release"\)/);
+  assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release"/);
+  assert.match(runtimeCard, /AbortSignal\.timeout\(40_000\)/);
   assert.match(runtimeCard, /authenticatedFetch\("\/api\/admin\/listing-publication-release", \{\s*method: "POST"/s);
   assert.match(runtimeCard, /role="alertdialog" aria-label=\{copy\.title\}/);
   assert.match(runtimeCard, />취소<\/button>/);

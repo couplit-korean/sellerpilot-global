@@ -8,6 +8,7 @@ import {
   type GatewayWorkerCompletion,
 } from "./gateway-contract";
 import { inquirySyncRequests, normalizeChannelInquiries } from "./inquiry-sync";
+import { lazadaQuarantineReady } from "./lazada-im-webhook";
 import { normalizeChannelOrders } from "./order-sync";
 import {
   executeChannelOperation,
@@ -209,6 +210,13 @@ function isEligibleClaim(
   staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
 ) {
   if (!serverlessGatewayOperationAllowed(claim.channel, claim.operation)) return false;
+  // Shopee only actually rejected the OAuth token exchange itself from the
+  // Vercel serverless source address (2026-08-30, job
+  // 177eaf2e-3e28-4757-9521-16a517ee3b93). Every other Shopee operation
+  // reuses the already-active, unexpired credential and is not IP-gated the
+  // same way, so only oauth.exchange keeps requiring the static-egress
+  // attestation; the rest of the fixed-egress channel list is unchanged.
+  if (claim.channel === "shopee" && claim.operation !== "oauth.exchange") return true;
   return !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(claim.channel)
     || staticEgressChannels.includes(claim.channel as ServerlessStaticEgressChannel);
 }
@@ -238,6 +246,13 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
       return error.message;
     }
     if (error.message === "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED") {
+      return error.message;
+    }
+    const shippingSetupCode = error.message.match(
+      /^(LISTING_SHIPPING_CONFIRMATION_REQUIRED|COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED|SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED|QOO10_UPDATE_SHIPPING_UNVERIFIED)(?::|$)/,
+    );
+    if (shippingSetupCode) return shippingSetupCode[1];
+    if (error.message === "SHOPEE_CATEGORY_READ_TOKEN_REFRESH_BLOCKED") {
       return error.message;
     }
     if (error.message === "NAVER_CREDENTIALS_MISSING") return "NAVER_AUTH_FAILED";
@@ -887,6 +902,17 @@ async function completeClaim(
   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
     storedResponse = parsed.data.result;
   }
+  const acceptedInquiryCount = normalizedInquiries?.length ?? 0;
+  if (job.channel === "lazada" && normalizedInquiries) {
+    if (!await lazadaQuarantineReady(normalizedInquiries, () => callRpc(dependencies, "sellerpilot_service_lazada_quarantine_ready", {}))) return "unavailable";
+    const ingestion = await callRpc(dependencies, "sellerpilot_service_ingest_lazada_gateway_v2", {
+      p_token_hash: gatewayTokenHash, p_job_id: job.id, p_claim_token: job.claim_token,
+      p_inquiries: normalizedInquiries,
+    });
+    const receipt = recordValue(ingestion.data);
+    if (ingestion.error || receipt?.contract !== "lazada_ingest_v2" || receipt.status !== "complete") return "unavailable";
+    normalizedInquiries = []; // Already committed; the job itself is still ownership/receipt checked below.
+  }
   if (job.operation === "orders.list" && storedResponse) {
     storedResponse = sanitizedOrderListResult(
       storedResponse as ChannelOperationResult,
@@ -896,7 +922,7 @@ async function completeClaim(
   if (job.operation === "inquiries.list" && storedResponse) {
     storedResponse = sanitizedInquiryListResult(
       storedResponse as ChannelOperationResult,
-      normalizedInquiries?.length ?? 0,
+      acceptedInquiryCount,
     );
   }
 
@@ -1054,7 +1080,10 @@ export async function runOneServerlessCsGatewayJob(
     },
     beginProviderMutation: async () => {
       await assertLeaseHealthy();
-      if (!providerMutationFenced) {
+      // Lazada pack and RTS are separate external writes. An earlier success
+      // cannot authorize RTS after ownership or cancellation changes.
+      const requiresFreshShipmentFence = job.channel === "lazada" && job.operation === "shipment.confirm";
+      if (requiresFreshShipmentFence || !providerMutationFenced) {
         await beginProviderMutation(dependencies, gatewayTokenHash, job);
         providerMutationFenced = true;
       }

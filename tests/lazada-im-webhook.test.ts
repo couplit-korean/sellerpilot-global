@@ -49,7 +49,7 @@ test("Lazada IM webhook exposes thrown transport errors and only succeeds after 
   const thrown = await persistLazadaImInquiry("credential-1", inquiry, async () => {
     throw new Error("network failed");
   });
-  const succeeded = await persistLazadaImInquiry("credential-1", inquiry, async () => ({ error: null }));
+  const succeeded = await persistLazadaImInquiry("credential-1", inquiry, async () => ({ data: { contract: "lazada_ingest_v2", status: "complete" }, error: null }));
 
   assert.deepEqual(thrown, { ok: false, status: 500 });
   assert.deepEqual(succeeded, { ok: true });

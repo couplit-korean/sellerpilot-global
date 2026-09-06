@@ -317,6 +317,7 @@ test("candidate automation bypass requires the exact runtime protection secret",
 test("the admin release route is authenticated and does not expose server secrets", async () => {
   const route = await readFile(new URL("../app/api/admin/serverless-runtime-release/route.ts", import.meta.url), "utf8");
   assert.match(route, /authenticateAdminRequest\(request/);
+  assert.match(route, /verifyAsymmetricClaimsLocally: true/);
   assert.match(route, /candidateAutomationBypassAuthorized/);
   assert.match(route, /VERCEL_AUTOMATION_BYPASS_SECRET/);
   assert.match(route, /if \(!candidateAutomationAuthorized\)[\s\S]{0,320}status: 401/);

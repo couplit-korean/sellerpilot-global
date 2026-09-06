@@ -52,6 +52,11 @@ import {
   qoo10RollbackUpdateRecoveryBinding,
 } from "./listing-update";
 import {
+  qoo10LotteShippingS1ExpectedShippingNo,
+  qoo10ShippingS1VerifierArgument,
+  qoo10ShippingS1VerifierContract,
+} from "./qoo10-lotte-shipping-s1-identity";
+import {
   normalizeTemuListingPublicationReadback,
   temuExactLongGoodsId,
   temuExactGoodsListArguments,
@@ -305,7 +310,8 @@ function sourceContext(input: VerificationInput) {
     && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
     && sourceArguments.publicationExpectedImageCount === 8;
   const exactQoo10S1Recovery = input.channel === "qoo10"
-    && input.arguments.sellerpilotQoo10ExactS1Recovery === "qoo10_exact_s1_verifier_v1"
+    && (input.arguments.sellerpilotQoo10ExactS1Recovery === "qoo10_exact_s1_verifier_v1"
+      || input.arguments[qoo10ShippingS1VerifierArgument] === qoo10ShippingS1VerifierContract)
     && source.data.sourceOperation === "listing.update"
     && Boolean(qoo10RecoveryBinding)
     && qoo10RecoveryBinding?.remoteId === remoteId
@@ -500,6 +506,13 @@ function qoo10ExactRecoveryField(record: UnknownRecord, aliases: readonly string
   const normalized = new Set(aliases.map((alias) => alias.toLowerCase()));
   const value = Object.entries(record).find(([key]) => normalized.has(key.toLowerCase()))?.[1];
   return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+
+function qoo10ExactRecoveryShippingNo(resultObject: unknown, remoteId: string) {
+  const matches = qoo10ExactRecoveryItems(resultObject, remoteId);
+  return matches.length === 1
+    ? qoo10ExactRecoveryField(matches[0] ?? {}, ["ShippingNo", "ShippingNO", "DeliveryGroupNo"])
+    : "";
 }
 
 function sha256(value: string) {
@@ -744,6 +757,29 @@ export async function executeListingPublicationVerification(
       const remoteDetailHtml = qoo10ExactRecoveryField(item, ["ItemDetail", "ItemDescription", "Description"]);
       const remoteDetailImageUrls = qoo10DetailImageUrls(remoteDetailHtml);
       const sourceSellerCodeValue = qoo10ExactRecoveryField(params, ["SellerCode"]);
+      const sourceObservedShippingNo = qoo10ExactRecoveryShippingNo(
+        recordValue(
+          recordValue(
+            responseSteps(source.sourceResponsePayload).find((item) =>
+              exactText(item.name) === "qoo10-rollback-pre-activation-readback",
+            ) ?? {},
+          ).data,
+        ).ResultObject,
+        remoteId,
+      );
+      const currentObservedShippingNo = qoo10ExactRecoveryShippingNo(
+        remote.data.ResultObject,
+        remoteId,
+      );
+      const expectedShippingNo = qoo10LotteShippingS1ExpectedShippingNo({
+        listingId: recovery.listingId,
+        remoteId: recovery.remoteId,
+        sourceJobId: recovery.sourceJobId,
+        updateJobId: source.sourceJobId,
+        requestShippingNo: exactText(params.ShippingNo),
+        confirmationShippingNo: recovery.expectedState.shippingNo,
+        observedShippingNos: [sourceObservedShippingNo, currentObservedShippingNo],
+      });
       const publication = normalizeQoo10ListingPublicationReadback({
         operation: "listing.update",
         remoteId,
@@ -754,6 +790,7 @@ export async function executeListingPublicationVerification(
         ...(sourceSellerCodeValue ? { expectedSellerCode: sourceSellerCodeValue } : {}),
         expectedRecovery: {
           ...recovery.expectedState,
+          shippingNo: expectedShippingNo,
           detailImageUrls: sourceDetailImageUrls,
         },
       });
@@ -811,6 +848,7 @@ export async function executeListingPublicationVerification(
         ? {
             expectedState: {
               ...recovery.expectedState,
+              shippingNo: expectedShippingNo,
               originType: qoo10ExactRecoveryField(params, ["ProductionPlaceType"]),
               originCode: qoo10ExactRecoveryField(params, ["ProductionPlace"]),
               adultYn: qoo10ExactRecoveryField(params, ["AdultYN"]),

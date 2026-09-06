@@ -105,7 +105,7 @@ test("product-only claim is a separate rolling-compatible route contract", async
   assert.match(worker, /const aiOnly = process\.argv\.includes\("--ai-only"\) \|\| productOnly/);
   assert.match(worker, /productOnly \? \{ scope: "product" \} : \{\}/);
   assert.match(worker, /const gatewayWorkerToken = aiOnly \? ""/);
-  assert.match(worker, /const schedulerWorkerToken = aiOnly \? ""/);
+  assert.match(worker, /const schedulerWorkerToken = \(aiOnly \|\| localRecoveryOnly\) \? ""/);
   assert.match(worker, /productOnly \? "product-only" : aiOnly \? "ai-only" : "all-scopes"/);
   assert.match(worker, /if \(productOnly && job\.claim_scope !== "product"\)/);
   assert.ok(

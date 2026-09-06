@@ -1,9 +1,11 @@
 # SellerPilot API 키·인증 운영 가이드
 
+현재 연결 사실은 [docs/현재상태.md](./현재상태.md)를 본다.
+
 ## 현재 운영 연결
 
 - Vercel 프로젝트: `sellerpilot-global` (`couplitofficial-4206` 계정)
-- Supabase 조직·프로젝트: Couplit 소유 계정으로 전환 후 최종 확정 필요
+- Supabase 조직: `couplit-korean`, 프로젝트 ref `sqaoqucxakebqkiygdxb`
 - 운영 도메인: `https://sellerpilot-global.vercel.app`
 - 인증 방식: Supabase Auth 이메일·비밀번호, 관리자 초대 전용
 - 비밀 보관: Supabase Vault, 버전별 불변 저장
@@ -29,13 +31,13 @@
 | 채널 | 필수 연결값 | 현재 수명 기준 | 안전 검사 |
 |---|---|---|---|
 | Qoo10 Japan | Seller ID, QAPI Key, 승인된 테스트 상품번호 | 콘솔 만료 표시 없음, 내부 90일 교체 권장 | 자격 형식 확인 후 승인 상품 읽기 검수 |
-| Shopee | Live Partner ID·Partner Key, Main account OAuth | Access 4시간, Refresh 30일, 승인 최대 365일 | 8개 숍별 `/api/v2/shop/get_shop_info` |
-| Lazada | App Key, App Secret, Access Token, Refresh Token, 국가 | Access 30일, Refresh 180일 | `/seller/get` 읽기 API |
+| Shopee | Live Partner ID·Partner Key, shop OAuth | Access 4시간, Refresh 30일 | `/api/v2/shop/get_shop_info`. 호출 IP를 Open Platform 화이트리스트에 등록 |
+| Lazada | 커머스 App Key/Secret/Token(137451) + IM `im_*`(137571 CS Bot) | Access 30일, Refresh 180일 | `/seller/get`. IM은 `/im/*`만 CS Bot 키 |
 | 쿠팡 | Vendor ID, Access Key, Secret Key | 180일, 만료 14일 전 재발급 | 등록상품 목록 `maxPerPage=1` |
 | 네이버 스마트스토어 | Application ID, Application Secret, SELLER, 판매자 UID | Access Token 180분, 서버 자동 재발급 | `/v1/seller/account` |
 | 서버 AI 스튜디오 | Vercel sensitive `SELLERPILOT_AI_WORKER_TOKEN`, 자동 제공 `VERCEL_OIDC_TOKEN` | Worker Token 30·90·180·365일, OIDC는 단기 자동 갱신 | AI scope 지문 일치, claim/heartbeat/receipt, 16개 이미지·34개 시장 terminal 검사 |
 
-## 2026-08-16 실제 연동 상태
+## 과거 스냅샷 (2026-08-16, 현재상태는 별도 문서)
 
 - Qoo10: 실판매자 콘솔과 등록 필드 확인 완료. QAPI 키는 Qoo10 측 발급이 필요해 아직 Vault 미등록.
 - Shopee: Couplit 앱 Online, Test·Live Redirect Domain 반영, Main account OTP와 8개 글로벌 숍 Authorized를 확인했다. 최신 `/auth` 콜백과 숍별 토큰 교환·선택·갱신 코드를 구현했고 운영 Partner Key의 Vault 입력과 보안 콜백 토큰 교환이 남았다.
@@ -76,13 +78,12 @@ Secret Key는 절대 `NEXT_PUBLIC_` 접두사를 사용하지 않는다. 새 키
 - [x] 서버 AI 런타임의 읽기 전용 상태·처리 건수·토큰 불일치 또는 만료 복구 안내 UI 구현(웹 발급·교체·원문 표시 없음)
 - [x] Vercel OIDC 서버 상품 스튜디오 claim·heartbeat·멱등 완료와 16개 이미지·26개국 계약 구현
 - [x] 연결 검사 응답의 비밀·원문 로그 차단
-- [ ] Couplit Supabase 계정 전환 후 Security/Performance Advisor 재검증
-- [ ] Couplit Supabase 프로젝트 생성 후 Vercel Publishable/Secret 환경변수 연결
-- [ ] 쿠팡 WING 비밀번호 재확인 후 180일 OpenAPI Key를 Vault에 저장하고 상품 목록 읽기 실검수
-- [ ] 네이버 Commerce API 계정·애플리케이션 생성 후 SELLER 토큰과 `/v1/seller/account` 실검수
-- [ ] Qoo10 승인 테스트 상품번호로 읽기 API 실검수
-- [ ] Shopee Partner Key를 Vault에 입력하고 Main account 콜백에서 8개 숍 토큰 교환·읽기 API 실검수
-- [ ] Lazada 고정 송신 IP 구성 후 운영 토큰을 Vault에 등록하고 실호출 통과
+- [x] Couplit Supabase 프로젝트 `sqaoqucxakebqkiygdxb`와 Vercel 환경변수 연결
+- [x] Qoo10 읽기 API 실검수
+- [x] Shopee Partner Key Vault 저장, shop_info 성공, lineage 인증. orders.list는 화이트리스트 IP 유지 필요
+- [x] Lazada 커머스 토큰 등록, CS Bot IM 토큰 분리 저장. 프로덕션 IM 라우팅 배포 대기
+- [ ] 쿠팡·네이버·11번가 static-egress/실주문 배송 쓰기
+- [ ] Temu Partner 토큰 연결
 - [ ] JEONGHUN 프로필에서 Vercel Production의 AI scope sensitive token 배치와 OIDC 서버 실호출을 확인하고, 16개 asset·34개 시장 결과를 운영 원장에서 검수
 - [ ] 웹훅 서명·중복 방지·재전송 E2E 검수
 

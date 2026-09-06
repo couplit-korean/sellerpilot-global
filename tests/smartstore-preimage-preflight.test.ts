@@ -57,6 +57,12 @@ function listingArguments(operation: "listing.create" | "listing.update") {
         detailContent: detailUrls.map((url) => `<img src="${url}" />`).join(""),
         salePrice: 5_000,
         stockQuantity: 1,
+        ...(operation === "listing.create" ? { deliveryInfo: {
+          deliveryType: "DELIVERY",
+          deliveryCompany: "CJGLS",
+          deliveryFee: { deliveryFeeType: "PAID", baseFee: 3_500, deliveryFeePayType: "PREPAID" },
+          claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3_500, exchangeDeliveryFee: 7_000, shippingAddressId: 123, returnAddressId: 456 },
+        } } : {}),
         detailAttribute: {
           sellerCodeInfo: { sellerManagementCode },
         },
@@ -73,6 +79,23 @@ const credential = {
   access_token_expires_at: "2099-01-01T00:00:00.000Z",
   after_service_phone: "02-1234-5678",
 };
+
+test("Smartstore create rejects absent or contradictory shipping before any provider request", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input) => { calls.push(String(input)); throw new Error("unexpected provider request"); };
+  try {
+    for (const deliveryInfo of [undefined, { deliveryType: "DELIVERY", deliveryFee: { deliveryFeeType: "FREE", baseFee: 3_500 } }]) {
+      const input = runtimeInput("listing.create", []);
+      const product = input.arguments.body.originProduct as Record<string, unknown>;
+      product.deliveryInfo = deliveryInfo;
+      await assert.rejects(prepareMarketplaceListingArguments(input), /SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED/);
+    }
+    assert.deepEqual(calls, []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
 
 function runtimeInput(
   operation: "listing.create" | "listing.update",
@@ -125,7 +148,7 @@ test("Smartstore create rejects an unavailable duplicate search before image mut
     const url = String(input);
     calls.push(url);
     if (url.endsWith("/v1/categories/50001578")) {
-      return Response.json({ id: "50001578", name: "케이블 정리", last: true });
+      return Response.json({ id: "50001578", name: "케이블 정리", last: true, exceptionalCategories: [] });
     }
     if (url.endsWith("/v1/products/search")) {
       return Response.json({ code: "TEMPORARY_UNAVAILABLE" }, { status: 503 });

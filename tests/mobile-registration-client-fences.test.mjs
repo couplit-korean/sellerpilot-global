@@ -32,6 +32,8 @@ test("operations snapshot composes auth, fetch, and body parsing with the bounde
   const snapshot = await source("../app/use-operations-snapshot.ts");
 
   assert.match(snapshot, /operationsSnapshotRequestTimeoutMs = 30_000/);
+  assert.match(snapshot, /OPERATIONS_TIMEOUT_RETRY_LIMIT = 2/);
+  assert.match(snapshot, /failureMessage.includes\("30초를 초과"\)/);
   assert.match(snapshot, /waitForAbortablePromise\(sessionPromise, init\.signal\)/);
   assert.match(snapshot, /headers\.set\("authorization", `Bearer \$\{accessToken\}`\)/);
   assert.match(snapshot, /createBoundedRequestSignal\([\s\S]*request\.signal/);

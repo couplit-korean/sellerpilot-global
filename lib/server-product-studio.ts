@@ -11,6 +11,7 @@ import {
   normalizeStudioResultForTerminalValidation,
   studioLocalizedChunkResultSchema,
   studioMasterResultSchema,
+  studioMasterTerminalResultSchema,
   type CliStudioResult,
 } from "./ai-cli-contract";
 import {
@@ -51,11 +52,31 @@ import {
   localizedSegmentCoverageIssue,
   mergeStudioSegmentOutputs,
   planStudioLocalizedChunks,
+  planStudioSegmentRepair,
+  studioIssuesForLocalizedChunk,
   studioMasterDetailImageRoleIssue,
   type StudioLocalizedTarget,
 } from "./studio-segment-generation";
+import {
+  createServerStudioLocalizedRepairBudget,
+  serverStudioContractRepairGuidance,
+} from "./server-studio-contract-recovery";
+import { createServerStudioGatewayCooldown } from "./server-studio-gateway-cooldown";
+import {
+  degradedSourcePhotoCatalogAssetIds,
+  isServerStudioSourcePhotoCatalogMode,
+  PREFLIGHT_ASSETS_REQUIRE_REGENERATION,
+  SERVER_STUDIO_REVIEWED_FALLBACK_NOT_COMPLETION,
+  sourcePhotoCatalogRenderRejectedReason,
+} from "./server-studio-fail-closed";
+import {
+  compositeServerStudioSettingShot,
+  resolveServerStudioContactMode,
+  ServerStudioIdentityPlateError,
+  serverStudioIdentityFailureDimensions,
+} from "./server-studio-identity";
 
-export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.3";
+export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.4";
 export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
@@ -690,17 +711,19 @@ function scopedGatewayTimeoutError(error: unknown) {
  * Logical localization and asset waves remain unchanged, but nested lanes can
  * no longer multiply their separate batch widths into one Gateway burst.
  *
- * Image work has an additional per-claim circuit. The first explicit 429 is
- * stored as the authoritative image failure and aborts queued/in-flight image
+ * One short 429 proven to precede any upstream attempt may wait for Retry-After
+ * while all new lanes pause. All other image 429s trip the per-claim circuit:
+ * the 429 remains the authoritative image failure and aborts queued/in-flight image
  * siblings before the gate releases that permit. This prevents another image
- * call from starting during the release/drain microtask and lets the reviewed
- * full-image fallback replace the final cohort atomically.
+ * call from starting during the release/drain microtask. The claim then fails
+ * closed with that original safe reason instead of completing a mosaic catalog.
  */
 function withServerStudioRemoteCallScope(
   dependencies: ServerProductStudioDependencies,
   claimSignal: AbortSignal,
 ): ServerProductStudioDependencies {
   const gate = createAbortableConcurrencyGate(SERVER_PRODUCT_STUDIO_MAX_REMOTE_CONCURRENCY);
+  const cooldown = createServerStudioGatewayCooldown();
   const imageController = new AbortController();
   let imageRateLimitFailure: ServerProductStudioError | null = null;
 
@@ -716,33 +739,44 @@ function withServerStudioRemoteCallScope(
     if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
     try {
       return await gate.run(async () => {
-        if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
-        const operationTimeoutSignal = AbortSignal.timeout(input.timeoutMs);
-        const operationSignal = AbortSignal.any([
-          queueSignal,
-          operationTimeoutSignal,
-        ]);
-        try {
-          const result = await input.call(operationSignal);
-          operationSignal.throwIfAborted();
+        for (let attempt = 0; ; attempt += 1) {
+          // Keep the existing permit while waiting so pending calls cannot form
+          // another burst. The claim deadline includes all wait and retry time.
+          await cooldown.wait(queueSignal);
           if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
-          return result;
-        } catch (error) {
-          const normalizedError = operationTimeoutSignal.aborted
-              && !claimSignal.aborted
-              && !input.signal.aborted
-              && (input.path !== "image" || !imageController.signal.aborted)
-            ? scopedGatewayTimeoutError(error)
-            : error;
-          if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(normalizedError)) {
-            imageRateLimitFailure = normalizedError;
-            imageController.abort(normalizedError);
+          const operationTimeoutSignal = AbortSignal.timeout(input.timeoutMs);
+          const operationSignal = AbortSignal.any([
+            queueSignal,
+            operationTimeoutSignal,
+          ]);
+          try {
+            const result = await input.call(operationSignal);
+            operationSignal.throwIfAborted();
+            if (input.path === "image" && imageRateLimitFailure) throw imageRateLimitFailure;
+            return result;
+          } catch (error) {
+            const normalizedError = operationTimeoutSignal.aborted
+                && !claimSignal.aborted
+                && !input.signal.aborted
+                && (input.path !== "image" || !imageController.signal.aborted)
+              ? scopedGatewayTimeoutError(error)
+              : error;
+            if (attempt === 0 && !queueSignal.aborted
+                && normalizedError instanceof ServerProductStudioError
+                && normalizedError.safeReason === "gateway_rate_limited"
+                && !normalizedError.terminal && cooldown.reserve(normalizedError.diagnostic)) {
+              continue;
+            }
+            if (input.path === "image" && !imageRateLimitFailure && isReviewedImageRateLimit(normalizedError)) {
+              imageRateLimitFailure = normalizedError;
+              imageController.abort(normalizedError);
+            }
+            if (input.path === "image" && imageRateLimitFailure
+                && isImageCircuitAbort(normalizedError, imageRateLimitFailure)) {
+              throw imageRateLimitFailure;
+            }
+            throw normalizedError;
           }
-          if (input.path === "image" && imageRateLimitFailure
-              && isImageCircuitAbort(normalizedError, imageRateLimitFailure)) {
-            throw imageRateLimitFailure;
-          }
-          throw normalizedError;
         }
       }, queueSignal);
     } catch (error) {
@@ -1523,42 +1557,6 @@ function normalizeReviewedStudioLocalizedClassification(
   };
 }
 
-function withReviewedFallbackWarnings(
-  result: z.infer<typeof cliStudioResultSchema>,
-  input: {
-    masterReason: string | null;
-    localizationReasons: readonly string[];
-    imageReason: string | null;
-    requestMode: ParsedStudioRequest["mode"];
-  },
-) {
-  const reasonLabel = (reason: string) => ({
-    gateway_rate_limited: "요청 한도(gateway_rate_limited)",
-    gateway_billing_required: "결제 필요(gateway_billing_required)",
-    gateway_timeout: "응답 시간 초과(gateway_timeout)",
-    gateway_customer_verification_required: "계정 확인 필요(gateway_customer_verification_required)",
-    studio_localization_contract_invalid: "국가별 문안 계약 불일치(studio_localization_contract_invalid)",
-    studio_terminal_contract_invalid: "최종 상세페이지 계약 불일치(studio_terminal_contract_invalid)",
-    master_transient_fallback: "마스터 문안 외부 제한",
-  }[reason] ?? reason);
-  const fallbackWarnings = [
-    ...(input.masterReason ? [
-      `외부 AI 문안 서비스의 ${reasonLabel(input.masterReason)}로 판매자가 검수한 입력만 사용해 16개 상세 섹션을 안전하게 구성했습니다. 게시 전 실물 표시사항을 다시 확인하세요.`,
-    ] : []),
-    ...(input.localizationReasons.length ? [
-      `34개 채널·국가 문안 전체는 ${input.localizationReasons.map(reasonLabel).join(", ")} 때문에 판매자가 검수한 상품명·브랜드·판매 구성·규격·가격을 보존하는 안전 문안으로 대체했습니다.`,
-    ] : []),
-    ...(input.imageReason ? [input.requestMode === "revision"
-      ? `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 수정용 원본 사진을 기준으로 역할별 이미지 16장을 모두 원본 사진 기반 중립 카탈로그 이미지로 구성했습니다.`
-      : `외부 AI 이미지 처리의 ${reasonLabel(input.imageReason)}로 사람이 승인한 1차 이미지 6장은 그대로 보존했습니다. 나머지 10장은 AI 생성 이미지가 아니라 원본 사진 기반 중립 카탈로그 이미지입니다.`,
-    ] : []),
-  ];
-  return cliStudioResultSchema.parse({
-    ...result,
-    warnings: [...new Set([...fallbackWarnings, ...result.warnings])].slice(0, 5),
-  });
-}
-
 async function callRpc(
   dependencies: ServerProductStudioDependencies,
   name: string,
@@ -1672,6 +1670,12 @@ async function restoreFirstDraftAssets(
       const path = request.preflight_asset_storage_paths[assetId];
       const lineage = request.preflight_asset_audit_lineage[assetId];
       if (!asset) throw new ServerProductStudioError("preflight_asset_id_invalid", true);
+      if (isServerStudioSourcePhotoCatalogMode(lineage.auditMode)) {
+        throw new ServerProductStudioError(PREFLIGHT_ASSETS_REQUIRE_REGENERATION, true, undefined, {
+          degradedAssetCount: 1,
+          degradedAssetIds: assetId,
+        });
+      }
       const claimToken = preflightClaimTokenFromPath(request.source_research_job_id, asset, path);
       if (!claimToken) throw new ServerProductStudioError("preflight_asset_path_invalid", true);
       const bytes = await download(path, signal);
@@ -1704,9 +1708,8 @@ async function restoreFirstDraftAssets(
         throw new ServerProductStudioError("preflight_asset_claim_mismatch", true);
       }
       // These six assets were already shown to and explicitly approved by the
-      // seller in stage one. Restore them byte-for-byte even when conservative
-      // catalog fallback layouts are visually close; every newly generated
-      // final-stage asset is still checked against all six restored fingerprints.
+      // seller in stage one. Restore them byte-for-byte. Catalog-mode lineage is
+      // rejected before this restore so degraded first-six pixels are not reused.
       if (restoredDigests.has(candidate.asset.digest)) {
         throw new ServerProductStudioError("preflight_asset_exact_duplicate", true);
       }
@@ -1726,21 +1729,19 @@ async function generateStudioMaster(
   sources: readonly ServerStudioSource[],
   dependencies: ServerProductStudioDependencies,
   signal: AbortSignal,
-  reviewedFallbackFields: ProductIntakeFields | null,
 ) {
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   let master: z.infer<typeof studioMasterResultSchema> | null = null;
-  let fallbackReason: string | null = null;
-  let fallbackDiagnostic: AiGatewayFailureDiagnostic | null = null;
   let issue = "";
   let structuralFailure: ServerProductStudioError | null = null;
+  let terminalFailure: z.ZodError | null = null;
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     const prompt = [
       buildServerStudioMasterPrompt(request),
       ...(issue ? [`이전 결과의 하드 계약 오류를 수정하세요: ${issue}`] : []),
     ].join("\n");
     try {
-      master = normalizeServerStudioMasterContract(await generate({
+      const candidate = normalizeServerStudioMasterContract(await generate({
         schema: studioMasterResultSchema,
         prompt,
         images: sources,
@@ -1748,20 +1749,24 @@ async function generateStudioMaster(
         tags: ["feature:product-studio-master", `attempt:${attempt}`],
       }));
       structuralFailure = null;
+      const validated = studioMasterTerminalResultSchema.safeParse(
+        normalizeStudioResultForTerminalValidation(candidate),
+      );
+      if (!validated.success) {
+        master = null;
+        terminalFailure = validated.error;
+        issue = serverStudioContractRepairGuidance(validated.error.issues);
+        continue;
+      }
+      master = validated.data;
+      terminalFailure = null;
     } catch (error) {
       if (error instanceof ServerProductStudioError && error.safeReason === "gateway_result_invalid") {
+        master = null;
+        terminalFailure = null;
         structuralFailure = error;
         issue = "이전 응답이 JSON 스키마를 충족하지 못했습니다. concise 구성의 8~12개 섹션, 이미지 역할 8개와 모든 필수 필드를 완전하게 반환하세요.";
         continue;
-      }
-      if (reviewedFallbackFields && !signal.aborted
-          && serverStudioAllowsReviewedTransientFallback(error)) {
-        master = buildReviewedServerStudioFallbackMaster(reviewedFallbackFields);
-        fallbackReason = (error as ServerProductStudioError).safeReason;
-        fallbackDiagnostic = (error as ServerProductStudioError).diagnostic ?? null;
-        structuralFailure = null;
-        issue = "";
-        break;
       }
       throw error;
     }
@@ -1769,19 +1774,21 @@ async function generateStudioMaster(
     if (!issue) break;
   }
   if (!master && structuralFailure) throw structuralFailure;
+  if (!master && terminalFailure) {
+    throw new ServerProductStudioError("studio_terminal_contract_invalid", true, undefined,
+      studioContractIssueLogDetails(terminalFailure));
+  }
   if (!master || issue) throw new ServerProductStudioError("studio_master_contract_invalid", true);
   const missingDedicatedEvidence = missingDedicatedEvidenceAssetIds(
     request.image_specs.map((spec) => spec.role),
   );
-  if (!missingDedicatedEvidence.length) return { master, fallbackReason, fallbackDiagnostic } as const;
+  if (!missingDedicatedEvidence.length) return { master } as const;
   const warning = `별도 후면·라벨·바코드·상하·측면 사진이 없어 ${missingDedicatedEvidence.join(", ")} 이미지는 대표사진 기반 중립 카탈로그 보기로 제한했습니다. 보이지 않는 포장 정보는 이미지 근거로 확인하지 않았습니다.`;
   return {
     master: {
       ...master,
       warnings: [warning, ...master.warnings.filter((item) => item !== warning)].slice(0, 5),
     },
-    fallbackReason,
-    fallbackDiagnostic,
   } as const;
 }
 
@@ -1795,109 +1802,87 @@ async function generateStudioLocalizedResult(
   const generate = dependencies.generateStructured ?? defaultGenerateStructured;
   const chunks = planStudioLocalizedChunks(4);
   const segments: unknown[] = new Array(chunks.length);
-  const fallbackReasons = new Set<string>();
-  const fallbackDiagnostics: AiGatewayFailureDiagnostic[] = [];
-  if (forceReviewedFallback && reviewedFallbackFields) {
-    chunks.forEach((targets, index) => {
-      segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
-    });
-    fallbackReasons.add("master_transient_fallback");
+  const repairBudget = createServerStudioLocalizedRepairBudget();
+  if (forceReviewedFallback) {
+    throw new ServerProductStudioError(SERVER_STUDIO_REVIEWED_FALLBACK_NOT_COMPLETION, true);
   }
+  const generateChunk = async (index: number, guidance = "") => {
+    signal.throwIfAborted();
+    const targets = chunks[index];
+    const schema = studioLocalizedChunkResultSchema(targets.length);
+    const segment = await generate({
+      schema,
+      prompt: [
+        buildServerStudioLocalizedPrompt(master, targets),
+        `분류 상태 계약: 모든 localizedListings[].classification.verificationStatus는 ${master.product.classification.verificationStatus}, isHealthFunctionalFood는 ${JSON.stringify(master.product.classification.isHealthFunctionalFood)} 값을 마스터에서 그대로 보존하세요.`,
+        ...(guidance ? [
+          "이 청크만 한 번 수정 생성합니다. 마스터의 상품 사실과 exact_targets는 그대로 보존하고 아래 계약 오류를 해결하세요. 다른 국가를 추가하거나 대체 문안을 사용하지 마세요.",
+          guidance,
+        ] : []),
+      ].join("\n"),
+      images: [],
+      signal,
+      tags: ["feature:product-studio-localization", `chunk:${index + 1}`, guidance ? "attempt:2" : "attempt:1"],
+    });
+    const parsed = schema.safeParse(segment);
+    if (!parsed.success) {
+      throw new ServerProductStudioError("studio_localization_contract_invalid", true, undefined,
+        studioContractIssueLogDetails(parsed.error));
+    }
+    const contractIssue = localizedSegmentCoverageIssue(parsed.data, targets)
+      || studioLocalizedClassificationIssue(master, targets, parsed.data);
+    if (contractIssue) {
+      throw new ServerProductStudioError("studio_localization_contract_invalid", true);
+    }
+    segments[index] = reviewedFallbackFields
+      ? normalizeReviewedStudioLocalizedClassification(master, targets, parsed.data, reviewedFallbackFields)
+      : parsed.data;
+  };
+  const contractFailure = (error: unknown) => error instanceof ServerProductStudioError
+    && (error.safeReason === "gateway_result_invalid"
+      || error.safeReason === "studio_localization_contract_invalid");
+
   for (let offset = 0; offset < chunks.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
-    if (forceReviewedFallback && reviewedFallbackFields) break;
-    const batchState: {
-      fallback: {
-        reason: string;
-        diagnostic: AiGatewayFailureDiagnostic | null;
-      } | null;
-    } = { fallback: null };
-    const batchController = new AbortController();
-    const batchSignal = AbortSignal.any([signal, batchController.signal]);
-    const chunkSettlements = await Promise.allSettled(chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE).map(async (targets, batchIndex) => {
-      const index = offset + batchIndex;
-      if (batchState.fallback) return;
-      let segment: unknown;
-      try {
-        segment = await generate({
-          schema: studioLocalizedChunkResultSchema(targets.length),
-          prompt: [
-            buildServerStudioLocalizedPrompt(master, targets),
-            `분류 상태 계약: 모든 localizedListings[].classification.verificationStatus는 ${master.product.classification.verificationStatus}, isHealthFunctionalFood는 ${JSON.stringify(master.product.classification.isHealthFunctionalFood)} 값을 마스터에서 그대로 보존하세요.`,
-          ].join("\n"),
-          images: [],
-          signal: batchSignal,
-          tags: ["feature:product-studio-localization", `chunk:${index + 1}`, "attempt:1"],
-        });
-      } catch (error) {
-        if (signal.aborted) throw error;
-        if (batchState.fallback && batchController.signal.aborted) return;
-        if (reviewedFallbackFields && serverStudioAllowsReviewedTransientFallback(error)) {
-          batchState.fallback = {
-            reason: (error as ServerProductStudioError).safeReason,
-            diagnostic: (error as ServerProductStudioError).diagnostic ?? null,
-          };
-          batchController.abort();
-          return;
-        }
-        throw error;
-      }
-      if (batchState.fallback) return;
-      const contractIssue = localizedSegmentCoverageIssue(segment, targets)
-        || studioLocalizedClassificationIssue(master, targets, segment);
-      if (contractIssue) {
-        if (!reviewedFallbackFields) {
-          throw new ServerProductStudioError("studio_localization_contract_invalid", true);
-        }
-        batchState.fallback = {
-          reason: "studio_localization_contract_invalid",
-          diagnostic: null,
-        };
-        batchController.abort();
-        return;
-      }
-      segments[index] = reviewedFallbackFields
-        ? normalizeReviewedStudioLocalizedClassification(
-          master,
-          targets,
-          segment,
-          reviewedFallbackFields,
-        )
-        : segment;
-    }));
-    const rejected = chunkSettlements.find(
-      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
-    );
-    if (rejected) throw rejected.reason;
-    const batchFallback = batchState.fallback;
-    if (batchFallback) {
-      signal.throwIfAborted();
-      if (!reviewedFallbackFields) {
-        throw new ServerProductStudioError("studio_localization_fallback_not_authorized", true);
-      }
-      chunks.forEach((targets, index) => {
-        segments[index] = buildReviewedStudioLocalizedSegment(master, targets, reviewedFallbackFields);
-      });
-      fallbackReasons.add(batchFallback.reason);
-      if (batchFallback.diagnostic) fallbackDiagnostics.push(batchFallback.diagnostic);
-      break;
+    const indexes = chunks.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE)
+      .map((_, index) => offset + index);
+    const settlements = await Promise.allSettled(indexes.map((index) => generateChunk(index)));
+    // Settle the whole wave before considering a repair. A concurrent 429,
+    // timeout, authentication or credit failure must never trigger more calls.
+    const failures = settlements.flatMap((settlement, index) => settlement.status === "rejected"
+      ? [{ index: indexes[index], error: settlement.reason as unknown }]
+      : []);
+    const unavailable = failures.find(({ error }) => !contractFailure(error));
+    if (unavailable) throw unavailable.error;
+    if (failures.length) {
+      if (!repairBudget.take(failures.map(({ index }) => index))) throw failures[0].error;
+      const repaired = await Promise.allSettled(failures.map(({ index }) => generateChunk(
+        index,
+        "이전 응답의 JSON 스키마, 국가·언어·중복 범위 또는 마스터 분류 상태가 일치하지 않았습니다. 모든 필수 필드와 exact_targets를 정확히 반환하세요.",
+      )));
+      const rejected = repaired.find((settlement): settlement is PromiseRejectedResult => settlement.status === "rejected");
+      if (rejected) throw rejected.reason;
     }
   }
-  let merged = mergeStudioSegmentOutputs(master, segments);
-  let parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
-  let terminalContractIssueDetails: Record<string, string | number | boolean> | null = null;
-  if (!parsed.success && reviewedFallbackFields) {
-    terminalContractIssueDetails = studioContractIssueLogDetails(parsed.error);
-    const reviewedMaster = buildReviewedServerStudioFallbackMaster(reviewedFallbackFields);
-    chunks.forEach((targets, index) => {
-      segments[index] = buildReviewedStudioLocalizedSegment(
-        reviewedMaster,
-        targets,
-        reviewedFallbackFields,
-      );
-    });
-    fallbackReasons.add("studio_terminal_contract_invalid");
-    merged = mergeStudioSegmentOutputs(reviewedMaster, segments);
-    parsed = cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(merged));
+  const validate = () => cliStudioResultSchema.safeParse(normalizeStudioResultForTerminalValidation(
+    mergeStudioSegmentOutputs(master, segments),
+  ));
+  let parsed = validate();
+  if (!parsed.success) {
+    const plan = planStudioSegmentRepair(parsed.error.issues, chunks);
+    const indexes = [...plan.localizedChunkIndexes].sort((left, right) => left - right);
+    if (!plan.repairMaster && repairBudget.take(indexes)) {
+      const issues = parsed.error.issues;
+      const repairs = await Promise.allSettled(indexes.map((index) => generateChunk(
+        index,
+        serverStudioContractRepairGuidance(
+          studioIssuesForLocalizedChunk(issues, chunks, index),
+          chunks.slice(0, index).reduce((total, targets) => total + targets.length, 0),
+        ),
+      )));
+      const rejected = repairs.find((settlement): settlement is PromiseRejectedResult => settlement.status === "rejected");
+      if (rejected) throw rejected.reason;
+      parsed = validate();
+    }
   }
   if (!parsed.success) {
     throw new ServerProductStudioError(
@@ -1909,12 +1894,6 @@ async function generateStudioLocalizedResult(
   }
   return {
     result: parsed.data,
-    fallbackReasons: [...fallbackReasons].sort(),
-    fallbackDiagnostics,
-    terminalContractIssueDetails,
-    terminalMasterFallbackReason: terminalContractIssueDetails
-      ? "studio_terminal_contract_invalid"
-      : null,
   } as const;
 }
 
@@ -1990,6 +1969,7 @@ async function resolveStudioCutout(
     source.path !== main.path && source.role.trim().toLocaleLowerCase() === "front"
   ));
   const candidates = front ? [main, front] : [main];
+  let lastError: unknown;
   for (const source of candidates) {
     try {
       const segmented = await (dependencies.segmentSource ?? defaultSegmentSource)(source, signal);
@@ -2001,29 +1981,19 @@ async function resolveStudioCutout(
         transientFallbackDiagnostic: null,
       };
     } catch (error) {
-      if (allowReviewedTransientFallback && !signal.aborted
-          && serverStudioAllowsReviewedTransientFallback(error)) {
-        return {
-          cutout: new Uint8Array(main.bytes),
-          catalogFallbackSource: main,
-          attemptedRoles: candidates.slice(0, candidates.indexOf(source) + 1).map((candidate) => candidate.role),
-          transientFallbackReason: (error as ServerProductStudioError).safeReason,
-          transientFallbackDiagnostic: (error as ServerProductStudioError).diagnostic ?? null,
-        };
+      lastError = error;
+      // Try main then front. Segmentation quality or gateway failures must not
+      // become a succeeded gray-mosaic / full-frame catalog.
+      if (!serverStudioSegmentationAllowsCatalogFallback(error)
+          && !(allowReviewedTransientFallback
+            && !signal.aborted
+            && serverStudioAllowsReviewedTransientFallback(error))) {
+        throw error;
       }
-      // Deterministic mask quality failures may fall back for every valid
-      // Studio request. Other gateway, schema and storage failures remain
-      // fail-closed unless this exact request passed the human-review fence.
-      if (!serverStudioSegmentationAllowsCatalogFallback(error)) throw error;
     }
   }
-  return {
-    cutout: new Uint8Array(main.bytes),
-    catalogFallbackSource: main,
-    attemptedRoles: candidates.map((candidate) => candidate.role),
-    transientFallbackReason: null,
-    transientFallbackDiagnostic: null,
-  };
+  if (lastError) throw lastError;
+  throw new ServerProductStudioError("product_segmentation_low_confidence", true);
 }
 
 const genericSourceRoles = new Set(["main", "front", "extra"]);
@@ -2100,50 +2070,6 @@ function sourceCatalogPlacement(asset: (typeof aiGeneratedAssetSpecs)[number]) {
   return asset.identityPolicy.placement;
 }
 
-function sourcePhotoCatalogPlacement(
-  asset: (typeof aiGeneratedAssetSpecs)[number],
-  variant: number,
-) {
-  const digest = createHash("sha256").update(`source-photo:${asset.id}:${variant}`).digest();
-  const width = 0.44 + ((digest[0] % 4) * 0.055);
-  const height = Math.min(0.72, width + 0.08 + ((digest[1] % 3) * 0.035));
-  const availableLeft = 0.94 - width;
-  const availableTop = 0.94 - height;
-  const horizontalLane = digest[2] % 3;
-  const verticalLane = digest[3] % 3;
-  return {
-    left: Number((0.03 + (availableLeft * horizontalLane / 2)).toFixed(4)),
-    top: Number((0.03 + (availableTop * verticalLane / 2)).toFixed(4)),
-    width: Number(width.toFixed(4)),
-    height: Number(height.toFixed(4)),
-  };
-}
-
-function sourcePhotoCatalogBackground(
-  asset: (typeof aiGeneratedAssetSpecs)[number],
-  variant: number,
-) {
-  const columns = 8;
-  const rows = 8;
-  const cells = Array.from({ length: columns * rows }, (_, index) => {
-    const digest = createHash("sha256")
-      .update(`source-photo-background:${asset.id}:${variant}:${index}`)
-      .digest();
-    const value = 222 + (digest[0] % 28);
-    const x = Math.floor((index % columns) * asset.width / columns);
-    const y = Math.floor(Math.floor(index / columns) * asset.height / rows);
-    const width = Math.ceil(asset.width / columns) + 1;
-    const height = Math.ceil(asset.height / rows) + 1;
-    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="rgb(${value},${value},${value})"/>`;
-  }).join("");
-  return Buffer.from(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
-      + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
-      + cells
-      + "</svg>",
-  );
-}
-
 export async function buildServerSourceEvidencePanel(
   asset: (typeof aiGeneratedAssetSpecs)[number],
   source: ServerStudioSource,
@@ -2199,16 +2125,17 @@ export async function buildServerSourceDerivedAsset(
     ? "source-evidence"
     : "source-catalog",
 ) {
+  if (renderMode === "source-photo-catalog") {
+    throw new ServerProductStudioError(sourcePhotoCatalogRenderRejectedReason(), true);
+  }
   const palette = paletteFor(asset.id, variant);
-  const background = renderMode === "source-photo-catalog"
-    ? sourcePhotoCatalogBackground(asset, variant)
-    : Buffer.from(
-      `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
-        + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
-        + `<circle cx="${15 + (variant * 17) % 70}%" cy="${18 + (variant * 23) % 64}%" r="${12 + variant * 2}%" fill="${palette.base}"/>`
-        + `<path d="M0 ${asset.height * (0.72 - variant * 0.03)} L${asset.width} ${asset.height * (0.48 + variant * 0.03)} L${asset.width} ${asset.height} L0 ${asset.height}Z" fill="${palette.accent}" opacity="0.16"/>`
-        + "</svg>",
-    );
+  const background = Buffer.from(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">`
+      + `<rect width="100%" height="100%" fill="${asset.identityPolicy.background}"/>`
+      + `<circle cx="${15 + (variant * 17) % 70}%" cy="${18 + (variant * 23) % 64}%" r="${12 + variant * 2}%" fill="${palette.base}"/>`
+      + `<path d="M0 ${asset.height * (0.72 - variant * 0.03)} L${asset.width} ${asset.height * (0.48 + variant * 0.03)} L${asset.width} ${asset.height} L0 ${asset.height}Z" fill="${palette.accent}" opacity="0.16"/>`
+      + "</svg>",
+  );
   if (renderMode === "source-evidence") {
     const panel = await buildServerSourceEvidencePanel(asset, source, variant);
     return sharp(background)
@@ -2216,9 +2143,7 @@ export async function buildServerSourceDerivedAsset(
       .png()
       .toBuffer();
   }
-  const placement = renderMode === "source-photo-catalog"
-    ? sourcePhotoCatalogPlacement(asset, variant)
-    : sourceCatalogPlacement(asset);
+  const placement = sourceCatalogPlacement(asset);
   const width = Math.max(1, Math.round(asset.width * placement.width));
   const height = Math.max(1, Math.round(asset.height * placement.height));
   const product = await sharp(cutout).resize(width, height, { fit: "contain" }).png().toBuffer();
@@ -2324,27 +2249,22 @@ async function settingShotAsset(input: {
     references,
     signal: input.signal,
   });
-  const normalizedBackground = await sharp(background, { failOn: "warning", limitInputPixels: 16_000_000 })
-    .rotate()
-    .resize(input.asset.width, input.asset.height, { fit: "cover" })
-    .png()
-    .toBuffer();
-  const placement = input.asset.identityPolicy.placement;
-  const width = Math.max(1, Math.round(input.asset.width * placement.width));
-  const height = Math.max(1, Math.round(input.asset.height * placement.height));
-  const product = await sharp(input.cutout).resize(width, height, { fit: "contain" }).png().toBuffer();
-  const bytes = await sharp(normalizedBackground)
-    .composite([{ input: product, left: Math.round(input.asset.width * placement.left), top: Math.round(input.asset.height * placement.top) }])
-    .png()
-    .toBuffer();
+  const contactMode = resolveServerStudioContactMode(input.result as CliStudioResult, input.asset.id);
+  const composed = await compositeServerStudioSettingShot({
+    background,
+    cutout: input.cutout,
+    asset: input.asset,
+    contactMode,
+    attempt: input.attempt,
+  });
   return {
-    bytes,
+    bytes: composed.bytes,
     rejectedBackground: {
       path: `rejected-background:${input.asset.id}:${input.attempt}`,
       role: `rejected-background:${input.asset.id}`,
       name: `${input.asset.id}-rejected-${input.attempt}.png`,
       mediaType: "image/png",
-      bytes: new Uint8Array(normalizedBackground),
+      bytes: new Uint8Array(composed.plate),
     } satisfies ServerStudioSource,
   };
 }
@@ -2426,29 +2346,60 @@ async function generateCandidate(input: {
   dependencies: ServerProductStudioDependencies;
   signal: AbortSignal;
 }): Promise<ServerStudioCandidateOutcome> {
-  const sourceResolution = input.catalogFallbackSource
-    && input.asset.identityPolicy.mode === "source-composite"
-    ? {
-      source: input.catalogFallbackSource,
-      auditMode: "source-photo-catalog" as const,
-      dedicatedEvidence: false,
-    }
-    : resolveServerAssetSource(input.asset, input.sources);
+  if (input.catalogFallbackSource) {
+    throw new ServerProductStudioError(sourcePhotoCatalogRenderRejectedReason(), true);
+  }
+  const sourceResolution = resolveServerAssetSource(input.asset, input.sources);
   const source = sourceResolution.source;
   const auditMode = sourceResolution.auditMode;
   const sceneRequired = auditMode === "scene-composite";
-  const generated = sceneRequired
-    ? await settingShotAsset(input)
-    : {
-      bytes: await buildServerSourceDerivedAsset(
-        input.asset,
-        source,
-        auditMode === "source-photo-catalog" ? source.bytes : input.cutout,
-        input.attempt,
-        auditMode === "source-photo-catalog" ? "source-photo-catalog" : auditMode,
-      ),
-      rejectedBackground: null,
-    };
+  let generated: { bytes: Buffer; rejectedBackground: ServerStudioSource | null };
+  try {
+    generated = sceneRequired
+      ? await settingShotAsset(input)
+      : {
+        bytes: await buildServerSourceDerivedAsset(
+          input.asset,
+          source,
+          input.cutout,
+          input.attempt,
+          auditMode === "source-evidence" ? "source-evidence" : "source-catalog",
+        ),
+        rejectedBackground: null,
+      };
+  } catch (error) {
+    if (error instanceof ServerProductStudioError) throw error;
+    if (error instanceof ServerStudioIdentityPlateError) {
+      const rejectedBackground = {
+        path: `rejected-background:${input.asset.id}:${input.attempt}`,
+        role: `rejected-background:${input.asset.id}`,
+        name: `${input.asset.id}-rejected-${input.attempt}.png`,
+        mediaType: "image/png",
+        bytes: new Uint8Array(error.plate),
+      } satisfies ServerStudioSource;
+      const fingerprint = await fingerprintAsset(input.asset.id, error.plate);
+      return {
+        status: "rejected",
+        rejection: {
+          attempt: input.attempt,
+          kind: "identity-audit",
+          digest: fingerprint.digest,
+          topologySignature: Buffer.from(fingerprint.visualHash).toString("hex"),
+          failureDimensions: [...error.failureDimensions],
+          missingTokens: [],
+          unsupportedTokens: [],
+          conflictingAssetId: null,
+          duplicateDistance: null,
+          duplicateExact: null,
+          rejectedBackground,
+        },
+      };
+    }
+    throw new ServerProductStudioError("identity_protection_failed", true, undefined, {
+      assetId: input.asset.id,
+      failureDimension: serverStudioIdentityFailureDimensions(error)[0] ?? "identity:foreground",
+    });
+  }
   const bytes = generated.bytes;
   const auditSource = auditMode === "source-evidence"
     ? await buildServerImageAuditReference(input.asset, source, input.attempt)
@@ -2573,7 +2524,12 @@ async function generateAssetWave(input: {
     }
     pending = retry;
   }
-  if (pending.length) throw new ServerProductStudioError("image_retry_exhausted", true);
+  if (pending.length) {
+    throw new ServerProductStudioError("image_retry_exhausted", true, undefined, {
+      pendingAssetIds: pending.map((asset) => asset.id).join(","),
+      lastFailureDimensions: pending.flatMap((asset) => retryLineage.get(asset.id)?.at(-1)?.failureDimensions ?? []).join(","),
+    });
+  }
 }
 
 async function generateAssetSet(input: {
@@ -2595,114 +2551,6 @@ async function generateAssetSet(input: {
       ...input,
       specs: input.specs.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE),
     });
-  }
-}
-
-async function buildReviewedSourcePhotoCatalogSet(input: {
-  specs: readonly (typeof aiGeneratedAssetSpecs)[number][];
-  sources: readonly ServerStudioSource[];
-  restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
-  jobId: string;
-  claimToken: string;
-  signal: AbortSignal;
-  touch: () => Promise<void>;
-}) {
-  // A partially completed remote lane is never mixed with this emergency
-  // catalog set. The six reviewed first-stage assets are outside `specs` and
-  // remain byte-for-byte intact; every remaining final role is rebuilt from a
-  // complete seller source frame without another provider call.
-  input.specs.forEach((asset) => input.restored.delete(asset.id));
-  for (let offset = 0; offset < input.specs.length; offset += SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE) {
-    input.signal.throwIfAborted();
-    await input.touch();
-    const batch = input.specs.slice(offset, offset + SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE);
-    const generated = await Promise.all(batch.map(async (asset) => {
-      const source = resolveServerAssetSource(asset, input.sources).source;
-      const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === asset.id);
-      for (let attempt = 1; attempt <= 8; attempt += 1) {
-        input.signal.throwIfAborted();
-        const variant = Math.max(1, assetIndex + attempt);
-        const bytes = new Uint8Array(await buildServerSourceDerivedAsset(
-          asset,
-          source,
-          source.bytes,
-          variant,
-          "source-photo-catalog",
-        ));
-        input.signal.throwIfAborted();
-        const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
-        if (metadata.width !== asset.width || metadata.height !== asset.height || metadata.format !== "png") {
-          throw new ServerProductStudioError("generated_asset_geometry_invalid", true);
-        }
-        const fingerprint = await fingerprintAsset(asset.id, bytes);
-        const conflict = findDuplicateShot(
-          fingerprint,
-          [...input.restored.values()].map((candidate) => candidate.fingerprint),
-        );
-        if (conflict) continue;
-        return {
-          id: asset.id,
-          path: aiGeneratedAssetPath(input.jobId, asset, input.claimToken),
-          bytes,
-          digest: fingerprint.digest,
-          fingerprint,
-          auditMode: "source-photo-catalog" as const,
-        } satisfies ServerStudioAsset;
-      }
-      throw new ServerProductStudioError("deterministic_catalog_duplicate_exhausted", true);
-    }));
-    // Resolve conflicts inside the same batch deterministically. In the rare
-    // event two entries collide, rebuild the later entry in a subsequent
-    // single-item pass rather than accepting a near duplicate.
-    for (const asset of generated) {
-      const conflict = findDuplicateShot(
-        asset.fingerprint,
-        [...input.restored.values()].map((candidate) => candidate.fingerprint),
-      );
-      if (conflict) {
-        const spec = input.specs.find((candidate) => candidate.id === asset.id);
-        if (!spec) throw new ServerProductStudioError("remaining_asset_contract_invalid", true);
-        let replacement: ServerStudioAsset | null = null;
-        const source = resolveServerAssetSource(spec, input.sources).source;
-        const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === spec.id);
-        for (let attempt = 9; attempt <= 16; attempt += 1) {
-          input.signal.throwIfAborted();
-          const bytes: Uint8Array = new Uint8Array(await buildServerSourceDerivedAsset(
-            spec,
-            source,
-            source.bytes,
-            assetIndex + attempt,
-            "source-photo-catalog",
-          ));
-          input.signal.throwIfAborted();
-          const metadata: { width?: number; height?: number; format?: string } = await sharp(
-            bytes,
-            { failOn: "warning", limitInputPixels: 16_000_000 },
-          ).metadata();
-          if (metadata.width !== spec.width || metadata.height !== spec.height || metadata.format !== "png") {
-            throw new ServerProductStudioError("generated_asset_geometry_invalid", true);
-          }
-          const fingerprint = await fingerprintAsset(spec.id, bytes);
-          if (findDuplicateShot(
-            fingerprint,
-            [...input.restored.values()].map((candidate) => candidate.fingerprint),
-          )) continue;
-          replacement = {
-            id: spec.id,
-            path: aiGeneratedAssetPath(input.jobId, spec, input.claimToken),
-            bytes,
-            digest: fingerprint.digest,
-            fingerprint,
-            auditMode: "source-photo-catalog",
-          };
-          break;
-        }
-        if (!replacement) throw new ServerProductStudioError("deterministic_catalog_duplicate_exhausted", true);
-        input.restored.set(replacement.id, replacement);
-      } else {
-        input.restored.set(asset.id, asset);
-      }
-    }
   }
 }
 
@@ -2799,6 +2647,17 @@ async function runFullStudioClaim(
     throw new ServerProductStudioError("studio_request_invalid", true);
   }
   const request = parsedRequest.data;
+  if (parsedRequest.mode === "preflight") {
+    const degradedAssetIds = degradedSourcePhotoCatalogAssetIds(
+      parsedRequest.data.preflight_asset_audit_lineage,
+    );
+    if (degradedAssetIds.length) {
+      throw new ServerProductStudioError(PREFLIGHT_ASSETS_REQUIRE_REGENERATION, true, undefined, {
+        degradedAssetCount: degradedAssetIds.length,
+        degradedAssetIds: degradedAssetIds.join(",").slice(0, 200),
+      });
+    }
+  }
   const reviewedFallbackFields = reviewedStudioFallbackFields(
     parsedRequest,
     claim.revision_fallback_authorized,
@@ -2814,7 +2673,7 @@ async function runFullStudioClaim(
 
   await touchClaim(dependencies, claim.id, claim.claim_token);
   const [masterSettlement, cutoutSettlement, restoredSettlement] = await Promise.allSettled([
-    generateStudioMaster(request, sources, dependencies, signal, reviewedFallbackFields),
+    generateStudioMaster(request, sources, dependencies, signal),
     resolveStudioCutout(sources, dependencies, signal, Boolean(reviewedFallbackFields)),
     parsedRequest.mode === "preflight"
       ? restoreFirstDraftAssets(parsedRequest.data, dependencies.download, signal)
@@ -2833,12 +2692,6 @@ async function runFullStudioClaim(
     path: "master" | "localization" | "image";
     diagnostic: AiGatewayFailureDiagnostic;
   }> = [];
-  if (masterGeneration.fallbackDiagnostic) {
-    gatewayFallbackDiagnostics.push({
-      path: "master",
-      diagnostic: masterGeneration.fallbackDiagnostic,
-    });
-  }
   if (cutoutResolution.transientFallbackDiagnostic) {
     gatewayFallbackDiagnostics.push({
       path: "image",
@@ -2866,101 +2719,49 @@ async function runFullStudioClaim(
     dependencies,
     signal,
     reviewedFallbackFields,
-    Boolean(masterGeneration.fallbackReason),
+    false,
   );
-  let localization: Awaited<ReturnType<typeof generateStudioLocalizedResult>>;
-  let imageFallbackReason = cutoutResolution.transientFallbackReason;
-  if (imageFallbackReason) {
-    localization = await localizationPromise;
-    await buildReviewedSourcePhotoCatalogSet({
-      specs: finalSpecs,
+  if (cutoutResolution.transientFallbackReason || cutoutResolution.catalogFallbackSource) {
+    throw new ServerProductStudioError(
+      cutoutResolution.transientFallbackReason ?? sourcePhotoCatalogRenderRejectedReason(),
+      true,
+      cutoutResolution.transientFallbackDiagnostic ?? undefined,
+    );
+  }
+  const settlements = await Promise.allSettled([
+    localizationPromise,
+    generateAssetSet({
+      result: master,
+      specs: settingSpecs,
       sources,
+      cutout: cutoutResolution.cutout,
       restored: generated,
       jobId: claim.id,
       claimToken: claim.claim_token,
+      dependencies,
       signal,
       touch,
-    });
-  } else {
-    const settlements = await Promise.allSettled([
-      localizationPromise,
-      generateAssetSet({
-        result: master,
-        specs: settingSpecs,
-        sources,
-        cutout: cutoutResolution.cutout,
-        catalogFallbackSource: cutoutResolution.catalogFallbackSource,
-        restored: generated,
-        jobId: claim.id,
-        claimToken: claim.claim_token,
-        dependencies,
-        signal,
-        touch,
-      }),
-      generateAssetSet({
-        result: master,
-        specs: sourceSpecs,
-        sources,
-        cutout: cutoutResolution.cutout,
-        catalogFallbackSource: cutoutResolution.catalogFallbackSource,
-        restored: generated,
-        jobId: claim.id,
-        claimToken: claim.claim_token,
-        dependencies,
-        signal,
-        touch,
-      }),
-    ] as const);
-    if (settlements[0].status === "rejected") throw settlements[0].reason;
-    localization = settlements[0].value;
-    const imageFailures = settlements.slice(1).filter(
-      (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
-    );
-    const disallowedFailure = imageFailures.find((failure) => (
-      !reviewedFallbackFields || signal.aborted
-      || !serverStudioAllowsReviewedTransientFallback(failure.reason)
-    ));
-    if (disallowedFailure) throw disallowedFailure.reason;
-    if (imageFailures.length) {
-      imageFallbackReason = (imageFailures[0].reason as ServerProductStudioError).safeReason;
-      for (const failure of imageFailures) {
-        const diagnostic = (failure.reason as ServerProductStudioError).diagnostic;
-        if (diagnostic) gatewayFallbackDiagnostics.push({ path: "image", diagnostic });
-      }
-      await buildReviewedSourcePhotoCatalogSet({
-        specs: finalSpecs,
-        sources,
-        restored: generated,
-        jobId: claim.id,
-        claimToken: claim.claim_token,
-        signal,
-        touch,
-      });
-    }
-  }
-  gatewayFallbackDiagnostics.push(...localization.fallbackDiagnostics.map((diagnostic) => ({
-    path: "localization" as const,
-    diagnostic,
-  })));
-  if (localization.terminalContractIssueDetails) {
-    try {
-      logError("terminal_contract_fallback", {
-        ...localization.terminalContractIssueDetails,
-        kind: claim.kind,
-      });
-    } catch {
-      // Safe deterministic recovery remains authoritative even if diagnostic
-      // logging is unavailable.
-    }
-  }
-  const effectiveMasterFallbackReason = localization.terminalMasterFallbackReason
-    ?? masterGeneration.fallbackReason;
-  const result = withReviewedFallbackWarnings(localization.result, {
-    masterReason: effectiveMasterFallbackReason,
-    localizationReasons: localization.fallbackReasons,
-    imageReason: imageFallbackReason,
-    requestMode: parsedRequest.mode,
-  });
+    }),
+    generateAssetSet({
+      result: master,
+      specs: sourceSpecs,
+      sources,
+      cutout: cutoutResolution.cutout,
+      restored: generated,
+      jobId: claim.id,
+      claimToken: claim.claim_token,
+      dependencies,
+      signal,
+      touch,
+    }),
+  ] as const);
+  if (settlements[0].status === "rejected") throw settlements[0].reason;
+  const localization = settlements[0].value;
+  const imageFailures = settlements.slice(1).filter(
+    (settlement): settlement is PromiseRejectedResult => settlement.status === "rejected",
+  );
+  if (imageFailures.length) throw imageFailures[0].reason;
+  const result = localization.result;
   const primaryFallbackDiagnostic = gatewayFallbackDiagnostics[0];
   if (primaryFallbackDiagnostic) {
     try {
@@ -2971,8 +2772,7 @@ async function runFullStudioClaim(
         fallbackCount: gatewayFallbackDiagnostics.length,
       });
     } catch {
-      // Observability must never turn a safely reconstructed, reviewed result
-      // back into a failed job.
+      // Observability must never turn a completed result back into a failed job.
     }
   }
   if (generated.size !== aiGeneratedAssetSpecs.length) {
@@ -3002,16 +2802,6 @@ async function runFullStudioClaim(
         generated.get(asset.id)?.auditMode ?? "unrecorded",
       ])),
       segmentation_attempted_roles: cutoutResolution.attemptedRoles,
-      ...((effectiveMasterFallbackReason
-          || localization.fallbackReasons.length
-          || imageFallbackReason) ? {
-          deterministic_fallback: {
-            reviewedInputOnly: true,
-            masterReason: effectiveMasterFallbackReason,
-            localizationReasons: localization.fallbackReasons,
-            imageReason: imageFallbackReason,
-          },
-        } : {}),
     },
     errorMessage: null,
   });

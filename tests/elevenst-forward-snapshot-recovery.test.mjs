@@ -65,8 +65,11 @@ async function databaseBeforeForwardMigration() {
   const names = (await readdir(migrationUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  assert.ok(names.includes(migrationName));
   for (const name of names) {
-    if (name === legacyRecoveryMigration || name === migrationName) continue;
+    // Reconstruct the state before this forward migration, not future overlays.
+    if (name >= migrationName) break;
+    if (name === legacyRecoveryMigration) continue;
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
     await db.exec(stripUnavailableExtensions(
       await readFile(new URL(name, migrationUrl), "utf8"),

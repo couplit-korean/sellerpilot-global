@@ -1,3 +1,8 @@
+import { readApprovedExternalDetailPublishContext } from "../../../../lib/server-external-detail-publish-context";
+import { readExternalDetailImportContext, externalDetailImportTarget, verifyExternalDetailOriginalSnapshot } from "../../../../lib/server-external-detail-import-api";
+import { inspectExternalDetailImportPng } from "../../../../lib/server-external-detail-import";
+import { externalDetailDigest } from "../../../../lib/external-detail-copy";
+import type { ApprovedProductDetailManifest } from "../../../../lib/server-product-detail-manifest";
 import { createHash } from "node:crypto";
 
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
@@ -70,6 +75,8 @@ import {
   type ShopeeSgExistingUpdateIdentity,
 } from "../../../../lib/channels/shopee-sg-existing-update";
 import {
+  bindElevenstAuthoritativeShippingSource,
+  elevenstShippingContractErrorMessage,
   mergeElevenstListingUpdateProduct,
   validateElevenstListingProduct,
 } from "../../../../lib/channels/elevenst-listing";
@@ -166,6 +173,10 @@ import {
   hasServerlessStaticEgressFor,
   SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "../../../../lib/channels/serverless-static-egress";
+import {
+  isSmartstoreLocalReadOperation,
+  resolveLocalGatewayReadReady,
+} from "../../../../lib/channels/smartstore-local-read-routing";
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import {
@@ -281,7 +292,7 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-type ProductContentMode = "ai_generated" | "manual_mvp";
+type ProductContentMode = "ai_generated" | "manual_mvp" | "external_generated";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -336,6 +347,11 @@ function marketplaceContentModeMatchesProduct(
   const assets = isRecord(argumentsValue.sellerpilotAssets)
     ? argumentsValue.sellerpilotAssets
     : null;
+  if (productContentMode === "external_generated") {
+    // Only the independently authenticated server DTO can select this branch.
+    // Browser copy/assets are overwritten by the exact approved import binder.
+    return Boolean(assets && assets.detailAssetMode !== "manual_source" && argumentsValue.sellerpilotContentMode === undefined);
+  }
   if (!assets || assets.contentMode !== productContentMode) return false;
 
   const preparedMarker = argumentsValue.sellerpilotContentMode;
@@ -545,6 +561,38 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "활성 키와 채널 정보가 일치하지 않습니다." }, { status: 409 });
   }
 
+  // ELEVENST_AUTHORITATIVE_SHIPPING_BEGIN
+  // Shipping-only server metadata must not turn a legacy update into a new
+  // content mutation. Preserve the original classification before binding.
+  const elevenstRequestedContentAssets = channel === "elevenst"
+    && isRecord(parsed.data.arguments.sellerpilotAssets);
+  // Run before content preparation, identity permits, claims or enqueue. Later
+  // create/update binders copy parsed arguments, so bind the server facts here.
+  if (channel === "elevenst" && (operation === "listing.create" || operation === "listing.update")) {
+    try {
+      const { data: shippingContext, error: shippingContextError } = await userClient.rpc(
+        "sellerpilot_get_product_publish_context",
+        { p_product_id: parsed.data.productId! },
+      );
+      if (shippingContextError) throw new Error("ELEVENST_SHIPPING_SOURCE_CONTEXT_UNAVAILABLE");
+      parsed.data.arguments = bindElevenstAuthoritativeShippingSource(
+        parsed.data.arguments,
+        shippingContext,
+        parsed.data.productId!,
+      );
+    } catch (error) {
+      const code = error instanceof Error && /^ELEVENST_[A-Z0-9_:-]+$/u.test(error.message)
+        ? error.message : "ELEVENST_SHIPPING_SOURCE_CONTEXT_UNAVAILABLE";
+      return NextResponse.json({
+        message: elevenstShippingContractErrorMessage(code)
+          ?? "11번가 상품 원장의 배송 사실을 확인하지 못했습니다. 저장된 상품 ID와 기본 배송비를 확인해 주세요.",
+        mode: "elevenst_authoritative_shipping_required",
+        code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  // ELEVENST_AUTHORITATIVE_SHIPPING_END
+
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
   const exactTemuExistingContentUpdateRequest = channel === "temu"
     && operation === "listing.update"
@@ -578,7 +626,9 @@ export async function POST(request: NextRequest) {
     && parsed.data.market === qoo10ExactLocalizationRecoveryIdentity.market
     && parsed.data.targetId === qoo10ExactLocalizationRecoveryIdentity.targetId;
   const contentBoundListingOperation = operation === "listing.create"
-    || (operation === "listing.update" && isRecord(parsed.data.arguments.sellerpilotAssets))
+    || (operation === "listing.update" && (channel === "elevenst"
+      ? elevenstRequestedContentAssets
+      : isRecord(parsed.data.arguments.sellerpilotAssets)))
     || exactSmartstoreContentUpdate
     || exactTemuExistingContentUpdateRequest
     || exactShopeeSgContentUpdate
@@ -586,12 +636,21 @@ export async function POST(request: NextRequest) {
     || (channel === "temu" && operation === "listing.activate");
   let verifiedPublishContext: Record<string, unknown> | null = null;
   let verifiedProductContentMode: ProductContentMode | null = null;
-  let approvedDetailBinding: { version: number; manifest: ProductDetailImageManifest } | null = null;
+  let approvedDetailBinding: ApprovedProductDetailManifest | null = null;
   let approvedDetailSignedUrls: string[] = [];
   let temuActivationSourceArguments: Record<string, unknown> | null = null;
   let temuActivationClaimIdempotencyKey: string | null = null;
+  let externallyVerifiedPublishContext: Record<string, unknown> | null = null;
+  if (contentBoundListingOperation && parsed.data.productId === externalDetailImportTarget) {
+    try {
+      const external = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient},parsed.data.productId);
+      if (isRecord(external.externalDetailImport) && external.externalDetailImport.status === "approved") {
+        externallyVerifiedPublishContext = await readApprovedExternalDetailPublishContext({user:userData.user,userClient,serviceClient},parsed.data.productId);
+      }
+    } catch { return NextResponse.json({mode:"external_detail_context_unavailable"},{status:409}); }
+  }
   if (contentBoundListingOperation) {
-    const { data: publishContext, error: contextError } = await userClient.rpc(
+    const { data: publishContext, error: contextError } = externallyVerifiedPublishContext ? {data:externallyVerifiedPublishContext,error:null} : await userClient.rpc(
       "sellerpilot_get_product_publish_context",
       { p_product_id: parsed.data.productId! },
     );
@@ -602,7 +661,7 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     const contentMode = publishContext.contentMode;
-    if (contentMode !== "manual_mvp" && contentMode !== "ai_generated") {
+    if (contentMode !== "manual_mvp" && contentMode !== "ai_generated" && !(contentMode === "external_generated" && externallyVerifiedPublishContext)) {
       return NextResponse.json({
         message: "상품 원장의 제작 방식을 확인하지 못해 판매채널 전송을 차단했습니다.",
         mode: "product_content_lineage_unverified",
@@ -650,6 +709,21 @@ export async function POST(request: NextRequest) {
         mode: "product_content_mode_mismatch",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+    // EXTERNAL_DETAIL_SOURCE_BEGIN
+    if (parsed.data.productId === externalDetailImportTarget) {
+      try {
+        // The publish_read snapshot is already bound and hash-checked. Do not
+        // replace it with a different GET context that can drop receipts.
+        if (!externallyVerifiedPublishContext) {
+          const imported = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId);
+          if (imported.externalDetailImport) publishContext.externalDetailImport = imported.externalDetailImport;
+        }
+        publishContext.detailAssetSource = "external_generated";
+        publishContext.externalDetailProductId = parsed.data.productId;
+        publishContext.externalDetailChannel = channel;
+        publishContext.externalDetailMarket = parsed.data.market;
+      } catch { return NextResponse.json({mode:"external_detail_context_unavailable"},{status:409}); }
+    }
     const approvedDetail = approvedProductDetailManifestFromPublishContext(publishContext);
     if (!approvedDetail.ok) {
       return NextResponse.json({
@@ -671,9 +745,19 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     const detailPaths = approvedDetail.value.manifest.images.map((image) => image.path);
-    const detailBucket = serviceClient.storage.from("sellerpilot-ai");
+    const detailBucket = serviceClient.storage.from(approvedDetail.value.external ? "sellerpilot-detail-imports" : "sellerpilot-ai");
     let resolvedSignedUrls: string[] | null = null;
     try {
+      if (approvedDetail.value.external) {
+        const row = publishContext.externalDetailImport as {payload:{assets:({storagePath:string}&Record<string,unknown>)[]};receipts:{decodedRgbaSha256:string}[]};
+        for (const [index, asset] of row.payload.assets.entries()) {
+          const blob = await detailBucket.download(asset.storagePath);
+          if (blob.error || !blob.data || blob.data.size !== asset.byteLength) throw Error("EXTERNAL_DETAIL_BYTES_UNAVAILABLE");
+          const {storagePath,...declared} = asset; void storagePath;
+          const receipt = await inspectExternalDetailImportPng(declared, Buffer.from(await blob.data.arrayBuffer()));
+          if (receipt.decodedRgbaSha256 !== row.receipts[index].decodedRgbaSha256) throw Error("EXTERNAL_DETAIL_PIXELS_CHANGED");
+        }
+      }
       const [detailExistence, detailSigning] = await Promise.all([
         Promise.all(detailPaths.map((path) => detailBucket.exists(path))),
         detailBucket.createSignedUrls(detailPaths, 2 * 60 * 60),
@@ -1522,7 +1606,24 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (channel === "smartstore") {
+  if (channel === "smartstore" && isSmartstoreLocalReadOperation(operation)) {
+    const { data: localGatewayRuntime, error: localGatewayRuntimeError } = await userClient.rpc(
+      "sellerpilot_ai_runtime_status",
+    );
+    const localGatewayReady = resolveLocalGatewayReadReady(localGatewayRuntime, {
+      statusAvailable: !localGatewayRuntimeError,
+    });
+    if (!localGatewayReady.available) {
+      return NextResponse.json({
+        ok: false,
+        operatorActionRequired: true,
+        workerReady: false,
+        blockedReason: "LOCAL_GATEWAY_WORKER_REQUIRED",
+        mode: "local_gateway_worker_required",
+        message: localGatewayReady.message,
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  } else if (channel === "smartstore") {
     const [staticEgressStatus, runtimeStatus] = await Promise.all([
       serviceClient.rpc("sellerpilot_service_serverless_static_egress_status"),
       serviceClient.rpc("sellerpilot_service_serverless_cs_wakeup_status"),
@@ -1578,9 +1679,10 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const staticEgressChannel = channel === "shopee"
-    ? "shopee"
-    : channel === "temu" && [
+  // Shopee OAuth token exchange stays gated in the authorize route. Authenticated
+  // Shopee calls (categories.*, shops.get, listing.*, diagnostic.test) are not
+  // IP-restricted the same way and must not block category confirmation.
+  const staticEgressChannel = channel === "temu" && [
         "listing.create",
         "listing.update",
         "listing.stop",
@@ -1611,7 +1713,6 @@ export async function POST(request: NextRequest) {
     if (!environmentReady
         || staticEgressStatus.error
         || databasePolicy[staticEgressChannel] !== true) {
-      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         manualRequired: true,
@@ -1619,18 +1720,17 @@ export async function POST(request: NextRequest) {
         staticEgressReady: false,
         blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
         mode: "static_egress_required",
-        message: `${channelName}에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 작업을 다시 시도해 주세요.`,
+        message: "Temu에 승인된 고정 egress IP와 서버 정책을 활성화한 뒤 상품 작업을 다시 시도해 주세요.",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     if (runtimeStatus.error || runtimeState.configured !== true || runtimeState.active !== true) {
-      const channelName = staticEgressChannel === "shopee" ? "Shopee" : "Temu";
       return NextResponse.json({
         ok: false,
         operatorActionRequired: true,
         workerReady: false,
         blockedReason: "SERVERLESS_WORKER_REQUIRED",
         mode: "serverless_worker_required",
-        message: `${channelName} 상품 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.`,
+        message: "Temu 상품 작업자가 활성 상태가 아니어서 작업을 대기열에 넣지 않았습니다.",
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
@@ -2467,6 +2567,14 @@ export async function POST(request: NextRequest) {
         mode: "shopee_sg_existing_inventory_permit_required",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
+  }
+  if (approvedDetailBinding?.external) {
+    try {
+      const fresh = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId!);
+      await verifyExternalDetailOriginalSnapshot({user:userData.user,userClient,serviceClient}, fresh);
+      const selected = approvedProductDetailManifestFromPublishContext({detailAssetSource:"external_generated",externalDetailImport:fresh.externalDetailImport,externalDetailProductId:parsed.data.productId,externalDetailChannel:channel,externalDetailMarket:parsed.data.market});
+      if (!selected.ok || externalDetailDigest(selected.value.external) !== externalDetailDigest(approvedDetailBinding.external)) throw Error("EXTERNAL_DETAIL_VERSION_CONFLICT");
+    } catch { return NextResponse.json({mode:"external_detail_changed_before_claim"},{status:409}); }
   }
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,

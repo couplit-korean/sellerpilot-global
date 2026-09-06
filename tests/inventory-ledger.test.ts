@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   adjustOnHand,
+  applyInventoryLedgerEvent,
   availableStock,
   buildOrderKey,
   cancelRelease,
@@ -16,6 +17,7 @@ import {
   setSafetyStock,
   type InventoryLedger,
   type InventoryLedgerEvent,
+  type InventoryLedgerEventInput,
 } from "../lib/inventory/ledger";
 
 const SKU = "SP-SKU-0001";
@@ -113,7 +115,10 @@ test("반품 재입고: 검수 후 수량을 실재고로 되돌린다", () => {
 
   // 동일 반품 멱등키 재적용은 재입고하지 않는다.
   const replay = expectOk(
-    receiveReturn(ledger, { idempotencyKey: "return-ret-00001", quantity: 1 }),
+    receiveReturn(ledger, {
+      idempotencyKey: "return-ret-00001", quantity: 1,
+      channel: "smartstore", externalOrderId: "ORD-4", orderLineKey: "LINE-2",
+    }),
   );
   assert.equal(replay.replayed, true);
   expectState(ledger, { onHand: 19, reserved: 0, safetyStock: 0, available: 19 });
@@ -430,4 +435,97 @@ test("10,000건 동시 주문 시뮬레이션: 음수재고 0건, 중복 차감 
     assert.ok(event.reservedAfter >= 0 && event.reservedAfter <= event.onHandAfter);
     assert.ok(event.safetyStockAfter >= 0);
   }
+});
+
+const conflictOrder = { channel: "shopee", externalOrderId: "CONFLICT-ORDER", orderLineKey: "LINE-1" };
+const conflictCases: { name: string; first: InventoryLedgerEventInput; conflict: InventoryLedgerEventInput }[] = [
+  { name: "입고", first: { type: "RECEIPT", idempotencyKey: "conflict-receipt", quantity: 2 }, conflict: { type: "RECEIPT", idempotencyKey: "conflict-receipt", quantity: 3 } },
+  ...(["SALE_PENDING", "SALE_CONFIRMED", "CANCEL_RELEASE"] as const).map((type) => ({
+    name: type, first: { type, ...conflictOrder, quantity: 2 }, conflict: { type, ...conflictOrder, quantity: 3 },
+  })),
+  { name: "반품", first: { type: "RETURN_RECEIVED", idempotencyKey: "conflict-return", quantity: 2, ...conflictOrder }, conflict: { type: "RETURN_RECEIVED", idempotencyKey: "conflict-return", quantity: 3, ...conflictOrder } },
+  { name: "실사", first: { type: "ADJUSTMENT", idempotencyKey: "conflict-adjust", newOnHand: 20, reason: "실사" }, conflict: { type: "ADJUSTMENT", idempotencyKey: "conflict-adjust", newOnHand: 30, reason: "실사" } },
+  { name: "안전재고", first: { type: "SAFETY_STOCK_CHANGE", idempotencyKey: "conflict-safety", safetyStock: 2 }, conflict: { type: "SAFETY_STOCK_CHANGE", idempotencyKey: "conflict-safety", safetyStock: 3 } },
+];
+
+for (const scenario of conflictCases) {
+  test(`${scenario.name}: 같은 멱등키의 다른 수량은 충돌이며 원장을 변경하지 않는다`, () => {
+    const ledger = freshLedger();
+    expectOk(receiveStock(ledger, { idempotencyKey: "conflict-initial", quantity: 100 }));
+    if (scenario.first.type === "SALE_CONFIRMED" || scenario.first.type === "CANCEL_RELEASE") {
+      expectOk(reserveStock(ledger, { ...conflictOrder, quantity: 2 }));
+    }
+    const first = expectOk(applyInventoryLedgerEvent(ledger, scenario.first));
+    const before = structuredClone(ledger);
+    expectFail(applyInventoryLedgerEvent(ledger, scenario.conflict), "IDEMPOTENCY_CONFLICT");
+    assert.deepEqual(ledger, before);
+    const retry = expectOk(applyInventoryLedgerEvent(ledger, { ...scenario.first, occurredAt: "2026-09-06T00:00:00Z" }));
+    assert.equal(retry.replayed, true);
+    assert.equal(retry.event, first.event);
+    assert.deepEqual(ledger, before);
+  });
+}
+
+for (const changedReference of [
+  { ...conflictOrder, externalOrderId: "OTHER-ORDER" },
+  { ...conflictOrder, orderLineKey: "OTHER-LINE" },
+  { ...conflictOrder, channel: "lazada" },
+  {},
+]) {
+  test(`반품 멱등키의 주문 참조 변경/누락은 충돌: ${JSON.stringify(changedReference)}`, () => {
+    const ledger = freshLedger();
+    expectOk(receiveReturn(ledger, { ...conflictOrder, idempotencyKey: "return-reference-key", quantity: 2 }));
+    const before = structuredClone(ledger);
+    expectFail(receiveReturn(ledger, { ...changedReference, idempotencyKey: "return-reference-key", quantity: 2 }), "IDEMPOTENCY_CONFLICT");
+    assert.deepEqual(ledger, before);
+  });
+}
+
+test("원장 재생도 같은 키의 상충 이벤트를 성공으로 숨기지 않는다", () => {
+  const ledger = freshLedger();
+  const first = expectOk(receiveStock(ledger, { idempotencyKey: "replay-conflict-key", quantity: 5 }));
+  const result = replayInventoryLedger(SKU, [first.event, { ...first.event, sequence: 2, quantity: 7 }]);
+  assert.equal(result.ok, false);
+  assert.ok(!result.ok);
+  assert.equal(result.code, "IDEMPOTENCY_CONFLICT");
+  assert.equal(result.ledger.onHand, 5);
+  assert.equal(result.ledger.events.length, 1);
+});
+
+test("콜론 참조 및 부분 반품 참조는 원장 기록 전에 거부한다", () => {
+  const ledger = freshLedger();
+  expectOk(receiveStock(ledger, { idempotencyKey: "reference-initial-stock", quantity: 100 }));
+  const before = structuredClone(ledger);
+  for (const [externalOrderId, orderLineKey] of [["A:B", "C"], ["A", "B:C"]]) {
+    for (const type of ["SALE_PENDING", "SALE_CONFIRMED", "CANCEL_RELEASE"] as const) {
+      expectFail(applyInventoryLedgerEvent(ledger, { type, channel: "shopee", externalOrderId, orderLineKey, quantity: 1 }), "INVALID_ORDER_REFERENCE");
+    }
+    expectFail(receiveReturn(ledger, { idempotencyKey: "reference-return-key", channel: "shopee", externalOrderId, orderLineKey, quantity: 1 }), "INVALID_ORDER_REFERENCE");
+    assert.deepEqual(ledger, before);
+  }
+  for (const refs of [
+    { channel: "shopee" }, { externalOrderId: "ORDER" }, { orderLineKey: "LINE" },
+    { channel: "shopee", externalOrderId: "ORDER" }, { channel: "shopee", orderLineKey: "LINE" },
+    { externalOrderId: "ORDER", orderLineKey: "LINE" },
+  ]) {
+    expectFail(receiveReturn(ledger, { ...refs, idempotencyKey: "reference-return-key", quantity: 1 }), "INVALID_ORDER_REFERENCE");
+    assert.deepEqual(ledger, before);
+  }
+});
+
+test("합성키 240문자 경계와 Unicode는 SQL 계약과 같고 정상 재시도는 보존한다", () => {
+  const ledger = freshLedger();
+  expectOk(receiveStock(ledger, { idempotencyKey: "boundary-initial-stock", quantity: 100 }));
+  for (const char of ["L", "😀"]) {
+    const order = { channel: "shopee", externalOrderId: "O", orderLineKey: char.repeat(231), quantity: 1 };
+    expectOk(reserveStock(ledger, order));
+    assert.equal(expectOk(reserveStock(ledger, order)).replayed, true);
+    const before = structuredClone(ledger);
+    expectFail(reserveStock(ledger, { ...order, orderLineKey: char.repeat(232) }), "INVALID_ORDER_REFERENCE");
+    expectFail(receiveReturn(ledger, { ...order, orderLineKey: char.repeat(232), idempotencyKey: "boundary-return-key" }), "INVALID_ORDER_REFERENCE");
+    assert.deepEqual(ledger, before);
+    expectOk(receiveReturn(ledger, { ...order, idempotencyKey: `boundary-return-${char}` }));
+  }
+  expectOk(receiveReturn(ledger, { quantity: 1, idempotencyKey: "unbound-reference-key" }));
+  assert.equal(expectOk(receiveReturn(ledger, { quantity: 1, idempotencyKey: "unbound-reference-key", channel: " ", externalOrderId: " ", orderLineKey: " " })).replayed, true);
 });

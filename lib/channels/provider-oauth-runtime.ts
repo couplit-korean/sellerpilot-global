@@ -1,5 +1,6 @@
 import type { GatewayClaim } from "./gateway-contract";
 import {
+  assertProviderAccountIdentity,
   shopeeProviderAccountIdentity,
   withLazadaProviderAccountIdentity,
   withProviderAccountIdentity,
@@ -218,6 +219,35 @@ async function exchangeShopeeOAuth(
     throw new Error("SHOPEE_OAUTH_INPUT_MISSING");
   }
 
+  // The claimant injects the decrypted Vault credential, not callback fields.
+  const previousMainAccountId = textValue(job.credential, "main_account_id");
+  const previousPrimaryShopId = textValue(job.credential, "shop_id");
+  const previousTargets = Array.isArray(job.credential.shopee_targets) ? job.credential.shopee_targets : [];
+  const previousShopIds = [...new Set([
+    ...numericIdList(job.credential.shop_ids),
+    ...collectNumericIds(previousTargets.filter((target) => target && typeof target === "object" && target.type === "shop"), ["id"]),
+    ...(previousPrimaryShopId ? [previousPrimaryShopId] : []),
+  ])];
+  const previousMerchantIds = [...new Set([
+    ...numericIdList(job.credential.merchant_ids),
+    ...collectNumericIds(previousTargets.filter((target) => target && typeof target === "object" && target.type === "merchant"), ["id"]),
+  ])];
+  if (previousMainAccountId && previousMainAccountId !== mainAccountId) {
+    throw new Error("SHOPEE_OAUTH_MAIN_ACCOUNT_MISMATCH");
+  }
+  if ((previousShopIds.length && !previousPrimaryShopId)
+      || (previousPrimaryShopId && !/^\d+$/.test(previousPrimaryShopId))) {
+    throw new Error("SHOPEE_OAUTH_EXISTING_PRIMARY_REQUIRED");
+  }
+  if (!mainAccountId && previousShopIds.some((id) => id !== shopId)) {
+    throw new Error("SHOPEE_OAUTH_EXISTING_SHOP_MISMATCH");
+  }
+  const accountIdentity = shopeeProviderAccountIdentity(mainAccountId
+    ? { mainAccountId }
+    : { shopId });
+  assertProviderAccountIdentity(job.credential, accountIdentity,
+    Boolean(job.credential.provider_account_subject || job.credential.provider_account_identity_version));
+
   await beginCredentialMutation(hooks);
   const remote = await exchangeShopeeOAuthToken({
     environment: job.environment,
@@ -236,9 +266,10 @@ async function exchangeShopeeOAuth(
   const refreshTokenExpiresAt = new Date(Date.now() + 30 * 86_400_000).toISOString();
   const authorizationExpiresAt = String(job.request.authorizationExpiresAt ?? "").trim()
     || new Date(Date.now() + 365 * 86_400_000).toISOString();
-  const accountIdentity = shopeeProviderAccountIdentity(mainAccountId
-    ? { mainAccountId }
-    : { shopId });
+  const returnedMainAccountIds = collectNumericIds(remote.data, ["main_account_id", "mainAccountId"]);
+  if (returnedMainAccountIds.some((id) => id !== mainAccountId)) {
+    throw new Error("SHOPEE_OAUTH_MAIN_ACCOUNT_MISMATCH");
+  }
   const nextSecret: Record<string, unknown> = withProviderAccountIdentity(
     withoutShopeeOAuthAccountState(job.credential),
     accountIdentity,
@@ -250,6 +281,11 @@ async function exchangeShopeeOAuth(
       main_account_access_token: accessToken,
       main_account_refresh_token: refreshToken,
       authorization_expires_at: authorizationExpiresAt,
+      ...(previousPrimaryShopId ? {
+        shop_id: previousPrimaryShopId,
+        shop_ids: previousShopIds,
+        merchant_ids: previousMerchantIds,
+      } : {}),
     });
     await stageCredentialRefresh(hooks, {
       payload: withoutProviderAccountIdentity(nextSecret),
@@ -260,9 +296,17 @@ async function exchangeShopeeOAuth(
     const shopIds = collectNumericIds(remote.data, ["shop_id", "shopId", "shop_id_list"]);
     const merchantIds = collectNumericIds(remote.data, ["merchant_id", "merchantId", "merchant_id_list"]);
     if (!shopIds.length) throw new Error("SHOPEE_OAUTH_SHOP_IDS_MISSING");
+    if (previousShopIds.some((id) => !shopIds.includes(id))
+        || previousMerchantIds.some((id) => !merchantIds.includes(id))) {
+      throw new Error("SHOPEE_OAUTH_EXISTING_TARGET_MISSING");
+    }
+    const primaryShopId = previousPrimaryShopId || shopIds[0];
+    // Exchange the preserved primary first, so every partial has its own new
+    // token rather than silently selecting the first provider response entry.
+    const orderedShopIds = [primaryShopId, ...shopIds.filter((id) => id !== primaryShopId)];
     const targets: Array<Record<string, unknown>> = [];
 
-    for (const targetShopId of shopIds) {
+    for (const targetShopId of orderedShopIds) {
       await beginCredentialMutation(hooks);
       const targetRemote = await exchangeShopeeOAuthToken({
         environment: job.environment,
@@ -287,7 +331,7 @@ async function exchangeShopeeOAuth(
         access_token_expires_at: tokenExpiry(targetRemote.data, 14_400),
         refresh_token_expires_at: refreshTokenExpiresAt,
       });
-      const primaryShop = targets.find((target) => target.type === "shop");
+      const primaryShop = targets.find((target) => target.type === "shop" && target.id === primaryShopId);
       const partialSecret = {
         ...nextSecret,
         main_account_id: mainAccountId,
@@ -354,7 +398,7 @@ async function exchangeShopeeOAuth(
       });
     }
 
-    const primaryShop = targets.find((target) => target.type === "shop");
+    const primaryShop = targets.find((target) => target.type === "shop" && target.id === primaryShopId);
     if (!primaryShop) throw new Error("SHOPEE_OAUTH_PRIMARY_SHOP_MISSING");
     Object.assign(nextSecret, {
       main_account_id: mainAccountId,

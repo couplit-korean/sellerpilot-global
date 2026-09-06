@@ -383,19 +383,64 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     });
   }, []);
 
+  const loadListingRelease = useCallback(async () => {
+    // A slow gate RPC or a late 503 must never erase a deploy SHA the server already
+    // confirmed, otherwise attestation buttons flip back to disabled mid-session.
+    const applyListingRelease = (listingReleasePayload: ListingReleasePayload) => {
+      setListingRelease((current) => {
+        const currentRelease = listingReleasePayload.runtimeRelease?.currentRelease ?? current.currentRelease;
+        const gate = listingReleasePayload.gate ?? current.gate;
+        return {
+          status: currentRelease ? "ready" : "failed",
+          message: listingReleasePayload.message ?? (currentRelease
+            ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
+            : "게시 릴리스 상태를 불러오지 못했습니다."),
+          currentRelease,
+          gate,
+          readyForOpen: listingReleasePayload.readyForOpen === true,
+          readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
+        };
+      });
+    };
+    const readListingRelease = async () => {
+      const listingReleaseResponse = await authenticatedFetch("/api/admin/listing-publication-release", {
+        signal: AbortSignal.timeout(40_000),
+      });
+      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
+      return { listingReleaseResponse, listingReleasePayload };
+    };
+    // The operations database is the scarce resource. Back off instead of
+    // retrying tightly so a degraded database is never amplified by this screen.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const { listingReleasePayload } = await readListingRelease();
+        applyListingRelease(listingReleasePayload);
+        if (listingReleasePayload.gate) return;
+      } catch {
+        setListingRelease((current) => ({
+          ...current,
+          status: current.currentRelease ? "ready" : "failed",
+          message: current.currentRelease
+            ? current.message
+            : "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
+        }));
+      }
+      if (attempt === 0) await new Promise((resolve) => window.setTimeout(resolve, 15_000));
+    }
+  }, [authenticatedFetch]);
+
   const load = useCallback(async (preserveGatewaySmoke = false) => {
     setLoading(true);
+    void loadListingRelease();
     try {
-      const [statusResponse, jobsResponse, readinessResponse, listingReleaseResponse] = await Promise.all([
+      const [statusResponse, jobsResponse, readinessResponse] = await Promise.all([
         authenticatedFetch("/api/admin/ai-worker-token"),
         authenticatedFetch("/api/admin/ai-jobs?limit=12"),
         authenticatedFetch("/api/ai/product-studio"),
-        authenticatedFetch("/api/admin/listing-publication-release"),
       ]);
       const statusPayload = await statusResponse.json().catch(() => ({ message: "런타임 상태 응답을 읽지 못했습니다." })) as WorkerStatus & { message?: string };
       const jobsPayload = await jobsResponse.json().catch(() => ({ message: "작업 이력 응답을 읽지 못했습니다.", jobs: [] })) as { message?: string; jobs?: AiJob[] };
       const readinessPayload = await readinessResponse.json().catch(() => null) as unknown;
-      const listingReleasePayload = await listingReleaseResponse.json().catch(() => ({ message: "게시 릴리스 상태 응답을 읽지 못했습니다." })) as ListingReleasePayload;
       if (!statusResponse.ok) throw new Error(statusPayload.message ?? "런타임 상태를 불러오지 못했습니다.");
       setStatus(statusPayload);
       const nextReadiness: ServerReadiness = validReadiness(readinessPayload) ? readinessPayload : {
@@ -413,16 +458,6 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       } else {
         setJobsError(jobsPayload.message ?? "작업 이력을 불러오지 못했습니다.");
       }
-      setListingRelease({
-        status: listingReleaseResponse.ok && listingReleasePayload.gate ? "ready" : "failed",
-        message: listingReleasePayload.message ?? (listingReleaseResponse.ok
-          ? "현재 배포의 게시 릴리스 상태를 확인했습니다."
-          : "게시 릴리스 상태를 불러오지 못했습니다."),
-        currentRelease: listingReleasePayload.runtimeRelease?.currentRelease ?? null,
-        gate: listingReleasePayload.gate ?? null,
-        readyForOpen: listingReleasePayload.readyForOpen === true,
-        readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
-      });
     } catch (loadError) {
       setReadiness({
         available: false,
@@ -430,18 +465,11 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         message: "Vercel 서버 AI 준비 상태를 확인할 수 없습니다.",
         checkedAt: new Date().toISOString(),
       });
-      setListingRelease((current) => ({
-        ...current,
-        status: "failed",
-        message: "현재 배포의 게시 릴리스 상태를 확인하지 못했습니다.",
-        readyForOpen: false,
-        readyForQoo10Open: false,
-      }));
       setError(loadError instanceof Error ? loadError.message : "런타임 상태를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, [authenticatedFetch]);
+  }, [authenticatedFetch, loadListingRelease]);
 
   const controlJob = async (job: AiJob, action: "retry" | "cancel") => {
     const actionLabel = action === "retry" ? "다시 실행" : "취소";
@@ -665,7 +693,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         <article><small>8개 게시 어댑터</small><b>{listingGate?.publicationAdaptersReady ?? 0} / {listingPublicationChannels.length}</b><em className={exactPublicationReleaseReady ? "ok" : "waiting"}>{exactPublicationReleaseReady ? "현재 SHA 일치" : "현재 SHA 확인 필요"}</em></article>
         <article><small>Qoo10 단일 채널</small><b>{listingGate?.qoo10AdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactQoo10ReleaseReady ? "ok" : "waiting"}>{exactQoo10ReleaseReady ? "현재 SHA 일치" : "Qoo10 SHA 확인 필요"}</em></article>
         <article><small>게시 결과 재조회기</small><b>{listingGate?.publicationRecheckerReady ? "확인됨" : "확인 필요"}</b><em className={listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "ok" : "waiting"}>{listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "현재 SHA 일치" : "재조회 계약 확인 필요"}</em></article>
-        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "재검증 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
+        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "게시 기준·런타임 SHA 결속 확인 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
       </div>
 
       <div className="cli-listing-release-blockers">

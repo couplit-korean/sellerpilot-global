@@ -266,6 +266,7 @@ function nestedRecord(payload: Record<string, unknown>, key: string) {
 export function assertShopeeShopProfileTarget(
   payload: Record<string, unknown>,
   requestedShopId: unknown,
+  options: { acceptSignedRequestBinding?: boolean } = {},
 ) {
   const requested = (() => {
     try {
@@ -282,7 +283,15 @@ export function assertShopeeShopProfileTarget(
     .flatMap((row) => [row.shop_id, row.shopId])
     .map(normalizedText)
     .filter(Boolean);
-  if (!candidates.length) throw new Error("SHOPEE_SHOP_IDENTITY_MISSING");
+  // Shopee get_shop_info is authenticated by the exact shop_id in the signed
+  // request but does not consistently echo shop_id in a successful response.
+  // Callers may rely on that transport binding only after they have verified
+  // the HTTP/provider success result. If an ID is echoed, it is still checked
+  // below and any mismatch remains fail-closed.
+  if (!candidates.length) {
+    if (options.acceptSignedRequestBinding === true) return requested;
+    throw new Error("SHOPEE_SHOP_IDENTITY_MISSING");
+  }
   for (const candidate of candidates) {
     let actual: string;
     try {

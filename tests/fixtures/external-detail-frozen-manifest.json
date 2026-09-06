@@ -1,0 +1,129 @@
+{
+  "contract": "external-detail-deployment-frozen-v1",
+  "files": [
+    {
+      "file": "20260906040000_external_detail_import.sql",
+      "sha256": "ad85277f4503e643bed79f82f4bf6b7574886d6c920961d15f7a7e4f65d77289"
+    },
+    {
+      "file": "20260906043000_external_detail_channel_fence.sql",
+      "sha256": "75cd390378716df067f53b6b1e3a7ae76c0093629b3d21c760dd98338931d9ee"
+    },
+    {
+      "file": "20260906053000_external_detail_publication_lifecycle.sql",
+      "sha256": "9399b9eda3c6a716fa13a3c6e06957d5f3c18ddfcb4f3d37c27c58e0659b9ce2"
+    }
+  ],
+  "functions": [
+    {
+      "signature": "public.sellerpilot_service_external_detail_import(text,uuid,uuid,uuid,jsonb)",
+      "bodySha256": "56c68bc87bcb3644c305a013d9fa82962b812785c688b64c01606c989b0f9147",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906040000_external_detail_import.sql"
+    },
+    {
+      "signature": "sellerpilot_private.guard_external_detail_gateway_source()",
+      "bodySha256": "1fbc444e7e3a474edd108ee56621b502dd6a353ded2c7e5e1249e45b5fd7f084",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906043000_external_detail_channel_fence.sql"
+    },
+    {
+      "signature": "sellerpilot_private.freeze_inflight_external_detail_product()",
+      "bodySha256": "d6e941cfa29c1c74758cbff11980dd038bb3c8b8d9fae4d8ff65387c0092a4df",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906043000_external_detail_channel_fence.sql"
+    },
+    {
+      "signature": "sellerpilot_private.external_detail_canonical(jsonb)",
+      "bodySha256": "d723df38df4bc562c8232ffe6bcf9a79960bc5f344580e4623e2797e1e35fb5d",
+      "securityDefiner": false,
+      "volatility": "i",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.external_detail_hash(jsonb)",
+      "bodySha256": "19ba99515a2d7ded724753f4d40dc5a2e2b39191325c9008dcf6e9cb590929f6",
+      "securityDefiner": false,
+      "volatility": "i",
+      "language": "sql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.external_detail_import_is_current(uuid)",
+      "bodySha256": "b1193c1e372a32d0ca92c6c1689d65dd9689b1e4ec90669d97028b417e383d1e",
+      "securityDefiner": true,
+      "volatility": "s",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.external_detail_source_manifest(uuid)",
+      "bodySha256": "59ee856f4f20a081da8e4cb73315c6a5eef7ebc89f85e6d01b1bfd4745de8f51",
+      "securityDefiner": true,
+      "volatility": "s",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "public.sellerpilot_service_bind_marketplace_normalized_asset_urls(uuid,jsonb)",
+      "bodySha256": "a72a74782bb7c970f5b1e22986d2a0a84dd45d9c58fe303c7b600a278edd8b13",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.external_detail_asset_binding_is_current(jsonb,jsonb,bigint,uuid)",
+      "bodySha256": "25c083bcc506597e8bc05f9b9ed358eea0b2242b402800d3ad2a1eed91113300",
+      "securityDefiner": true,
+      "volatility": "s",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)",
+      "bodySha256": "c2f41802caeb29874d41a84b97ded9340ea4864bb95f3624b4a5dca4dd1cd45e",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.listing_publication_review_is_current(uuid)",
+      "bodySha256": "a872f8051d2319d63acfbeaecf9143d00b977cf97c085f7b077584c67090411a",
+      "securityDefiner": true,
+      "volatility": "s",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    },
+    {
+      "signature": "sellerpilot_private.guard_external_detail_publication_completion()",
+      "bodySha256": "2d9affc9d2b450971a72a6e3f634bc974b56fa48732c236bd6489c5210f1883d",
+      "securityDefiner": true,
+      "volatility": "v",
+      "language": "plpgsql",
+      "migration": "20260906053000_external_detail_publication_lifecycle.sql"
+    }
+  ],
+  "renamed": [
+    [
+      "public.sellerpilot_service_bind_marketplace_normalized_asset_urls(uuid,jsonb)",
+      "public.sellerpilot_bind_normalized_urls_before_external(uuid,jsonb)"
+    ],
+    [
+      "public.sellerpilot_service_listing_publication_verification_source(text,uuid,uuid)",
+      "public.sellerpilot_verification_source_before_external(text,uuid,uuid)"
+    ],
+    [
+      "sellerpilot_private.listing_publication_review_is_current(uuid)",
+      "sellerpilot_private.listing_publication_review_current_before_external(uuid)"
+    ]
+  ]
+}

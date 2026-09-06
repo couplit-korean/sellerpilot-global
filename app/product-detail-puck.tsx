@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-img-element -- Puck blocks accept object/data URLs from the image studio */
 
-import { Puck, usePuck, type Config, type Data, type Viewports } from "@puckeditor/core";
+import { Puck, Render, usePuck, type Config, type Data, type Viewports } from "@puckeditor/core";
 import { ProductDetailBuyer } from "./product-detail-buyer";
 import { Save, X } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
@@ -15,6 +15,7 @@ import { resolveProductDetailAssets } from "./_publishing/product-detail-persist
 import mediaStyles from "./product-detail-media.module.css";
 import type { DetailLayout, DetailMotion, DetailSection, ProductStudioResult } from "./product-studio-types";
 import { useModalInteraction } from "./use-modal-interaction";
+import { productDetailChrome, resolveProductDetailLocale, type ProductDetailLocale } from "../lib/product-detail-locale";
 
 type VerificationStatus = "verified" | "needs-review";
 type DetailSectionType = DetailSection["type"];
@@ -31,9 +32,6 @@ const detailSectionTypeOptions: Array<{ label: string; value: DetailSectionType 
   { label: "필수 안내", value: "notice" },
 ];
 
-const detailSectionTypeLabels = Object.fromEntries(
-  detailSectionTypeOptions.map((option) => [option.value, option.label]),
-) as Record<DetailSectionType, string>;
 
 const verificationStatusOptions: Array<{ label: string; value: VerificationStatus }> = [
   { label: "자료 확인", value: "verified" },
@@ -175,6 +173,8 @@ const productDetailEditorViewports: Viewports = [
   { width: 1280, height: "auto", label: "데스크톱", icon: "Monitor" },
 ];
 
+export function createProductDetailConfig(locale: ProductDetailLocale = "ko"): Config<DetailComponents> {
+const labels = productDetailChrome(locale);
 const detailConfig: Config<DetailComponents> = {
   categories: {
     story: { title: "상세페이지 블록", components: ["HeroBlock", "VerificationRibbonBlock", "BenefitBlock", "ImageStoryBlock", "AnimatedGifBlock", "StoryBlock", "CtaBlock"], defaultExpanded: true },
@@ -197,8 +197,8 @@ const detailConfig: Config<DetailComponents> = {
       defaultProps: { eyebrow: "NEW PRODUCT", title: "제품의 핵심 가치를 한 문장으로", description: "짧고 명확한 제품 설명", cta: "상품 확인하기", imageUrl: "", imageAlt: "상품 대표 이미지", primary: "#25352d", accent: "#d9eeae", surface: "#f4f1e9", layout: "split" },
       render: ({ eyebrow, title, description, cta, imageUrl, imageAlt, primary, accent, surface, layout }) => (
         <section className={`pdp-hero-block ${layout}`} data-motion="reveal" style={{ "--pdp-primary": primary, "--pdp-accent": accent, "--pdp-surface": surface } as React.CSSProperties}>
-          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><span className="pdp-visual-cta" aria-label={`마켓 버튼 문구 미리보기: ${cta}`}>버튼 문구 · {cta}</span></div>
-          <div className="pdp-hero-visual">{imageUrl ? <img src={imageUrl} alt={imageAlt || "상품 대표 이미지"} /> : <span>PRODUCT IMAGE</span>}<i /></div>
+          <div className="pdp-hero-copy"><span>{eyebrow}</span><h1>{title}</h1><p>{description}</p><span className="pdp-visual-cta" aria-label={`${labels.buttonPreview}: ${cta}`}>{labels.button} · {cta}</span></div>
+          <div className="pdp-hero-visual">{imageUrl ? <img src={imageUrl} alt={imageAlt || labels.heroAlt} /> : <span>PRODUCT IMAGE</span>}<i /></div>
         </section>
       ),
     },
@@ -227,18 +227,18 @@ const detailConfig: Config<DetailComponents> = {
       render: ({ classification, verificationStatus, evidence, healthFunctionalStatus, targetCustomer, primary, accent, surface }) => (
         <section
           className="pdp-verification-ribbon"
-          aria-label="상품 분류와 확인 상태"
+          aria-label={labels.ribbonAria}
           style={{
             color: primary,
             background: `color-mix(in srgb, ${primary}, transparent 82%)`,
             borderBlock: `1px solid color-mix(in srgb, ${primary}, transparent 78%)`,
           }}
         >
-          <VerificationCell label="상품 분류" value={classification} surface={surface} />
-          {healthFunctionalStatus.trim() ? <VerificationCell label="건강기능식품 표시" value={healthFunctionalStatus} surface={surface} /> : null}
-          <VerificationCell label="추천 대상" value={targetCustomer} surface={surface} />
+          <VerificationCell label={labels.classification} value={classification} surface={surface} />
+          {healthFunctionalStatus.trim() ? <VerificationCell label={labels.health} value={healthFunctionalStatus} surface={surface} /> : null}
+          <VerificationCell label={labels.audience} value={targetCustomer} surface={surface} />
           <VerificationCell
-            label={verificationStatus === "verified" ? "자료 확인 완료" : "구매 전 추가 확인"}
+            label={verificationStatus === "verified" ? labels.verified : labels.needsReview}
             value={evidence}
             surface={verificationStatus === "verified" ? accent : `color-mix(in srgb, ${accent}, white 42%)`}
           />
@@ -315,7 +315,7 @@ const detailConfig: Config<DetailComponents> = {
       fields: { audience: { type: "text", label: "추천 대상" }, title: { type: "text", label: "제목" }, description: { type: "textarea", label: "설명" }, checklist: { type: "textarea", label: "마지막 확인사항" }, button: { type: "text", label: "버튼" }, primary: { type: "text", label: "주 색상" }, accent: { type: "text", label: "강조 색상" } },
       defaultProps: { audience: "이 상품의 핵심 정보를 비교한 고객", title: "확인한 기준으로 선택하세요", description: "상품 정보를 확인하고 나에게 맞는 옵션을 선택하세요.", checklist: "분류 · 구성 · 규격 · 주의사항을 마지막으로 확인하세요.", button: "상품 정보 확인하기", primary: "#25352d", accent: "#d9eeae" },
       render: ({ audience, title, description, checklist, button, primary, accent }) => (
-        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>FOR {audience}</span><h2>{title}</h2><p>{description}</p><p className="pdp-cta-checklist">{checklist}</p><span className="pdp-visual-cta" aria-label={`마켓 버튼 문구 미리보기: ${button}`}>버튼 문구 · {button}</span></section>
+        <section className="pdp-cta-block" style={{ "--pdp-primary": primary, "--pdp-accent": accent } as React.CSSProperties}><span>FOR {audience}</span><h2>{title}</h2><p>{description}</p><p className="pdp-cta-checklist">{checklist}</p><span className="pdp-visual-cta" aria-label={`${labels.buttonPreview}: ${button}`}>{labels.button} · {button}</span></section>
       ),
     },
   },
@@ -375,14 +375,14 @@ function AnimatedGifMedia({ gifUrl, posterUrl, alt, caption, tone }: DetailCompo
           ? "gif-load-failed"
           : "validation-failed";
   const status = mediaState === "animated"
-    ? "상세페이지에서만 재생됩니다. 판매채널 이미지 전송과는 별도입니다."
+    ? labels.gifAnimated
     : mediaState === "reduced-motion"
-      ? "동작 줄이기 설정에 따라 정적 poster로 표시합니다."
+      ? labels.gifReduced
       : mediaState === "gif-load-failed"
-        ? "GIF를 불러오지 못해 정적 poster로 표시합니다."
+        ? labels.gifFailed
         : mediaState === "poster-unavailable"
-          ? "유효한 HTTPS 정적 poster URL이 필요합니다."
-          : "GIF URL·poster·대체텍스트·캡션을 확인해 정적 poster로 표시합니다.";
+          ? labels.posterInvalid
+          : labels.gifInvalid;
 
   return (
     <figure className={`${mediaStyles.mediaBlock} ${tone === "dark" ? mediaStyles.dark : ""}`} data-media-state={mediaState}>
@@ -392,13 +392,13 @@ function AnimatedGifMedia({ gifUrl, posterUrl, alt, caption, tone }: DetailCompo
         ) : showPoster && media.posterUrl ? (
           <img className={mediaStyles.image} src={media.posterUrl} alt={media.alt} loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailedPosterUrl(media.posterUrl ?? "")} />
         ) : (
-          <span className={mediaStyles.placeholder} role="img" aria-label={media.alt}>정적 poster URL을 확인해 주세요.</span>
+          <span className={mediaStyles.placeholder} role="img" aria-label={media.alt}>{labels.posterCheck}</span>
         )}
         <span className={mediaStyles.modeBadge}>{showAnimation ? "ANIMATED GIF" : "STATIC POSTER"}</span>
       </div>
       <figcaption className={mediaStyles.copy}>
         <span>DETAIL MOTION</span>
-        <h2>{media.caption || "상품 동작 안내"}</h2>
+        <h2>{media.caption || labels.motionCaption}</h2>
         <p>{media.alt}</p>
         <small>{status}</small>
       </figcaption>
@@ -411,18 +411,21 @@ function VerificationCell({ label, value, surface }: { label: string; value: str
 }
 
 function SectionTypeBadge({ sectionType }: { sectionType: DetailSectionType }) {
-  return <em className="pdp-section-type">{detailSectionTypeLabels[sectionType] ?? "상품 정보"}</em>;
+  return <em className="pdp-section-type">{labels.sections[sectionType] ?? labels.productInfo}</em>;
 }
 
 function SectionEvidence({ buyerQuestion, evidence, verificationStatus }: { buyerQuestion: string; evidence: string; verificationStatus: VerificationStatus }) {
   if (!buyerQuestion && !evidence) return null;
   return (
-    <aside className="pdp-section-evidence" aria-label="구매 질문과 확인 근거">
-      <span><small>{verificationStatus === "verified" ? "자료 확인" : "확인 필요"}</small></span>
-      {buyerQuestion && <span><small>구매 전 질문</small><b>{buyerQuestion}</b></span>}
-      {evidence && <span><small>{verificationStatus === "verified" ? "확인 근거" : "추가 확인할 근거"}</small><b>{evidence}</b></span>}
+    <aside className="pdp-section-evidence" aria-label={labels.evidenceAria}>
+      <span><small>{verificationStatus === "verified" ? labels.checked : labels.unchecked}</small></span>
+      {buyerQuestion && <span><small>{labels.question}</small><b>{buyerQuestion}</b></span>}
+      {evidence && <span><small>{verificationStatus === "verified" ? labels.evidence : labels.pendingEvidence}</small><b>{evidence}</b></span>}
     </aside>
   );
+}
+
+return detailConfig;
 }
 
 export function createDetailData(result: ProductDetailSource, imageUrl: string, assetUrls: Record<string, string>): ProductDetailData {
@@ -469,7 +472,9 @@ export function createDetailData(result: ProductDetailSource, imageUrl: string, 
   };
 }
 
-export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data, onDetailImageLoadState }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; onDetailImageLoadState?: (role: string, state: ProductDetailImageLoadState) => void }) {
+export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data, locale, onDetailImageLoadState }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; locale?: string; onDetailImageLoadState?: (role: string, state: ProductDetailImageLoadState) => void }) {
+  const resolvedLocale = resolveProductDetailLocale(data, locale);
+  const renderConfig = useMemo(() => createProductDetailConfig(resolvedLocale), [resolvedLocale]);
   const renderData = useMemo(() => {
     if (data) return resolveProductDetailAssets(data, assetUrls);
     return result ? createDetailData(result, imageUrl, assetUrls) : null;
@@ -479,11 +484,11 @@ export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data, on
     [onDetailImageLoadState],
   );
   if (!renderData) return null;
-  return <ProductDetailImageLoadContext.Provider value={imageLoadContext}><ProductDetailBuyer data={renderData} onDetailImageLoadState={imageLoadContext.report} renderAnimatedGif={(props) => <AnimatedGifMedia {...props} />} /></ProductDetailImageLoadContext.Provider>;
+  return <ProductDetailImageLoadContext.Provider value={imageLoadContext}><ProductDetailBuyer data={renderData} locale={resolvedLocale} onDetailImageLoadState={imageLoadContext.report} renderAnimatedGif={(props) => <Render config={renderConfig} data={{ content: [{ type: "AnimatedGifBlock", props }] }} />} /></ProductDetailImageLoadContext.Provider>;
 }
 
 function ProductDetailPublishAction({ saving, onSave }: { saving: boolean; onSave: (next: ProductDetailData) => void | Promise<void> }) {
-  const { appState } = usePuck<typeof detailConfig>();
+  const { appState } = usePuck<ReturnType<typeof createProductDetailConfig>>();
   return (
     <button
       type="button"
@@ -499,10 +504,17 @@ function ProductDetailPublishAction({ saving, onSave }: { saving: boolean; onSav
   );
 }
 
-export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, saving = false, onSave, onClose }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; saving?: boolean; onSave: (next: ProductDetailData) => void | Promise<void>; onClose: () => void }) {
+export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, locale, saving = false, onSave, onClose }: { result: ProductDetailSource | null; imageUrl: string; assetUrls?: Record<string, string>; data: ProductDetailData | null; locale?: string; saving?: boolean; onSave: (next: ProductDetailData) => void | Promise<void>; onClose: () => void }) {
+  const resolvedLocale = resolveProductDetailLocale(data, locale);
+  const renderConfig = useMemo(() => createProductDetailConfig(resolvedLocale), [resolvedLocale]);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
-  const initialData = useMemo(() => data ? resolveProductDetailAssets(data, assetUrls) : result ? createDetailData(result, imageUrl, assetUrls) : null, [assetUrls, data, imageUrl, result]);
+  const initialData = useMemo(() => {
+    const document = data ? resolveProductDetailAssets(data, assetUrls) : result ? createDetailData(result, imageUrl, assetUrls) : null;
+    if (!document || locale === undefined) return document;
+    // Persist an explicitly selected preview language, without changing block facts.
+    return { ...document, root: { ...document.root, props: { ...document.root?.props, locale: resolvedLocale } } };
+  }, [assetUrls, data, imageUrl, result, locale, resolvedLocale]);
   useModalInteraction(Boolean(initialData), dialogRef, onClose, { dismissible: !saving, initialFocusRef: closeButtonRef });
 
   if (!initialData) return null;
@@ -511,7 +523,7 @@ export function ProductDetailEditor({ result, imageUrl, assetUrls = {}, data, sa
       <div className="puck-editor-top"><span><b>Puck 상세페이지 편집기</b><small>{saving ? "운영 원장에 저장 중입니다." : "블록을 드래그하고 오른쪽 속성에서 문구·색상을 수정하세요."}</small></span><button ref={closeButtonRef} type="button" aria-label="편집기 닫기" disabled={saving} onClick={onClose}><X size={18} /></button></div>
       <div className="puck-editor-body" aria-busy={saving} aria-disabled={saving || undefined} inert={saving || undefined}>
         <Puck
-          config={detailConfig}
+          config={renderConfig}
           data={initialData}
           viewports={productDetailEditorViewports}
           overrides={{ headerActions: () => <ProductDetailPublishAction saving={saving} onSave={onSave} /> }}

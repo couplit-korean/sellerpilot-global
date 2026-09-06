@@ -10,6 +10,24 @@
   display: none;
 }
 
+/* iOS Safari zooms focused inputs under 16px. Keep the same contract on Android. */
+@media (max-width: 720px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  .login-card input,
+  .input-wrap input,
+  .command-input input,
+  .search-field input,
+  .credential-form-grid input,
+  .credential-form-grid textarea,
+  textarea {
+    font-size: 16px;
+  }
+}
+
 .dashboard-product-readiness {
   padding: 18px;
 }
@@ -362,6 +380,12 @@
     inset: 0;
     border: 0;
     border-radius: 0;
+  }
+
+  .cli-runtime-card > header,
+  .cli-runtime-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 
@@ -796,12 +820,14 @@
 
   .tab-toolbar > div:first-child {
     width: 100%;
+    flex-wrap: wrap;
     overflow-x: auto;
   }
 
   .tab-toolbar > div:first-child button {
     min-height: 44px;
     flex: 0 0 auto;
+    font-size: 11px;
   }
 
   .tab-toolbar > .paid-orders-export-button {
@@ -995,7 +1021,6 @@
 
   .live-channel-bars,
   .channel-list,
-  .cs-channel-verification-grid,
   .order-detail-ledger { grid-template-columns: minmax(0, 1fr); }
 
   .channel-list .channel-row { grid-template-columns: auto minmax(0, 1fr) auto; }
@@ -1298,7 +1323,7 @@
   }
 
   .credential-card > header {
-    grid-template-columns: 38px minmax(0, 1fr);
+    grid-template-columns: min-content minmax(0, 1fr);
   }
 
   .credential-card > header .connection-state {
@@ -1361,8 +1386,13 @@
   }
 
   .integration-gate-list {
-    grid-template-columns: repeat(5, minmax(200px, 82vw));
+    grid-template-columns: repeat(5, minmax(160px, 70vw));
     overflow-x: auto;
+  }
+
+  .integration-gate-panel .panel-heading {
+    flex-wrap: wrap;
+    row-gap: 8px;
   }
 
   .qoo10-image-rule {
@@ -1378,8 +1408,13 @@
   }
 
   .acceptance-gates {
-    grid-template-columns: repeat(3, minmax(180px, 76vw) 24px) minmax(180px, 76vw);
-    overflow-x: auto;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+    overflow-x: visible;
+  }
+
+  .acceptance-gates > i {
+    display: none;
   }
 
   .acceptance-toolbar {
@@ -1415,7 +1450,7 @@
 
   .acceptance-item,
   .acceptance-item-head {
-    min-width: 650px;
+    min-width: 0;
   }
 
   /* Style learning */
@@ -1596,6 +1631,36 @@
   .showcase-detail-footer {
     width: calc(100% - 24px);
   }
+}
+
+/* Tablet-only: keep tab filters on their own readable row, separate from search */
+@media (min-width: 721px) and (max-width: 900px) {
+  .tab-toolbar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .tab-toolbar > div:first-child {
+    width: 100%;
+    flex-wrap: wrap;
+    overflow-x: visible;
+  }
+
+  .tab-toolbar > div:first-child button {
+    flex: 0 0 auto;
+    min-height: 38px;
+    font-size: 11px;
+  }
+
+  .tab-toolbar .search-field {
+    flex: 1 1 100%;
+    width: 100%;
+    margin: 0;
+  }
+}
+
+@media (max-width: 820px) {
+  .cs-channel-verification .cs-channel-verification-grid { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 720px) {
@@ -2948,6 +3013,12 @@
     padding: 0;
     scroll-snap-type: none;
   }
+
+  /* Avoid 3 near-identical stacked empty-state cards per channel on mobile. */
+  .competitor-market-groups .competitor-price-grid .competitor-price-empty:nth-child(n+2) {
+    display: none;
+  }
+
   .competitor-market-groups *,
   .competitor-observation-card,
   .competitor-observation-card > header > div,
@@ -3083,8 +3154,22 @@
 
 @media (max-width: 390px) {
   .topbar-actions .demo-data-badge {
-    width: 76px;
-    min-width: 76px;
+    display: inline-flex;
+    width: auto;
+    min-width: 0;
+    height: 32px;
+    padding: 0 8px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .topbar-actions .demo-data-badge > svg {
+    grid-row: auto;
+  }
+
+  .topbar-actions .demo-data-badge b,
+  .topbar-actions .demo-data-badge small {
+    display: none;
   }
 
   .topbar-title h1 {
@@ -3097,7 +3182,7 @@
    and Android safe area instead of covering the last controls on the page. */
 @media (max-width: 720px) {
   .app-content {
-    padding-bottom: calc(86px + env(safe-area-inset-bottom));
+    padding-bottom: calc(86px + env(safe-area-inset-bottom)) !important;
   }
 
   .mobile-bottom-nav {
@@ -3131,6 +3216,13 @@
     background: transparent;
     font-size: 10px;
     font-weight: 700;
+  }
+
+  .mobile-bottom-nav button span {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .mobile-bottom-nav button.active {
@@ -3572,6 +3664,10 @@
   .topbar > .topbar-title h1 {
     width: auto;
     max-width: 100%;
+    overflow: visible;
+    white-space: normal;
+    text-overflow: clip;
+    line-height: 1.2;
   }
 
   .topbar > .topbar-actions {
@@ -4261,49 +4357,6 @@
 }
 
 @media (max-width: 720px) {
-  .commerce-service-rail {
-    display: grid;
-    height: auto;
-    min-height: 0;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 0;
-    overflow: visible;
-    padding: 0;
-    white-space: normal;
-  }
-
-  .commerce-service-rail strong,
-  .commerce-service-rail span,
-  .commerce-service-rail em,
-  .commerce-service-rail span:nth-of-type(n) {
-    display: flex !important;
-    min-width: 0;
-    min-height: 34px;
-    align-items: center;
-    gap: 6px;
-    margin: 0;
-    border-right: 1px solid #dfe5e2;
-    border-bottom: 1px solid #dfe5e2;
-    padding: 7px 10px;
-    overflow-wrap: anywhere;
-    font-size: 9px;
-    white-space: normal;
-  }
-
-  .commerce-service-rail strong,
-  .commerce-service-rail em {
-    grid-column: 1 / -1;
-  }
-
-  .commerce-service-rail strong {
-    color: #fff;
-    background: #25352d;
-  }
-
-  .commerce-service-rail em {
-    border-bottom: 0;
-  }
-
   .publishing-steps {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -4541,6 +4594,156 @@
   }
 }
 
+/* Tablet-only: cardify order/margin tables same as mobile, since the 734px
+   table-wrap at ~768px is narrower than the raw table (~940-980px). */
+@media (min-width: 721px) and (max-width: 900px) {
+  .order-table,
+  .order-table tbody,
+  .order-table tr,
+  .order-table td,
+  .margin-table,
+  .margin-table tbody,
+  .margin-table tr,
+  .margin-table td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none;
+  }
+
+  .order-table thead,
+  .margin-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .order-table tbody,
+  .margin-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .order-table tr,
+  .margin-table tr {
+    position: relative;
+    display: grid;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(30 48 41 / 5%);
+  }
+
+  .order-table td,
+  .margin-table td {
+    position: static;
+    inset: auto;
+    display: flex;
+    width: 100%;
+    min-height: 50px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 9px 11px;
+    background: #fff;
+    box-shadow: none;
+    white-space: normal;
+  }
+
+  .order-table td:first-child,
+  .order-table td:nth-child(2),
+  .order-table td:last-child,
+  .margin-table td:first-child,
+  .margin-table td:last-child {
+    position: static;
+    inset: auto;
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    background: #fff;
+    box-shadow: none;
+  }
+
+  .order-table td::before,
+  .margin-table td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  .order-table td:nth-child(2),
+  .order-table td:nth-child(5),
+  .margin-table td:first-child,
+  .margin-table td:nth-child(7),
+  .margin-table td:nth-child(8),
+  .margin-table td:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .order-table td:nth-child(2),
+  .margin-table td:first-child {
+    border-top: 0;
+  }
+
+  .order-table td:first-child {
+    position: absolute;
+    z-index: 1;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    border: 0;
+    padding: 0;
+  }
+
+  .order-table td:nth-child(2)::before { content: "주문번호"; }
+  .order-table td:nth-child(3)::before { content: "채널"; }
+  .order-table td:nth-child(4)::before { content: "구매자"; }
+  .order-table td:nth-child(5)::before { content: "상품"; }
+  .order-table td:nth-child(6)::before { content: "결제금액"; }
+  .order-table td:nth-child(7)::before { content: "주문 · 배송"; }
+  .order-table td:nth-child(8)::before { content: "정산"; }
+  .order-table td:nth-child(9)::before { content: "주문시간"; }
+  .order-table td:last-child { grid-column: 1 / -1; padding: 6px; }
+  .order-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .margin-table td:nth-child(2)::before { content: "계획 판매가"; }
+  .margin-table td:nth-child(3)::before { content: "수수료"; }
+  .margin-table td:nth-child(4)::before { content: "변동비율"; }
+  .margin-table td:nth-child(5)::before { content: "순이익"; }
+  .margin-table td:nth-child(6)::before { content: "마진율"; }
+  .margin-table td:nth-child(7)::before { content: "권장 판매가"; }
+  .margin-table td:nth-child(8)::before { content: "등록 판정"; }
+  .margin-table td:last-child { padding: 6px; }
+  .margin-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .order-table .order-product-button,
+  .order-table .order-detail-link,
+  .margin-table .margin-channel-cell {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    text-align: left;
+  }
+
+  .order-table input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+  }
+}
+
 @media (max-width: 360px) {
   .product-table tr,
   .order-table tr,
@@ -4560,5 +4763,81 @@
   .order-table td:first-child {
     position: absolute;
     grid-column: auto;
+  }
+}
+
+
+/* Release QA: close the tablet and compact-desktop gaps without changing the
+   established 280-720px Fold/mobile contracts. */
+@media (min-width: 901px) {
+  .commerce-service-rail {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    scrollbar-width: thin;
+  }
+
+  .commerce-service-rail::-webkit-scrollbar {
+    height: 4px;
+  }
+}
+
+@media (min-width: 1181px) {
+  .order-summary-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1081px) and (max-width: 1366px) {
+  .daily-briefing {
+    grid-template-columns: minmax(260px, .8fr) minmax(520px, 1.4fr);
+  }
+
+  .briefing-settlement {
+    grid-column: 1 / -1;
+    min-height: 86px;
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 16px;
+  }
+
+  .briefing-settlement strong,
+  .briefing-settlement small,
+  .briefing-settlement button {
+    margin-top: 0;
+  }
+}
+
+@media (min-width: 481px) and (max-width: 720px) {
+  .topbar-actions .global-search {
+    display: inline-flex;
+    width: 44px;
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .topbar-actions .global-search span,
+  .topbar-actions .global-search kbd {
+    display: none;
+  }
+}
+
+/* Keep the native table semantics on tablets, but shrink the product identity
+   column enough that a 768px viewport needs only a short, discoverable pan. */
+@media (min-width: 721px) and (max-width: 900px) {
+  .product-table {
+    min-width: 760px;
+  }
+
+  .product-table .product-cell {
+    min-width: 280px;
+  }
+
+  .product-table th,
+  .product-table td {
+    white-space: normal;
   }
 }

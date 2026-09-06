@@ -1,6 +1,6 @@
 # SellerPilot PostgreSQL core
 
-`0001_core.sql` is the production data contract for the PPT-based acceptance scope. It is intentionally not connected to the public demo deployment yet.
+`0001_core.sql`는 PPT 수용 범위의 초기 스키마 초안이다. 현재 운영 DB는 Supabase 프로젝트 `sqaoqucxakebqkiygdxb`이며 마이그레이션은 `supabase/migrations`가 원장이다. 운영 사실은 `docs/현재상태.md`를 본다.
 
 ## Guarantees encoded in the schema
 
@@ -16,7 +16,7 @@
 
 ## Required provisioning decisions
 
-Before applying this migration, choose a PostgreSQL provider, private connection method, managed secret store, object storage, queue/scheduler, fixed egress IP, backup policy, and monitoring service. Development, staging, and production must use separate databases and credentials.
+운영은 Supabase Vault + Vercel이다. 유료 Vercel Static IP는 사용하지 않는다. 채널 개발자센터 화이트리스트에 관측 공인 IP를 등록한다.
 
 Do not place seller API keys, refresh tokens, buyer data, or production connection strings in the repository or browser code.
 

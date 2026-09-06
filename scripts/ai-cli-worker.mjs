@@ -148,6 +148,10 @@ import {
   WORKER_COMPLETION_TRANSIENT_GRACE_MS,
   WorkerRequestTerminalError,
 } from "./worker-lifecycle-retry.mjs";
+import {
+  isLocalGatewayRecoveryAllowedTuple,
+  LOCAL_GATEWAY_RECOVERY_CLAIM_MODE,
+} from "../lib/channels/local-gateway-recovery-lane.ts";
 import { executeChannelOperation, writeChannelOperations } from "../lib/channels/operations.ts";
 import {
   assertShopeeShopProfileTarget,
@@ -165,8 +169,13 @@ import {
 const productOnly = process.argv.includes("--product-only");
 const gatewayOnly = process.argv.includes("--gateway-only");
 const aiOnly = process.argv.includes("--ai-only") || productOnly;
+const localRecoveryOnly = process.argv.includes("--local-recovery-only");
+const noScheduler = process.argv.includes("--no-scheduler");
 if (gatewayOnly && aiOnly) {
   throw new Error("--gateway-only cannot be combined with --ai-only or --product-only.");
+}
+if (localRecoveryOnly && !gatewayOnly) {
+  throw new Error("--local-recovery-only is only valid with --gateway-only.");
 }
 if (gatewayOnly && !process.env.SELLERPILOT_URL?.trim()) {
   throw new Error("SELLERPILOT_URL must explicitly identify the deployed control plane in gateway-only mode.");
@@ -190,7 +199,8 @@ function loadWorkerToken(environmentName, keychainService) {
 
 const aiWorkerToken = gatewayOnly ? "" : loadWorkerToken("SELLERPILOT_AI_WORKER_TOKEN", "SellerPilot AI Worker");
 const gatewayWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_GATEWAY_WORKER_TOKEN", "SellerPilot Gateway Worker");
-const schedulerWorkerToken = aiOnly ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
+// Opt out before reading either the environment token or Keychain. Gateway claims stay enabled.
+const schedulerWorkerToken = (aiOnly || localRecoveryOnly || noScheduler) ? "" : loadWorkerToken("SELLERPILOT_SCHEDULER_WORKER_TOKEN", "SellerPilot Scheduler Worker");
 const aiWorkerConfigured = isWorkerTokenConfigured(aiWorkerToken);
 const gatewayWorkerConfigured = isWorkerTokenConfigured(gatewayWorkerToken);
 const schedulerWorkerConfigured = isWorkerTokenConfigured(schedulerWorkerToken);
@@ -4131,7 +4141,7 @@ async function processGatewayJob(job) {
           path: "/api/v2/shop/get_shop_info",
         });
         if (remote.response.ok && !textValue(remote.data, "error")) {
-          assertShopeeShopProfileTarget(remote.data, shopId);
+          assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
         }
         if (ensured.refreshed) credentialRefresh = { payload: ensured.payload, expiresAt: ensured.credentialExpiresAt };
       } else if (job.channel === "lazada") {
@@ -4295,7 +4305,8 @@ async function processGatewayJob(job) {
         console.log(`[Lazada category debug] query=${String(operationArguments.query || "").slice(0, 160)}`);
       }
       await assertGatewayLeaseHealthy();
-      if (writeChannelOperations.has(job.operation)) {
+      const lazadaShipmentBoundary = job.channel === "lazada" && job.operation === "shipment.confirm";
+      if (writeChannelOperations.has(job.operation) && !lazadaShipmentBoundary) {
         await markExternalWriteStarted();
       }
       result = await executeChannelOperation({
@@ -4304,6 +4315,12 @@ async function processGatewayJob(job) {
         payload: credential,
         arguments: operationArguments,
         environment: job.environment,
+        ...(lazadaShipmentBoundary ? {
+          providerMutationHooks: {
+            begin: markExternalWriteStarted,
+            assertLeaseHealthy: assertGatewayLeaseHealthy,
+          },
+        } : {}),
       });
       if (listingMediaWriteObserved) {
         result.steps.unshift({
@@ -4399,7 +4416,9 @@ async function processGatewayJob(job) {
   }
 }
 
-const workerMode = gatewayOnly ? "gateway-only" : productOnly ? "product-only" : aiOnly ? "ai-only" : "all-scopes";
+const workerMode = gatewayOnly
+  ? (localRecoveryOnly ? "gateway-only-local-recovery" : "gateway-only")
+  : productOnly ? "product-only" : aiOnly ? "ai-only" : "all-scopes";
 console.log(gatewayOnly
   ? `SellerPilot channel gateway worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · poll=${pollMs}ms`
   : `SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
@@ -4488,13 +4507,32 @@ do {
       try {
         const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
           method: "POST",
-          body: JSON.stringify({ version: workerVersion }),
+          body: JSON.stringify({
+            version: workerVersion,
+            ...(localRecoveryOnly ? { mode: LOCAL_GATEWAY_RECOVERY_CLAIM_MODE } : {}),
+          }),
         });
         gatewayWorkerHealth?.markGatewayResponse(gatewayResponse.status);
+        if (localRecoveryOnly && gatewayResponse.status === 409) {
+          console.error("로컬 복구 전용 claim 경계를 서버가 확인하지 않아 실행을 중단합니다. running 행을 유지합니다.");
+          stopping = true;
+          process.exitCode = 1;
+          break;
+        }
         if (gatewayResponse.ok && gatewayResponse.status !== 204) {
+          const gatewayJob = await gatewayResponse.json();
+          if (localRecoveryOnly) {
+            const claimedChannel = typeof gatewayJob?.channel === "string" ? gatewayJob.channel : "";
+            const claimedOperation = typeof gatewayJob?.operation === "string" ? gatewayJob.operation : "";
+            if (!isLocalGatewayRecoveryAllowedTuple(claimedChannel, claimedOperation)) {
+              console.error(`로컬 복구 전용 claim 경계를 서버가 확인하지 않아 실행을 중단합니다. ${claimedChannel} · ${claimedOperation} · running 행을 유지합니다.`);
+              stopping = true;
+              process.exitCode = 1;
+              break;
+            }
+          }
           markWorkerBusy();
           gatewayQueueIdle = false;
-          const gatewayJob = await gatewayResponse.json();
           if (once) {
             await processGatewayJob(gatewayJob);
             continue;

@@ -43,6 +43,10 @@ async function migrationHarness() {
   };
 }
 
+// This fixture was introduced with exact cable activation in 0c7f235.
+// Freeze that production-contract version, independently of full-chain replay.
+const TEMU_FIXTURE_SCHEMA_THROUGH = "20260831146000_temu_exact_cable_clips.sql";
+
 async function replayMigrations(db) {
   const { compatibility, withoutUnavailableExtensions } = await migrationHarness();
   await db.exec(compatibility);
@@ -50,7 +54,9 @@ async function replayMigrations(db) {
   const names = (await readdir(migrationUrl))
     .filter((name) => name.endsWith(".sql"))
     .sort();
+  assert.ok(names.includes(TEMU_FIXTURE_SCHEMA_THROUGH));
   for (const name of names) {
+    if (name > TEMU_FIXTURE_SCHEMA_THROUGH) break;
     const source = await readFile(new URL(name, migrationUrl), "utf8");
     await db.exec(withoutUnavailableExtensions(source));
   }

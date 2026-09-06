@@ -439,7 +439,7 @@ button.demo-data-badge.attention {
 
 .exchange-title {
   min-width: 164px;
-  flex: 0 0 164px;
+  flex: 0 0 210px;
 }
 
 .exchange-title > span {
@@ -1578,6 +1578,10 @@ button.demo-data-badge.attention {
   gap: 12px;
 }
 
+.channel-selection-heading > div {
+  min-width: 0;
+}
+
 .channel-selection-heading b,
 .channel-selection-heading small {
   display: block;
@@ -1591,6 +1595,7 @@ button.demo-data-badge.attention {
   margin-top: 4px;
   color: #788391;
   font-size: 9px;
+  line-height: 1.45;
 }
 
 .channel-selection-heading em {
@@ -1618,6 +1623,89 @@ button.demo-data-badge.attention {
 .publish-channel-list label > span small {
   margin-top: 3px;
   font-size: 8px;
+}
+
+.channel-rule-handoff {
+  overflow: hidden;
+  border: 1px solid #dce7e2;
+  border-radius: 9px;
+  background: #f7fbf9;
+}
+
+.channel-rule-handoff > header {
+  padding: 10px 12px;
+  border-bottom: 1px solid #dce7e2;
+}
+
+.channel-rule-handoff > header b,
+.channel-rule-handoff > header small,
+.channel-rule-handoff article b,
+.channel-rule-handoff article small {
+  display: block;
+}
+
+.channel-rule-handoff > header b {
+  color: #29483d;
+  font-size: 11px;
+}
+
+.channel-rule-handoff > header small {
+  margin-top: 4px;
+  color: #667b72;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.channel-rule-handoff > div {
+  display: grid;
+  max-height: 270px;
+  gap: 1px;
+  overflow-y: auto;
+  background: #dce7e2;
+}
+
+.channel-rule-handoff article {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(38px, max-content) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+
+.channel-rule-handoff article span {
+  min-width: 0;
+}
+
+.channel-rule-handoff article b {
+  color: #34483f;
+  font-size: 10px;
+}
+
+.channel-rule-handoff article small {
+  margin-top: 3px;
+  color: #77867f;
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.channel-rule-handoff article em {
+  align-self: start;
+  padding: 3px 5px;
+  border-radius: 5px;
+  color: #3d6958;
+  background: #e5f2ec;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+@media (max-width: 720px) {
+  .channel-rule-handoff > div {
+    max-height: none;
+    overflow-y: visible;
+  }
 }
 
 .unavailable-channels {
@@ -2147,15 +2235,29 @@ button.demo-data-badge.attention {
     min-height: 106px;
   }
 
+  .briefing-settlement strong {
+    font-size: 19px;
+  }
+
   .publishing-readiness-card {
     grid-template-columns: 1fr;
   }
 
   .publishing-readiness-card > div {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     justify-content: space-between;
+    gap: 4px;
     text-align: left;
+  }
+
+  .publishing-readiness-card span,
+  .publishing-readiness-card b {
+    min-width: 0;
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
   }
 
   .publishing-readiness-card b {
@@ -2423,13 +2525,13 @@ button.demo-data-badge.attention {
 .ticket-list-empty small { font-size: 8px; line-height: 1.5; }
 .conversation-empty { grid-column: 2 / -1; min-height: 420px; }
 .conversation-empty .live-empty-state { min-height: 100%; }
-.readiness-inquiry-state { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1px solid #e2e8e5; border-radius: 9px; padding: 10px; color: #65756e; background: #f8faf9; }
+.readiness-inquiry-state { display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(0, auto); align-items: center; gap: 8px; border: 1px solid #e2e8e5; border-radius: 9px; padding: 10px; color: #65756e; background: #f8faf9; }
 .readiness-inquiry-state > span { display: grid; min-width: 0; gap: 2px; }
 .readiness-inquiry-state b { color: #34443d; font-size: 9px; }
 .readiness-inquiry-state small { overflow: hidden; color: #7d8a85; font-size: 8px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .readiness-inquiry-state.failed { border-color: #f0d2b4; color: #a8611f; background: #fff9f1; }
 .readiness-inquiry-state.passed { border-color: #cbe4d9; color: #187455; background: #f3fbf7; }
-.readiness-inquiry-state button { display: inline-flex; min-height: 36px; align-items: center; gap: 4px; border: 1px solid #cfdcd6; border-radius: 8px; padding: 0 9px; color: #315f50; background: white; font-size: 8px; font-weight: 800; white-space: nowrap; }
+.readiness-inquiry-state button { display: inline-flex; min-height: 36px; align-items: center; gap: 4px; border: 1px solid #cfdcd6; border-radius: 8px; padding: 0 9px; color: #315f50; background: white; font-size: 8px; font-weight: 800; white-space: normal; }
 
 .channel-name span.pending,
 .channel-hero em.pending { color: #b54708; }

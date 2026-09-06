@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { productDetailDataBodySchema, productDetailDataQuerySchema } from "../../../../lib/product-detail-data-contract";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
+import { productDetailDataBodySchema, productDetailDataQuerySchema } from "../../../../lib/product-detail-data-schemas";
 
 export const runtime = "nodejs";
 

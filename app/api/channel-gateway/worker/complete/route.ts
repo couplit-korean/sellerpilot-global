@@ -7,6 +7,7 @@ import {
   gatewayWorkerCompletionSchema,
 } from "../../../../../lib/channels/gateway-contract";
 import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
+import { lazadaQuarantineReady } from "../../../../../lib/channels/lazada-im-webhook";
 import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
 import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
 import type { ChannelOperationResult } from "../../../../../lib/channels/operations";
@@ -234,6 +235,20 @@ export async function POST(request: Request) {
     storedResponse = parsed.data.result;
   }
 
+  if (job.channel === "lazada" && normalizedInquiries) {
+    if (!await lazadaQuarantineReady(normalizedInquiries, () => serviceClient.rpc("sellerpilot_service_lazada_quarantine_ready"))) {
+      return NextResponse.json({ message: "Lazada unordered message storage is not ready" }, { status: 503 });
+    }
+    const ingestion = await serviceClient.rpc("sellerpilot_service_ingest_lazada_gateway_v2", {
+      p_token_hash: tokenHash, p_job_id: parsed.data.jobId, p_claim_token: parsed.data.claimToken,
+      p_inquiries: normalizedInquiries,
+    });
+    const receipt = ingestion.data && typeof ingestion.data === "object" ? ingestion.data as Record<string, unknown> : null;
+    if (ingestion.error || receipt?.contract !== "lazada_ingest_v2" || receipt.status !== "complete") {
+      return NextResponse.json({ message: "Lazada partial ingestion: quarantine storage/review pending", partial: true, retryAfterSeconds: 300 }, { status: 503, headers: { "retry-after": "300" } });
+    }
+    normalizedInquiries = [];
+  }
   if (job.operation === "listing.lineage.verify") {
     if (!listingLineageChannels.has(String(job.channel))) {
       return NextResponse.json({ message: "상품 계보 검증 채널이 현재 작업과 일치하지 않습니다." }, { status: 409 });

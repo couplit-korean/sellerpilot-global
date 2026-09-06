@@ -179,7 +179,7 @@ test("Qoo10 rollback updates preserve required carrier fields but keep the exist
   assert.equal((publishedArguments.params as Record<string, unknown>).AvailableDateValue, params.AvailableDateValue);
 });
 
-test("Qoo10 rollback recovery replaces client shipping with the authoritative remote ShippingNo", () => {
+test("Qoo10 rollback recovery replaces every fenced carrier value with authoritative confirmed state", () => {
   const authoritativeBinding = {
     status: "allowed" as const,
     contract: qoo10RollbackUpdateRecoveryContract,
@@ -202,8 +202,12 @@ test("Qoo10 rollback recovery replaces client shipping with the authoritative re
       expectedState: { ...authoritativeBinding.expectedState, shippingNo: "0" },
     },
     params: {
-      ItemCode: "1217336970",
+      ItemCode: "9999999999",
       ItemTitle: "更新商品",
+      SecondSubCat: "300000536",
+      RetailPrice: "3190",
+      ItemPrice: "3190",
+      ItemQty: "9",
       ShippingNo: "0",
     },
   };
@@ -212,7 +216,15 @@ test("Qoo10 rollback recovery replaces client shipping with the authoritative re
     untrustedClientArguments,
     authoritativeBinding,
   );
-  assert.equal((bound.params as Record<string, unknown>).ShippingNo, "806971");
+  assert.deepEqual(bound.params, {
+    ...untrustedClientArguments.params,
+    ItemCode: "1217336970",
+    SecondSubCat: "320000542",
+    RetailPrice: "1871",
+    ItemPrice: "1871",
+    ItemQty: "1",
+    ShippingNo: "806971",
+  });
   assert.deepEqual(bound[qoo10RollbackUpdateRecoveryArgument], authoritativeBinding);
   assert.equal(untrustedClientArguments.params.ShippingNo, "0", "server binding must not mutate the parsed request");
   assert.equal(

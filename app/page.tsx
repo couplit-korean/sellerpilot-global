@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { getSafeSignInError } from "../lib/auth-sign-in-error-safety";
 import {
   Activity,
   AlertCircle,
@@ -94,6 +95,10 @@ import { MobilePushManager } from "./mobile-push-manager";
 import { PlatformUsagePage } from "./platform-usage-page";
 import { marketplaceListingLinkLabel, marketplaceListingUrl, type RemoteListingReference } from "./channel-links";
 import { channels, type ChannelKey } from "./channel-config";
+import {
+  channelOverviewHealthLabel,
+  channelStepSelectionLabel,
+} from "./channel-readiness-data";
 import { activeChannelKeys, isActiveChannelKey } from "../lib/channels/catalog";
 import { coreFirstDraftAssetIds, type AiGeneratedAssetId } from "../lib/ai-generated-assets";
 import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
@@ -110,7 +115,25 @@ import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
-import { emptyProductIntake, productConditions, productCurrencies, productEditSchema, productIntakeSchema, type ProductIntakeDraft } from "../lib/product-intake";
+import {
+  emptyProductIntake,
+  emptyProductIntakeDraftDecisions,
+  isProductIntakePublicationReady,
+  productConditions,
+  productCurrencies,
+  productEditSchema,
+  productIntakeDraftSchema,
+  productIntakeSchema,
+  productRegistrationIntakeDraftSchema,
+  type ProductIntakeDraft,
+  type ProductIntakeDraftDecisions,
+  type ProductRegistrationIntakeDraft,
+} from "../lib/product-intake";
+import {
+  getProductRegistrationDraft,
+  putProductRegistrationDraft,
+  ProductRegistrationDraftClientError,
+} from "../lib/product-registration-draft-client";
 import { isResolvedProductFact } from "../lib/product-facts";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
@@ -482,6 +505,16 @@ const ticketChannelCodes: Record<string, string> = {
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
 const productMarginSalesChannels = activeChannelKeys.map((key) => ({ key, code: channels[key].letter }));
+const channelRuleHandoffs: Record<(typeof activeChannelKeys)[number], string> = {
+  qoo10: "일본어 상품명 · 배송코드 · 출고 가능일을 공식 조회와 판매자 확인으로 확정",
+  shopee: "국가별 숍 · 말단 카테고리 · 필수 속성 · 활성 물류를 공식 API로 확인",
+  lazada: "판매 국가 · 말단 카테고리 · 필수 속성 · 배송·보증 정책을 확인",
+  coupang: "말단 카테고리 · 상품고시 · 인증 · 출고지·반품지를 WING API로 확인",
+  elevenst: "말단 카테고리 · 상품정보제공고시 · 인증 · 배송 조건을 확인",
+  smartstore: "말단 카테고리 · 필수 속성 · 상품고시 · A/S·출고·반품 정책을 확인",
+  ebay: "필수 상품 속성 · 배송·결제·반품 정책 · 재고 위치를 Seller Hub와 확인",
+  temu: "Compliance 승인 · 말단 카테고리 · 배송 템플릿을 Partner/Seller Center에서 확인",
+};
 type DisplayProduct = {
   id: string;
   sourceId: string;
@@ -745,7 +778,7 @@ function StatusBadge({ status }: { status: string }) {
 }
 
 function credentialConnectionLabel(status: string | undefined) {
-  if (status === "active") return "읽기 진단 정상";
+  if (status === "active") return "읽기 진단 통과";
   if (status === "unverified") return "키 등록됨 · 진단 필요";
   return "API 키 등록 필요";
 }
@@ -779,9 +812,14 @@ function LoginScreen({
     }
     setLoading(true);
     setError("");
-    const loginError = await onLogin(email.trim(), password);
-    setLoading(false);
-    if (loginError) setError(loginError);
+    try {
+      const loginError = await onLogin(email.trim(), password);
+      if (loginError) setError(loginError);
+    } catch (loginError) {
+      setError(getSafeSignInError(loginError));
+    } finally {
+      setLoading(false);
+    }
   };
 
   const requestPasswordReset = async () => {
@@ -1042,7 +1080,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channel.failedAttemptCount ? `오류 ${channel.failedAttemptCount}` : "정상"}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channelOverviewHealthLabel(channel)}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -2400,6 +2438,23 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
 
 type UploadedPhoto = { name: string; url: string; file: File; role: string; originalWidth: number; originalHeight: number };
 const productSourcePhotoSha256Pattern = /^[a-f0-9]{64}$/;
+const productRegistrationDraftIdPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+type RegistrationDraftSaveState = "initializing" | "ready" | "saving" | "saved" | "conflict" | "unavailable";
+
+function productRegistrationDraftImageSelections(photos: readonly UploadedPhoto[]) {
+  return photos.map((photo) => ({
+    role: photo.role,
+    name: photo.name,
+    mediaType: photo.file.type,
+    bytes: photo.file.size,
+    originalWidth: photo.originalWidth,
+    originalHeight: photo.originalHeight,
+    // File/blob URLs are browser-local and must never be presented as a
+    // restored server asset. A later upload ledger may replace this null.
+    uploadedPath: null,
+  }));
+}
 
 async function productSourcePhotoSha256(file: File) {
   const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
@@ -2621,7 +2676,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
 
 function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, initialProduct, onStartAnother, onShowHistory, onManualProductCreated }: { notify: (message: string) => void; channelMetrics: OperationsSnapshot["channelMetrics"]; pipeline: OperationsSnapshot["pipeline"] | null; authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>; initialProduct?: { id: string; name: string } | null; onStartAnother: () => void; onShowHistory: () => void; onManualProductCreated: () => void }) {
   const existingProductEdit = Boolean(initialProduct?.id);
-  const draftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
+  const legacyDraftStorageKey = `sellerpilot:publishing-draft:v3:${initialProduct?.id ?? "new"}`;
   const [running, setRunning] = useState(false);
   const automationStartInFlightRef = useRef(false);
   const [mainPhoto, setMainPhoto] = useState<UploadedPhoto | null>(null);
@@ -2650,7 +2705,22 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const productResearchRecoveryGenerationRef = useRef(0);
   const [intake, setIntake] = useState<ProductIntakeDraft>(() => ({ ...emptyProductIntake }));
   const intakeRef = useRef(intake);
-  const [hydratedDraftStorageKey, setHydratedDraftStorageKey] = useState("");
+  const [intakeDecisions, setIntakeDecisions] = useState<ProductIntakeDraftDecisions>(() => ({ ...emptyProductIntakeDraftDecisions }));
+  const intakeDecisionsRef = useRef(intakeDecisions);
+  const [userEditedFields, setUserEditedFields] = useState<Array<keyof ProductIntakeDraft>>([]);
+  const userEditedFieldsRef = useRef(new Set<keyof ProductIntakeDraft>());
+  const [registrationDraftId, setRegistrationDraftId] = useState("");
+  const [registrationDraftHydrated, setRegistrationDraftHydrated] = useState(existingProductEdit);
+  const [registrationDraftSaveState, setRegistrationDraftSaveState] = useState<RegistrationDraftSaveState>(existingProductEdit ? "ready" : "initializing");
+  const [registrationDraftMessage, setRegistrationDraftMessage] = useState(existingProductEdit ? "" : "서버에서 이어쓰기 초안을 확인하고 있습니다.");
+  const [registrationDraftLoadVersion, setRegistrationDraftLoadVersion] = useState(0);
+  const [restoredLocalPhotoCount, setRestoredLocalPhotoCount] = useState(0);
+  const [retainedDraftImageSelections, setRetainedDraftImageSelections] = useState<ProductRegistrationIntakeDraft["imageSelections"]>([]);
+  const registrationDraftVersionRef = useRef(0);
+  const registrationDraftLastSavedRef = useRef("");
+  const registrationDraftCurrentRef = useRef<{ serialized: string; data: ProductRegistrationIntakeDraft } | null>(null);
+  const registrationDraftPendingRef = useRef<{ serialized: string; data: ProductRegistrationIntakeDraft } | null>(null);
+  const registrationDraftSaveInFlightRef = useRef(false);
   const [activeStage, setActiveStage] = useState<1 | 2 | 3>(initialProduct?.id ? 3 : 1);
   const productResearchInputRef = useRef(intake.researchInput);
   const researchAppliedValuesRef = useRef<Partial<ProductIntakeDraft>>({});
@@ -2703,49 +2773,199 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   }, [intake]);
 
   useEffect(() => {
-    const restoreTimer = window.setTimeout(() => {
-      try {
-        const stored = window.sessionStorage.getItem(draftStorageKey);
-        if (stored) {
-          const parsed = JSON.parse(stored) as unknown;
-          if (isRecord(parsed)) {
-            const restored = { ...emptyProductIntake } as ProductIntakeDraft;
-            for (const key of Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>) {
-              const candidate = parsed[key];
-              if (typeof candidate === typeof emptyProductIntake[key]) {
-                (restored as Record<keyof ProductIntakeDraft, unknown>)[key] = candidate;
-              }
-            }
-            restored.condition = productConditions.includes(restored.condition) ? restored.condition : "NEW";
-            restored.currency = productCurrencies.includes(restored.currency) ? restored.currency : "KRW";
-            restored.gtinStatus = restored.gtinStatus === "HAS_GTIN" ? "HAS_GTIN" : "NO_GTIN";
-            restored.imageRightsConfirmed = false;
-            restored.productFactsConfirmed = false;
-            intakeRef.current = restored;
-            setIntake(restored);
-          }
-        }
-      } catch {
-        window.sessionStorage.removeItem(draftStorageKey);
-      } finally {
-        setActiveStage(initialProduct?.id ? 3 : 1);
-        setHydratedDraftStorageKey(draftStorageKey);
-      }
-    }, 0);
-    return () => window.clearTimeout(restoreTimer);
-  }, [draftStorageKey, initialProduct?.id]);
+    intakeDecisionsRef.current = intakeDecisions;
+  }, [intakeDecisions]);
 
   useEffect(() => {
-    if (hydratedDraftStorageKey !== draftStorageKey) return;
-    if (queuedJobId) {
-      window.sessionStorage.removeItem(draftStorageKey);
-      return;
+    if (existingProductEdit) return;
+    const timer = window.setTimeout(() => {
+      const params = new URLSearchParams(window.location.search);
+      const requestedDraftId = params.get("registrationDraftId")?.trim() ?? "";
+      const nextDraftId = productRegistrationDraftIdPattern.test(requestedDraftId)
+        ? requestedDraftId
+        : crypto.randomUUID();
+      setRegistrationDraftId(nextDraftId);
+      if (requestedDraftId !== nextDraftId) {
+        params.set("view", "publishing");
+        params.set("registrationDraftId", nextDraftId);
+        window.history.replaceState(
+          { ...(isRecord(window.history.state) ? window.history.state : {}), view: "publishing", registrationDraftId: nextDraftId },
+          "",
+          `${window.location.pathname}?${params.toString()}`,
+        );
+      }
+      try {
+        const legacy = JSON.parse(window.sessionStorage.getItem(legacyDraftStorageKey) ?? "null") as unknown;
+        const parsedLegacy = productIntakeDraftSchema.safeParse(legacy);
+        if (parsedLegacy.success) {
+          const restoredLegacy = { ...parsedLegacy.data, imageRightsConfirmed: false, productFactsConfirmed: false };
+          const restoredFields = (Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>).filter((field) => (
+            field !== "imageRightsConfirmed"
+            && field !== "productFactsConfirmed"
+            && !Object.is(restoredLegacy[field], emptyProductIntake[field])
+          ));
+          intakeRef.current = restoredLegacy;
+          userEditedFieldsRef.current = new Set(restoredFields);
+          setIntake(restoredLegacy);
+          setUserEditedFields(restoredFields);
+          setRegistrationDraftMessage("기존 브라우저 초안을 읽었습니다. 서버 저장이 확인될 때까지 이 화면을 유지해 주세요.");
+        }
+      } catch {
+        // Invalid legacy data is never promoted to the authenticated server draft.
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [existingProductEdit, legacyDraftStorageKey]);
+
+  const registrationDraftFetch = useCallback((input: RequestInfo | URL, init?: RequestInit) => (
+    authenticatedFetch(typeof input === "string" ? input : input.toString(), init)
+  ), [authenticatedFetch]);
+
+  useEffect(() => {
+    if (existingProductEdit || !registrationDraftId) return;
+    const controller = new AbortController();
+    void getProductRegistrationDraft<ProductRegistrationIntakeDraft>(registrationDraftFetch, {
+      draftId: registrationDraftId,
+      kind: "intake",
+      signal: controller.signal,
+    }).then((savedDraft) => {
+      if (controller.signal.aborted) return;
+      registrationDraftVersionRef.current = savedDraft?.version ?? 0;
+      registrationDraftPendingRef.current = null;
+      if (!savedDraft) {
+        registrationDraftLastSavedRef.current = "";
+        setRegistrationDraftSaveState("ready");
+        setRegistrationDraftMessage("새 서버 초안을 준비했습니다. 필수정보가 부족해도 자동 저장됩니다.");
+        setRegistrationDraftHydrated(true);
+        return;
+      }
+      const parsed = productRegistrationIntakeDraftSchema.safeParse(savedDraft.data);
+      if (!parsed.success) {
+        setRegistrationDraftSaveState("unavailable");
+        setRegistrationDraftMessage("저장된 초안 형식을 확인하지 못했습니다. 현재 입력은 덮어쓰지 않았습니다.");
+        setRegistrationDraftHydrated(true);
+        return;
+      }
+      const restoredIntake: ProductIntakeDraft = {
+        ...parsed.data.intake,
+        imageRightsConfirmed: false,
+        productFactsConfirmed: false,
+      };
+      const restoredFields = parsed.data.userEditedFields.filter((field) => (
+        field !== "imageRightsConfirmed" && field !== "productFactsConfirmed"
+      ));
+      intakeRef.current = restoredIntake;
+      intakeDecisionsRef.current = parsed.data.decisions;
+      userEditedFieldsRef.current = new Set(restoredFields);
+      setIntake(restoredIntake);
+      setIntakeDecisions(parsed.data.decisions);
+      setUserEditedFields(restoredFields);
+      setRestoredLocalPhotoCount(parsed.data.imageSelections.filter((image) => image.uploadedPath === null).length);
+      setRetainedDraftImageSelections(parsed.data.imageSelections);
+      if (parsed.data.researchJobId) setResearchRecoveryJobId(parsed.data.researchJobId);
+      registrationDraftLastSavedRef.current = JSON.stringify(parsed.data);
+      window.sessionStorage.removeItem(legacyDraftStorageKey);
+      setActiveStage(1);
+      setRegistrationDraftSaveState("saved");
+      setRegistrationDraftMessage(`서버 초안 v${savedDraft.version}을 복원했습니다. 확인 체크는 안전을 위해 다시 받아야 합니다.`);
+      setRegistrationDraftHydrated(true);
+    }).catch((error) => {
+      if (controller.signal.aborted) return;
+      const migrationMissing = error instanceof ProductRegistrationDraftClientError && error.status === 503;
+      setRegistrationDraftSaveState("unavailable");
+      setRegistrationDraftMessage(migrationMissing
+        ? "서버 초안 저장소가 아직 준비되지 않았습니다. 현재 화면을 닫기 전에 준비 상태를 다시 확인해 주세요."
+        : error instanceof Error ? error.message : "서버 초안을 불러오지 못했습니다. 현재 입력은 덮어쓰지 않았습니다.");
+      setRegistrationDraftHydrated(true);
+    });
+    return () => controller.abort();
+  }, [existingProductEdit, legacyDraftStorageKey, registrationDraftFetch, registrationDraftId, registrationDraftLoadVersion]);
+
+  const registrationDraftData = useMemo<ProductRegistrationIntakeDraft>(() => {
+    const localSelections = productRegistrationDraftImageSelections([
+      ...(mainPhoto ? [mainPhoto] : []),
+      ...Object.values(slotPhotos),
+      ...extraPhotos,
+    ]);
+    const replacedRoles = new Set(localSelections.map((selection) => selection.role));
+    return {
+      schemaVersion: 1,
+      intake: {
+        ...intake,
+        // A resumed draft must be checked against the physical product and the
+        // currently selected files again. These are publication approvals, not
+        // editable draft values.
+        imageRightsConfirmed: false,
+        productFactsConfirmed: false,
+      },
+      decisions: intakeDecisions,
+      userEditedFields,
+      imageSelections: [
+        ...localSelections,
+        ...retainedDraftImageSelections.filter((selection) => !replacedRoles.has(selection.role)),
+      ].slice(0, 100),
+      researchJobId: isProductResearchJobId(sourceResearchJobId)
+        ? sourceResearchJobId
+        : isProductResearchJobId(researchRecoveryJobId.trim()) ? researchRecoveryJobId.trim() : null,
+    };
+  }, [extraPhotos, intake, intakeDecisions, mainPhoto, researchRecoveryJobId, retainedDraftImageSelections, slotPhotos, sourceResearchJobId, userEditedFields]);
+
+  const persistRegistrationDraft = useCallback(async (candidate: { serialized: string; data: ProductRegistrationIntakeDraft }) => {
+    registrationDraftPendingRef.current = candidate;
+    if (registrationDraftSaveInFlightRef.current || !registrationDraftId) return;
+    registrationDraftSaveInFlightRef.current = true;
+    try {
+      while (registrationDraftPendingRef.current) {
+        const next = registrationDraftPendingRef.current;
+        registrationDraftPendingRef.current = null;
+        if (next.serialized === registrationDraftLastSavedRef.current) continue;
+        setRegistrationDraftSaveState("saving");
+        setRegistrationDraftMessage("미완성 입력을 서버 초안에 저장하고 있습니다.");
+        try {
+          const saved = await putProductRegistrationDraft<ProductRegistrationIntakeDraft>(registrationDraftFetch, {
+            draftId: registrationDraftId,
+            kind: "intake",
+            productId: resolvedProductId,
+            expectedVersion: registrationDraftVersionRef.current,
+            data: next.data,
+          });
+          registrationDraftVersionRef.current = saved.version;
+          registrationDraftLastSavedRef.current = next.serialized;
+          window.sessionStorage.removeItem(legacyDraftStorageKey);
+          if (!registrationDraftPendingRef.current) {
+            setRegistrationDraftSaveState("saved");
+            setRegistrationDraftMessage(`서버 초안 v${saved.version}에 저장했습니다. 로컬 사진 원본은 다시 열 때 재선택해야 합니다.`);
+          }
+        } catch (error) {
+          registrationDraftPendingRef.current = null;
+          if (error instanceof ProductRegistrationDraftClientError && error.status === 409) {
+            setRegistrationDraftSaveState("conflict");
+            setRegistrationDraftMessage("다른 탭에서 같은 초안이 변경되었습니다. 현재 화면 입력은 유지했으며 자동으로 덮어쓰지 않았습니다.");
+          } else {
+            setRegistrationDraftSaveState("unavailable");
+            setRegistrationDraftMessage(error instanceof ProductRegistrationDraftClientError && error.status === 503
+              ? "서버 초안 저장소가 아직 준비되지 않았습니다. 저장 완료로 표시하지 않았습니다."
+              : error instanceof Error ? error.message : "서버 초안을 저장하지 못했습니다. 현재 화면 입력은 유지됩니다.");
+          }
+          return;
+        }
+      }
+    } finally {
+      registrationDraftSaveInFlightRef.current = false;
     }
-    const saveTimer = window.setTimeout(() => {
-      window.sessionStorage.setItem(draftStorageKey, JSON.stringify(intake));
-    }, 250);
-    return () => window.clearTimeout(saveTimer);
-  }, [draftStorageKey, hydratedDraftStorageKey, intake, queuedJobId]);
+  }, [legacyDraftStorageKey, registrationDraftFetch, registrationDraftId, resolvedProductId]);
+
+  useEffect(() => {
+    const parsed = productRegistrationIntakeDraftSchema.safeParse(registrationDraftData);
+    if (!parsed.success) return;
+    const current = { serialized: JSON.stringify(parsed.data), data: parsed.data };
+    registrationDraftCurrentRef.current = current;
+    if (existingProductEdit || !registrationDraftHydrated || !registrationDraftId || queuedJobId
+        || registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable"
+        || current.serialized === registrationDraftLastSavedRef.current) return;
+    const timer = window.setTimeout(() => void persistRegistrationDraft(current), 500);
+    return () => window.clearTimeout(timer);
+  }, [existingProductEdit, persistRegistrationDraft, queuedJobId, registrationDraftData, registrationDraftHydrated, registrationDraftId, registrationDraftSaveState]);
 
   useEffect(() => {
     const hasIntakeChanges = (Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>)
@@ -2753,14 +2973,17 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         && key !== "productFactsConfirmed"
         && !Object.is(intake[key], emptyProductIntake[key]));
     const hasDraft = Boolean(mainPhoto || Object.keys(slotPhotos).length || extraPhotos.length || hasIntakeChanges);
-    if (!hasDraft || queuedJobId) return;
+    const currentServerDraft = registrationDraftCurrentRef.current?.serialized ?? "";
+    const serverDraftUnsaved = currentServerDraft !== registrationDraftLastSavedRef.current;
+    const hasBrowserOnlyPhotos = Boolean(mainPhoto || Object.keys(slotPhotos).length || extraPhotos.length);
+    if (!hasDraft || queuedJobId || (!serverDraftUnsaved && !hasBrowserOnlyPhotos)) return;
     const warnBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", warnBeforeUnload);
     return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [extraPhotos.length, intake, mainPhoto, queuedJobId, slotPhotos]);
+  }, [extraPhotos.length, intake, mainPhoto, queuedJobId, registrationDraftSaveState, slotPhotos]);
 
   useEffect(() => {
     const previousFile = previousMainPhotoFileRef.current;
@@ -2797,6 +3020,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     productResearchGenerationRef.current += 1;
     setResearchingProduct(false);
     window.sessionStorage.removeItem(productResearchPendingStorageKey);
+      window.sessionStorage.removeItem(shopeeExactBrowserKey);
     competitorResearchControllerRef.current?.abort(new DOMException("대표사진이 변경되었습니다.", "AbortError"));
     competitorResearchControllerRef.current = null;
     setResearchResult(null);
@@ -2846,9 +3070,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
   const [commerceTemplates, setCommerceTemplates] = useState<CommerceTemplate[]>([]);
   const [appliedTemplate, setAppliedTemplate] = useState("");
-  const connectedChannelKeys = useMemo(() => channelMetrics
+  const connectedChannelKeys = useMemo<Array<(typeof activeChannelKeys)[number]>>(() => channelMetrics
     .filter((metric) => metric.credentialStatus === "active" && activeChannelKeys.includes(metric.channelKey as (typeof activeChannelKeys)[number]))
-    .map((metric) => metric.channelKey), [channelMetrics]);
+    .map((metric) => metric.channelKey as (typeof activeChannelKeys)[number]), [channelMetrics]);
   const selectedChannels = useMemo(
     () => connectedChannelKeys.filter((key) => channelSelection[key] !== false),
     [channelSelection, connectedChannelKeys],
@@ -2951,12 +3175,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     const historyState = isRecord(window.history.state) ? window.history.state : {};
     const params = new URLSearchParams({ view: "publishing" });
     if (initialProduct?.id) params.set("productId", initialProduct.id);
+    if (!initialProduct?.id && registrationDraftId) params.set("registrationDraftId", registrationDraftId);
     window.history.replaceState(
-      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}) },
+      { ...historyState, view: "publishing", ...(initialProduct?.id ? { productId: initialProduct.id } : {}), ...(!initialProduct?.id && registrationDraftId ? { registrationDraftId } : {}) },
       "",
       `${window.location.pathname}?${params.toString()}`,
     );
-  }, [initialProduct]);
+  }, [initialProduct, registrationDraftId]);
 
   useEffect(() => {
     void authenticatedFetch("/api/admin/templates").then(async (response) => {
@@ -2965,6 +3190,19 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setCommerceTemplates(Array.isArray(payload.templates) ? payload.templates : []);
     }).catch(() => null);
   }, [authenticatedFetch]);
+
+  const markIntakeFieldsEdited = (fields: readonly (keyof ProductIntakeDraft)[]) => {
+    const next = new Set(userEditedFieldsRef.current);
+    for (const field of fields) next.add(field);
+    userEditedFieldsRef.current = next;
+    setUserEditedFields((Object.keys(emptyProductIntake) as Array<keyof ProductIntakeDraft>).filter((field) => next.has(field)));
+  };
+
+  const setIntakeDecision = <Key extends keyof ProductIntakeDraftDecisions>(key: Key, confirmed: boolean) => {
+    const next = { ...intakeDecisionsRef.current, [key]: confirmed };
+    intakeDecisionsRef.current = next;
+    setIntakeDecisions(next);
+  };
 
   const applyCommerceTemplate = (template: CommerceTemplate) => {
     const numeric = (key: string, fallback: number) => typeof template.values[key] === "number" ? Number(template.values[key]) : fallback;
@@ -2979,6 +3217,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     };
     intakeRef.current = nextTemplateIntake;
     setIntake(nextTemplateIntake);
+    setIntakeDecision("shippingFeeKrw", true);
+    markIntakeFieldsEdited(["weightKg", "packageLengthCm", "packageWidthCm", "packageHeightCm", "shippingFeeKrw", "shippingRule", "packagingRule"]);
     if (firstDraftGenerated) {
       setFirstDraftReviewed(false);
       closeGeneratedProductRegistration();
@@ -2989,6 +3229,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
   const setIntakeField = <Key extends keyof ProductIntakeDraft>(key: Key, value: ProductIntakeDraft[Key]) => {
     const currentIntake = intakeRef.current;
+    if (key !== "imageRightsConfirmed" && key !== "productFactsConfirmed") markIntakeFieldsEdited([key]);
     let nextIntake: ProductIntakeDraft = { ...currentIntake, [key]: value };
     if (key !== "imageRightsConfirmed" && key !== "productFactsConfirmed" && !Object.is(currentIntake[key], value)) {
       nextIntake.productFactsConfirmed = false;
@@ -3281,21 +3522,26 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       )
       : intakeRef.current;
     if (recovery) researchAppliedValuesRef.current = {};
+    const sellerEdited = userEditedFieldsRef.current;
+    const suggestedText = <Key extends "productName" | "sellerSku" | "categoryHint" | "brandName" | "manufacturer" | "countryOfOrigin" | "material" | "packageContents" | "description" | "productUrl">(
+      key: Key,
+      suggestionValue: string,
+    ) => sellerEdited.has(key) || currentIntake[key].trim() ? currentIntake[key] : suggestionValue;
     const nextIntake: ProductIntakeDraft = {
       ...currentIntake,
       researchInput,
-      productName: currentIntake.productName.trim() || suggestion.productName || "",
-      sellerSku: currentIntake.sellerSku.trim() || `AUTO-${jobId.replaceAll("-", "").slice(0, 20).toUpperCase()}`,
-      categoryHint: currentIntake.categoryHint.trim() || suggestion.categoryHint || "",
-      brandName: currentIntake.brandName.trim() || confirmedProductResearchValue(suggestion.brandName),
-      manufacturer: currentIntake.manufacturer.trim() || confirmedProductResearchValue(suggestion.manufacturer),
-      countryOfOrigin: currentIntake.countryOfOrigin.trim() || confirmedProductResearchValue(suggestion.countryOfOrigin),
-      material: currentIntake.material.trim() || confirmedProductResearchValue(suggestion.material),
-      packageContents: currentIntake.packageContents.trim() || normalizeProductSaleConfiguration(suggestion.packageContents),
-      description: currentIntake.description.trim() || confirmedProductResearchValue(suggestion.description),
-      productUrl: currentIntake.productUrl.trim() || firstReadableSource,
-      gtinStatus: currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
-      gtin: currentIntake.gtin || suggestion.gtin || "",
+      productName: suggestedText("productName", suggestion.productName || ""),
+      sellerSku: suggestedText("sellerSku", `AUTO-${jobId.replaceAll("-", "").slice(0, 20).toUpperCase()}`),
+      categoryHint: suggestedText("categoryHint", suggestion.categoryHint || ""),
+      brandName: suggestedText("brandName", confirmedProductResearchValue(suggestion.brandName)),
+      manufacturer: suggestedText("manufacturer", confirmedProductResearchValue(suggestion.manufacturer)),
+      countryOfOrigin: suggestedText("countryOfOrigin", confirmedProductResearchValue(suggestion.countryOfOrigin)),
+      material: suggestedText("material", confirmedProductResearchValue(suggestion.material)),
+      packageContents: suggestedText("packageContents", normalizeProductSaleConfiguration(suggestion.packageContents)),
+      description: suggestedText("description", confirmedProductResearchValue(suggestion.description)),
+      productUrl: suggestedText("productUrl", firstReadableSource),
+      gtinStatus: sellerEdited.has("gtinStatus") || currentIntake.gtin || !suggestion.gtin ? currentIntake.gtinStatus : "HAS_GTIN",
+      gtin: sellerEdited.has("gtin") || currentIntake.gtin ? currentIntake.gtin : suggestion.gtin || "",
       productFactsConfirmed: false,
     };
     researchAppliedValuesRef.current = collectResearchAppliedValues(
@@ -4008,6 +4254,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify("이 상품은 이미 등록 큐에 있습니다. 진행상황을 확인하거나 ‘다른 상품 등록’을 눌러 새 작업을 시작해 주세요.");
       return;
     }
+    const decisionErrors: Record<string, string> = {};
+    if (!intakeDecisionsRef.current.condition) decisionErrors.condition = "상품 상태를 직접 선택해 주세요.";
+    if (!intakeDecisionsRef.current.gtinStatus) decisionErrors.gtinStatus = "GTIN 유무를 직접 확인해 주세요.";
+    if (!intakeDecisionsRef.current.currency) decisionErrors.currency = "판매 통화를 직접 선택해 주세요.";
+    if (!intakeDecisionsRef.current.shippingFeeKrw) decisionErrors.shippingFeeKrw = "무료배송이면 0원, 유료배송이면 실제 금액을 입력해 주세요.";
+    if (Object.keys(decisionErrors).length) {
+      setManualErrors((current) => ({ ...current, ...decisionErrors }));
+      const message = Object.values(decisionErrors)[0] ?? "기본 선택값을 직접 확인해 주세요.";
+      setUploadError(message);
+      notify(message);
+      return;
+    }
     const parsed = productIntakeSchema.safeParse(intakeRef.current);
     if (!parsed.success) {
       const errors: Record<string, string> = {};
@@ -4054,7 +4312,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     && Boolean(sourceResearchLineageReceipt)
     && firstDraftImages.length === coreFirstDraftAssetIds.length;
   const firstDraftReady = firstDraftContentReady && firstDraftReviewed;
-  const intakeReady = productIntakeSchema.safeParse(intake).success;
+  const intakeReady = isProductIntakePublicationReady(intake, intakeDecisions);
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
     Boolean(mainPhoto),
@@ -4066,10 +4324,15 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     isResolvedProductFact(intake.countryOfOrigin),
     isResolvedProductFact(intake.material),
     isResolvedProductFact(intake.packageContents),
+    intakeDecisions.condition && productConditions.includes(intake.condition),
+    intakeDecisions.gtinStatus && ((intake.gtinStatus === "HAS_GTIN" && /^\d{8,14}$/.test(intake.gtin.trim()))
+      || (intake.gtinStatus === "NO_GTIN" && intake.gtin.trim() === "")),
     intake.sellingPrice > 0,
+    intakeDecisions.currency && productCurrencies.includes(intake.currency),
     intake.stock > 0,
     intake.weightKg > 0,
     intake.packageLengthCm > 0 && intake.packageWidthCm > 0 && intake.packageHeightCm > 0,
+    intakeDecisions.shippingFeeKrw,
     intake.description.trim().length >= 20,
     intake.imageRightsConfirmed,
     intake.productFactsConfirmed,
@@ -4088,11 +4351,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           {existingProductEdit ? <>
             <li className="active"><span>1</span><b>상품 원장 연결</b><small>연결 완료</small></li>
             <li><span>2</span><b>채널별 초안 확인</b><small>아래에서 확인</small></li>
-            <li><span>3</span><b>채널별 원격 반영</b><small>{selectedChannels.length}개 채널 준비</small></li>
+            <li><span>3</span><b>채널별 원격 반영</b><small>{channelStepSelectionLabel(selectedChannels.length)}</small></li>
           </> : <>
             <li className={activeStage === 1 ? "active" : ""}><button type="button" aria-current={activeStage === 1 ? "step" : undefined} onClick={() => setActiveStage(1)}><span>1</span><b>1차 정보 · 이미지 6개</b><small>{firstDraftContentReady ? "생성 완료" : `${intakeProgress}% 입력`}</small></button></li>
             <li className={activeStage === 2 ? "active" : ""}><button type="button" aria-current={activeStage === 2 ? "step" : undefined} disabled={!firstDraftContentReady} onClick={() => setActiveStage(2)}><span>2</span><b>사람 확인 · 상세페이지</b><small>{firstDraftReviewed ? "검토 완료" : "검토 필요"}</small></button></li>
-            <li className={activeStage === 3 ? "active" : ""}><button type="button" aria-current={activeStage === 3 ? "step" : undefined} disabled={!resolvedProductId} onClick={() => setActiveStage(3)}><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? `${selectedChannels.length}개 채널 준비` : "상세 완료 후 열림"}</small></button></li>
+            <li className={activeStage === 3 ? "active" : ""}><button type="button" aria-current={activeStage === 3 ? "step" : undefined} disabled={!resolvedProductId} onClick={() => setActiveStage(3)}><span>3</span><b>최종 채널 업로드</b><small>{resolvedProductId ? channelStepSelectionLabel(selectedChannels.length) : "상세 완료 후 열림"}</small></button></li>
           </>}
         </ol>
       </section>
@@ -4103,6 +4366,18 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       <section className="publishing-layout">
         <article className="panel upload-panel">
           <div className="panel-heading"><div><span className="panel-kicker">NEW PRODUCT</span><h3>새 상품 분석 자료</h3></div><span className="step-chip">STEP 1 / 3</span></div>
+          <div className={`analysis-context-note registration-draft-state ${registrationDraftSaveState}`} role={registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable" ? "alert" : "status"}>
+            {registrationDraftSaveState === "saving" || registrationDraftSaveState === "initializing" ? <LoaderCircle className="spin" size={16} /> : registrationDraftSaveState === "conflict" || registrationDraftSaveState === "unavailable" ? <AlertTriangle size={16} /> : <CloudUpload size={16} />}
+            <span><b>{registrationDraftSaveState === "saved" ? "서버 초안 저장됨" : registrationDraftSaveState === "saving" ? "서버 초안 저장 중" : registrationDraftSaveState === "conflict" ? "서버 초안 충돌" : registrationDraftSaveState === "unavailable" ? "서버 초안 저장 확인 필요" : "서버 초안 준비"}</b><small>{registrationDraftMessage}{registrationDraftId ? ` · 초안 ${registrationDraftId.slice(0, 8)}` : ""}</small></span>
+            {registrationDraftSaveState === "unavailable" && <button type="button" className="credential-secondary" onClick={() => {
+              const hasLocalWork = userEditedFields.length > 0 || Boolean(mainPhoto) || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0;
+              const current = registrationDraftCurrentRef.current;
+              if (hasLocalWork && current) void persistRegistrationDraft(current);
+              else setRegistrationDraftLoadVersion((version) => version + 1);
+            }}>{userEditedFields.length > 0 || mainPhoto || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0 ? "저장 다시 시도" : "서버 상태 다시 확인"}</button>}
+          </div>
+          {restoredLocalPhotoCount > 0 && <p className="upload-error"><AlertCircle size={14} />이 초안에서 이전에 선택한 로컬 사진 {restoredLocalPhotoCount}장은 브라우저 보안상 복원할 수 없습니다. 상품정보는 복원됐으며 사진만 다시 선택해 주세요.</p>}
+          {(mainPhoto || Object.keys(slotPhotos).length > 0 || extraPhotos.length > 0) && <p className="product-research-help">현재 선택한 사진의 파일명·크기·역할은 서버 초안에 기록하지만 원본 File은 이 브라우저에만 있습니다. 분석 작업에 업로드되기 전에 화면을 다시 열면 사진을 재선택해야 합니다.</p>}
 
           <section className="main-photo-section">
             <div className="upload-section-heading"><div><b>대표사진</b><span className="required-chip">필수</span><small>검색 결과와 채널 목록에서 가장 먼저 보이는 이미지입니다.</small></div><em>{mainPhoto ? "1장 등록됨" : "미등록"}</em></div>
@@ -4191,12 +4466,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <div className="intake-group-heading"><span>02</span><div><b>구성·표시 정보</b><small>라벨과 실물 기준으로 소재, 구성품, 바코드를 확인합니다.</small></div></div>
               <label className={manualErrors.material ? "field-error" : ""}><span>소재·성분 <i>필수</i></span><input required value={intake.material} maxLength={500} onChange={(event) => setIntakeField("material", event.target.value)} placeholder="예: 도자기 100%" />{manualErrors.material && <small>{manualErrors.material}</small>}</label>
               <label className={manualErrors.packageContents ? "field-error" : ""}><span>판매 구성 <i>필수</i></span><select required value={intake.packageContents} onChange={(event) => setIntakeField("packageContents", event.target.value)}><option value="">구성을 선택하세요</option>{productSaleConfigurations.map((configuration) => <option value={configuration.value} key={configuration.value}>{configuration.label}</option>)}</select>{manualErrors.packageContents && <small>{manualErrors.packageContents}</small>}</label>
-              <label><span>상품 상태 <i>필수</i></span><select value={intake.condition} onChange={(event) => setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"])}>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select></label>
-              <label><span>바코드 상태 <i>필수</i></span><select value={intake.gtinStatus} onChange={(event) => setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"])}><option value="NO_GTIN">GTIN 없음</option><option value="HAS_GTIN">GTIN 있음</option></select></label>
+              <label className={manualErrors.condition ? "field-error" : ""}><span>상품 상태 <i>필수</i></span><select value={intakeDecisions.condition ? intake.condition : ""} onChange={(event) => { setIntakeDecision("condition", true); setIntakeField("condition", event.target.value as ProductIntakeDraft["condition"]); }}><option value="" disabled>상태를 직접 선택하세요</option>{productConditions.map((value) => <option value={value} key={value}>{value === "NEW" ? "신품" : value === "USED" ? "중고" : "리퍼브"}</option>)}</select>{manualErrors.condition && <small>{manualErrors.condition}</small>}</label>
+              <label className={manualErrors.gtinStatus ? "field-error" : ""}><span>바코드 상태 <i>필수</i></span><select value={intakeDecisions.gtinStatus ? intake.gtinStatus : ""} onChange={(event) => { setIntakeDecision("gtinStatus", true); setIntakeField("gtinStatus", event.target.value as ProductIntakeDraft["gtinStatus"]); }}><option value="" disabled>GTIN 유무를 직접 확인하세요</option><option value="NO_GTIN">GTIN 없음 확인</option><option value="HAS_GTIN">GTIN 있음</option></select>{manualErrors.gtinStatus && <small>{manualErrors.gtinStatus}</small>}</label>
               {intake.gtinStatus === "HAS_GTIN" && <label className={manualErrors.gtin ? "field-error" : ""}><span>GTIN / EAN / UPC <i>필수</i></span><input inputMode="numeric" required value={intake.gtin} maxLength={14} onChange={(event) => setIntakeField("gtin", event.target.value.replace(/\D/g, ""))} placeholder="8~14자리 숫자" />{manualErrors.gtin && <small>{manualErrors.gtin}</small>}</label>}
               <div className="intake-group-heading"><span>03</span><div><b>판매·재고</b><small>기준 통화의 판매가와 실제 가용 재고를 입력합니다.</small></div></div>
               <label className={manualErrors.sellingPrice ? "field-error" : ""}><span>판매가 <i>필수</i></span><input type="number" required min="0.01" step="0.01" value={intake.sellingPrice || ""} onChange={(event) => setIntakeField("sellingPrice", Number(event.target.value))} placeholder="0" />{manualErrors.sellingPrice && <small>{manualErrors.sellingPrice}</small>}</label>
-              <label><span>통화 <i>필수</i></span><select value={intake.currency} onChange={(event) => setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"])}>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select></label>
+              <label className={manualErrors.currency ? "field-error" : ""}><span>통화 <i>필수</i></span><select value={intakeDecisions.currency ? intake.currency : ""} onChange={(event) => { setIntakeDecision("currency", true); setIntakeField("currency", event.target.value as ProductIntakeDraft["currency"]); }}><option value="" disabled>판매 통화를 선택하세요</option>{productCurrencies.map((value) => <option value={value} key={value}>{value}</option>)}</select>{manualErrors.currency && <small>{manualErrors.currency}</small>}</label>
               <label className={manualErrors.stock ? "field-error" : ""}><span>재고 <i>필수</i></span><input type="number" required min="1" step="1" value={intake.stock || ""} onChange={(event) => setIntakeField("stock", Number(event.target.value))} placeholder="1" />{manualErrors.stock && <small>{manualErrors.stock}</small>}</label>
               <div className="intake-group-heading"><span>04</span><div><b>포장·배송 규격</b><small>운임 계산과 채널 배송 제한 검증에 사용합니다.</small></div></div>
               {commerceTemplates.length > 0 && <div className="intake-template-picker"><span><FileText size={14} />저장한 템플릿{appliedTemplate ? <em>적용: {appliedTemplate}</em> : null}</span><div>{commerceTemplates.map((template) => <button type="button" key={template.id} onClick={() => applyCommerceTemplate(template)}>{template.name}{template.is_default ? <small>기본</small> : null}</button>)}</div></div>}
@@ -4204,7 +4479,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               <label className={manualErrors.packageLengthCm ? "field-error" : ""}><span>포장 가로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageLengthCm || ""} onChange={(event) => setIntakeField("packageLengthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageLengthCm && <small>{manualErrors.packageLengthCm}</small>}</label>
               <label className={manualErrors.packageWidthCm ? "field-error" : ""}><span>포장 세로 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageWidthCm || ""} onChange={(event) => setIntakeField("packageWidthCm", Number(event.target.value))} placeholder="12" />{manualErrors.packageWidthCm && <small>{manualErrors.packageWidthCm}</small>}</label>
               <label className={manualErrors.packageHeightCm ? "field-error" : ""}><span>포장 높이 cm <i>필수</i></span><input type="number" required min="0.1" step="0.1" value={intake.packageHeightCm || ""} onChange={(event) => setIntakeField("packageHeightCm", Number(event.target.value))} placeholder="10" />{manualErrors.packageHeightCm && <small>{manualErrors.packageHeightCm}</small>}</label>
-              <label><span>기본 배송비 KRW</span><input type="number" min="0" step="100" value={intake.shippingFeeKrw} onChange={(event) => setIntakeField("shippingFeeKrw", Number(event.target.value))} placeholder="0" /></label>
+              <label className={manualErrors.shippingFeeKrw ? "field-error" : ""}><span>기본 배송비 KRW <i>필수</i></span><input type="number" min="0" step="100" value={intakeDecisions.shippingFeeKrw ? intake.shippingFeeKrw : ""} onChange={(event) => { const entered = event.target.value; setIntakeDecision("shippingFeeKrw", entered !== ""); setIntakeField("shippingFeeKrw", entered === "" ? 0 : Number(entered)); }} placeholder="무료배송이면 0을 직접 입력" />{manualErrors.shippingFeeKrw ? <small>{manualErrors.shippingFeeKrw}</small> : <small>0원도 판매자가 직접 확인한 경우에만 무료배송으로 사용합니다.</small>}</label>
               <label><span>배송 규칙</span><input value={intake.shippingRule} maxLength={1000} onChange={(event) => setIntakeField("shippingRule", event.target.value)} placeholder="예: 결제 후 1–2영업일 내 출고" /></label>
               <label><span>포장 규칙</span><input value={intake.packagingRule} maxLength={1000} onChange={(event) => setIntakeField("packagingRule", event.target.value)} placeholder="예: 완충재 이중 포장" /></label>
             </div>
@@ -4222,9 +4497,10 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
-          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 키가 연결된 채널만 선택할 수 있습니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
-          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 공식 API 등록 가능</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
-          <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const connected = connectedChannelKeys.includes(key); return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : connected ? "연결됨" : "키 필요"}</em></span>; })}</div></details>
+          <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 읽기 진단을 통과한 채널만 선택할 수 있습니다. 실제 업로드에는 3단계 공식 검증과 게시 게이트 통과가 추가로 필요합니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 읽기 진단 통과 · 3단계 검증 필요</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          <section className="channel-rule-handoff" aria-label="전체 채널별 후속 필수 확인"><header><b>8개 채널 규칙은 3단계에서 확정</b><small>1차는 공통 상품 사실만 저장합니다. 계정 정책과 공식 카테고리 값은 자동 조회 후 확인하며 추측하지 않습니다.</small></header><div>{activeChannelKeys.map((key) => { const selected = selectedChannels.includes(key); const credentialStatus = channelMetrics.find((metric) => metric.channelKey === key)?.credentialStatus; return <article key={key}><ChannelMark code={channels[key].letter} size="sm" /><span><b>{channels[key].name}</b><small>{channelRuleHandoffs[key]}</small></span><em>{selected ? "3단계" : credentialStatus === "unverified" ? "진단 필요" : "키 필요"}</em></article>; })}</div></section>
+          <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const credentialStatus = channelMetrics.find((metric) => metric.channelKey === key)?.credentialStatus; return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : credentialStatus === "unverified" ? "진단 필요" : "키 필요"}</em></span>; })}</div></details>
           <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>상품 원장 저장</b><small>서버 AI 분석 또는 판매자 확인 원본으로 저장</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
         </aside>
       </section>
@@ -4250,7 +4526,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         onJobQueued={(jobId) => {
           setQueuedJobId(jobId);
           setActiveStage(2);
-          window.sessionStorage.removeItem(draftStorageKey);
+          window.sessionStorage.removeItem(legacyDraftStorageKey);
         }}
         onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(studioResult.product.name);
@@ -4820,9 +5096,9 @@ function ChannelPage({ channelKey, onNavigate, onOpenCs, metric, displayProducts
   const averageOrder = orderCount > 0 ? revenue / orderCount : 0;
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : credentialRegistered ? "pending" : ""}><i />{connected ? "운영 API 키 · 읽기 진단 정상" : credentialRegistered ? "운영 API 키 등록 · 읽기 진단 필요" : "운영 API 키 등록 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : credentialRegistered ? "pending" : ""}><i />{connected ? "운영 API 키 · 읽기 진단 통과" : credentialRegistered ? "운영 API 키 등록 · 읽기 진단 필요" : "운영 API 키 등록 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={formatCompactWon(revenue)} detail="실제 게시 상품 매출" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={orderCount.toLocaleString()} detail={`출고대기 ${metric?.readyToShipCount ?? 0}건`} icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={(metric?.publishedCount ?? 0).toLocaleString()} detail={`관리 상품 ${metric?.productCount ?? 0}개`} icon={Package} tone="green" /><MetricCard label="미처리 CS" value={(metric?.openTicketCount ?? 0).toLocaleString()} detail="해당 채널 문의 열기" icon={Headphones} tone="orange" onClick={() => onOpenCs(channelKey, "open")} /></section>
-      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : credentialRegistered ? "pending" : ""}`}>{connected ? "ON" : credentialRegistered ? "CHECK" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: credentialRegistered ? "키 등록됨" : "키 필요" }, { label: "읽기 진단", score: connected ? "정상" : credentialRegistered ? "확인 필요" : "미실행" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
+      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : credentialRegistered ? "pending" : ""}`}>{connected ? "ON" : credentialRegistered ? "CHECK" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: credentialRegistered ? "키 등록됨" : "키 필요" }, { label: "읽기 진단", score: connected ? "통과" : credentialRegistered ? "확인 필요" : "미실행" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
       <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">LIVE PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>30일 판매</th><th>30일 매출</th><th>재고</th><th>상태</th></tr></thead><tbody>{channelProducts.slice(0, 10).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>{channelProducts.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>이 채널의 실상품이 없습니다.</b><small>API 키 연결 후 상품 동기화 또는 신규 등록을 실행하세요.</small></div>}</section>
     </div>
   );
@@ -6216,6 +6492,30 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   );
 }
 
+const shopeeExactBrowserKey = "sellerpilot.shopee-exact-session.v1";
+type ShopeeExactBrowserSession = { sessionId: string; credentialId: string; ownerId: string; expiresAt: number };
+function readShopeeExactBrowserSession(ownerId: string): ShopeeExactBrowserSession | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(shopeeExactBrowserKey) ?? "null") as ShopeeExactBrowserSession | null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.ownerId !== ownerId
+      || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
+    return value;
+  } catch { return null; }
+}
+
+const lazadaExactBrowserKey = "sellerpilot.lazada-exact-session.v1";
+type LazadaExactBrowserSession = { sessionId: string; credentialId: string; actorId: string; expiresAt: number };
+function readLazadaExactBrowserSession(actorId: string): LazadaExactBrowserSession | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(lazadaExactBrowserKey) ?? "null") as LazadaExactBrowserSession | null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.actorId !== actorId
+      || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
+    return value;
+  } catch { return null; }
+}
+
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userId, setUserId] = useState("");
@@ -6228,8 +6528,98 @@ export default function Home() {
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthToastMessage, setOAuthToastMessage] = useState("");
   const oauthHandled = useRef(false);
+  const exactStarting = useRef(false);
+  const lazadaExactStarting = useRef(false);
   const accountSwitchingRef = useRef(false);
   const clearOAuthToastMessage = useCallback(() => setOAuthToastMessage(""), []);
+
+  useEffect(() => {
+    if (accessState !== "admin" || !userId) return;
+    const startExact = async (event: Event) => {
+      const credentialId = (event as CustomEvent<{ credentialId?: string }>).detail?.credentialId;
+      if (!credentialId || !/^[0-9a-f-]{36}$/i.test(credentialId) || exactStarting.current) return;
+      exactStarting.current = true;
+      try {
+        const { data, error } = await createSupabaseClient().auth.getSession();
+        if (error || data.session?.user.id !== userId) throw new Error("session_unavailable");
+        const accessToken = data.session.access_token;
+        const postExact = (body: object) => fetch("/api/admin/channel-credentials/shopee/exact", {
+          method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify(body), signal: AbortSignal.timeout(25_000),
+        });
+        let prepared = readShopeeExactBrowserSession(userId);
+        if (!prepared || prepared.credentialId !== credentialId) {
+          const response = await postExact({ action: "prepare", credentialId });
+          const result = await response.json() as { status?: string; sessionId?: string };
+          if (!response.ok || result.status !== "executor_required" || !result.sessionId) throw new Error("prepare_blocked");
+          prepared = { sessionId: result.sessionId, credentialId, ownerId: userId, expiresAt: Date.now() + 9 * 60_000 };
+          window.sessionStorage.setItem(shopeeExactBrowserKey, JSON.stringify(prepared));
+          setOAuthToastMessage(`Shopee exact 세션: ${prepared.sessionId}. 이 세션으로 전용 실행기를 시작한 뒤 OAuth 재연결을 다시 눌러 주세요. 아직 공식 승인·토큰 교환 전입니다.`);
+          return;
+        }
+        const response = await postExact({ action: "start", sessionId: prepared.sessionId, credentialId });
+        const result = await response.json() as { status?: string; authorizationUrl?: string };
+        if (!response.ok || result.status !== "ready" || !result.authorizationUrl) {
+          setOAuthToastMessage(result.status === "callback_integration_required"
+            ? "Shopee exact callback 배포 승인 대기입니다. 일반 authorize로 우회하지 않았습니다."
+            : `Shopee 전용 실행기 준비를 확인해 주세요. 세션: ${prepared.sessionId}. 공식 인가는 시작하지 않았습니다.`);
+          return;
+        }
+        const url = new URL(result.authorizationUrl);
+        if (url.origin !== "https://open.shopee.com" || !url.searchParams.get("state")?.startsWith("sellerpilot-shopee-exact-")) throw new Error("invalid_authorization_url");
+        window.location.assign(url.toString());
+      } catch {
+        setOAuthToastMessage("Shopee exact 시작을 완료하지 못했습니다. 전용 실행기·인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
+      } finally { exactStarting.current = false; }
+    };
+    const listener = (event: Event) => { void startExact(event); };
+    window.addEventListener("sellerpilot:shopee-exact-start", listener);
+    return () => window.removeEventListener("sellerpilot:shopee-exact-start", listener);
+  }, [accessState, userId]);
+
+  useEffect(() => {
+    if (accessState !== "admin" || !userId) return;
+    const startExact = async (event: Event) => {
+      const credentialId = (event as CustomEvent<{ credentialId?: string }>).detail?.credentialId;
+      if (!credentialId || !/^[0-9a-f-]{36}$/i.test(credentialId) || lazadaExactStarting.current) return;
+      lazadaExactStarting.current = true;
+      try {
+        const { data, error } = await createSupabaseClient().auth.getSession();
+        if (error || data.session?.user.id !== userId) throw new Error("session_unavailable");
+        const accessToken = data.session.access_token;
+        const postExact = (body: object) => fetch("/api/admin/channel-credentials/lazada/exact", {
+          method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
+          body: JSON.stringify(body), signal: AbortSignal.timeout(25_000),
+        });
+        let prepared = readLazadaExactBrowserSession(userId);
+        if (!prepared || prepared.credentialId !== credentialId) {
+          const response = await postExact({ action: "prepare", credentialId });
+          const result = await response.json() as { status?: string; sessionId?: string };
+          if (!response.ok || result.status !== "executor_required" || !result.sessionId) throw new Error("prepare_blocked");
+          prepared = { sessionId: result.sessionId, credentialId, actorId: userId, expiresAt: Date.now() + 9 * 60_000 };
+          window.sessionStorage.setItem(lazadaExactBrowserKey, JSON.stringify(prepared));
+          setOAuthToastMessage(`Lazada exact 세션: ${prepared.sessionId}. 이 세션으로 전용 실행기를 시작한 뒤 OAuth 재연결을 다시 눌러 주세요. 아직 공식 승인·토큰 교환 전입니다.`);
+          return;
+        }
+        const response = await postExact({ action: "start", sessionId: prepared.sessionId, credentialId });
+        const result = await response.json() as { status?: string; authorizationUrl?: string };
+        if (!response.ok || result.status !== "ready" || !result.authorizationUrl) {
+          setOAuthToastMessage(result.status === "callback_integration_required"
+            ? "Lazada exact callback 배포 승인 대기입니다. 일반 authorize로 우회하지 않았습니다."
+            : `Lazada 전용 실행기 준비를 확인해 주세요. 세션: ${prepared.sessionId}. 공식 인가는 시작하지 않았습니다.`);
+          return;
+        }
+        const url = new URL(result.authorizationUrl);
+        if (url.origin !== "https://auth.lazada.com" || !url.searchParams.get("state")?.startsWith("sellerpilot-lazada-my-")) throw new Error("invalid_authorization_url");
+        window.location.assign(url.toString());
+      } catch {
+        setOAuthToastMessage("Lazada exact 시작을 완료하지 못했습니다. 전용 실행기·인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
+      } finally { lazadaExactStarting.current = false; }
+    };
+    const listener = (event: Event) => { void startExact(event); };
+    window.addEventListener("sellerpilot:lazada-exact-start", listener);
+    return () => window.removeEventListener("sellerpilot:lazada-exact-start", listener);
+  }, [accessState, userId]);
 
   useEffect(() => {
     const captureCallback = window.setTimeout(() => {
@@ -6267,7 +6657,7 @@ export default function Home() {
         const [{ data: isAdmin, error }, { data: latestSession, error: sessionError }] = await withPromiseTimeout(Promise.all([
           supabase.rpc("sellerpilot_is_admin"),
           supabase.auth.getSession(),
-        ]), 12_000, "관리자 권한 확인 시간이 초과되었습니다.");
+        ]), 25_000, "관리자 권한 확인 시간이 초과되었습니다.");
         if (!active || accountSwitchingRef.current || generation !== verificationGeneration) return;
         if (sessionError) {
           failVerification(generation);
@@ -6318,7 +6708,7 @@ export default function Home() {
       void verifyAdmin(session, generation);
     };
     const initialGeneration = ++verificationGeneration;
-    void withPromiseTimeout(supabase.auth.getSession(), 12_000, "로그인 세션 확인 시간이 초과되었습니다.")
+    void withPromiseTimeout(supabase.auth.getSession(), 25_000, "로그인 세션 확인 시간이 초과되었습니다.")
       .then(({ data, error }) => {
         if (!active || initialGeneration !== verificationGeneration) return;
         if (error) {
@@ -6357,17 +6747,45 @@ export default function Home() {
     const completeChannelOAuth = async () => {
       try {
         const { data: sessionData } = await createSupabaseClient().auth.getSession();
+        if (!sessionData.session || sessionData.session.user.id !== userId) throw new Error("OAuth 관리자 세션을 확인하지 못했습니다.");
+        if (pendingChannelOAuth.channel === "shopee") {
+          const exact = readShopeeExactBrowserSession(userId);
+          if (!pendingChannelOAuth.state.startsWith("sellerpilot-shopee-exact-") || !exact || !pendingChannelOAuth.mainAccountId) {
+            throw new Error("Shopee exact 세션·state·main account가 없어 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          }
+          const response = await fetch("/api/admin/channel-credentials/shopee/exact", {
+            method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+            body: JSON.stringify({ action: "bind", sessionId: exact.sessionId, credentialId: exact.credentialId,
+              code: pendingChannelOAuth.code, state: pendingChannelOAuth.state, mainAccountId: pendingChannelOAuth.mainAccountId }),
+            signal: AbortSignal.timeout(25_000),
+          });
+          const bound = await response.json() as { status?: string };
+          if (!response.ok || bound.status !== "bound") throw new Error("Shopee exact 결속을 확인하지 못했습니다. 코드 재교환 없이 해당 세션을 확인해 주세요.");
+          setOAuthToastMessage("Shopee 승인을 전용 실행기에 결속했습니다. 연결 완료 전입니다. 토큰 교환·Vault 저장·안전한 읽기 검증 결과를 확인해야 합니다.");
+          window.sessionStorage.removeItem(shopeeExactBrowserKey);
+          return;
+        }
+        if (pendingChannelOAuth.channel === "lazada") {
+          const exact = readLazadaExactBrowserSession(userId);
+          if (!pendingChannelOAuth.state.startsWith("sellerpilot-lazada-my-") || !exact) {
+            throw new Error("Lazada exact 세션·state가 없어 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          }
+          const response = await fetch("/api/admin/channel-credentials/lazada/exact", {
+            method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+            body: JSON.stringify({ action: "bind", sessionId: exact.sessionId, credentialId: exact.credentialId,
+              code: pendingChannelOAuth.code, state: pendingChannelOAuth.state }),
+            signal: AbortSignal.timeout(25_000),
+          });
+          const bound = await response.json() as { status?: string };
+          if (!response.ok || bound.status !== "bound") throw new Error("Lazada exact 결속을 확인하지 못했습니다. 코드 재교환 없이 해당 세션을 확인해 주세요.");
+          setOAuthToastMessage("Lazada 승인을 전용 실행기에 결속했습니다. 연결 완료 전입니다. 토큰 교환·Vault 저장·안전한 읽기 검증 결과를 확인해야 합니다.");
+          window.sessionStorage.removeItem(lazadaExactBrowserKey);
+          return;
+        }
         const response = await fetch(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
-          body: JSON.stringify({
-            secretPayload: {
-              authorization_code: pendingChannelOAuth.code,
-              ...(pendingChannelOAuth.shopId ? { shop_id: pendingChannelOAuth.shopId } : {}),
-              ...(pendingChannelOAuth.mainAccountId ? { main_account_id: pendingChannelOAuth.mainAccountId } : {}),
-            },
-            oauthState: pendingChannelOAuth.state,
-          }),
+          method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+          body: JSON.stringify({ secretPayload: { authorization_code: pendingChannelOAuth.code }, oauthState: pendingChannelOAuth.state }),
+          signal: AbortSignal.timeout(25_000),
         });
         const payload = await response.json().catch(() => ({ message: "채널 OAuth 응답을 읽지 못했습니다." })) as { message: string };
         if (!response.ok) throw new Error(payload.message);
@@ -6379,7 +6797,7 @@ export default function Home() {
       }
     };
     void completeChannelOAuth();
-  }, [accessState, pendingChannelOAuth]);
+  }, [accessState, pendingChannelOAuth, userId]);
 
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
@@ -6391,7 +6809,7 @@ export default function Home() {
         ? "sample@couplit-official.test"
         : email.trim();
     const { data, error } = await createSupabaseClient().auth.signInWithPassword({ email: normalizedEmail, password });
-    if (error) return "아이디 또는 비밀번호를 확인해 주세요.";
+    if (error) return getSafeSignInError(error);
     setFreshLoginUserId(data.user.id);
     setLoginNotice("");
     return null;

@@ -1,3 +1,4 @@
+import { productDetailChrome, resolveProductDetailLocale, type ProductDetailLocale } from "../../lib/product-detail-locale";
 import type { ProductDetailData } from "../product-detail-puck";
 import { productDetailRoleFromAssetReference } from "../../lib/product-detail-image-manifest";
 
@@ -31,10 +32,10 @@ function renderHeroBlockHtml(props: Record<string, unknown>): string {
   ].join("");
 }
 
-function renderVerificationRibbonHtml(props: Record<string, unknown>): string {
+function renderVerificationRibbonHtml(props: Record<string, unknown>, locale: ProductDetailLocale): string {
   const classification = trimmedText(props.classification);
   return props.verificationStatus === "verified" && classification
-    ? `<section data-sellerpilot-puck-block="verification" style="padding:16px 24px;text-align:center;border-bottom:1px solid #eeedf2;font-size:13px">제품 유형 · ${htmlEscape(classification)}</section>`
+    ? `<section data-sellerpilot-puck-block="verification" style="padding:16px 24px;text-align:center;border-bottom:1px solid #eeedf2;font-size:13px">${htmlEscape(productDetailChrome(locale).classification)} · ${htmlEscape(classification)}</section>`
     : "";
 }
 
@@ -112,11 +113,11 @@ function renderCtaBlockHtml(props: Record<string, unknown>): string {
   ].join("");
 }
 
-function renderDetailBlockHtml(block: ProductDetailData["content"][number]): string {
+function renderDetailBlockHtml(block: ProductDetailData["content"][number], locale: ProductDetailLocale): string {
   const props = block.props as Record<string, unknown>;
   switch (block.type) {
     case "HeroBlock": return renderHeroBlockHtml(props);
-    case "VerificationRibbonBlock": return renderVerificationRibbonHtml(props);
+    case "VerificationRibbonBlock": return renderVerificationRibbonHtml(props, locale);
     case "BenefitBlock": return renderBenefitBlockHtml(props);
     case "ImageStoryBlock": return renderImageStoryBlockHtml(props);
     case "StoryBlock": return renderStoryBlockHtml(props);
@@ -126,9 +127,10 @@ function renderDetailBlockHtml(block: ProductDetailData["content"][number]): str
   }
 }
 
-export function productDetailDataToHtml(data: ProductDetailData | null | undefined): string {
+export function productDetailDataToHtml(data: ProductDetailData | null | undefined, locale?: string): string {
   if (!data || !Array.isArray(data.content) || data.content.length === 0) return "";
-  const blocks = data.content.map(renderDetailBlockHtml).filter((html) => html.length > 0);
+  const resolvedLocale = resolveProductDetailLocale(data, locale);
+  const blocks = data.content.map((block) => renderDetailBlockHtml(block, resolvedLocale)).filter((html) => html.length > 0);
   if (!blocks.length) return "";
   return `<div data-sellerpilot-puck-detail="true" data-sellerpilot-presentation="buyer-v1" data-sellerpilot-section-count="${blocks.length}" style="max-width:860px;margin:0 auto;background:#fff;color:#272438;font-family:Arial,sans-serif;line-height:1.75;word-break:keep-all;overflow-wrap:anywhere">${blocks.join("")}</div>`;
 }

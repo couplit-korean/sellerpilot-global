@@ -612,6 +612,11 @@ export function bindQoo10RollbackUpdateRecoveryArguments(
   next[qoo10RollbackUpdateRecoveryArgument] = structuredClone(validated);
   next.params = {
     ...params,
+    ItemCode: validated.remoteId,
+    SecondSubCat: validated.expectedState.categoryCode,
+    RetailPrice: String(validated.expectedState.retailPriceJpy),
+    ItemPrice: String(validated.expectedState.sellPriceJpy),
+    ItemQty: String(validated.expectedState.quantity),
     ShippingNo: validated.expectedState.shippingNo,
   };
   return next;

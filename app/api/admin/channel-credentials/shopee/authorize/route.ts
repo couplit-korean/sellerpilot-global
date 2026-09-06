@@ -15,8 +15,11 @@ import {
   configuredServerlessStaticEgressChannels,
   databaseServerlessStaticEgressAllows,
   hasServerlessStaticEgressFor,
-  SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "../../../../../../lib/channels/serverless-static-egress";
+import {
+  resolveShopeeOAuthExecutorReadiness,
+  type ShopeeOAuthExecutorReadiness,
+} from "../../../../../../lib/channels/shopee-oauth-executor-readiness";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -55,9 +58,14 @@ async function shopeeStaticEgressReady(serviceClient: SupabaseClient) {
   const { data, error } = await serviceClient.rpc(
     "sellerpilot_service_serverless_static_egress_status",
   );
-  return !error
-    && hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"])
-    && databaseServerlessStaticEgressAllows(data, "shopee");
+  const envConfigured = hasServerlessStaticEgressFor(configuredServerlessStaticEgressChannels(), ["shopee"]);
+  const databaseAllows = databaseServerlessStaticEgressAllows(data, "shopee");
+  return {
+    ready: !error && envConfigured && databaseAllows,
+    error: Boolean(error),
+    envConfigured,
+    databaseAllows,
+  };
 }
 
 async function shopeeGatewayWorkerReady(serviceClient: SupabaseClient) {
@@ -74,18 +82,6 @@ async function shopeeGatewayWorkerReady(serviceClient: SupabaseClient) {
     && runtimeState.active === true;
 }
 
-function shopeeStaticEgressBlocked(message: string) {
-  return NextResponse.json({
-    ok: false,
-    manualRequired: true,
-    externalActionRequired: true,
-    staticEgressReady: false,
-    blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
-    mode: "static_egress_required",
-    message,
-  }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-}
-
 function shopeeGatewayWorkerBlocked(message: string) {
   return NextResponse.json({
     ok: false,
@@ -97,17 +93,80 @@ function shopeeGatewayWorkerBlocked(message: string) {
   }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
 }
 
+function shopeeOAuthExecutorBlocked(
+  readiness: ShopeeOAuthExecutorReadiness,
+  input: { staticEgressMessage: string; workerMessage: string },
+) {
+  if (readiness.reason === "serverless_worker_required") {
+    return shopeeGatewayWorkerBlocked(input.workerMessage);
+  }
+  if (readiness.reason === "static_egress_status_unavailable") {
+    return NextResponse.json({
+      ok: false,
+      manualRequired: true,
+      operatorActionRequired: true,
+      workerReady: false,
+      blockedReason: readiness.blockedReason,
+      mode: "executor_unproven",
+      reason: readiness.reason,
+      message: readiness.message,
+      prerequisites: readiness.prerequisites,
+    }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (readiness.reason === "executor_exclusive_unproven") {
+    return NextResponse.json({
+      ok: false,
+      manualRequired: true,
+      operatorActionRequired: true,
+      workerReady: false,
+      blockedReason: readiness.blockedReason,
+      mode: "executor_unproven",
+      reason: readiness.reason,
+      message: readiness.message,
+      prerequisites: readiness.prerequisites,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  return NextResponse.json({
+    ok: false,
+    operatorActionRequired: true,
+    workerReady: false,
+    blockedReason: readiness.blockedReason,
+    mode: "local_gateway_worker_required",
+    reason: readiness.reason,
+    message: readiness.message,
+    prerequisites: readiness.prerequisites,
+  }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+}
+
 async function shopeeOAuthGatewayBlocked(
   serviceClient: SupabaseClient,
   input: { staticEgressMessage: string; workerMessage: string },
+  userClient: SupabaseClient,
 ) {
-  const [staticEgressReady, workerReady] = await Promise.all([
-    shopeeStaticEgressReady(serviceClient),
-    shopeeGatewayWorkerReady(serviceClient),
-  ]);
-  if (!staticEgressReady) return shopeeStaticEgressBlocked(input.staticEgressMessage);
-  if (!workerReady) return shopeeGatewayWorkerBlocked(input.workerMessage);
-  return null;
+  const staticEgress = await shopeeStaticEgressReady(serviceClient);
+  if (staticEgress.ready) {
+    const workerReady = await shopeeGatewayWorkerReady(serviceClient);
+    if (!workerReady) return shopeeGatewayWorkerBlocked(input.workerMessage);
+    return null;
+  }
+
+  let runtimeStatus: unknown = null;
+  let runtimeStatusAvailable = false;
+  if (!staticEgress.error && !staticEgress.databaseAllows) {
+    const { data, error } = await userClient.rpc("sellerpilot_ai_runtime_status");
+    runtimeStatus = data;
+    runtimeStatusAvailable = !error;
+  }
+
+  const readiness = resolveShopeeOAuthExecutorReadiness({
+    staticEgressRpcError: staticEgress.error,
+    envConfigured: staticEgress.envConfigured,
+    databaseAllows: staticEgress.databaseAllows,
+    runtimeStatus,
+    runtimeStatusAvailable,
+  });
+  if (readiness.allowed) return null;
+  return shopeeOAuthExecutorBlocked(readiness, input);
 }
 
 function oauthStartResponse(
@@ -182,7 +241,7 @@ export async function POST(request: NextRequest) {
     const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
       staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 다시 시작해 주세요.",
       workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 승인 코드를 대기열에 넣지 않았습니다. 작업자 상태를 확인한 뒤 OAuth 승인을 다시 시작해 주세요.",
-    });
+    }, userClient);
     if (blocked) return blocked;
   }
   const metadata = credentialId && Array.isArray(credentialRows)
@@ -251,7 +310,7 @@ export async function POST(request: NextRequest) {
     const blocked = await shopeeOAuthGatewayBlocked(serviceClient, {
       staticEgressMessage: "Shopee에 승인된 고정 egress IP와 서버 정책을 먼저 활성화한 뒤 OAuth 승인을 시작해 주세요.",
       workerMessage: "Shopee OAuth 작업자가 활성 상태가 아니어서 판매자 승인을 시작하지 않았습니다. 작업자 상태를 확인해 주세요.",
-    });
+    }, userClient);
     if (blocked) return blocked;
   }
   const nextSecret: Record<string, unknown> = {

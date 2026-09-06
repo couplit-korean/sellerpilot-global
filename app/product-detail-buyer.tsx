@@ -1,6 +1,7 @@
 /* eslint-disable @next/next/no-img-element -- studio assets can be local preview URLs */
 import React, { type CSSProperties, type ReactNode } from "react";
 import { productDetailRoleFromAssetReference } from "../lib/product-detail-image-manifest";
+import { productDetailChrome, resolveProductDetailLocale, type ProductDetailLocale } from "../lib/product-detail-locale";
 import type { ProductDetailData, ProductDetailImageLoadState } from "./product-detail-puck";
 
 type Block = ProductDetailData["content"][number];
@@ -16,7 +17,7 @@ type BuyerMedia = {
   renderAnimatedGif?: (props: Extract<Block, { type: "AnimatedGifBlock" }>["props"]) => ReactNode;
 };
 
-function BuyerBlock({ block, onDetailImageLoadState, renderAnimatedGif }: { block: Block } & BuyerMedia) {
+function BuyerBlock({ block, locale, onDetailImageLoadState, renderAnimatedGif }: { block: Block; locale: ProductDetailLocale } & BuyerMedia) {
   switch (block.type) {
     case "HeroBlock": {
       const p = block.props;
@@ -30,7 +31,7 @@ function BuyerBlock({ block, onDetailImageLoadState, renderAnimatedGif }: { bloc
       // Audit provenance stays in the editor document. Only confirmed product
       // classification belongs in the customer view; no universal health badge.
       return p.verificationStatus === "verified" && p.classification
-        ? <div className="buyer-classification"><span>제품 유형</span><strong>{p.classification}</strong></div>
+        ? <div className="buyer-classification"><span>{productDetailChrome(locale).classification}</span><strong>{p.classification}</strong></div>
         : null;
     }
     case "BenefitBlock": {
@@ -59,7 +60,7 @@ function BuyerBlock({ block, onDetailImageLoadState, renderAnimatedGif }: { bloc
 }
 
 /** Presentation only. Does not mutate the editor document or channel HTML. */
-export function ProductDetailBuyer({ data, ...media }: { data: ProductDetailData } & BuyerMedia) {
+export function ProductDetailBuyer({ data, locale, ...media }: { data: ProductDetailData; locale?: string } & BuyerMedia) {
   const hero = data.content.find((block) => block.type === "HeroBlock");
   const palette = hero?.type === "HeroBlock" ? hero.props : null;
   const style = {
@@ -67,5 +68,5 @@ export function ProductDetailBuyer({ data, ...media }: { data: ProductDetailData
     "--buyer-accent": palette?.accent || "#f3eaaa",
     "--buyer-surface": palette?.surface || "#f4f1fa",
   } as CSSProperties;
-  return React.createElement("article", { className: "buyer-detail", style }, data.content.map((block, index) => <BuyerBlock key={block.props.id || index} block={block} {...media} />));
+  return React.createElement("article", { className: "buyer-detail", style }, data.content.map((block, index) => <BuyerBlock key={block.props.id || index} block={block} locale={resolveProductDetailLocale(data, locale)} {...media} />));
 }

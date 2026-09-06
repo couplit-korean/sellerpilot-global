@@ -1328,7 +1328,10 @@ function validateGeneralFoodClaim(
   }
 }
 
-export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("cli") }).superRefine((value, context) => {
+function refineStudioMasterResult(
+  value: z.infer<typeof studioMasterResultSchema>,
+  context: RefinementCtx,
+) {
   const classificationSignals = [
     value.product.category,
     value.product.classification.displayName,
@@ -1445,6 +1448,20 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
     }
   }
 
+  return generalFood;
+}
+
+// Run the same semantic checks before translating the master into 34 markets.
+// A shape-valid master with duplicate copy must be repaired before its content
+// becomes the input to paid localization and final image generation.
+export const studioMasterTerminalResultSchema = studioMasterResultSchema.superRefine((value, context) => {
+  refineStudioMasterResult(value, context);
+});
+
+export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("cli") }).superRefine((value, context) => {
+  const generalFood = refineStudioMasterResult(value, context);
+  const concise = value.design.creativeStrategy.contentDensity === "concise";
+  const assignedAssets = value.design.sections.map((section) => section.imageAsset).filter((asset) => asset !== "none");
   const received = new Set(value.localizedListings.map((listing) => `${listing.channel}:${listing.market}`));
   for (const required of Object.keys(requiredLocalizedMarkets)) {
     if (!received.has(required)) context.addIssue({ code: "custom", path: ["localizedListings"], message: `${required} 번역이 필요합니다.` });

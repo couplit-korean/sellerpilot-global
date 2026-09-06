@@ -49,6 +49,7 @@ export type InventoryLedgerErrorCode =
   | "INVALID_SKU"
   | "INVALID_QUANTITY"
   | "INVALID_IDEMPOTENCY_KEY"
+  | "IDEMPOTENCY_CONFLICT"
   | "INVALID_CHANNEL"
   | "INVALID_ORDER_REFERENCE"
   | "INVALID_REASON"
@@ -273,6 +274,12 @@ export function buildOrderKey(channel: string, externalOrderId: string, orderLin
   return `${channel}:${externalOrderId}:${orderLineKey}`;
 }
 
+// PostgreSQL length(text) counts Unicode code points, not UTF-16 code units.
+function validCompoundOrderReference(channel: string, order: string, line: string): boolean {
+  const length = Array.from(buildOrderKey(channel, order, line)).length;
+  return !order.includes(":") && !line.includes(":") && length >= 8 && length <= 240;
+}
+
 /** 빈 원장 생성. 실재고는 RECEIPT 이벤트로만 적재된다(순수 재생 유지). */
 export function createInventoryLedger(sku: string): InventoryLedger {
   return {
@@ -306,15 +313,17 @@ export function inventoryLedgerSnapshot(ledger: InventoryLedger): InventoryLedge
 }
 
 export function cloneInventoryLedger(ledger: InventoryLedger): InventoryLedger {
+  const reservations = ledger.reservations.map((reservation) => ({ ...reservation }));
   const cloned: InventoryLedger = {
     sku: ledger.sku,
     onHand: ledger.onHand,
     reserved: ledger.reserved,
     safetyStock: ledger.safetyStock,
     events: ledger.events.map((event) => ({ ...event })),
-    reservations: ledger.reservations.map((reservation) => ({ ...reservation })),
+    reservations,
     seenKeys: new Map(ledger.seenKeys),
-    reservationIndex: new Map(ledger.reservationIndex),
+    // Both views must reference the branch's records, never the source ledger.
+    reservationIndex: new Map(reservations.map((reservation) => [reservation.orderKey, reservation])),
   };
   return cloned;
 }
@@ -392,13 +401,13 @@ function normalizeInput(
           result: fail(ledger, "INVALID_CHANNEL", `지원하지 않는 채널입니다: ${channel || "(빈 값)"}`),
         };
       }
-      if (!externalOrderId || externalOrderId.length > 240) {
+      if (!externalOrderId || Array.from(externalOrderId).length > 240) {
         return {
           ok: false,
           result: fail(ledger, "INVALID_ORDER_REFERENCE", "주문번호는 1~240자여야 합니다."),
         };
       }
-      if (!orderLineKey || orderLineKey.length > 240) {
+      if (!orderLineKey || Array.from(orderLineKey).length > 240) {
         return {
           ok: false,
           result: fail(ledger, "INVALID_ORDER_REFERENCE", "주문라인 키는 1~240자여야 합니다."),
@@ -409,6 +418,9 @@ function normalizeInput(
           ok: false,
           result: fail(ledger, "INVALID_QUANTITY", `주문 수량은 1~${MAX_INVENTORY_QUANTITY} 정수여야 합니다.`),
         };
+      }
+      if (!validCompoundOrderReference(channel, externalOrderId, orderLineKey)) {
+        return { ok: false, result: fail(ledger, "INVALID_ORDER_REFERENCE", "주문 참조는 콜론을 포함할 수 없고 합성키는 8~240자여야 합니다.") };
       }
       const orderKey = buildOrderKey(channel, externalOrderId, orderLineKey);
       return {
@@ -452,6 +464,10 @@ function normalizeInput(
       const orderLineKey =
         typeof input.orderLineKey === "string" ? input.orderLineKey.trim() : "";
       let orderKey: string | null = null;
+      const referenceCount = [channel, externalOrderId, orderLineKey].filter(Boolean).length;
+      if (referenceCount !== 0 && referenceCount !== 3) {
+        return { ok: false, result: fail(ledger, "INVALID_ORDER_REFERENCE", "반품 채널·주문번호·주문라인은 모두 입력하거나 모두 생략해야 합니다.") };
+      }
       if (channel && externalOrderId && orderLineKey) {
         if (!(SUPPORTED_INVENTORY_CHANNELS as readonly string[]).includes(channel)) {
           return {
@@ -459,10 +475,10 @@ function normalizeInput(
             result: fail(ledger, "INVALID_CHANNEL", `지원하지 않는 채널입니다: ${channel}`),
           };
         }
-        if (externalOrderId.length > 240 || orderLineKey.length > 240) {
+        if (!validCompoundOrderReference(channel, externalOrderId, orderLineKey)) {
           return {
             ok: false,
-            result: fail(ledger, "INVALID_ORDER_REFERENCE", "반품 주문 참조는 240자 이하여야 합니다."),
+            result: fail(ledger, "INVALID_ORDER_REFERENCE", "반품 참조는 콜론을 포함할 수 없고 합성키는 8~240자여야 합니다."),
           };
         }
         orderKey = buildOrderKey(channel, externalOrderId, orderLineKey);
@@ -554,7 +570,8 @@ function normalizeInput(
 
 /**
  * 이벤트 한 건을 원자적으로 적용한다.
- * - 멱등키 중복이면 상태 변경 없이 기존 이벤트를 돌려준다(replayed=true).
+ * - 멱등키와 수량·주문 참조가 같으면 기존 이벤트를 돌려준다(replayed=true).
+ * - 같은 키로 수량·주문 참조를 바꾸면 IDEMPOTENCY_CONFLICT로 거부한다.
  * - 검증 실패 시 상태를 전혀 변경하지 않는다.
  */
 export function applyInventoryLedgerEvent(
@@ -578,6 +595,20 @@ function applyRawEvent(ledger: InventoryLedger, raw: RawInventoryEvent): LedgerA
     );
     if (!event) {
       return fail(ledger, "RESERVATION_NOT_FOUND", "원장 인덱스와 이벤트 기록이 불일치합니다.");
+    }
+    // A key identifies one stock effect, not permission to silently accept a
+    // changed quantity or a return rebound to another order. Retry timestamps
+    // and display reasons are not part of that effect.
+    if (
+      event.quantity !== raw.quantity ||
+      event.orderKey !== raw.orderKey ||
+      event.channel !== raw.channel
+    ) {
+      return fail(
+        ledger,
+        "IDEMPOTENCY_CONFLICT",
+        "같은 멱등키에 다른 수량 또는 주문 참조가 전달되었습니다. 기존 이벤트를 확인해 주세요.",
+      );
     }
     return { ok: true, ledger, event, replayed: true, snapshot: inventoryLedgerSnapshot(ledger) };
   }

@@ -12,4 +12,3 @@ export const productDetailDataBodySchema = z.object({
     zones: z.record(z.string(), z.unknown()).optional(),
   }).passthrough(),
 });
-

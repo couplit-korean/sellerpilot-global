@@ -151,7 +151,13 @@ test("one rejected channel localization keeps every unrelated draft available", 
     { weight: 0.2, length: 10, width: 8, height: 4 },
     10,
   );
-  assert.equal(drafts.shopee, "{}", "the rejected channel stays fail-closed");
+  const shopeeDraft = JSON.parse(drafts.shopee ?? "{}") as {
+    sellerpilotDraftError?: string;
+    body?: { global_item_name?: string };
+  };
+  assert.equal(shopeeDraft.sellerpilotDraftError, undefined, "review-marked copy must not blank the channel draft");
+  assert.equal(JSON.stringify(shopeeDraft).includes(unapprovedLocalizationReviewMarker), false);
+  assert.ok(shopeeDraft.body?.global_item_name);
   assert.notEqual(drafts.qoo10, "{}", "Qoo10 remains independently reachable");
   assert.equal(
     (JSON.parse(drafts.qoo10 ?? "{}") as { params?: { ItemTitle?: string } })

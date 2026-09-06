@@ -1,5 +1,7 @@
 # Privacy governance
 
+> 운영 사실(연결·IP·배포 SHA)은 [docs/현재상태.md](./현재상태.md)가 원장이다. 이 파일은 당시 기획/검수 스냅샷이다.
+
 Owner: SellerPilot service operator
 Review cadence: every six months, and whenever a processor, data purpose, region, or marketplace integration changes
 Last reviewed: 2026-08-18

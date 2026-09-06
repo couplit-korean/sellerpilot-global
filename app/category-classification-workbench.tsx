@@ -5,7 +5,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
 import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
+import {
+  elevenstProcessedFoodCategoryId,
+  elevenstProcessedFoodNotificationFields,
+  elevenstProcessedFoodProductNameNoticeCode,
+} from "../lib/channels/elevenst-listing";
 import { createClient } from "../lib/supabase/client";
+import {
+  assignmentCategoryAttributeDescriptors,
+  categoryAttributeApplies,
+  compatibleCategoryValues,
+  missingCategoryInputIssues,
+  normalizeCategoryMetadata,
+  normalizeStoredCategoryAttribute,
+  serializeCategoryAttributeValues,
+  suggestedCategoryAttributeValues,
+  type CategoryAttribute,
+  type CategoryAttributeValue,
+  type CategoryOfficialMetadata,
+} from "./category-attribute-model";
+import { CategoryAttributeField } from "./category-attribute-field";
 import { fetchChannelTargets } from "./channel-target-client";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
@@ -19,8 +38,7 @@ export type CredentialRow = {
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
 export type OperationPayload = { ok?: boolean; steps?: OperationStep[]; remoteId?: string; message?: string };
 type CategorySuggestion = { id: string; name: string; path: string[]; confidence: number; leaf: boolean };
-type CategoryAttribute = { id: string; name: string; required: boolean; values: Array<{ id: string; name: string }> };
-type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+export type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
 export type EbayCategoryTreeBinding = { marketplaceId: string; categoryTreeId: string };
 const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_US", displayName: "United States", marketCode: "US", locale: "en-US", language: "English", currency: "USD" },
@@ -40,13 +58,31 @@ const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_PL", displayName: "Polska", marketCode: "PL", locale: "pl-PL", language: "Polski", currency: "PLN" },
 ];
 type LocalizedListing = { channel: ActiveChannelKey; market: string; locale: string; title: string; shortDescription: string; description: string; keywords: string[] };
+type StoredCategoryAssignment = {
+  channel: ActiveChannelKey;
+  environment: "sandbox" | "production";
+  market: string;
+  category_id: string;
+  category_path: string[];
+  is_leaf: boolean;
+  confidence: number | string;
+  required_attributes: unknown;
+  provided_attributes: unknown;
+  status: string;
+};
+type IsolatedCategoryValues = { categoryId: string; values: Record<string, CategoryAttributeValue> };
 const categoryBootstrapRequestTimeoutMs = 30_000;
 type ChannelState = {
   phase: "idle" | "suggesting" | "inspecting" | "ready" | "confirmed" | "error";
   suggestions: CategorySuggestion[];
   selected?: CategorySuggestion;
   attributes: CategoryAttribute[];
-  values: Record<string, string>;
+  values: Record<string, CategoryAttributeValue>;
+  dirtyAttributeIds: string[];
+  valueCategoryId: string | null;
+  isolatedValues: IsolatedCategoryValues[];
+  officialMetadata: CategoryOfficialMetadata | null;
+  loadedFromAssignment: boolean;
   verifiedLeaf: boolean;
   manualCategoryId: string;
   manualCategoryName: string;
@@ -60,6 +96,11 @@ const initialState = (): ChannelState => ({
   suggestions: [],
   attributes: [],
   values: {},
+  dirtyAttributeIds: [],
+  valueCategoryId: null,
+  isolatedValues: [],
+  officialMetadata: null,
+  loadedFromAssignment: false,
   verifiedLeaf: false,
   manualCategoryId: "",
   manualCategoryName: "",
@@ -159,15 +200,55 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
     return Object.fromEntries(Object.entries(parsed).flatMap(([key, value]) => {
       if (!value || typeof value !== "object" || Array.isArray(value)) return [];
       const state = value as Partial<ChannelState>;
-      const phase = state.phase === "suggesting" || state.phase === "inspecting" ? "error" : state.phase;
-      if (!phase || !["idle", "ready", "confirmed", "error"].includes(phase)) return [];
+      const restoredPhase = state.phase === "suggesting" || state.phase === "inspecting" ? "error" : state.phase;
+      if (!restoredPhase || !["idle", "ready", "confirmed", "error"].includes(restoredPhase)) return [];
+      const restoredValues: Record<string, CategoryAttributeValue> = state.values && typeof state.values === "object" && !Array.isArray(state.values)
+        ? Object.entries(state.values).reduce<Record<string, CategoryAttributeValue>>((result, [id, item]) => {
+            if (typeof item === "string") result[id] = item;
+            else if (Array.isArray(item) && item.every((entry) => typeof entry === "string")) result[id] = item;
+            return result;
+          }, {})
+        : {};
+      const channel = activeChannelKeys.find((candidate) => key.startsWith(`${candidate}:`));
+      const restoredAttributes = Array.isArray(state.attributes)
+        ? state.attributes.flatMap((attribute) => {
+            const normalized = normalizeStoredCategoryAttribute(attribute);
+            return normalized ? [normalized] : [];
+          })
+        : [];
+      const attributes = channel && state.selected?.id
+        ? appendChannelRequiredAttributes(channel, state.selected.id, restoredAttributes)
+        : restoredAttributes;
+      const phase = restoredPhase === "confirmed"
+        && missingCategoryInputIssues(attributes, restoredValues).length > 0
+        ? "ready"
+        : restoredPhase;
       return [[key, {
         ...initialState(),
         ...state,
         phase,
         suggestions: Array.isArray(state.suggestions) ? state.suggestions : [],
-        attributes: Array.isArray(state.attributes) ? state.attributes : [],
-        values: state.values && typeof state.values === "object" && !Array.isArray(state.values) ? state.values : {},
+        attributes,
+        values: restoredValues,
+        dirtyAttributeIds: Array.isArray(state.dirtyAttributeIds)
+          ? state.dirtyAttributeIds.filter((id): id is string => typeof id === "string")
+          : [],
+        valueCategoryId: typeof state.valueCategoryId === "string" ? state.valueCategoryId : state.selected?.id ?? null,
+        isolatedValues: Array.isArray(state.isolatedValues)
+          ? state.isolatedValues.flatMap((entry) => entry
+              && typeof entry === "object"
+              && !Array.isArray(entry)
+              && typeof entry.categoryId === "string"
+              && entry.values
+              && typeof entry.values === "object"
+              && !Array.isArray(entry.values)
+            ? [{ categoryId: entry.categoryId, values: entry.values }]
+            : [])
+          : [],
+        officialMetadata: state.officialMetadata?.schemaVersion === "sellerpilot.category-input.v2"
+          ? state.officialMetadata
+          : null,
+        loadedFromAssignment: state.loadedFromAssignment === true,
         // Taxonomy tree IDs are provider-issued market bindings. Never trust a
         // sessionStorage copy for a later official category validation call.
         ebayCategoryTreeBinding: undefined,
@@ -179,6 +260,92 @@ function restoreCategoryStates(productId: string | null): Record<string, Channel
   } catch {
     return {};
   }
+}
+
+function storedCategoryValue(attribute: CategoryAttribute, value: unknown): CategoryAttributeValue | null {
+  const supplied = (Array.isArray(value) ? value : [value]).flatMap((item) =>
+    typeof item === "string" || typeof item === "number" ? [String(item).trim()] : []).filter(Boolean);
+  if (!supplied.length) return null;
+  const normalized = supplied.map((item) => attribute.values.find((option) => option.id === item || option.name === item)?.id ?? item);
+  return attribute.repeatable || attribute.inputKind === "multi_select" ? normalized : normalized[0] ?? null;
+}
+
+function storedCategoryAssignment(value: unknown): StoredCategoryAssignment | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const channel = activeChannelKeys.find((candidate) => candidate === row.channel);
+  if (!channel || (row.environment !== "production" && row.environment !== "sandbox")) return null;
+  if (typeof row.market !== "string" || typeof row.category_id !== "string") return null;
+  return {
+    channel,
+    environment: row.environment,
+    market: row.market,
+    category_id: row.category_id,
+    category_path: Array.isArray(row.category_path) ? row.category_path.filter((item): item is string => typeof item === "string" && Boolean(item.trim())) : [],
+    is_leaf: row.is_leaf === true,
+    confidence: typeof row.confidence === "number" || typeof row.confidence === "string" ? row.confidence : 0,
+    required_attributes: row.required_attributes,
+    provided_attributes: row.provided_attributes,
+    status: typeof row.status === "string" ? row.status : "pending",
+  };
+}
+
+export function categoryStatesFromAssignments(rows: unknown) {
+  if (!Array.isArray(rows)) return {} as Record<string, ChannelState>;
+  return Object.fromEntries(rows.flatMap((value) => {
+    const assignment = storedCategoryAssignment(value);
+    if (!assignment || assignment.environment !== "production") return [];
+    const storedDescriptors = Array.isArray(assignment.required_attributes) ? assignment.required_attributes : [];
+    const hasTypedDescriptors = storedDescriptors.length > 0 && storedDescriptors.every((attribute) => Boolean(
+      attribute
+      && typeof attribute === "object"
+      && !Array.isArray(attribute)
+      && typeof attribute.inputKind === "string"
+      && typeof attribute.requirement === "string",
+    ));
+    const attributes = storedDescriptors.length
+      ? storedDescriptors.flatMap((attribute) => {
+          const normalized = normalizeStoredCategoryAttribute(attribute);
+          return normalized ? [normalized] : [];
+        })
+      : [];
+    const rawValues = assignment.provided_attributes
+      && typeof assignment.provided_attributes === "object"
+      && !Array.isArray(assignment.provided_attributes)
+      ? assignment.provided_attributes as Record<string, unknown>
+      : {};
+    const values = Object.fromEntries(attributes.flatMap((attribute) => {
+      const normalized = storedCategoryValue(attribute, rawValues[attribute.id]);
+      return normalized === null ? [] : [[attribute.id, normalized]];
+    }));
+    const path = assignment.category_path.map((part) => part.trim()).filter(Boolean);
+    const name = path.at(-1) ?? assignment.category_id;
+    const selected = {
+      id: assignment.category_id,
+      name,
+      path: path.length ? path : [name],
+      confidence: Number(assignment.confidence) || 0,
+      leaf: assignment.is_leaf,
+    };
+    const confirmed = assignment.status === "confirmed"
+      && assignment.is_leaf
+      && hasTypedDescriptors
+      && missingCategoryInputIssues(attributes, values).length === 0;
+    return [[`${assignment.channel}:${assignment.market}`, {
+      ...initialState(),
+      phase: confirmed ? "confirmed" : "ready",
+      selected,
+      attributes,
+      values,
+      valueCategoryId: selected.id,
+      verifiedLeaf: assignment.is_leaf,
+      loadedFromAssignment: true,
+    } satisfies ChannelState]];
+  }));
+}
+
+export function categoryConfirmationTargets(target: ChannelTarget | undefined) {
+  return [target] as Array<ChannelTarget | undefined>;
 }
 
 function records(value: unknown, depth = 0): Record<string, unknown>[] {
@@ -649,6 +816,22 @@ function lazadaTreeLeaves(value: unknown, parentPath: string[] = [], depth = 0):
   return [...current, ...Object.values(row).flatMap((item) => lazadaTreeLeaves(item, parentPath, depth + 1))];
 }
 
+// A channel category search that returns nothing is a dead end for the operator:
+// the official tree is in the channel's own language, so a Korean product name
+// never matches. Surface the top-level groups the channel actually returned so
+// the next search can use the channel's own vocabulary. This only improves the
+// error message; selection still runs the official attributes and validate APIs
+// before a category can be saved.
+export function officialTopLevelGroups(payload: OperationPayload, limit = 8) {
+  const groups = new Set<string>();
+  for (const row of records({ steps: payload.steps ?? [] })) {
+    const top = text(row, ["CATE_L_NM", "categoryTreeNodeLevel1Name", "level1Name"]);
+    if (top) groups.add(top);
+    if (groups.size >= limit) break;
+  }
+  return [...groups].slice(0, limit);
+}
+
 export function normalizeSuggestions(channel: ActiveChannelKey, payload: OperationPayload, query: string) {
   const root = { steps: payload.steps ?? [] };
   const directCoupang = records(root).find((row) => text(row, ["predictedCategoryId"]));
@@ -778,37 +961,43 @@ export function normalizeSuggestions(channel: ActiveChannelKey, payload: Operati
     .slice(0, 5);
 }
 
-function normalizeAttributes(payloads: OperationPayload[]) {
-  const found = records({ payloads }).flatMap((row): CategoryAttribute[] => {
-    const constraint = row.aspectConstraint && typeof row.aspectConstraint === "object" && !Array.isArray(row.aspectConstraint)
-      ? row.aspectConstraint as Record<string, unknown>
-      : {};
-    const id = text(row, ["attribute_id", "attributeId", "attributeSeq", "attributeTypeName", "name", "localizedAspectName"]);
-    const name = text(row, ["display_attribute_name", "original_attribute_name", "attributeName", "attributeTypeName", "label", "name", "localizedAspectName"]);
-    const looksLikeAttribute = Boolean(
-      row.attribute_id !== undefined || row.attributeSeq !== undefined || row.attributeTypeName !== undefined
-      || row.localizedAspectName !== undefined || row.is_mandatory !== undefined || row.mandatory !== undefined,
-    );
-    if (!id || !name || !looksLikeAttribute) return [];
-    const required = booleanValue(row, ["required", "mandatory", "is_mandatory", "isMandatory"], false)
-      || constraint.aspectRequired === true
-      || row.attributeType === "PRIMARY";
-    const optionRows = Array.isArray(row.options) ? row.options
-      : Array.isArray(row.attribute_value_list) ? row.attribute_value_list
-        : Array.isArray(row.attributeValues) ? row.attributeValues
-          : Array.isArray(row.aspectValues) ? row.aspectValues : [];
-    const values = optionRows.flatMap((item) => {
-      if (item && typeof item === "object") {
-        const option = item as Record<string, unknown>;
-        const name = text(option, ["display_value_name", "original_value_name", "name", "value", "localizedValue", "display_value", "en_name"]);
-        const id = text(option, ["value_id", "id", "option_id"]) || name;
-        return id && name ? [{ id, name }] : [];
-      }
-      return typeof item === "string" && item ? [{ id: item, name: item }] : [];
-    }).slice(0, 100);
-    return [{ id, name, required, values }];
-  });
-  return [...new Map(found.map((item) => [item.id, item])).values()].sort((left, right) => Number(right.required) - Number(left.required));
+export function normalizeAttributes(payloads: OperationPayload[]) {
+  return normalizeCategoryMetadata("ebay", payloads).descriptors;
+}
+
+function appendChannelRequiredAttributes(
+  channel: ActiveChannelKey,
+  categoryId: string,
+  providerAttributes: CategoryAttribute[],
+) {
+  if (channel !== "elevenst" || categoryId !== elevenstProcessedFoodCategoryId) return providerAttributes;
+  const explicitFoodNotices: CategoryAttribute[] = elevenstProcessedFoodNotificationFields
+    .filter((field) => field.code !== elevenstProcessedFoodProductNameNoticeCode)
+    .map((field) => ({
+      id: `notification:${field.code}`,
+      name: field.label,
+      required: true,
+      requirement: "required",
+      values: [],
+      mode: "FREE_TEXT",
+      inputKind: "text",
+      units: [],
+      groupId: null,
+      repeatable: false,
+      sourceKind: "notice",
+      condition: null,
+      unsupportedReason: null,
+    }));
+  return [...new Map([...providerAttributes, ...explicitFoodNotices].map((item) => [item.id, item])).values()]
+    .sort((left, right) => Number(right.required) - Number(left.required));
+}
+
+export function normalizeChannelAttributes(
+  channel: ActiveChannelKey,
+  categoryId: string,
+  payloads: OperationPayload[],
+) {
+  return appendChannelRequiredAttributes(channel, categoryId, normalizeCategoryMetadata(channel, payloads).descriptors);
 }
 
 function categoryPathLabel(category: CategorySuggestion) {
@@ -832,6 +1021,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [targetErrors, setTargetErrors] = useState<Partial<Record<"shopee" | "lazada" | "ebay", string>>>({});
   const [selectedMarkets, setSelectedMarkets] = useState<Partial<Record<"shopee" | "lazada" | "ebay", string>>>({ ebay: "US" });
   const [localizedListings, setLocalizedListings] = useState<LocalizedListing[]>([]);
+  const [productFacts, setProductFacts] = useState<Record<string, unknown>>({ productName, description });
   const [sourceImageUrl, setSourceImageUrl] = useState("");
   const [loadingCredentials, setLoadingCredentials] = useState(true);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
@@ -863,13 +1053,28 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     void (async () => {
       try {
         const supabase = createClient();
-        const [{ data, error }, { data: sessionData }] = await Promise.all([
+        const [{ data, error }, { data: sessionData }, { data: assignmentRows, error: assignmentError }] = await Promise.all([
           waitForAbortablePromise(supabase.rpc("sellerpilot_list_credentials").abortSignal(bounded.signal), bounded.signal),
           waitForAbortablePromise(supabase.auth.getSession(), bounded.signal),
+          waitForAbortablePromise(
+            supabase.rpc("sellerpilot_list_product_category_assignments", { p_source_ref: sourceRef }).abortSignal(bounded.signal),
+            bounded.signal,
+          ),
         ]);
         if (!isLatestRequest()) return;
         if (bounded.signal.aborted) throw bounded.signal.reason ?? new DOMException("채널 등록 준비 조회가 중단되었습니다.", "AbortError");
         setCredentials(error || !Array.isArray(data) ? [] : data.filter(isCredentialRow));
+        if (!assignmentError) {
+          const storedStates = categoryStatesFromAssignments(assignmentRows);
+          setStates((current) => {
+            const next = { ...current };
+            for (const [key, stored] of Object.entries(storedStates)) {
+              const existing = current[key];
+              if (!existing?.selected && !existing?.dirtyAttributeIds.length) next[key] = stored;
+            }
+            return next;
+          });
+        }
         const accessToken = sessionData.session?.access_token;
         if (!accessToken) {
           const message = "채널 등록 대상을 보려면 다시 로그인해 주세요.";
@@ -908,6 +1113,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           localizedListings?: LocalizedListing[];
           sourceImages?: Array<{ url?: string | null }>;
           generatedImages?: Array<{ url?: string | null }>;
+          manualFields?: Record<string, unknown>;
         } = { localizedListings: [] };
         if (contextResult.status === "fulfilled" && contextResult.value?.ok) {
           contextPayload = await waitForAbortablePromise(
@@ -925,6 +1131,13 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           ebay: current.ebay ?? ebayMarketplaceTargets[0].marketCode,
         }));
         setLocalizedListings(Array.isArray(contextPayload.localizedListings) ? contextPayload.localizedListings : []);
+        setProductFacts({
+          ...(contextPayload.manualFields && typeof contextPayload.manualFields === "object" && !Array.isArray(contextPayload.manualFields)
+            ? contextPayload.manualFields
+            : {}),
+          productName,
+          description,
+        });
         setSourceImageUrl(
           contextPayload.sourceImages?.find((image) => image.url)?.url
           ?? contextPayload.generatedImages?.find((image) => image.url)?.url
@@ -937,6 +1150,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         setTargets({ ebay: ebayMarketplaceTargets });
         setTargetErrors({ shopee: message, lazada: message });
         setLocalizedListings([]);
+        setProductFacts({ productName, description });
         setSourceImageUrl("");
       } finally {
         bounded.dispose();
@@ -948,7 +1162,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       controller.abort(new DOMException("채널 등록 준비 화면이 변경되었습니다.", "AbortError"));
       bounded.dispose();
     };
-  }, [bootstrapVersion, productId]);
+  }, [bootstrapVersion, description, productId, productName, sourceRef]);
 
   const activeCredential = useMemo(() => activeProductionCredentialMap(credentials), [credentials]);
   const visibleChannels = useMemo(() => {
@@ -1045,8 +1259,24 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         ebayTreeBinding = binding;
       }
       const suggestions = normalizeSuggestions(channel, payload, textQuery);
-      if (!suggestions.length) throw new Error("공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
-      setStates((current) => ({ ...current, [key]: { ...initialState(), phase: "idle", suggestions, ebayCategoryTreeBinding: ebayTreeBinding } }));
+      if (!suggestions.length) {
+        const groups = officialTopLevelGroups(payload);
+        throw new Error(groups.length
+          ? `공식 카테고리 응답에서 “${textQuery}”와 일치하는 말단 카테고리를 찾지 못했습니다. 이 채널이 돌려준 상위 분류는 ${groups.join(" · ")} 입니다. 채널 언어로 다시 검색하거나 아래에서 공식 ID를 직접 검증하세요.`
+          : "공식 카테고리 응답에서 일치하는 말단 카테고리를 찾지 못했습니다.");
+      }
+      setStates((current) => {
+        const state = current[key] ?? initialState();
+        return { ...current, [key]: {
+          ...state,
+          phase: "idle",
+          suggestions,
+          selected: undefined,
+          verifiedLeaf: false,
+          ebayCategoryTreeBinding: ebayTreeBinding,
+          error: undefined,
+        } };
+      });
     } catch (error) {
       setStates((current) => ({ ...current, [key]: {
         ...(current[key] ?? initialState()),
@@ -1090,9 +1320,32 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         operation(channel, "categories.attributes", common),
         operation(channel, "categories.validate", common),
       ]);
-      const attributes = normalizeAttributes([attributesPayload]);
+      const normalizedMetadata = normalizeCategoryMetadata(channel, [attributesPayload]);
+      const attributes = appendChannelRequiredAttributes(channel, selected.id, normalizedMetadata.descriptors);
+      const reconciled = compatibleCategoryValues(currentState.attributes, attributes, currentState.values);
+      const suggested = suggestedCategoryAttributeValues(attributes, productFacts);
+      const values = { ...suggested, ...reconciled.accepted };
+      const isolatedValues = Object.keys(reconciled.isolated).length
+        ? [...currentState.isolatedValues, { categoryId: currentState.valueCategoryId ?? currentState.selected?.id ?? "이전 카테고리", values: reconciled.isolated }]
+        : currentState.isolatedValues;
       const verifiedLeaf = selected.leaf && validationPayload.ok !== false;
-      setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, attributes, values: {}, verifiedLeaf, phase: "ready" } }));
+      setStates((current) => ({ ...current, [key]: {
+        ...(current[key] ?? initialState()),
+        selected,
+        attributes,
+        values,
+        dirtyAttributeIds: currentState.dirtyAttributeIds.filter((id) => Object.hasOwn(reconciled.accepted, id)),
+        valueCategoryId: selected.id,
+        isolatedValues,
+        officialMetadata: {
+          ...normalizedMetadata,
+          descriptors: attributes,
+          unsupportedAttributeIds: attributes.filter((attribute) => attribute.inputKind === "unsupported").map((attribute) => attribute.id),
+        },
+        loadedFromAssignment: false,
+        verifiedLeaf,
+        phase: "ready",
+      } }));
     } catch (error) {
       setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), selected, phase: "error", error: error instanceof Error ? error.message : "카테고리 메타정보 조회 실패" } }));
     }
@@ -1117,6 +1370,20 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     });
   };
 
+  const updateAttributeValue = (key: string, attributeId: string, value: CategoryAttributeValue) => {
+    setStates((current) => {
+      const state = current[key] ?? initialState();
+      return { ...current, [key]: {
+        ...state,
+        phase: state.phase === "confirmed" ? "ready" : state.phase,
+        values: { ...state.values, [attributeId]: value },
+        dirtyAttributeIds: state.dirtyAttributeIds.includes(attributeId)
+          ? state.dirtyAttributeIds
+          : [...state.dirtyAttributeIds, attributeId],
+      } };
+    });
+  };
+
   const confirm = async (channel: ActiveChannelKey) => {
     const key = stateKey(channel);
     const state = states[key];
@@ -1128,23 +1395,23 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       notify("ChatGPT CLI 분석과 상품 원장 저장을 먼저 완료해 주세요.");
       return;
     }
-    const missing = state.attributes.filter((attribute) => attribute.required && !state.values[attribute.id]?.trim());
-    if (!state.verifiedLeaf || missing.length) {
-      notify(!state.verifiedLeaf ? "공식 API로 말단 카테고리 유효성을 먼저 확인해 주세요." : `필수 속성 ${missing.length}개를 모두 입력해 주세요.`);
+    if (!state.officialMetadata && state.loadedFromAssignment && state.phase !== "confirmed") {
+      notify("기존 저장값을 수정하려면 현재 카테고리의 공식 속성 메타를 다시 확인해 주세요.");
       return;
     }
-    const requiredAttributes = state.attributes.map((attribute) => ({ id: attribute.id, name: attribute.name, required: attribute.required, values: attribute.values }));
-    const providedAttributes = channel === "lazada"
-      ? Object.fromEntries(state.attributes.map((attribute) => {
-          const selectedValue = state.values[attribute.id] ?? "";
-          const selectedOption = attribute.values.find((value) => value.id === selectedValue);
-          return [attribute.id, selectedOption?.name ?? selectedValue];
-        }))
-      : state.values;
-    const shopeeTargets = targets.shopee ?? [];
-    const assignmentTargets: Array<ChannelTarget | undefined> = channel === "shopee" && shopeeTargets.length > 0
-      ? shopeeTargets
-      : [target];
+    const issues = missingCategoryInputIssues(state.attributes, state.values);
+    if (!state.verifiedLeaf || issues.length) {
+      notify(!state.verifiedLeaf
+        ? "공식 API로 말단 카테고리 유효성을 먼저 확인해 주세요."
+        : `필수·조건부 속성 ${issues.length}개를 확인해 주세요: ${issues.slice(0, 3).map((issue) => issue.label).join(" · ")}`);
+      return;
+    }
+    const requiredAttributes = assignmentCategoryAttributeDescriptors(state.attributes, state.values);
+    const providedAttributes = serializeCategoryAttributeValues(channel, state.attributes, state.values);
+    // A category/attribute response verified for one concrete shop cannot prove
+    // that every other Shopee market accepts the same values. Persist only the
+    // target the seller reviewed; the other markets keep independent states.
+    const assignmentTargets = categoryConfirmationTargets(target);
     const results = await Promise.all(assignmentTargets.map((assignmentTarget) => createClient().rpc("sellerpilot_save_product_category_assignment", {
       p_product_id: productId,
       p_source_ref: sourceRef,
@@ -1166,18 +1433,39 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         locale: assignmentTarget?.locale ?? null,
         globalProduct: channel === "shopee",
         categoryTreeId: channel === "ebay" ? state.ebayCategoryTreeBinding?.categoryTreeId ?? null : null,
+        categoryInput: {
+          schemaVersion: "sellerpilot.category-input.v2",
+          descriptors: state.attributes,
+          unsupportedAttributeIds: state.attributes.filter((attribute) => attribute.inputKind === "unsupported").map((attribute) => attribute.id),
+        },
+        nativeCategoryMetadata: state.officialMetadata?.nativeCategoryMetadata ?? {
+          attributes: [],
+          noticeCategories: [],
+          certifications: [],
+        },
       },
       p_confirm: true,
     })));
     if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
-    notify(`${channelCatalog[channel].name} 카테고리와 필수 속성을 ${channel === "shopee" ? `${assignmentTargets.length}개 숍에 ` : ""}확정했습니다.`);
+    notify(`${channelCatalog[channel].name} ${assignmentTargets[0]?.marketCode ?? channelCatalog[channel].market} 카테고리와 입력한 전체 속성을 확정했습니다.`);
   };
 
   return <section className="panel category-workbench">
-    <div className="category-workbench-head"><div><span className="panel-kicker">OFFICIAL CATEGORY PREFLIGHT</span><h3>채널별 카테고리 확정</h3><p>공식 API 추천·말단 여부·필수 속성을 검증하고 실제 등록 사전조건으로 저장합니다.</p></div><span className="step-chip">STEP 3 / 3</span></div>
-    <div className="category-query"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="브랜드·제품 종류·용량·용도를 포함한 정확한 상품명" /><small>카테고리 수수료와 노출이 달라질 수 있으므로 자동 추천 뒤 판매자가 최종 확정합니다.</small></div>
+    <div className="category-workbench-head">
+      <div>
+        <span className="panel-kicker">CATEGORY &amp; PRODUCT SPECIFICATIONS</span>
+        <h3>상품군과 채널별 상품정보</h3>
+        <p>공통 상품정보를 바탕으로 채널의 공식 말단 카테고리와 필수·조건부·선택 속성을 함께 확인합니다.</p>
+      </div>
+      <span className="step-chip">STEP 3 / 3</span>
+    </div>
+    <div className="category-query">
+      <Search size={17} />
+      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="브랜드·제품 종류·용량·용도를 포함한 정확한 상품명" />
+      <small>저장된 확정값은 다시 사용하며, 새 추천을 선택해도 맞지 않는 이전 값은 별도로 보관합니다.</small>
+    </div>
     <div className="category-channel-grid">{visibleChannels.map((channel) => {
       const definition = channelCatalog[channel];
       const credential = activeCredential.get(channel);
@@ -1185,17 +1473,67 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       const key = stateKey(channel);
       const state = states[key] ?? initialState();
       const busy = state.phase === "suggesting" || state.phase === "inspecting";
-      const required = state.attributes.filter((attribute) => attribute.required);
-      const completedRequired = required.filter((attribute) => state.values[attribute.id]?.trim()).length;
+      const applicableAttributes = state.attributes.filter((attribute) => categoryAttributeApplies(attribute, state.values));
+      const supportedAttributes = applicableAttributes.filter((attribute) => attribute.inputKind !== "unsupported");
+      const unsupportedAttributes = applicableAttributes.filter((attribute) => attribute.inputKind === "unsupported");
+      const issues = missingCategoryInputIssues(state.attributes, state.values);
+      const requiredCount = applicableAttributes.filter((attribute) => attribute.requirement === "required").length
+        + new Set(applicableAttributes.filter((attribute) => attribute.requirement === "one_of_group").map((attribute) => attribute.groupId).filter(Boolean)).size;
+      const completedRequired = Math.max(0, requiredCount - issues.length);
+      const optionalCount = applicableAttributes.filter((attribute) => attribute.requirement === "optional" && attribute.inputKind !== "unsupported").length;
       const requiresTarget = channel === "shopee" || channel === "lazada";
       const targetReady = !requiresTarget || Boolean(target);
+      const metadataRefreshRequired = state.loadedFromAssignment && !state.officialMetadata && state.phase !== "confirmed";
       return <article className={`category-channel-card ${state.phase}`} key={channel}>
-        <header><span>{definition.mark}</span><div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div><em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em></header>
-        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select"><span>등록 국가·언어</span><select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>{channel === "ebay" ? <small>선택 국가의 공식 category tree를 조회합니다.</small> : null}</label>}
+        <header>
+          <span>{definition.mark}</span>
+          <div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div>
+          <em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em>
+        </header>
+        {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select">
+          <span>등록 국가·언어</span>
+          <select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>
+          <small>{channel === "shopee" ? "각 국가·숍을 따로 검증하고 저장합니다." : channel === "ebay" ? "선택 국가의 공식 category tree를 조회합니다." : "선택 국가의 공식 카테고리 메타를 조회합니다."}</small>
+        </label>}
         {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} /><span>{targetErrors[channel]}</span><button type="button" disabled={loadingCredentials} onClick={() => setBootstrapVersion((current) => current + 1)}><RefreshCw className={loadingCredentials ? "spin" : undefined} size={13} />다시 확인</button></p>}
-        {!state.suggestions.length && !state.selected && <div className="category-empty"><Tags size={21} /><b>{!targetReady ? "등록 대상 동기화 필요" : credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b><small>{!targetReady ? "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small><button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "OAuth 재승인 필요" : "공식 API 추천"}</button>{credential && productId && targetReady && <div className="category-manual-fallback"><b>공식 ID 수동 검증</b><small>추천 결과가 없을 때 판매자센터에서 확인한 실제 말단 카테고리를 입력합니다. 저장 전 공식 속성·유효성 API를 다시 통과해야 합니다.</small><label><span>카테고리 ID <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 ID`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="공식 말단 카테고리 ID" /></label><label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="공식 카테고리명" /></label><label><span>전체 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 말단" /></label><button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />공식 API로 검증</button></div>}</div>}
-        {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions"><div className="category-suggestions-toolbar"><small>후보가 맞지 않으면 위 검색어를 고친 뒤 이 채널만 다시 조회하세요.</small><button type="button" disabled={busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}현재 검색어로 다시 추천</button></div>{state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}</div>}
-        {state.selected && <div className="category-inspection"><div className="selected-category"><BadgeCheck size={18} /><span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}</small></span><button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...initialState(), suggestions: state.suggestions } }))}>다시 선택</button></div>{state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <><div className="category-proof"><span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span><span className={completedRequired === required.length ? "passed" : "failed"}><Check size={14} />필수 속성 {completedRequired}/{required.length}</span></div>{required.length > 0 && <div className="category-attribute-list">{required.map((attribute) => <label key={attribute.id}><span>{attribute.name}<em>필수</em></span>{attribute.values.length ? <select value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))}><option value="">값 선택</option>{attribute.values.map((value) => <option value={value.id} key={value.id}>{value.name}</option>)}</select> : <input value={state.values[attribute.id] ?? ""} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...state, values: { ...state.values, [attribute.id]: event.target.value } } }))} placeholder={`${attribute.name} 입력`} />}</label>)}</div>}<button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || completedRequired !== required.length || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리 저장됨</> : "카테고리·속성 저장"}</button></>}</div>}
+        {!state.suggestions.length && !state.selected && <div className="category-empty">
+          <Tags size={21} />
+          <b>{!targetReady ? "등록 대상 동기화 필요" : credential ? productId ? "공식 카테고리 추천 대기" : "상품 원장 연결 대기" : "API 키 연결 후 사용"}</b>
+          <small>{!targetReady ? "OAuth 재승인 후 국가·언어 정보를 다시 동기화하세요." : credential ? productId ? "상품명으로 채널 원본 분류를 조회합니다." : "AI 분석을 완료해 상품 UUID를 먼저 생성하세요." : "API 키 관리에서 운영 키를 먼저 연결하세요."}</small>
+          <button type="button" disabled={!credential || !productId || !targetReady || busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{!targetReady ? "OAuth 재승인 필요" : "공식 API 추천"}</button>
+          {credential && productId && targetReady && <div className="category-manual-fallback">
+            <b>공식 ID 수동 검증</b>
+            <small>추천 결과가 없을 때 판매자센터에서 확인한 실제 말단 카테고리를 입력합니다. 저장 전 공식 속성·유효성 API를 다시 통과해야 합니다.</small>
+            <label><span>카테고리 ID <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리 ID`} value={state.manualCategoryId} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryId: event.target.value } }))} placeholder="공식 말단 카테고리 ID" /></label>
+            <label><span>카테고리명 <em>필수</em></span><input required aria-label={`${definition.name} 수동 카테고리명`} value={state.manualCategoryName} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryName: event.target.value } }))} placeholder="공식 카테고리명" /></label>
+            <label><span>전체 경로</span><input aria-label={`${definition.name} 수동 카테고리 경로`} value={state.manualCategoryPath} onChange={(event) => setStates((current) => ({ ...current, [key]: { ...(current[key] ?? initialState()), manualCategoryPath: event.target.value } }))} placeholder="상위 › 하위 › 말단" /></label>
+            <button type="button" className="category-manual-verify" disabled={busy || !state.manualCategoryId.trim() || !state.manualCategoryName.trim()} onClick={() => void inspectManualCategory(channel)}><ShieldCheck size={14} />공식 API로 검증</button>
+          </div>}
+        </div>}
+        {state.suggestions.length > 0 && !state.selected && <div className="category-suggestions">
+          <div className="category-suggestions-toolbar"><small>후보가 맞지 않으면 위 검색어를 고친 뒤 이 채널만 다시 조회하세요.</small><button type="button" disabled={busy} onClick={() => void suggest(channel)}>{busy ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}현재 검색어로 다시 추천</button></div>
+          {state.suggestions.map((suggestion, index) => <button type="button" onClick={() => void inspect(channel, suggestion)} key={`${suggestion.id}-${suggestion.name}`}><span><b>{index + 1}. {suggestion.name}</b><small>{categoryPathLabel(suggestion)}</small></span><em>{Math.round(suggestion.confidence * 100)}%</em><ChevronRight size={14} /></button>)}
+        </div>}
+        {state.selected && <div className="category-inspection">
+          <div className="selected-category">
+            <BadgeCheck size={18} />
+            <span><b>{state.selected.name}</b><small>{categoryPathLabel(state.selected)} · ID {state.selected.id}{state.loadedFromAssignment ? " · 저장값 불러옴" : ""}</small></span>
+            <button type="button" onClick={() => setStates((current) => ({ ...current, [key]: { ...state, selected: undefined, phase: "idle", verifiedLeaf: false, error: undefined } }))}>다시 선택</button>
+          </div>
+          {state.phase === "inspecting" ? <p className="category-loading"><LoaderCircle className="spin" size={16} />공식 속성·유효성 동시 확인 중</p> : <>
+            <div className="category-proof">
+              <span className={state.verifiedLeaf ? "passed" : "failed"}><ShieldCheck size={14} />{state.verifiedLeaf ? "말단 카테고리 확인" : "유효성 확인 필요"}</span>
+              <span className={issues.length === 0 ? "passed" : "failed"}><Check size={14} />필수·조건부 {completedRequired}/{requiredCount}</span>
+              <span className="passed"><Tags size={14} />선택 속성 {optionalCount}개</span>
+            </div>
+            {state.loadedFromAssignment && <button type="button" className="category-manual-verify" disabled={busy || !credential} onClick={() => void inspect(channel, state.selected!)}><RefreshCw size={14} />공식 메타 다시 확인</button>}
+            {supportedAttributes.length > 0 && <div className="category-attribute-list">{supportedAttributes.map((attribute) => <CategoryAttributeField key={attribute.id} attribute={attribute} value={state.values[attribute.id]} onChange={(value) => updateAttributeValue(key, attribute.id, value)} />)}</div>}
+            {unsupportedAttributes.length > 0 && <div className="category-attribute-list" role="status"><b>아직 입력할 수 없는 공식 메타 {unsupportedAttributes.length}개</b>{unsupportedAttributes.map((attribute) => <CategoryAttributeField key={attribute.id} attribute={attribute} value={state.values[attribute.id]} onChange={(value) => updateAttributeValue(key, attribute.id, value)} />)}</div>}
+            {state.isolatedValues.length > 0 && <p className="category-error"><AlertTriangle size={14} /><span>카테고리 변경과 맞지 않는 이전 값 {state.isolatedValues.reduce((count, item) => count + Object.keys(item.values).length, 0)}개를 자동 적용하지 않고 보관했습니다.</span></p>}
+            {issues.length > 0 && <p className="category-error"><AlertTriangle size={14} /><span>{issues.slice(0, 4).map((issue) => issue.label).join(" · ")} 확인이 필요합니다.</span></p>}
+            <button type="button" className="category-confirm" onClick={() => void confirm(channel)} disabled={!state.verifiedLeaf || issues.length > 0 || metadataRefreshRequired || state.phase === "confirmed"}>{state.phase === "confirmed" ? <><Check size={15} />카테고리·전체 속성 저장됨</> : metadataRefreshRequired ? "공식 메타 다시 확인 필요" : "카테고리·전체 속성 저장"}</button>
+          </>}
+        </div>}
         {state.error && <p className="category-error"><AlertTriangle size={14} />{state.error}</p>}
       </article>;
     })}</div>

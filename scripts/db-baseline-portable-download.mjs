@@ -1,0 +1,13 @@
+import{createHash,createPublicKey,verify}from'node:crypto';import{writeFile,mkdir}from'node:fs/promises';import{resolve}from'node:path';
+const name='@embedded-postgres/darwin-arm64',version='17.6.0-beta.15';
+const dir=resolve(process.argv[2]??'');if(!dir.includes('/tmp/'))throw Error('explicit private tmp directory required');
+await mkdir(dir,{recursive:true,mode:0o700});
+const meta=await(await fetch(`https://registry.npmjs.org/${name}/${version}`)).json();
+const keys=(await(await fetch('https://registry.npmjs.org/-/npm/v1/keys')).json()).keys;
+const signature=meta.dist.signatures.find(s=>keys.some(k=>k.keyid===s.keyid));if(!signature)throw Error('no matching registry signature key');
+const key=keys.find(k=>k.keyid===signature.keyid);if(!verify('sha256',Buffer.from(`${name}@${version}:${meta.dist.integrity}`),createPublicKey({key:Buffer.from(key.key,'base64'),format:'der',type:'spki'}),Buffer.from(signature.sig,'base64')))throw Error('registry signature mismatch');
+const r=await fetch(meta.dist.tarball);if(!r.ok)throw Error('download failed');const b=Buffer.from(await r.arrayBuffer());
+if('sha512-'+createHash('sha512').update(b).digest('base64')!==meta.dist.integrity)throw Error('tarball integrity mismatch');
+await writeFile(dir+'/postgres.tgz',b,{mode:0o600,flag:'wx'});
+const report={name,version,repository:meta.repository,license:meta.license,tarball:meta.dist.tarball,compressedBytes:b.length,unpackedBytes:meta.dist.unpackedSize,integrity:meta.dist.integrity,registrySignatureVerified:true,registryKeyId:key.keyid,scriptsExecuted:false};
+await writeFile(dir+'/download-evidence.json',JSON.stringify(report,null,2)+'\n',{mode:0o600,flag:'wx'});console.log(JSON.stringify(report));

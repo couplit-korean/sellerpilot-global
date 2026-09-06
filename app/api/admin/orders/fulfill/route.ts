@@ -112,6 +112,9 @@ function localShipmentErrorMessage(raw: string) {
   if (raw.startsWith("SHIPMENT_FIELD_INVALID:shopee.shopId")) {
     return "Shopee 주문의 정확한 Shop ID가 동기화되지 않아 기본 상점으로의 오발송을 차단했습니다. 해당 Shop으로 주문을 다시 동기화해 주세요.";
   }
+  if (raw.startsWith("SHIPMENT_FIELD_INVALID:ebay.lineItem")) {
+    return "eBay 주문 품목번호와 정확한 수량이 확인되지 않아 발송을 차단했습니다. 주문을 다시 동기화해 주세요.";
+  }
   if (raw.startsWith("SHOPEE_SHIPPING_MODE_SELECTION_REQUIRED")) {
     return "Shopee가 이 주문에 픽업 또는 드롭오프 선택을 요구합니다. 확인되지 않은 장소·시간값을 만들지 않고 자동 발송을 차단했습니다.";
   }

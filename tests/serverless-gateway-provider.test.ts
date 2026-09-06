@@ -493,7 +493,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
         orders: [{
           orderId: "order-1",
           buyer: { username: "private-buyer" },
-          lineItems: [{ title: "private-product", quantity: 2 }],
+          lineItems: [{ lineItemId: "order-line-1", title: "private-product", quantity: 2 }],
           pricingSummary: { total: { value: "17.50", currency: "USD" } },
           orderPaymentStatus: "PAID",
           orderFulfillmentStatus: "NOT_STARTED",
@@ -547,6 +547,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
     amountKrw: 0,
     status: "paid",
     orderedAt: "2026-08-28T02:03:04.000Z",
+    providerContext: { orderId: "order-1", lineItems: [{ lineItemId: "order-line-1", quantity: 2 }] },
   }]);
   assert.deepEqual(completion?.arguments_.p_response_payload, {
     ok: true,
@@ -875,4 +876,108 @@ test("test-only provider result fixtures stay within channel operation contracts
     safeMessage: "ok",
   };
   assert.equal(result.operation, operation);
+});
+
+test("Shopee category suggest uses a still-valid token without starting credential refresh", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  globalThis.fetch = async (input) => {
+    events.push(`fetch:${new URL(String(input)).pathname}`);
+    return new Response(JSON.stringify({ error: "", response: { category_list: [] } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  try {
+    const job = genericClaim("shopee", "categories.suggest");
+    job.environment = "production";
+    const accessExpiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+    job.request = {
+      arguments: { globalProduct: true, merchantId: "2001", query: { language: "en" } },
+    };
+    job.credential = {
+      partner_id: "2031489",
+      partner_key: "partner-secret",
+      shop_id: "1001",
+      merchant_id: "2001",
+      authorization_expires_at: "2099-01-01T00:00:00.000Z",
+      shopee_targets: [
+        {
+          type: "merchant",
+          id: "2001",
+          access_token: "live-access",
+          refresh_token: "refresh-token",
+          access_token_expires_at: accessExpiresAt,
+          refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    const result = await executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("provider-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(events.includes("credential-fence"), false);
+    assert.equal(events.includes("credential-stage"), false);
+    assert.ok(events.includes("fetch:/api/v2/global_product/get_category"));
+    assert.equal(events.includes("fetch:/api/v2/auth/access_token/get"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee category suggest does not fence the channel when the stored token is expired", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  globalThis.fetch = async (input) => {
+    events.push(`fetch:${new URL(String(input)).pathname}`);
+    throw new Error("unexpected provider fetch");
+  };
+  try {
+    const job = genericClaim("shopee", "categories.suggest");
+    job.environment = "production";
+    job.request = {
+      arguments: { globalProduct: true, merchantId: "2001" },
+    };
+    job.credential = {
+      partner_id: "2031489",
+      partner_key: "partner-secret",
+      shop_id: "1001",
+      merchant_id: "2001",
+      authorization_expires_at: "2099-01-01T00:00:00.000Z",
+      shopee_targets: [
+        {
+          type: "merchant",
+          id: "2001",
+          access_token: "expired-access",
+          refresh_token: "refresh-token",
+          access_token_expires_at: "2000-01-01T00:00:00.000Z",
+          refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+        },
+      ],
+    };
+    await assert.rejects(
+      executeServerlessGatewayProviderJob({
+        job,
+        signal: new AbortController().signal,
+        hooks: {
+          assertLeaseHealthy: async () => { events.push("lease"); },
+          beginProviderMutation: async () => { events.push("provider-fence"); },
+          beginCredentialMutation: async () => { events.push("credential-fence"); },
+          stageCredentialRefresh: async () => { events.push("credential-stage"); },
+        },
+      }),
+      /SHOPEE_CATEGORY_READ_TOKEN_REFRESH_BLOCKED/,
+    );
+    assert.equal(events.includes("credential-fence"), false);
+    assert.equal(events.includes("fetch:/api/v2/auth/access_token/get"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

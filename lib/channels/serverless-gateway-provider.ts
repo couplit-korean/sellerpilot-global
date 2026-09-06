@@ -271,6 +271,14 @@ async function prepareCredential(
   let shopeeShopCredential: SecretPayload | undefined;
   let arguments_ = operationArguments;
   const publicationReadOnly = input.job.operation === "listing.publication.verify";
+  const shopeeCategoryRead = input.job.channel === "shopee"
+    && (
+      input.job.operation === "categories.list"
+      || input.job.operation === "categories.suggest"
+      || input.job.operation === "categories.attributes"
+      || input.job.operation === "categories.validate"
+    );
+  const shopeeAccessBufferMs = shopeeCategoryRead ? 0 : 10 * 60 * 1_000;
   const publicationSource = publicationReadOnly
     ? listingPublicationVerificationSourceSchema.safeParse(
         operationArguments.sellerpilotPublicationSource,
@@ -282,11 +290,19 @@ async function prepareCredential(
   const readOnlyCredentialRefreshBlocked = async () => {
     throw new Error("LISTING_PUBLICATION_VERIFY_CREDENTIAL_REFRESH_REQUIRED");
   };
+  const shopeeCategoryReadRefreshBlocked = async () => {
+    throw new Error("SHOPEE_CATEGORY_READ_TOKEN_REFRESH_BLOCKED");
+  };
   const refreshHooks = publicationReadOnly
     ? {
         onExternalMutationStart: readOnlyCredentialRefreshBlocked,
         onCredentialRefresh: readOnlyCredentialRefreshBlocked,
       }
+    : shopeeCategoryRead
+      ? {
+          onExternalMutationStart: shopeeCategoryReadRefreshBlocked,
+          onCredentialRefresh: shopeeCategoryReadRefreshBlocked,
+        }
     : {
         onExternalMutationStart: input.hooks.beginCredentialMutation,
         onCredentialRefresh: input.hooks.stageCredentialRefresh,
@@ -337,11 +353,11 @@ async function prepareCredential(
         const shopEnsured = await ensureShopeeAccessToken(
           credential,
           input.job.environment,
-          10 * 60 * 1_000,
+          shopeeAccessBufferMs,
           shopId,
           refreshHooks.onExternalMutationStart,
           refreshHooks.onCredentialRefresh,
-          !publicationReadOnly,
+          !publicationReadOnly && !shopeeCategoryRead,
         );
         shopeeShopCredential = shopEnsured.payload;
         if (!publicationReadOnly) credential = shopEnsured.payload;
@@ -357,11 +373,11 @@ async function prepareCredential(
       const merchantEnsured = await ensureShopeeMerchantAccessToken(
         credential,
         input.job.environment,
-        10 * 60 * 1_000,
+        shopeeAccessBufferMs,
         merchantId,
         refreshHooks.onExternalMutationStart,
         refreshHooks.onCredentialRefresh,
-        !publicationReadOnly,
+        !publicationReadOnly && !shopeeCategoryRead,
       );
       credential = merchantEnsured.payload;
     } else {
@@ -370,11 +386,11 @@ async function prepareCredential(
       const ensured = await ensureShopeeAccessToken(
         credential,
         input.job.environment,
-        10 * 60 * 1_000,
+        shopeeAccessBufferMs,
         shopId,
         refreshHooks.onExternalMutationStart,
         refreshHooks.onCredentialRefresh,
-        !publicationReadOnly,
+        !publicationReadOnly && !shopeeCategoryRead,
       );
       credential = ensured.payload;
     }
@@ -487,7 +503,7 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
     await input.hooks.assertLeaseHealthy();
     const providerError = textValue(remote.data, "error");
     const ok = remote.response.ok && !providerError;
-    if (ok) assertShopeeShopProfileTarget(remote.data, shopId);
+    if (ok) assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
     return {
       ok,
       channel: "shopee" as const,
@@ -852,6 +868,8 @@ export async function executeServerlessGatewayProviderJob(
     }
 
     await input.hooks.assertLeaseHealthy();
+    const delayedLazadaShipmentBoundary = input.job.channel === "lazada"
+      && input.job.operation === "shipment.confirm";
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
     const delayedTemuExactUpdateBoundary = input.job.channel === "temu"
@@ -872,6 +890,7 @@ export async function executeServerlessGatewayProviderJob(
       && input.job.operation === "listing.update"
       && Boolean(coupangExactQaRecoveryBinding(operationArguments, "listing.update"));
     if (writeChannelOperations.has(input.job.operation)
+        && !delayedLazadaShipmentBoundary
         && !delayedTemuActivationBoundary
         && !delayedTemuExactUpdateBoundary
         && !delayedEbayExactUpdateBoundary
@@ -887,7 +906,8 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedTemuActivationBoundary
+      ...(delayedLazadaShipmentBoundary
+          || delayedTemuActivationBoundary
           || delayedTemuExactUpdateBoundary
           || delayedEbayExactUpdateBoundary
           || delayedShopeeExactInventoryBoundary

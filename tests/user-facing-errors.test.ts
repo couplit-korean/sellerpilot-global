@@ -36,3 +36,27 @@ test("failure notices never use a success tone", () => {
   assert.equal(userNotice("HTTP 500 Internal Server Error").tone, "error");
   assert.equal(userNotice("로그인이 만료되었습니다.").tone, "warning");
 });
+
+test("shipping setup failures name the seller information to correct", () => {
+  for (const [code, expected] of [
+    ["COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED", /쿠팡 배송비 유형과 금액/],
+    ["SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED", /출고지·반품지/],
+    ["LISTING_SHIPPING_CONFIRMATION_REQUIRED:shippingRule,packagingRule", /배송규칙·포장규칙/],
+    ["QOO10_UPDATE_SHIPPING_UNVERIFIED", /현재 배송그룹을 확인하지 못해 수정을 중단/],
+  ] as const) {
+    const notice = userNotice(new Error(code));
+    assert.match(notice.message, expected);
+    assert.doesNotMatch(notice.message, /CONFIRMATION_REQUIRED|shippingRule|packagingRule/);
+    assert.notEqual(notice.tone, "success");
+  }
+});
+
+test("uncertain eBay shipment messages preserve the no-resend instruction before generic error mapping", () => {
+  for (const code of ["EXISTING_CONFLICT", "WRITE_UNCERTAIN", "READBACK_UNAVAILABLE", "READBACK_MISMATCH"]) {
+    const notice = userNotice(`EBAY_SHIPMENT_${code}: HTTP 503 timeout quantity`);
+    assert.match(notice.message, /다시 전송하지 마세요/);
+    assert.match(notice.message, /송장번호·주문 품목과 수량/);
+    assert.doesNotMatch(notice.message, /다시 시도|HTTP|EBAY_SHIPMENT/);
+    assert.equal(notice.tone, "warning");
+  }
+});

@@ -1,0 +1,22 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import {shopeeExactAdminInput,shopeeExactWorkerInput,parseShopeeExactClaim} from "../lib/channels/shopee-oauth-exact";
+const id="11111111-1111-4111-8111-111111111111";
+const job=()=>({id,claim_token:id,credential_id:id,channel:"shopee",operation:"oauth.exchange",environment:"production",attempt_count:1,
+request:{shopeeExactSession:id,mainAccountId:"123"},credential:{partner_id:"2031489",shop_id:"1719148844",main_account_id:"123",shop_ids:["1719148844","2","3","4","5","6","7","8"]}});
+test("prepare cannot inject owner, identity or readiness",()=>{assert.equal(shopeeExactAdminInput.safeParse({action:"prepare",credentialId:id}).success,true);for(const extra of [{owner:id},{ready:true},{shopId:"2"}])assert.equal(shopeeExactAdminInput.safeParse({action:"prepare",credentialId:id,...extra}).success,false);});
+test("worker cannot select an arbitrary job or general lane",()=>{assert.equal(shopeeExactWorkerInput.safeParse({action:"claim",sessionId:id}).success,true);for(const extra of [{jobId:id},{mode:"default"},{channel:"smartstore"}])assert.equal(shopeeExactWorkerInput.safeParse({action:"claim",sessionId:id,...extra}).success,false);});
+test("only the exact operation, attempt, session and existing primary are executable",()=>{assert.equal(parseShopeeExactClaim(job(),id).id,id);for(const changed of [{operation:"diagnostic.test"},{channel:"lazada"},{attempt_count:2},{environment:"sandbox"},{request:{shopeeExactSession:"other",mainAccountId:"123"}},{credential:{...job().credential,shop_id:"2"}},{credential:{...job().credential,partner_id:"999"}}])assert.throws(()=>parseShopeeExactClaim({...job(),...changed},id));});
+test("malformed eight-shop binding and mismatching main account fail",()=>{for(const credential of [{...job().credential,shop_ids:["1719148844"]},{...job().credential,main_account_id:"456"}])assert.throws(()=>parseShopeeExactClaim({...job(),credential},id));});
+test("dedicated runner has no generic claim, scheduler, diagnostic or recovery script",async()=>{const s=await readFile(new URL("../scripts/shopee-oauth-exact-once.mjs",import.meta.url),"utf8");assert.doesNotMatch(s,/ai-cli-worker|\/worker\/claim|channel-sync|shopee-exact-diagnostic/);assert.match(s,/attestIp/);assert.match(s,/credentialRefresh:finalRefresh/);assert.match(s,/reconciliation_required/);assert.match(s,/safeReadVerified:false/);});
+test("callback remains closed until the root UI dispatcher is separately integrated",async()=>{const s=await readFile(new URL("../app/api/admin/channel-credentials/shopee/exact/route.ts",import.meta.url),"utf8");assert.match(s,/timingSafeEqual/);assert.match(s,/httpOnly: true/);assert.match(s,/auth\.user\.id/);assert.match(s,/CALLBACK_READY !== "1"/);assert.match(s,/callback_integration_required/);});
+
+test("exact claim rejects missing or nonnumeric main-account binding on both sides",()=>{
+  for(const mainAccountId of [undefined,null,"","not-an-account",{},true]) {
+    assert.throws(()=>parseShopeeExactClaim({...job(),request:{...job().request,mainAccountId},credential:{...job().credential,main_account_id:mainAccountId}},id),/SHOPEE_EXACT_CLAIM_INVALID/);
+  }
+});
+test("exact claim requires exactly eight shops, not eight unique IDs plus duplicates",()=>{
+  assert.throws(()=>parseShopeeExactClaim({...job(),credential:{...job().credential,shop_ids:[...job().credential.shop_ids,"8"]}},id),/SHOPEE_EXACT_CLAIM_INVALID/);
+});

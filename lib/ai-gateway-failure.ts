@@ -101,16 +101,19 @@ function boundedErrorRecords(error: unknown) {
   const queue: unknown[] = [error];
   const seen = new Set<unknown>();
   const records: Record<string, unknown>[] = [];
+  let truncated = false;
   while (queue.length > 0 && records.length < MAX_INSPECTED_RECORDS) {
     const candidate = queue.shift();
     if (candidate == null || seen.has(candidate)) continue;
     seen.add(candidate);
     const record = errorRecord(candidate);
     if (!record) continue;
+    if (Array.isArray(record.errors) && record.errors.length > MAX_LINKED_ERRORS) truncated = true;
     records.push(record);
     queue.push(...linkedErrors(record));
   }
-  return records;
+  truncated ||= queue.some((candidate) => !seen.has(candidate) && errorRecord(candidate) != null);
+  return { records, truncated };
 }
 
 function safeHttpStatus(value: unknown) {
@@ -237,25 +240,41 @@ function gatewayMetadataRecords(records: readonly Record<string, unknown>[]) {
   });
 }
 
-function providerAttemptEvidence(records: readonly Record<string, unknown>[]) {
+function providerAttemptEvidence(records: readonly Record<string, unknown>[], inspectionTruncated: boolean) {
   let upstreamProviderAttempted: boolean | undefined;
+  let explicitZeroTotal = false;
+  let incompleteEvidence = inspectionTruncated;
   let providerRateLimited = false;
   const attempts: Record<string, unknown>[] = [];
   for (const gateway of gatewayMetadataRecords(records)) {
     const routing = errorRecord(gateway.routing);
-    if (!routing) continue;
+    if (!routing) {
+      incompleteEvidence = true;
+      continue;
+    }
     const totalAttemptCount = routing.totalProviderAttemptCount;
-    if (typeof totalAttemptCount === "number" && Number.isInteger(totalAttemptCount) && totalAttemptCount >= 0) {
-      upstreamProviderAttempted = totalAttemptCount > 0 ? true : upstreamProviderAttempted ?? false;
+    if (typeof totalAttemptCount === "number" && Number.isSafeInteger(totalAttemptCount) && totalAttemptCount >= 0) {
+      if (totalAttemptCount > 0) upstreamProviderAttempted = true;
+      else explicitZeroTotal = true;
+    } else {
+      // A zero for one model says nothing about omitted/fallback models. Only
+      // a complete routing total can prove that no upstream call was started.
+      incompleteEvidence = true;
+    }
+    if (routing.modelAttempts != null && (!Array.isArray(routing.modelAttempts) || routing.modelAttempts.length > 20)) {
+      incompleteEvidence = true;
     }
     const modelAttempts = Array.isArray(routing.modelAttempts) ? routing.modelAttempts.slice(0, 20) : [];
     for (const modelAttempt of modelAttempts) {
       const modelRecord = errorRecord(modelAttempt);
-      if (!modelRecord) continue;
+      if (!modelRecord) {
+        incompleteEvidence = true;
+        continue;
+      }
       const providerAttemptCount = modelRecord.providerAttemptCount;
       if (typeof providerAttemptCount === "number" && Number.isInteger(providerAttemptCount)
-          && providerAttemptCount >= 0) {
-        upstreamProviderAttempted = providerAttemptCount > 0 ? true : upstreamProviderAttempted ?? false;
+          && providerAttemptCount > 0) {
+        upstreamProviderAttempted = true;
       }
       const providerAttempts = Array.isArray(modelRecord.providerAttempts)
         ? modelRecord.providerAttempts.slice(0, 20)
@@ -269,6 +288,9 @@ function providerAttemptEvidence(records: readonly Record<string, unknown>[]) {
         if (providerError) attempts.push(providerError);
       }
     }
+  }
+  if (upstreamProviderAttempted !== true && explicitZeroTotal && !incompleteEvidence) {
+    upstreamProviderAttempted = false;
   }
   const attemptCodes = explicitSignalCodes(attempts);
   providerRateLimited = attempts.some((attempt) => (
@@ -368,7 +390,7 @@ export function classifyAiGatewayFailure(
   error: unknown,
   options: AiGatewayFailureOptions = {},
 ): AiGatewayFailureReason {
-  const records = boundedErrorRecords(error);
+  const { records } = boundedErrorRecords(error);
 
   // Vercel returns this as a nested provider payload, commonly alongside a
   // generic 403. It must win over all broader status/name classifications.
@@ -388,14 +410,14 @@ export function inspectAiGatewayFailure(
   error: unknown,
   options: AiGatewayFailureOptions = {},
 ): AiGatewayFailureDiagnostic {
-  const records = boundedErrorRecords(error);
+  const { records, truncated } = boundedErrorRecords(error);
   const reason = classifyAiGatewayFailure(error, options);
   const httpStatus = records.flatMap((record) => {
     const status = safeHttpStatus(record.statusCode);
     return status == null ? [] : [status];
   })[0];
   const codes = explicitSignalCodes(records);
-  const providerEvidence = providerAttemptEvidence(records);
+  const providerEvidence = providerAttemptEvidence(records, truncated);
   const metadata = gatewayMetadataRecords(records);
   const generationId = [
     ...records.map((record) => record.generationId),

@@ -63,6 +63,7 @@ const supportedCertificationGroups = new Set(["01:03", "02:03", "03:03", "04:05"
 const verifiedSimpleListingCategoryId = "1341821";
 export const elevenstProcessedFoodCategoryId = "1346631";
 export const elevenstProcessedFoodNoticeType = "891031";
+export const elevenstProcessedFoodProductNameNoticeCode = "176317774";
 export const elevenstProcessedFoodNotificationFields = [
   { code: "176400445", label: "생산자 및 소재지 (수입품의 경우 생산자, 수입자 및 제조국)" },
   { code: "176398001", label: "제조연월일, 소비기한 또는 품질유지기한" },
@@ -70,7 +71,7 @@ export const elevenstProcessedFoodNotificationFields = [
   { code: "23757260", label: "유전자변형식품 표시" },
   { code: "23757095", label: "영양성분" },
   { code: "176312674", label: "소비자안전을 위한 주의사항" },
-  { code: "176317774", label: "제품명" },
+  { code: elevenstProcessedFoodProductNameNoticeCode, label: "제품명" },
   { code: "23756754", label: "소비자상담 관련 전화번호" },
   { code: "23757245", label: "원재료명 (원산지 포함) 및 함량" },
   { code: "42155152", label: "포장단위별 내용물의 용량(중량), 수량" },
@@ -219,7 +220,8 @@ function validateProductNotification(product: Record<string, unknown>, categoryI
  * Other category-specific options, certifications, notices, and delivery modes
  * remain blocked until their exact provider metadata is supplied.
  */
-export function validateElevenstListingProduct(value: unknown): Record<string, unknown> {
+export function validateElevenstListingProduct(value: unknown, shippingSource?: unknown): Record<string, unknown> {
+  if (shippingSource !== undefined) assertElevenstListingShippingSource(shippingSource);
   const product = object(value, "product");
   const unknownField = Object.keys(product).find((field) => !supportedProductFields.has(field));
   if (unknownField) throw new Error(`ELEVENST_PRODUCT_FIELD_UNVERIFIED:${unknownField}`);
@@ -271,6 +273,76 @@ export function validateElevenstListingProduct(value: unknown): Record<string, u
   return product;
 }
 
+/**
+ * Source facts are internal metadata, never new 11st XML fields. Only the
+ * existing zero-fee contract is verified. Do not erase a paid/unknown fee to
+ * make that contract pass, or infer a paid contract from the provider codes.
+ */
+export function assertElevenstListingShippingSource(value: unknown): void {
+  const source = object(value, "sellerpilotAssets.shipping");
+  const raw = source.shippingFeeKrw;
+  const fee = (typeof raw === "number" || typeof raw === "string")
+    && String(raw).trim() !== "" ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(fee) || fee < 0) {
+    throw new Error("ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED");
+  }
+  if (fee !== 0) {
+    throw new Error(`ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:${fee}`);
+  }
+}
+
+export function elevenstShippingContractErrorMessage(code: string): string | undefined {
+  if (code === "ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED") {
+    return "입력 배송비 KRW를 확인하세요. 미입력·잘못된 배송비를 무료배송으로 처리하지 않습니다.";
+  }
+  const paid = /^ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:(\d{1,16})$/u.exec(code);
+  if (paid) {
+    return `입력 배송비 ${paid[1]} KRW는 현재 검증된 무료배송 계약과 일치하지 않습니다. 입력값을 보존하고 공식 유료배송 필드·권한 확인 전 등록·수정을 중단하세요.`;
+  }
+  return undefined;
+}
+
+/** Bind only the server-read product facts, never a browser's claimed fee. */
+export function bindElevenstAuthoritativeShippingSource(
+  argumentsValue: Record<string, unknown>,
+  publishContextValue: unknown,
+  expectedProductId: string,
+): Record<string, unknown> {
+  const context = object(publishContextValue, "publishContext");
+  const product = object(context.product, "publishContext.product");
+  if (!expectedProductId || product.id !== expectedProductId) {
+    throw new Error("ELEVENST_SHIPPING_SOURCE_PRODUCT_MISMATCH");
+  }
+  const manual = object(context.manualFields, "publishContext.manualFields");
+  const source = {
+    shippingFeeKrw: manual.shippingFeeKrw,
+    shippingRule: manual.shippingRule,
+    packagingRule: manual.packagingRule,
+  };
+  // Validate before returning anything that could be fingerprinted or enqueued.
+  assertElevenstListingShippingSource(source);
+  const next = structuredClone(argumentsValue);
+  const assets = next.sellerpilotAssets && typeof next.sellerpilotAssets === "object" && !Array.isArray(next.sellerpilotAssets)
+    ? next.sellerpilotAssets as Record<string, unknown> : {};
+  const shipping = assets.shipping && typeof assets.shipping === "object" && !Array.isArray(assets.shipping)
+    ? assets.shipping as Record<string, unknown> : {};
+  next.sellerpilotAssets = { ...assets, shipping: { ...shipping, ...source } };
+  return next;
+}
+
+/** Use at both create/update execution boundaries, before any provider read/write. */
+export function validateElevenstListingArguments(value: unknown): Record<string, unknown> {
+  const args = object(value, "arguments");
+  // Legacy immutable requests contain only the native product. Keep their
+  // verified contract unchanged; absence is NOT evidence that a fee was zero.
+  // Callers with stored source facts must bind those facts before this check.
+  if (Object.hasOwn(args, "sellerpilotAssets")) {
+    const assets = object(args.sellerpilotAssets, "sellerpilotAssets");
+    if (Object.hasOwn(assets, "shipping")) assertElevenstListingShippingSource(assets.shipping);
+  }
+  return validateElevenstListingProduct(args.product);
+}
+
 export function elevenstListingUpdatePatchFromProduct(value: unknown) {
   const product = object(value, "product");
   return Object.fromEntries(elevenstListingUpdateFields.flatMap((field) =>
@@ -279,8 +351,8 @@ export function elevenstListingUpdatePatchFromProduct(value: unknown) {
       : []));
 }
 
-export function mergeElevenstListingUpdateProduct(snapshotValue: unknown, patchValue: unknown) {
-  const snapshot = validateElevenstListingProduct(structuredClone(snapshotValue));
+export function mergeElevenstListingUpdateProduct(snapshotValue: unknown, patchValue: unknown, shippingSource?: unknown) {
+  const snapshot = validateElevenstListingProduct(structuredClone(snapshotValue), shippingSource);
   const patch = object(patchValue, "productPatch");
   const unknownField = Object.keys(patch).find((field) => !elevenstListingUpdateFieldSet.has(field));
   if (unknownField) throw new Error(`ELEVENST_UPDATE_FIELD_UNVERIFIED:${unknownField}`);

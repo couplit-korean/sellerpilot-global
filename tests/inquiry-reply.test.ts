@@ -102,7 +102,15 @@ test("Lazada reply sends a text message to the synced IM session", async () => {
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "inquiries.reply",
-      payload: { app_key: "app", app_secret: "test-secret", access_token: "test-token", country: "my" },
+      payload: {
+        app_key: "commerce-app-key",
+        app_secret: "commerce-app-secret",
+        access_token: "commerce-access-token",
+        im_app_key: "im-app-key",
+        im_app_secret: "im-app-secret",
+        im_access_token: "im-access-token",
+        country: "my",
+      },
       arguments: buildInquiryReplyArguments("lazada", "lazada-im:session-1", "We have checked."),
       environment: "production",
     });
@@ -111,6 +119,10 @@ test("Lazada reply sends a text message to the synced IM session", async () => {
     assert.equal(calledBody.get("session_id"), "session-1");
     assert.equal(calledBody.get("template_id"), "1");
     assert.equal(calledBody.get("txt"), "We have checked.");
+    assert.equal(calledBody.get("app_key"), "im-app-key");
+    assert.equal(calledBody.get("access_token"), "im-access-token");
+    assert.notEqual(calledBody.get("app_key"), "commerce-app-key");
+    assert.notEqual(calledBody.get("access_token"), "commerce-access-token");
   } finally {
     globalThis.fetch = originalFetch;
   }

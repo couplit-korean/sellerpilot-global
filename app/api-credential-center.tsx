@@ -348,7 +348,17 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   };
 
   const startOAuth = async (credential: Credential) => {
+    if (credential.channel === "shopee") {
+      setPendingOAuth(null);
+      setError("");
+      window.dispatchEvent(new CustomEvent("sellerpilot:shopee-exact-start", { detail: { credentialId: credential.id } }));
+      return;
+    }
     if (credential.channel === "tracx") return;
+    if (credential.channel === "lazada") {
+      window.dispatchEvent(new CustomEvent("sellerpilot:lazada-exact-start", { detail: { credentialId: credential.id } }));
+      return;
+    }
     const definition = channelCatalog[credential.channel];
     setOauthStartingId(credential.id);
     setPendingOAuth(null);

@@ -1180,6 +1180,7 @@ test("Lazada shipment confirmation uses Pack then ReadyToShip with the official 
         trackingNumber: "IGNORED-BY-LAZADA",
         providerContext: { orderId: "9001", orderItemIds: ["9101"], deliveryType: "dropship" },
       },
+      providerMutationHooks: { begin: async () => {}, assertLeaseHealthy: async () => {} },
       environment: "production",
     });
     assert.equal(result.ok, true);

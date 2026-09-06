@@ -1,3 +1,4 @@
+import { selectExternalDetailChannel, bindExternalDetailChannelCopy, type ExternalDetailChannelSelection } from "./server-external-detail-channel";
 import { createHash } from "node:crypto";
 import {
   canonicalProductDetailImageManifestInput,
@@ -11,8 +12,10 @@ import {
   type ProductDetailImagePathEntry,
 } from "./product-detail-image-manifest";
 import { validateStoredProductGeneratedAssetPaths } from "./studio-result-assets";
+import { inspectStudioResultQuality } from "./studio-result-quality";
 
-type ApprovedProductDetailManifest = {
+export type ApprovedProductDetailManifest = {
+  external?: ExternalDetailChannelSelection;
   version: number;
   manifest: ProductDetailImageManifest;
 };
@@ -56,6 +59,16 @@ export function resolveProductDetailDocumentAssetPaths(
 export function approvedProductDetailManifestFromPublishContext(
   context: Record<string, unknown>,
 ): ApprovedProductDetailManifestResult {
+  // External documents have their own approval source. Legacy channel adapters must
+  // not combine their images with old Studio/localized copy.
+  if (context.detailAssetSource === "external_generated") {
+    try { return {ok:true,value:selectExternalDetailChannel(context)}; } catch(error) { return {ok:false,code:error instanceof Error?error.message:"EXTERNAL_DETAIL_APPROVAL_MISMATCH"}; }
+  }
+  // Approval binds exact bytes, not production quality. Historical emergency
+  // catalog/copy results must not become publishable merely by saving them.
+  if (inspectStudioResultQuality(context.studioResult).blockedForPublication) {
+    return { ok: false, code: "STUDIO_DEGRADED_RESULT_REGENERATION_REQUIRED" };
+  }
   const detailPage = recordValue(context.detailPage);
   const version = Number(detailPage?.version);
   const approvedVersion = Number(detailPage?.approvedVersion);
@@ -130,7 +143,8 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
       || new Set(signedUrls).size !== productDetailImageCount) {
     throw new Error("DETAIL_PAGE_MANIFEST_SIGNING_FAILED");
   }
-  const next = stripClientImageTokens(structuredClone(argumentsValue)) as Record<string, unknown>;
+  const sourceArguments = approved.external ? bindExternalDetailChannelCopy(stripClientImageTokens(structuredClone(argumentsValue)) as Record<string, unknown>, approved.external) : argumentsValue;
+  const next = (approved.external ? sourceArguments : stripClientImageTokens(structuredClone(sourceArguments))) as Record<string, unknown>;
   const assets = recordValue(next.sellerpilotAssets);
   if (!assets) throw new Error("DETAIL_PAGE_MARKETPLACE_ASSETS_REQUIRED");
 
@@ -153,8 +167,11 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
   });
   const fallbackRoles = [...remainingRoles];
   sectionsInput.forEach((_section, index) => {
+    // Preserve matched roles without consuming a role needed by a later
+    // unmatched section, including its localized alternative text.
+    if (assigned.has(index)) return;
     const fallbackRole = fallbackRoles.shift();
-    if (!assigned.has(index) && fallbackRole) assigned.set(index, fallbackRole);
+    if (fallbackRole) assigned.set(index, fallbackRole);
   });
   const sections: Record<string, unknown>[] = sectionsInput.map((section, index) => ({
     ...section,
@@ -178,7 +195,7 @@ export function bindMarketplaceArgumentsToApprovedDetailManifest(
           ],
         }
       : {}),
-    contentMode: "ai_generated",
+    contentMode: approved.external ? "external_generated" : "ai_generated",
     detailAssetMode: "dedicated",
     detailImageUrls: [...signedUrls],
     detailImageRoles: roles,

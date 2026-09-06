@@ -21,6 +21,10 @@ const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
 const STALE_AI_RECOVERY_INTERVAL_MS = 5 * 60_000;
 const STALE_AI_RECOVERY_RETRY_MS = 30_000;
 export const operationsSnapshotRequestTimeoutMs = 30_000;
+const OPERATIONS_TIMEOUT_RETRY_LIMIT = 2;
+// Exponential backoff keeps a degraded operations database from being retried
+// into a deeper outage by every open browser tab.
+const OPERATIONS_TIMEOUT_RETRY_MS = 15_000;
 
 export type OperationProduct = {
   id: string;
@@ -504,6 +508,8 @@ export function useOperationsSnapshot() {
   });
   const rangeKey = operationsSnapshotRangeKey(range);
   const selectedRangeKeyRef = useRef(rangeKey);
+  const timeoutRetryCountRef = useRef(0);
+  const timeoutRetryTimerRef = useRef(0);
 
   useLayoutEffect(() => {
     selectedRangeKeyRef.current = rangeKey;
@@ -531,7 +537,7 @@ export function useOperationsSnapshot() {
     return init?.signal ? waitForAbortablePromise(request, init.signal) : request;
   }, []);
 
-  const load = useCallback((options: LoadOptions = {}) => {
+  const load = useCallback(function loadSnapshot(options: LoadOptions = {}): Promise<void> {
     const startedAt = Date.now();
     const nextRefreshAt = nextDataRefreshAtRef.current.get(rangeKey) ?? 0;
     if (!options.force && startedAt < nextRefreshAt) return Promise.resolve();
@@ -634,6 +640,8 @@ export function useOperationsSnapshot() {
           nextDataRefreshAtRef.current.set(request.key, startedAt + DATA_REFRESH_INTERVAL_MS);
           lastSuccessfulRangeKeyRef.current = request.key;
           lastGoodDataRef.current = baseData;
+          timeoutRetryCountRef.current = 0;
+          window.clearTimeout(timeoutRetryTimerRef.current);
           setData(baseData);
           setState("database");
           setMessage("Supabase 운영 DB · 실데이터만 표시 · 5분 자동 갱신");
@@ -666,6 +674,15 @@ export function useOperationsSnapshot() {
           setState(unavailable.state);
           setMessage(unavailable.message);
         });
+        const isTimeout = failureMessage.includes("30초를 초과");
+        if (isTimeout && timeoutRetryCountRef.current < OPERATIONS_TIMEOUT_RETRY_LIMIT) {
+          const backoffMs = OPERATIONS_TIMEOUT_RETRY_MS * 2 ** timeoutRetryCountRef.current;
+          timeoutRetryCountRef.current += 1;
+          window.clearTimeout(timeoutRetryTimerRef.current);
+          timeoutRetryTimerRef.current = window.setTimeout(() => {
+            void loadSnapshot({ force: true });
+          }, backoffMs);
+        }
       } finally {
         bounded.dispose();
       }
@@ -691,6 +708,7 @@ export function useOperationsSnapshot() {
     return () => {
       requestCoordinator.abortCurrent();
       window.clearTimeout(initialLoad);
+      window.clearTimeout(timeoutRetryTimerRef.current);
       window.clearInterval(refresh);
       window.removeEventListener("focus", refreshWhenVisible);
       document.removeEventListener("visibilitychange", refreshWhenVisible);

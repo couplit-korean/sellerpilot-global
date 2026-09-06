@@ -16,6 +16,8 @@ type BaseNormalizedChannelInquiry = {
   priority: number;
   receivedAt: string;
   remoteMessageId?: string;
+  senderRole?: "customer" | "seller";
+  orderingStatus?: "unverified" | "conflict";
   providerContext?: Record<string, unknown>;
   externalOrderReference?: string;
   ticketKind?: "conversation" | "after_sales";
@@ -272,7 +274,9 @@ export function normalizeChannelInquiries(
   if (channel === "lazada") {
     const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp)
       .map((inquiry) => finalizeInquiry(channel, inquiry));
-    return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
+    return [...new Map(normalized.map((inquiry) => [inquiry.orderingStatus === "conflict"
+      ? `${inquiry.inboundKey}:${inquiry.senderRole}:${createHash("sha256").update(inquiry.message).digest("hex")}`
+      : inquiry.inboundKey, inquiry])).values()];
   }
   const inquirySteps = result.steps.filter((item) => item.ok && /^inquiries(?::\d+)?$/.test(item.name));
   const pageData = inquirySteps.length
@@ -285,7 +289,10 @@ export function normalizeChannelInquiries(
           : channel === "ebay" ? normalizeEbay(data, iso)
             : [])
     .map((inquiry) => finalizeInquiry(channel, inquiry));
-  return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
+  // A ticket can carry several immutable messages (or after-sales revisions).
+  // Collapse only repeated observations of the same message, not its entire
+  // conversation. The persistence ledger owns latest-message ordering.
+  return [...new Map(normalized.map((inquiry) => [inquiry.inboundKey, inquiry])).values()];
 }
 
 export { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests } from "./sync-arguments";

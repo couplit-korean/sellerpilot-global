@@ -70,4 +70,9 @@ test("channel target route validates active production lineage before returning 
   assert.match(source, /envelope\.credentialId !== credential\.id/);
   assert.match(source, /lineageBoundShopeeTargets\(normalizedCachedTargets, activeShopeeSecret\)/);
   assert.doesNotMatch(source, /supportedShopeeTargets\(normalizedCachedTargets\)/);
+  const fallbackValidationIndex = source.indexOf("if (!targets.length || targets.some");
+  const cacheSeedIndex = source.indexOf("const stored = await Promise.all(targets.map");
+  assert.ok(fallbackValidationIndex > cacheReturnIndex && cacheSeedIndex > fallbackValidationIndex);
+  assert.match(source, /p_credential_id: credential\.id/);
+  assert.match(source, /p_channel: "shopee"/);
 });
