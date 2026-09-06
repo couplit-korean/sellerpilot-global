@@ -136,6 +136,76 @@ export const smartstoreManualAdoptionCommitSchema = z.discriminatedUnion("status
   }),
 ]);
 
+const smartstoreManualAdoptionReadbackStateBase = z.object({
+  contract: z.literal("smartstore_manual_adoption_readback_enqueue_v1"),
+  productId: z.string().uuid(),
+  providerMutationPerformed: z.literal(false),
+}).strict();
+
+const emptyReadbackVerification = {
+  receiptId: z.null(),
+  attestationId: z.null(),
+  originProductNo: z.null(),
+  channelProductNo: z.null(),
+  contentVerified: z.literal(false),
+  normalUpdateEligible: z.literal(false),
+} as const;
+
+const pendingReadbackState = smartstoreManualAdoptionReadbackStateBase.extend({
+  listingId: z.string().uuid(),
+  jobId: z.string().uuid(),
+  reused: z.boolean(),
+  ...emptyReadbackVerification,
+});
+
+/**
+ * Service-only queue/status projection. The browser never supplies any of
+ * these identities; the database derives and binds them from the current
+ * owner, approval, source CREATE, credential, and listing lineage.
+ */
+export const smartstoreManualAdoptionReadbackStateSchema = z.discriminatedUnion(
+  "status",
+  [
+    pendingReadbackState.extend({
+      status: z.literal("queued"),
+      reason: z.literal("READBACK_QUEUED"),
+    }),
+    pendingReadbackState.extend({
+      status: z.literal("running"),
+      reason: z.literal("READBACK_RUNNING"),
+    }),
+    pendingReadbackState.extend({
+      status: z.literal("reconciliation_required"),
+      reason: z.literal("READBACK_RECONCILIATION_REQUIRED"),
+    }),
+    smartstoreManualAdoptionReadbackStateBase.extend({
+      status: z.literal("verified"),
+      reason: z.literal("ADOPTION_ALREADY_VERIFIED"),
+      listingId: z.string().uuid(),
+      jobId: z.string().uuid().nullable(),
+      reused: z.boolean(),
+      receiptId: z.string().uuid(),
+      attestationId: z.string().uuid(),
+      originProductNo: remoteIdSchema,
+      channelProductNo: remoteIdSchema,
+      contentVerified: z.literal(true),
+      normalUpdateEligible: z.literal(true),
+    }),
+    smartstoreManualAdoptionReadbackStateBase.extend({
+      status: z.literal("blocked"),
+      reason: z.enum(["PREPARE_BLOCKED", "READBACK_FAILED", "NO_READBACK_JOB"]),
+      listingId: z.string().uuid().nullable(),
+      jobId: z.string().uuid().nullable(),
+      reused: z.boolean(),
+      ...emptyReadbackVerification,
+    }),
+  ],
+);
+
+export type SmartstoreManualAdoptionReadbackState = z.infer<
+  typeof smartstoreManualAdoptionReadbackStateSchema
+>;
+
 export type SmartstoreManualAdoptionPreparation = z.infer<
   typeof smartstoreManualAdoptionPreparationSchema
 >;

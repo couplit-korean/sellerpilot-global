@@ -9,9 +9,8 @@ import * as zod from "zod";
 
 import {
   collectSmartstoreManualAdoptionReadback,
-  smartstoreManualAdoptionCommitSchema,
   smartstoreManualAdoptionCredentialCauseCode,
-  smartstoreManualAdoptionPreparationSchema,
+  smartstoreManualAdoptionReadbackStateSchema,
   smartstoreManualAdoptionRequestSchema,
   SmartstoreManualAdoptionError,
 } from "../lib/server-smartstore-manual-adoption";
@@ -23,12 +22,9 @@ const originProductNo = "13688607602";
 const channelProductNo = "13749310594";
 const productId = "11111111-1111-4111-8111-111111111111";
 const listingId = "22222222-2222-4222-8222-222222222222";
-const sourceJobId = "33333333-3333-4333-8333-333333333333";
-const sourceAttemptId = "44444444-4444-4444-8444-444444444444";
-const credentialId = "55555555-5555-4555-8555-555555555555";
+const readbackJobId = "33333333-3333-4333-8333-333333333333";
 const receiptId = "66666666-6666-4666-8666-666666666666";
 const attestationId = "77777777-7777-4777-8777-777777777777";
-const digest = "a".repeat(64);
 const privateMarker = "PRIVATE_CREDENTIAL_OR_PROVIDER_TEXT";
 const routeSource = await readFile(
   new URL("../app/api/admin/products/[id]/smartstore-manual-adoption/route.ts", import.meta.url),
@@ -38,78 +34,93 @@ const compiledRoute = ts.transpileModule(routeSource, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 
-const prepareBase = {
-  contract: "smartstore_manual_adoption_prepare_v1",
+const stateBase = {
+  contract: "smartstore_manual_adoption_readback_enqueue_v1",
   productId,
-  sellerSku,
-  remoteCreationOriginAsserted: false,
-  apiCreateSucceeded: false,
+  listingId,
+  jobId: readbackJobId,
+  reused: false,
+  receiptId: null,
+  attestationId: null,
+  originProductNo: null,
+  channelProductNo: null,
   providerMutationPerformed: false,
-  normalUpdateEligibilityScope: "database_linkage_only",
-  publicationGateOpenAsserted: false,
+  contentVerified: false,
+  normalUpdateEligible: false,
 } as const;
 
-function blockedPreparation(reason: string, overrides: Record<string, unknown> = {}) {
+function queuedState(overrides: Record<string, unknown> = {}) {
   return {
-    ...prepareBase,
-    status: "blocked",
-    reason,
-    listingId: null,
-    sourceJobId: null,
-    sourceAttemptId: null,
-    credentialId: null,
-    originProductNo: null,
-    channelProductNo: null,
-    approvalRevision: null,
-    contentSha256: null,
-    manifestDigest: null,
-    receiptId: null,
-    attestationId: null,
-    provenance: null,
-    contentVerified: false,
-    normalUpdateEligible: false,
-    reused: false,
+    ...stateBase,
+    status: "queued",
+    reason: "READBACK_QUEUED",
     ...overrides,
   };
 }
 
-function readyPreparation() {
+function runningState(overrides: Record<string, unknown> = {}) {
   return {
-    ...prepareBase,
-    status: "ready",
-    reason: null,
-    listingId,
-    sourceJobId,
-    sourceAttemptId,
-    credentialId,
-    originProductNo: null,
-    channelProductNo: null,
-    approvalRevision: 1,
-    contentSha256: digest,
-    manifestDigest: digest,
-    receiptId: null,
-    attestationId: null,
-    provenance: null,
-    contentVerified: false,
-    normalUpdateEligible: false,
-    reused: false,
+    ...stateBase,
+    status: "running",
+    reason: "READBACK_RUNNING",
+    reused: true,
+    ...overrides,
   };
 }
 
-async function callRoute(
-  preparedData: unknown,
-  preparedError: { message: string } | null = null,
-  providerError?: unknown,
-  credentialMode: "ok" | "error" | "throw" | "invalid" = "ok",
+function reconciliationState() {
+  return {
+    ...stateBase,
+    status: "reconciliation_required",
+    reason: "READBACK_RECONCILIATION_REQUIRED",
+    reused: true,
+  };
+}
+
+function verifiedState(overrides: Record<string, unknown> = {}) {
+  return {
+    ...stateBase,
+    status: "verified",
+    reason: "ADOPTION_ALREADY_VERIFIED",
+    reused: true,
+    receiptId,
+    attestationId,
+    originProductNo,
+    channelProductNo,
+    contentVerified: true,
+    normalUpdateEligible: true,
+    ...overrides,
+  };
+}
+
+function blockedState(
+  reason: "PREPARE_BLOCKED" | "READBACK_FAILED" | "NO_READBACK_JOB",
+  overrides: Record<string, unknown> = {},
 ) {
+  return {
+    ...stateBase,
+    status: "blocked",
+    reason,
+    reused: true,
+    ...overrides,
+  };
+}
+
+async function callRoute(input: {
+  method?: "GET" | "POST";
+  rpcData: unknown;
+  rpcError?: { message?: string; code?: string } | null;
+  body?: unknown;
+  routeProductId?: string;
+  query?: string;
+}) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
   const logs: Array<{ message: string; details: Record<string, unknown> }> = [];
-  let providerCollections = 0;
   const context = vm.createContext({
-    AbortSignal,
     exports: {},
     Request,
     Response,
+    URL,
     require(name: string) {
       if (name === "next/server") return { NextResponse: Response };
       if (name === "zod") return zod;
@@ -120,30 +131,7 @@ async function callRoute(
             serviceClient: {
               rpc: async (rpcName: string, args: Record<string, unknown>) => {
                 calls.push({ name: rpcName, args });
-                if (rpcName === "sellerpilot_service_prepare_smartstore_manual_adoption") {
-                  return { data: preparedData, error: preparedError };
-                }
-                if (rpcName === "sellerpilot_decrypt_credential") {
-                  if (credentialMode === "throw") throw new Error(privateMarker);
-                  if (credentialMode === "error") {
-                    return {
-                      data: null,
-                      error: { code: "PGRST202", message: privateMarker },
-                    };
-                  }
-                  if (credentialMode === "invalid") {
-                    return { data: null, error: null };
-                  }
-                  return {
-                    data: {
-                      client_id: privateMarker,
-                      client_secret: privateMarker,
-                      token_type: "SELLER",
-                    },
-                    error: null,
-                  };
-                }
-                throw new Error(`unexpected RPC ${rpcName}`);
+                return { data: input.rpcData, error: input.rpcError ?? null };
               },
             },
           }),
@@ -151,14 +139,7 @@ async function callRoute(
         };
       }
       if (name.endsWith("/server-smartstore-manual-adoption")) {
-        return {
-          ...manualAdoptionContract,
-          collectSmartstoreManualAdoptionReadback: async () => {
-            providerCollections += 1;
-            if (providerError !== undefined) throw providerError;
-            throw new Error("blocked preparation must not reach provider readback");
-          },
-        };
+        return manualAdoptionContract;
       }
       throw new Error(`unexpected module ${name}`);
     },
@@ -169,15 +150,22 @@ async function callRoute(
     },
   });
   vm.runInContext(compiledRoute, context, { timeout: 1_000 });
-  const request = new Request(`https://fixture.invalid/api/admin/products/${productId}/smartstore-manual-adoption`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ confirmReadOnlyAdoption: true }),
+  const method = input.method ?? "POST";
+  const routeProductId = input.routeProductId ?? productId;
+  const request = new Request(
+    `https://fixture.invalid/api/admin/products/${routeProductId}/smartstore-manual-adoption${input.query ?? ""}`,
+    method === "POST"
+      ? {
+          method,
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input.body ?? { confirmReadOnlyAdoption: true }),
+        }
+      : { method },
+  );
+  const routeResponse = await context.exports[method](request, {
+    params: Promise.resolve({ id: routeProductId }),
   });
-  const routeResponse = await context.exports.POST(request, {
-    params: Promise.resolve({ id: productId }),
-  });
-  return { calls, logs, providerCollections, routeResponse };
+  return { calls, logs, routeResponse };
 }
 
 function imageUrl(index: number) {
@@ -268,7 +256,7 @@ test("browser request accepts only an explicit read-only adoption confirmation",
   }
 });
 
-test("token exchange failures become only allowlisted credential cause codes", async () => {
+test("token exchange failures become only allowlisted credential cause codes for the Mac worker", async () => {
   for (const code of [
     "NAVER_CREDENTIALS_MISSING",
     "NAVER_AUTH_FAILED",
@@ -276,10 +264,7 @@ test("token exchange failures become only allowlisted credential cause codes", a
     "NAVER_PROVIDER_UNAVAILABLE",
     "NAVER_TOKEN_EXCHANGE_FAILED",
   ]) {
-    assert.equal(
-      smartstoreManualAdoptionCredentialCauseCode(new Error(code)),
-      code,
-    );
+    assert.equal(smartstoreManualAdoptionCredentialCauseCode(new Error(code)), code);
   }
   assert.equal(
     smartstoreManualAdoptionCredentialCauseCode(new TypeError(privateMarker)),
@@ -305,164 +290,152 @@ test("token exchange failures become only allowlisted credential cause codes", a
   );
 });
 
-test("credential decrypt RPC, invalid payload, and token exchange failures remain distinct and secret-free", async () => {
-  const cases = [
-    {
-      credentialMode: "error" as const,
-      providerError: undefined,
-      causeCode: "SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED",
-      mode: "smartstore_manual_adoption_credential_decrypt_failed",
-    },
-    {
-      credentialMode: "invalid" as const,
-      providerError: undefined,
-      causeCode: "SMARTSTORE_CREDENTIAL_PAYLOAD_INVALID",
-      mode: "smartstore_manual_adoption_credential_payload_invalid",
-    },
-    {
-      credentialMode: "throw" as const,
-      providerError: undefined,
-      causeCode: "SMARTSTORE_CREDENTIAL_DECRYPT_RPC_FAILED",
-      mode: "smartstore_manual_adoption_credential_decrypt_failed",
-    },
-    {
-      credentialMode: "ok" as const,
-      providerError: new SmartstoreManualAdoptionError(
-        "SMARTSTORE_MANUAL_CREDENTIAL_UNAVAILABLE",
-        new Error(privateMarker),
-        "NAVER_IP_NOT_ALLOWED",
-      ),
-      causeCode: "NAVER_IP_NOT_ALLOWED",
-      mode: "smartstore_manual_adoption_ip_not_allowed",
-    },
-  ];
-  for (const expected of cases) {
-    const result = await callRoute(
-      readyPreparation(),
-      null,
-      expected.providerError,
-      expected.credentialMode,
-    );
-    assert.equal(result.routeResponse.status, 503);
-    assert.equal(result.routeResponse.headers.get("cache-control"), "no-store, max-age=0");
-    const body = await result.routeResponse.json();
-    assert.equal(body.causeCode, expected.causeCode);
-    assert.equal(body.mode, expected.mode);
-    assert.equal(result.logs.length, 1);
-    assert.equal(result.logs[0]?.details.causeCode, expected.causeCode);
-    assert.doesNotMatch(JSON.stringify({ body, logs: result.logs }), new RegExp(privateMarker, "u"));
+test("queue state schema binds status, reason, identities, and verification flags", () => {
+  for (const value of [
+    queuedState(),
+    runningState(),
+    reconciliationState(),
+    verifiedState(),
+    blockedState("PREPARE_BLOCKED", { listingId: null, jobId: null }),
+    blockedState("READBACK_FAILED"),
+    blockedState("NO_READBACK_JOB", { listingId: null, jobId: null }),
+  ]) {
+    assert.equal(smartstoreManualAdoptionReadbackStateSchema.safeParse(value).success, true);
+  }
+  for (const value of [
+    { ...queuedState(), reason: "READBACK_RUNNING" },
+    { ...queuedState(), contentVerified: true },
+    { ...verifiedState(), receiptId: null },
+    { ...verifiedState(), providerRaw: { hidden: true } },
+  ]) {
+    assert.equal(smartstoreManualAdoptionReadbackStateSchema.safeParse(value).success, false);
   }
 });
 
-test("preparation and commit schemas preserve blocked nullability and exact verified invariants", () => {
-  assert.equal(
-    smartstoreManualAdoptionPreparationSchema.safeParse(
-      blockedPreparation("source_count=0"),
-    ).success,
-    true,
-  );
-  assert.equal(
-    smartstoreManualAdoptionPreparationSchema.safeParse(blockedPreparation("tuple_drift", {
-      listingId,
-      sourceJobId,
-      sourceAttemptId,
-      credentialId,
-      approvalRevision: 1,
-      contentSha256: digest,
-      manifestDigest: digest,
-    })).success,
-    true,
-  );
+test("POST enqueues only a server-derived readback job and returns 202", async () => {
+  const result = await callRoute({ rpcData: queuedState() });
+  assert.equal(result.routeResponse.status, 202);
+  assert.deepEqual(structuredClone(result.calls), [{
+    name: "sellerpilot_service_enqueue_smartstore_manual_adoption_readback",
+    args: {
+      p_actor: "88888888-8888-4888-8888-888888888888",
+      p_product_id: productId,
+    },
+  }]);
+  const body = await result.routeResponse.json();
+  assert.equal(body.status, "queued");
+  assert.equal(body.jobId, readbackJobId);
+  assert.equal(body.apiCreateSucceeded, false);
+  assert.equal(body.providerMutationPerformed, false);
+  assert.doesNotMatch(JSON.stringify(body), /credential|readback|READBACK_QUEUED/u);
+});
 
-  const committed = {
-    contract: "smartstore_manual_adoption_verified_v1",
+test("a repeated POST reuses the exact running job instead of enqueueing another identity", async () => {
+  const result = await callRoute({ rpcData: runningState() });
+  assert.equal(result.routeResponse.status, 202);
+  assert.equal(result.calls.length, 1);
+  const body = await result.routeResponse.json();
+  assert.equal(body.status, "running");
+  assert.equal(body.jobId, readbackJobId);
+  assert.equal(body.reused, true);
+});
+
+test("GET polls product-scoped status without accepting browser job or credential identity", async () => {
+  const result = await callRoute({ method: "GET", rpcData: runningState() });
+  assert.equal(result.routeResponse.status, 202);
+  assert.deepEqual(structuredClone(result.calls), [{
+    name: "sellerpilot_service_get_smartstore_manual_adoption_readback_status",
+    args: {
+      p_actor: "88888888-8888-4888-8888-888888888888",
+      p_product_id: productId,
+    },
+  }]);
+
+  const forgedIdentity = await callRoute({
+    method: "GET",
+    rpcData: runningState(),
+    query: `?jobId=${readbackJobId}`,
+  });
+  assert.equal(forgedIdentity.routeResponse.status, 400);
+  assert.equal(forgedIdentity.calls.length, 0);
+});
+
+test("verified queue status preserves the existing UI-safe success contract", async () => {
+  const result = await callRoute({ method: "GET", rpcData: verifiedState() });
+  assert.equal(result.routeResponse.status, 200);
+  const body = await result.routeResponse.json();
+  assert.deepEqual(body, {
+    ok: true,
     status: "verified",
     receiptId,
     attestationId,
     productId,
     listingId,
-    sourceJobId,
-    sourceAttemptId,
-    credentialId,
     originProductNo,
     channelProductNo,
-    sellerSku,
     normalUpdateEligible: true,
     apiCreateSucceeded: false,
     providerMutationPerformed: false,
     contentVerified: true,
-    provenance: "manual_adoption_verified",
-    remoteCreationOriginAsserted: false,
-    normalUpdateEligibilityScope: "database_linkage_only",
-    publicationGateOpenAsserted: false,
-    sourcePreserved: true,
-    reused: false,
-  };
-  assert.equal(smartstoreManualAdoptionCommitSchema.safeParse(committed).success, true);
-  assert.equal(smartstoreManualAdoptionCommitSchema.safeParse({
-    ...committed,
     reused: true,
-  }).success, false);
-  assert.equal(smartstoreManualAdoptionCommitSchema.safeParse({
-    ...committed,
-    providerRaw: { forged: true },
-  }).success, false);
+    message: "기존 상품 연결 확인 완료",
+  });
 });
 
-for (const [reason, expectedMessage, overrides] of [
-  [
-    "SOURCE_RECONCILIATION_REQUIRED",
-    "이 상품에 연결할 스마트스토어 등록 실패 기록을 찾지 못해 기존 상품 연결을 시작하지 않았습니다.",
-    {},
-  ],
-  ["SOURCE_TUPLE_OR_APPROVAL_NOT_CURRENT", "현재 상품·판매자 계정·승인 이미지와 기존 스마트스토어 등록 기록이 모두 일치하지 않아 연결하지 않았습니다.", {
-    listingId,
-    sourceJobId,
-    sourceAttemptId,
-    credentialId,
-    approvalRevision: 1,
-    contentSha256: digest,
-    manifestDigest: digest,
-  }],
-] as const) {
-  test(`legitimate ${reason} preparation remains a 409 without privileged follow-up`, async () => {
-    const result = await callRoute(blockedPreparation(reason, overrides));
-    assert.equal(result.routeResponse.status, 409);
-    assert.equal(result.routeResponse.headers.get("cache-control"), "no-store, max-age=0");
-    assert.deepEqual(result.calls.map((call) => call.name), [
-      "sellerpilot_service_prepare_smartstore_manual_adoption",
-    ]);
-    assert.equal(result.providerCollections, 0);
-    const body = await result.routeResponse.json();
-    assert.equal(body.ok, false);
-    assert.equal(body.status, "blocked");
-    assert.equal(body.message, expectedMessage);
-    assert.doesNotMatch(body.message, /SOURCE_|TUPLE|APPROVAL/u);
-    assert.doesNotMatch(JSON.stringify(body), /credential|sourceJob|sourceAttempt|contentSha|manifest/u);
-  });
-}
+test("reconciliation stops polling and never re-enqueues", async () => {
+  const result = await callRoute({ method: "GET", rpcData: reconciliationState() });
+  assert.equal(result.routeResponse.status, 409);
+  assert.equal(result.calls[0]?.name, "sellerpilot_service_get_smartstore_manual_adoption_readback_status");
+  const body = await result.routeResponse.json();
+  assert.equal(body.status, "reconciliation_required");
+  assert.equal(body.jobId, readbackJobId);
+  assert.doesNotMatch(JSON.stringify(body), /READBACK_RECONCILIATION_REQUIRED/u);
+});
 
-for (const [sqlCode, expectedStatus, expectedMode] of [
-  ["SMARTSTORE_MANUAL_ADOPTION_REMOTE_CONTENT_MISMATCH", 409, "smartstore_manual_adoption_content_mismatch"],
-  ["SMARTSTORE_MANUAL_ADOPTION_DETAIL_CONTENT_MISMATCH", 409, "smartstore_manual_adoption_content_mismatch"],
-  ["SMARTSTORE_MANUAL_ADOPTION_SOURCE_TUPLE_OR_APPROVAL_DRIFT", 409, "smartstore_manual_adoption_not_ready"],
-  ["SMARTSTORE_MANUAL_ADOPTION_SEARCH_RESPONSE_INCOMPLETE", 409, "smartstore_manual_adoption_provider_readback_unverified"],
-  ["SMARTSTORE_MANUAL_ADOPTION_OWNER_REQUIRED", 403, "smartstore_manual_adoption_owner_required"],
-  ["SMARTSTORE_MANUAL_ADOPTION_DEPENDENCY_MISSING", 503, "smartstore_manual_adoption_backend_unavailable"],
+for (const [reason, expectedStatus, expectedMode] of [
+  ["PREPARE_BLOCKED", 409, "smartstore_manual_adoption_not_ready"],
+  ["READBACK_FAILED", 409, "smartstore_manual_adoption_readback_failed"],
+  ["NO_READBACK_JOB", 404, "smartstore_manual_adoption_job_not_found"],
 ] as const) {
-  test(`${sqlCode} maps to a safe ${expectedStatus} response`, async () => {
-    const marker = "PRIVATE_DATABASE_DETAIL";
-    const result = await callRoute(null, { message: `${sqlCode}: ${marker}` });
+  test(`${reason} becomes a safe terminal response`, async () => {
+    const nullIdentity = reason === "NO_READBACK_JOB" || reason === "PREPARE_BLOCKED";
+    const result = await callRoute({
+      method: "GET",
+      rpcData: blockedState(reason, nullIdentity ? { listingId: null, jobId: null } : {}),
+    });
     assert.equal(result.routeResponse.status, expectedStatus);
-    assert.equal(result.routeResponse.headers.get("cache-control"), "no-store, max-age=0");
-    assert.equal(result.providerCollections, 0);
     const body = await result.routeResponse.json();
     assert.equal(body.mode, expectedMode);
-    assert.equal(body.status, "blocked");
-    assert.doesNotMatch(JSON.stringify(body), new RegExp(`${sqlCode}|${marker}`, "u"));
+    assert.doesNotMatch(JSON.stringify(body), new RegExp(reason, "u"));
   });
 }
 
+test("malformed or cross-product service output fails closed without leaking values", async () => {
+  for (const rpcData of [
+    { ...queuedState(), providerRaw: privateMarker },
+    queuedState({ productId: "99999999-9999-4999-8999-999999999999" }),
+  ]) {
+    const result = await callRoute({ rpcData });
+    assert.equal(result.routeResponse.status, 503);
+    const body = await result.routeResponse.json();
+    assert.equal(body.mode, "smartstore_manual_adoption_backend_unavailable");
+    assert.doesNotMatch(JSON.stringify({ body, logs: result.logs }), new RegExp(privateMarker, "u"));
+  }
+});
+
+test("known lineage RPC failures remain safe 409 responses", async () => {
+  const result = await callRoute({
+    rpcData: null,
+    rpcError: {
+      code: "P0001",
+      message: `SMARTSTORE_MANUAL_ADOPTION_SOURCE_TUPLE_OR_APPROVAL_DRIFT:${privateMarker}`,
+    },
+  });
+  assert.equal(result.routeResponse.status, 409);
+  const body = await result.routeResponse.json();
+  assert.equal(body.mode, "smartstore_manual_adoption_not_ready");
+  assert.doesNotMatch(JSON.stringify({ body, logs: result.logs }), new RegExp(privateMarker, "u"));
+});
 test("official search and two GETs discover one exact product and preserve eight image hash positions", async () => {
   const fixture = providerFixture();
   const calls: Array<{ method: string; path: string; body?: unknown }> = [];
