@@ -22,7 +22,8 @@ export function selectExternalDetailChannel(context:Record<string,unknown>){
  const title=blocks.map(block=>record(block.props).title).find(value=>typeof value==='string'&&value.trim());
  if(typeof title!=='string'||!html||!plain)throw Error('EXTERNAL_DETAIL_REVIEWED_TITLE_REQUIRED');
  const sections=blocks.filter(block=>block.type==='ImageStoryBlock').map(block=>({type:'overview',heading:String(block.props.title??''),body:String(block.props.body??''),imageAsset:String(block.props.imageRole),imageAltText:String(block.props.imageAlt),...(typeof block.props.evidence==='string'?{evidence:block.props.evidence}:{})}));
- if(sections.some(s=>!s.heading||!s.body))throw Error('EXTERNAL_DETAIL_SECTION_COPY_REQUIRED');
+ // Reviewed ImageStoryBlock titles may intentionally be empty. Preserve the approved copy; require a nonblank body.
+ if(sections.some(s=>!s.body.trim()))throw Error('EXTERNAL_DETAIL_SECTION_COPY_REQUIRED');
  const images=manifest.images.map(image=>({role:image.role,path:image.path,sourceSha256:image.sourceSha256}));
  return {version:manifest.version,manifest:{contract:productDetailImageManifestContract as typeof productDetailImageManifestContract,algorithm:'sha256' as const,digest:createHash('sha256').update(canonicalProductDetailImageManifestInput(images)).digest('hex'),images},external:{contract:'sellerpilot_external_detail_channel_v1',productId:payload.productId,ownerId:payload.ownerId,importId:manifest.importId,version:manifest.version,productUpdatedAt:row.approved_product_updated_at,requestSha256:manifest.requestSha256,locale,language,channel,market,documentSha256:copy.documentSha256,allLocaleDocumentSha256:Object.fromEntries(Object.entries(manifest.reviewedCopy).map(([key,value])=>[key,value.documentSha256])),imageSha256s:images.map(i=>i.sourceSha256),pixelSha256s:manifest.images.map(i=>i.pixelSha256),title:title.trim(),html,plain,sections}};
 }
