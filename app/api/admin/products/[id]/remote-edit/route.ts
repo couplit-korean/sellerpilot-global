@@ -42,6 +42,10 @@ import {
   hasServerlessStaticEgressFor,
 } from "../../../../../../lib/channels/serverless-static-egress";
 import { hasClientSmartstoreManualAdoptionUpdateMarker } from "../../../../../../lib/server-smartstore-adoption-update-binding";
+import {
+  smartstoreContentRepairArgument,
+  smartstoreContentRepairTransmissionArgument,
+} from "../../../../../../lib/channels/smartstore-content-repair-contract";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -438,6 +442,15 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status: "blocked",
       mode: "smartstore_manual_adoption_marker_server_owned",
       message: "스마트스토어 기존 상품 연결 증거는 서버 원장에서만 추가할 수 있습니다.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (Object.hasOwn(body.data.arguments, smartstoreContentRepairArgument)
+      || Object.hasOwn(body.data.arguments, smartstoreContentRepairTransmissionArgument)) {
+    return NextResponse.json({
+      ok: false,
+      status: "blocked",
+      mode: "smartstore_content_repair_marker_server_owned",
+      message: "스마트스토어 승인 내용 복구 증거와 수정값은 서버 원장에서만 추가할 수 있습니다.",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 

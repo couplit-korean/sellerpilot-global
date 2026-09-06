@@ -74,6 +74,36 @@ export type PendingSmartstoreExistingAdoption = {
   message: string;
 };
 
+export type RepairRequiredSmartstoreExistingAdoption = {
+  productId: string;
+  listingId: string;
+  jobId: string;
+  baselineId: string;
+  originProductNo: string;
+  channelProductNo: string;
+  message: string;
+};
+
+export type PendingSmartstoreContentRepair = {
+  status: "queued" | "running" | "verification_queued" | "verification_running";
+  productId: string;
+  listingId: string;
+  jobId: string;
+  baselineId: string;
+  verificationJobId: string | null;
+  reused: boolean;
+  message: string;
+};
+
+export type VerifiedSmartstoreContentRepair = {
+  productId: string;
+  listingId: string;
+  jobId: string | null;
+  baselineId: string;
+  verificationJobId: string;
+  message: string;
+};
+
 /**
  * A queued readback is still working. Keep its exact product, listing, and job
  * identities while polling so an unrelated 202 response cannot be adopted.
@@ -107,6 +137,117 @@ export function parsePendingSmartstoreExistingAdoption(
     message: text(result.message) || (result.status === "running"
       ? "로컬 채널 작업기가 스마트스토어 기존 상품을 공식 조회하고 있습니다."
       : "스마트스토어 기존 상품 공식 조회 작업을 로컬 채널 작업기에 등록했습니다."),
+  };
+}
+
+/** Identity-only proof never becomes a verified listing without repair. */
+export function parseRepairRequiredSmartstoreExistingAdoption(
+  value: unknown,
+  expectedProductId: string,
+): RepairRequiredSmartstoreExistingAdoption | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  const productId = text(result.productId);
+  const listingId = text(result.listingId);
+  const jobId = text(result.jobId);
+  const baselineId = text(result.baselineId);
+  const originProductNo = text(result.originProductNo);
+  const channelProductNo = text(result.channelProductNo);
+  if (result.ok !== true
+      || result.status !== "repair_required"
+      || result.apiCreateSucceeded !== false
+      || result.providerMutationPerformed !== false
+      || result.contentVerified !== false
+      || result.normalUpdateEligible !== false
+      || result.reused !== true
+      || !uuidPattern.test(expectedProductId)
+      || productId !== expectedProductId
+      || ![listingId, jobId, baselineId].every((identifier) => uuidPattern.test(identifier))
+      || !/^[1-9]\d{5,19}$/u.test(originProductNo)
+      || !/^[1-9]\d{5,19}$/u.test(channelProductNo)) return null;
+  return {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    originProductNo,
+    channelProductNo,
+    message: text(result.message) || "기존 상품 신원을 확인했고 승인 내용 복구 확인이 필요합니다.",
+  };
+}
+
+export function parsePendingSmartstoreContentRepair(
+  value: unknown,
+  expectedProductId: string,
+): PendingSmartstoreContentRepair | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  const status = result.status;
+  const productId = text(result.productId);
+  const listingId = text(result.listingId);
+  const jobId = text(result.jobId);
+  const baselineId = text(result.baselineId);
+  const verificationJobId = result.verificationJobId === null
+    ? null
+    : text(result.verificationJobId);
+  const isVerification = status === "verification_queued" || status === "verification_running";
+  const isQueued = status === "queued";
+  if (result.ok !== true
+      || !["queued", "running", "verification_queued", "verification_running"].includes(String(status))
+      || result.apiCreateSucceeded !== false
+      || result.contentVerified !== false
+      || result.normalUpdateEligible !== false
+      || typeof result.providerMutationPerformed !== "boolean"
+      || typeof result.reused !== "boolean"
+      || (isQueued ? result.providerMutationPerformed !== false : result.reused !== true)
+      || !uuidPattern.test(expectedProductId)
+      || productId !== expectedProductId
+      || ![listingId, jobId, baselineId].every((identifier) => uuidPattern.test(identifier))
+      || (isVerification
+        ? !verificationJobId || !uuidPattern.test(verificationJobId) || result.providerMutationPerformed !== true
+        : verificationJobId !== null)) return null;
+  return {
+    status: status as PendingSmartstoreContentRepair["status"],
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    reused: result.reused,
+    message: text(result.message) || (isVerification
+      ? "복구한 내용을 스마트스토어 공식 API로 재검증하고 있습니다."
+      : "승인 내용 복구 작업을 로컬 채널 작업기에서 진행하고 있습니다."),
+  };
+}
+
+export function parseVerifiedSmartstoreContentRepair(
+  value: unknown,
+  expectedProductId: string,
+): VerifiedSmartstoreContentRepair | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const result = value as Record<string, unknown>;
+  const productId = text(result.productId);
+  const listingId = text(result.listingId);
+  const jobId = result.jobId === null ? null : text(result.jobId);
+  const baselineId = text(result.baselineId);
+  const verificationJobId = text(result.verificationJobId);
+  if (result.ok !== true
+      || result.status !== "verified"
+      || result.apiCreateSucceeded !== false
+      || result.contentVerified !== true
+      || result.providerMutationPerformed !== true
+      || result.normalUpdateEligible !== true
+      || !uuidPattern.test(expectedProductId)
+      || productId !== expectedProductId
+      || ![listingId, baselineId, verificationJobId].every((identifier) => uuidPattern.test(identifier))
+      || (jobId !== null && !uuidPattern.test(jobId))) return null;
+  return {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    message: text(result.message) || "승인 내용 복구와 스마트스토어 공식 재검증을 완료했습니다.",
   };
 }
 

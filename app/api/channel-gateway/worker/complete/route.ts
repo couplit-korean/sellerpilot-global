@@ -5,8 +5,10 @@ import { z } from "zod";
 import {
   gatewayJobCompletionStatusAtJobBoundary,
   gatewayWorkerCompletionSchema,
+  smartstoreContentRepairWorkerResultSchema,
   smartstoreManualAdoptionLineageResultSchema,
 } from "../../../../../lib/channels/gateway-contract";
+import { smartstoreContentRepairCompletionSchema } from "../../../../../lib/server-smartstore-content-repair";
 import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
 import { lazadaQuarantineReady } from "../../../../../lib/channels/lazada-im-webhook";
 import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
@@ -23,22 +25,37 @@ import {
 export const runtime = "nodejs";
 
 const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
-const smartstoreManualAdoptionCompletionSchema = z.object({
+const smartstoreManualAdoptionCompletionBase = z.object({
   contract: z.literal("smartstore_manual_adoption_readback_completion_v1"),
-  status: z.enum([
-    "verified",
-    "queued",
-    "failed",
-    "reconciliation_required",
-    "lease_lost",
-  ]),
   jobId: z.string().uuid(),
-  receiptId: z.string().uuid().nullable(),
-  attestationId: z.string().uuid().nullable(),
   readbackSha256: z.string().regex(/^[a-f0-9]{64}$/u).nullable(),
   reused: z.boolean(),
-  reason: z.string().min(1).max(160).nullable(),
 }).strict();
+const smartstoreManualAdoptionCompletionSchema = z.union([
+  smartstoreManualAdoptionCompletionBase.extend({
+    status: z.enum([
+      "verified",
+      "queued",
+      "failed",
+      "reconciliation_required",
+      "lease_lost",
+    ]),
+    receiptId: z.string().uuid().nullable(),
+    attestationId: z.string().uuid().nullable(),
+    // The pre-repair completion RPC omitted this key. Accept only omission or
+    // null while code and migration roll independently.
+    baselineId: z.null().optional(),
+    reason: z.string().min(1).max(160).nullable(),
+  }),
+  smartstoreManualAdoptionCompletionBase.extend({
+    status: z.literal("repair_required"),
+    receiptId: z.null(),
+    attestationId: z.null(),
+    baselineId: z.string().uuid(),
+    readbackSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    reason: z.literal("APPROVED_CONTENT_REPAIR_REQUIRED"),
+  }),
+]);
 const listingLineageCompletionSchema = z.object({
   status: z.enum(["bound", "queued", "manual_required", "lease_lost"]),
   job_id: z.string().uuid(),
@@ -259,11 +276,62 @@ export async function POST(request: Request) {
     return NextResponse.json({
       message: adoptionCompletion.data.status === "verified"
         ? "스마트스토어 기존 상품을 공식 조회하고 SellerPilot 원장에 안전하게 연결했습니다."
+        : adoptionCompletion.data.status === "repair_required"
+          ? "스마트스토어 기존 상품 신원을 확인했으며 승인 내용 복구 확인이 필요한 상태로 보존했습니다."
         : adoptionCompletion.data.status === "queued"
           ? "스마트스토어 기존 상품 읽기 검증을 동일 작업으로 다시 대기시켰습니다."
         : adoptionCompletion.data.status === "reconciliation_required"
           ? "스마트스토어 읽기 결과를 재전송하지 않고 확인 필요 상태로 보존했습니다."
           : "스마트스토어 기존 상품을 연결하지 않고 조회 실패 상태를 저장했습니다.",
+    });
+  }
+
+  if (job.channel === "smartstore"
+      && job.operation === "listing.update"
+      && job.smartstoreContentRepairContract === "smartstore_existing_content_repair_job_v1") {
+    const repairResult = parsed.data.status === "succeeded"
+      ? smartstoreContentRepairWorkerResultSchema.safeParse(parsed.data.result)
+      : null;
+    if (repairResult && !repairResult.success) {
+      return NextResponse.json({ message: "스마트스토어 승인 내용 복구 결과 형식이 올바르지 않습니다." }, { status: 409 });
+    }
+    const repairStatus = parsed.data.status === "succeeded"
+      ? "succeeded"
+      : parsed.data.status === "reconciliation_required"
+        ? "reconciliation_required"
+        : "failed";
+    const { data: repairData, error: repairCompletionError } = await serviceClient.rpc(
+      "sellerpilot_complete_smartstore_content_repair",
+      {
+        p_token_hash: tokenHash,
+        p_job_id: parsed.data.jobId,
+        p_claim_token: parsed.data.claimToken,
+        p_status: repairStatus,
+        p_readback: repairResult?.success ? repairResult.data.evidence : null,
+        p_error_message: parsed.data.status === "succeeded" ? null : parsed.data.error,
+      },
+    );
+    const repairCompletion = smartstoreContentRepairCompletionSchema.safeParse(repairData);
+    if (repairCompletionError || !repairCompletion.success
+        || repairCompletion.data.jobId !== parsed.data.jobId) {
+      const status = repairCompletionError
+        ? workerRpcErrorStatus(repairCompletionError)
+        : 503;
+      console.error("smartstore content repair completion RPC failed", {
+        code: repairCompletionError?.code ?? "invalid_contract",
+        status,
+      });
+      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    }
+    if (repairCompletion.data.status === "lease_lost") {
+      return NextResponse.json({ message: "실행 중인 스마트스토어 승인 내용 복구 claim이 만료됐습니다." }, { status: 409 });
+    }
+    return NextResponse.json({
+      message: repairCompletion.data.status === "verification_queued"
+        ? "스마트스토어 승인 내용 복구를 기록하고 공식 재검증 작업을 등록했습니다."
+        : repairCompletion.data.status === "reconciliation_required"
+          ? "스마트스토어 복구 결과를 재전송하지 않고 확인 필요 상태로 보존했습니다."
+          : "스마트스토어 승인 내용 복구 실패 상태를 저장했습니다.",
     });
   }
 

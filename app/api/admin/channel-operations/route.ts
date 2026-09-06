@@ -126,6 +126,10 @@ import {
   type SmartstoreManualAdoptionUpdateBinding,
 } from "../../../../lib/server-smartstore-adoption-update-binding";
 import {
+  smartstoreContentRepairArgument,
+  smartstoreContentRepairTransmissionArgument,
+} from "../../../../lib/channels/smartstore-content-repair-contract";
+import {
   bindShopeeSgExactRepresentativeFromStorage,
 } from "../../../../lib/server-shopee-sg-exact-representative";
 import {
@@ -469,6 +473,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       message: "스마트스토어 기존 상품 연결 증거는 서버 원장에서만 추가할 수 있습니다.",
       mode: "smartstore_manual_adoption_marker_server_owned",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (channel === "smartstore"
+      && operation === "listing.update"
+      && (Object.hasOwn(parsed.data.arguments, smartstoreContentRepairArgument)
+        || Object.hasOwn(parsed.data.arguments, smartstoreContentRepairTransmissionArgument))) {
+    return NextResponse.json({
+      message: "스마트스토어 승인 내용 복구 증거와 수정값은 서버 원장에서만 추가할 수 있습니다.",
+      mode: "smartstore_content_repair_marker_server_owned",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (channel === "coupang"

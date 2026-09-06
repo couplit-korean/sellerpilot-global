@@ -155,6 +155,9 @@ const pendingReadbackState = smartstoreManualAdoptionReadbackStateBase.extend({
   listingId: z.string().uuid(),
   jobId: z.string().uuid(),
   reused: z.boolean(),
+  // Optional only during the rolling deploy from the pre-repair RPC contract.
+  // The repair_required branch below always requires the immutable UUID.
+  baselineId: z.null().optional(),
   ...emptyReadbackVerification,
 });
 
@@ -179,6 +182,20 @@ export const smartstoreManualAdoptionReadbackStateSchema = z.discriminatedUnion(
       reason: z.literal("READBACK_RECONCILIATION_REQUIRED"),
     }),
     smartstoreManualAdoptionReadbackStateBase.extend({
+      status: z.literal("repair_required"),
+      reason: z.literal("APPROVED_CONTENT_REPAIR_REQUIRED"),
+      listingId: z.string().uuid(),
+      jobId: z.string().uuid(),
+      reused: z.literal(true),
+      receiptId: z.null(),
+      attestationId: z.null(),
+      baselineId: z.string().uuid(),
+      originProductNo: remoteIdSchema,
+      channelProductNo: remoteIdSchema,
+      contentVerified: z.literal(false),
+      normalUpdateEligible: z.literal(false),
+    }),
+    smartstoreManualAdoptionReadbackStateBase.extend({
       status: z.literal("verified"),
       reason: z.literal("ADOPTION_ALREADY_VERIFIED"),
       listingId: z.string().uuid(),
@@ -186,6 +203,7 @@ export const smartstoreManualAdoptionReadbackStateSchema = z.discriminatedUnion(
       reused: z.boolean(),
       receiptId: z.string().uuid(),
       attestationId: z.string().uuid(),
+      baselineId: z.null().optional(),
       originProductNo: remoteIdSchema,
       channelProductNo: remoteIdSchema,
       contentVerified: z.literal(true),
@@ -197,6 +215,7 @@ export const smartstoreManualAdoptionReadbackStateSchema = z.discriminatedUnion(
       listingId: z.string().uuid().nullable(),
       jobId: z.string().uuid().nullable(),
       reused: z.boolean(),
+      baselineId: z.null().optional(),
       ...emptyReadbackVerification,
     }),
   ],

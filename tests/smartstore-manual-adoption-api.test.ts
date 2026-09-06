@@ -44,12 +44,25 @@ const stateBase = {
   reused: false,
   receiptId: null,
   attestationId: null,
+  baselineId: null,
   originProductNo: null,
   channelProductNo: null,
   providerMutationPerformed: false,
   contentVerified: false,
   normalUpdateEligible: false,
 } as const;
+
+function repairRequiredState() {
+  return {
+    ...stateBase,
+    status: "repair_required",
+    reason: "APPROVED_CONTENT_REPAIR_REQUIRED",
+    reused: true,
+    baselineId: "66666666-6666-4666-8666-666666666666",
+    originProductNo,
+    channelProductNo,
+  };
+}
 
 function queuedState(overrides: Record<string, unknown> = {}) {
   return {
@@ -324,6 +337,7 @@ test("queue state schema binds status, reason, identities, and verification flag
     queuedState(),
     runningState(),
     reconciliationState(),
+    repairRequiredState(),
     verifiedState(),
     blockedState("PREPARE_BLOCKED", { listingId: null, jobId: null }),
     blockedState("READBACK_FAILED"),
@@ -336,9 +350,45 @@ test("queue state schema binds status, reason, identities, and verification flag
     { ...queuedState(), contentVerified: true },
     { ...verifiedState(), receiptId: null },
     { ...verifiedState(), providerRaw: { hidden: true } },
+    { ...repairRequiredState(), baselineId: null },
+    { ...repairRequiredState(), contentVerified: true },
   ]) {
     assert.equal(smartstoreManualAdoptionReadbackStateSchema.safeParse(value).success, false);
   }
+  for (const preRepairContract of [
+    queuedState(),
+    runningState(),
+    reconciliationState(),
+    verifiedState(),
+    blockedState("READBACK_FAILED"),
+  ]) {
+    delete (preRepairContract as { baselineId?: null }).baselineId;
+    assert.equal(
+      smartstoreManualAdoptionReadbackStateSchema.safeParse(preRepairContract).success,
+      true,
+    );
+    assert.equal(
+      smartstoreManualAdoptionReadbackStateSchema.safeParse({
+        ...preRepairContract,
+        baselineId: "66666666-6666-4666-8666-666666666666",
+      }).success,
+      false,
+    );
+  }
+});
+
+test("content mismatch returns an identity-bound repair requirement without claiming verification", async () => {
+  const result = await callRoute({ rpcData: repairRequiredState() });
+  assert.equal(result.routeResponse.status, 200);
+  const body = await result.routeResponse.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.status, "repair_required");
+  assert.equal(body.baselineId, repairRequiredState().baselineId);
+  assert.equal(body.apiCreateSucceeded, false);
+  assert.equal(body.providerMutationPerformed, false);
+  assert.equal(body.contentVerified, false);
+  assert.equal(body.normalUpdateEligible, false);
+  assert.doesNotMatch(JSON.stringify(body), /credential|readback|APPROVED_CONTENT_REPAIR_REQUIRED/u);
 });
 
 test("POST enqueues only a server-derived readback job and returns 202", async () => {

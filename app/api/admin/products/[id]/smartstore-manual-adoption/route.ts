@@ -136,6 +136,24 @@ function rpcFailure(error: { message?: string; code?: string } | null) {
 
 function stateResponse(state: SmartstoreManualAdoptionReadbackState) {
   if (state.status === "verified") return verifiedResponse(state);
+  if (state.status === "repair_required") {
+    return response({
+      ok: true,
+      status: "repair_required",
+      productId: state.productId,
+      listingId: state.listingId,
+      jobId: state.jobId,
+      baselineId: state.baselineId,
+      reused: state.reused,
+      originProductNo: state.originProductNo,
+      channelProductNo: state.channelProductNo,
+      apiCreateSucceeded: false,
+      providerMutationPerformed: false,
+      contentVerified: false,
+      normalUpdateEligible: false,
+      message: "기존 상품 신원은 확인됐지만 현재 상세 내용이 승인본과 달라 승인 내용 복구 확인이 필요합니다.",
+    });
+  }
   if (state.status === "queued" || state.status === "running") {
     const running = state.status === "running";
     return response({

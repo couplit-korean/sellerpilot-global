@@ -4,7 +4,10 @@ import test from "node:test";
 
 import {
   isSmartstoreExistingAdoptionActivity,
+  parsePendingSmartstoreContentRepair,
   parsePendingSmartstoreExistingAdoption,
+  parseRepairRequiredSmartstoreExistingAdoption,
+  parseVerifiedSmartstoreContentRepair,
   parseVerifiedSmartstoreExistingAdoption,
   smartstoreExistingAdoptionErrorMessage,
   smartstoreExistingAdoptionState,
@@ -13,6 +16,8 @@ import {
 const productId = "1ed4acfc-7603-48ec-a638-241131e59358";
 const listingId = "44444444-4444-4444-8444-444444444444";
 const jobId = "55555555-5555-4555-8555-555555555555";
+const baselineId = "66666666-6666-4666-8666-666666666666";
+const verificationJobId = "77777777-7777-4777-8777-777777777777";
 
 test("failed or reconciliation Smartstore listings require verified existing-product review", () => {
   assert.equal(smartstoreExistingAdoptionState([
@@ -103,6 +108,82 @@ test("queued and running responses remain working only with exact read-only iden
   assert.equal(parsePendingSmartstoreExistingAdoption({ ...pending, jobId: listingId, productId: jobId }, productId), null);
 });
 
+test("identity-only readback exposes repair without claiming content verification", () => {
+  const required = {
+    ok: true,
+    status: "repair_required",
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    originProductNo: "13688607602",
+    channelProductNo: "13749310594",
+    reused: true,
+    apiCreateSucceeded: false,
+    providerMutationPerformed: false,
+    contentVerified: false,
+    normalUpdateEligible: false,
+    message: "승인 내용 복구 확인이 필요합니다.",
+  };
+  assert.deepEqual(parseRepairRequiredSmartstoreExistingAdoption(required, productId), {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    originProductNo: required.originProductNo,
+    channelProductNo: required.channelProductNo,
+    message: required.message,
+  });
+  assert.equal(parseRepairRequiredSmartstoreExistingAdoption({ ...required, contentVerified: true }, productId), null);
+  assert.equal(parseVerifiedSmartstoreExistingAdoption(required, productId), null);
+});
+
+test("content repair polling separates provider mutation from strict verification", () => {
+  const pending = {
+    ok: true,
+    status: "verification_queued",
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    reused: true,
+    apiCreateSucceeded: false,
+    providerMutationPerformed: true,
+    contentVerified: false,
+    normalUpdateEligible: false,
+    message: "공식 재검증 대기 중",
+  };
+  assert.deepEqual(parsePendingSmartstoreContentRepair(pending, productId), {
+    status: "verification_queued",
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    reused: true,
+    message: pending.message,
+  });
+  assert.equal(parsePendingSmartstoreContentRepair({ ...pending, verificationJobId: null }, productId), null);
+  assert.equal(parseVerifiedSmartstoreContentRepair(pending, productId), null);
+
+  const verified = {
+    ...pending,
+    status: "verified",
+    contentVerified: true,
+    normalUpdateEligible: true,
+    message: "공식 재검증 완료",
+  };
+  assert.deepEqual(parseVerifiedSmartstoreContentRepair(verified, productId), {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    message: verified.message,
+  });
+});
+
 test("error copy accepts only bounded server messages", () => {
   assert.equal(smartstoreExistingAdoptionErrorMessage({ message: "공식 조회 결과가 일치하지 않습니다." }), "공식 조회 결과가 일치하지 않습니다.");
   assert.equal(smartstoreExistingAdoptionErrorMessage({ message: "x".repeat(501) }), "기존 스마트스토어 상품의 공식 조회 결과를 확인하지 못했습니다.");
@@ -115,6 +196,12 @@ test("product and runtime UI expose safe Smartstore actions without browser-supp
   ]);
   assert.match(page, /smartstore-manual-adoption/);
   assert.match(page, /JSON\.stringify\(\{ confirmReadOnlyAdoption: true \}\)/);
+  assert.match(page, /smartstore-content-repair/);
+  assert.match(page, /JSON\.stringify\(\{ confirmApprovedContentRepair: true \}\)/);
+  assert.match(page, /parseRepairRequiredSmartstoreExistingAdoption/);
+  assert.match(page, /parsePendingSmartstoreContentRepair/);
+  assert.match(page, /parseVerifiedSmartstoreContentRepair/);
+  assert.match(page, /승인 내용으로 복구/);
   assert.match(page, /response\.status !== 202/);
   assert.match(page, /parsePendingSmartstoreExistingAdoption/);
   assert.match(page, /\{ method: "GET", cache: "no-store" \}/);

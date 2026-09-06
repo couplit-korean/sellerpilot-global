@@ -229,7 +229,10 @@ import { operationEventNotifications, operationEventState, type OperationEventSt
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
   isSmartstoreExistingAdoptionActivity,
+  parsePendingSmartstoreContentRepair,
   parsePendingSmartstoreExistingAdoption,
+  parseRepairRequiredSmartstoreExistingAdoption,
+  parseVerifiedSmartstoreContentRepair,
   parseVerifiedSmartstoreExistingAdoption,
   smartstoreExistingAdoptionErrorMessage,
   smartstoreExistingAdoptionState,
@@ -1504,7 +1507,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
   const [savedDetailPage, setSavedDetailPage] = useState<ProductDetailPageEnvelope | null>(null);
   const [detailPageSource, setDetailPageSource] = useState<ReturnType<typeof parseProductDetailSource>>(null);
   const [remoteListingState, setRemoteListingState] = useState<"loading" | "ready" | "unavailable">("loading");
-  const [smartstoreAdoptionStatus, setSmartstoreAdoptionStatus] = useState<"idle" | "working" | "verified" | "failed">("idle");
+  const [smartstoreAdoptionStatus, setSmartstoreAdoptionStatus] = useState<"idle" | "working" | "repair_required" | "repairing" | "verified" | "failed">("idle");
   const [smartstoreAdoptionMessage, setSmartstoreAdoptionMessage] = useState("");
   const [inventoryEditing, setInventoryEditing] = useState(false);
   const [inventoryOnHand, setInventoryOnHand] = useState(product.onHand);
@@ -2352,15 +2355,25 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
       for (;;) {
         if (response.status === 200 && response.ok) {
           const verified = parseVerifiedSmartstoreExistingAdoption(payload, product.sourceId);
-          if (!verified) {
-            throw new Error("기존 상품 결속 결과에 신규 등록 없음과 공식 내용 검증 증거가 모두 포함되지 않았습니다.");
+          if (verified) {
+            const message = `${verified.message} · 신규 상품 등록 요청 없음`;
+            setSmartstoreAdoptionStatus("verified");
+            setSmartstoreAdoptionMessage(message);
+            notify(message);
+            await onChanged().catch(() => null);
+            return;
           }
-          const message = `${verified.message} · 신규 상품 등록 요청 없음`;
-          setSmartstoreAdoptionStatus("verified");
-          setSmartstoreAdoptionMessage(message);
-          notify(message);
-          await onChanged().catch(() => null);
-          return;
+          const repairRequired = parseRepairRequiredSmartstoreExistingAdoption(
+            payload,
+            product.sourceId,
+          );
+          if (repairRequired) {
+            setSmartstoreAdoptionStatus("repair_required");
+            setSmartstoreAdoptionMessage(repairRequired.message);
+            notify(repairRequired.message);
+            return;
+          }
+          throw new Error("기존 상품 결속 결과에 읽기 전용 신원 확인 또는 공식 내용 검증 증거가 포함되지 않았습니다.");
         }
         if (response.status !== 202 || !response.ok) {
           throw new Error(smartstoreExistingAdoptionErrorMessage(payload));
@@ -2405,6 +2418,102 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
         smartstoreAdoptionControllerRef.current = null;
         if (!controller.signal.aborted) {
           setSmartstoreAdoptionStatus((current) => current === "working" ? "idle" : current);
+        }
+      }
+    }
+  };
+
+  const repairSmartstoreApprovedContent = async () => {
+    if (smartstoreAdoptionStatus !== "repair_required") return;
+    smartstoreAdoptionControllerRef.current?.abort(new DOMException("새 스마트스토어 복구 요청으로 교체됐습니다.", "AbortError"));
+    const controller = new AbortController();
+    smartstoreAdoptionControllerRef.current = controller;
+    const scope = createPageAbortScope(
+      [getProductDetailSignal(), controller.signal],
+      120_000,
+      "스마트스토어 승인 내용 복구 시간이 초과되었습니다.",
+    );
+    setSmartstoreAdoptionStatus("repairing");
+    setSmartstoreAdoptionMessage("현재 판매가·재고·정책을 보존하면서 승인된 상품 내용으로 복구를 시작합니다.");
+    let repairJobId = "";
+    let baselineId = "";
+    let verificationJobId = "";
+    try {
+      const endpoint = `/api/admin/products/${product.sourceId}/smartstore-content-repair`;
+      let { response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
+        authenticatedFetch,
+        endpoint,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmApprovedContentRepair: true }),
+        },
+        scope.signal,
+        120_000,
+        { message: "스마트스토어 승인 내용 복구 응답을 읽지 못했습니다." },
+      );
+      for (;;) {
+        if (response.status === 200 && response.ok) {
+          const verified = parseVerifiedSmartstoreContentRepair(payload, product.sourceId);
+          if (!verified
+              || (repairJobId && verified.jobId !== null && verified.jobId !== repairJobId)
+              || (baselineId && verified.baselineId !== baselineId)
+              || (verificationJobId && verified.verificationJobId !== verificationJobId)) {
+            throw new Error("스마트스토어 복구 완료 결과의 상품·작업·공식 재검증 식별값을 확인하지 못했습니다.");
+          }
+          setSmartstoreAdoptionStatus("verified");
+          setSmartstoreAdoptionMessage(verified.message);
+          notify(verified.message);
+          await onChanged().catch(() => null);
+          return;
+        }
+        if (response.status !== 202 || !response.ok) {
+          throw new Error(smartstoreExistingAdoptionErrorMessage(payload));
+        }
+        const pending = parsePendingSmartstoreContentRepair(payload, product.sourceId);
+        if (!pending
+            || (repairJobId && pending.jobId !== repairJobId)
+            || (baselineId && pending.baselineId !== baselineId)
+            || (verificationJobId && pending.verificationJobId !== verificationJobId)) {
+          throw new Error("스마트스토어 승인 내용 복구 작업의 상품·작업 식별값을 확인하지 못했습니다.");
+        }
+        repairJobId = pending.jobId;
+        baselineId = pending.baselineId;
+        if (pending.verificationJobId) verificationJobId = pending.verificationJobId;
+        setSmartstoreAdoptionMessage(pending.message);
+        await abortableBrowserDelay(2_000, scope.signal);
+        ({ response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
+          authenticatedFetch,
+          endpoint,
+          { method: "GET", cache: "no-store" },
+          scope.signal,
+          15_000,
+          { message: "스마트스토어 승인 내용 복구 상태를 읽지 못했습니다." },
+        ));
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      if (scope.signal.aborted
+          && scope.signal.reason instanceof DOMException
+          && scope.signal.reason.name === "TimeoutError"
+          && repairJobId) {
+        const message = `스마트스토어 승인 내용 복구 작업 ${repairJobId.slice(0, 8)}이 계속 진행 중입니다. 다시 선택하면 같은 작업 상태부터 이어서 확인합니다.`;
+        setSmartstoreAdoptionStatus("repair_required");
+        setSmartstoreAdoptionMessage(message);
+        notify(message);
+        return;
+      }
+      const message = error instanceof Error
+        ? error.message
+        : "스마트스토어 승인 내용 복구와 공식 재검증을 완료하지 못했습니다.";
+      setSmartstoreAdoptionStatus("failed");
+      setSmartstoreAdoptionMessage(message);
+      notify(message);
+    } finally {
+      scope.dispose();
+      if (smartstoreAdoptionControllerRef.current === controller) {
+        smartstoreAdoptionControllerRef.current = null;
+        if (!controller.signal.aborted) {
+          setSmartstoreAdoptionStatus((current) => current === "repairing" ? "repair_required" : current);
         }
       }
     }
@@ -2533,7 +2642,9 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
             const smartstoreReviewRequired = channelKey === "smartstore"
               && smartstoreAdoptionState === "review_required"
               && smartstoreAdoptionStatus !== "verified";
-            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}{liveListing?.market ? ` · ${liveListing.market}` : ""}</b><small>{stateCopy}</small><small className="channel-live-facts">재고 {liveListing?.inventoryQuantity ?? "—"} · 30일 판매 {liveListing?.sold30d ?? 0} · 채널 확정 카테고리 {categoryConfirmed ? liveListing?.categoryId : "미확정"}</small>{categoryConfirmed && liveListing?.categoryPath?.length ? <small>{liveListing.categoryPath.join(" › ")}</small> : null}{listing?.lastError || liveListing?.inventoryError ? <em>{listing?.lastError ?? liveListing?.inventoryError}</em> : null}{channelKey === "smartstore" && smartstoreAdoptionMessage ? <em role={smartstoreAdoptionStatus === "failed" ? "alert" : "status"}>{smartstoreAdoptionMessage}</em> : null}</span>{smartstoreReviewRequired ? <button type="button" className="product-channel-link" onClick={() => void verifySmartstoreExistingAdoption()} disabled={smartstoreAdoptionStatus === "working"} title="신규 등록 없이 공식 조회 결과로 기존 상품 결속만 확인합니다.">{smartstoreAdoptionStatus === "working" ? <LoaderCircle className="spin" size={13} /> : <ShieldCheck size={13} />}{smartstoreAdoptionStatus === "working" ? "공식 조회·연결 확인 중" : "기존 스마트스토어 상품 연결 확인"}</button> : channelKey === "smartstore" && smartstoreAdoptionStatus === "verified" ? <span className="product-channel-unavailable">기존 상품 연결 확인 완료</span> : destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
+            const smartstoreRepairRequired = smartstoreAdoptionStatus === "repair_required"
+              || smartstoreAdoptionStatus === "repairing";
+            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}{liveListing?.market ? ` · ${liveListing.market}` : ""}</b><small>{stateCopy}</small><small className="channel-live-facts">재고 {liveListing?.inventoryQuantity ?? "—"} · 30일 판매 {liveListing?.sold30d ?? 0} · 채널 확정 카테고리 {categoryConfirmed ? liveListing?.categoryId : "미확정"}</small>{categoryConfirmed && liveListing?.categoryPath?.length ? <small>{liveListing.categoryPath.join(" › ")}</small> : null}{listing?.lastError || liveListing?.inventoryError ? <em>{listing?.lastError ?? liveListing?.inventoryError}</em> : null}{channelKey === "smartstore" && smartstoreAdoptionMessage ? <em role={smartstoreAdoptionStatus === "failed" ? "alert" : "status"}>{smartstoreAdoptionMessage}</em> : null}</span>{smartstoreReviewRequired ? <button type="button" className="product-channel-link" onClick={() => void (smartstoreRepairRequired ? repairSmartstoreApprovedContent() : verifySmartstoreExistingAdoption())} disabled={smartstoreAdoptionStatus === "working" || smartstoreAdoptionStatus === "repairing"} title={smartstoreRepairRequired ? "현재 판매가·재고·정책은 유지하고 승인된 상품명·상세·이미지만 복구한 뒤 공식 재검증합니다." : "신규 등록 없이 공식 조회 결과로 기존 상품 결속만 확인합니다."}>{smartstoreAdoptionStatus === "working" || smartstoreAdoptionStatus === "repairing" ? <LoaderCircle className="spin" size={13} /> : <ShieldCheck size={13} />}{smartstoreAdoptionStatus === "working" ? "공식 조회·연결 확인 중" : smartstoreAdoptionStatus === "repairing" ? "승인 내용 복구·재검증 중" : smartstoreAdoptionStatus === "repair_required" ? "승인 내용으로 복구" : "기존 스마트스토어 상품 연결 확인"}</button> : channelKey === "smartstore" && smartstoreAdoptionStatus === "verified" ? <span className="product-channel-unavailable">기존 상품 연결 확인 완료</span> : destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
           })}</div> : remoteListingState === "loading" ? <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>상품 채널 연결을 확인하고 있습니다.</b><small>등록 시도·게시 완료·실패 이력을 함께 불러옵니다.</small></div> : <div className="product-detail-empty"><Store size={24} /><b>연결된 판매 채널이 없습니다.</b><small>현재 상품 정보만 등록되어 있으며 채널 게시 전 상태입니다.</small></div>}
         </article>
       </section>
