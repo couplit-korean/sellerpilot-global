@@ -140,7 +140,7 @@ export type ServerProductResearchDependencies = {
   vercelGitCommitSha?: string;
   requireActiveRuntime?: boolean;
   rpc?: (name: string, arguments_?: Record<string, unknown>) => Promise<RpcResult>;
-  analyze?: (researchInput: string, signal: AbortSignal) => Promise<ServerProductResearchResult>;
+  analyze?: (researchInput: string, signal: AbortSignal, dependencies?: ProductResearchGenerationDependencies) => Promise<ServerProductResearchResult>;
   analyzeSources?: typeof analyzeServerStudioSources;
   preflightImageMode?: ProductResearchPreflightImageMode;
   download?: (path: string, signal: AbortSignal) => Promise<Uint8Array>;
@@ -1222,9 +1222,8 @@ export async function runOneServerProductResearch(
   // In multi-photo intake, extraction must precede copy research so side/label
   // facts are available to suggested fields, rather than just to image rendering.
   const researchPromise = request.preflight && request.preflight.image_paths.length > 1
-    ? preflightPromise.then(preflight => dependencies.analyze
-      ? dependencies.analyze(request.researchInput, runtimeSignal)
-      : analyzeServerProductResearch(request.researchInput, runtimeSignal, { sourceEvidence: preflight?.sourcePhotoEvidence }))
+    ? preflightPromise.then(preflight => (dependencies.analyze ?? analyzeServerProductResearch)(
+      request.researchInput, runtimeSignal, { sourceEvidence: preflight?.sourcePhotoEvidence }))
     : (dependencies.analyze ?? analyzeServerProductResearch)(request.researchInput, runtimeSignal);
   const [researchOutcome, preflightOutcome] = await Promise.allSettled([
     researchPromise,
