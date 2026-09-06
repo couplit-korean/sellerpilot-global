@@ -423,13 +423,38 @@ function fact(value: unknown) {
   return /^(?:unknown|not provided|n\/a|tbd|미정|미확인|확인 필요)$/iu.test(normalized) ? "" : normalized;
 }
 
+function firstNamedFact(productFacts: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = fact(productFacts[key]);
+    if (value) return value;
+  }
+  return "";
+}
+
+function producerAndLocationFact(productFacts: Record<string, unknown>) {
+  const combined = firstNamedFact(productFacts, ["producerAndLocation", "manufacturerAndLocation"]);
+  if (combined) return combined;
+  const producer = firstNamedFact(productFacts, ["producer", "manufacturer"]);
+  const location = firstNamedFact(productFacts, ["producerAddress", "manufacturerAddress"]);
+  return producer && location ? `${producer}, ${location}` : "";
+}
+
 export function suggestedCategoryAttributeValues(attributes: CategoryAttribute[], productFacts: Record<string, unknown>) {
   const result: Record<string, CategoryAttributeValue> = {};
   const candidate = (attribute: CategoryAttribute) => {
     const name = attribute.name.toLocaleLowerCase().replace(/\s+/gu, "");
     if (attribute.id === "notice:category" && attribute.values.length === 1) return attribute.values[0]?.id ?? "";
+    if (/(영양성분|영양정보|nutritionfacts?|nutritionalinformation)/u.test(name)) {
+      return firstNamedFact(productFacts, ["nutritionFacts", "nutritionInformation"]);
+    }
+    if (/(생산자.*소재지|제조자.*소재지|제조사.*소재지|생산자.*주소|제조자.*주소|제조사.*주소|producer.*(?:location|address)|manufacturer.*(?:location|address))/u.test(name)) {
+      return producerAndLocationFact(productFacts);
+    }
+    if (/(소재지|사업장주소|생산지주소)/u.test(name)) {
+      return firstNamedFact(productFacts, ["producerAddress", "manufacturerAddress"]);
+    }
     if (/(brand|브랜드|상표)/u.test(name)) return fact(productFacts.brandName);
-    if (/(manufacturer|제조사|제조자|공급자)/u.test(name)) return fact(productFacts.manufacturer);
+    if (/(manufacturer|producer|제조사|제조자|생산자|공급자)/u.test(name)) return fact(productFacts.manufacturer);
     if (/(country.*manufacture|원산지|제조국)/u.test(name)) return fact(productFacts.countryOfOrigin);
     if (/(material|소재|재질|원재료|성분)/u.test(name)) return fact(productFacts.material);
     if (/(seller.*sku|판매자.*상품코드|모델번호)/u.test(name)) return fact(productFacts.sellerSku);
