@@ -1524,19 +1524,28 @@ function operatorPositiveFee(value: unknown) {
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
+function coupangConfirmedWeight(attribute: UnknownRecord, value: unknown) {
+  if (typeof value !== "string") return "";
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(\S+)$/u);
+  if (!match || !Number.isFinite(Number(match[1])) || Number(match[1]) <= 0) return "";
+  const usableUnits = Array.isArray(attribute.usableUnits)
+    ? attribute.usableUnits.map(String).map((unit) => unit.trim()).filter((unit) => unit && unit !== "없음")
+    : [];
+  const unit = match[2];
+  if (!usableUnits.includes(unit)) return "";
+  return `${match[1]}${unit}`;
+}
+
 function coupangAttributeValue(attribute: UnknownRecord, facts: UnknownRecord) {
   const name = String(attribute.attributeTypeName ?? "").replace(/\s+/g, "");
-  const usableUnits = Array.isArray(attribute.usableUnits) ? attribute.usableUnits.map(String) : [];
-  const firstUnit = (...candidates: string[]) =>
-    candidates.find((unit) => usableUnits.includes(unit)) ?? "";
   if (/총?수량|개수|구성수/.test(name)) {
     return coupangConfirmedText(facts.quantityAttribute);
   }
-  if (/중량|무게/.test(name) && Number(facts.weightKg) > 0) {
-    const unit = firstUnit("g", "kg");
-    return unit === "kg"
-      ? `${Number(facts.weightKg)}kg`
-      : `${Math.round(Number(facts.weightKg) * 1_000)}g`;
+  if (/중량|무게/.test(name)) {
+    // Shipping/package weight is not the confirmed net content of a sale unit.
+    // Bind an explicit fact to the exact provider metadata unit rather than
+    // treating arbitrary seller text as a fulfilled mandatory attribute.
+    return coupangConfirmedWeight(attribute, facts.weightAttribute);
   }
   if (/크기|사이즈/.test(name)
       && Array.isArray(facts.dimensionsCm)

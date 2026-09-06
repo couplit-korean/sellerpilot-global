@@ -1,4 +1,5 @@
 import type { ActiveChannelKey } from "./catalog";
+import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
   elevenstProcessedFoodCategoryId,
   elevenstProcessedFoodNotificationFields,
@@ -12,6 +13,7 @@ export type ListingRequirement = {
   source: "상품 정보" | "카테고리" | "판매자 계정";
   status: ListingRequirementStatus;
   manualPath?: string[];
+  inputType?: "boolean" | "number";
   placeholder?: string;
   help?: string;
 };
@@ -159,6 +161,90 @@ const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFo
     : `카테고리 속성 notification:${field.code}에 확정값을 입력해 주세요.`,
 }));
 
+const smartstoreCapacityPath = ["body", "originProduct", "detailAttribute", "unitCapacity"];
+const smartstoreCapacityAmounts = ["totalCapacityValue", "unitCapacity", "indicationUnit"];
+function smartstoreCapacity(draft: Record<string, unknown>) {
+  const value = valueAt(draft, smartstoreCapacityPath);
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+const capacityAmountsApply = (draft: Record<string, unknown>) => {
+  const value = smartstoreCapacity(draft);
+  return value.unitPriceYn !== false || smartstoreCapacityAmounts.some((key) => Object.hasOwn(value, key));
+};
+
+export function isSmartstoreCapacityPath(path: string[]) {
+  return path.length === 5 && smartstoreCapacityPath.every((part, index) => path[index] === part)
+    && ["unitPriceYn", ...smartstoreCapacityAmounts].includes(path[4]);
+}
+
+/** Only these provider fields use typed inputs; other channels keep their existing setter contract. */
+export function setSmartstoreCapacityDraftValue(draft: Record<string, unknown>, path: string[], value: string) {
+  if (!isSmartstoreCapacityPath(path)) throw new Error("SMARTSTORE_CAPACITY_PATH_INVALID");
+  const clone = setListingDraftValue(draft, path, value);
+  const capacity = smartstoreCapacity(clone);
+  const key = path[4];
+  if (value === "") delete capacity[key];
+  else if (key === "unitPriceYn" && ["true", "false"].includes(value)) capacity[key] = value === "true";
+  else if (["totalCapacityValue", "unitCapacity"].includes(key) && /^\d+(?:\.\d+)?$/.test(value)) capacity[key] = Number(value);
+  return clone;
+}
+
+/** UI boundary: malformed JSON containers stay untouched and return an actionable message. */
+export function editSmartstoreCapacityDraftValue(draft: Record<string, unknown>, path: string[], value: string):
+  { ok: true; draft: Record<string, unknown> } | { ok: false; message: string } {
+  try {
+    return { ok: true, draft: setSmartstoreCapacityDraftValue(draft, path, value) };
+  } catch {
+    return { ok: false, message: "단위가격 JSON 구조를 확인해 주세요. ‘채널 공식 payload 최종 검토’에서 body.originProduct.detailAttribute.unitCapacity를 객체로 수정한 뒤 입력해 주세요. 기존 입력은 보존했습니다." };
+  }
+}
+
+export function isCoupangWeightPath(path: string[]) {
+  return path.length === 2 && path[0] === "facts" && path[1] === "weightAttribute";
+}
+
+/** Confirmed net weight never follows the shipping/package mass during common edits. */
+export function preserveCoupangWeightDraft(current: Record<string, unknown>, next: Record<string, unknown>) {
+  const facts = current.facts;
+  if (!facts || typeof facts !== "object" || Array.isArray(facts) || !Object.hasOwn(facts, "weightAttribute")) return next;
+  const clone = structuredClone(next);
+  if (!clone.facts || typeof clone.facts !== "object" || Array.isArray(clone.facts)) throw new Error("COUPANG_WEIGHT_CONTAINER_INVALID");
+  (clone.facts as Record<string, unknown>).weightAttribute = structuredClone((facts as Record<string, unknown>).weightAttribute);
+  return clone;
+}
+
+/** Preserve exact JSON types, including invalid values, so rebuilding never silently repairs an approval input. */
+export function preserveSmartstoreCapacityDraft(current: Record<string, unknown>, next: Record<string, unknown>) {
+  const currentDetail = valueAt(current, smartstoreCapacityPath.slice(0, -1));
+  if (!currentDetail || typeof currentDetail !== "object" || !Object.hasOwn(currentDetail, "unitCapacity")) return next;
+  const clone = structuredClone(next);
+  const nextDetail = valueAt(clone, smartstoreCapacityPath.slice(0, -1));
+  if (!nextDetail || typeof nextDetail !== "object" || Array.isArray(nextDetail)) throw new Error("SMARTSTORE_CAPACITY_CONTAINER_INVALID");
+  (nextDetail as Record<string, unknown>).unitCapacity = structuredClone((currentDetail as Record<string, unknown>).unitCapacity);
+  return clone;
+}
+
+const smartstoreCapacityRequirements: RequirementSpec[] = [
+  { key: "unit-price-enabled", label: "단위가격 표시 여부", source: "카테고리", inputType: "boolean",
+    manualPath: [...smartstoreCapacityPath, "unitPriceYn"],
+    test: (draft) => { const value = smartstoreCapacity(draft); return typeof value.unitPriceYn === "boolean"
+      && (value.unitPriceYn || !smartstoreCapacityAmounts.some((key) => Object.hasOwn(value, key))); },
+    help: "대상 여부를 확인해 선택하세요. 필수 카테고리는 비대상으로 전송할 수 없습니다. 비대상은 수량·단위를 비워야 합니다. 등록 직전 공식 카테고리로 다시 검증합니다." },
+  { key: "unit-total-capacity", label: "판매단위의 총용량", source: "상품 정보", inputType: "number",
+    manualPath: [...smartstoreCapacityPath, "totalCapacityValue"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).totalCapacityValue; return typeof value === "number" && Number.isFinite(value)
+      && value >= 0.001 && value <= 999_999_999 && /^\d+(?:\.\d{1,3})?$/.test(String(value)); },
+    help: "실제 판매 구성 전체의 용량을 입력하세요. 배송중량이나 묶음 수에서 추정하지 않습니다. 소수 셋째 자리까지 입력할 수 있습니다." },
+  { key: "unit-display-capacity", label: "단위가격 기준량", source: "카테고리", inputType: "number",
+    manualPath: [...smartstoreCapacityPath, "unitCapacity"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).unitCapacity; return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 999; },
+    help: "상품군에 적용되는 기준량을 확인해 입력하세요. 1~999의 정수이며 기본값을 자동 적용하지 않습니다." },
+  { key: "unit-indication", label: "용량 단위", source: "카테고리",
+    manualPath: [...smartstoreCapacityPath, "indicationUnit"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).indicationUnit; return typeof value === "string" && (smartstoreIndicationUnits as readonly string[]).includes(value); },
+    help: `공식 단위 중 상품에 맞는 값을 입력하세요: ${smartstoreIndicationUnits.join(", ")}` },
+];
+
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
@@ -260,6 +346,15 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
       help: "카테고리 메타에서 필수 인증이 확인되면 판매자 확인 코드가 필요합니다. 문서화되지 않은 dataType은 면책이 아니며, 코드 없이 빈 인증을 만들지 않습니다.",
     },
     {
+      key: "weight-attribute",
+      label: "판매단위의 확정 순중량",
+      source: "상품 정보",
+      runtime: true,
+      manualPath: ["facts", "weightAttribute"],
+      placeholder: "포장에서 확인한 순중량과 단위",
+      help: "판매 구성의 순중량을 단위와 함께 입력하세요. 배송·포장 중량으로 추정하지 않습니다. 필수 여부는 공식 카테고리에서 확인하며, 정확한 중량을 모르면 입력하지 않습니다.",
+    },
+    {
       key: "quantity-attribute",
       label: "수량·구성 속성",
       source: "상품 정보",
@@ -285,6 +380,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },
   ],
   smartstore: [
+    ...smartstoreCapacityRequirements,
     { key: "category", label: "스마트스토어 말단 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "originProduct", "name"] },
     { key: "description", label: "상세 설명", source: "상품 정보", path: ["body", "originProduct", "detailContent"] },
@@ -359,6 +455,7 @@ export function inspectListingDraft(
       ? "runtime"
       : (spec.test ? spec.test(draft) : meaningful(valueAt(draft, spec.path ?? []))) ? "ready" : "manual",
     manualPath: spec.manualPath,
+    inputType: spec.inputType,
     placeholder: spec.placeholder,
     help: spec.help,
   }));

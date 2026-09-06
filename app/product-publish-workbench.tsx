@@ -80,7 +80,7 @@ import {
   type StoredListingHandoff,
 } from "../lib/channel-listing-handoff";
 import type { StudioResultQuality } from "../lib/studio-result-quality";
-import { inspectListingDraft, listingDraftValue, setListingDraftValue } from "../lib/channels/listing-preflight";
+import { inspectListingDraft, listingDraftValue, setListingDraftValue, isSmartstoreCapacityPath, editSmartstoreCapacityDraftValue, preserveSmartstoreCapacityDraft, isCoupangWeightPath, preserveCoupangWeightDraft } from "../lib/channels/listing-preflight";
 import {
   coupangShippingFeeDraft,
   listingShippingDraftSource,
@@ -1309,6 +1309,8 @@ export function buildSynchronizedDraftMap(
           { productId: context.product.id, listing },
         )) {
           if (!requirement.manualPath) continue;
+          if (channel === "smartstore" && isSmartstoreCapacityPath(requirement.manualPath)) continue;
+          if (channel === "coupang" && isCoupangWeightPath(requirement.manualPath)) continue;
           if (shippingSourceChanged && shippingRequirementDependsOnSource(requirement)) continue;
           nextDraft = setListingDraftValue(
             nextDraft,
@@ -1317,6 +1319,8 @@ export function buildSynchronizedDraftMap(
           );
         }
       }
+      if (channel === "smartstore" && currentDraft) nextDraft = preserveSmartstoreCapacityDraft(currentDraft, nextDraft);
+      if (channel === "coupang" && currentDraft) nextDraft = preserveCoupangWeightDraft(currentDraft, nextDraft);
       return [channel, JSON.stringify(nextDraft, null, 2)];
     } catch (error) {
       // Keep a hand-edited or previously valid channel draft intact when one
@@ -1900,6 +1904,17 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const updateManualDraftField = (channel: ActiveChannelKey, path: string[], value: string) => {
     const parsed = parseDraft(drafts[channel]);
     if (!parsed) return;
+    if (channel === "smartstore" && isSmartstoreCapacityPath(path)) {
+      // Validate outside the React updater: malformed hand-edited JSON must not
+      // throw during render or silently replace the operator's original value.
+      const edit = editSmartstoreCapacityDraftValue(parsed, path, value);
+      if (!edit.ok) {
+        notify(edit.message);
+        return;
+      }
+      setDrafts((current) => ({ ...current, [channel]: JSON.stringify(edit.draft, null, 2) }));
+      return;
+    }
     setDrafts((current) => ({
       ...current,
       [channel]: JSON.stringify(setListingDraftValue(parsed, path, value), null, 2),
@@ -2928,7 +2943,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             </div>)}</div>
             {requirements.some((item) => item.manualPath) && <div className="publish-manual-fields">{requirements.filter((item) => item.manualPath).map((item) => <label key={`${item.key}-input`} className={item.status === "manual" ? "missing" : "ready"}>
               <span>{item.label} <i>필수</i></span>
-              <input required value={listingDraftValue(draftObject, item.manualPath!)} placeholder={item.placeholder} onChange={(event) => updateManualDraftField(channel, item.manualPath!, event.target.value)} />
+              {item.inputType === "boolean" ? <select required value={listingDraftValue(draftObject, item.manualPath!)} onChange={(event) => updateManualDraftField(channel, item.manualPath!, event.target.value)}><option value="">선택하세요</option><option value="true">표시 대상</option><option value="false">비대상 확인</option></select>
+                : <input required type={item.inputType === "number" ? "number" : "text"} step={item.inputType === "number" ? "any" : undefined} value={listingDraftValue(draftObject, item.manualPath!)} placeholder={item.placeholder} onChange={(event) => updateManualDraftField(channel, item.manualPath!, event.target.value)} />}
               {item.help && <small>{item.help}</small>}
             </label>)}</div>}
             {channel === "ebay" && ebayHandoffStatus && requirements.some((item) => item.manualPath) && <div className="publish-required-head"><button type="button" className="credential-secondary" disabled={ebayHandoffSaving || !ebayDraftHandoff || ebayHandoffStatus === "saved"} onClick={() => void saveEbayListingHandoff()}>{ebayHandoffSaving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}정책 저장</button><small role="status">{listingHandoffStatusLabel(ebayHandoffStatus)}{ebayHandoffError ? ` · ${ebayHandoffError}` : ""}</small></div>}
