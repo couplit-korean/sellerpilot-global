@@ -227,6 +227,12 @@ import {
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
 import {
+  isSmartstoreExistingAdoptionActivity,
+  parseVerifiedSmartstoreExistingAdoption,
+  smartstoreExistingAdoptionErrorMessage,
+  smartstoreExistingAdoptionState,
+} from "./_products/smartstore-existing-adoption-ui";
+import {
   controllableRegistrationActivityJobId,
   isCancelledRegistrationActivity,
   isRegistrationActivityRunning,
@@ -1496,6 +1502,8 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
   const [savedDetailPage, setSavedDetailPage] = useState<ProductDetailPageEnvelope | null>(null);
   const [detailPageSource, setDetailPageSource] = useState<ReturnType<typeof parseProductDetailSource>>(null);
   const [remoteListingState, setRemoteListingState] = useState<"loading" | "ready" | "unavailable">("loading");
+  const [smartstoreAdoptionStatus, setSmartstoreAdoptionStatus] = useState<"idle" | "working" | "verified" | "failed">("idle");
+  const [smartstoreAdoptionMessage, setSmartstoreAdoptionMessage] = useState("");
   const [inventoryEditing, setInventoryEditing] = useState(false);
   const [inventoryOnHand, setInventoryOnHand] = useState(product.onHand);
   const [inventorySaving, setInventorySaving] = useState(false);
@@ -2301,6 +2309,56 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     }
   };
 
+  const smartstoreAdoptionState = smartstoreExistingAdoptionState([
+    ...remoteListings,
+    ...commerceOperations.listings.map((listing) => ({
+      channel: listing.channel,
+      status: listing.status,
+      remoteId: listing.remoteId,
+    })),
+  ]);
+
+  const verifySmartstoreExistingAdoption = async () => {
+    if (smartstoreAdoptionStatus === "working") return;
+    const scope = createPageAbortScope([getProductDetailSignal()], 120_000, "스마트스토어 공식 조회 시간이 초과되었습니다.");
+    setSmartstoreAdoptionStatus("working");
+    setSmartstoreAdoptionMessage("스마트스토어 공식 조회로 기존 상품과 판매자 계보를 확인하고 있습니다.");
+    try {
+      const { response, payload } = await authenticatedJsonWithDeadline<Record<string, unknown>>(
+        authenticatedFetch,
+        `/api/admin/products/${product.sourceId}/smartstore-manual-adoption`,
+        {
+          method: "POST",
+          body: JSON.stringify({ confirmReadOnlyAdoption: true }),
+        },
+        scope.signal,
+        120_000,
+        { message: "기존 스마트스토어 상품 연결 응답을 읽지 못했습니다." },
+      );
+      if (!response.ok) throw new Error(smartstoreExistingAdoptionErrorMessage(payload));
+      const verified = parseVerifiedSmartstoreExistingAdoption(payload, product.sourceId);
+      if (!verified) {
+        throw new Error("기존 상품 결속 결과에 신규 등록 없음과 공식 내용 검증 증거가 모두 포함되지 않았습니다.");
+      }
+      const message = `${verified.message} · 신규 상품 등록 요청 없음`;
+      setSmartstoreAdoptionStatus("verified");
+      setSmartstoreAdoptionMessage(message);
+      notify(message);
+      await onChanged().catch(() => null);
+    } catch (error) {
+      if (scope.signal.aborted && scope.signal.reason instanceof DOMException && scope.signal.reason.name === "AbortError") return;
+      const message = error instanceof Error
+        ? error.message
+        : "기존 스마트스토어 상품의 공식 조회와 원장 연결을 확인하지 못했습니다.";
+      setSmartstoreAdoptionStatus("failed");
+      setSmartstoreAdoptionMessage(message);
+      notify(message);
+    } finally {
+      scope.dispose();
+      setSmartstoreAdoptionStatus((current) => current === "working" ? "idle" : current);
+    }
+  };
+
   const manualFieldRows = [
     ["브랜드", detailFieldValue(detailContext.manualFields.brandName)],
     ["제조사·공급처", detailFieldValue(detailContext.manualFields.manufacturer)],
@@ -2419,9 +2477,12 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
             const stateCopy = remoteListingState === "loading"
               ? "원격 상품번호 확인 중"
               : listing?.remoteId
-                ? `${listing.status === "published" ? "등록 완료" : listing.status ?? "상품 연결"} · 원격 ID ${listing.remoteId}`
+                ? `${listing.status === "published" ? channelKey === "smartstore" ? "판매 상품 연결 확인" : "등록 완료" : listing.status ?? "상품 연결"} · 원격 ID ${listing.remoteId}`
                 : remoteListingState === "unavailable" ? "연결 정보 조회 실패" : listing?.status ? `${listing.status} · 판매 상품 주소 확인 필요` : "게시 이력 없음";
-            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}{liveListing?.market ? ` · ${liveListing.market}` : ""}</b><small>{stateCopy}</small><small className="channel-live-facts">재고 {liveListing?.inventoryQuantity ?? "—"} · 30일 판매 {liveListing?.sold30d ?? 0} · 채널 확정 카테고리 {categoryConfirmed ? liveListing?.categoryId : "미확정"}</small>{categoryConfirmed && liveListing?.categoryPath?.length ? <small>{liveListing.categoryPath.join(" › ")}</small> : null}{listing?.lastError || liveListing?.inventoryError ? <em>{listing?.lastError ?? liveListing?.inventoryError}</em> : null}</span>{destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
+            const smartstoreReviewRequired = channelKey === "smartstore"
+              && smartstoreAdoptionState === "review_required"
+              && smartstoreAdoptionStatus !== "verified";
+            return <div key={channelKey}><ChannelMark code={code} /><span><b>{channel.name}{liveListing?.market ? ` · ${liveListing.market}` : ""}</b><small>{stateCopy}</small><small className="channel-live-facts">재고 {liveListing?.inventoryQuantity ?? "—"} · 30일 판매 {liveListing?.sold30d ?? 0} · 채널 확정 카테고리 {categoryConfirmed ? liveListing?.categoryId : "미확정"}</small>{categoryConfirmed && liveListing?.categoryPath?.length ? <small>{liveListing.categoryPath.join(" › ")}</small> : null}{listing?.lastError || liveListing?.inventoryError ? <em>{listing?.lastError ?? liveListing?.inventoryError}</em> : null}{channelKey === "smartstore" && smartstoreAdoptionMessage ? <em role={smartstoreAdoptionStatus === "failed" ? "alert" : "status"}>{smartstoreAdoptionMessage}</em> : null}</span>{smartstoreReviewRequired ? <button type="button" className="product-channel-link" onClick={() => void verifySmartstoreExistingAdoption()} disabled={smartstoreAdoptionStatus === "working"} title="신규 등록 없이 공식 조회 결과로 기존 상품 결속만 확인합니다.">{smartstoreAdoptionStatus === "working" ? <LoaderCircle className="spin" size={13} /> : <ShieldCheck size={13} />}{smartstoreAdoptionStatus === "working" ? "공식 조회·연결 확인 중" : "기존 스마트스토어 상품 연결 확인"}</button> : channelKey === "smartstore" && smartstoreAdoptionStatus === "verified" ? <span className="product-channel-unavailable">기존 상품 연결 확인 완료</span> : destination ? <a className="product-channel-link" href={destination} target="_blank" rel="noreferrer">{marketplaceListingLinkLabel(listingReference)}<ExternalLink size={13} /></a> : <span className="product-channel-unavailable">판매 상품 주소 확인 필요</span>}</div>;
           })}</div> : remoteListingState === "loading" ? <div className="product-detail-empty"><LoaderCircle className="spin" size={24} /><b>상품 채널 연결을 확인하고 있습니다.</b><small>등록 시도·게시 완료·실패 이력을 함께 불러옵니다.</small></div> : <div className="product-detail-empty"><Store size={24} /><b>연결된 판매 채널이 없습니다.</b><small>현재 상품 정보만 등록되어 있으며 채널 게시 전 상태입니다.</small></div>}
         </article>
       </section>
@@ -2642,9 +2703,12 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         const expanded = expandedActivityId === activity.id;
         const isImageOperation = isRegistrationImageActivity(activity);
         const isCancelled = isCancelledRegistrationActivity(activity);
+        const isSmartstoreAdoptionReview = Boolean(product && isSmartstoreExistingAdoptionActivity(activity));
         const longAnalysis = longRunningAnalysisState(activity, aiRuntime, snapshotGeneratedAt);
         const displayStatusLabel = registrationActivityDisplayStatusLabel(activity);
-        const imageFailureActionLabel = activity.status === "failed" && activity.id.startsWith("asset:")
+        const imageFailureActionLabel = isSmartstoreAdoptionReview
+          ? "기존 스마트스토어 상품 연결 확인"
+          : activity.status === "failed" && activity.id.startsWith("asset:")
           ? "상품 상세에서 이미지 재제작"
           : activity.status === "failed" && activity.id.startsWith("revision:")
             ? "상품 상세에서 다시 수정"
@@ -2671,7 +2735,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
-          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
+          <footer>{activity.status === "analyzing" && <button type="button" className="registration-stop-button" onClick={() => void stopActivity(activity)} disabled={Boolean(stoppingActivityId)} title="현재 AI 분석 작업을 안전하게 취소합니다.">{stoppingActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : <Square size={13} />}{stoppingActivityId === activity.id ? "중지 확인 중" : "등록 작동 중지"}</button>}{activity.status === "publishing" && <span className="registration-stop-unavailable" title="이미 판매채널로 전송된 요청은 중복·불일치를 막기 위해 회수하지 않습니다."><ShieldCheck size={13} />외부 전송 중 · 중지 불가</span>}{activity.status === "blocked" && !isSmartstoreAdoptionReview && <button type="button" className="credential-secondary" onClick={onExternalActions}>외부 조치 확인</button>}{activity.status === "failed" && product && activity.id.startsWith("product:") && !isSmartstoreAdoptionReview && <button type="button" className="credential-secondary" onClick={() => onRetryProduct(product)}><RefreshCw size={14} />등록 재시도</button>}{retryableJobId && <button type="button" className="credential-secondary" onClick={() => void recoverAnalysis(activity)} disabled={Boolean(recoveringActivityId) || !studioExecutionReady} title={!studioExecutionReady ? studioWorkerReadiness?.message : undefined}>{recoveringActivityId === activity.id ? <LoaderCircle className="spin" size={14} /> : !studioExecutionReady ? <AlertCircle size={14} /> : <RefreshCw size={14} />}{recoveringActivityId === activity.id ? "기존 작업 재개 중" : !studioExecutionReady ? recoveryUnavailableLabel : activity.id.startsWith("revision:") ? "상품 수정 작업 재개" : activity.id.startsWith("asset:") ? "이미지 재제작 재개" : "서버 저장 입력으로 AI 분석 재시도"}</button>}{product ? <button type="button" className="ghost-button" onClick={() => onOpenProduct(product)}>{imageFailureActionLabel}<ChevronRight size={14} /></button> : !retryableJobId ? <span /> : null}</footer>
         </article>;
       })}</section> : <section className="panel registration-empty"><PackageCheck size={30} /><b>선택한 상태의 상품이 없습니다.</b><small>새 상품 등록을 시작하면 상품 한 개당 카드 한 개로 표시됩니다.</small><button type="button" className="primary-button" onClick={onNewProduct}><Plus size={15} />첫 상품 등록</button></section>}
   </div>;
