@@ -29,6 +29,13 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 작업이 끝나면 `docs/현재상태.md`를 고치고, 다른 `.md`가 모순되면 맞춘 뒤 `integration-aside`에 커밋·푸시한다. 비밀 원문은 넣지 않는다.
 
+# Migration coordination
+
+- 새 SQL 파일을 만들기 전에 `node scripts/check-migration-version.mjs YYYYMMDDHHMMSS_name.sql`로 로컬 번호 중복과 실제 날짜·시간 형식을 확인하고, 병행 담당에게 번호와 파일 소유를 공유한다. 이 검사는 파일명만 읽는다.
+- 운영 적용 여부는 `supabase_migrations.schema_migrations`의 version뿐 아니라 name과 저장된 원문의 해시까지 대조한다. 같은 번호의 다른 작업은 적용 완료 근거가 아니다. 운영 조회가 필요한 경우에도 기존 승인을 반복 요청하지 않고 읽기 검증한다.
+- 2026-09-07 실제 충돌: 103000은 운영 CS `search_cs_archive`이며 별도 exact-manual-adoption 파일은 미적용이었다. 110000은 이미 `general_local_channel_executor`로 적용됐다. 새 작업에서 이 번호를 재사용하지 않는다.
+- DB 검증은 실제 운영의 공유 관리자/상품 소유자 관계, 레거시 승인 필드, 미결속 NULL 값과 정상 수정 이후 상태를 포함한다. 과거 실패 작업을 다시 쓰거나 확인되지 않은 성공 플래그를 만들어 호환 문제를 숨기지 않는다.
+
 # Git remotes
 
 - `origin` = `Kimchanghee/sellerpilot-global` (이 환경에서 push 가능)
