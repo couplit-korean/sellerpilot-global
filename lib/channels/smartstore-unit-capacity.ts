@@ -25,9 +25,12 @@ export function smartstoreUpdateOriginProductWithPreservedUnitCapacity(
   currentValue: unknown,
 ) {
   const requested = structuredClone(record(requestedValue));
+  const current = record(currentValue);
+  if (!Object.hasOwn(requested, "leafCategoryId") && Object.hasOwn(current, "leafCategoryId")) {
+    requested.leafCategoryId = current.leafCategoryId;
+  }
   const requestedDetail = record(requested.detailAttribute);
   if (Object.hasOwn(requestedDetail, "unitCapacity")) return requested;
-  const current = record(currentValue);
   const currentDetail = record(current.detailAttribute);
   if (!Object.hasOwn(currentDetail, "unitCapacity")) return requested;
   requested.detailAttribute = {

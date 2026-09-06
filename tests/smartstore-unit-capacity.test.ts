@@ -179,3 +179,14 @@ test("runtime update preserves readback identity checks then blocks required omi
     assert.equal(calls.some(url => url.includes("upload") || url.includes("images.example")), false);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+
+test("content-only update keeps the exact remote category without requiring user reentry", () => {
+  const current = product(capacity);
+  const preserved = smartstoreUpdateOriginProductWithPreservedUnitCapacity({ name: "new title" }, current);
+  assert.equal(preserved.leafCategoryId, category.id);
+  assert.doesNotThrow(() => assertSmartstoreUnitCapacity({ originProduct: preserved, category }));
+  const explicitInvalid = smartstoreUpdateOriginProductWithPreservedUnitCapacity({ leafCategoryId: "", detailAttribute: { unitCapacity: capacity } }, current);
+  assert.equal(explicitInvalid.leafCategoryId, "");
+  assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: explicitInvalid, category }), /CATEGORY_UNVERIFIED/);
+});

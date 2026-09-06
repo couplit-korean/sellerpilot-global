@@ -1300,9 +1300,9 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     const expectedSellerManagementCode = String(
       contentRepair?.sellerSku ?? requestedSellerCodeInfo.sellerManagementCode ?? "",
     ).trim();
-    if (!expectedSellerManagementCode) {
-      throw new Error("NAVER_SELLER_MANAGEMENT_CODE_MISSING");
-    }
+    // Existing content edits can obtain the seller code from the exact remote
+    // origin product; the shared helper then verifies the unique search pair.
+    // Repair/exact recovery always supplies its immutable server-bound code.
     if (exactRecovery) {
       const requestedTitle = String(requestedOriginProduct.name ?? "").trim();
       const requestedDescription = String(requestedOriginProduct.detailContent ?? "").trim();
