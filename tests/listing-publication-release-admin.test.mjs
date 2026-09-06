@@ -16,7 +16,7 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
   assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
-  assert.match(route, /const scopedPublicationChannels = \["qoo10", "coupang"\] as const/);
+  assert.match(route, /const scopedPublicationChannels = \["qoo10", "coupang", "smartstore"\] as const/);
   assert.match(route, /action: z\.literal\("open_channel_gate"\),\s*channel: z\.enum\(scopedPublicationChannels\)/s);
   assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*"temu"/s);
   assert.match(route, /p_release_sha: identity\.status === "valid" \? identity\.release : null/);
@@ -61,6 +61,13 @@ test("listing publication release actions call only the fenced service RPCs", as
   assert.match(route, /gate\.coupangReconciliationRequired === 0/);
   assert.match(route, /gate\.listingMutationsRunning === 0/);
   assert.match(route, /readyForCoupangOpen:/);
+  assert.match(route, /function readyForSmartstoreOpen/);
+  assert.match(route, /gate\.smartstoreAttestedRelease === currentRelease/);
+  assert.match(route, /gate\.smartstoreReviewViolations === 0/);
+  assert.match(route, /gate\.smartstoreQueuedOrRunning === 0/);
+  assert.match(route, /gate\.smartstoreReconciliationRequired === 0/);
+  assert.match(route, /readyForSmartstoreOpen:/);
+  assert.match(route, /SmartStore release gate scope mismatch/);
   assert.match(route, /p_channel: parsed\.data\.channel,\s*p_open: true,/s);
   assert.match(route, /parsed\.data\.action !== "close_gate" && identity\.status !== "valid"/);
   assert.match(route, /p_open: parsed\.data\.action === "open_gate"/);

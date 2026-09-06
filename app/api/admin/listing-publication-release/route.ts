@@ -21,7 +21,7 @@ const publicationChannels = [
   "temu",
 ] as const;
 
-const scopedPublicationChannels = ["qoo10", "coupang"] as const;
+const scopedPublicationChannels = ["qoo10", "coupang", "smartstore"] as const;
 
 const channelLabels: Record<(typeof publicationChannels)[number], string> = {
   qoo10: "Qoo10",
@@ -83,6 +83,14 @@ const gateStatusSchema = z.object({
   coupangQueuedOrRunning: z.number().int().nonnegative(),
   coupangReconciliationRequired: z.number().int().nonnegative(),
   coupangEffectiveOpen: z.boolean(),
+  smartstoreAdapterReady: z.boolean(),
+  smartstoreAttestedRelease: releaseShaSchema,
+  smartstoreReleaseConsistent: z.boolean(),
+  smartstoreRuntimeReleaseMatches: z.boolean(),
+  smartstoreReviewViolations: z.number().int().nonnegative(),
+  smartstoreQueuedOrRunning: z.number().int().nonnegative(),
+  smartstoreReconciliationRequired: z.number().int().nonnegative(),
+  smartstoreEffectiveOpen: z.boolean(),
 }).superRefine((value, context) => {
   if (value.state !== (value.open ? "open" : "closed")) {
     context.addIssue({ code: "custom", message: "listing release gate state mismatch" });
@@ -109,6 +117,12 @@ const gateStatusSchema = z.object({
     // A null scope is the global gate, which covers Coupang after every
     // channel passes. A "coupang" scope grants only the Coupang boundary.
     context.addIssue({ code: "custom", message: "Coupang release gate scope mismatch" });
+  }
+  if (
+    value.smartstoreEffectiveOpen
+    && (!value.open || (value.openedChannel !== "smartstore" && value.openedChannel !== null))
+  ) {
+    context.addIssue({ code: "custom", message: "SmartStore release gate scope mismatch" });
   }
   if (!value.open && value.openedChannel !== null) {
     context.addIssue({ code: "custom", message: "closed listing release gate cannot retain a channel scope" });
@@ -170,6 +184,19 @@ function readyForCoupangOpen(gate: GateStatus, currentRelease: string) {
     && gate.listingMutationsRunning === 0;
 }
 
+function readyForSmartstoreOpen(gate: GateStatus, currentRelease: string) {
+  return gate.smartstoreAdapterReady
+    && gate.publicationRecheckerReady
+    && gate.smartstoreReleaseConsistent
+    && gate.smartstoreAttestedRelease === currentRelease
+    && gate.activeRuntimeRelease === currentRelease
+    && gate.smartstoreRuntimeReleaseMatches
+    && gate.smartstoreReviewViolations === 0
+    && gate.smartstoreQueuedOrRunning === 0
+    && gate.smartstoreReconciliationRequired === 0
+    && gate.listingMutationsRunning === 0;
+}
+
 async function readGateStatus(serviceClient: SupabaseClient) {
   const { data, error } = await serviceClient.rpc("sellerpilot_service_listing_mutation_release_gate_status");
   if (error) return null;
@@ -195,6 +222,8 @@ function statusPayload(gate: GateStatus, identity: RuntimeReleaseIdentity) {
       && readyForQoo10Open(gate, identity.release),
     readyForCoupangOpen: identity.status === "valid"
       && readyForCoupangOpen(gate, identity.release),
+    readyForSmartstoreOpen: identity.status === "valid"
+      && readyForSmartstoreOpen(gate, identity.release),
   };
 }
 
@@ -230,6 +259,7 @@ export async function GET(request: Request) {
       readyForOpen: false,
       readyForQoo10Open: false,
       readyForCoupangOpen: false,
+      readyForSmartstoreOpen: false,
       message: identity.status === "valid"
         ? "배포 SHA는 확인했습니다. 게이트 상세는 잠시 후 다시 불러옵니다."
         : "게시 릴리스 게이트 상태를 안전하게 확인하지 못했습니다.",
