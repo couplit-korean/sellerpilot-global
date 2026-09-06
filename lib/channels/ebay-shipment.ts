@@ -15,9 +15,13 @@ const record = (value: unknown): Record<string, unknown> => value && typeof valu
   : {};
 
 function validShippedDate(value: unknown): value is string {
-  return typeof value === "string"
-    && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)
-    && Number.isFinite(Date.parse(value));
+  if (typeof value !== "string"
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)) return false;
+  const timestamp = Date.parse(value);
+  // Date.parse rolls impossible calendar dates and 24:00 into the next day.
+  // Compare through seconds, preserving valid provider fractional precision.
+  return Number.isFinite(timestamp)
+    && new Date(timestamp).toISOString().slice(0, 19) === value.slice(0, 19);
 }
 
 function exactText(value: unknown, field: string, max: number) {

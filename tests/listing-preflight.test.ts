@@ -225,6 +225,7 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
         salePrice: 10_000,
         stockQuantity: 1,
         detailAttribute: {
+          unitCapacity: { unitPriceYn: false }, // Explicit fixture; runtime still verifies category eligibility.
           originAreaInfo: { content: "중국" },
           minorPurchasable: true,
           productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC" },

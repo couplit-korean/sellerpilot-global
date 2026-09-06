@@ -36,6 +36,18 @@ function confirmedNotices() {
 function genericDraft(overrides: Record<string, unknown> = {}) {
   return {
     publicationIntent: "safe_test",
+    // Explicit synthetic shipping contract lets the original notice, attribute
+    // and account-enrichment regressions reach their intended validation layer.
+    sellerpilotAssets: { shipping: {
+      shippingFeeKrw: 0,
+      shippingRule: "테스트 판매자 확인 주문 기준 2영업일 출고",
+      shippingRuleReview: "확인",
+      coupangLeadTimeConfirmation: JSON.stringify({
+        shippingRule: "테스트 판매자 확인 주문 기준 2영업일 출고",
+        outboundShippingTimeDay: 2, source: "coupang-wing",
+        orderDateAndCalendarConfirmed: true, approvedPromiseMatched: true, sameDayShipping: false,
+      }),
+    } },
     facts: {
       manufacturer: "롯데제과",
       countryOfOrigin: "대한민국",
@@ -57,6 +69,7 @@ function genericDraft(overrides: Record<string, unknown> = {}) {
         itemName: "롯데샌드 쿠키",
         salePrice: 10000,
         maximumBuyCount: 1,
+        outboundShippingTimeDay: 2,
         images: [{ vendorPath: "https://example.com/cookie.jpg" }],
         notices: [],
         attributes: [],
@@ -237,6 +250,7 @@ test("generic Coupang preparation preserves paid and conditional fees through ac
   for (const [type, threshold] of [["NOT_FREE", 0], ["CONDITIONAL_FREE", 50_000]] as const) {
     const argumentsValue = genericReadyDraft();
     Object.assign(argumentsValue.body, { deliveryChargeType: type, deliveryCharge: 3_500, freeShipOverAmount: threshold });
+    argumentsValue.sellerpilotAssets.shipping.shippingFeeKrw = 3_500;
     const { prepared } = await prepareGeneric({ argumentsValue });
     const body = prepared.arguments.body as Record<string, unknown>;
     assert.equal(body.deliveryChargeType, type);
@@ -255,7 +269,7 @@ test("generic Coupang preparation refuses missing or contradictory shipping befo
   ]) {
     const argumentsValue = genericReadyDraft();
     Object.assign(argumentsValue.body, shipping);
-    await assert.rejects(prepareGeneric({ argumentsValue }), /COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED/);
+    await assert.rejects(prepareGeneric({ argumentsValue }), /LISTING_SHIPPING_CONFIRMATION_REQUIRED:.*shipping-fee-contract/);
   }
 });
 

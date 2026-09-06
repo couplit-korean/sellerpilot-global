@@ -12,6 +12,7 @@ import {
 import { makeValidatedProductDetailPersistable, parsePersistedProductDetailPage } from "./_publishing/product-detail-persistence";
 import type { ProductDetailData, ProductDetailImageLoadState, ProductDetailSource } from "./product-detail-puck";
 import { inspectStudioResultQuality, type StudioResultQuality } from "../lib/studio-result-quality";
+import { productDetailImageLoadCycleKey } from "../lib/product-detail-image-load-cycle";
 
 import { ProductDetailAssetImport, savedDetailSource } from "./product-detail-asset-import";
 
@@ -94,9 +95,15 @@ export function SavedProductDetailPage({
   // An external persisted document must never resolve through Studio asset URLs.
   const studioDocument = savedSource === "studio" ? detailPage?.data ?? null : null;
   const [saving, setSaving] = useState(false);
-  const detailImageLoadCycle = detailPage?.version ?? 0;
+  const detailImageLoadCycle = productDetailImageLoadCycleKey({
+    productId,
+    version: detailPage?.version ?? 0,
+    savedSource,
+    selectedSource,
+    assetUrls,
+  });
   const [imageLoadSnapshot, setImageLoadSnapshot] = useState<{
-    cycle: number;
+    cycle: string;
     states: Record<string, ProductDetailImageLoadState>;
   }>({ cycle: detailImageLoadCycle, states: {} });
   const saveInFlight = useRef(false);
