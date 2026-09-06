@@ -10,6 +10,7 @@ import { executeChannelOperation } from "../lib/channels/operations";
 import type { RemoteResponse } from "../lib/channels/protocols";
 
 const fingerprint = "a".repeat(64);
+const smartstoreSellerSku = "SMARTSTORE-PUBLICATION-TEST";
 
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   return {
@@ -82,7 +83,12 @@ function smartstoreOriginProduct(input: {
     smartstoreChannelProductNo: 20000001,
     originProduct: {
       statusType: input.originStatus,
+      name: "검증된 스마트스토어 원상품명",
+      leafCategoryId: "50022679",
+      salePrice: 3190,
+      stockQuantity: 1,
       detailContent: smartstoreDetailHtml(input.imageCount ?? 8),
+      detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } },
       images: {
         representativeImage: { url: smartstoreImageUrl(0) },
         optionalImages: Array.from({ length: input.imageCount ?? 8 }, (_, index) => ({
@@ -96,6 +102,39 @@ function smartstoreOriginProduct(input: {
       channelProductName: "검증된 스마트스토어 상품명",
       channelProductDisplayStatusType: input.channelStatus,
     },
+  };
+}
+
+function smartstorePublicationRequest(input: {
+  origin: Record<string, unknown>;
+  channelProduct?: Record<string, unknown>;
+}) {
+  const originProduct = structuredClone(input.origin.originProduct) as Record<string, unknown>;
+  const channelProduct = structuredClone(
+    input.channelProduct ?? input.origin.smartstoreChannelProduct,
+  ) as Record<string, unknown>;
+  return async (request: { method: string; path: string }) => {
+    if (request.path === "/v1/products/search") return remote({
+      page: 1,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+      first: true,
+      last: true,
+      contents: [{
+        originProductNo: "10000001",
+        channelProducts: [{
+          channelProductNo: "20000001",
+          sellerManagementCode: smartstoreSellerSku,
+        }],
+      }],
+    });
+    if (request.path === "/v2/products/origin-products/10000001") return remote(input.origin);
+    if (request.path === "/v2/products/channel-products/20000001") return remote({
+      originProduct,
+      smartstoreChannelProduct: channelProduct,
+    });
+    return remote({ code: "NOT_FOUND" }, 404);
   };
 }
 
@@ -385,15 +424,21 @@ test("SmartStore read-only publication boundary requires SALE and ON for live", 
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
   let requestedId = "";
+  const origin = smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" });
+  delete (origin as Record<string, unknown>).originProductNo;
+  delete (origin as Record<string, unknown>).smartstoreChannelProductNo;
+  delete (origin.smartstoreChannelProduct as Record<string, unknown>).channelProductNo;
+  delete (origin.smartstoreChannelProduct as Record<string, unknown>).originProductNo;
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "10000001",
     expected,
     verifiedAt: "2026-08-29T22:00:00.000Z",
-    readOriginProduct: async (originProductNo) => {
-      requestedId = originProductNo;
-      return remote(smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }));
+    sellerSku: smartstoreSellerSku,
+    request: async (request) => {
+      if (request.path.includes("/origin-products/")) requestedId = request.path.split("/").at(-1) ?? "";
+      return smartstorePublicationRequest({ origin })(request);
     },
   });
   assert.equal(requestedId, "10000001");
@@ -407,27 +452,44 @@ test("SmartStore read-only publication boundary requires SALE and ON for live", 
   assert.equal(readback.state?.imageCount, 8);
 });
 
-test("SmartStore dedicated channel-product wrapper overrides stale origin-embedded title and visibility", async () => {
+test("SmartStore publication readback rejects a conflicting optional GET identity before attestation", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" });
+  origin.originProductNo = 99999999;
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote({
-      ...smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }),
-      smartstoreChannelProduct: {
-        channelProductNo: 20000001,
-        originProductNo: 10000001,
-        channelProductName: "승인된 원상품의 오래된 채널명",
-        channelProductDisplayStatusType: "ON",
-      },
-    }),
-    readChannelProduct: async () => remote({
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
+  });
+  assert.equal(readback.state, undefined);
+  assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_IDENTITY_UNVERIFIED");
+});
+
+test("SmartStore dedicated channel-product wrapper overrides stale origin-embedded title and visibility", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const origin = {
+    ...smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }),
+    smartstoreChannelProduct: {
+      channelProductNo: 20000001,
       originProductNo: 10000001,
-      smartstoreChannelProductNo: 20000001,
-      smartstoreChannelProduct: {
+      channelProductName: "승인된 원상품의 오래된 채널명",
+      channelProductDisplayStatusType: "ON",
+    },
+  };
+  const readback = await readSmartstoreListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "10000001",
+    expected,
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({
+      origin,
+      channelProduct: {
         channelProductNo: 20000001,
         originProductNo: 10000001,
         channelProductName: "공격자가 바꾼 실제 채널 상품명",
@@ -452,14 +514,13 @@ test("SmartStore dedicated channel-product read fails closed without official ti
       intent: "live",
       remoteId: "10000001",
       expected,
-      readOriginProduct: async () => remote(smartstoreOriginProduct({
+      sellerSku: smartstoreSellerSku,
+      request: smartstorePublicationRequest({
+        origin: smartstoreOriginProduct({
         originStatus: "SALE",
         channelStatus: "ON",
-      })),
-      readChannelProduct: async () => remote({
-        originProductNo: 10000001,
-        smartstoreChannelProductNo: 20000001,
-        smartstoreChannelProduct,
+        }),
+        channelProduct: smartstoreChannelProduct,
       }),
     });
     assert.equal(readback.state, undefined);
@@ -470,15 +531,17 @@ test("SmartStore dedicated channel-product read fails closed without official ti
 test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({
+    originStatus: "OUTOFSTOCK",
+    channelStatus: "ON",
+  });
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote(smartstoreOriginProduct({
-      originStatus: "OUTOFSTOCK",
-      channelStatus: "ON",
-    })),
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
   });
   assert.equal(readback.state?.visibility, "non_public");
   assert.equal(readback.state?.providerStatus, "OUTOFSTOCK|ON");
@@ -490,6 +553,7 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" });
     calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
     if (url.endsWith("/v1/oauth2/token")) {
       return Response.json({ access_token: "naver-token", expires_in: 10_800 });
@@ -498,7 +562,17 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       createBody = JSON.parse(String(init.body));
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
-    return Response.json(smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" }));
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -519,7 +593,7 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       (createBody.smartstoreChannelProduct as Record<string, unknown>).channelProductDisplayStatusType,
       "SUSPENSION",
     );
-    assert.equal(calls.filter((call) => call === "GET /external/v2/products/origin-products/10000001").length, 2);
+    assert.equal(calls.filter((call) => call === "GET /external/v2/products/origin-products/10000001").length, 3);
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteState?.visibility, "non_public");
@@ -533,11 +607,22 @@ test("SmartStore WAIT readback remains pending_review and is never counted as pu
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.endsWith("/v2/products") && init?.method === "POST") {
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
-    return Response.json(smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" }));
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -565,9 +650,20 @@ test("SmartStore stop requires origin status SUSPENSION in the final GET", async
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.includes("/change-status")) return Response.json({});
-    return Response.json(smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" }));
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -595,16 +691,18 @@ test("SmartStore stop requires origin status SUSPENSION in the final GET", async
 test("SmartStore does not issue verified state when final detail HTML has seven unique images", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({
+    originStatus: "SALE",
+    channelStatus: "ON",
+    imageCount: 7,
+  });
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote(smartstoreOriginProduct({
-      originStatus: "SALE",
-      channelStatus: "ON",
-      imageCount: 7,
-    })),
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
   });
   assert.equal(readback.state, undefined);
   assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED");

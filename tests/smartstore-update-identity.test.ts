@@ -25,6 +25,40 @@ test("official GET without number echoes resolves unique search pair and preserv
   assert.equal(result.currentOriginProduct.stockQuantity, 1);
   assert.equal(calls.length, 3);
 });
+test("missing update seller code is derived from the exact origin path before the complete identity reads", async () => {
+  const { input, calls } = fixture();
+  const result = await readSmartstoreUpdateIdentity({ ...input, sellerSku: undefined });
+  assert.equal(result.sellerSku, sellerSku);
+  assert.deepEqual(calls, [
+    `/v2/products/origin-products/${originProductNo}`,
+    "/v1/products/search",
+    `/v2/products/origin-products/${originProductNo}`,
+    `/v2/products/channel-products/${channelProductNo}`,
+  ]);
+});
+for (const mode of ["missingOrigin", "emptySku", "changedSku"] as const) {
+  test(`seller-code fallback rejects ${mode} before update identity can be trusted`, async () => {
+    const { input, bodies } = fixture();
+    const originPath = `/v2/products/origin-products/${originProductNo}`;
+    if (mode === "missingOrigin") delete bodies[originPath].originProduct;
+    if (mode === "emptySku") {
+      (((bodies[originPath].originProduct as Record<string, unknown>).detailAttribute as Record<string, unknown>)
+        .sellerCodeInfo as Record<string, unknown>).sellerManagementCode = "";
+    }
+    const originalRequest = input.request;
+    const request = async (requestInput: { path: string }) => {
+      if (mode === "changedSku" && requestInput.path === "/v1/products/search") {
+        (((bodies[originPath].originProduct as Record<string, unknown>).detailAttribute as Record<string, unknown>)
+          .sellerCodeInfo as Record<string, unknown>).sellerManagementCode = "OTHER";
+      }
+      return originalRequest(requestInput);
+    };
+    await assert.rejects(
+      readSmartstoreUpdateIdentity({ ...input, sellerSku: undefined, request }),
+      /NAVER_UPDATE_/,
+    );
+  });
+}
 for (const mode of ["duplicate", "incomplete", "wrongOrigin", "conflictingSearchAlias", "wrongOriginAlias", "wrongChannelAlias", "missingChannelOrigin", "changedDetail", "wrongChannelSku", "wrongExpectedChannel"] as const) {
   test(`update rejects ${mode} before any provider mutation`, async () => {
     const { input, bodies } = fixture();

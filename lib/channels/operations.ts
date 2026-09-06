@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { externalDetailCanonical } from "../external-detail-canonical";
 import {
   coupangRequest,
   ebayRequest,
@@ -148,6 +149,12 @@ import {
   readEbayListingPublicationState,
   readSmartstoreListingPublicationState,
 } from "./listing-publication-readback";
+import { readSmartstoreUpdateIdentity } from "./smartstore-update-identity";
+import {
+  prepareSmartstoreContentRepairBody,
+  smartstoreContentRepairBinding,
+  smartstoreContentRepairBodyHashes,
+} from "./smartstore-content-repair";
 import { executeListingPublicationVerification } from "./listing-publication-verification";
 import { uploadChannelNativeImages } from "./native-image-upload";
 import {
@@ -254,6 +261,15 @@ export type ChannelOperationResult = {
   continuation?: {
     reason: "page_cap_reached";
     arguments: Record<string, unknown>;
+  };
+  smartstoreContentRepair?: {
+    contract: "smartstore_existing_content_repair_mutation_v1";
+    originProductNo: string;
+    channelProductNo: string;
+    baselineBodySha256: string;
+    prewriteProtectedBodySha256: string;
+    prewriteOriginResponseSha256: string;
+    prewriteChannelResponseSha256: string;
   };
   safeMessage: string;
 };
@@ -4954,12 +4970,19 @@ function smartstoreBodyForPublicationIntent(
   return body;
 }
 
+function smartstoreSellerSkuFromArguments(argumentsValue: Record<string, unknown>) {
+  const body = objectValue(argumentsValue, "body", false);
+  const originProduct = objectValue(body, "originProduct", false);
+  const detailAttribute = objectValue(originProduct, "detailAttribute", false);
+  const sellerCodeInfo = objectValue(detailAttribute, "sellerCodeInfo", false);
+  return textValue(sellerCodeInfo, "sellerManagementCode");
+}
+
 async function smartstoreListingResultWithPublicationReadback(
   input: ExecuteInput,
   steps: ChannelOperationStep[],
   remoteId: string,
-  readOriginProduct: (originProductNo: string) => Promise<RemoteResponse>,
-  readChannelProduct: (channelProductNo: string) => Promise<RemoteResponse>,
+  request: Parameters<typeof readSmartstoreUpdateIdentity>[0]["request"],
 ) {
   if (!listingPublicationReadbackRequested(input) || steps.some((item) => !item.ok)) {
     return result(input, steps, remoteId);
@@ -4976,11 +4999,14 @@ async function smartstoreListingResultWithPublicationReadback(
     intent: listingPublicationIntentFromArguments(input.arguments),
     remoteId,
     expected,
-    readOriginProduct,
-    readChannelProduct,
+    sellerSku: smartstoreSellerSkuFromArguments(input.arguments) || undefined,
+    request,
   });
   return result(input, [
     ...steps,
+    ...(readback.searchProductReadback
+      ? [step("seller-code-publication-readback", readback.searchProductReadback)]
+      : []),
     step("origin-product-publication-readback", readback.originProductReadback),
     ...(readback.channelProductReadback
       ? [step("channel-product-publication-readback", readback.channelProductReadback)]
@@ -4990,6 +5016,10 @@ async function smartstoreListingResultWithPublicationReadback(
 }
 
 async function executeSmartstore(input: ExecuteInput) {
+  const contentRepair = smartstoreContentRepairBinding(input.arguments);
+  if (contentRepair && input.operation !== "listing.update") {
+    throw new Error("SMARTSTORE_CONTENT_REPAIR_UPDATE_ONLY");
+  }
   const storedAccessToken = readStoredNaverAccessToken(input.payload);
   let token = storedAccessToken
     ? { accessToken: storedAccessToken }
@@ -5075,8 +5105,7 @@ async function executeSmartstore(input: ExecuteInput) {
           input,
           [searchStep, updateStep, readbackStep],
           remoteId,
-          (originProductNo) => request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(originProductNo)}` }),
-          (channelProductNo) => request({ method: "GET", path: `/v2/products/channel-products/${pathSegment(channelProductNo)}` }),
+          request,
         );
       }
     }
@@ -5092,94 +5121,97 @@ async function executeSmartstore(input: ExecuteInput) {
       input,
       steps,
       remoteId,
-      (originProductNo) => request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(originProductNo)}` }),
-      (channelProductNo) => request({ method: "GET", path: `/v2/products/channel-products/${pathSegment(channelProductNo)}` }),
+      request,
     );
   }
   if (input.operation === "listing.update") {
     const remoteId = stringArgument(input.arguments, "originProductNo");
     const originProductNo = pathSegment(remoteId);
     const patchBody = objectValue(input.arguments, "body");
-    const readProduct = () => request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
-    const preflightRemote = await readProduct();
+    const requestedOriginProduct = objectValue(patchBody, "originProduct", false);
+    const requestedDetailAttribute = objectValue(requestedOriginProduct, "detailAttribute", false);
+    const requestedSellerCodeInfo = objectValue(requestedDetailAttribute, "sellerCodeInfo", false);
+    const sellerSku = contentRepair?.sellerSku
+      ?? textValue(requestedSellerCodeInfo, "sellerManagementCode");
+    let searchPreflightRemote: RemoteResponse | undefined;
+    let preflightRemote: RemoteResponse | undefined;
+    let channelPreflightRemote: RemoteResponse | undefined;
+    const identity = await readSmartstoreUpdateIdentity({
+      request: async (requestInput) => {
+        const remote = await request(requestInput);
+        if (requestInput.path === "/v1/products/search") searchPreflightRemote = remote;
+        else if (requestInput.path === `/v2/products/origin-products/${remoteId}`) preflightRemote = remote;
+        else if (requestInput.path.startsWith("/v2/products/channel-products/")) {
+          channelPreflightRemote = remote;
+        }
+        return remote;
+      },
+      originProductNo: remoteId,
+      sellerSku: sellerSku || undefined,
+      expectedChannelProductNo: contentRepair?.channelProductNo,
+    });
+    if (!searchPreflightRemote || !preflightRemote || !channelPreflightRemote) {
+      throw new Error("NAVER_UPDATE_IDENTITY_READBACK_INCOMPLETE");
+    }
     const preflightStep = step("product-update-preflight", preflightRemote);
-    const currentOriginProduct = objectValue(preflightRemote.data, "originProduct", false);
-    const embeddedChannelProduct = objectValue(preflightRemote.data, "smartstoreChannelProduct", false);
-    const responseOriginProductNo = String(
-      preflightRemote.data.originProductNo ?? currentOriginProduct.originProductNo ?? "",
-    ).trim();
-    const responseChannelProductNo = String(
-      preflightRemote.data.smartstoreChannelProductNo
-        ?? embeddedChannelProduct.channelProductNo
-        ?? "",
-    ).trim();
-    preflightStep.ok = preflightStep.ok
-      && Object.keys(currentOriginProduct).length > 0
-      && (!responseOriginProductNo || responseOriginProductNo === remoteId)
-      && Boolean(responseChannelProductNo);
+    const currentOriginProduct = identity.currentOriginProduct;
     preflightStep.data = {
       ...preflightStep.data,
-      sellerpilotVerification: preflightStep.ok ? "SMARTSTORE_EXISTING_PRODUCT_VERIFIED" : "SMARTSTORE_EXISTING_PRODUCT_MISSING",
-      sellerpilotOriginProductNo: responseOriginProductNo || remoteId,
-      ...(responseChannelProductNo
-        ? { sellerpilotChannelProductNo: responseChannelProductNo }
-        : {}),
+      sellerpilotVerification: "SMARTSTORE_EXISTING_PRODUCT_VERIFIED",
+      sellerpilotIdentitySource: "complete_seller_code_search_and_exact_product_paths",
+      sellerpilotOriginProductNo: identity.originProductNo,
+      sellerpilotChannelProductNo: identity.channelProductNo,
     };
-    if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
-    const channelPreflightRemote = await request({
-      method: "GET",
-      path: `/v2/products/channel-products/${pathSegment(responseChannelProductNo)}`,
-    });
     const channelPreflightStep = step("channel-product-update-preflight", channelPreflightRemote);
-    const currentChannelProduct = objectValue(
-      channelPreflightRemote.data,
-      "smartstoreChannelProduct",
-      false,
-    );
-    const authoritativeChannelProductNo = String(
-      currentChannelProduct.channelProductNo
-        ?? currentChannelProduct.smartstoreChannelProductNo
-        ?? channelPreflightRemote.data.smartstoreChannelProductNo
-        ?? "",
-    ).trim();
-    const authoritativeOriginProductNo = String(
-      currentChannelProduct.originProductNo
-        ?? channelPreflightRemote.data.originProductNo
-        ?? "",
-    ).trim();
-    channelPreflightStep.ok = channelPreflightStep.ok
-      && Object.keys(currentChannelProduct).length > 0
-      && authoritativeChannelProductNo === responseChannelProductNo
-      && authoritativeOriginProductNo === remoteId;
+    const currentChannelProduct = identity.currentChannelProduct;
     channelPreflightStep.data = {
       ...channelPreflightStep.data,
-      sellerpilotVerification: channelPreflightStep.ok
-        ? "SMARTSTORE_CHANNEL_PRODUCT_VERIFIED"
-        : "SMARTSTORE_CHANNEL_PRODUCT_MISMATCH",
+      sellerpilotVerification: "SMARTSTORE_CHANNEL_PRODUCT_VERIFIED",
     };
-    if (!channelPreflightStep.ok) {
-      return result(input, [preflightStep, channelPreflightStep], remoteId);
-    }
     const currentBody = {
       originProduct: currentOriginProduct,
       smartstoreChannelProduct: currentChannelProduct,
     };
-    const mergedBody = smartstoreBodyForPublicationIntent(
-      input,
-      mergeListingUpdatePatch(currentBody, patchBody) as Record<string, unknown>,
-    );
+    const mergedBody = contentRepair
+      ? prepareSmartstoreContentRepairBody({
+          argumentsValue: input.arguments,
+          currentOriginProduct,
+          currentChannelProduct,
+          phase: "prepared",
+        })
+      : smartstoreBodyForPublicationIntent(
+          input,
+          mergeListingUpdatePatch(currentBody, patchBody) as Record<string, unknown>,
+        );
     const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: mergedBody });
     const updateStep = step("product-update", remote);
     if (!updateStep.ok) return result(input, [preflightStep, channelPreflightStep, updateStep], remoteId);
-    const readbackRemote = await readProduct();
+    const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
     const readbackStep = listingUpdateReadbackStep("product-readback", readbackRemote, input.channel, input.arguments);
-    return smartstoreListingResultWithPublicationReadback(
+    const listingResult = await smartstoreListingResultWithPublicationReadback(
       input,
       [preflightStep, channelPreflightStep, updateStep, readbackStep],
       remoteId,
-      (originProductId) => request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(originProductId)}` }),
-      (channelProductNo) => request({ method: "GET", path: `/v2/products/channel-products/${pathSegment(channelProductNo)}` }),
+      request,
     );
+    if (!contentRepair || !listingResult.ok) return listingResult;
+    const prewriteHashes = smartstoreContentRepairBodyHashes(currentBody);
+    return {
+      ...listingResult,
+      smartstoreContentRepair: {
+        contract: "smartstore_existing_content_repair_mutation_v1" as const,
+        originProductNo: identity.originProductNo,
+        channelProductNo: identity.channelProductNo,
+        baselineBodySha256: prewriteHashes.baselineBodySha256,
+        prewriteProtectedBodySha256: prewriteHashes.protectedBodySha256,
+        prewriteOriginResponseSha256: createHash("sha256")
+          .update(externalDetailCanonical(preflightRemote.data))
+          .digest("hex"),
+        prewriteChannelResponseSha256: createHash("sha256")
+          .update(externalDetailCanonical(channelPreflightRemote.data))
+          .digest("hex"),
+      },
+    };
   }
   if (input.operation === "listing.stop") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
@@ -5192,8 +5224,7 @@ async function executeSmartstore(input: ExecuteInput) {
       input,
       [step("status-stop", remote)],
       decodeURIComponent(originProductNo),
-      (originProductId) => request({ method: "GET", path: `/v2/products/origin-products/${pathSegment(originProductId)}` }),
-      (channelProductNo) => request({ method: "GET", path: `/v2/products/channel-products/${pathSegment(channelProductNo)}` }),
+      request,
     );
   }
   if (input.operation === "price.update") {

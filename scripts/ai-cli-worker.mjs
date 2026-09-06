@@ -82,6 +82,9 @@ import {
   gatewayJobCompletionStatus,
   smartstoreManualAdoptionReadbackJobSchema,
 } from "../lib/channels/gateway-contract.ts";
+import { smartstoreContentRepairTransmissionArgument } from "../lib/channels/smartstore-content-repair-contract.ts";
+import { smartstoreContentRepairBinding } from "../lib/channels/smartstore-content-repair.ts";
+import { buildSmartstoreContentRepairResult } from "../lib/channels/smartstore-content-repair-result.ts";
 import {
   qoo10S1ActivationArgument,
   qoo10S1ActivationArgumentsValid,
@@ -4433,6 +4436,42 @@ async function processGatewayJob(job) {
           status: 200,
           data: { sellerpilotMutation: "accepted" },
         });
+      }
+      const contentRepair = job.channel === "smartstore" && job.operation === "listing.update"
+        ? smartstoreContentRepairBinding(operationArguments)
+        : null;
+      if (contentRepair && result.ok) {
+        const mutationEvidence = result.smartstoreContentRepair;
+        if (!mutationEvidence
+            || mutationEvidence.contract !== "smartstore_existing_content_repair_mutation_v1"
+            || mutationEvidence.originProductNo !== contentRepair.originProductNo
+            || mutationEvidence.channelProductNo !== contentRepair.channelProductNo
+            || mutationEvidence.baselineBodySha256 !== contentRepair.baselineBodySha256
+            || mutationEvidence.prewriteProtectedBodySha256 !== contentRepair.protectedBodySha256) {
+          throw new Error("SMARTSTORE_CONTENT_REPAIR_MUTATION_EVIDENCE_INVALID");
+        }
+        await assertGatewayLeaseHealthy();
+        const postwriteReadback = await collectSmartstoreManualAdoptionReadback({
+          credential,
+          target: { sellerSku: contentRepair.sellerSku },
+          signal: gatewayExecutionSignal,
+        });
+        await assertGatewayLeaseHealthy();
+        const evidence = buildSmartstoreContentRepairResult({
+          binding: contentRepair,
+          mutationEvidence,
+          approvedTransmissionImages: operationArguments[smartstoreContentRepairTransmissionArgument],
+          postwriteReadback,
+        });
+        result = {
+          ok: true,
+          channel: "smartstore",
+          operation: "listing.update",
+          steps: result.steps,
+          remoteId: contentRepair.originProductNo,
+          evidence,
+          safeMessage: "스마트스토어 기존 상품에 승인된 콘텐츠를 반영하고 공식 재조회 증거를 확인했습니다.",
+        };
       }
       if (job.channel === "lazada" && job.operation === "categories.suggest") {
         const names = result.steps.flatMap((entry) => entry?.data?.data?.categorySuggestions ?? []).map((entry) => entry.categoryName).slice(0, 10);

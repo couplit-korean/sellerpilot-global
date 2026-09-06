@@ -7,6 +7,7 @@ import {
 } from "./listing-publication-state";
 import type { RemoteResponse } from "./protocols";
 import { smartstoreReadbackImageProjection } from "./smartstore-image-contract";
+import { readSmartstoreUpdateIdentity } from "./smartstore-update-identity";
 
 type ListingMutationOperation = "listing.create" | "listing.update" | "listing.stop";
 
@@ -324,6 +325,7 @@ function htmlImageUrls(value: unknown) {
 
 export type SmartstoreListingPublicationReadback = {
   state?: VerifiedListingRemoteState;
+  searchProductReadback?: RemoteResponse;
   originProductReadback: RemoteResponse;
   channelProductReadback?: RemoteResponse;
   failureCode?: string;
@@ -338,50 +340,91 @@ export async function readSmartstoreListingPublicationState(input: {
   intent?: ListingPublicationIntent;
   remoteId: string;
   expected: ListingPublicationReadbackExpectation;
-  readOriginProduct: (originProductNo: string) => Promise<RemoteResponse>;
-  readChannelProduct?: (channelProductNo: string) => Promise<RemoteResponse>;
+  sellerSku?: string;
+  request: Parameters<typeof readSmartstoreUpdateIdentity>[0]["request"];
   verifiedAt?: string;
 }): Promise<SmartstoreListingPublicationReadback> {
-  const originProductReadback = await input.readOriginProduct(input.remoteId);
+  if (!/^[1-9]\d{5,19}$/u.test(input.remoteId)) {
+    throw new Error("SMARTSTORE_PUBLICATION_REMOTE_ID_INVALID");
+  }
+  // The official v2 GET bodies do not promise product-number echoes. Read the
+  // origin path once to bind/derive the seller SKU, then resolve the unique
+  // origin/channel pair through the complete SELLER_CODE search before using
+  // either GET body as publication evidence.
+  const initialOriginProductReadback = await input.request({
+    method: "GET",
+    path: `/v2/products/origin-products/${input.remoteId}`,
+  });
+  const initialOriginProduct = record(initialOriginProductReadback.data.originProduct);
+  const providerSellerSku = String(
+    record(record(initialOriginProduct.detailAttribute).sellerCodeInfo).sellerManagementCode ?? "",
+  ).trim();
+  const expectedSellerSku = String(input.sellerSku ?? providerSellerSku).trim();
+  if (!remoteAccepted(initialOriginProductReadback)
+      || !expectedSellerSku
+      || providerSellerSku !== expectedSellerSku) {
+    return {
+      originProductReadback: initialOriginProductReadback,
+      failureCode: "SMARTSTORE_PUBLICATION_IDENTITY_UNVERIFIED",
+    };
+  }
+  let searchProductReadback: RemoteResponse | undefined;
+  let originProductReadback: RemoteResponse | undefined;
+  let channelProductReadback: RemoteResponse | undefined;
+  let resolvedChannelProductNo = "";
+  try {
+    const identity = await readSmartstoreUpdateIdentity({
+      request: async (request) => {
+        const remote = await input.request(request);
+        if (request.path === "/v1/products/search") searchProductReadback = remote;
+        else if (request.path === `/v2/products/origin-products/${input.remoteId}`) {
+          originProductReadback = remote;
+        } else if (request.path.startsWith("/v2/products/channel-products/")) {
+          channelProductReadback = remote;
+        }
+        return remote;
+      },
+      originProductNo: input.remoteId,
+      sellerSku: expectedSellerSku,
+    });
+    resolvedChannelProductNo = identity.channelProductNo;
+  } catch {
+    return {
+      ...(searchProductReadback ? { searchProductReadback } : {}),
+      originProductReadback: originProductReadback ?? initialOriginProductReadback,
+      ...(channelProductReadback ? { channelProductReadback } : {}),
+      failureCode: "SMARTSTORE_PUBLICATION_IDENTITY_UNVERIFIED",
+    };
+  }
+  if (!originProductReadback || !channelProductReadback) {
+    return {
+      ...(searchProductReadback ? { searchProductReadback } : {}),
+      originProductReadback: originProductReadback ?? initialOriginProductReadback,
+      ...(channelProductReadback ? { channelProductReadback } : {}),
+      failureCode: "SMARTSTORE_PUBLICATION_IDENTITY_UNVERIFIED",
+    };
+  }
   const locale = listingExpectedPublicationLocale("smartstore", "KR");
   const originProduct = record(originProductReadback.data.originProduct);
-  const channelProduct = record(originProductReadback.data.smartstoreChannelProduct);
-  const responseOriginProductNo = String(
-    originProductReadback.data.originProductNo
-      ?? originProduct.originProductNo
-      ?? "",
-  ).trim();
-  const responseChannelProductNo = String(
-    originProductReadback.data.smartstoreChannelProductNo
-      ?? channelProduct.channelProductNo
-      ?? "",
-  ).trim();
-  const channelProductReadback = responseChannelProductNo && input.readChannelProduct
-    ? await input.readChannelProduct(responseChannelProductNo)
-    : undefined;
-  const authoritativeChannelWrapper = channelProductReadback?.data ?? {};
+  const authoritativeChannelWrapper = channelProductReadback.data;
   const officialSmartstoreChannelProduct = record(authoritativeChannelWrapper.smartstoreChannelProduct);
-  const authoritativeChannelProduct = input.readChannelProduct
-    ? officialSmartstoreChannelProduct
-    : channelProduct;
+  const authoritativeChannelProduct = officialSmartstoreChannelProduct;
   const authoritativeChannelProductNo = String(
     authoritativeChannelProduct.channelProductNo
       ?? authoritativeChannelProduct.smartstoreChannelProductNo
       ?? authoritativeChannelWrapper.smartstoreChannelProductNo
-      ?? responseChannelProductNo,
+      ?? "",
   ).trim();
   const authoritativeOriginProductNo = String(
     authoritativeChannelProduct.originProductNo
       ?? authoritativeChannelWrapper.originProductNo
-      ?? input.remoteId,
+      ?? "",
   ).trim();
   const originStatus = String(originProduct.statusType ?? "").trim().toUpperCase();
   const channelStatus = String(
-    input.readChannelProduct
-      ? (authoritativeChannelProduct.channelProductDisplayStatusType
-        ?? authoritativeChannelProduct.displayStatusType
-        ?? "")
-      : (channelProduct.channelProductDisplayStatusType ?? ""),
+    authoritativeChannelProduct.channelProductDisplayStatusType
+      ?? authoritativeChannelProduct.displayStatusType
+      ?? "",
   ).trim().toUpperCase();
   const authoritativeChannelTitle = String(
     authoritativeChannelProduct.channelProductName ?? "",
@@ -389,16 +432,11 @@ export async function readSmartstoreListingPublicationState(input: {
   const imageProjection = smartstoreReadbackImageProjection(originProduct);
   const detailImageUrls = imageProjection.detailImageUrls;
   const identityVerified = remoteAccepted(originProductReadback)
-    && (!responseOriginProductNo || responseOriginProductNo === input.remoteId)
     && Object.keys(originProduct).length > 0
-    && (!input.readChannelProduct
-      || Boolean(channelProductReadback
-        && remoteAccepted(channelProductReadback)
-        && Object.keys(officialSmartstoreChannelProduct).length > 0
-        && authoritativeChannelProductNo === responseChannelProductNo
-        && authoritativeOriginProductNo === input.remoteId
-        && authoritativeChannelTitle.length > 0
-        && channelStatus.length > 0));
+    && remoteAccepted(channelProductReadback)
+    && Object.keys(officialSmartstoreChannelProduct).length > 0
+    && authoritativeChannelTitle.length > 0
+    && channelStatus.length > 0;
   const localeVerified = locale === input.expected.locale;
   const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
   const imageCountVerified = input.operation === "listing.stop"
@@ -423,17 +461,19 @@ export async function readSmartstoreListingPublicationState(input: {
       || !imageCountVerified
       || (input.operation === "listing.stop" && originStatus !== "SUSPENSION")) {
     return {
+      ...(searchProductReadback ? { searchProductReadback } : {}),
       originProductReadback,
-      ...(channelProductReadback ? { channelProductReadback } : {}),
+      channelProductReadback,
       failureCode: "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED",
     };
   }
 
   const resources: Record<string, unknown> = { originProductNo: input.remoteId };
-  if (authoritativeChannelProductNo) resources.smartstoreChannelProductNo = authoritativeChannelProductNo;
+  if (resolvedChannelProductNo) resources.smartstoreChannelProductNo = resolvedChannelProductNo;
   return {
+    ...(searchProductReadback ? { searchProductReadback } : {}),
     originProductReadback,
-    ...(channelProductReadback ? { channelProductReadback } : {}),
+    channelProductReadback,
     state: buildVerifiedState({
       visibility,
       providerStatus: `${originStatus}|${channelStatus || "UNKNOWN"}`,
@@ -443,7 +483,7 @@ export async function readSmartstoreListingPublicationState(input: {
       fingerprint: input.expected.fingerprint,
       imageCount: input.operation === "listing.stop" ? 0 : detailImageUrls.length,
       evidence: {
-        identitySource: responseOriginProductNo ? "origin_product_response" : "origin_product_path",
+        identitySource: "complete_seller_code_search_and_exact_product_paths",
         originProductStatus: originStatus,
         channelProductDisplayStatus: channelStatus,
         ...(input.operation === "listing.stop"
@@ -456,8 +496,6 @@ export async function readSmartstoreListingPublicationState(input: {
         detailImageCount: detailImageUrls.length,
         readbackDigest: sha256({
           originProductNo: input.remoteId,
-          responseOriginProductNo,
-          responseChannelProductNo,
           authoritativeChannelProductNo,
           authoritativeOriginProductNo,
           originStatus,

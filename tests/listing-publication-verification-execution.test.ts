@@ -233,6 +233,7 @@ const coupangData = {
 };
 const smartstoreProviderRepresentative =
   "https://shop-phinf.pstatic.net/20260830_sellerpilot/representative.jpg";
+const smartstoreSellerSku = "SELLERPILOT-SMARTSTORE-001";
 const smartstoreProviderImages = detailUrls.map((_, index) =>
   `https://shop-phinf.pstatic.net/20260830_sellerpilot/detail-${index + 1}.jpg`);
 const smartstoreDescriptionText = "한국어 상품 상세 정보입니다.";
@@ -246,6 +247,9 @@ const smartstoreData = {
   originProduct: {
     name: "한국어로 확인된 스마트스토어 판매 상품",
     statusType: "SALE",
+    detailAttribute: {
+      sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku },
+    },
     detailContent: smartstoreProviderDescription,
     images: {
       representativeImage: { url: smartstoreProviderRepresentative },
@@ -746,6 +750,9 @@ test("all eight real provider executors reverify read-only state without opening
       const isExactEbayTradingRead = method === "POST"
         && url.endsWith("/ws/api.dll")
         && ["GetUser", "GetItem"].includes(ebayTradingCall);
+      const isExactSmartstoreRead = fixture.channel === "smartstore"
+        && method === "POST"
+        && url.endsWith("/v1/products/search");
       const temuRequestBody = fixture.channel === "temu" && typeof init?.body === "string"
         ? JSON.parse(init.body) as Record<string, unknown>
         : {};
@@ -756,7 +763,8 @@ test("all eight real provider executors reverify read-only state without opening
           "bg.local.goods.detail.query",
           "temu.local.goods.sku.stock.query",
         ].includes(String(temuRequestBody.type ?? ""));
-      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead && !isExactTemuRead) {
+      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead
+          && !isExactSmartstoreRead && !isExactTemuRead) {
         providerWriteRequests += 1;
       }
       if (fixture.channel === "elevenst") {
@@ -783,11 +791,37 @@ test("all eight real provider executors reverify read-only state without opening
       if (fixture.channel === "coupang" && url.includes("/vendor-items/4444/inventories")) {
         return Response.json({ code: "SUCCESS", data: { sellerItemId: 3333, onSale: true } });
       }
+      if (isExactSmartstoreRead) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          searchKeywordType: "SELLER_CODE",
+          sellerManagementCode: smartstoreSellerSku,
+          page: 1,
+          size: 50,
+          orderType: "NO",
+        });
+        return Response.json({
+          page: 1,
+          size: 50,
+          first: true,
+          last: true,
+          totalElements: 1,
+          totalPages: 1,
+          contents: [{
+            originProductNo: smartstoreData.originProductNo,
+            channelProducts: [{
+              originProductNo: smartstoreData.originProductNo,
+              channelProductNo: smartstoreData.smartstoreChannelProductNo,
+              sellerManagementCode: smartstoreSellerSku,
+            }],
+          }],
+        });
+      }
       if (fixture.channel === "smartstore" && url.includes("/v2/products/channel-products/")) {
         assert.equal(new Headers(init?.headers).get("authorization"), "Bearer naver-access");
         return Response.json({
           originProductNo: smartstoreData.originProductNo,
           smartstoreChannelProductNo: smartstoreData.smartstoreChannelProductNo,
+          originProduct: smartstoreData.originProduct,
           smartstoreChannelProduct: smartstoreData.smartstoreChannelProduct,
         });
       }
@@ -878,7 +912,8 @@ test("all eight real provider executors reverify read-only state without opening
       assert.ok(calls.length >= 1, fixture.channel);
       if (fixture.channel === "smartstore") {
         assert.equal(calls.some((call) => call.url.includes("/oauth2/token")), false);
-        assert.ok(calls.every((call) => call.method === "GET"));
+        assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+        assert.ok(calls.every((call) => call.method === "GET" || call.url.endsWith("/v1/products/search")));
       }
     } finally {
       globalThis.fetch = originalFetch;

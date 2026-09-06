@@ -46,7 +46,7 @@ export function runWithProviderReadOnlyTransport<T>(execute: () => Promise<T>) {
 
 function assertProviderReadOnlyTransport(
   method: string,
-  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "temu_read_rpc",
+  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "smartstore_read_rpc" | "temu_read_rpc",
 ) {
   if (!providerReadOnlyTransportStorage.getStore()) return;
   const normalized = method.trim().toUpperCase();
@@ -54,6 +54,7 @@ function assertProviderReadOnlyTransport(
   if (normalized === "POST"
       && (exception === "qoo10_read_rpc"
         || exception === "ebay_trading_read"
+        || exception === "smartstore_read_rpc"
         || exception === "temu_read_rpc")) return;
   throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
@@ -250,7 +251,12 @@ export async function naverRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
-  assertProviderReadOnlyTransport(input.method);
+  assertProviderReadOnlyTransport(
+    input.method,
+    input.method === "POST" && input.path === "/v1/products/search"
+      ? "smartstore_read_rpc"
+      : undefined,
+  );
   const query = input.query?.toString() ?? "";
   const response = await fetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,

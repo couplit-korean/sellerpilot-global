@@ -98,20 +98,39 @@ test("Lazada listing update verifies the requested item identity after the XML w
   }
 });
 
-test("Smartstore listing 13671684696 update preserves category 50001578 and remote sale/display policy", async () => {
+test("Smartstore update derives the existing seller code, resolves missing GET ID echoes, and preserves remote commerce", async () => {
   const originalFetch = globalThis.fetch;
+  const sellerSku = "SMARTSTORE-UPDATE-TEST";
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   let transmittedBody: Record<string, unknown> | null = null;
+  const initialOriginProduct = {
+    leafCategoryId: "50001578",
+    name: "수정 상품",
+    salePrice: 77_770,
+    stockQuantity: 9,
+    deliveryInfo: { deliveryType: "DELIVERY" },
+    detailAttribute: {
+      sellerCodeInfo: { sellerManagementCode: sellerSku },
+      unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
+      productInfoProvidedNotice: {
+        productInfoProvidedNoticeType: "ETC",
+        etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },
+      },
+    },
+  };
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, init });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "13671684696", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: sellerSku,
+      }] }],
+    });
     if (url.includes("/v2/products/channel-products/")) return Response.json({
-      originProductNo: 13671684696,
-      smartstoreChannelProductNo: 20000001,
+      originProduct: structuredClone(initialOriginProduct),
       smartstoreChannelProduct: {
-        channelProductNo: 20000001,
-        originProductNo: 13671684696,
         channelProductName: "수정 상품",
         channelProductDisplayStatusType: "SUSPENSION",
         naverShoppingRegistration: true,
@@ -122,25 +141,8 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
       return Response.json({});
     }
     if (init?.method === "GET") return Response.json(transmittedBody ?? {
-      originProductNo: 13671684696,
-      smartstoreChannelProductNo: 20000001,
-      originProduct: {
-        leafCategoryId: "50001578",
-        name: "수정 상품",
-        salePrice: 77_770,
-        stockQuantity: 9,
-        deliveryInfo: { deliveryType: "DELIVERY" },
-        detailAttribute: {
-          unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
-          productInfoProvidedNotice: {
-            productInfoProvidedNoticeType: "ETC",
-            etc: { manufacturer: "기존 제조사", customerServicePhoneNumber: "010-0000-0000" },
-          },
-        },
-      },
+      originProduct: structuredClone(initialOriginProduct),
       smartstoreChannelProduct: {
-        channelProductNo: 20000001,
-        originProductNo: 13671684696,
         channelProductName: "수정 상품",
         channelProductDisplayStatusType: "SUSPENSION",
         naverShoppingRegistration: true,
@@ -156,13 +158,19 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
       arguments: {
         originProductNo: "13671684696",
         body: {
-          originProduct: { name: "수정 상품", salePrice: 1000, stockQuantity: 999 },
+          originProduct: {
+            name: "수정 상품",
+            salePrice: 1000,
+            stockQuantity: 999,
+          },
           smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "ON" },
         },
       },
       environment: "production",
     });
     assert.equal(result.ok, true);
+    const searchCall = calls.find((call) => call.url.endsWith("/v1/products/search"));
+    assert.equal(JSON.parse(String(searchCall?.init?.body)).sellerManagementCode, sellerSku);
     assert.equal(result.remoteId, "13671684696");
     assert.deepEqual(result.steps.map((step) => step.name), [
       "product-update-preflight",
@@ -171,8 +179,8 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
       "product-readback",
     ]);
     const productCalls = calls.filter((call) => call.url.includes("/v2/products/origin-products/13671684696"));
-    assert.deepEqual(productCalls.map((call) => call.init?.method), ["GET", "PUT", "GET"]);
-    assert.deepEqual(JSON.parse(String(productCalls[1].init?.body)), {
+    assert.deepEqual(productCalls.map((call) => call.init?.method), ["GET", "GET", "PUT", "GET"]);
+    assert.deepEqual(JSON.parse(String(productCalls[2].init?.body)), {
       originProduct: {
         leafCategoryId: "50001578",
         name: "수정 상품",
@@ -180,6 +188,7 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
         stockQuantity: 9,
         deliveryInfo: { deliveryType: "DELIVERY" },
         detailAttribute: {
+          sellerCodeInfo: { sellerManagementCode: sellerSku },
           unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
           productInfoProvidedNotice: {
             productInfoProvidedNoticeType: "ETC",
@@ -188,8 +197,6 @@ test("Smartstore listing 13671684696 update preserves category 50001578 and remo
         },
       },
       smartstoreChannelProduct: {
-        channelProductNo: 20000001,
-        originProductNo: 13671684696,
         channelProductName: "수정 상품",
         channelProductDisplayStatusType: "SUSPENSION",
         naverShoppingRegistration: true,
@@ -226,12 +233,23 @@ test("Shopee local update blocks a global-or-unknown ID before any write", async
 
 test("listing update fails when the provider accepts the write but readback keeps old mutable content", async () => {
   const originalFetch = globalThis.fetch;
+  const sellerSku = "SMARTSTORE-UPDATE-MISMATCH";
+  const originProduct = {
+    name: "기존 상품",
+    salePrice: 77_770,
+    detailAttribute: { sellerCodeInfo: { sellerManagementCode: sellerSku } },
+  };
   globalThis.fetch = async (input) => {
     const url = String(input);
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "1234567890", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: sellerSku,
+      }] }],
+    });
     if (url.includes("/channel-products/")) return Response.json({
-      originProductNo: 1234567890,
-      smartstoreChannelProductNo: 20000001,
+      originProduct: structuredClone(originProduct),
       smartstoreChannelProduct: {
         channelProductNo: 20000001,
         originProductNo: 1234567890,
@@ -240,9 +258,7 @@ test("listing update fails when the provider accepts the write but readback keep
       },
     });
     if (url.includes("/origin-products/")) return Response.json({
-      originProductNo: 1234567890,
-      smartstoreChannelProductNo: 20000001,
-      originProduct: { name: "기존 상품", salePrice: 77_770 },
+      originProduct: structuredClone(originProduct),
       smartstoreChannelProduct: {
         channelProductNo: 20000001,
         originProductNo: 1234567890,
@@ -257,7 +273,12 @@ test("listing update fails when the provider accepts the write but readback keep
       channel: "smartstore",
       operation: "listing.update",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
-      arguments: { originProductNo: "1234567890", body: { originProduct: { name: "수정 상품" } } },
+      arguments: { originProductNo: "1234567890", body: {
+        originProduct: {
+          name: "수정 상품",
+          detailAttribute: { sellerCodeInfo: { sellerManagementCode: sellerSku } },
+        },
+      } },
       environment: "production",
     });
     assert.equal(result.ok, false);

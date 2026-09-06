@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operations";
 import {
   listingOperationRequiresVerifiedRemoteState,
@@ -365,7 +366,7 @@ export const smartstoreManualAdoptionReadbackJobSchema = z.object({
   manifestDigest: smartstoreManualAdoptionDigestSchema,
 }).strict();
 
-const smartstoreManualAdoptionReadbackSchema = z.object({
+export const smartstoreManualAdoptionReadbackSchema = z.object({
   contract: z.literal("smartstore_official_manual_adoption_readback_v1"),
   source: z.literal("smartstore_official_api_readback_v1"),
   observedAt: z.string().datetime({ offset: true }),
@@ -408,6 +409,82 @@ const smartstoreManualAdoptionReadbackSchema = z.object({
     context.addIssue({ code: "custom", message: "SmartStore adoption readback must be serializable" });
   }
 });
+
+const smartstoreContentRepairDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+export const smartstoreContentRepairResultSchema = z.object({
+  contract: z.literal("smartstore_existing_content_repair_result_v1"),
+  source: z.literal("smartstore_official_content_repair_v1"),
+  observedAt: z.string().datetime({ offset: true }),
+  providerMutationPerformed: z.literal(true),
+  originProductNo: z.string().regex(/^[1-9]\d{5,19}$/u),
+  channelProductNo: z.string().regex(/^[1-9]\d{5,19}$/u),
+  baselineBodySha256: smartstoreContentRepairDigestSchema,
+  prewriteProtectedBodySha256: smartstoreContentRepairDigestSchema,
+  postwriteProtectedBodySha256: smartstoreContentRepairDigestSchema,
+  prewriteOriginResponseSha256: smartstoreContentRepairDigestSchema,
+  prewriteChannelResponseSha256: smartstoreContentRepairDigestSchema,
+  postwriteOriginResponseSha256: smartstoreContentRepairDigestSchema,
+  postwriteChannelResponseSha256: smartstoreContentRepairDigestSchema,
+  approvedTransmissionImages: smartstoreContentRepairTransmissionImagesSchema,
+  postwriteReadback: smartstoreManualAdoptionReadbackSchema,
+}).strict().superRefine((value, context) => {
+  if (value.prewriteProtectedBodySha256 !== value.postwriteProtectedBodySha256) {
+    context.addIssue({
+      code: "custom",
+      path: ["postwriteProtectedBodySha256"],
+      message: "SmartStore content repair changed protected provider fields",
+    });
+  }
+  if (value.observedAt !== value.postwriteReadback.observedAt
+      || value.postwriteReadback.originReadback.path
+        !== `/v2/products/origin-products/${value.originProductNo}`
+      || value.postwriteReadback.channelReadback.path
+        !== `/v2/products/channel-products/${value.channelProductNo}`) {
+    context.addIssue({
+      code: "custom",
+      path: ["postwriteReadback"],
+      message: "SmartStore content repair readback identity mismatch",
+    });
+  }
+  if (value.approvedTransmissionImages.some((image, index) => image.index !== index)
+      || new Set(value.approvedTransmissionImages.map((image) => image.url)).size !== 8
+      || new Set(value.approvedTransmissionImages.map((image) => image.contentSha256)).size !== 8
+      || new Set(value.approvedTransmissionImages.map((image) => image.decodedRgbaSha256)).size !== 8
+      || value.approvedTransmissionImages.some((image) => {
+        try {
+          const target = new URL(image.url);
+          return target.protocol !== "https:"
+            || Boolean(target.search || target.hash)
+            || target.pathname !== `/storage/v1/object/public/sellerpilot-marketplace/normalized/${image.contentSha256.slice(0, 2)}/${image.contentSha256}.jpg`;
+        } catch {
+          return true;
+        }
+      })
+      || value.postwriteReadback.detailImagePixelSha256s.some((digest, index) =>
+        digest !== value.approvedTransmissionImages[index]?.decodedRgbaSha256)) {
+    context.addIssue({
+      code: "custom",
+      path: ["approvedTransmissionImages"],
+      message: "SmartStore repair transmission images must be ordered and distinct",
+    });
+  }
+});
+
+export const smartstoreContentRepairWorkerResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("smartstore"),
+  operation: z.literal("listing.update"),
+  steps: z.array(z.object({
+    name: z.string().min(1).max(160),
+    ok: z.boolean(),
+    status: z.number().int().min(0).max(999),
+    requestId: z.string().max(160).optional(),
+    data: z.record(z.string(), z.unknown()),
+  })).min(1).max(128),
+  remoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+  evidence: smartstoreContentRepairResultSchema,
+  safeMessage: z.string().min(1).max(1_000),
+}).strict();
 
 export const smartstoreManualAdoptionLineageResultSchema = z.object({
   ok: z.literal(true),
@@ -503,6 +580,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.union([
+      smartstoreContentRepairWorkerResultSchema,
       operationResultSchema,
       diagnosticResultSchema,
       competitorSearchResultSchema,

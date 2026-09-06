@@ -1160,21 +1160,20 @@ export async function executeListingPublicationVerification(
     if (!accessToken) {
       throw new Error("LISTING_PUBLICATION_VERIFY_CREDENTIAL_REFRESH_REQUIRED");
     }
-    const readOriginProduct = (originProductNo: string) => naverRequest({
-      accessToken,
-      method: "GET",
-      path: `/v2/products/origin-products/${pathSegment(originProductNo)}`,
-    });
+    const sourceBody = recordValue(sourceArguments.body);
+    const sourceOriginProduct = recordValue(sourceBody.originProduct);
+    const sourceDetailAttribute = recordValue(sourceOriginProduct.detailAttribute);
+    const sourceSellerCodeInfo = recordValue(sourceDetailAttribute.sellerCodeInfo);
+    const sellerSku = exactText(sourceSellerCodeInfo.sellerManagementCode);
     const readback = await readSmartstoreListingPublicationState({
       operation: mutationSourceOperation(),
       intent: "live",
       remoteId,
       expected,
-      readOriginProduct,
-      readChannelProduct: (channelProductNo) => naverRequest({
+      ...(sellerSku ? { sellerSku } : {}),
+      request: (request) => naverRequest({
+        ...request,
         accessToken,
-        method: "GET",
-        path: `/v2/products/channel-products/${pathSegment(channelProductNo)}`,
       }),
     });
     const readbackStep = providerStep(
@@ -1182,7 +1181,12 @@ export async function executeListingPublicationVerification(
       readback.originProductReadback,
     );
     readbackStep.ok = readbackStep.ok && Boolean(readback.state);
-    const steps = [readbackStep];
+    const steps = [
+      ...(readback.searchProductReadback
+        ? [providerStep("seller-code-publication-reverification", readback.searchProductReadback)]
+        : []),
+      readbackStep,
+    ];
     if (readback.channelProductReadback) {
       steps.push(providerStep(
         "channel-product-publication-reverification",

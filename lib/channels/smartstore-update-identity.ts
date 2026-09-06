@@ -33,12 +33,29 @@ function critical(origin: RecordValue) {
 export async function readSmartstoreUpdateIdentity(input: {
   request: Request;
   originProductNo: string;
-  sellerSku: string;
+  sellerSku?: string;
   expectedChannelProductNo?: string;
 }) {
-  if (!id(input.originProductNo) || !input.sellerSku.trim()) throw new Error("NAVER_UPDATE_IDENTITY_INPUT_INVALID");
+  if (!id(input.originProductNo)) throw new Error("NAVER_UPDATE_IDENTITY_INPUT_INVALID");
+  let sellerSku = String(input.sellerSku ?? "").trim();
+  if (!sellerSku) {
+    const discovery = await input.request({
+      method: "GET",
+      path: `/v2/products/origin-products/${input.originProductNo}`,
+    });
+    const discoveryOriginProduct = record(discovery.data.originProduct);
+    sellerSku = sku(discoveryOriginProduct);
+    if (discovery.response.status !== 200 || discovery.data.code
+        || !Object.keys(discoveryOriginProduct).length || !sellerSku
+        || !aliasesMatch([
+          discovery.data.originProductNo,
+          discoveryOriginProduct.originProductNo,
+        ], input.originProductNo)) {
+      throw new Error("NAVER_UPDATE_SELLER_CODE_DISCOVERY_FAILED");
+    }
+  }
   const search = await input.request({ method: "POST", path: "/v1/products/search", body: {
-    searchKeywordType: "SELLER_CODE", sellerManagementCode: input.sellerSku,
+    searchKeywordType: "SELLER_CODE", sellerManagementCode: sellerSku,
     page: 1, size: 50, orderType: "NO",
   } });
   const data = search.data;
@@ -53,7 +70,7 @@ export async function readSmartstoreUpdateIdentity(input: {
     if (!id(row.originProductNo) || !Array.isArray(row.channelProducts)) return [];
     return row.channelProducts.flatMap(value => {
       const channel = record(value);
-      if (String(channel.sellerManagementCode ?? "").trim() !== input.sellerSku) return [];
+      if (String(channel.sellerManagementCode ?? "").trim() !== sellerSku) return [];
       const originProductNo = id(row.originProductNo);
       const channelProductNo = id(channel.channelProductNo);
       if (!channelProductNo || !aliasesMatch([channel.originProductNo], originProductNo)
@@ -72,7 +89,7 @@ export async function readSmartstoreUpdateIdentity(input: {
   const currentOriginProduct = record(origin.data.originProduct);
   const embedded = record(origin.data.smartstoreChannelProduct);
   if (origin.response.status !== 200 || origin.data.code || !Object.keys(currentOriginProduct).length
-      || sku(currentOriginProduct) !== input.sellerSku
+      || sku(currentOriginProduct) !== sellerSku
       || !aliasesMatch([origin.data.originProductNo, currentOriginProduct.originProductNo, embedded.originProductNo], originProductNo)
       || !aliasesMatch([origin.data.channelProductNo, origin.data.smartstoreChannelProductNo,
         embedded.channelProductNo, embedded.smartstoreChannelProductNo], channelProductNo)) {
@@ -83,13 +100,13 @@ export async function readSmartstoreUpdateIdentity(input: {
   const channelOrigin = record(channel.data.originProduct);
   const channelSku = String(currentChannelProduct.sellerManagementCode ?? "").trim();
   if (channel.response.status !== 200 || channel.data.code || !Object.keys(currentChannelProduct).length
-      || !Object.keys(channelOrigin).length || sku(channelOrigin) !== input.sellerSku
-      || (channelSku && channelSku !== input.sellerSku)
+      || !Object.keys(channelOrigin).length || sku(channelOrigin) !== sellerSku
+      || (channelSku && channelSku !== sellerSku)
       || !aliasesMatch([channel.data.originProductNo, channelOrigin.originProductNo, currentChannelProduct.originProductNo], originProductNo)
       || !aliasesMatch([channel.data.channelProductNo, channel.data.smartstoreChannelProductNo,
         currentChannelProduct.channelProductNo, currentChannelProduct.smartstoreChannelProductNo], channelProductNo)
       || critical(currentOriginProduct) !== critical(channelOrigin)) {
     throw new Error("NAVER_UPDATE_CHANNEL_PREFLIGHT_FAILED");
   }
-  return { originProductNo, channelProductNo, currentOriginProduct, currentChannelProduct };
+  return { originProductNo, channelProductNo, sellerSku, currentOriginProduct, currentChannelProduct };
 }
