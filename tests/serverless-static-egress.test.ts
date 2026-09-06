@@ -254,10 +254,10 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.match(route, /Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다/);
   assert.match(
     route,
-    /쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다[\s\S]*두 채널의 30일 작업/,
+    /선택한 채널에 승인된 송신 경로 설정이 필요합니다[\s\S]*다른 채널은 별도로 과거 문의를 불러올 수 있습니다/,
   );
   assert.match(route, /fixedEgressRequired \? \{ blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED \} : \{\}/);
-  assert.match(page, /Vercel 고정 egress 설정 필요/);
+  assert.match(page, /채널 송신 경로 설정 필요/);
   assert.match(page, /작업을 접수하거나 자동 재시도하지 않습니다/);
   assert.match(page, /if \(parsedBackfill\) setInquiryHistoryBackfill\(parsedBackfill\)/);
 });

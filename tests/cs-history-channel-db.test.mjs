@@ -36,6 +36,7 @@ async function fixture() {
   await db.exec(`alter table sellerpilot_private.inquiry_history_backfill_runs add column blocked_reason text;`);
   await db.exec(definition('sellerpilot_private.enqueue_inquiry_history_backfill_item'));
   await db.exec(migration);
+  await db.exec(await readFile(new URL("../supabase/migrations/20260907105000_select_past_cs_history_windows.sql", import.meta.url),"utf8"));
   await db.exec(`insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${smart}','smartstore','${owner}'); insert into sellerpilot_private.serverless_static_egress_policy values ('smartstore',true),('coupang',false);`);
   return db;
 }
@@ -104,5 +105,41 @@ test('credential rotation gets a different run; cross-owner joint scope is rejec
   assert.notEqual((await start(db,['smartstore'])).runId,old.runId);
   await db.exec(`update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang';insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${coupang}','coupang',gen_random_uuid());`);
   await assert.rejects(start(db,['coupang','smartstore']),/owners do not match/);
+ }finally{await db.close();}
+});
+
+
+test('past history window preserves the exact old date range and does not expand Smartstore to today',async()=>{
+ const db=await fixture();try{
+  const begin=async(end)=>(await db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['smartstore'],30,$1::date) result",[end])).rows[0].result;
+  const run=await begin('2024-02-29');assert.equal(run.fromDate,'2024-01-31');assert.equal(run.toDate,'2024-02-29');assert.equal(run.totalJobs,2);
+  const jobs=(await db.query('select request_payload from sellerpilot_private.channel_gateway_jobs')).rows.map(row=>row.request_payload.arguments);
+  assert.equal(jobs.find(job=>job.kind==='product').query.fromDate,'2024-01-31T00:00:00.000+09:00');
+  assert.equal(jobs.find(job=>job.kind==='product').query.toDate,'2024-02-29T23:59:59.999+09:00');
+  assert.equal(jobs.find(job=>job.kind==='customer').query.endSearchDate,'2024-02-29');
+  assert.equal((await begin('2024-02-29')).runId,run.runId);
+  assert.notEqual((await begin('2024-01-30')).runId,run.runId);
+  assert.equal((await db.query('select count(*)::int n from sellerpilot_private.channel_gateway_jobs')).rows[0].n,4);
+ }finally{await db.close();}
+});
+test('current history keeps its legacy request key and past Coupang windows remain seven days or shorter',async()=>{
+ const db=await fixture();try{
+  const legacy=await start(db,['smartstore']);
+  const current=(await db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['smartstore'],30,(now() at time zone 'Asia/Seoul')::date) result")).rows[0].result;
+  assert.equal(current.runId,legacy.runId);
+  await db.exec(`update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang';insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${coupang}','coupang','${owner}');`);
+  const run=(await db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['coupang'],30,date '2024-02-29') result")).rows[0].result;
+  assert.equal(run.totalJobs,25);
+  const jobs=(await db.query("select request_payload from sellerpilot_private.channel_gateway_jobs where channel='coupang'")).rows;
+  for(const job of jobs){const q=job.request_payload.arguments.query;assert.ok(q.inquiryStartAt>='2024-01-31');assert.ok(q.inquiryEndAt<='2024-02-29');assert.ok(Date.parse(q.inquiryEndAt)-Date.parse(q.inquiryStartAt)<=6*86400000);}
+ }finally{await db.close();}
+});
+test('historical end date rejects future and unsupported early dates without enqueuing, and remains admin only',async()=>{
+ const db=await fixture();try{
+  for(const date of ['1999-12-31','9999-01-01'])await assert.rejects(db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['smartstore'],30,$1::date)",[date]),/invalid inquiry history end date/);
+  assert.equal((await db.query('select count(*)::int n from sellerpilot_private.channel_gateway_jobs')).rows[0].n,0);
+  const grants=(await db.query("select has_function_privilege('anon','public.sellerpilot_start_inquiry_history_backfill_v3(text[],integer,date)','execute') a,has_function_privilege('service_role','public.sellerpilot_start_inquiry_history_backfill_v3(text[],integer,date)','execute') s")).rows[0];assert.deepEqual(grants,{a:false,s:false});
+  await db.exec("select set_config('request.jwt.claim.sub','',false)");
+  await assert.rejects(db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['smartstore'],30,date '2024-02-29')"),/administrator/);
  }finally{await db.close();}
 });

@@ -167,6 +167,19 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
     const recipientId = text(row.senderId);
     const message = originalMessageBody(row.body);
     if (!messageId || !/^[1-9]\d{0,18}$/.test(itemId) || !recipientId || !message) return null;
+    const undatedAnswers = Array.isArray(row.responses)
+      ? row.responses.map((value) => {
+        if (typeof value !== "string" || value.length > 20000) throw new Error("EBAY_ANSWER_BODY_INVALID");
+        return { body: value, reason: "provider_timestamp_unavailable" };
+      }).filter(({ body }) => Boolean(body.trim()))
+      : undefined;
+    const providerContext = {
+      itemId, parentMessageId: messageId, recipientId, marketplaceId,
+      ...(undatedAnswers ? { unsequencedAnswers: undatedAnswers } : {}),
+    };
+    if ((undatedAnswers?.length ?? 0) > 100 || Buffer.byteLength(JSON.stringify(providerContext), "utf8") > 60000) {
+      throw new Error("EBAY_ANSWER_CONTEXT_LIMIT");
+    }
     const messageStatus = text(row.messageStatus).toLowerCase();
     return {
       externalTicketId: `ebay:${messageId}`,
@@ -177,7 +190,7 @@ function normalizeEbay(data: Record<string, unknown>, iso: TimestampNormalizer) 
       priority: 3,
       receivedAt: iso(row.creationDate, row.lastModifiedDate),
       remoteMessageId: messageId,
-      providerContext: { itemId, parentMessageId: messageId, recipientId, marketplaceId },
+      providerContext,
       replyContext: { itemId, parentMessageId: messageId, recipientId, marketplaceId },
     };
   }).filter((row): row is BaseNormalizedChannelInquiry => Boolean(row));
