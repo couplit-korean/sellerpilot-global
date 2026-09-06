@@ -181,7 +181,7 @@ AS $function$
     )
     from sellerpilot_private.listing_mutation_release_gate gate
    where gate.singleton;
-$function$
+$function$;
 
 
 CREATE OR REPLACE FUNCTION public.sellerpilot_service_set_listing_mutation_release_gate(p_open boolean, p_release_sha text)
@@ -285,6 +285,6 @@ begin
 
   return public.sellerpilot_service_listing_mutation_release_gate_status();
 end;
-$function$
+$function$;
 
 commit;
