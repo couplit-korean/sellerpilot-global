@@ -20,6 +20,7 @@ import {
   buildChannelArguments,
   buildDraftMap,
   buildSynchronizedDraftMap,
+  workbenchExternalPublicationReady,
   workbenchStudioPublicationBlocked,
 } from "../app/product-publish-workbench";
 import { inspectListingDraft } from "../lib/channels/listing-preflight";
@@ -446,4 +447,31 @@ test("absent studioQuality is not a publication block and is not quality verifie
   assert.equal(workbenchStudioPublicationBlocked({
     studioQuality: { blockedForPublication: true },
   }), true);
+});
+
+test("approved external detail is not treated as a Studio success conversion", () => {
+  const signedImages = Array.from({ length: 8 }, (_, index) => ({
+    path: `external-detail/owner/product/import/${index}.png`,
+    url: `https://signed.example/${index}.png`,
+  }));
+  assert.equal(workbenchStudioPublicationBlocked({
+    contentMode: "external_generated",
+    studioQuality: { blockedForPublication: true },
+  }), false);
+  assert.equal(workbenchExternalPublicationReady({
+    contentMode: "external_generated",
+    externalDetailImport: { status: "approved", signedImages },
+  }), true);
+  assert.equal(workbenchExternalPublicationReady({
+    contentMode: "external_generated",
+    externalDetailImport: { status: "verified", signedImages },
+  }), false);
+  assert.equal(workbenchExternalPublicationReady({
+    contentMode: "ai_generated",
+    externalDetailImport: { status: "approved", signedImages },
+  }), false);
+  assert.equal(workbenchExternalPublicationReady({
+    contentMode: "external_generated",
+    externalDetailImport: { status: "approved", signedImages: signedImages.slice(0, 7) },
+  }), false);
 });

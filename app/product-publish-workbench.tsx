@@ -445,13 +445,41 @@ type PublishContext = {
     approvedVersion?: number;
     imageManifest?: unknown;
   };
-  contentMode?: "ai_generated" | "manual_mvp";
+  contentMode?: "ai_generated" | "manual_mvp" | "external_generated";
+  detailAssetSource?: "external_generated" | string;
+  externalDetailImport?: {
+    status?: string;
+    signedImages?: Array<{ path?: string; url?: string }>;
+  } | null;
   studioQuality?: StudioResultQuality;
 };
 
-export function workbenchStudioPublicationBlocked(
-  context: { studioQuality?: { blockedForPublication?: boolean } | null } | null | undefined,
+export function workbenchExternalPublicationReady(
+  context: {
+    contentMode?: string;
+    detailAssetSource?: string;
+    externalDetailImport?: {
+      status?: string;
+      signedImages?: Array<{ path?: string; url?: string }>;
+    } | null;
+  } | null | undefined,
 ) {
+  const images = context?.externalDetailImport?.signedImages;
+  return (context?.contentMode === "external_generated" || context?.detailAssetSource === "external_generated")
+    && context?.externalDetailImport?.status === "approved"
+    && Array.isArray(images)
+    && images.length === productDetailImageCount
+    && images.every((image) => typeof image.path === "string" && image.path.length > 0 && typeof image.url === "string" && image.url.length > 0);
+}
+
+export function workbenchStudioPublicationBlocked(
+  context: {
+    contentMode?: string;
+    detailAssetSource?: string;
+    studioQuality?: { blockedForPublication?: boolean } | null;
+  } | null | undefined,
+) {
+  if (context?.contentMode === "external_generated" || context?.detailAssetSource === "external_generated") return false;
   return context?.studioQuality?.blockedForPublication === true;
 }
 
@@ -654,7 +682,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   const sourceImage = galleryImageUrls[0] ?? "";
   const sellerpilotAssets = {
     ...(operation === "listing.create" ? { shipping: listingShippingDraftSource(manual) } : {}),
-    contentMode: manualMvp ? "manual_mvp" : "ai_generated",
+    contentMode: manualMvp ? "manual_mvp" : context.contentMode === "external_generated" ? "external_generated" : "ai_generated",
     galleryImageUrls,
     detailImageUrls,
     detailImageRoles: generatedDedicatedReady ? imageSeo.detailImageRoles : [],
@@ -1479,10 +1507,13 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     && context.detailPage?.version === context.detailPage?.approvedVersion
     && approvedDetailManifest.images.length === productDetailImageCount
     && approvedDetailManifest.images.every((entry) => context.generatedImages.some((image) => image.id === entry.role && image.path === entry.path && Boolean(image.url))));
-  const imagePackageReady = Boolean(context
-    && !manualMvp
-    && marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
-    && approvedDetailPageReady);
+  const externalPublicationReady = workbenchExternalPublicationReady(context);
+  const imagePackageReady = Boolean(context && (
+    externalPublicationReady
+    || (!manualMvp
+      && marketplaceThumbnailCount >= marketplaceMinimumThumbnailCount
+      && approvedDetailPageReady)
+  ));
   const imagePackageBlockedMessage = manualMvp
     ? "승인된 상세페이지 이미지 8장이 없는 직접등록 상품은 판매채널 자동 전송을 시작하지 않습니다."
     : `채널 업로드 이미지가 미완료입니다. 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장과 저장·승인된 상세페이지 8/8장을 모두 확인한 뒤 실행해 주세요.`;
