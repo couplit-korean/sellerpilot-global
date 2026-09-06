@@ -54,8 +54,11 @@ test("vision inspects every photo against the same main anchor with bounded conc
   let active = 0; let peak = 0; const seen: string[] = [];
   const result = await analyzeServerStudioSources(inputs, { generateStructured: async input => {
     active++; peak = Math.max(peak, active);
-    assert.equal(input.images[0].role, "main");
-    const photo = input.images.at(-1)!;
+    assert.equal(input.images.at(-1)?.role, "main");
+    assert.match(input.prompt, /Analyze ONLY IMAGE 1/);
+    const photo = input.images[0];
+    if (photo.role === "main") assert.match(input.prompt, /target is the identity anchor itself/);
+    else assert.match(input.prompt, /Do not copy IMAGE 2 text/);
     seen.push(photo.path);
     await new Promise(resolve => setTimeout(resolve, 1));
     active--;

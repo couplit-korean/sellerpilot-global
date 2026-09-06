@@ -1524,6 +1524,98 @@ function operatorPositiveFee(value: unknown) {
   return Number.isFinite(amount) && amount > 0 ? amount : null;
 }
 
+const coupangExternalSkuLookupBatchSize = 5;
+
+function coupangExternalVendorSku(item: UnknownRecord) {
+  return typeof item.externalVendorSku === "string" ? item.externalVendorSku.trim() : "";
+}
+
+function coupangExternalSkuLookupHasContinuation(data: UnknownRecord) {
+  const nextToken = data.nextToken;
+  const hasNext = data.hasNext;
+  return (hasNext !== undefined && hasNext !== false)
+    || (nextToken !== undefined && nextToken !== null && String(nextToken).trim() !== "");
+}
+
+async function assertCoupangExternalVendorSkusAvailable(
+  input: PrepareProviderListingInput,
+  argumentsValue: UnknownRecord,
+  body: UnknownRecord,
+  vendorId: string,
+) {
+  if (input.operation !== "listing.create") return;
+  const items = Array.isArray(body.items)
+    ? body.items.map(recordValue).filter((item): item is UnknownRecord => Boolean(item))
+    : [];
+  const sellerSkus = items.map(coupangExternalVendorSku);
+  if (!items.length || sellerSkus.some((sku) => !sku)) {
+    throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_REQUIRED_FOR_DUPLICATE_CHECK");
+  }
+  const requestedSellerSkus = sellerSkus.filter(Boolean);
+  if (!requestedSellerSkus.length) return;
+  if (new Set(requestedSellerSkus).size !== requestedSellerSkus.length) {
+    throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_DUPLICATE_IN_REQUEST");
+  }
+
+  const lookups: Array<Awaited<ReturnType<typeof coupangRequest>>> = [];
+  for (let offset = 0; offset < requestedSellerSkus.length; offset += coupangExternalSkuLookupBatchSize) {
+    await input.hooks.assertLeaseHealthy();
+    const batch = requestedSellerSkus.slice(offset, offset + coupangExternalSkuLookupBatchSize);
+    let remotes: Array<Awaited<ReturnType<typeof coupangRequest>>>;
+    try {
+      remotes = await Promise.all(batch.map((sellerSku) => coupangRequest({
+        payload: input.credential,
+        method: "GET",
+        path: `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/external-vendor-sku-codes/${encodeURIComponent(sellerSku)}`,
+      })));
+    } catch {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_FAILED");
+    }
+    lookups.push(...remotes);
+  }
+  await input.hooks.assertLeaseHealthy();
+
+  const resumeRemoteId = typeof argumentsValue.resumeRemoteId === "string"
+    ? argumentsValue.resumeRemoteId.trim()
+    : "";
+  for (const remote of lookups) {
+    if (!remote.response.ok || remote.data.code !== "SUCCESS" || !Array.isArray(remote.data.data)) {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_FAILED");
+    }
+    // Coupang's exact external-SKU endpoint documents one complete result list
+    // and no paging contract. Never treat a response carrying continuation as
+    // a proven absence.
+    if (coupangExternalSkuLookupHasContinuation(remote.data)) {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_INCOMPLETE");
+    }
+    const matches = remote.data.data.map(recordValue);
+    if (matches.some((match) => !match)) {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_IDENTITY_INVALID");
+    }
+    const remoteIds = matches.map((match) => {
+      const rawSellerProductId = match?.sellerProductId;
+      const sellerProductIdText = typeof rawSellerProductId === "number"
+        || typeof rawSellerProductId === "string"
+        ? String(rawSellerProductId).trim()
+        : "";
+      const sellerProductId = Number(sellerProductIdText);
+      if (String(match?.vendorId ?? "").trim() !== vendorId
+          || !/^\d+$/u.test(sellerProductIdText)
+          || !Number.isSafeInteger(sellerProductId)
+          || sellerProductId <= 0) {
+        throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_IDENTITY_INVALID");
+      }
+      return String(sellerProductId);
+    });
+    if (new Set(remoteIds).size !== remoteIds.length) {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_LOOKUP_IDENTITY_INVALID");
+    }
+    if (remoteIds.some((remoteId) => !resumeRemoteId || remoteId !== resumeRemoteId)) {
+      throw new Error("COUPANG_EXTERNAL_VENDOR_SKU_ALREADY_EXISTS");
+    }
+  }
+}
+
 function coupangConfirmedWeight(attribute: UnknownRecord, value: unknown) {
   if (typeof value !== "string") return "";
   const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(\S+)$/u);
@@ -1858,6 +1950,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     throw new Error("COUPANG_DISPLAY_CATEGORY_REQUIRED");
   }
   const vendorId = textValue(input.credential, "vendor_id");
+  await assertCoupangExternalVendorSkusAvailable(input, strictArguments, body, vendorId);
   await input.hooks.assertLeaseHealthy();
   const [outboundRemote, returnRemote, metadataRemote, categoryStatusRemote] = await Promise.all([
     coupangRequest({

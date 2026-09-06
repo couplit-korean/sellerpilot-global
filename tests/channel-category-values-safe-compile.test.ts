@@ -84,6 +84,7 @@ function genericArguments() {
       returnCharge: 0,
       items: [{
         itemName: "롯데샌드",
+        externalVendorSku: "CATEGORY-VALUE-TEST-SKU",
         salePrice: 10_000,
         maximumBuyCount: 1,
         outboundShippingTimeDay: 2,
@@ -135,6 +136,9 @@ async function prepare(argumentsValue: Record<string, unknown>) {
   };
   globalThis.fetch = async (input) => {
     const pathname = new URL(String(input)).pathname;
+    if (pathname.includes("/external-vendor-sku-codes/")) {
+      return Response.json({ code: "SUCCESS", data: [] });
+    }
     if (pathname.endsWith("/shipping-place/outbound")) {
       return Response.json({ code: "SUCCESS", data: { content: [{
         usable: true,
@@ -150,6 +154,9 @@ async function prepare(argumentsValue: Record<string, unknown>) {
         returnFee02kg: 3_000,
         placeAddresses: [address],
       }] } });
+    }
+    if (pathname.endsWith("/status")) {
+      return Response.json({ code: "SUCCESS", data: true });
     }
     return Response.json(metadata);
   };
