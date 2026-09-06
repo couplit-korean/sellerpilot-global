@@ -1,0 +1,57 @@
+/* Scoped customer presentation: editor chrome and channel HTML are independent. */
+.buyer-detail { container-type: inline-size; width: 100%; max-width: 860px; margin: auto; background: #fff; color: #272438; font-family: var(--font-geist-sans), "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; font-size: 16px; line-height: 1.75; word-break: keep-all; overflow-wrap: anywhere; }
+.buyer-detail *, .buyer-detail *::before, .buyer-detail *::after { box-sizing: border-box; }
+.buyer-detail h1, .buyer-detail h2, .buyer-detail p, .buyer-detail figure { margin: 0; }
+.buyer-detail img { display: block; width: 100%; height: auto; }
+.buyer-detail .buyer-eyebrow { font-size: 12px; font-weight: 700; letter-spacing: .14em; line-height: 1.5; text-transform: uppercase; }
+.buyer-detail h1 { margin-top: 22px; font-size: clamp(38px, 6.8cqi, 60px); line-height: 1.15; letter-spacing: -.055em; font-weight: 800; white-space: pre-line; }
+.buyer-detail h2 { margin-top: 16px; font-size: clamp(27px, 4.8cqi, 42px); line-height: 1.28; letter-spacing: -.045em; font-weight: 750; white-space: pre-line; }
+.buyer-detail .buyer-body, .buyer-detail .buyer-lead { margin-top: 22px; max-width: 42em; font-size: 16px; line-height: 1.85; white-space: pre-line; }
+.buyer-detail .buyer-hero { display: grid; grid-template-columns: 1fr 1fr; align-items: center; background: var(--buyer-surface); color: var(--buyer-primary); }
+.buyer-detail .buyer-hero-copy { padding: 64px 28px 64px 48px; }
+.buyer-detail .buyer-hero-image img { aspect-ratio: 4 / 5; object-fit: contain; }
+.buyer-detail .buyer-hero.centered { grid-template-columns: 1fr; text-align: center; }
+.buyer-detail .centered .buyer-hero-copy { padding: 60px 40px 34px; }
+.buyer-detail .centered .buyer-lead { margin-inline: auto; }
+.buyer-detail .centered .buyer-hero-image img { max-height: 650px; aspect-ratio: auto; }
+.buyer-detail .buyer-classification { display: flex; justify-content: center; gap: 20px; padding: 16px 24px; border-bottom: 1px solid #eeedf2; font-size: 13px; }
+.buyer-detail .buyer-classification span { color: #77727f; }
+.buyer-detail .buyer-section { padding: 72px 48px; }
+.buyer-detail .buyer-benefits { text-align: center; }
+.buyer-detail .buyer-benefits .buyer-body { margin-inline: auto; }
+.buyer-detail .buyer-points { list-style: none; display: grid; gap: 0; margin: 30px 0 0; padding: 0; }
+.buyer-detail .buyer-points li { padding: 15px 0; border-top: 1px solid #e9e6ee; font-size: 15px; }
+.buyer-detail .buyer-benefits .buyer-points { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 22px; }
+.buyer-detail .buyer-benefits .buyer-points li { padding: 26px 8px; border-top: 2px solid var(--buyer-primary); font-size: 19px; font-weight: 700; }
+.buyer-detail .buyer-image-story { display: grid; grid-template-columns: 1fr 1fr; align-items: center; padding: 0; background: var(--buyer-surface); }
+.buyer-detail .buyer-image-story figure img { aspect-ratio: 4 / 5; object-fit: contain; }
+.buyer-detail .buyer-copy { padding: 44px 32px; }
+.buyer-detail .buyer-image-story.reverse figure { order: 2; }
+.buyer-detail .buyer-image-story.full-bleed { grid-template-columns: 1fr; background: #fff; }
+.buyer-detail .full-bleed figure img { aspect-ratio: auto; max-height: 780px; object-fit: contain; }
+.buyer-detail .full-bleed .buyer-copy { padding: 44px 48px 72px; max-width: 720px; }
+.buyer-detail .full-bleed.reverse figure { order: 0; }
+.buyer-detail .buyer-story { display: grid; grid-template-columns: 1fr 1fr; align-items: start; gap: 42px; }
+.buyer-detail .buyer-story .buyer-points { margin: 0; }
+.buyer-detail .buyer-story.spec-grid, .buyer-detail .buyer-story.steps { grid-template-columns: 1fr; }
+.buyer-detail .spec-grid .buyer-points { grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 28px; }
+.buyer-detail .buyer-story.dark { color: #fff; background: var(--buyer-primary); }
+.buyer-detail .buyer-story.dark .buyer-points li { border-color: #ffffff38; }
+.buyer-detail .buyer-story.accent { background: var(--buyer-accent); color: #272438; }
+.buyer-detail .buyer-step { display: inline-block; margin-right: 20px; font-weight: 800; }
+.buyer-detail .buyer-closing { text-align: center; background: var(--buyer-primary); color: #fff; }
+.buyer-detail .buyer-closing .buyer-body { margin-inline: auto; }
+.buyer-detail .buyer-footnote { margin-top: 28px; font-size: 13px; line-height: 1.8; opacity: .8; }
+@container (max-width: 580px) {
+  .buyer-detail .buyer-hero, .buyer-detail .buyer-image-story, .buyer-detail .buyer-story { grid-template-columns: 1fr; }
+  .buyer-detail .buyer-hero-copy, .buyer-detail .centered .buyer-hero-copy { padding: 40px 24px 26px; }
+  .buyer-detail .buyer-hero-image img { max-height: 480px; aspect-ratio: 1; }
+  .buyer-detail .buyer-section, .buyer-detail .buyer-copy, .buyer-detail .full-bleed .buyer-copy { padding: 44px 24px; }
+  .buyer-detail .buyer-image-story { padding: 0; }
+  .buyer-detail .buyer-image-story figure img { aspect-ratio: 1; }
+  .buyer-detail .buyer-image-story.reverse figure { order: 0; }
+  .buyer-detail .buyer-benefits .buyer-points { grid-template-columns: 1fr; gap: 0; }
+  .buyer-detail .buyer-benefits .buyer-points li { padding: 18px 6px; font-size: 18px; }
+  .buyer-detail .spec-grid .buyer-points { grid-template-columns: 1fr; }
+  .buyer-detail .buyer-body, .buyer-detail .buyer-lead { font-size: 15px; }
+}

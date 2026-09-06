@@ -1,0 +1,8 @@
+.timeline { min-width: 0; }
+.heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin: 20px 0; color: #536174; font-size: 13px; }
+.messages { list-style: none; padding: 0; margin: 12px 0; }
+.message { margin: 16px 0; padding: 14px 16px; border: 1px solid #e1e6ed; border-radius: 12px; background: #f8fafc; }
+.seller { margin-left: 24px; background: #edf5ff; border-color: #d6e5f8; }
+.meta, .state { color: #536174; font-size: 12px; line-height: 1.6; }
+.body { color: #243248; font-size: 14px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+@media (max-width: 600px) { .seller { margin-left: 12px; } .message { padding: 12px; } }

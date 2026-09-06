@@ -17,7 +17,7 @@ function document(locale?: string): ProductDetailData {
     { type: "CtaBlock", props: { id: "c", audience: "You", title: "Choose", description: "Read the label", checklist: "Allergens", button: "See product", primary: "#123456", accent: "#abcdef" } },
   ] } as ProductDetailData;
 }
-for (const [locale, label] of [["ja-JP", "確認根拠"], ["en-US", "Evidence requiring review"]]) {
+for (const [locale, label] of [["ja-JP", "商品分類"], ["en-US", "Product category"]]) {
   test(`${locale}: actual React render and HTML export have no Korean chrome; facts unchanged`, () => {
     const d=document(locale); const before=JSON.stringify(d);
     const html=productDetailDataToHtml(d);
@@ -29,7 +29,7 @@ for (const [locale, label] of [["ja-JP", "確認根拠"], ["en-US", "Evidence re
 test("legacy Korean remains Korean and explicit locale reaches render/export",()=>{
   const d=document(); assert.equal(resolveProductDetailLocale(d),"ko");
   const ko=renderToStaticMarkup(createElement(ProductDetailRender,{result:null,imageUrl:"",data:d}));
-  assert.match(ko,/규격·수치/); assert.match(ko,/구매 전 질문/); assert.match(ko,/버튼 문구/);
+  assert.match(ko,/상품 분류/); assert.doesNotMatch(ko,/구매 전 질문|버튼 문구|Package label/);
   assert.match(productDetailDataToHtml(d),/상품 분류/);
   assert.doesNotMatch(productDetailDataToHtml(d,"en-GB"),/[\uAC00-\uD7A3]/u);
   assert.doesNotMatch(renderToStaticMarkup(createElement(ProductDetailRender,{result:null,imageUrl:"",data:d,locale:"ja-JP"})),/[\uAC00-\uD7A3]/u);

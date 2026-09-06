@@ -1432,7 +1432,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       </div>
       <div className="studio-source-row">
         <span><CheckCircle2 size={15} /><b>이미지 분석</b><small>{mainPhoto ? `${photos.length}장 반영` : "대표사진 등록 대기"}</small></span>
-        <span><Sparkles size={15} /><b>상세 기획</b><small>16–20개 구매 흐름 섹션</small></span>
+        <span><Sparkles size={15} /><b>상세 기획</b><small>8–12개 이미지 중심 섹션</small></span>
         <span><ImageIcon size={15} /><b>자동 이미지</b><small>핵심 생활 설정샷 6개 · 대표/근거 보조 자산 10개</small></span>
         <a href={CODEX_IMAGE_SOURCE} target="_blank" rel="noreferrer"><WandSparkles size={15} /><b>Codex Image 규칙</b><small>gpt-image-2 · MIT</small><ExternalLink size={12} /></a>
       </div>

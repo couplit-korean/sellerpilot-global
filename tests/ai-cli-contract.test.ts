@@ -2189,3 +2189,32 @@ test("support reply CLI contract requires a supported locale and reviewable draf
     result,
   }).success, true);
 });
+
+
+test("concise studio accepts eight short image sections and preserves publication role agreement", () => {
+  const source = validResult();
+  const roles = source.localizedListings[0].detailSections.map((section) => section.imageAsset);
+  const result = {
+    ...source,
+    design: {
+      ...source.design,
+      creativeStrategy: { ...source.design.creativeStrategy, contentDensity: "concise", targetSectionCount: 8 },
+      sections: source.design.sections.slice(0, 8).map((section, index) => ({
+        ...section, body: section.body.slice(0, 200), points: [], imageAsset: roles[index],
+        type: index === 6 ? "spec" : index === 7 ? "caution" : section.type,
+      })),
+    },
+  };
+  const parsed = cliStudioResultSchema.safeParse(result);
+  if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues));
+  const bad = structuredClone(result);
+  bad.design.sections[7].imageAsset = bad.design.sections[0].imageAsset;
+  assert.equal(cliStudioResultSchema.safeParse(bad).success, false);
+  const incomplete = structuredClone(result);
+  incomplete.design.sections.pop();
+  incomplete.design.creativeStrategy.targetSectionCount = 7;
+  assert.equal(cliStudioResultSchema.safeParse(incomplete).success, false);
+  const wrongLocaleRoles = structuredClone(result);
+  wrongLocaleRoles.localizedListings[0].detailSections[0].imageAsset = "detail-material";
+  assert.equal(cliStudioResultSchema.safeParse(wrongLocaleRoles).success, false);
+});

@@ -8,7 +8,7 @@ import {
   coreFirstDraftAssetIds,
   remainingFinalAssetIds,
 } from "../lib/ai-generated-assets";
-import { cliStudioResultSchema, requiredLocalizedMarkets } from "../lib/ai-cli-contract";
+import { cliStudioResultSchema, requiredLocalizedMarkets, studioMasterResultSchema } from "../lib/ai-cli-contract";
 import type { AiGatewayFailureDiagnostic } from "../lib/ai-gateway-failure";
 import {
   assertPortableAudit,
@@ -1759,6 +1759,9 @@ test("single-main master prompt labels package imagery as catalog fallback, neve
       fit: "contain",
     }],
   });
+  assert.match(prompt, /contentDensity는 concise/u);
+  assert.match(prompt, /8~12개/u);
+  assert.match(prompt, /최대 240자/u);
   assert.match(prompt, /detail-package, detail-contents/u);
   assert.match(prompt, /대표사진에서 분리한 동일상품의 중립 카탈로그 보기/u);
   assert.match(prompt, /라벨·바코드·후면·숨은 구성품의 이미지 근거라고 쓰지 마세요/u);
@@ -2183,4 +2186,27 @@ test("a 300-second-compatible runtime timeout completes the exact claim as faile
   const completion = calls.findLast((call) => call.name === "sellerpilot_complete_ai_job_with_image_context");
   assert.equal(completion?.arguments_.p_status, "failed");
   assert.equal(completion?.arguments_.p_error_message, "server_studio_runtime_timeout");
+});
+
+
+test("concise master normalization keeps eight image sections instead of filling twelve legacy slots", () => {
+  const source = testMasterResult();
+  const candidate = {
+    ...source,
+    design: {
+      ...source.design,
+      creativeStrategy: { ...source.design.creativeStrategy, contentDensity: "concise", targetSectionCount: 9 },
+      sections: source.design.sections.slice(0, 8).map((section, index) => ({
+        ...section, body: section.body.slice(0, 200), points: [],
+        type: index === 6 ? "spec" : index === 7 ? "caution" : section.type,
+      })),
+    },
+  };
+  const parsed = studioMasterResultSchema.parse(candidate);
+  const normalized = normalizeServerStudioMasterContract(parsed);
+  assert.equal(normalized.design.creativeStrategy.targetSectionCount, 8);
+  assert.equal(normalized.design.sections.length, 8);
+  assert.deepEqual(normalized.design.sections, parsed.design.sections);
+  assert.equal(studioMasterDetailImageRoleIssue(normalized), "");
+  assert.equal(candidate.design.creativeStrategy.targetSectionCount, 9);
 });

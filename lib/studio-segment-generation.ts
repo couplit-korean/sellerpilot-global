@@ -85,6 +85,14 @@ export function studioMasterDetailImageRoleIssue(masterOutput: unknown): string 
   const duplicateRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) > 1);
   const missingRoles = requiredRoles.filter((role) => (roleCounts.get(role) ?? 0) === 0);
 
+  const concise = isJsonObject(masterOutput.design.creativeStrategy)
+    && masterOutput.design.creativeStrategy.contentDensity === "concise";
+  if (concise) {
+    return assignedRoles.length === 8 && duplicateRoles.length === 0 && invalidRoles.length === 0
+      ? ""
+      : "간결형 마스터에는 서로 다른 유효한 상세 이미지 역할 8개를 정확히 한 번씩 배정해야 합니다.";
+  }
+
   if (assignedRoles.length === requiredRoles.length
       && duplicateRoles.length === 0
       && missingRoles.length === 0

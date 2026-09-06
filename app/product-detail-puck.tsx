@@ -2,6 +2,7 @@
 /* eslint-disable @next/next/no-img-element -- Puck blocks accept object/data URLs from the image studio */
 
 import { Puck, Render, usePuck, type Config, type Data, type Viewports } from "@puckeditor/core";
+import { ProductDetailBuyer } from "./product-detail-buyer";
 import { Save, X } from "lucide-react";
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -453,7 +454,7 @@ export function createDetailData(result: ProductDetailSource, imageUrl: string, 
         const sectionMotion = section.motion ?? "none";
         const sectionAsset = section.imageAsset ?? detailImageAssets[index] ?? "none";
         const sectionImage = sectionAsset === "none" || !selectedDetailRoles.has(sectionAsset) ? "" : assetUrls[sectionAsset];
-        const sectionImageFit: "contain" | "cover" = evidenceDetailImageAssets.has(sectionAsset) ? "contain" : "cover";
+        const sectionImageFit: "contain" | "cover" = design.creativeStrategy?.contentDensity === "concise" || evidenceDetailImageAssets.has(sectionAsset) ? "contain" : "cover";
         const sectionVerificationStatus: VerificationStatus = verificationStatus === "needs-review" || /(미확인|확인 필요|추가 확인|근거 없음|제공되지 않)/.test(section.evidence ?? "") ? "needs-review" : "verified";
         return sectionImage ? {
           type: "ImageStoryBlock" as const,
@@ -483,7 +484,7 @@ export function ProductDetailRender({ result, imageUrl, assetUrls = {}, data, lo
     [onDetailImageLoadState],
   );
   if (!renderData) return null;
-  return <ProductDetailImageLoadContext.Provider value={imageLoadContext}><Render config={renderConfig} data={renderData} /></ProductDetailImageLoadContext.Provider>;
+  return <ProductDetailImageLoadContext.Provider value={imageLoadContext}><ProductDetailBuyer data={renderData} locale={resolvedLocale} onDetailImageLoadState={imageLoadContext.report} renderAnimatedGif={(props) => <Render config={renderConfig} data={{ content: [{ type: "AnimatedGifBlock", props }] }} />} /></ProductDetailImageLoadContext.Provider>;
 }
 
 function ProductDetailPublishAction({ saving, onSave }: { saving: boolean; onSave: (next: ProductDetailData) => void | Promise<void> }) {

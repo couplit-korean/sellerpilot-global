@@ -77,7 +77,7 @@ export type ProductStudioResult = {
     creativeStrategy: {
       designArchetype: "proof-led" | "problem-solution" | "routine-led" | "comparison-led" | "material-led" | "fit-guide" | "gift-story" | "spec-first";
       purchaseDecision: string;
-      contentDensity: "long" | "deep-dive";
+      contentDensity: "concise" | "long" | "deep-dive";
       targetSectionCount: number;
       lengthRationale: string;
       differentiationKey: string;

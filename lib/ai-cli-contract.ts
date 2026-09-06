@@ -315,8 +315,8 @@ export const studioCoreSchema = z.object({
     creativeStrategy: z.object({
       designArchetype: z.enum(["proof-led", "problem-solution", "routine-led", "comparison-led", "material-led", "fit-guide", "gift-story", "spec-first"]),
       purchaseDecision: z.string().min(1).max(300),
-      contentDensity: z.enum(["long", "deep-dive"]),
-      targetSectionCount: z.number().int().min(16).max(20),
+      contentDensity: z.enum(["concise", "long", "deep-dive"]),
+      targetSectionCount: z.number().int().min(8).max(20),
       lengthRationale: z.string().min(1).max(400),
       differentiationKey: z.string().min(1).max(300),
       artDirection: z.string().min(1).max(600),
@@ -332,13 +332,31 @@ export const studioCoreSchema = z.object({
       evidence: z.string().min(10).max(500),
       eyebrow: z.string().min(1).max(80),
       title: z.string().min(1).max(160),
-      body: z.string().min(160).max(1_100),
-      points: z.array(z.string().min(1).max(240)).min(3).max(6),
+      body: z.string().min(20).max(1_100),
+      points: z.array(z.string().min(1).max(240)).max(6),
       layout: z.enum(["split", "full-bleed", "cards", "steps", "spec-grid", "editorial"]),
       imageAsset: z.union([z.literal("none"), detailImageAssetSchema]),
       visualDirection: z.string().min(10).max(500),
       motion: z.enum(["none", "reveal", "stagger"]),
-    })).min(16).max(20),
+    })).min(8).max(20),
+  }).superRefine((design, context) => {
+    const concise = design.creativeStrategy.contentDensity === "concise";
+    const minimum = concise ? 8 : 16;
+    const maximum = concise ? 12 : 20;
+    if (design.sections.length < minimum || design.sections.length > maximum) {
+      context.addIssue({ code: "custom", path: ["sections"], message: `상세 본문은 ${minimum}~${maximum}개 섹션이어야 합니다.` });
+    }
+    if (design.creativeStrategy.targetSectionCount < minimum || design.creativeStrategy.targetSectionCount > maximum) {
+      context.addIssue({ code: "custom", path: ["creativeStrategy", "targetSectionCount"], message: "상세 구성 방식과 목표 섹션 수가 일치해야 합니다." });
+    }
+    design.sections.forEach((section, index) => {
+      if (concise ? section.body.length > 240 : section.body.length < 160) {
+        context.addIssue({ code: "custom", path: ["sections", index, "body"], message: concise ? "간결형 본문은 20~240자로 작성하세요." : "긴 상세 본문은 최소 160자여야 합니다." });
+      }
+      if (concise ? section.points.length > 3 : section.points.length < 3) {
+        context.addIssue({ code: "custom", path: ["sections", index, "points"], message: concise ? "간결형 보조 정보는 최대 3개입니다." : "긴 상세 보조 정보는 최소 3개입니다." });
+      }
+    });
   }),
   thumbnail: z.object({
     headline: z.string().min(1).max(120),
@@ -994,10 +1012,12 @@ export function normalizeStudioSectionCount(value: unknown): unknown {
   if (!design || typeof design !== "object" || Array.isArray(design)) return value;
   const designRecord = design as Record<string, unknown>;
   const sections = designRecord.sections;
-  if (!Array.isArray(sections) || sections.length < 16 || sections.length > 20) return value;
+  if (!Array.isArray(sections)) return value;
   const creativeStrategy = designRecord.creativeStrategy;
   if (!creativeStrategy || typeof creativeStrategy !== "object" || Array.isArray(creativeStrategy)) return value;
   const creativeStrategyRecord = creativeStrategy as Record<string, unknown>;
+  const concise = creativeStrategyRecord.contentDensity === "concise";
+  if (sections.length < (concise ? 8 : 16) || sections.length > (concise ? 12 : 20)) return value;
   if (creativeStrategyRecord.targetSectionCount === sections.length) return value;
   return {
     ...source,
@@ -1097,6 +1117,7 @@ function studioSectionTypeRepairScore(section: Record<string, unknown>, type: Ma
  */
 export function normalizeStudioRequiredSectionTypeCoverage(value: unknown): unknown {
   if (!isPlainRecord(value) || !isPlainRecord(value.design)) return value;
+  if (isPlainRecord(value.design.creativeStrategy) && value.design.creativeStrategy.contentDensity === "concise") return value;
   const sections = value.design.sections;
   if (!Array.isArray(sections) || sections.length < 16 || sections.length > 20
       || !sections.every(isPlainRecord)) return value;
@@ -1352,16 +1373,21 @@ function refineStudioMasterResult(
   if (value.design.sections.length !== value.design.creativeStrategy.targetSectionCount) {
     context.addIssue({ code: "custom", path: ["design", "creativeStrategy", "targetSectionCount"], message: "상세페이지 목표 섹션 수와 실제 섹션 수가 일치해야 합니다." });
   }
+  const concise = value.design.creativeStrategy.contentDensity === "concise";
   const assignedAssets = value.design.sections.map((section) => section.imageAsset).filter((asset) => asset !== "none");
   const requiredAssets = [...aiDetailAssetIds];
-  if (requiredAssets.length !== 12
+  if (concise && (assignedAssets.length !== 8 || new Set(assignedAssets).size !== 8)) {
+    context.addIssue({ code: "custom", path: ["design", "sections"], message: "간결형 상세에는 서로 다른 이미지 역할 8개가 필요합니다." });
+  }
+  if (!concise && (requiredAssets.length !== 12
     || assignedAssets.length !== requiredAssets.length
     || new Set(assignedAssets).size !== requiredAssets.length
-    || requiredAssets.some((asset) => !assignedAssets.includes(asset as typeof assignedAssets[number]))) {
+    || requiredAssets.some((asset) => !assignedAssets.includes(asset as typeof assignedAssets[number])))) {
     context.addIssue({ code: "custom", path: ["design", "sections"], message: "상세 이미지 12종은 서로 다른 구매 질문에 정확히 한 번씩 배정해야 합니다." });
   }
-  if (new Set(value.design.sections.map((section) => section.layout)).size < 5) {
-    context.addIssue({ code: "custom", path: ["design", "sections"], message: "긴 상세페이지는 최소 5가지 서로 다른 레이아웃을 사용해야 합니다." });
+  const minimumLayouts = concise ? (value.design.sections.length <= 8 ? 2 : 3) : 5;
+  if (new Set(value.design.sections.map((section) => section.layout)).size < minimumLayouts) {
+    context.addIssue({ code: "custom", path: ["design", "sections"], message: `상세페이지는 최소 ${minimumLayouts}가지 서로 다른 레이아웃을 사용해야 합니다.` });
   }
   value.design.sections.forEach((section, index) => {
     if (index > 0 && section.layout === value.design.sections[index - 1].layout) {
@@ -1382,7 +1408,7 @@ function refineStudioMasterResult(
       });
     }
   });
-  for (const requiredType of masterDetailSectionTypes) {
+  for (const requiredType of concise ? ["spec", "caution"] : masterDetailSectionTypes) {
     if (!value.design.sections.some((section) => section.type === requiredType)) {
       context.addIssue({ code: "custom", path: ["design", "sections"], message: `${requiredType} 구매정보 섹션이 필요합니다.` });
     }
@@ -1434,6 +1460,8 @@ export const studioMasterTerminalResultSchema = studioMasterResultSchema.superRe
 
 export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("cli") }).superRefine((value, context) => {
   const generalFood = refineStudioMasterResult(value, context);
+  const concise = value.design.creativeStrategy.contentDensity === "concise";
+  const assignedAssets = value.design.sections.map((section) => section.imageAsset).filter((asset) => asset !== "none");
   const received = new Set(value.localizedListings.map((listing) => `${listing.channel}:${listing.market}`));
   for (const required of Object.keys(requiredLocalizedMarkets)) {
     if (!received.has(required)) context.addIssue({ code: "custom", path: ["localizedListings"], message: `${required} 번역이 필요합니다.` });
@@ -1480,6 +1508,9 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
     }
     const sectionTypes = new Set(listing.detailSections.map((section) => section.type));
     const imageAssets = new Set(listing.detailSections.map((section) => section.imageAsset));
+    if (concise && assignedAssets.some((asset) => !imageAssets.has(asset))) {
+      context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: "간결형 현지화의 이미지 8개 역할은 마스터와 일치해야 합니다." });
+    }
     if (sectionTypes.size !== localizedDetailSectionTypes.length || imageAssets.size !== localizedDetailSectionTypes.length) {
       context.addIssue({ code: "custom", path: ["localizedListings", index, "detailSections"], message: `${key} 상세 섹션 유형과 이미지 역할은 중복 없이 8개여야 합니다.` });
     }
