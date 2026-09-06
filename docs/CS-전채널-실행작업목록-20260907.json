@@ -1,0 +1,857 @@
+{
+  "title": "SellerPilot 전 채널 CS 100% 완료 실행 계획",
+  "version": 1,
+  "baseline_checked_at": "2026-09-06T17:41:00.977174+00:00",
+  "runtime_release": "d409055526328f864d6e932d012558f14cc30071",
+  "scope": "CS 수신·전체 이력·답변·첨부·재문의·운영 복구; 상품 등록 및 배송 신규 기능 구현은 범위 밖",
+  "status": "implementation_in_progress",
+  "channel_count": 8,
+  "tasks": [
+    {
+      "id": "BASE-01",
+      "area": "common",
+      "title": "범위·완료 원장 확정",
+      "status": "planned",
+      "kind": "analysis",
+      "change": "8채널의 실제 활성 계정·국가·shop·문의 유형·메시지 형식·조회기간·지원 API·권한을 행 단위로 등록. 미확정과 제공불가를 구분한다.",
+      "acceptance": "모든 요청 범위가 목록에 있고 출처·확인일·소유계정·필수 읽기/답변 scope가 기록된다. 미승인 기능을 분모에서 숨기지 않는다.",
+      "depends_on": [],
+      "target_modules": [],
+      "evidence": []
+    },
+    {
+      "id": "BASE-02",
+      "area": "common",
+      "title": "운영 기준과 작업 충돌 정리",
+      "status": "in_progress",
+      "kind": "integration",
+      "change": "d409055 운영 SHA 및 현재 배포/DB 함수·migration history를 대조한 격리 작업 경로를 정한다. 기존 상세페이지/상품 작업 diff를 보존한다.",
+      "acceptance": "기준 SHA·DB 함수 해시·현재 변경 파일·병합 담당 경계가 기록되고 다른 작업 변경을 덮지 않는다.",
+      "depends_on": [],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "scripts/ai-cli-worker.mjs",
+        "app/page.tsx"
+      ],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "CORE-01",
+      "area": "common",
+      "title": "CS 어댑터 경계 분리",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "기존 문의 분기를 lib/cs/adapters/<channel>.ts로 점진 추출. 기존 operations dispatcher는 호환 호출을 유지하고 인증·서명·HTTP만 공통 재사용한다.",
+      "acceptance": "등록/배송 호출 계약은 유지되고 CS만으로 실행·검증 가능하다. imports 검사 및 기존 게시/배송 핵심 회귀 통과.",
+      "depends_on": [
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/serverless-gateway-provider.ts",
+        "lib/channels/protocols.ts",
+        "lib/cs/adapters/ (신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "CORE-02",
+      "area": "common",
+      "title": "계정·채널별 과거 수집 분리",
+      "status": "in_progress",
+      "kind": "implementation",
+      "change": "쿠팡+스마트스토어 공동 요청/공동 고정송신 검사를 제거하는 대신 대상 채널만 검사한다. 기간 분할·페이지 커서·재개·세부 수집건수를 일반화한다.",
+      "acceptance": "쿠팡 차단 상태에서도 스마트스토어만 과거 수집 성공. 중단 후 정확한 커서에서 재개. 작업 수와 메시지 수를 별도 표시.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "app/api/operations/sync/route.ts",
+        "lib/channels/sync-arguments.ts",
+        "inquiry_history_backfill_runs 및 관련 RPC"
+      ],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "CORE-03",
+      "area": "common",
+      "title": "정규화·전체 대화 원장 통합",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "기존 support_* 원장을 재사용한다. 원격 계정/대화/메시지/답변 ID, 방향, 원래 시각, 관측시각, 출처, 수정 이력을 구분하고 outgoing delivery와 provider echo를 결속한다.",
+      "acceptance": "재수집·push와 답변 echo가 같은 대화를 중복 생성하지 않는다. 새 고객 턴만 재개방하며 외부 작성 답변도 보존한다.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/inquiry-sync.ts",
+        "support_inbound_messages",
+        "support_reply_deliveries",
+        "support_pending_seller_messages"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "CORE-04",
+      "area": "common",
+      "title": "답변 수락·원격 확인 분리",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "queued/running/provider_accepted/remote_verified/reconciliation 상태를 기존 계약과 호환되게 확장한다. 공급자 ACK 뒤 원격 내용·상태 또는 검증 가능한 조회/화면 영수증을 결속한다.",
+      "acceptance": "202나 공급자 ACK만으로 remote_verified가 되지 않는다. 응답 유실은 먼저 원격 대조하며 중복 발송 0건.",
+      "depends_on": [
+        "CORE-03"
+      ],
+      "target_modules": [
+        "app/api/admin/cs/reply/route.ts",
+        "lib/channels/gateway.ts",
+        "lib/channels/gateway-contract.ts",
+        "support_reply_deliveries 및 완료 RPC"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "CORE-05",
+      "area": "common",
+      "title": "첨부·지원하지 않는 메시지 보존",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "텍스트/이미지/파일/카드/시스템 이벤트를 명시 분류한다. 지원 메시지는 안전한 메타데이터·원본 참조를 저장하고 미해석 고객 메시지는 처리 필요 원장에 남긴다.",
+      "acceptance": "텍스트 없는 고객 이벤트를 성공 무시하지 않는다. 서명 검증·계정 권한·용량·MIME·비공개 접근과 만료/삭제 처리가 검증된다.",
+      "depends_on": [
+        "CORE-03"
+      ],
+      "target_modules": [
+        "lib/channels/lazada-im.ts",
+        "lib/channels/lazada-im-webhook.ts",
+        "lib/cs/message-content.ts (신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "CORE-06",
+      "area": "common",
+      "title": "송신·토큰·큐 정책을 CS에 결속",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "계정/operation별 실제 승인 송신 경로, 권한, 토큰 갱신 정책을 검증한다. CS 처리량·재시도·우선순위를 상품 작업과 구분한다.",
+      "acceptance": "상품 게시 큐 적체 중에도 합의한 CS 수신 목표 충족. 토큰 갱신/429/5xx/worker 중단 후 누락·이중 답변 없음.",
+      "depends_on": [
+        "BASE-01",
+        "CORE-01"
+      ],
+      "target_modules": [
+        "lib/channels/serverless-static-egress.ts",
+        "lib/channels/serverless-cs-gateway.ts",
+        "gateway claim/lease/refresh RPC"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "UI-01",
+      "area": "common",
+      "title": "문의 목록·검색·기간 조회 API",
+      "status": "in_progress",
+      "kind": "implementation",
+      "change": "소유자 범위 안에서 채널/계정/마켓/유형/기간/상태/검색 조건과 cursor pagination을 제공한다. 미처리 기본 필터가 과거 완료 문의를 숨긴다는 점을 UI에 표시한다.",
+      "acceptance": "과거 완료 문의도 전체/완료 필터에서 조회된다. 동일 시각·대량 데이터 페이지 경계 누락 없음. 다른 계정 데이터 접근 차단.",
+      "depends_on": [
+        "CORE-03"
+      ],
+      "target_modules": [
+        "app/api/admin/cs/tickets/route.ts (신설 제안)",
+        "app/cs/ (신설 제안)"
+      ],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "UI-02",
+      "area": "common",
+      "title": "전체 대화 타임라인",
+      "status": "in_progress",
+      "kind": "implementation",
+      "change": "originalMessage 단일 표시를 고객/판매자 전체 메시지 타임라인으로 교체한다. 서버 cursor 조회, 더 보기, 첨부, 수정, 작성 출처, 전송·원격 확인을 표시한다.",
+      "acceptance": "질문→외부 답변→재문의→앱 답변이 원래 시각/순서대로 보이고 새로고침 후 동일하다. 모바일·키보드·빈상태 검증.",
+      "depends_on": [
+        "UI-01",
+        "CORE-04",
+        "CORE-05"
+      ],
+      "target_modules": [
+        "app/page.tsx",
+        "app/cs/conversation-timeline.tsx (신설 제안)",
+        "app/api/admin/cs/tickets/[id]/messages/route.ts (신설 제안)"
+      ],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "UI-03",
+      "area": "common",
+      "title": "연결·이력 진행률을 사실대로 표시",
+      "status": "in_progress",
+      "kind": "implementation",
+      "change": "키 보관, 현재 수신, 이력 범위, 답변 가능, 원격 검증, 재연결 필요, 미지원 상태를 각각 표시하고 채널별 수집 버튼을 제공한다.",
+      "acceptance": "무문의와 수집 정지를 구분한다. 한 채널 장애가 다른 채널 버튼을 막지 않는다. 전체 완료는 모든 범위/페이지 완료 뒤에만 표시.",
+      "depends_on": [
+        "CORE-02",
+        "UI-01"
+      ],
+      "target_modules": [
+        "app/cs-release-state.ts",
+        "app/page.tsx",
+        "app/cs/history-sync-panel.tsx (신설 제안)"
+      ],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "Q10-01",
+      "area": "qoo10",
+      "title": "문의 유형·조회 범위 확정과 이력 수집",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "MSG/HELP/ITEM별 API 조회기간·완료상태·원격 순번 계약을 확인하고 답변 포함 이력 수집을 구현한다.",
+      "acceptance": "지원 유형마다 원격 ID/건수 대조, 기간 경계/페이지 누락 0, 같은 문의 재수집 중복 0.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02",
+        "CORE-02",
+        "CORE-03"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "Q10-02",
+      "area": "qoo10",
+      "title": "답변·외부 답변·재문의 계약",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "복합 문의 ID와 부모 순번을 유지해 발송하고 원격 내용/상태를 검증한다. SellerPilot 밖에서 한 답변도 동일 대화에 결속한다.",
+      "acceptance": "응답 유실 후 재조회로 중복 전송 방지. 새 고객 순번만 재개방.",
+      "depends_on": [
+        "Q10-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "Q10-03",
+      "area": "qoo10",
+      "title": "Qoo10 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "Q10-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "NAV-01",
+      "area": "smartstore",
+      "title": "두 문의 유형의 과거 데이터 독립 복구",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "쿠팡과 분리한 backfill에 상품문의·고객문의의 미답변/답변완료를 포함하고 외부 답변을 대화 원장에 저장한다.",
+      "acceptance": "쿠팡을 차단한 상태에서 두 유형의 스마트스토어 과거 수집이 독립 완료되고 원격 원본과 일치.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02",
+        "CORE-02",
+        "CORE-03"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "NAV-02",
+      "area": "smartstore",
+      "title": "상품/고객 답변·수정·재문의",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "문의 종류에 맞는 ID와 POST/PUT 계약을 유지한다. 고객문의 답변 수정은 공식 별도 API를 검토하여 필요한 경우 별도 작업으로 연결한다.",
+      "acceptance": "각 유형의 최초/기존답변/수정/재문의/답변 권한 없음이 정확한 결과와 UI로 이어진다.",
+      "depends_on": [
+        "NAV-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "NAV-03",
+      "area": "smartstore",
+      "title": "스마트스토어 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "NAV-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "COU-01",
+      "area": "coupang",
+      "title": "실제 승인 송신 경로 복구",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "기존 허용 로컬/서버 또는 검증된 고정송신 경로를 CS 조회·답변에 결속한다. 정책만 켜거나 제한을 우회하지 않는다.",
+      "acceptance": "승인된 경로/계정/키가 일치하며 상품/콜센터 CS 읽기가 실제 실행되고 정상 반환한다.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02",
+        "CORE-06"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "COU-02",
+      "area": "coupang",
+      "title": "상품·콜센터 이력·답변 복구",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "상품 문의, 콜센터 NO_ANSWER와 TRANSFER를 기간 분할하여 복구하고 requested_by/parentAnswerId를 보존한다.",
+      "acceptance": "각 유형의 과거/신규/이관 문의가 누락 없이 수집되고 정확한 부모 답변에 전달된다.",
+      "depends_on": [
+        "COU-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "COU-03",
+      "area": "coupang",
+      "title": "쿠팡 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "COU-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "EBY-01",
+      "area": "ebay",
+      "title": "ASQ 전체 이력·답변 확인 완성",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "ASQ 페이지/기간/사이트 식별자 및 완료 답변을 보존하고 provider ACK 이후 실제 답변을 확인한다.",
+      "acceptance": "ASQ 부모 문의·수신자·상품·market 일치, 판매자센터 원본과 누락/중복 없는 대화 표시.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02",
+        "CORE-02",
+        "CORE-03"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "EBY-02",
+      "area": "ebay",
+      "title": "ASQ 밖의 CS 범위 확장",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "GetMyMessages·주문 당사자 메시지 등 실제 필요한 표면의 공식 권한을 확인해 별도 어댑터와 UI 구분을 구현한다.",
+      "acceptance": "전체 요청 범위가 ASQ와 중복 없이 수집·표시된다. 읽기전용 알림과 답변 가능한 고객 메시지를 구분한다.",
+      "depends_on": [
+        "EBY-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "EBY-03",
+      "area": "ebay",
+      "title": "eBay 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "EBY-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "LAZ-01",
+      "area": "lazada",
+      "title": "IM 권한·판매자 신원 결속",
+      "status": "planned",
+      "kind": "external_validation",
+      "change": "현재 IM 앱 권한/토큰을 확인하고 실제 OAuth/GetSeller 결과로 provider_account identity와 seller-country-app 연결을 인증해 저장한다.",
+      "acceptance": "합성 신원값 없이 인증된 판매자/국가 결속. 서명이 맞아도 다른 판매자 메시지는 거부. 현재 계정 실제 IM 읽기/Push 검증.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "LAZ-02",
+      "area": "lazada",
+      "title": "Push·초기 이력·첨부·토큰 수명주기",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "현재 24시간/한 번 bootstrap 정책을 공식 최신 계약과 대조하고 실패/중단 재개를 설계한다. webhook durable 저장·순서 역전·이미지/카드/판매자 echo·IM 토큰 갱신을 완성한다.",
+      "acceptance": "텍스트 없는 실제 지원 메시지도 원장/처리 필요 상태에 남는다. 토큰 교체·웹훅 재전송·역순 도착·초기화와 신규 Push 동시 수신에 누락/중복 없음.",
+      "depends_on": [
+        "LAZ-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "LAZ-03",
+      "area": "lazada",
+      "title": "Lazada 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "LAZ-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "SHO-01",
+      "area": "shopee",
+      "title": "Chat API·국가별 shop 권한 계약 확정",
+      "status": "planned",
+      "kind": "external_validation",
+      "change": "로그인 개발자센터에서 실제 partner app의 Chat 읽기/전송/이벤트/형식/조회기간/제한·승인 결과를 기록한다.",
+      "acceptance": "API 존재/미제공/신청필요/승인완료가 근거와 함께 확정된다. Commerce 인증을 Chat 승인으로 대체하지 않는다.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "SHO-02",
+      "area": "shopee",
+      "title": "Chat 조회·답변 어댑터 구현",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "승인된 계약에 맞게 conversation/message 페이지·첨부·event/허용 polling·reply/영수증·계정 분리를 구현하고 허용 목록을 증거와 함께 연다.",
+      "acceptance": "대화 ID/message ID/shop/market 결속. API 오류와 실제 수신/답변 상태가 원장과 UI에 반영된다.",
+      "depends_on": [
+        "SHO-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "SHO-03",
+      "area": "shopee",
+      "title": "Shopee 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "SHO-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "ELE-01",
+      "area": "elevenst",
+      "title": "상품 Q&A·긴급알리미 API 계약 확정",
+      "status": "planned",
+      "kind": "external_validation",
+      "change": "판매자 개발 가이드와 현재 Key 서비스 권한·IP를 확인하고 문의 종류별 endpoint/필드/상태/기간/첨부/답변수정 계약을 기록한다.",
+      "acceptance": "정확한 공식 계약·현재 계정 권한·읽기 샘플이 확보된다. 미확정을 API 부재로 표시하지 않는다.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "ELE-02",
+      "area": "elevenst",
+      "title": "문의 조회·답변 어댑터 구현",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "확정한 계약으로 유형별 조회·정규화·답변·외부 답변 수집·페이지 재개를 구현한다. 상품 등록 parser와 CS parser를 분리한다.",
+      "acceptance": "상품 Q&A/지원 긴급알리미 유형 각각 읽기·답변·수정·재문의 계약 검증. unsupported 플래그만 해제하지 않는다.",
+      "depends_on": [
+        "ELE-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "ELE-03",
+      "area": "elevenst",
+      "title": "11번가 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "ELE-02",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "TEM-01",
+      "area": "temu",
+      "title": "앱·판매자 인증과 지원범위 확정",
+      "status": "planned",
+      "kind": "external_validation",
+      "change": "한국 판매자 유형/앱·권한 scope·지역 endpoint·승인 송신 경로를 확인하고 실제 운영 자격을 결속한다.",
+      "acceptance": "활성 운영 자격과 실제 판매자 읽기 확인. 반품/환불/구매자 메시지 API 권한을 서로 구분한다.",
+      "depends_on": [
+        "BASE-01",
+        "BASE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "TEM-02",
+      "area": "temu",
+      "title": "반품·환불 이력과 상태 연결",
+      "status": "planned",
+      "kind": "implementation",
+      "change": "반품·환불 업무를 일반 대화와 구분해 목록/상세/기한/주문 참조·상태 변경 이력을 수집한다. 금전 영향이 있는 승인 operation은 별도 권한과 확인 경계를 둔다.",
+      "acceptance": "지원 상태별 실제 사례가 원격과 일치하고 일반 채팅 답변 성공으로 집계되지 않는다.",
+      "depends_on": [
+        "TEM-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-02"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "TEM-03",
+      "area": "temu",
+      "title": "구매자 메시지 권한·별도 어댑터",
+      "status": "planned",
+      "kind": "external_validation",
+      "change": "한국 판매자/앱의 일반 고객 메시지 제공 여부를 공식 확인하고 제공되면 조회/답변/이력을 별도 구현한다. API가 제공되지 않으면 후속 구현/실검증은 blocked로 남긴다.",
+      "acceptance": "제공 여부/승인/실제 지원 범위가 확정된다. 불가하면 전체 API 자동화 목표의 잔여 격차로 남기고 수동 처리만으로 완료 처리하지 않는다.",
+      "depends_on": [
+        "TEM-01",
+        "CORE-01",
+        "CORE-03",
+        "CORE-04",
+        "CORE-02",
+        "CORE-05"
+      ],
+      "target_modules": [
+        "lib/channels/operations.ts",
+        "lib/channels/inquiry-sync.ts",
+        "lib/channels/inquiry-reply.ts",
+        "lib/cs/adapters/ (채널별 신설 제안)"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "TEM-04",
+      "area": "temu",
+      "title": "Temu 실제 왕복·과거 이력 검증",
+      "status": "planned",
+      "kind": "live_verification",
+      "change": "정확히 허용된 테스트 문의/계정에서 지원 유형별 과거 수집·신규 문의·답변·외부 답변·재문의·지원 첨부·원격 대조를 수행한다.",
+      "acceptance": "원격 문의/답변 식별자와 UI·DB가 일치. 실제 전송은 문의·문구·수신자 확정 후 실행. 유형 하나라도 미검증이면 채널 완료 불가.",
+      "depends_on": [
+        "TEM-02",
+        "TEM-03",
+        "REL-01"
+      ],
+      "target_modules": [
+        "채널별 원격 문의·답변 영수증",
+        "support_* 운영 원장",
+        "CS 웹 UI",
+        "릴리스 증거 원장"
+      ],
+      "evidence": []
+    },
+    {
+      "id": "QA-01",
+      "area": "common",
+      "title": "DB·실행기·UI 장애 계약 검증",
+      "status": "in_progress",
+      "kind": "validation",
+      "change": "동시 답변, 최신 inbound 변경, claim 만료, ACK 유실, 429/5xx, 잘못된 계정/서명, 페이지 재개, 삭제 후 재수집, 미지원 이벤트를 오프라인/격리 DB로 검증한다.",
+      "acceptance": "확정된 필수 시나리오 전부 통과. 고객 응답 유실·중복 전송·다른 판매자 저장 0. 기존 58개 통과를 신규 범위 완료로 대신하지 않는다.",
+      "depends_on": [
+        "CORE-02",
+        "CORE-03",
+        "CORE-04",
+        "CORE-05",
+        "CORE-06",
+        "UI-02",
+        "UI-03"
+      ],
+      "target_modules": [],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "QA-02",
+      "area": "common",
+      "title": "대량 이력·보관·접근권한 검증",
+      "status": "in_progress",
+      "kind": "validation",
+      "change": "실제 적용 함수/권한과 migration replay 일치, 메시지/첨부 보관·삭제·검색 성능·대량 cursor 조회·운영 화면 상태를 검증한다.",
+      "acceptance": "대규모 fixture에서 페이지 누락/중복 0, 접근 격리 통과, 조회 성능 목표 충족, 재구축한 DB와 운영 정의 차이 없음.",
+      "depends_on": [
+        "QA-01"
+      ],
+      "target_modules": [],
+      "evidence": [
+        "docs/CS-구현진행-20260907.md"
+      ]
+    },
+    {
+      "id": "REL-01",
+      "area": "common",
+      "title": "기능별 배포·DB 적용·실행 버전 결속",
+      "status": "planned",
+      "kind": "release",
+      "change": "준비된 채널과 공통 UI/DB를 호환 migration→API/worker→기능 활성 순서로 단계 배포한다. 미준비 채널은 계속 차단하고 version·function hash·실제 route를 검증한다.",
+      "acceptance": "각 채널 live test 전에 그 채널 구현과 필수 QA/DB 적용/릴리스 일치가 확인된다. 다른 채널을 기다릴 필요 없이 단계 승격 가능. 롤백은 신규 enqueue 중지·진행/불확실 작업 보존. QA-01/02 공통 통과 외에 배포 대상 채널의 필수 오프라인 계약 시나리오도 모두 통과해야 한다. 이 게이트는 채널마다 별도 증거로 반복한다.",
+      "depends_on": [
+        "QA-01",
+        "QA-02"
+      ],
+      "target_modules": [],
+      "evidence": []
+    },
+    {
+      "id": "OPS-01",
+      "area": "common",
+      "title": "48시간 관측·최종 채널별 완료 판정",
+      "status": "planned",
+      "kind": "acceptance",
+      "change": "전체 지원 범위의 최신 수신/답변/이력·지연·토큰 갱신·재시도·worker 중단 복구를 관측하고 원격 표본과 재대조한다.",
+      "acceptance": "48시간의 정의된 시험에서 수집 누락·중복답변·계정 혼선 0, 각 채널 목표 지연 충족, 오래된 무처리 큐 0, 미조정 전송 0, 필수 범위 unknown/blocked/미검증 0.",
+      "depends_on": [
+        "Q10-03",
+        "NAV-03",
+        "COU-03",
+        "EBY-03",
+        "LAZ-03",
+        "SHO-03",
+        "ELE-03",
+        "TEM-04"
+      ],
+      "target_modules": [],
+      "evidence": []
+    }
+  ],
+  "per_channel_release_rule": "REL-01은 채널별 반복 게이트다. 공통 QA-01/02와 대상 채널 구현 및 오프라인 계약 검증 완료 후에만 해당 채널을 배포한다. live_verification은 그 채널의 REL-01 증거를 요구하며 다른 채널의 미완료로 준비된 채널의 배포를 막지 않는다.",
+  "completion_rule": "필수 범위 unknown/blocked/미검증이 하나라도 있으면 해당 채널 또는 전체 API 자동화 완료로 판정하지 않음",
+  "definition_of_done_evidence_fields": [
+    "channel",
+    "seller_account_ref",
+    "market",
+    "surface",
+    "scenario",
+    "source_date_range",
+    "remote_ids",
+    "job_id",
+    "receipt_id",
+    "runtime_release",
+    "database_function_hash",
+    "observed_at",
+    "result",
+    "evidence_path"
+  ],
+  "implementation_branch": "codex/cs-completion-20260907",
+  "implementation_progress_note": "1차: 한국 채널별 7~30일 이력 요청 분리 및 기존 원장 전체 대화 조회·표시 구현. 운영 적용 및 실제 채널 왕복 미완료."
+}

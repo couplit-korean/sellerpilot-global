@@ -29,7 +29,7 @@ const historyBackfillResultSchema = z.object({
   historyDays: z.number().int().min(7).max(30),
   fromDate: z.string(),
   toDate: z.string(),
-  channels: z.array(z.enum(["coupang", "smartstore"])).length(2),
+  channels: z.array(z.enum(["coupang", "smartstore"])).min(1).max(2),
   expectedInitialJobs: z.number().int().nonnegative(),
   totalJobs: z.number().int().nonnegative(),
   queuedJobs: z.number().int().nonnegative(),
@@ -103,19 +103,20 @@ function periodicEnqueueSummary(values: unknown[]) {
 }
 
 function historyBackfillMessage(result: HistoryBackfillResult) {
+  const label = result.channels.map((channel) => channel === "coupang" ? "쿠팡" : "스마트스토어").join("·");
   if (result.status === "blocked" || result.blockedReason === SERVERLESS_STATIC_EGRESS_REQUIRED) {
-    return "쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 두 채널의 과거 문의 작업을 접수하거나 재시도하지 않습니다.";
+    return `${label} 문의 조회에는 승인된 송신 경로 설정이 필요합니다. 설정 전에는 선택한 채널의 과거 문의 작업을 접수하거나 재시도하지 않습니다.`;
   }
   if (result.status === "succeeded") {
-    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
+    return `${label} 최근 ${result.historyDays}일 문의 ${result.succeededJobs}건의 읽기 작업이 모두 반영됐습니다.`;
   }
   if (result.status === "failed") {
-    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 작업 중 ${result.failedJobs}건이 실패했습니다. 완료로 표시하지 않았으며 상태를 확인해 주세요.`;
+    return `${label} 최근 ${result.historyDays}일 문의 작업 중 ${result.failedJobs}건이 실패했습니다. 완료로 표시하지 않았으며 상태를 확인해 주세요.`;
   }
   if ((result.retriedJobs ?? 0) > 0) {
-    return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의의 안전한 읽기 실패 ${result.retriedJobs}건을 다시 접수했습니다. ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+    return `${label} 최근 ${result.historyDays}일 문의의 안전한 읽기 실패 ${result.retriedJobs}건을 다시 접수했습니다. ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
   }
-  return `쿠팡·스마트스토어 최근 ${result.historyDays}일 문의 읽기 작업 ${result.totalJobs}건을 접수했습니다. 서버에서 순차 처리되며 ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
+  return `${label} 최근 ${result.historyDays}일 문의 읽기 작업 ${result.totalJobs}건을 접수했습니다. 서버에서 순차 처리되며 ${result.succeededJobs}/${result.totalJobs}건 완료 상태입니다.`;
 }
 
 export async function GET(request: Request) {
@@ -169,19 +170,18 @@ export async function POST(request: Request) {
       headers: { "cache-control": "no-store, max-age=0" },
     });
   }
+  const historyChannels = (parsed.data.channels ?? []) as Array<"coupang" | "smartstore">;
   if (parsed.data.historyDays !== undefined
-      && (parsed.data.channels?.length !== 2
-        || !parsed.data.channels.includes("coupang")
-        || !parsed.data.channels.includes("smartstore"))) {
-    return NextResponse.json({
-      message: "과거 문의 다시 불러오기는 쿠팡과 네이버 스마트스토어만 함께 선택할 수 있습니다.",
-    }, { status: 400 });
+      && (historyChannels.length < 1 || historyChannels.length > 2
+        || new Set(historyChannels).size !== historyChannels.length
+        || historyChannels.some((channel) => channel !== "coupang" && channel !== "smartstore"))) {
+    return NextResponse.json({ message: "과거 문의를 불러올 쿠팡 또는 스마트스토어를 선택해 주세요." }, { status: 400 });
   }
   const staticEgressChannels = configuredServerlessStaticEgressChannels();
   if (parsed.data.historyDays !== undefined) {
     const envReady = hasServerlessStaticEgressFor(
       staticEgressChannels,
-      ["coupang", "smartstore"],
+      historyChannels,
     );
     const { data: databasePolicy, error: databasePolicyError } = envReady
       ? await admin.serviceClient.rpc("sellerpilot_service_serverless_static_egress_status")
@@ -189,7 +189,7 @@ export async function POST(request: Request) {
     const policy = databasePolicy && typeof databasePolicy === "object" && !Array.isArray(databasePolicy)
       ? databasePolicy as Record<string, unknown>
       : {};
-    const databaseReady = policy.coupang === true && policy.smartstore === true;
+    const databaseReady = historyChannels.every((channel) => policy[channel] === true);
     if (!envReady || databasePolicyError || !databaseReady) {
       const blockedAt = new Date();
       const seoulDate = (daysAgo: number) => new Intl.DateTimeFormat("en-CA", {
@@ -209,7 +209,7 @@ export async function POST(request: Request) {
           historyDays: parsed.data.historyDays,
           fromDate: seoulDate(parsed.data.historyDays - 1),
           toDate: seoulDate(0),
-          channels: ["coupang", "smartstore"],
+          channels: historyChannels,
           expectedInitialJobs: 0,
           totalJobs: 0,
           queuedJobs: 0,
@@ -221,7 +221,7 @@ export async function POST(request: Request) {
           updatedAt: blockedAt.toISOString(),
           completedAt: blockedAt.toISOString(),
         },
-        message: "쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 두 채널의 30일 작업을 접수하거나 재시도하지 않습니다.",
+        message: "선택한 채널에 승인된 송신 경로 설정이 필요합니다. 다른 채널은 별도로 과거 문의를 불러올 수 있습니다.",
       }, {
         status: 409,
         headers: { "cache-control": "no-store, max-age=0" },
@@ -257,12 +257,11 @@ export async function POST(request: Request) {
     .filter((row) => row.status === "active" && row.environment === "production" && isActiveChannelKey(row.channel) && requested.has(row.channel))
     .filter((row, index, rows) => rows.findIndex((candidate) => candidate.channel === row.channel) === index);
   if (parsed.data.historyDays !== undefined
-      && (!credentials.some((credential) => credential.channel === "coupang")
-        || !credentials.some((credential) => credential.channel === "smartstore"))) {
+      && !historyChannels.every((channel) => credentials.some((credential) => credential.channel === channel))) {
     return NextResponse.json({
       ok: false,
       connectedChannels: credentials.map((credential) => credential.channel),
-      message: "쿠팡과 네이버 스마트스토어 운영 자격증명이 모두 활성 상태여야 과거 문의를 다시 불러올 수 있습니다.",
+      message: "선택한 채널의 운영 자격증명이 활성 상태여야 과거 문의를 다시 불러올 수 있습니다.",
     }, {
       status: 409,
       headers: { "cache-control": "no-store, max-age=0" },
@@ -270,13 +269,13 @@ export async function POST(request: Request) {
   }
   if (parsed.data.historyDays !== undefined) {
     const { data, error } = await admin.userClient.rpc(
-      "sellerpilot_start_inquiry_history_backfill",
-      { p_history_days: parsed.data.historyDays },
+      "sellerpilot_start_inquiry_history_backfill_v2",
+      { p_channels: historyChannels, p_history_days: parsed.data.historyDays },
     );
     if (error) {
       return NextResponse.json({
         ok: false,
-        message: "쿠팡·스마트스토어 자격증명 소유자와 연결 상태를 확인한 뒤 다시 시도해 주세요.",
+        message: "선택한 채널의 자격증명 소유자와 연결 상태를 확인한 뒤 다시 시도해 주세요.",
       }, {
         status: 409,
         headers: { "cache-control": "no-store, max-age=0" },
@@ -288,7 +287,7 @@ export async function POST(request: Request) {
     }
     return NextResponse.json({
       ok: parsedResult.data.status !== "failed",
-      requestedChannels: ["coupang", "smartstore"],
+      requestedChannels: historyChannels,
       connectedChannels: credentials.map((credential) => credential.channel),
       historyBackfill: parsedResult.data,
       message: historyBackfillMessage(parsedResult.data),
