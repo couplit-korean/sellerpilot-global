@@ -13,7 +13,7 @@ import {
 } from "./channels/protocols";
 import {
   smartstoreDetailImageCount,
-  smartstoreReadbackImageProjection,
+  strictSmartstoreUploadedImageUrl,
 } from "./channels/smartstore-image-contract";
 
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
@@ -225,6 +225,7 @@ type DownloadedImage = {
 export type SmartstoreManualAdoptionReadbackDependencies = {
   accessToken: (credential: SecretPayload) => Promise<string>;
   downloadImage: (url: string, signal?: AbortSignal) => Promise<DownloadedImage>;
+  normalizedImageProjectUrl: string;
   now: () => Date;
   request: SmartstoreProviderRequest;
 };
@@ -310,16 +311,22 @@ export function smartstoreManualAdoptionCredentialCauseCode(
 export class SmartstoreManualAdoptionError extends Error {
   readonly code: string;
   readonly causeCode: SmartstoreManualAdoptionCredentialCauseCode | null;
+  readonly diagnosticCode: string | null;
 
   constructor(
     code: string,
     cause?: unknown,
     causeCode: SmartstoreManualAdoptionCredentialCauseCode | null = null,
+    diagnosticCode: string | null = null,
   ) {
-    super(code, cause === undefined ? undefined : { cause });
+    super(
+      diagnosticCode ? `${code}:${diagnosticCode}` : code,
+      cause === undefined ? undefined : { cause },
+    );
     this.name = "SmartstoreManualAdoptionError";
     this.code = code;
     this.causeCode = causeCode;
+    this.diagnosticCode = diagnosticCode;
   }
 }
 
@@ -398,6 +405,148 @@ function criticalOriginProductEvidence(value: unknown) {
   });
 }
 
+function htmlImageUrlOccurrences(value: unknown) {
+  const html = typeof value === "string" ? value : "";
+  const urls: string[] = [];
+  for (const match of html.matchAll(
+    /<img\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/giu,
+  )) {
+    const url = String(match[1] ?? match[2] ?? match[3] ?? "")
+      .replaceAll("&amp;", "&")
+      .trim();
+    if (url) urls.push(url);
+  }
+  return urls;
+}
+
+function legacySmartstoreRepresentativeImageUrl(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return "";
+  try {
+    const url = new URL(raw);
+    return ["http:", "https:"].includes(url.protocol)
+        && url.hostname === "shop1.phinf.naver.net"
+        && url.port === ""
+        && url.username === ""
+        && url.password === ""
+        && url.search === ""
+        && url.hash === ""
+        && /^\/.+\.[a-z0-9]+$/iu.test(url.pathname)
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function currentProjectNormalizedImageUrl(value: unknown, projectUrlValue: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  const projectRaw = typeof projectUrlValue === "string" ? projectUrlValue.trim() : "";
+  if (!raw || !projectRaw) return "";
+  try {
+    const url = new URL(raw);
+    const projectUrl = new URL(projectRaw);
+    const match = url.pathname.match(
+      /^\/storage\/v1\/object\/public\/sellerpilot-marketplace\/normalized\/([a-f0-9]{2})\/([a-f0-9]{64})\.jpg$/u,
+    );
+    return projectUrl.protocol === "https:"
+        && url.protocol === "https:"
+        && url.origin === projectUrl.origin
+        && url.username === ""
+        && url.password === ""
+        && url.search === ""
+        && url.hash === ""
+        && Boolean(match)
+        && match?.[1] === match?.[2]?.slice(0, 2)
+      ? url.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function smartstoreProviderOwnedImageUrl(value: unknown) {
+  return strictSmartstoreUploadedImageUrl(value)
+    || legacySmartstoreRepresentativeImageUrl(value);
+}
+
+type SmartstoreManualAdoptionImageProjection = {
+  detailImageUrls: string[];
+  diagnosticCode: string;
+  verified: boolean;
+  failureCode:
+    | "SMARTSTORE_MANUAL_REPRESENTATIVE_IMAGE_UNVERIFIED"
+    | "SMARTSTORE_MANUAL_DETAIL_IMAGE_COUNT_INVALID"
+    | "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED"
+    | null;
+};
+
+/**
+ * Existing-product adoption accepts either durable Naver upload URLs or the
+ * exact current SellerPilot project's public normalized-image namespace. The
+ * latter is still bound to the source job and approved pixel receipts by the
+ * atomic database commit. Normal listing publication keeps using the stricter
+ * gallery-to-detail projection in smartstore-image-contract.ts.
+ */
+export function smartstoreManualAdoptionImageProjection(
+  originProductValue: unknown,
+  normalizedImageProjectUrl: string,
+): SmartstoreManualAdoptionImageProjection {
+  const originProduct = record(originProductValue);
+  const images = record(originProduct.images);
+  const representativeImageValid = Boolean(smartstoreProviderOwnedImageUrl(
+    record(images.representativeImage).url,
+  ));
+  const gallery = Array.isArray(images.optionalImages) ? images.optionalImages : [];
+  const galleryValidCount = gallery.filter((image) => Boolean(
+    smartstoreProviderOwnedImageUrl(record(image).url)
+      || currentProjectNormalizedImageUrl(record(image).url, normalizedImageProjectUrl),
+  )).length;
+  const detailImageUrls = htmlImageUrlOccurrences(originProduct.detailContent);
+  const uniqueDetailImageCount = new Set(detailImageUrls).size;
+  const providerDetailImageCount = detailImageUrls.filter((url) => Boolean(
+    strictSmartstoreUploadedImageUrl(url),
+  )).length;
+  const normalizedDetailImageCount = detailImageUrls.filter((url) => Boolean(
+    currentProjectNormalizedImageUrl(url, normalizedImageProjectUrl),
+  )).length;
+  const queryDetailImageCount = detailImageUrls.filter((value) => {
+    try {
+      return new URL(value).search.length > 0;
+    } catch {
+      return false;
+    }
+  }).length;
+  const diagnosticCode = [
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC",
+    `R${representativeImageValid ? 1 : 0}`,
+    `D${detailImageUrls.length}`,
+    `U${uniqueDetailImageCount}`,
+    `P${providerDetailImageCount}`,
+    `S${normalizedDetailImageCount}`,
+    `Q${queryDetailImageCount}`,
+    `G${gallery.length}`,
+    `GV${galleryValidCount}`,
+  ].join("_");
+  const detailCountValid = detailImageUrls.length === smartstoreDetailImageCount
+    && uniqueDetailImageCount === smartstoreDetailImageCount;
+  const detailSurfaceValid = providerDetailImageCount === smartstoreDetailImageCount
+    || normalizedDetailImageCount === smartstoreDetailImageCount;
+  const failureCode = !representativeImageValid
+    ? "SMARTSTORE_MANUAL_REPRESENTATIVE_IMAGE_UNVERIFIED"
+    : !detailCountValid
+      ? "SMARTSTORE_MANUAL_DETAIL_IMAGE_COUNT_INVALID"
+      : !detailSurfaceValid
+        ? "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED"
+        : null;
+  return {
+    detailImageUrls,
+    diagnosticCode,
+    verified: failureCode === null,
+    failureCode,
+  };
+}
+
 function accepted(remote: RemoteResponse) {
   const code = String(remote.data.code ?? "").trim().toUpperCase();
   return remote.response.status === 200 && !code;
@@ -454,6 +603,7 @@ async function defaultAccessToken(credential: SecretPayload) {
 const defaultDependencies: SmartstoreManualAdoptionReadbackDependencies = {
   accessToken: defaultAccessToken,
   downloadImage: downloadMarketplaceImage,
+  normalizedImageProjectUrl: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
   now: () => new Date(),
   request: naverRequest,
 };
@@ -719,11 +869,17 @@ export async function collectSmartstoreManualAdoptionReadback(
     throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_CHANNEL_STATUS_MISMATCH");
   }
 
-  const images = smartstoreReadbackImageProjection(originProduct);
-  if (!images.verified
-      || images.detailImageUrls.length !== smartstoreDetailImageCount
-      || new Set(images.detailImageUrls).size !== smartstoreDetailImageCount) {
-    throw new SmartstoreManualAdoptionError("SMARTSTORE_MANUAL_DETAIL_IMAGES_UNVERIFIED");
+  const images = smartstoreManualAdoptionImageProjection(
+    originProduct,
+    dependencies.normalizedImageProjectUrl,
+  );
+  if (!images.verified || images.failureCode) {
+    throw new SmartstoreManualAdoptionError(
+      images.failureCode ?? "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED",
+      undefined,
+      null,
+      images.diagnosticCode,
+    );
   }
   const inspectedDetailImages = await mapWithConcurrency(
     images.detailImageUrls,

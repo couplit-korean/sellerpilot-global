@@ -208,6 +208,9 @@ test("only transient SmartStore read failures can reuse the bounded job", () => 
     "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_STATUS_MISMATCH",
     "SMARTSTORE_MANUAL_CHANNEL_ORIGIN_PRODUCT_MISMATCH",
     "SMARTSTORE_MANUAL_CHANNEL_STATUS_MISMATCH",
+    "SMARTSTORE_MANUAL_REPRESENTATIVE_IMAGE_UNVERIFIED",
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_COUNT_INVALID",
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED",
   ]) {
     assert.equal(isRetryableSmartstoreManualAdoptionReadbackError(
       new SmartstoreManualAdoptionError(terminalCode),

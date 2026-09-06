@@ -9,6 +9,7 @@ import * as zod from "zod";
 
 import {
   collectSmartstoreManualAdoptionReadback,
+  smartstoreManualAdoptionImageProjection,
   smartstoreManualAdoptionCredentialCauseCode,
   smartstoreManualAdoptionReadbackStateSchema,
   smartstoreManualAdoptionRequestSchema,
@@ -26,6 +27,7 @@ const readbackJobId = "33333333-3333-4333-8333-333333333333";
 const receiptId = "66666666-6666-4666-8666-666666666666";
 const attestationId = "77777777-7777-4777-8777-777777777777";
 const privateMarker = "PRIVATE_CREDENTIAL_OR_PROVIDER_TEXT";
+const normalizedImageProjectUrl = "https://sqaoqucxakebqkiygdxb.supabase.co";
 const routeSource = await readFile(
   new URL("../app/api/admin/products/[id]/smartstore-manual-adoption/route.ts", import.meta.url),
   "utf8",
@@ -172,6 +174,11 @@ function imageUrl(index: number) {
   return `https://shop-phinf.pstatic.net/20260907/detail-${index}.jpg`;
 }
 
+function normalizedImageUrl(index: number, projectUrl = normalizedImageProjectUrl) {
+  const digest = index.toString(16).padStart(64, "0");
+  return `${projectUrl}/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`;
+}
+
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   return {
     response: Response.json(data, { status }),
@@ -228,6 +235,27 @@ function providerFixture() {
     },
   };
   return { channel, detailImageUrls, origin, search };
+}
+
+function legacySourceImageFixture() {
+  const fixture = providerFixture();
+  const detailImageUrls = Array.from({ length: 8 }, (_, index) => normalizedImageUrl(index + 1));
+  const legacyImages = {
+    representativeImage: {
+      url: "http://shop1.phinf.naver.net/20260907/legacy-representative.jpg",
+    },
+    optionalImages: [
+      { url: "http://shop1.phinf.naver.net/20260907/legacy-gallery-1.jpg" },
+      { url: "https://shop-phinf.pstatic.net/20260907/legacy-gallery-2.jpg" },
+    ],
+  };
+  for (const response of [fixture.origin, fixture.channel]) {
+    response.originProduct.detailContent = detailImageUrls
+      .map((url) => `<img src="${url}">`)
+      .join("");
+    response.originProduct.images = structuredClone(legacyImages);
+  }
+  return { ...fixture, detailImageUrls };
 }
 
 async function imageBytes(index: number) {
@@ -511,6 +539,136 @@ test("official search and two GETs discover one exact product and preserve eight
   assert.equal(result.channelReadback.request, null);
   assert.doesNotMatch(JSON.stringify(result), /secret-not-returned/u);
 });
+
+test("manual adoption accepts eight exact current-project normalized detail images without an eight-image gallery", async () => {
+  const fixture = legacySourceImageFixture();
+  const projection = smartstoreManualAdoptionImageProjection(
+    fixture.origin.originProduct,
+    normalizedImageProjectUrl,
+  );
+  assert.equal(projection.verified, true);
+  assert.equal(projection.failureCode, null);
+  assert.equal(
+    projection.diagnosticCode,
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R1_D8_U8_P0_S8_Q0_G2_GV2",
+  );
+
+  const downloaded: string[] = [];
+  const result = await collectSmartstoreManualAdoptionReadback(
+    { credential: {}, target: { sellerSku } },
+    {
+      accessToken: async () => "token",
+      normalizedImageProjectUrl,
+      request: async (input) => input.path === "/v1/products/search"
+        ? remote(fixture.search)
+        : input.path.endsWith(originProductNo)
+          ? remote(fixture.origin)
+          : remote(fixture.channel),
+      downloadImage: async (url) => {
+        downloaded.push(url);
+        return {
+          bytes: await imageBytes(fixture.detailImageUrls.indexOf(url) + 1),
+          contentType: "image/png",
+        };
+      },
+    },
+  );
+  assert.deepEqual(downloaded, fixture.detailImageUrls);
+  assert.deepEqual(result.detailImageUrls, fixture.detailImageUrls);
+  assert.equal(result.detailImagePixelSha256s.length, 8);
+});
+
+for (const [label, mutate, projectUrl, expectedCode, expectedDiagnostic] of [
+  [
+    "a different Supabase project",
+    (fixture: ReturnType<typeof legacySourceImageFixture>) => fixture,
+    "https://different-project.supabase.co",
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED",
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R1_D8_U8_P0_S0_Q0_G2_GV2",
+  ],
+  [
+    "an arbitrary HTTPS origin",
+    (fixture: ReturnType<typeof legacySourceImageFixture>) => {
+      const urls = Array.from({ length: 8 }, (_, index) => `https://images.example.test/${index}.jpg`);
+      for (const response of [fixture.origin, fixture.channel]) {
+        response.originProduct.detailContent = urls.map((url) => `<img src="${url}">`).join("");
+      }
+      return fixture;
+    },
+    normalizedImageProjectUrl,
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED",
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R1_D8_U8_P0_S0_Q0_G2_GV2",
+  ],
+  [
+    "provider image query parameters",
+    (fixture: ReturnType<typeof legacySourceImageFixture>) => {
+      const urls = Array.from(
+        { length: 8 },
+        (_, index) => `https://shop-phinf.pstatic.net/detail/${index}.jpg?type=w860`,
+      );
+      for (const response of [fixture.origin, fixture.channel]) {
+        response.originProduct.detailContent = urls.map((url) => `<img src="${url}">`).join("");
+      }
+      return fixture;
+    },
+    normalizedImageProjectUrl,
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_SOURCE_UNVERIFIED",
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R1_D8_U8_P0_S0_Q8_G2_GV2",
+  ],
+  [
+    "a duplicate detail image",
+    (fixture: ReturnType<typeof legacySourceImageFixture>) => {
+      const duplicate = fixture.detailImageUrls[0]!;
+      const urls = [duplicate, duplicate, ...fixture.detailImageUrls.slice(2)];
+      for (const response of [fixture.origin, fixture.channel]) {
+        response.originProduct.detailContent = urls.map((url) => `<img src="${url}">`).join("");
+      }
+      return fixture;
+    },
+    normalizedImageProjectUrl,
+    "SMARTSTORE_MANUAL_DETAIL_IMAGE_COUNT_INVALID",
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R1_D8_U7_P0_S8_Q0_G2_GV2",
+  ],
+  [
+    "an untrusted representative image",
+    (fixture: ReturnType<typeof legacySourceImageFixture>) => {
+      for (const response of [fixture.origin, fixture.channel]) {
+        response.originProduct.images.representativeImage.url = "https://images.example.test/main.jpg";
+      }
+      return fixture;
+    },
+    normalizedImageProjectUrl,
+    "SMARTSTORE_MANUAL_REPRESENTATIVE_IMAGE_UNVERIFIED",
+    "SMARTSTORE_MANUAL_IMAGE_DIAGNOSTIC_R0_D8_U8_P0_S8_Q0_G2_GV2",
+  ],
+] as const) {
+  test(`${label} is rejected with only bounded image diagnostics`, async () => {
+    const fixture = mutate(legacySourceImageFixture());
+    let downloads = 0;
+    await assert.rejects(
+      collectSmartstoreManualAdoptionReadback({ credential: {}, target: { sellerSku } }, {
+        accessToken: async () => "token",
+        normalizedImageProjectUrl: projectUrl,
+        request: async (input) => input.path === "/v1/products/search"
+          ? remote(fixture.search)
+          : input.path.endsWith(originProductNo)
+            ? remote(fixture.origin)
+            : remote(fixture.channel),
+        downloadImage: async () => {
+          downloads += 1;
+          return { bytes: await imageBytes(1), contentType: "image/png" };
+        },
+      }),
+      (error: unknown) => error instanceof SmartstoreManualAdoptionError
+        && error.code === expectedCode
+        && error.diagnosticCode === expectedDiagnostic
+        && error.message === `${expectedCode}:${expectedDiagnostic}`
+        && !error.message.includes("http")
+        && !error.message.includes("sellerpilot-marketplace"),
+    );
+    assert.equal(downloads, 0);
+  });
+}
 
 test("ambiguous SELLER_CODE search fails before any product GET or image download", async () => {
   const fixture = providerFixture();
