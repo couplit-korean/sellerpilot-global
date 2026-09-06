@@ -693,7 +693,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         <article><small>8개 게시 어댑터</small><b>{listingGate?.publicationAdaptersReady ?? 0} / {listingPublicationChannels.length}</b><em className={exactPublicationReleaseReady ? "ok" : "waiting"}>{exactPublicationReleaseReady ? "현재 SHA 일치" : "현재 SHA 확인 필요"}</em></article>
         <article><small>Qoo10 단일 채널</small><b>{listingGate?.qoo10AdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactQoo10ReleaseReady ? "ok" : "waiting"}>{exactQoo10ReleaseReady ? "현재 SHA 일치" : "Qoo10 SHA 확인 필요"}</em></article>
         <article><small>게시 결과 재조회기</small><b>{listingGate?.publicationRecheckerReady ? "확인됨" : "확인 필요"}</b><em className={listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "ok" : "waiting"}>{listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "현재 SHA 일치" : "재조회 계약 확인 필요"}</em></article>
-        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "재검증 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
+        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "게시 기준·런타임 SHA 결속 확인 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
       </div>
 
       <div className="cli-listing-release-blockers">

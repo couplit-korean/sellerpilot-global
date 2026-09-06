@@ -285,7 +285,7 @@ export function ProductDetailAssetImport({ productId, currentVersion, authentica
   });
   return <section className="panel" aria-label="외부 상세 이미지와 정식 검수 문안 가져오기" data-source-kind="external_generated">
     <h3>외부 생성 8컷 + 정식 검수 문안 가져오기</h3>
-    <p><b>external_generated</b> · AI Studio 생성 성공이 아닙니다. 원본 사실·이미지 권리·연출 소품 및 패키지 차이를 사람이 검수하고 별도로 승인합니다. 기존 Studio 원본과 채널 게시 조건은 보존됩니다.</p>
+    <p><b>external_generated</b> · AI Studio 생성 성공이 아닙니다. 원본 사실·이미지 권리·연출 소품 및 패키지 차이에 대해 검수 주체와 근거를 명시한 검수·별도 승인이 필요합니다. 기존 Studio 원본과 채널 게시 조건은 보존됩니다.</p>
     <label>재개할 import ID (비우면 저장된 예약 또는 현재 승인본)<input value={resumeId} disabled={busy} onChange={(event) => setResumeId(event.target.value)} /></label>
     <button type="button" disabled={busy} onClick={loadContext}>현재 상품·소유자·버전 읽기 · 예약/승인본 재로딩</button>
     {receipt ? <p>import {receipt.id} · {receipt.status} · 만료 {bound?.row.expires_at ?? "조회 필요"} · 지문 {receipt.request_sha256}</p> : null}
@@ -297,7 +297,7 @@ export function ProductDetailAssetImport({ productId, currentVersion, authentica
       <textarea rows={8} value={raw} disabled={locked} onChange={(event) => { setRaw(event.target.value); setDraft(null); changed(); }} />
     </label>
     <p>각 문서는 Puck document와 reviewNote를 포함해야 합니다. source.kind는 external_generated이며 권리 근거·한계·원본 SHA256 참조가 필요합니다. 임의 소유자·상품·버전 필드는 받지 않습니다.</p>
-    <button type="button" disabled={locked || !raw} onClick={() => { try { setDraft(parseExternalImportPackage(raw)); setMessage("패키지 형식 확인. 아래 실물 이미지·문안 검수는 아직 필요합니다."); changed(); } catch (error) { setDraft(null); setMessage(error instanceof Error ? error.message : "JSON 형식 오류"); } }}>패키지 검수 화면 열기</button>
+    <button type="button" disabled={locked || !raw} onClick={() => { try { setDraft(parseExternalImportPackage(raw)); setMessage("패키지 형식 확인. 아래 실제 파일·문안 검수는 아직 필요합니다."); changed(); } catch (error) { setDraft(null); setMessage(error instanceof Error ? error.message : "JSON 형식 오류"); } }}>패키지 검수 화면 열기</button>
     {draft ? <>
       <p>권리 근거: {draft.audit.rightsBasis}</p><p>연출·사실 한계: {draft.audit.limitations}</p>
       <ul>{draft.audit.sourceReferences.map((reference, index) => <li key={index}>{reference.label} · {reference.sha256} {reference.url ?? ""}</li>)}</ul>

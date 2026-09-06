@@ -1,0 +1,5112 @@
+{
+  "checked_at": "2026-09-06T01:14:20.117323+00:00",
+  "history_count": 276,
+  "functions": [
+    {
+      "qualified_name": "public.sellerpilot_056700_complete_gateway_before_qoo10_s1_activation",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "562044489390349633bbf311c93c2945",
+      "definition_md5": "40f65611df4ff8fdca7c6b4d16570957",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_0902_ingest_inquiries_unsafe",
+      "arguments": "p_credential_id uuid, p_channel text, p_inquiries jsonb",
+      "raw_prosrc_md5": "d3329d1c2c396ff786c4029d706a77cc",
+      "definition_md5": "91bd60f67db18201ae19a8696f0f3473",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_090500_complete_before_qoo10_shipping_s1",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "9188e31469c9265e86354c436c870b17",
+      "definition_md5": "5c36a05726c0a667a7e4295d5ba85b18",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_11820_begin_refresh_unsafe",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid",
+      "raw_prosrc_md5": "62e95160b2412a98b297e2d53023ecf4",
+      "definition_md5": "d24a2328f4d85342e4135980915ec13e",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_11820_claim_gateway_unsafe",
+      "arguments": "p_token_hash text, p_worker_version text",
+      "raw_prosrc_md5": "ac718a24f7339514431cc4bb7d230866",
+      "definition_md5": "3ede9ef7c5673d1f09f539f33bc4f9a7",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_11820_complete_gateway_unsafe",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text",
+      "raw_prosrc_md5": "19fa8a75c97d100498d60a4624071f53",
+      "definition_md5": "706fd335c0f78240bbe7289925d85e97",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_11820_prepare_refresh_unsafe",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone, p_recovery_only boolean, p_oauth_complete boolean",
+      "raw_prosrc_md5": "720f723ce1e1f87dc9e633192155d0f9",
+      "definition_md5": "d9add074dfd67d35d7516a327e1dba43",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_11840_claim_gateway_unsafe",
+      "arguments": "p_token_hash text, p_worker_version text",
+      "raw_prosrc_md5": "2e6ee773ba84c743345f3e266803db69",
+      "definition_md5": "4e7f63b34383632f7756ee701c25a5e1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_133000_complete_gateway_before_temu_publication",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "272d5206e7e953b2090659051de1b678",
+      "definition_md5": "0f5943c087538d6a3a88ce4aa29f0e5c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_133000_reap_gateway_before_temu_publication",
+      "arguments": "p_limit integer",
+      "raw_prosrc_md5": "308f46a9ba491e8b527cc8fc5ce037ae",
+      "definition_md5": "6751f6abfe0c43123f262a9af840c93c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_173960_complete_before_temu_exact",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "e41a28dc6b354821e83c343dc6f8692f",
+      "definition_md5": "9a8a4496a950c451b342fb88fe68711a",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_173980_complete_before_lazada_exact",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "dc99117e0db7ed626b098e9ae568cfee",
+      "definition_md5": "64d08785a5d656a265b676bea5968343",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_222257_complete_gateway_before_qoo10_retry_preserve",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text",
+      "raw_prosrc_md5": "9df1f0a7018051942636ec89c0addca3",
+      "definition_md5": "e9f7dd15c430468c482a586163ccd480",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_260826_claim_gateway_unscoped",
+      "arguments": "p_token_hash text, p_worker_version text",
+      "raw_prosrc_md5": "21324cf1ddbb15004974542d5685c021",
+      "definition_md5": "5260c620759bd22d2e9a76a872143805",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_270827_ingest_orders_without_shopee_lineage",
+      "arguments": "p_credential_id uuid, p_channel text, p_orders jsonb",
+      "raw_prosrc_md5": "72163b030ad8554f56df9b673f098510",
+      "definition_md5": "03b04aadf7fa475ce8208b7dc1a1e02a",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_28141000_ingest_inquiries_unsafe",
+      "arguments": "p_credential_id uuid, p_channel text, p_inquiries jsonb",
+      "raw_prosrc_md5": "82441882363b74a0c8ec6fd964847f38",
+      "definition_md5": "484fe9b421cea6fa1bd24dd47e92fcc4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_301100_complete_gateway_pre_publication_review",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text",
+      "raw_prosrc_md5": "1813f6de15600db443c8da1cc2c31832",
+      "definition_md5": "410d8e54dca894ac927ba0aef8682574",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_54851_prepare_refresh_identity_unsafe",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone, p_recovery_only boolean, p_oauth_complete boolean",
+      "raw_prosrc_md5": "fb658481295c0c8f4c4df34018d38d38",
+      "definition_md5": "2dd4229903aeb5e15cfadf678c36083d",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sellerpilot_claim_channel_gateway_job",
+      "arguments": "p_token_hash text, p_worker_version text",
+      "raw_prosrc_md5": "540d140842489d8d22abcf87466d1b67",
+      "definition_md5": "02c760a31a88de8ea8b2d41954d45431",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_complete_channel_gateway_job",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text",
+      "raw_prosrc_md5": "7f4c97c6d0f05296fe5840abd898a761",
+      "definition_md5": "04f74ff6036c91215fe222eff63323f2",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_get_order_fulfillment_context_v2",
+      "arguments": "p_ids uuid[]",
+      "raw_prosrc_md5": "51c5e910728f4b5e85ebc4925542e188",
+      "definition_md5": "2fac5cc37a2a4fdbc4208123541ceaf8",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "s",
+      "result_type": "TABLE(id uuid, external_order_id text, channel_key text, status text, provider_context jsonb)",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "authenticated",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": true,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_is_admin",
+      "arguments": "",
+      "raw_prosrc_md5": "2e564fe06d7a89793eb3d0dc4e8d3f8c",
+      "definition_md5": "130635f02be19055996e687de79557da",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "authenticated",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": true,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_prune_personal_data",
+      "arguments": "p_completed_before timestamp with time zone",
+      "raw_prosrc_md5": "e913d05b6e7eecd5d23961d7d4cfdc4a",
+      "definition_md5": "e428152eb9844c011f92e0e64fe2fe91",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_record_credential_test",
+      "arguments": "p_credential_id uuid, p_status text, p_safe_message text",
+      "raw_prosrc_md5": "413b40d7372c2bc39a8b289a650e41db",
+      "definition_md5": "eadc68cd3067ae08cc92f75f70348073",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "void",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_begin_gateway_credential_refresh",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid",
+      "raw_prosrc_md5": "b3cd87a12c71a61be9f50b5cd0839f10",
+      "definition_md5": "abcc60b0b6d24e72fc214dd82eee23d0",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_bootstrap_product_inventory",
+      "arguments": "p_product_id uuid, p_owner uuid, p_sku text, p_source_fingerprint text, p_expected_on_hand integer, p_expected_reserved integer",
+      "raw_prosrc_md5": "b3bd74fa9dcf9ad78f10a0b35d93daee",
+      "definition_md5": "f6be43800e82fc9d871e6aa875d754c4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_complete_gateway_transaction",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "321c0226ee45a2a16daba97b0fc7215b",
+      "definition_md5": "70c57c09be1d5239bea14d423d557bc5",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_gateway_completion_context",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid",
+      "raw_prosrc_md5": "b030b4b392b4fd5c573f93588495cb99",
+      "definition_md5": "1463f3cd6db86d71ace707ad16de126e",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_inquiries",
+      "arguments": "p_credential_id uuid, p_channel text, p_inquiries jsonb",
+      "raw_prosrc_md5": "7b5ca54a1c99c6140a58d0531c4b2ce2",
+      "definition_md5": "99f74b1fe5bfd5728e766cd63821e8fd",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_lazada_gateway_v2",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_inquiries jsonb",
+      "raw_prosrc_md5": "fcf0d3868ff36377d820259522a5f3d5",
+      "definition_md5": "f167ed52ee3b12d21bb6905ae340439f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_lazada_inquiries_v2",
+      "arguments": "p_credential_id uuid, p_inquiries jsonb",
+      "raw_prosrc_md5": "1c8821735032bed7795e9cc6094dff25",
+      "definition_md5": "36bcdddda39045d47cb7dd57f4077f66",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_orders",
+      "arguments": "p_credential_id uuid, p_channel text, p_orders jsonb",
+      "raw_prosrc_md5": "7657c4469226c8a0873628e9f029380d",
+      "definition_md5": "8ca1b25d5153fdff82a53f7ba1ae825d",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_orders_pre_temu_fulfillment",
+      "arguments": "p_credential_id uuid, p_channel text, p_orders jsonb",
+      "raw_prosrc_md5": "fb7b4b6eea9d1d4b8c7e3a60c9949b31",
+      "definition_md5": "ea913d544a572e38a2a42940b04bff9b",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_ingest_orders_pre_v2",
+      "arguments": "p_credential_id uuid, p_channel text, p_orders jsonb",
+      "raw_prosrc_md5": "d14ffa7469856e8146492e6caa2806fb",
+      "definition_md5": "ab651f584f2e55d9292fe1df5f51a84f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_inventory_bootstrap_source",
+      "arguments": "p_product_id uuid, p_owner uuid, p_sku text",
+      "raw_prosrc_md5": "2273b749f120d1a256b28e63ca908f53",
+      "definition_md5": "87ef2f7539ee43fcb3f93902d1cb03b0",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_lazada_im_webhook_candidates_v1",
+      "arguments": "p_app_key text",
+      "raw_prosrc_md5": "8b353b181aa521fd094bc59df6ba6e0d",
+      "definition_md5": "78a91c5fc3b669521f63f21fa3de00e3",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog"
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_lazada_quarantine_ready",
+      "arguments": "",
+      "raw_prosrc_md5": "36788f88936cdaeac7d5e519c67d3b33",
+      "definition_md5": "df5dbc233610a253f12be23bc55464dc",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_mark_channel_sync",
+      "arguments": "p_credential_id uuid, p_channel text, p_data_type text, p_status text, p_error text",
+      "raw_prosrc_md5": "d2ce999665b172d4a34aebb5dabc1053",
+      "definition_md5": "8f4abfdfe38d33db62a5b8e58ff0a4e3",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_prepare_gateway_credential_refresh",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone, p_recovery_only boolean, p_oauth_complete boolean",
+      "raw_prosrc_md5": "1fe46770550a691611d4f89eebec24a1",
+      "definition_md5": "c55863b99dd2f95fce035c79c91d1fdf",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_reap_stale_channel_gateway_jobs",
+      "arguments": "p_limit integer",
+      "raw_prosrc_md5": "c24344b048b9d1c12c1689f3fcfded30",
+      "definition_md5": "eb67acbb3b2f0b20c2f84cb3c8e9286b",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_record_lazada_im_bootstrap_result",
+      "arguments": "p_job_id uuid, p_effective_credential_id uuid, p_succeeded boolean",
+      "raw_prosrc_md5": "f126aa740cb53cf3cbdf61c61acd496b",
+      "definition_md5": "2ae7dae75fde42b8a6e9a18f1d4030ef",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_refresh_ebay",
+      "arguments": "p_credential_id uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone",
+      "raw_prosrc_md5": "c1fb7e1a17930e6d6b5ed390ae3cf6ca",
+      "definition_md5": "c0f365f4af9c29a2b7b4c37ec1ab2185",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private, vault"
+      ],
+      "volatility": "v",
+      "result_type": "uuid",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_refresh_lazada",
+      "arguments": "p_credential_id uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone",
+      "raw_prosrc_md5": "11b0043fdb17236254fcb10458287e4f",
+      "definition_md5": "10184659ce0e94b4ca79901dbc5a3f0c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private, vault"
+      ],
+      "volatility": "v",
+      "result_type": "uuid",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_refresh_shopee",
+      "arguments": "p_credential_id uuid, p_secret_payload jsonb, p_expires_at timestamp with time zone",
+      "raw_prosrc_md5": "c44f1df04c77ea573b106c88eb8b22c6",
+      "definition_md5": "69702acda9217be573a3382429de00a4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private, vault"
+      ],
+      "volatility": "v",
+      "result_type": "uuid",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_service_upsert_channel_market_target",
+      "arguments": "p_owner_id uuid, p_credential_id uuid, p_channel text, p_target_id text, p_display_name text, p_market_code text, p_locale text, p_language text, p_currency text, p_remote_status text",
+      "raw_prosrc_md5": "5de25d7aff4604df4e94328e49ca6252",
+      "definition_md5": "61b5e96a7e0fe59df21964ccc45a5f84",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "uuid",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "service_role",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "public.sellerpilot_verify_channel_credential_owner_v1",
+      "arguments": "p_credential_id uuid, p_channel text, p_environment text",
+      "raw_prosrc_md5": "0eaa0291e40c5191dd1f23a8a7d508dc",
+      "definition_md5": "3a44c8b4cb350e1ac01d15702d5abf64",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "authenticated",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": true,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "public.sp_173990_complete_pre",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid, p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "5335b01fab5b1433c838a9e3d0764278",
+      "definition_md5": "dbde6af0400c7feee50977cf03d8ab03",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.active_serverless_runtime_release_sha",
+      "arguments": "",
+      "raw_prosrc_md5": "9564e40d87d35eaf44424ea3e4694472",
+      "definition_md5": "2547eb6ac00f844179aa7143d36ad29a",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.apply_exact_qoo10_s1_activation_listing",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "788243d894681f840118a4eb16762621",
+      "definition_md5": "2a0c08b02c78e9c05827ce3c6cf43df6",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.apply_listing_publication_review_to_listing",
+      "arguments": "p_listing_id uuid, p_job_id uuid",
+      "raw_prosrc_md5": "3098e6f98f558d4a7c1eaddf3b0a4dca",
+      "definition_md5": "f1a05261831dec4fc3ccd035171ce305",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.apply_listing_publication_verifier_completion",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "8308f699e7dd4df6ce2402cc0c30335c",
+      "definition_md5": "d2081517136bc491b71801404075ada8",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.apply_qoo10_shipping_s1_activation_listing",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "3a7f81ecbeab14dd39acca32cea59607",
+      "definition_md5": "623d57e12ac25021be52b5ccdfd05da4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.apply_verified_remote_listing_completion",
+      "arguments": "p_job_id uuid, p_listing_id uuid, p_operation text, p_terminal_status text, p_error_message text, p_prior_listing jsonb, p_prior_product_status text",
+      "raw_prosrc_md5": "00f2ed7e65763f98b46229a897e07837",
+      "definition_md5": "2715c151cf4d5f38457bbe97c128eadf",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.archive_catalog_for_inactive_credential",
+      "arguments": "",
+      "raw_prosrc_md5": "bbcea0f33a9c68cec2c3849c79a19366",
+      "definition_md5": "3066e8b7dba0db3a0ea263e0c877d7ae",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.attested_listing_publication_release_sha",
+      "arguments": "",
+      "raw_prosrc_md5": "1604e17903526cb9e91a40ad74e826f6",
+      "definition_md5": "567651a6087ccedbde3cdac119d81f3d",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.attested_listing_publication_release_sha",
+      "arguments": "p_channel text",
+      "raw_prosrc_md5": "d4f87e0fc68ae406ba6e517086cd2e58",
+      "definition_md5": "ea5333cc2f2b36f2ae4a5d5a1e514135",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.bind_shopee_sg_exact_inventory_claim",
+      "arguments": "",
+      "raw_prosrc_md5": "60ffd29546eb5ec4f5e4550e1205920b",
+      "definition_md5": "0aaa748d2644c2ff1b976cb03c2b5bc0",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.bind_temu_server_owned_mutation_claim_trigger",
+      "arguments": "",
+      "raw_prosrc_md5": "2c3b830027e22d3a99a49152fdf3f452",
+      "definition_md5": "f5561a483419411cf8d311473628e9c5",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.block_closed_listing_mutation_claim",
+      "arguments": "",
+      "raw_prosrc_md5": "fb8c6b6f8436ec8761e554ed452f66b1",
+      "definition_md5": "5939d2081cd72d29f9980f8668ae1b23",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.capture_elevenst_listing_snapshot",
+      "arguments": "",
+      "raw_prosrc_md5": "46c45b4a9864b62baed8b00c0b85a0eb",
+      "definition_md5": "438cb822cf4ee6b9b59066da6f03a234",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.capture_listing_public_url_from_inventory",
+      "arguments": "",
+      "raw_prosrc_md5": "84676070563cddfcb258f72eae08c76c",
+      "definition_md5": "a5f6fee16d67ba108c84d17124bc1276",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.coupang_exact_rep_remote_resources_from_job",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "f71b707dd532320c22e0abe3e6f69584",
+      "definition_md5": "4875a4a390b3ab09529c174bb6e6fcf1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.coupang_exact_rep_response_valid",
+      "arguments": "p_job_id uuid, p_response jsonb",
+      "raw_prosrc_md5": "09293c7b32d9c8046e22b7bbad7b7d12",
+      "definition_md5": "e5e1d7f115bbd8c50a8230ef1ce49b68",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.credential_lineage_attestation_marker_matches",
+      "arguments": "p_channel text, p_environment text, p_vault_secret_id uuid",
+      "raw_prosrc_md5": "e67b784c5f6408961acfbf86dd20f8b4",
+      "definition_md5": "c08d21a83cd36a82c3a6e695c79d44f7",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.credential_seller_account_lineage",
+      "arguments": "p_channel text, p_environment text, p_vault_secret_id uuid",
+      "raw_prosrc_md5": "94ef717b37760955a31481901a69ca88",
+      "definition_md5": "03d45360aaa503bec664bd15c6bddc78",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "TABLE(seller_account_key text, seller_account_key_source text, seller_account_verified_at timestamp with time zone)",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.ebay_asq_ticket_external_id",
+      "arguments": "p_seller_account_key text, p_parent_message_id text",
+      "raw_prosrc_md5": "0a7f077559c566648e3ebc7e9d9221a0",
+      "definition_md5": "5ca4fb6faef033cdf410eb31b0969e6b",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.enqueue_temu_safe_test_containment",
+      "arguments": "p_source_job_id uuid",
+      "raw_prosrc_md5": "6ed4af8cde18e37ddd626651243002f4",
+      "definition_md5": "d60ffa5b119eb6c158ee2fc7560ad2fb",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.exact_lazada_three_readback_proof",
+      "arguments": "p_target_id uuid",
+      "raw_prosrc_md5": "1d8fed4cbee812ddcacafa4245b43c49",
+      "definition_md5": "130a9fd4ad074240f7f4c26cdf13d5e7",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.expire_exact_qoo10_s1_activation_preclaim",
+      "arguments": "",
+      "raw_prosrc_md5": "50a9d33d57576f2d470229b2940cb2e3",
+      "definition_md5": "0829be752308364f9f8b22701b394053",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.expire_qoo10_shipping_s1_activation_preclaim",
+      "arguments": "",
+      "raw_prosrc_md5": "dc43853004a7d1b9411d30179989a9be",
+      "definition_md5": "d6b6c9dfaac35c6c53918158a5b6c94f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.finalize_reaped_temu_publication_jobs",
+      "arguments": "",
+      "raw_prosrc_md5": "3ad3d77423be8e043a9a47c831dc5a3e",
+      "definition_md5": "9c553e3f0b33557d9a94a60caaabf707",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.gateway_completion_fingerprint",
+      "arguments": "p_status text, p_response_payload jsonb, p_error_message text, p_credential_refresh jsonb, p_normalized_orders jsonb, p_normalized_inquiries jsonb, p_diagnostic jsonb",
+      "raw_prosrc_md5": "fca28f39e2b15f3c773f6d27938a97e3",
+      "definition_md5": "1b6dfa2cabc732043fc7658df8e2fb75",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.gateway_external_write_observed",
+      "arguments": "p_operation text, p_response_payload jsonb",
+      "raw_prosrc_md5": "5d7204c9ecc7ad57a56fc2e40a420637",
+      "definition_md5": "072516d4fd7fc48eaadbfdb2c29e63e3",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.gateway_job_requires_reconciliation",
+      "arguments": "p_operation text, p_credential_refresh_in_flight boolean, p_prepared_credential_id uuid, p_credential_refresh_recovery_vault_id uuid, p_oauth_exchange_completed boolean, p_provider_mutation_started_at timestamp with time zone",
+      "raw_prosrc_md5": "6d5fa85d6110675a8cce30109c48f80b",
+      "definition_md5": "981f4f19f8d5bf02888b71b9e8275dbf",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_and_finalize_inquiry_reply_job",
+      "arguments": "",
+      "raw_prosrc_md5": "853afbb9e28f6e56b197b5b17e734123",
+      "definition_md5": "ab89b469cf302abe145a9fcc63bb352f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_channel_gateway_running_parallelism",
+      "arguments": "",
+      "raw_prosrc_md5": "1c4b027d5a07bed8c68ee12e491268a3",
+      "definition_md5": "fe5a931ccac23cbf7a467ced52ded7c1",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_coupang_exact_rep_completion",
+      "arguments": "",
+      "raw_prosrc_md5": "4add0fb49acdf2435339432d99154fac",
+      "definition_md5": "0b59a628237ca16353a68d7ad2140f06",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_credential_seller_lineage",
+      "arguments": "",
+      "raw_prosrc_md5": "9f0759cf8dbd6738fec36a47c4ce7826",
+      "definition_md5": "c0d62fd4515d3d3df2ee90319394fffd",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_elevenst_cookie_create_source_job_immutable",
+      "arguments": "",
+      "raw_prosrc_md5": "93a82c66c97d0105f9b2493f0a5829fb",
+      "definition_md5": "2f7aff564f3b0f85968eac626faa23bd",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_exact_existing_update_job",
+      "arguments": "",
+      "raw_prosrc_md5": "1eb4227823729e73a9af26f70700cc1f",
+      "definition_md5": "501f1e44b0f3bacc2d93ced6d4860367",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_exact_lazada_dual_blockers",
+      "arguments": "",
+      "raw_prosrc_md5": "b955fc6311512443f8896ab40b52a51f",
+      "definition_md5": "fae461bb7923f3eb7c8d133b457f9508",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_exact_lazada_failed_oauth_blocker",
+      "arguments": "",
+      "raw_prosrc_md5": "2930812742b63d5b4f2614216e59b11a",
+      "definition_md5": "fbe23ce756b1529f261bbbd6521914bb",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_exact_qoo10_adopted_localization_job",
+      "arguments": "",
+      "raw_prosrc_md5": "ed16077063c9cf298e2ec58e720d681b",
+      "definition_md5": "9b7b27a8351437c25a3f7e2aea314bc7",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_exact_qoo10_s1_activation_job_lineage",
+      "arguments": "",
+      "raw_prosrc_md5": "b6145e330990207c6058b703e9820e8b",
+      "definition_md5": "68824291817a64dfeaf2cadf6729c5b2",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_gateway_job_seller_lineage",
+      "arguments": "",
+      "raw_prosrc_md5": "f6b9e495fd3ad40e72ed793e331bf8e2",
+      "definition_md5": "d4d19a1c0a5312e29a3a2bbed51977eb",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_lazada_shipment_job",
+      "arguments": "",
+      "raw_prosrc_md5": "41eaa3ce4c66998375a72ce6184f248e",
+      "definition_md5": "1ec13ae62e0b97a5a0934de423bc1b38",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_listing_lineage_verification_job_completion",
+      "arguments": "",
+      "raw_prosrc_md5": "042c489ecc59526f5afad92a62c083b5",
+      "definition_md5": "6c6f12b67e2fae6bd6f3086396322667",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_product_bound_inventory",
+      "arguments": "",
+      "raw_prosrc_md5": "43548fe924598db020ebf7e3f0be67f5",
+      "definition_md5": "00357b76572828bdf4f3c9a96456702b",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_exact_localization_update_job",
+      "arguments": "",
+      "raw_prosrc_md5": "4484a920201a28be68ae4ab0171a26a9",
+      "definition_md5": "52f41ecfce9c8b38ee54131160bb559b",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_exact_no_effect_verifier_job",
+      "arguments": "",
+      "raw_prosrc_md5": "2bb474358f07e74de767620d2a2d53dc",
+      "definition_md5": "c266dfcce05f71931991fa8c6e67e613",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_exact_s1_verifier_overlap",
+      "arguments": "",
+      "raw_prosrc_md5": "c9a4a0f55e2aa2a170e887dbaec3e20d",
+      "definition_md5": "4b77224326a00aa9fe374fa56a5cc211",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_shipping_s1_activation_claim_bind",
+      "arguments": "",
+      "raw_prosrc_md5": "49500e4780419d34dbc1210ed3aaa360",
+      "definition_md5": "16d09dbbd80a2d5c7b0c6adcf187ecaf",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_shipping_s1_fresh_activation_slot",
+      "arguments": "",
+      "raw_prosrc_md5": "8d8516e1d6db6c6d67b9988cdd7624ae",
+      "definition_md5": "71fb54ee72703d28c2213d7001a8bce1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_qoo10_shipping_s1_verifier_overlap",
+      "arguments": "",
+      "raw_prosrc_md5": "6cffd696fb40e8737a1d60e20013e20c",
+      "definition_md5": "0b0f7e4030b6e024a6a62bb72d391b54",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_shopee_sg_exact_update_job",
+      "arguments": "",
+      "raw_prosrc_md5": "20e975d2f84662a043a01535eb578043",
+      "definition_md5": "f7bdc2cc41679a892d2eeb6f9a1ed742",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_shopee_shipment_order_lineage",
+      "arguments": "",
+      "raw_prosrc_md5": "22e61a174087db19753651f5f685f9d4",
+      "definition_md5": "0d3ba5cd601f75af58faa826cc70b35b",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_smartstore_exact_qa_update_job",
+      "arguments": "",
+      "raw_prosrc_md5": "16ecacdf45ddc385e4aa4a612dba0a18",
+      "definition_md5": "9e224401d2696ba671b1c6b7b91a34bd",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_temu_exact_credential_certification_job",
+      "arguments": "",
+      "raw_prosrc_md5": "a8ca979509388656914e1037940e710f",
+      "definition_md5": "f32c40644bffe4f25bdbdae539d36029",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_temu_exact_existing_adoption_job",
+      "arguments": "",
+      "raw_prosrc_md5": "8b3bdb0f1506c7fa1c32f46243bf099a",
+      "definition_md5": "d6f8ad5de26450a0fc0aa1a895ca9766",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_temu_listing_mutation_serialization",
+      "arguments": "",
+      "raw_prosrc_md5": "09bb8de5290f90ba75614aacd768e956",
+      "definition_md5": "e47843dbba8eb7bf452d02ac3a7d4f56",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.guard_temu_server_owned_mutation_job",
+      "arguments": "",
+      "raw_prosrc_md5": "419ad4ffcfc24a13ffb0daae521be158",
+      "definition_md5": "638ba6c8f222752980e16e0cf0d9b164",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.inherit_inquiry_history_backfill_tags",
+      "arguments": "",
+      "raw_prosrc_md5": "4071bcc3a6b7469d5a7f6a52eec3ec7e",
+      "definition_md5": "203b3aee02c336c7b4231b4ffedee6fa",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.inventory_product_source_fingerprint",
+      "arguments": "p sellerpilot_private.products",
+      "raw_prosrc_md5": "f46a8c78ed8b191d63fdc0210a2f5864",
+      "definition_md5": "9589c888dc5068bce00889522f052d56",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.jsonb_contains_exact_scalar",
+      "arguments": "p_value jsonb, p_expected text, p_depth integer",
+      "raw_prosrc_md5": "5b1c47e5a6f77fa4a8bb67c7489f3e2f",
+      "definition_md5": "d78bf3e042b7498f2a45be0facc8f4b2",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_exact_three_blockers_intact",
+      "arguments": "p_source_credential_id uuid, p_owner_id uuid, p_environment text",
+      "raw_prosrc_md5": "4acacc8585a6bd8c338f1b992190f4a1",
+      "definition_md5": "2e513cbcbb7b553b32a6b6ad580c2445",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_exact_update_remote_resources",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "2da66629af12e51de627ef1d7f629436",
+      "definition_md5": "a9615fd12055add92ec25f144e9931de",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_exact_update_response_valid",
+      "arguments": "p_job_id uuid, p_response jsonb",
+      "raw_prosrc_md5": "0181ebf6cbc0adbe108c9d71d7847fd1",
+      "definition_md5": "8b01c6e7f9e83ebbb30da5b4727b3cad",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_order_has_item_conflict",
+      "arguments": "p_order_id uuid",
+      "raw_prosrc_md5": "29c107bddddbc0ea2092f8fc147eb5ad",
+      "definition_md5": "380f583fdedcbd89a2981ba4f35548a6",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, sellerpilot_private"
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_order_ownership_guard",
+      "arguments": "",
+      "raw_prosrc_md5": "0ba3ea6724865f5f28443964f327a928",
+      "definition_md5": "095a80b34c17c1af47d36e88b3624525",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.lazada_record_order_item_claims",
+      "arguments": "",
+      "raw_prosrc_md5": "e4355335f72d808c0a05b4c84abaeb69",
+      "definition_md5": "f923f3c296ec263f1484f50c7420e696",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=pg_catalog, public, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.listing_mutation_release_gate_is_effective",
+      "arguments": "",
+      "raw_prosrc_md5": "a90bddba673e0ca850e1906ea20456f1",
+      "definition_md5": "9a52b5a09d32446f9dcf90e6dbbe3f3f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.listing_mutation_release_gate_is_effective",
+      "arguments": "p_channel text",
+      "raw_prosrc_md5": "676a3b134bb1eb92a698b6973274935c",
+      "definition_md5": "67adb446108a668517fafabbee4ad94c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.listing_publication_review_is_current",
+      "arguments": "p_listing_id uuid",
+      "raw_prosrc_md5": "ef32a3631462e0dab809575ccff827e0",
+      "definition_md5": "15735339b43650fdd7622d239ea0f7a4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.listing_publication_review_violation_count",
+      "arguments": "",
+      "raw_prosrc_md5": "251e3bf2435c043f60ed0cfb060e26ad",
+      "definition_md5": "feffe20583a495f59323612b77ede1c4",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.listing_publication_review_violation_count",
+      "arguments": "p_channel text",
+      "raw_prosrc_md5": "1b25a2ce80bc533678ac92678a48b8cf",
+      "definition_md5": "1db28693bea6706aea80b0cfeb54ba01",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.mirror_product_authoritative_inventory",
+      "arguments": "",
+      "raw_prosrc_md5": "57a1d5bf1e6b4bc7d48b5e0bec1a96cc",
+      "definition_md5": "24367b3163659225e3148c95f5ae38f1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.new_seller_account_key",
+      "arguments": "",
+      "raw_prosrc_md5": "eaba3cc6933d0474ce4a77961381b4e8",
+      "definition_md5": "840430b1f625234e373145cac5ca24a7",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.persist_succeeded_support_reply_message",
+      "arguments": "",
+      "raw_prosrc_md5": "a5503057223145f556d678c80c9e9b3d",
+      "definition_md5": "425ff5512740e08d8ced8d033a860136",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_canonical_provider_detail_html",
+      "arguments": "p_source text",
+      "raw_prosrc_md5": "766ec1f64e865d74d9672eb59431542f",
+      "definition_md5": "2358f7ae5587ddd59704765cbac80781",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_activation_expectation_valid",
+      "arguments": "p_expectation jsonb, p_source_arguments jsonb",
+      "raw_prosrc_md5": "a50bef2b4fe69ba46056cd8c349aa380",
+      "definition_md5": "1b0d96703b785506cf4b3259643ed229",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_activation_expectation_valid_056700",
+      "arguments": "p_expectation jsonb, p_source_arguments jsonb",
+      "raw_prosrc_md5": "6dacb76e90cc8f871762190c2cd519d5",
+      "definition_md5": "e95a6199eeaf4c221f8e6becb002ddd7",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_activation_keyword_binding_valid",
+      "arguments": "p_response jsonb, p_request_payload jsonb, p_observation_expectation jsonb, p_step_name text",
+      "raw_prosrc_md5": "7a7a26d51166ec4013f34985b80e51a1",
+      "definition_md5": "8d67131317e5680c6aebe06c910ec3d1",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_aliases_consistent",
+      "arguments": "p_item jsonb, p_aliases text[]",
+      "raw_prosrc_md5": "c031c1e5447fa0ac091adf75606a75f1",
+      "definition_md5": "1147e733d11a847d366e8727a2491fd6",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_decode_html",
+      "arguments": "p_html text",
+      "raw_prosrc_md5": "a5f15d0fa77b2218a4b5b3d2974be2dc",
+      "definition_md5": "7fdd15b376cf2eba9f5a4e6206930a4d",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_detail_image_urls",
+      "arguments": "p_html text",
+      "raw_prosrc_md5": "33ee684cb12240ce7656b25233e9b1c0",
+      "definition_md5": "01f7da26f96aa93a7b1e173d046d7156",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_hex_codepoint",
+      "arguments": "p_hex text",
+      "raw_prosrc_md5": "d356b838b987cefe9544cfa6cad7e773",
+      "definition_md5": "f7e43e3db1cdf4e619e6e81696394fa7",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "integer",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_item_matches_source",
+      "arguments": "p_item jsonb, p_source_arguments jsonb, p_expected_status text",
+      "raw_prosrc_md5": "05f997b35beae60d8d3be07c85dde4f8",
+      "definition_md5": "9690d249290d6f051f29e7e0d71b88ed",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_item_matches_source_056700",
+      "arguments": "p_item jsonb, p_source_arguments jsonb, p_expected_status text",
+      "raw_prosrc_md5": "875655c71804e33c73dd17e9d8475e85",
+      "definition_md5": "a65d39b1f056f34332657260f15893df",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_keyword_matches",
+      "arguments": "p_expected_title text, p_expected_keyword text, p_actual_keyword text",
+      "raw_prosrc_md5": "b67b9612a7c3b3098a4954321d650d02",
+      "definition_md5": "f96512aa5ff39c285cf2eac09a1378bd",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_localization_v2_arguments_valid",
+      "arguments": "p_arguments jsonb, p_release_sha text",
+      "raw_prosrc_md5": "ae2876a30bc98102bb94e4543dc10b11",
+      "definition_md5": "4278aedb513c7bd24750f2c2ad10869e",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_localization_v2_source_is_current",
+      "arguments": "p_source_job_id uuid, p_release_sha text",
+      "raw_prosrc_md5": "a2eb751041a3a3cd42dbda68f94c264f",
+      "definition_md5": "a2d4c713a3f641225354c011731d48b6",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_remote_items",
+      "arguments": "p_value jsonb, p_remote_id text",
+      "raw_prosrc_md5": "aa8413f52208b44d3090b800e2bce540",
+      "definition_md5": "fa7412c4de0a2734a97ce1cff67cf741",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "SETOF jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_representative_image_matches",
+      "arguments": "p_value text, p_content_id text",
+      "raw_prosrc_md5": "d539a7ae1b88011a2fcde165457220a1",
+      "definition_md5": "7eecdd68e0e076818a341c059004d70e",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_response_state_valid",
+      "arguments": "p_response jsonb, p_operation text, p_step_name text, p_expected_status text, p_expected_visibility text, p_source_arguments jsonb",
+      "raw_prosrc_md5": "3f54d4974a4bd037de0b3dd3d8209211",
+      "definition_md5": "8d6a46e7a05d2841ec63e90ba4608fc6",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_s1_activation_claim_priority",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "a2c1df719176bcad59105fd729f5a6c2",
+      "definition_md5": "f0fb198787c3df3f3eb0c3f6f99800fe",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_s1_legacy_source_is_current",
+      "arguments": "",
+      "raw_prosrc_md5": "a3c6ceca6dfdaf41c27ef449843fd506",
+      "definition_md5": "094d5d501fe19c1e91f46fb2a425410d",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_s1_release_is_current",
+      "arguments": "p_release_sha text",
+      "raw_prosrc_md5": "66fec78cff755184be2c51f5c495fa02",
+      "definition_md5": "12ba250d3fff1c780c50bfbd450a4f90",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_exact_s1_source_is_current",
+      "arguments": "",
+      "raw_prosrc_md5": "c73c6fc7431d2d74e1fcad0bbbd50f3d",
+      "definition_md5": "9f12e38419eafa7e8fc1537188fed10c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_activation_claim_priority",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "ba180ca605250ab586bf38a2fe7711a8",
+      "definition_md5": "2e180775479b5ef04c8095ec9f4300e1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_activation_expectation_valid",
+      "arguments": "p_expectation jsonb, p_source_arguments jsonb",
+      "raw_prosrc_md5": "40e8470143682e903d9aaf46bc20c928",
+      "definition_md5": "7294fd96c5345640ae19dec4ca9677e7",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_activation_job_matches",
+      "arguments": "p_job sellerpilot_private.channel_gateway_jobs",
+      "raw_prosrc_md5": "80c4acddbf888298ba4efe30ac1f3a29",
+      "definition_md5": "e6779b573a4f3059fae7da72fb42780d",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_has_activation_step",
+      "arguments": "p_response jsonb",
+      "raw_prosrc_md5": "4ee48525df25b1c78cc2b9e39ae28279",
+      "definition_md5": "25c8f17135ee3e30aed7c0d65fb35515",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_jobs_are_current",
+      "arguments": "",
+      "raw_prosrc_md5": "7a1729e32e73380570c21586aec87a2f",
+      "definition_md5": "f545e2b5d2971b3b1c84946e3ce6e4af",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_named_remote_item",
+      "arguments": "p_response jsonb, p_name text, p_remote_id text",
+      "raw_prosrc_md5": "50bddc42463471960c91e59d3238e885",
+      "definition_md5": "94b068259bc06414200ad35917de94c6",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_named_step",
+      "arguments": "p_response jsonb, p_name text",
+      "raw_prosrc_md5": "cc85b372a02a2227138b7be46d113c18",
+      "definition_md5": "fcbe23d5af65d4fb47d5af9c5b2ee1fe",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_observed_shipping_no",
+      "arguments": "p_response jsonb, p_remote_id text",
+      "raw_prosrc_md5": "81683538d4ed426a2e4c033a8ebc3505",
+      "definition_md5": "5d7406c6d7b32a39f29e8c8cd9a7a83f",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_provider_status",
+      "arguments": "p_response jsonb",
+      "raw_prosrc_md5": "8f36caae52807494e19c51a3ccbffa51",
+      "definition_md5": "5b4bb0a8e186f534be1a37ff373c07ff",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_publication_checks",
+      "arguments": "p_response jsonb",
+      "raw_prosrc_md5": "9d2cb9e5c9e17a8ffc4dbef349cd2d86",
+      "definition_md5": "8aee7729ef0da3bd86b49322755ad717",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_publication_checks_match",
+      "arguments": "p_response jsonb, p_require_recovery boolean",
+      "raw_prosrc_md5": "1c8a7c140724c60eed0575bd8e7190b4",
+      "definition_md5": "204bcc2fdb31f26b17d5f7d5d4ea79e7",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_readback_item",
+      "arguments": "p_response jsonb, p_remote_id text",
+      "raw_prosrc_md5": "ca94228cf221caff8a1e446110f1412e",
+      "definition_md5": "6bb48847a2746dd10b885750f919d539",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_release_is_current",
+      "arguments": "p_release_sha text",
+      "raw_prosrc_md5": "66fec78cff755184be2c51f5c495fa02",
+      "definition_md5": "d65bcbe83fcaa3bb921fb02b62e57a9a",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_source_observation_extract",
+      "arguments": "p_create_request jsonb, p_create_response jsonb, p_update_request jsonb, p_update_response jsonb",
+      "raw_prosrc_md5": "7740b1918351d4ea49254172f14320f9",
+      "definition_md5": "7fc9fae2491e02e17935cce34de27221",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_step_checks",
+      "arguments": "p_response jsonb, p_name text",
+      "raw_prosrc_md5": "bf850521deb8f6aef1366fcdb3c39a63",
+      "definition_md5": "e470343eb2eb6353db1491e2638b5395",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.qoo10_shipping_s1_verifier_job_matches",
+      "arguments": "p_job sellerpilot_private.channel_gateway_jobs",
+      "raw_prosrc_md5": "0f8022ec08abf4cd8804b183e648c9c6",
+      "definition_md5": "868df4688f7f42749b507c6741f22e02",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.reconcile_gateway_resource_terminal",
+      "arguments": "",
+      "raw_prosrc_md5": "9824a25d12c592f3b585394f7ac87af9",
+      "definition_md5": "53e3e2ea076cae2f2c844d9f127f9bd6",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.reconcile_gateway_shipment_ack_terminal",
+      "arguments": "",
+      "raw_prosrc_md5": "08672913a1ef4706bc9c676d5edf384e",
+      "definition_md5": "e8a76c6a1957a33eba3362ee37f639d2",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_exact_qoo10_s1_activation_outcome",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "e2c88127e6458ca68280dfb651b044d3",
+      "definition_md5": "11c0a9842f2526613a86b85b04f86e93",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_exact_qoo10_s1_activation_outcome_056700",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "438826653e0e03c35fca7212d87171cf",
+      "definition_md5": "ce1ac826ef39b81d72586851a688acc1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_exact_qoo10_s1_observation",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "9608887c545e74a31950b9213c53335f",
+      "definition_md5": "5fd11c7e55ce6f3044195ca66451f707",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_exact_qoo10_s1_observation_056700",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "24de688bc8ea8c46f9d3bfe17c8309f6",
+      "definition_md5": "599d15b0056323c4f1d240b2e9e9cb0e",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_qoo10_shipping_s1_activation_outcome",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "a282138b837fe08370e292527f65a266",
+      "definition_md5": "843378f243d9993466c6dd4acfd4c112",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_qoo10_shipping_s1_observation",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "ce6960bb4e8dd8e1bb66eb971f501d29",
+      "definition_md5": "59c21aa0dd65ee6082db643a98bc93d1",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_temu_activation_outcome",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "edd8ad59ca8ee8c0aa0cd496ac0cedb4",
+      "definition_md5": "fe8fb251cf6306bee1d0f53c30c5bfcb",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_temu_containment_discovery",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "2d2df9808195a145f307c3fb50326e63",
+      "definition_md5": "e07fb4d8b8fb8eddf71c349f35a1de3d",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.record_temu_containment_outcome",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "0fc5f9b8d4cf5c3dabd2b4496b05371e",
+      "definition_md5": "99db7e3583ee526dd1ce9e1d5785883f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.refresh_inquiry_history_backfill_from_job",
+      "arguments": "",
+      "raw_prosrc_md5": "196c3e0fbf7903a71eaa9bf50cf800f0",
+      "definition_md5": "836b1ae57875c28b1a01795f922ae8df",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.register_pending_listing_publication_review",
+      "arguments": "p_source_job_id uuid",
+      "raw_prosrc_md5": "8f399beb5384b4ba6557a0a2d24e02b7",
+      "definition_md5": "842f15c6bbb405aada8b253c3e2287ac",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.safe_lazada_exact_three_oauth_exchange_blocker",
+      "arguments": "p_source_credential_id uuid, p_owner_id uuid, p_environment text, p_new_oauth_fingerprint text, p_new_created_at timestamp with time zone",
+      "raw_prosrc_md5": "726aa3271196f8bc6f807129d0f82666",
+      "definition_md5": "21284f49f4bc0412fc823d55f60b51cb",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "uuid",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.safe_listing_publication_timestamp",
+      "arguments": "p_value text",
+      "raw_prosrc_md5": "b03f734a79906aeb4644e5436127752c",
+      "definition_md5": "c517837c800a4ab8a2621e463cb97900",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "timestamp with time zone",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.sanitize_oauth_gateway_response_payload",
+      "arguments": "",
+      "raw_prosrc_md5": "f31a44ba1812b8b1caea42ae1d0d7c7e",
+      "definition_md5": "ed2f5bbbd0eb040589a6e9abd0d458f8",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.schedule_temu_safe_test_containment_discovery",
+      "arguments": "p_source_job_id uuid",
+      "raw_prosrc_md5": "78f73643da9455b3b10961fe723fab25",
+      "definition_md5": "3326953ab151d8a6c75206effbe004d0",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.serverless_gateway_job_allowed",
+      "arguments": "p_channel text, p_operation text",
+      "raw_prosrc_md5": "d69d66149ebc6382e7d4f100cc7cee43",
+      "definition_md5": "3ca5660f3b95345421ce708f92d34465",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.serverless_gateway_job_allowed_before_qoo10_s1_activation",
+      "arguments": "p_channel text, p_operation text",
+      "raw_prosrc_md5": "22e22531e8260bed4d448b6c707e88dd",
+      "definition_md5": "b0124befe477ca6b41ec147d21d0ad04",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.serverless_gateway_job_allowed_before_temu_173960",
+      "arguments": "p_channel text, p_operation text",
+      "raw_prosrc_md5": "5046f957aacf9fa7a310ff73eb25999c",
+      "definition_md5": "6248e357952ca3a07be1f06609cc1aa2",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.serverless_static_egress_allowed",
+      "arguments": "p_channel text",
+      "raw_prosrc_md5": "f0d9b0b60accf9c5c13f42cecaf999a1",
+      "definition_md5": "544c32bddd83a68c4076a970261f77d6",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.supersede_exact_lazada_dual_blockers_after_readback",
+      "arguments": "",
+      "raw_prosrc_md5": "7041c83186a5a28f2afd35f42a750c75",
+      "definition_md5": "c46088105c6ab88d77d77ee35cfa50a0",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.supersede_exact_lazada_three_blockers_after_readback",
+      "arguments": "",
+      "raw_prosrc_md5": "e82dd6cd95d826d22e4ef08cd8f292d3",
+      "definition_md5": "ff35f9bf0853fccc91e51ca5e4394f63",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.supersede_safe_lazada_refresh_after_oauth",
+      "arguments": "",
+      "raw_prosrc_md5": "a0353882de90da90c3d381581aadd7a7",
+      "definition_md5": "b885fbcc08e52a60b293422f5df12bc8",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.support_deletion_fingerprint",
+      "arguments": "p_owner_id uuid, p_channel text, p_value text",
+      "raw_prosrc_md5": "d8e07d2f9c82149f92f05bb6cffcaffe",
+      "definition_md5": "28c7e1306ab118dc4800edeb1c6164bc",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "text",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.suppress_noop_sync_audit",
+      "arguments": "",
+      "raw_prosrc_md5": "21304f68bbd727869905ec5c3635f483",
+      "definition_md5": "c754728e433c43b19467aa59d9d5295d",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=pg_catalog, sellerpilot_private"
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "PUBLIC",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        },
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": true,
+      "authenticated_execute": true,
+      "service_execute": true
+    },
+    {
+      "qualified_name": "sellerpilot_private.sync_inquiry_reply_delivery_ledger",
+      "arguments": "",
+      "raw_prosrc_md5": "030be70ad4d6ef18c8a71082849af02d",
+      "definition_md5": "788f765d96514493979eccccb5337966",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.sync_listing_publication_review_job_status",
+      "arguments": "",
+      "raw_prosrc_md5": "2212d3ec60dc4c924b48392c225ce070",
+      "definition_md5": "0868b6e36c677571e8aa8c82ad701b41",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.sync_temu_containment_discovery_job_status",
+      "arguments": "",
+      "raw_prosrc_md5": "5659f31a5bf9cbaa949e49807b8f8abd",
+      "definition_md5": "e6280ed9dc90722b7f9237d5f077c760",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.sync_temu_exact_credential_certification_job",
+      "arguments": "",
+      "raw_prosrc_md5": "04e7e16369e9a12390004f9ab7e30f4c",
+      "definition_md5": "2119ba19a234ddb8be25e65c7cf8fb7c",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.sync_temu_exact_existing_adoption_job",
+      "arguments": "",
+      "raw_prosrc_md5": "72479281c5c1690472cc7129ef8e5a9a",
+      "definition_md5": "e7855bdd7c6adfa236654c7a5df29997",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "v",
+      "result_type": "trigger",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_exact_update_response_valid",
+      "arguments": "p_job_id uuid, p_response jsonb",
+      "raw_prosrc_md5": "4800a593a06d004e80d48aa94b9d8fb7",
+      "definition_md5": "90da4186646590abcf8ab733daeb7646",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_publication_asset_identity",
+      "arguments": "p_binding jsonb",
+      "raw_prosrc_md5": "3f427fb949cf41315c3de2943bdc225f",
+      "definition_md5": "5333a4798488677857fc17e80131cdeb",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_publication_exact_long",
+      "arguments": "p_value text",
+      "raw_prosrc_md5": "3fa46f0ab4d72425b65b1f123df5dbd2",
+      "definition_md5": "33cce4db1d77896e24d3985b7997ca50",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "i",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_remote_resources_before_exact_173960",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "ddfe4ae0c57d9e609fc13fd310b1f64f",
+      "definition_md5": "953d3942ab2de2c588073a4613630eba",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_remote_resources_from_job",
+      "arguments": "p_job_id uuid",
+      "raw_prosrc_md5": "85e109e1a546b4fce033b3ea97352527",
+      "definition_md5": "275685981bd21d89eba68750e64b9b4f",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "jsonb",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.temu_terminal_remote_state_valid",
+      "arguments": "p_job_id uuid, p_goods_id text, p_external_goods_id text, p_expected_image_count integer, p_allowed_visibility text[]",
+      "raw_prosrc_md5": "71362fde96e7bf4b72005f0864266f8d",
+      "definition_md5": "dfd0c3dac1a80496169ac44736328073",
+      "owner_role": "postgres",
+      "security_definer": true,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.worker_token_has_scope",
+      "arguments": "p_token_hash text, p_scope text, p_require_active boolean",
+      "raw_prosrc_md5": "0693227a3d7dd4f8691c065fc5ea4836",
+      "definition_md5": "067e5afe8f4ffc2c30f48c66deb43042",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    },
+    {
+      "qualified_name": "sellerpilot_private.worker_token_may_complete_gateway_job",
+      "arguments": "p_token_hash text, p_job_id uuid, p_claim_token uuid",
+      "raw_prosrc_md5": "619c6c925cb95e21dbcb227019e20d33",
+      "definition_md5": "fd95bd08816975d5e2750a480c728e2a",
+      "owner_role": "postgres",
+      "security_definer": false,
+      "settings": [
+        "search_path=\"\""
+      ],
+      "volatility": "s",
+      "result_type": "boolean",
+      "acl": [
+        {
+          "grantee": "postgres",
+          "grantable": false,
+          "privilege": "EXECUTE"
+        }
+      ],
+      "anon_execute": false,
+      "authenticated_execute": false,
+      "service_execute": false
+    }
+  ],
+  "triggers": [
+    {
+      "name": "archive_catalog_on_credential_revoke",
+      "enabled": "O",
+      "function": "sellerpilot_private.archive_catalog_for_inactive_credential()",
+      "relation": "sellerpilot_private.channel_credentials",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "e5732a6496e42e4d26686b0a4d8d20a4",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_credential_seller_lineage",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_credential_seller_lineage()",
+      "relation": "sellerpilot_private.channel_credentials",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "37b1bb4b6d2b86a0382d8230a8437c78",
+      "initially_deferred": false
+    },
+    {
+      "name": "a_bind_temu_server_owned_mutation_claim",
+      "enabled": "O",
+      "function": "sellerpilot_private.bind_temu_server_owned_mutation_claim_trigger()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "1e69bdb19de2710c97f14b145a6713a5",
+      "initially_deferred": false
+    },
+    {
+      "name": "bind_shopee_sg_exact_inventory_claim",
+      "enabled": "O",
+      "function": "sellerpilot_private.bind_shopee_sg_exact_inventory_claim()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "18b68a4f2d50b00c0011a3f547adda75",
+      "initially_deferred": false
+    },
+    {
+      "name": "block_closed_listing_mutation_claim",
+      "enabled": "O",
+      "function": "sellerpilot_private.block_closed_listing_mutation_claim()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "0a0301b7186c6fc5dbd825c10492cd21",
+      "initially_deferred": false
+    },
+    {
+      "name": "capture_elevenst_listing_snapshot",
+      "enabled": "O",
+      "function": "sellerpilot_private.capture_elevenst_listing_snapshot()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "c2eb44f7ecefb5fbc98cfb21356c542f",
+      "initially_deferred": false
+    },
+    {
+      "name": "capture_listing_public_url_from_inventory",
+      "enabled": "O",
+      "function": "sellerpilot_private.capture_listing_public_url_from_inventory()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "b244714aac9e92f898e73e77e52f5507",
+      "initially_deferred": false
+    },
+    {
+      "name": "channel_gateway_jobs_persist_support_reply_message",
+      "enabled": "O",
+      "function": "sellerpilot_private.persist_succeeded_support_reply_message()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "8140477b14400aedef8a0becce87aa0a",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_00_qoo10_shipping_s1_fresh_activation_slot",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_shipping_s1_fresh_activation_slot()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "547f3519863c8957edb2019c2dfdad4b",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_and_finalize_inquiry_reply_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_and_finalize_inquiry_reply_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "5f384da398ee7d275d08d76ebdd67c6d",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_channel_gateway_running_parallelism",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_channel_gateway_running_parallelism()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "5f4f5c935600551defa8322b63672df3",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_coupang_exact_rep_completion",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_coupang_exact_rep_completion()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": true,
+      "definition_md5": "92eb79bb6ea3c1c153cd3128275826d2",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_elevenst_cookie_create_source_job_immutable",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_elevenst_cookie_create_source_job_immutable()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 27,
+      "deferrable": false,
+      "definition_md5": "060f029059f695164c9c367e00438a1d",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_exact_existing_update_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_exact_existing_update_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": true,
+      "definition_md5": "69353ea64ff63272f758d63752542911",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_exact_lazada_dual_blockers",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_exact_lazada_dual_blockers()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 27,
+      "deferrable": false,
+      "definition_md5": "d5d1393a82571fdc645726e9fe072cc7",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_exact_lazada_failed_oauth_blocker",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_exact_lazada_failed_oauth_blocker()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 27,
+      "deferrable": false,
+      "definition_md5": "f8d94f54b50451da4b766051dcd3d323",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_exact_qoo10_adopted_localization_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_exact_qoo10_adopted_localization_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": true,
+      "definition_md5": "00fc8df82cfb0df460e78e43b7b5c1ad",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_exact_qoo10_s1_activation_job_lineage",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_exact_qoo10_s1_activation_job_lineage()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "f502c573510837ce6372a1400a30450c",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_gateway_job_seller_lineage",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_gateway_job_seller_lineage()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "6ffe4d095ae3d89ed8b462ce9c9c2f68",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_listing_lineage_verification_job_completion",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_listing_lineage_verification_job_completion()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "9b9a14f231fe7d50888e90ae479e4aef",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_qoo10_exact_localization_update_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_exact_localization_update_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": true,
+      "definition_md5": "eac3f65760fc4ec354037ff8892204c6",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_qoo10_exact_no_effect_verifier_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_exact_no_effect_verifier_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "4f7b4a0813932d3b3ec26b926da0649a",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_qoo10_exact_s1_verifier_overlap",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_exact_s1_verifier_overlap()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "c60e130c9706292d9123850b371d46bb",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_qoo10_shipping_s1_activation_claim_bind",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_shipping_s1_activation_claim_bind()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "6cfc13b8a0de0528f612a890d6961a81",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_qoo10_shipping_s1_verifier_overlap",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_qoo10_shipping_s1_verifier_overlap()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "0a5ac3ab1b6207c92ed2d04bcdd1703c",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_shopee_sg_exact_update_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_shopee_sg_exact_update_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": true,
+      "definition_md5": "dd7588c431c4526ea514e67a070d1794",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_shopee_shipment_order_lineage",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_shopee_shipment_order_lineage()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 7,
+      "deferrable": false,
+      "definition_md5": "a7c65d1654830d1707530e6c37a4f673",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_smartstore_exact_qa_update_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_smartstore_exact_qa_update_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": true,
+      "definition_md5": "dd82989533abf1b26ab69ce5ba2eab90",
+      "initially_deferred": true
+    },
+    {
+      "name": "guard_temu_exact_credential_certification_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_temu_exact_credential_certification_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "b59e4d8e18c92596cc0ce1c84873ea9a",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_temu_exact_existing_adoption_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_temu_exact_existing_adoption_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "5b00386cb0273a58772f2ded61152127",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_temu_listing_mutation_serialization",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_temu_listing_mutation_serialization()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "3ac11379d9507bcc5298ee788aad5802",
+      "initially_deferred": false
+    },
+    {
+      "name": "guard_temu_server_owned_mutation_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_temu_server_owned_mutation_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 31,
+      "deferrable": false,
+      "definition_md5": "01c7e2a2f52215232d485b0d23d0a1da",
+      "initially_deferred": false
+    },
+    {
+      "name": "inherit_inquiry_history_backfill_tags",
+      "enabled": "O",
+      "function": "sellerpilot_private.inherit_inquiry_history_backfill_tags()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 7,
+      "deferrable": false,
+      "definition_md5": "292487a6dafb71f486e9a6c91f6ff436",
+      "initially_deferred": false
+    },
+    {
+      "name": "reconcile_gateway_resource_terminal",
+      "enabled": "O",
+      "function": "sellerpilot_private.reconcile_gateway_resource_terminal()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "e5044f829d2bd20bea4a1dc4ff1a05eb",
+      "initially_deferred": false
+    },
+    {
+      "name": "reconcile_gateway_shipment_ack_terminal",
+      "enabled": "O",
+      "function": "sellerpilot_private.reconcile_gateway_shipment_ack_terminal()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "8c60d276e5a94353dd16326ffbeaeb9b",
+      "initially_deferred": false
+    },
+    {
+      "name": "refresh_inquiry_history_backfill_from_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.refresh_inquiry_history_backfill_from_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "6a196efd446bc1a70005b6cfa245dc5e",
+      "initially_deferred": false
+    },
+    {
+      "name": "sellerpilot_sanitize_oauth_gateway_response_payload",
+      "enabled": "O",
+      "function": "sellerpilot_private.sanitize_oauth_gateway_response_payload()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "57d5345c1b6362f5c581616bb60c8fc4",
+      "initially_deferred": false
+    },
+    {
+      "name": "supersede_safe_lazada_refresh_after_oauth",
+      "enabled": "O",
+      "function": "sellerpilot_private.supersede_safe_lazada_refresh_after_oauth()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 17,
+      "deferrable": false,
+      "definition_md5": "9b5eb5a7990a755508d6de4728749577",
+      "initially_deferred": false
+    },
+    {
+      "name": "sync_inquiry_reply_delivery_ledger",
+      "enabled": "O",
+      "function": "sellerpilot_private.sync_inquiry_reply_delivery_ledger()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "477bb5b83bc4a364aedd684bcfbe9f86",
+      "initially_deferred": false
+    },
+    {
+      "name": "sync_listing_publication_review_job_status",
+      "enabled": "O",
+      "function": "sellerpilot_private.sync_listing_publication_review_job_status()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "1656f8108aed588b798394fdfe70eaa6",
+      "initially_deferred": false
+    },
+    {
+      "name": "sync_temu_containment_discovery_job_status",
+      "enabled": "O",
+      "function": "sellerpilot_private.sync_temu_containment_discovery_job_status()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "72405d487b7b9f5c8537f8cf4eff30f0",
+      "initially_deferred": false
+    },
+    {
+      "name": "sync_temu_exact_credential_certification_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.sync_temu_exact_credential_certification_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "cb14aacedacba97f4945114a0adcd23d",
+      "initially_deferred": false
+    },
+    {
+      "name": "sync_temu_exact_existing_adoption_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.sync_temu_exact_existing_adoption_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "d465af067368aebf4632c50f9e2bf8db",
+      "initially_deferred": false
+    },
+    {
+      "name": "zzzz_guard_lazada_shipment_job",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_lazada_shipment_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 23,
+      "deferrable": false,
+      "definition_md5": "d407026e7a0bdacbdc647a9acd07a780",
+      "initially_deferred": false
+    },
+    {
+      "name": "zzzz_guard_lazada_shipment_marker",
+      "enabled": "O",
+      "function": "sellerpilot_private.guard_lazada_shipment_job()",
+      "relation": "sellerpilot_private.channel_gateway_jobs",
+      "type_mask": 19,
+      "deferrable": false,
+      "definition_md5": "402affefcc4421525a1d22f0952a4107",
+      "initially_deferred": false
+    },
+    {
+      "name": "supersede_exact_lazada_dual_blockers_after_readback",
+      "enabled": "O",
+      "function": "sellerpilot_private.supersede_exact_lazada_dual_blockers_after_readback()",
+      "relation": "sellerpilot_private.channel_market_targets",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "6cfa3c4c5953df107e89549446b9929b",
+      "initially_deferred": false
+    },
+    {
+      "name": "supersede_exact_lazada_three_blockers_after_readback",
+      "enabled": "O",
+      "function": "sellerpilot_private.supersede_exact_lazada_three_blockers_after_readback()",
+      "relation": "sellerpilot_private.channel_market_targets",
+      "type_mask": 21,
+      "deferrable": false,
+      "definition_md5": "3e5290082bf3823d3d8bbe38f85d9365",
+      "initially_deferred": false
+    },
+    {
+      "name": "operation_audit_suppress_noop_sync",
+      "enabled": "O",
+      "function": "sellerpilot_private.suppress_noop_sync_audit()",
+      "relation": "sellerpilot_private.operation_audit",
+      "type_mask": 7,
+      "deferrable": false,
+      "definition_md5": "6034a22911584fa4f65a84648023eb1d",
+      "initially_deferred": false
+    }
+  ],
+  "schemas": [
+    {
+      "name": "auth",
+      "owner": "supabase_admin",
+      "anon_usage": true,
+      "service_usage": true,
+      "authenticated_usage": true
+    },
+    {
+      "name": "extensions",
+      "owner": "postgres",
+      "anon_usage": true,
+      "service_usage": true,
+      "authenticated_usage": true
+    },
+    {
+      "name": "public",
+      "owner": "pg_database_owner",
+      "anon_usage": true,
+      "service_usage": true,
+      "authenticated_usage": true
+    },
+    {
+      "name": "sellerpilot_private",
+      "owner": "postgres",
+      "anon_usage": false,
+      "service_usage": false,
+      "authenticated_usage": false
+    }
+  ]
+}

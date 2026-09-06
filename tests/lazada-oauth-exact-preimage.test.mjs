@@ -15,11 +15,28 @@ const {runLazadaExactJob}=await tsImport('../lib/channels/lazada-oauth-exact.ts'
 import {unseal} from '../scripts/db-baseline-export.mjs';
 const folder=process.env.SELLERPILOT_BASELINE_FOLDER??'/Users/kimchangheemac/.aside/u/0/backups/sellerpilot/20260905-974d4cb-v4/';
 const baseline=unseal(await readFile(folder+'baseline.enc','utf8'),await readFile(folder+'baseline.key'));
+const appliedOverlayNames=['20260906010000_verify_channel_credential_owner.sql','20260905140000_preserve_unordered_lazada_messages.sql','20260905141000_products_authoritative_inventory_bridge.sql','20260905142000_lazada_durable_order_item_ownership.sql','20260906011000_route_lazada_im_webhook_credentials.sql'];
+const appliedOverlay=await Promise.all(appliedOverlayNames.map(async name=>({name,sql:await readFile(new URL('../supabase/migrations/'+name,import.meta.url),'utf8')})));
+const wrapperHook=process.env.LAZADA_REVIEWED_WRAPPER_HOOK?await import(process.env.LAZADA_REVIEWED_WRAPPER_HOOK):null;
+const liveCatalog=JSON.parse(await readFile(new URL('./fixtures/lazada-live-catalog-20260906.json',import.meta.url),'utf8'));
+const sentinelOwner='88888888-8888-4888-8888-888888888888',sentinelCredential='88888888-8888-4888-8888-888888888889',sentinelJob='88888888-8888-4888-8888-88888888888a';
+const sentinelSql=`select jsonb_build_object('credentials',(select jsonb_agg(to_jsonb(c) order by id) from sellerpilot_private.channel_credentials c where created_by='${sentinelOwner}'),'jobs',(select jsonb_agg(to_jsonb(j) order by id) from sellerpilot_private.channel_gateway_jobs j where created_by='${sentinelOwner}'),'historicalReceipts',(select jsonb_agg(to_jsonb(r) order by job_id) from sellerpilot_private.gateway_completion_receipts r where worker_token_id='97b5f43a-b526-4b2c-8cd3-4b30b51c2d6d'))`;
+async function verifyLiveOverlay(db){
+ const schemas=(await db.query("select nspname name,pg_get_userbyid(nspowner) owner,has_schema_privilege('anon',oid,'USAGE') anon_usage,has_schema_privilege('authenticated',oid,'USAGE') authenticated_usage,has_schema_privilege('service_role',oid,'USAGE') service_usage from pg_namespace")).rows;
+ for(const expected of liveCatalog.schemas)assert.deepEqual(schemas.find(s=>s.name===expected.name),expected,'LIVE_OVERLAY_SCHEMA '+expected.name);
+ const actual=(await db.query(`select n.nspname||'.'||p.proname qualified_name,pg_get_function_identity_arguments(p.oid) arguments,md5(p.prosrc) raw_prosrc_md5,md5(pg_get_functiondef(p.oid)) definition_md5,pg_get_userbyid(p.proowner) owner_role,p.prosecdef security_definer,p.proconfig settings,p.provolatile volatility,pg_get_function_result(p.oid) result_type,
+ (select jsonb_agg(jsonb_build_object('grantee',case when a.grantee=0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end,'privilege',a.privilege_type,'grantable',a.is_grantable) order by case when a.grantee=0 then 'PUBLIC' else pg_get_userbyid(a.grantee) end,a.privilege_type) from aclexplode(coalesce(p.proacl,acldefault('f',p.proowner))) a) acl,
+ has_function_privilege('anon',p.oid,'EXECUTE') anon_execute,has_function_privilege('authenticated',p.oid,'EXECUTE') authenticated_execute,has_function_privilege('service_role',p.oid,'EXECUTE') service_execute from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in('public','sellerpilot_private')`)).rows;
+ for(const expected of liveCatalog.functions){const found=actual.find(f=>f.qualified_name===expected.qualified_name&&f.arguments===expected.arguments);if(found)found.acl.sort((a,b)=>a.grantee.localeCompare(b.grantee));expected.acl.sort((a,b)=>a.grantee.localeCompare(b.grantee));assert.deepEqual(found,expected,'LIVE_OVERLAY_FUNCTION '+expected.qualified_name);}
+ const triggers=(await db.query(`select t.tgname name,n.nspname||'.'||c.relname relation,t.tgenabled enabled,t.tgtype type_mask,t.tgdeferrable deferrable,t.tginitdeferred initially_deferred,md5(pg_get_triggerdef(t.oid,true)) definition_md5 from pg_trigger t join pg_class c on c.oid=t.tgrelid join pg_namespace n on n.oid=c.relnamespace where not t.tgisinternal`)).rows;
+ for(const expected of liveCatalog.triggers){const shape=Object.fromEntries(Object.entries(expected).filter(([key])=>key!=='function')); assert.deepEqual(triggers.find(t=>t.name===shape.name&&t.relation===shape.relation),shape,'LIVE_OVERLAY_TRIGGER '+shape.name);}
+}
 const migration=await readFile(new URL('../supabase/migrations/20260906060000_lazada_exact_oauth_executor.sql',import.meta.url),'utf8');
 const shopee300Url=new URL('../supabase/migrations/20260906030000_shopee_exact_oauth_executor.sql',import.meta.url);
 const lazada500Url=new URL('../supabase/migrations/20260906050000_bind_lazada_oauth_to_authoritative_seller.sql',import.meta.url);
 const shopee300=await readFile(shopee300Url,'utf8'),lazada500=await readFile(lazada500Url,'utf8');
 after(async()=>{
+ for(const item of appliedOverlay)assert.equal(await readFile(new URL('../supabase/migrations/'+item.name,import.meta.url),'utf8'),item.sql,'APPLIED_OVERLAY_CHANGED_DURING_RUN');
  assert.equal(await readFile(shopee300Url,'utf8'),shopee300,'BC_300_CHANGED_DURING_RUN_RETEST_FINAL_VERSION');
  assert.equal(await readFile(lazada500Url,'utf8'),lazada500,'FROZEN_500_CHANGED_DURING_RUN');
  assert.equal(await readFile(new URL('../supabase/migrations/20260906060000_lazada_exact_oauth_executor.sql',import.meta.url),'utf8'),migration,'FROZEN_600_CHANGED_DURING_RUN');
@@ -34,8 +51,9 @@ async function fixture({executionActor="11111111-1111-4111-8111-111111111111",wo
  try {
  await db.exec('set check_function_bodies=off; create schema extensions; create extension pgcrypto with schema extensions; create schema vault;');
  for(const role of baseline.roles){if(role.name==='postgres')continue;await db.exec(`do $$begin create role "${role.name.replaceAll('"','""')}";exception when duplicate_object then null;end$$;`);}
- // Function-body composition fixture, not a native ownership/ACL restore.
- const selected=o=>/^(public|sellerpilot_private|auth)(\.|$)/.test(o.identity);
+ // Captured object ownership/ACL composition; native role attributes and
+ // memberships/extensions remain outside this WASM fixture.
+ const selected=o=>/^(public|sellerpilot_private|auth)([.:]|$)/.test(o.identity);
  for(const kind of ['schema','enum','sequence','table','function','default','constraint','index','foreign-key','trigger','policy','rls']){
   for(const o of baseline.objects.filter(o=>o.kind===kind&&selected(o))){
    if(kind==='constraint'&&/ADD CONSTRAINT .* TRIGGER /.test(o.ddl)) {
@@ -57,22 +75,36 @@ async function fixture({executionActor="11111111-1111-4111-8111-111111111111",wo
  create function vault.update_secret(secret_id uuid,new_secret text default null,new_name text default null,new_description text default null) returns void language sql as $$update vault.secrets set secret=coalesce(new_secret,secret),name=coalesce(new_name,name),description=coalesce(new_description,description) where id=secret_id$$;
  create function vault.delete_secret(secret_id uuid) returns void language sql as $$delete from vault.secrets where id=secret_id$$;
  insert into auth.users(id)values('${owner}'),('11111111-1111-4111-8111-111111111111');insert into sellerpilot_private.admin_users(user_id,display_name)values('${owner}','Fixture owner'),('11111111-1111-4111-8111-111111111111','Shared admin actor');
- insert into auth.users(id) values('${workerIssuer}') on conflict do nothing;
+ insert into auth.users(id) values('${workerIssuer}'),('7f448e38-f86f-4749-bc5f-cecf6d0723e5') on conflict do nothing;
  insert into vault.secrets(id,secret) values('${credential}','{"app_key":"137451","app_secret":"fixture-commerce","country":"my","access_token":"fixture-old","refresh_token":"fixture-old-refresh","im_app_key":"137571","im_app_secret":"fixture-im","im_access_token":"fixture-im-token"}');
  alter table sellerpilot_private.channel_credentials disable trigger user;
  insert into sellerpilot_private.channel_credentials(id,channel,environment,status,vault_secret_id,created_by,expires_at,version,fingerprint,seller_account_key_source) values('${credential}','lazada','production','active','${credential}','${owner}',now()+interval '90 days',5,'fixturekey12','legacy_unattested');
  alter table sellerpilot_private.channel_credentials enable trigger user;
- insert into sellerpilot_private.ai_cli_worker_tokens(id,token_hash,scope,status,created_by,expires_at,label,fingerprint)values('${token}','${hash}','gateway','active','${workerIssuer}','2026-11-28T07:41:58.603499+00:00'::timestamptz,'Fixture exact worker','fixturekey12');`);
- // Restore this exact function's captured owner/revoke/grants, not a made-up
- // ACL or a modified business body. Broader native restore remains unproven.
- for(const entry of baseline.objects.filter(o=>['owner','revoke','grant'].includes(o.kind)&&o.ddl.includes('sellerpilot_service_reap_stale_channel_gateway_jobs(')))await db.exec(entry.ddl);
+ insert into sellerpilot_private.ai_cli_worker_tokens(id,token_hash,scope,status,created_by,expires_at,label,fingerprint)values('${token}','${hash}','gateway','active','${workerIssuer}','2026-11-28T07:41:58.603499+00:00'::timestamptz,'Fixture exact worker','fixturekey12');
+ insert into sellerpilot_private.ai_cli_worker_tokens(id,token_hash,scope,status,created_by,expires_at,label,fingerprint)values('97b5f43a-b526-4b2c-8cd3-4b30b51c2d6d',repeat('c',64),'serverless_cs','revoked','7f448e38-f86f-4749-bc5f-cecf6d0723e5','2027-08-30T08:41:36.446571Z','Synthetic historical serverless metadata','fixtureold12');`);
+ // Restore captured existing object owners/ACLs, not invented grants. Only
+ // already-restored public/private/auth objects are eligible. No body stubs.
+ // Historic serverless ID/scope is observed. Its hash, lifecycle and issuer
+ // seed attributes are synthetic, not a claim about unqueried live token state.
+ for(const kind of ['schema-owner','owner','revoke','grant'])for(const entry of baseline.objects.filter(o=>o.kind===kind&&(selected(o)||/^extensions(:|$)/.test(o.identity))))await db.exec(entry.ddl);
+ for(const item of appliedOverlay)await db.exec(item.sql);
+ await verifyLiveOverlay(db);
+ // Unrelated owner lineage is synthetic and must survive application + execution.
+ await db.exec(`insert into auth.users(id) values('${sentinelOwner}');
+ alter table sellerpilot_private.channel_credentials disable trigger user;
+ insert into sellerpilot_private.channel_credentials(id,channel,environment,status,vault_secret_id,created_by,expires_at,version,fingerprint,seller_account_key_source) values('${sentinelCredential}','lazada','production','revoked','${credential}','${sentinelOwner}',now()+interval '90 days',3,'sentinelkey12','legacy_unattested');
+ alter table sellerpilot_private.channel_credentials enable trigger user;
+ alter table sellerpilot_private.channel_gateway_jobs disable trigger user;
+ insert into sellerpilot_private.channel_gateway_jobs(id,credential_id,created_by,channel,environment,operation,status,request_payload) values('${sentinelJob}','${sentinelCredential}','${sentinelOwner}','lazada','production','orders.list','cancelled','{"syntheticSentinel":true}');
+ alter table sellerpilot_private.channel_gateway_jobs enable trigger user;`);
+ const sentinelBeforeApply=await scalar(db,sentinelSql);
  await db.exec(shopee300);
  const sharedContractSql="select n.nspname,p.proname,pg_get_function_identity_arguments(p.oid) args,md5(pg_get_functiondef(p.oid)) hash from pg_proc p join pg_namespace n on n.oid=p.pronamespace where p.proname in('worker_token_has_scope','worker_token_may_complete_gateway_job','sellerpilot_service_gateway_completion_context','sellerpilot_service_complete_gateway_transaction','sellerpilot_11820_complete_gateway_unsafe') and n.nspname in('public','sellerpilot_private') order by 1,2,3";
  const originalSharedContract=(await db.query(sharedContractSql)).rows;
  const genericAfter300=await scalar(db,genericDefinitionSql);
  const reaperAfter300=await scalar(db,reaperDefinitionSql);
  const shopeeAfter300=(await db.query(shopeeDefinitionsSql)).rows;
- await db.exec(lazada500);
+ assert.deepEqual(await scalar(db,sentinelSql),sentinelBeforeApply,'300 application preserves unrelated owner');
  // Seed pre-existing historical rows before enabling current insert-lineage hooks.
  // This changes fixture loading only, not any business function definition.
  await db.exec('alter table sellerpilot_private.channel_gateway_jobs disable trigger user');
@@ -111,10 +143,10 @@ async function fixture({executionActor="11111111-1111-4111-8111-111111111111",wo
       );
       insert into sellerpilot_private.gateway_completion_receipts(job_id,claim_token,worker_token_id,completion_fingerprint,created_at) values
         ('faee01e1-2d68-4f99-951c-15684822fc43','11111111-1111-4111-8111-111111111111',
-         '02955cb4-fa9f-466b-824f-b61f06276190',sellerpilot_private.gateway_completion_fingerprint('reconciliation_required',null,'serverless_cs_execution_failed',null,null,null,null),
+         '97b5f43a-b526-4b2c-8cd3-4b30b51c2d6d',sellerpilot_private.gateway_completion_fingerprint('reconciliation_required',null,'serverless_cs_execution_failed',null,null,null,null),
          '2026-08-30 10:24:07.470146+00'),
         ('a976573f-a150-4061-a1c6-5e8e4880ba2b','31111111-1111-4111-8111-111111111111',
-         '02955cb4-fa9f-466b-824f-b61f06276190',sellerpilot_private.gateway_completion_fingerprint('reconciliation_required',null,'serverless_cs_execution_failed',null,null,null,null),
+         '97b5f43a-b526-4b2c-8cd3-4b30b51c2d6d',sellerpilot_private.gateway_completion_fingerprint('reconciliation_required',null,'serverless_cs_execution_failed',null,null,null,null),
          '2026-08-30 09:16:07.032446+00');
 
       insert into sellerpilot_private.channel_gateway_jobs(
@@ -140,14 +172,20 @@ async function fixture({executionActor="11111111-1111-4111-8111-111111111111",wo
       insert into sellerpilot_private.gateway_completion_receipts(job_id,claim_token,worker_token_id,completion_fingerprint,created_at) values(
         'd917f08b-1283-456e-930a-6042ec0b24a7',
         '51111111-1111-4111-8111-111111111111',
-        '02955cb4-fa9f-466b-824f-b61f06276190',
+        '97b5f43a-b526-4b2c-8cd3-4b30b51c2d6d',
         'bfd9d9e768f23c0073eb656d24f1f2785a0904cdb62a98c0b465b63b0fc69198',
         '2026-09-02 01:11:15.728629+00'
       );
 `);
  await db.exec('alter table sellerpilot_private.channel_gateway_jobs enable trigger user');
+ const preserved=await scalar(db,sentinelSql);
+ if(!await wrapperHook?.install?.(db,'500',lazada500))await db.exec(lazada500);
+ await wrapperHook?.capture?.(db,'500');
+ assert.deepEqual(await scalar(db,sentinelSql),preserved,'500 application preserves other owner and historical receipts');
  assert.equal(await scalar(db,"select sellerpilot_private.lazada_exact_three_blockers_intact($1,$2,'production')",[credential,owner]),true);
- await db.exec(migration);
+ if(!await wrapperHook?.install?.(db,'600',migration))await db.exec(migration);
+ await wrapperHook?.capture?.(db,'600');
+ assert.deepEqual(await scalar(db,sentinelSql),preserved,'600 application preserves other owner and historical receipts');
  assert.equal(await scalar(db,genericDefinitionSql),genericAfter300,'500/600 must preserve generic claim/reaper installed alongside 300');
  assert.equal(await scalar(db,reaperDefinitionSql),reaperAfter300,'500/600 must preserve the scheduled reaper installed alongside 300');
  assert.deepEqual((await db.query(shopeeDefinitionsSql)).rows,shopeeAfter300,'500/600 must preserve every Shopee exact function');
@@ -159,6 +197,7 @@ const actor='11111111-1111-4111-8111-111111111111';
 async function rpc(db,sql,args){await db.exec('set role service_role');try{return await scalar(db,sql,args);}finally{await db.exec('reset role');}}
 test('actual preimage controller: atomic reserve, Vault restoration, shared actor, no general claim and no code replay',async()=>{
  const db=await fixture();try{
+ const preserved=await scalar(db,sentinelSql);
  const admin=(action,body={})=>rpc(db,'select public.sellerpilot_lazada_exact_oauth_admin($1,$2,$3,$4,$5,$6::jsonb)',[action,actor,session,credential,hash,JSON.stringify(body)]);
  const worker=body=>rpc(db,'select public.sellerpilot_lazada_exact_oauth_worker($1,$2,$3,$4,$5,$6::jsonb)',[body.action,session,hash,body.jobId??null,body.claimToken??null,JSON.stringify(body.payload??{})]);
  assert.equal((await admin('prepare')).status,'executor_required');assert.equal((await admin('start')).status,'executor_required');assert.equal((await worker({action:'pulse'})).status,'armed');assert.equal((await admin('start')).status,'ready');
@@ -173,6 +212,7 @@ test('actual preimage controller: atomic reserve, Vault restoration, shared acto
   const read=await worker({action:'claim'});assert.equal(read.job.id,done.jobId);assert.equal(read.job.operation,'shops.get');
   const result=await runLazadaExactJob(read.job,session,worker,async(url,init)=>{assert.equal(new URL(url).pathname,'/rest/seller/get');assert.equal(init.method,'GET');return Response.json({code:'0',data:{seller_id:'300872000183',short_code:'MY4NNISR2D',status:'ACTIVE'}});});
   assert.equal(result.status,'completed');assert.equal(exchanges,1);
+  assert.deepEqual(await scalar(db,sentinelSql),preserved,'successful rotation/readback preserves other owner + original serverless receipts');
   assert.equal(await scalar(db,"select count(*)::int from sellerpilot_private.channel_gateway_jobs where id in('a976573f-a150-4061-a1c6-5e8e4880ba2b','d917f08b-1283-456e-930a-6042ec0b24a7','faee01e1-2d68-4f99-951c-15684822fc43') and status='cancelled'"),3);
   assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.channel_gateway_jobs where id in($1,$2) and worker_token_id is null and claim_token is null and lease_expires_at is null',[bound.jobId,done.jobId]),2);
   assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.lazada_exact_claims e join sellerpilot_private.gateway_completion_receipts r on r.job_id=e.job_id and r.claim_token=e.claim_token and r.worker_token_id=e.worker_token_id'),2);
@@ -193,7 +233,7 @@ test('actual preimage controller: atomic reserve, Vault restoration, shared acto
    if(kind==='receipt'){await db.exec('alter table sellerpilot_private.gateway_completion_receipts disable trigger user');await db.query('update sellerpilot_private.gateway_completion_receipts set claim_token=$1 where job_id=$2',[token,done.jobId]);}
    if(kind==='lease'){await db.exec('alter table sellerpilot_private.lazada_exact_completions disable trigger user');await db.query("update sellerpilot_private.lazada_exact_completions set lease_checked_at=now()-interval '2 hours',lease_expires_at=now()-interval '1 hour' where job_id=$1",[done.jobId]);}
    if(kind==='owner'){await db.exec('alter table sellerpilot_private.lazada_exact_oauth_sessions disable trigger user');await db.query('update sellerpilot_private.lazada_exact_oauth_sessions set owner_id=$1',[actor]);}
-   if(kind==='issuer')await db.query('update sellerpilot_private.ai_cli_worker_tokens set created_by=$1',[owner]);
+   if(kind==='issuer')await db.query('update sellerpilot_private.ai_cli_worker_tokens set created_by=$1 where id=$2',[owner,token]);
    if(kind==='version'){await db.exec('alter table sellerpilot_private.channel_credentials disable trigger user');await db.query('update sellerpilot_private.channel_credentials set version=7 where id=$1',[read.job.credential_id]);}
    assert.equal(await scalar(db,'select sellerpilot_private.lazada_exact_completed_job_bound($1)',[done.jobId]),false,kind);
    await db.exec('rollback');
@@ -286,8 +326,8 @@ for(const {executionActor,workerIssuer} of [{executionActor:owner,workerIssuer:o
  const db=await fixture({executionActor,workerIssuer});const original=globalThis.fetch;try{
  const a=(action,body={})=>rpc(db,'select public.sellerpilot_lazada_exact_oauth_admin($1,$2,$3,$4,$5,$6::jsonb)',[action,executionActor,session,credential,hash,JSON.stringify(body)]);
  const w=body=>rpc(db,'select public.sellerpilot_lazada_exact_oauth_worker($1,$2,$3,$4,$5,$6::jsonb)',[body.action,session,hash,body.jobId??null,body.claimToken??null,JSON.stringify(body.payload??{})]);
- const tokenBefore=(await db.query('select id,created_by,scope,status,expires_at,token_hash from sellerpilot_private.ai_cli_worker_tokens')).rows;
- assert.equal(tokenBefore.length,1);assert.equal(tokenBefore[0].id,token);assert.equal(tokenBefore[0].created_by,workerIssuer);
+ const tokenBefore=(await db.query('select id,created_by,scope,status,expires_at,token_hash from sellerpilot_private.ai_cli_worker_tokens order by id')).rows;
+ assert.equal(tokenBefore.length,2);assert.equal(tokenBefore.filter(t=>t.scope==='gateway').length,1);assert.equal(tokenBefore[0].id,token);assert.equal(tokenBefore[0].created_by,workerIssuer);
  assert.equal(await scalar(db,"select sellerpilot_private.worker_token_has_scope($1,'gateway',true)",[hash]),true);
  assert.equal(await scalar(db,"select sellerpilot_private.worker_token_has_scope($1,'gateway',true)",['f'.repeat(64)]),false);
  await a('prepare');await w({action:'pulse'});await a('bind',{code:'0_137451_fixture_owner_actor',country:'my'});
@@ -305,7 +345,7 @@ for(const {executionActor,workerIssuer} of [{executionActor:owner,workerIssuer:o
  const read=(await w({action:'claim'})).job;
  const completed=await runLazadaExactJob(read,session,w,async()=>Response.json({code:'0',data:{seller_id:'300872000183',short_code:'MY4NNISR2D',status:'ACTIVE'}}));
  assert.equal(completed.status,'completed');assert.equal(exchanges,1);
- assert.deepEqual((await db.query('select id,created_by,scope,status,expires_at,token_hash from sellerpilot_private.ai_cli_worker_tokens')).rows,tokenBefore,'no token creation, reassignment or mutation');
+ assert.deepEqual((await db.query('select id,created_by,scope,status,expires_at,token_hash from sellerpilot_private.ai_cli_worker_tokens order by id')).rows,tokenBefore,'no token creation, reassignment or mutation');
  assert.equal(await scalar(db,'select bool_and(worker_issuer_id=$1) from sellerpilot_private.lazada_exact_claims',[workerIssuer]),true);
  const replayContext=await rpc(db,'select public.sellerpilot_service_gateway_completion_context($1,$2,$3)',[hash,originalClaim.id,originalClaim.claim_token]);assert.equal(replayContext.status,'completed_replay');
  assert.equal(await scalar(db,'select bool_and(sellerpilot_private.lazada_exact_completed_job_bound(job_id)) from sellerpilot_private.lazada_exact_claims'),true);
@@ -333,11 +373,11 @@ for(const invalid of ['unknown-hash','ai-scope','scheduler-scope','serverless-sc
   assert.equal((await pulse(hash)).status,'armed');
   await assert.rejects(db.query('update sellerpilot_private.lazada_exact_oauth_sessions set worker_issuer_id=$1',[owner]),/IDENTITY_IMMUTABLE/);
   // Adversarial fixture metadata mutation. No production token is modified.
-  await db.query('update sellerpilot_private.ai_cli_worker_tokens set created_by=$1',[owner]);
+  await db.query('update sellerpilot_private.ai_cli_worker_tokens set created_by=$1 where id=$2',[owner,token]);
  }else if(invalid.endsWith('-scope')){
-  await db.query('update sellerpilot_private.ai_cli_worker_tokens set scope=$1',[{'ai-scope':'ai','scheduler-scope':'scheduler','serverless-scope':'serverless_cs'}[invalid]]);
- }else if(invalid==='revoked')await db.exec("update sellerpilot_private.ai_cli_worker_tokens set status='revoked',revoked_at=clock_timestamp()");
- else if(invalid==='expired')await db.exec("update sellerpilot_private.ai_cli_worker_tokens set expires_at=clock_timestamp()-interval '1 second'");
+  await db.query('update sellerpilot_private.ai_cli_worker_tokens set scope=$1 where id=$2',[{'ai-scope':'ai','scheduler-scope':'scheduler','serverless-scope':'serverless_cs'}[invalid],token]);
+ }else if(invalid==='revoked')await db.query("update sellerpilot_private.ai_cli_worker_tokens set status='revoked',revoked_at=clock_timestamp() where id=$1",[token]);
+ else if(invalid==='expired')await db.query("update sellerpilot_private.ai_cli_worker_tokens set expires_at=clock_timestamp()-interval '1 second' where id=$1",[token]);
  await assert.rejects(pulse(invalid==='unknown-hash'?'f'.repeat(64):hash),/TOKEN_INVALID/);
  assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.lazada_exact_claims'),0);
  assert.doesNotMatch(migration,/(?:insert\s+into|update|delete\s+from)\s+sellerpilot_private\.ai_cli_worker_tokens\b/i);
