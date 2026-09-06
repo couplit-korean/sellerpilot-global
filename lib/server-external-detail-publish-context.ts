@@ -1,6 +1,7 @@
 import type {AdminApiContext} from './admin-api';
 import {approvedExternalDetailManifest} from './server-external-detail-manifest';
 import {externalDetailDigest} from './external-detail-copy';
+import {externalDetailApprovalContentSha256} from './external-detail-approval-revision';
 const record=(value:unknown):Record<string,unknown>|null=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:null;
 /** The DTO is derived ONLY from the owned database snapshot read after approval.
  * It does not call an unguarded predecessor of the legacy Studio RPC.
@@ -8,12 +9,20 @@ const record=(value:unknown):Record<string,unknown>|null=>value&&typeof value===
 export function externalDetailPublishContextFromRead(input:unknown,ownerId:string,productId:string){
  const read=record(input),product=record(read?.productRow),job=record(read?.sourceJob),row=record(read?.externalDetailImport),payload=record(row?.payload);
  const manifest=approvedExternalDetailManifest(row);
+ const revisionReceipt=record(read?.approvalRevision);
+ const approvalRevision=row?.approvalRevision,contentSha256=row?.contentSha256;
+ const usesContentRevision=(approvalRevision!==null&&approvalRevision!==undefined)||(contentSha256!==null&&contentSha256!==undefined);
  if(read?.contract!=='sellerpilot_external_detail_publish_read_v1'||!product||!job||!row||!payload||!manifest
   ||product.id!==productId||product.owner_id!==ownerId||payload.productId!==productId||payload.ownerId!==ownerId||row.product_id!==productId||row.owner_id!==ownerId
-  ||product.external_detail_import_id!==row.id||product.updated_at!==row.approved_product_updated_at||product.detail_page_version!==row.approved_detail_version
+  ||product.external_detail_import_id!==row.id||product.detail_page_version!==row.approved_detail_version
   ||product.ai_job_id!==job.id||job.createdBy!==ownerId||product.ai_job_id!==payload.expectedAiJobId
   ||typeof product.sku!=='string'||!product.sku||typeof product.name!=='string'||!product.name
   ||externalDetailDigest(product.detail_page_data)!==manifest.reviewedCopy.ko.documentSha256)throw Error('EXTERNAL_DETAIL_PUBLISH_SNAPSHOT_INVALID');
+ if(usesContentRevision){
+  if(!Number.isSafeInteger(approvalRevision)||Number(approvalRevision)<1||typeof contentSha256!=='string'||!/^[a-f0-9]{64}$/u.test(contentSha256)
+   ||revisionReceipt?.revision!==approvalRevision||revisionReceipt?.contentSha256!==contentSha256||revisionReceipt?.requestSha256!==manifest.requestSha256||revisionReceipt?.detailVersion!==product.detail_page_version
+   ||externalDetailApprovalContentSha256(product,row,job)!==contentSha256)throw Error('EXTERNAL_DETAIL_APPROVAL_REVISION_INVALID');
+ }else if(product.updated_at!==row.approved_product_updated_at)throw Error('EXTERNAL_DETAIL_PUBLISH_SNAPSHOT_INVALID');
  const request=record(job.requestPayload),result=record(job.resultPayload);
  if(!request||!Array.isArray(request.image_paths)||!request.image_paths.length||request.image_paths.some(p=>typeof p!=='string'||!p.startsWith(`${ownerId}/`)||p.includes('..')))throw Error('EXTERNAL_DETAIL_SOURCE_PATH_INVALID');
  const ownedRows=(value:unknown)=>{if(!Array.isArray(value)||value.some(v=>!record(v)||v.owner_id!==ownerId||v.product_id!==productId))throw Error('EXTERNAL_DETAIL_METADATA_OWNER_MISMATCH');return value as Record<string,unknown>[];};
@@ -23,7 +32,7 @@ export function externalDetailPublishContextFromRead(input:unknown,ownerId:strin
  const facts=record(product.product_facts);
  return {
   ownerId,contentMode:'external_generated',detailAssetSource:'external_generated',externalDetailImport:row,
-  externalDetailSnapshot:{contract:read.contract,productId,ownerId,productUpdatedAt:product.updated_at,detailVersion:product.detail_page_version,requestSha256:manifest.requestSha256},
+  externalDetailSnapshot:{contract:read.contract,productId,ownerId,productUpdatedAt:row.approved_product_updated_at,detailVersion:product.detail_page_version,requestSha256:manifest.requestSha256,...(usesContentRevision?{approvalRevision:Number(approvalRevision),contentSha256}: {})},
   product:{id:product.id,externalCode:product.external_code,sku:product.sku,name:product.name,description:product.description,sourceUrl:product.source_url,status:product.status,onHand:product.on_hand,costKrw:product.cost_krw},
   manualFields:facts&&Object.keys(facts).length?facts:record(request.manual_fields)??{},imageSpecs:request.image_specs??[],sourceImagePaths:request.image_paths,
   generatedImagePaths:result?.asset_storage_paths??{},localizedListings:result?.localizedListings??[],studioResult:job.resultPayload,studioJob:{id:job.id,status:job.status,kind:job.kind},
@@ -32,7 +41,7 @@ export function externalDetailPublishContextFromRead(input:unknown,ownerId:strin
  };
 }
 export async function readApprovedExternalDetailPublishContext(admin:AdminApiContext,productId:string){
- const {data,error}=await admin.serviceClient.rpc('sellerpilot_service_external_detail_import',{p_action:'publish_read',p_actor:admin.user.id,p_product:productId,p_import:null,p_payload:{}});
+ const {data,error}=await admin.serviceClient.rpc('sellerpilot_service_get_external_detail_publish_context',{p_actor:admin.user.id,p_product:productId});
  if(error)throw Error(error.message.startsWith('EXTERNAL_DETAIL_')?error.message:'EXTERNAL_DETAIL_BACKEND_UNAVAILABLE');
  return externalDetailPublishContextFromRead(data,admin.user.id,productId);
 }
