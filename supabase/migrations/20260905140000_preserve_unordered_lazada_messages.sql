@@ -12,9 +12,44 @@ begin
      or to_regprocedure('public.sellerpilot_prune_personal_data(timestamptz)') is null then
     raise exception 'LAZADA_QUARANTINE_PREREQUISITE_REQUIRED';
   end if;
-  if position('v_seller_events' in pg_get_functiondef('public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)'::regprocedure)) = 0
-     or position('support_pending_seller_messages' in pg_get_functiondef('public.sellerpilot_prune_personal_data(timestamptz)'::regprocedure)) = 0 then
+  -- Reviewed production preimages, not a variable-name substring heuristic.
+  -- The ingest is the deletion-aware wrapper: non-Lazada seller/system history
+  -- stays here; Lazada delegates unchanged to sellerpilot_0902_ingest_inquiries_unsafe.
+  -- SHA256 values are derived from exact parent readback prosrc (MD5 ad00/4344),
+  -- never recomputed from arbitrary live content during application.
+  if (select count(*) from pg_proc p
+      join pg_language l on l.oid=p.prolang
+      where (p.oid, encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')) in (
+        ('public.sellerpilot_prune_personal_data(timestamptz)'::regprocedure, 'a2d6f3b590daea01be633e79544a267d5a73a4c5ac0715738e7d6c258bc93732'),
+        ('public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)'::regprocedure, 'e077db4075c02ac2d4801a2c21da9d496e3fce938c8b054d9f522ee5a12f469c')
+      ) and p.prokind='f' and p.prosecdef and p.provolatile='v' and not p.proretset
+        and p.prorettype = case when p.oid='public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)'::regprocedure
+          then 'integer'::regtype else 'jsonb'::regtype end
+        and l.lanname='plpgsql' and p.proowner='postgres'::regrole
+        and p.proconfig=array['search_path=""']::text[]
+        and cardinality(p.proacl)=2
+        and p.proacl @> array['postgres=X/postgres','service_role=X/postgres']::aclitem[]
+        and not has_function_privilege('anon',p.oid,'EXECUTE')
+        and not has_function_privilege('authenticated',p.oid,'EXECUTE')
+        and has_function_privilege('service_role',p.oid,'EXECUTE')) <> 2 then
     raise exception 'LAZADA_QUARANTINE_LIVE_DEFINITION_REVIEW_REQUIRED';
+  end if;
+  if to_regprocedure('public.sellerpilot_0902_ingest_inquiries_unsafe(uuid,text,jsonb)') is null
+     or to_regprocedure('sellerpilot_private.support_deletion_fingerprint(uuid,text,text)') is null
+     or to_regclass('sellerpilot_private.support_ticket_deletions') is null
+     or to_regclass('sellerpilot_private.support_message_deletions') is null then
+    raise exception 'LAZADA_QUARANTINE_PREREQUISITE_REQUIRED';
+  end if;
+  -- Exact reviewed dependency code and owner-only ACL, from the parent readback.
+  if (select count(*) from pg_proc p where (p.oid,encode(sha256(convert_to(p.prosrc,'UTF8')),'hex')) in (
+      ('public.sellerpilot_0902_ingest_inquiries_unsafe(uuid,text,jsonb)'::regprocedure,'72180765dd0c713a5147cd7d2c384896c904199396fbb403e4109c8ddafd9617'),
+      ('sellerpilot_private.support_deletion_fingerprint(uuid,text,text)'::regprocedure,'bfb013b036577f29cc4a2b55bafbdd521e81df8e7f81f8ada0223403f1cd2546')
+    ) and p.proowner='postgres'::regrole and p.proconfig=array['search_path=""']::text[]
+      and cardinality(p.proacl)=1 and p.proacl @> array['postgres=X/postgres']::aclitem[]
+      and not has_function_privilege('anon',p.oid,'EXECUTE')
+      and not has_function_privilege('authenticated',p.oid,'EXECUTE')
+      and not has_function_privilege('service_role',p.oid,'EXECUTE')) <> 2 then
+    raise exception 'LAZADA_QUARANTINE_DEPENDENCY_REVIEW_REQUIRED';
   end if;
 end $$;
 
@@ -67,7 +102,12 @@ declare
  conflict boolean; quarantine boolean; conflicts jsonb; valid_time boolean;
  nc integer:=0; qc integer:=0; pc integer:=0; cc integer:=0; ec integer:=0; retained integer; tombstones integer;
 begin
- if jsonb_typeof(p_inquiries) is distinct from 'array' or jsonb_array_length(p_inquiries)>10000 then raise exception 'LAZADA_INGEST_BATCH_INVALID'; end if;
+ -- Keep the exact native 500-row / 1,000,000-byte JSONB input ceiling.
+ -- Reject the whole batch before quarantine/dedup writes; never split around
+ -- deletion, ordering, or native validation. Within this ceiling, V2 still
+ -- commits valid normal messages independently of quarantine-capacity partials.
+ if jsonb_typeof(p_inquiries) is distinct from 'array' or jsonb_array_length(p_inquiries)>500
+    or octet_length(p_inquiries::text)>1000000 then raise exception 'LAZADA_INGEST_BATCH_INVALID'; end if;
  select c.created_by,c.seller_account_key,c.seller_account_key_source='provider_certified_v1' into v_owner,v_account,v_cert
  from sellerpilot_private.channel_credentials c where c.id=p_credential_id and c.channel='lazada' and c.status in ('active','grace');
  if v_owner is null then raise exception 'active channel credential required'; end if;
@@ -106,6 +146,24 @@ begin
    end if;
    quarantine:=conflict or coalesce(e->>'orderingStatus'='unverified',false) or not valid_time;
    if quarantine then
+     -- Quarantine must not resurrect originals suppressed by the reviewed
+     -- native deletion wrapper. Unknown send time is suppressed for a deleted
+     -- conversation; known later messages still honor deleted identity hashes.
+     if exists (
+       select 1 from sellerpilot_private.support_ticket_deletions deletion
+       where deletion.owner_id=v_owner and deletion.channel_key='lazada'
+         and deletion.external_ticket_fingerprint=sellerpilot_private.support_deletion_fingerprint(v_owner,'lazada',tid)
+         and (not valid_time
+           or (case when valid_time then (e->>'receivedAt')::timestamptz end)<=deletion.deleted_through_at
+           or exists (
+             select 1 from sellerpilot_private.support_message_deletions message_deletion
+             where message_deletion.deletion_id=deletion.id and (
+               message_deletion.inbound_key_fingerprint=sellerpilot_private.support_deletion_fingerprint(v_owner,'lazada',left(nullif(trim(e->>'inboundKey'),''),500))
+               or message_deletion.remote_message_fingerprint=sellerpilot_private.support_deletion_fingerprint(v_owner,'lazada',mid)
+             )
+           )
+         )
+     ) then continue; end if;
      if conflict then cc:=cc+1; end if;
      if v_account is null or not coalesce(v_cert,false) then pc:=pc+1; continue; end if;
      if seen.identity_digest is null then

@@ -287,6 +287,13 @@ async function createDatabase({ through } = {}) {
   return db;
 }
 
+async function applyReviewedCs140(db) {
+  for (const file of ['fixtures/cs140-reviewed-live-dependencies.sql', 'fixtures/cs140-reviewed-live-preimages.sql']) {
+    await db.exec(await readFile(new URL(file, import.meta.url), 'utf8'));
+  }
+  await db.exec(await readFile(new URL('../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql', import.meta.url), 'utf8'));
+}
+
 async function seedAdminAndCredential(db) {
   await db.query(
     "insert into auth.users (id, email) values ($1, 'cs-dynamic@example.test')",
@@ -2207,7 +2214,7 @@ test("Lazada normalized full history persists both roles without replacing the l
   const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
   const db = await createDatabase();
   try {
-    await db.exec(await readFile(new URL("../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql", import.meta.url), "utf8"));
+    await applyReviewedCs140(db);
     await seedAdminAndCredential(db);
     await setClaims(db, "service_role");
     const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential(
@@ -2333,7 +2340,7 @@ test("Lazada V2 commits buyers on quarantine overflow and isolates conflicting b
   const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
   const db = await createDatabase();
   try {
-    await db.exec(await readFile(new URL("../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql", import.meta.url), "utf8"));
+    await applyReviewedCs140(db);
     await seedAdminAndCredential(db);
     await setClaims(db, "service_role");
     const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:"test",app_secret:"test",country:"my",access_token:"test",provider_account_subject:`lazada:v1:${"A".repeat(60)}`,provider_account_identity_version:"v1"})]);
@@ -2402,4 +2409,75 @@ test("Lazada V2 commits buyers on quarantine overflow and isolates conflicting b
     assert.equal((await gatewayIngest(originalBatch)).status,'complete');
     assert.equal(await scalar(db,"select status from sellerpilot_private.channel_gateway_jobs where id=$1",[readJob]),'running','ingestion must not complete the job itself');
   } finally { await db.close(); }
+});
+
+// Current parent-captured wrapper/deletion/ledger composition, not legacy
+// marker substitution. All records below are synthetic; no operating access.
+async function seedCs140Lazada(db) {
+  await seedAdminAndCredential(db);
+  await setClaims(db, 'service_role');
+  return scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:'synthetic',app_secret:'test-only',country:'my',access_token:'test-only',provider_account_subject:`lazada:v1:${'A'.repeat(60)}`,provider_account_identity_version:'v1'})]);
+}
+function cs140Event(id, role='customer', time='2026-09-05T10:00:00Z', ticket='lazada-im:synthetic') {
+  return {externalTicketId:ticket,customerName:'Synthetic',subject:'Synthetic',message:`  ORIGINAL ${role} ${id}\n`,senderRole:role,status:'waiting',providerStatus:'waiting',priority:3,receivedAt:time,remoteMessageId:id,inboundKey:`synthetic:${id}`,providerContext:{sessionId:ticket},replyContext:{sessionId:ticket}};
+}
+test('CS140 actual deletion chain suppresses old/identity-deleted events and quarantine without cross-owner/channel loss',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedCs140Lazada(db);
+  const ingest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[credential,JSON.stringify(rows)]);
+  const deletion=await scalar(db,`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at) values($1,'lazada',sellerpilot_private.support_deletion_fingerprint($1,'lazada','lazada-im:synthetic'),'2026-09-05T09:00:00Z') returning id`,[ADMIN_ID]);
+  await db.query(`insert into sellerpilot_private.support_message_deletions(deletion_id,inbound_key_fingerprint,remote_message_fingerprint)values($1,sellerpilot_private.support_deletion_fingerprint($2,'lazada','synthetic:deleted-key'),sellerpilot_private.support_deletion_fingerprint($2,'lazada','deleted-mid'))`,[deletion,ADMIN_ID]);
+  const rows=[cs140Event('old','customer','2026-09-05T08:00:00Z'),cs140Event('deleted-key'),cs140Event('deleted-mid'),{...cs140Event('deleted-mid','seller'),orderingStatus:'conflict'},{...cs140Event('unknown','seller',''),orderingStatus:'unverified'}, {...cs140Event('malformed','seller','not-time'),orderingStatus:'conflict'}];
+  assert.equal((await ingest(rows)).normalCount,0);
+  for(const table of ['support_inbound_messages','lazada_unordered_messages','lazada_unordered_dedup'])assert.equal(await scalar(db,`select count(*)::integer from sellerpilot_private.${table}`),0);
+  const future=cs140Event('future');assert.equal((await ingest([future])).normalCount,1);
+  assert.equal(await scalar(db,"select body from sellerpilot_private.support_inbound_messages where remote_message_id='future'"),future.message);
+  const unrelated={...cs140Event('unrelated','seller','','lazada-im:other'),orderingStatus:'unverified'};
+  assert.equal((await ingest([unrelated])).quarantinedCount,1);
+  // Same deletion hash under another channel must not suppress Lazada.
+  await db.query(`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at)values($1,'qoo10',sellerpilot_private.support_deletion_fingerprint($1,'qoo10','lazada-im:other-channel'),'2026-09-06')`,[ADMIN_ID]);
+  assert.equal((await ingest([{...unrelated,externalTicketId:'lazada-im:other-channel',remoteMessageId:'channel-isolated'}])).quarantinedCount,1);
+  const otherOwner='00000000-0000-4000-8000-000000000088';
+  await db.query("insert into auth.users(id,email)values($1,'synthetic-other@example.test')",[otherOwner]);
+  await db.query(`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at)values($1,'lazada',sellerpilot_private.support_deletion_fingerprint($1,'lazada','lazada-im:other-owner'),'2026-09-06')`,[otherOwner]);
+  assert.equal((await ingest([{...unrelated,externalTicketId:'lazada-im:other-owner',remoteMessageId:'owner-isolated'}])).quarantinedCount,1);
+ }finally{await db.close();}
+});
+test('CS140 actual non-Lazada seller/system history and originals survive Lazada partial unchanged',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const lazada=await seedCs140Lazada(db);
+  const qoo=await scalar(db,"select id from sellerpilot_private.channel_credentials where channel='qoo10' and status='active' limit 1");
+  const events=[cs140Event('q-customer','customer',undefined,'qoo10:synthetic'),cs140Event('q-seller','seller','2026-09-05T10:01:00Z','qoo10:synthetic'),cs140Event('q-system','system','2026-09-05T10:02:00Z','qoo10:synthetic')];
+  assert.equal(await scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",[qoo,JSON.stringify(events)]),1);
+  assert.deepEqual((await db.query("select sender_role,body from sellerpilot_private.support_inbound_messages where channel_key='qoo10' order by received_at")).rows,events.map(e=>({sender_role:e.senderRole,body:e.message})));
+  assert.equal(await scalar(db,"select latest_inbound_key from sellerpilot_private.support_tickets where channel_key='qoo10'"),'synthetic:q-customer');
+  const before=(await db.query("select to_jsonb(t) row from sellerpilot_private.support_tickets t where channel_key='qoo10'")).rows;
+  const account=await scalar(db,'select seller_account_key from sellerpilot_private.channel_credentials where id=$1',[lazada]);
+  await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)select $1,$2,'lazada-im:capacity','cap-'||n,repeat('a',64),'seller','synthetic' from generate_series(1,1000)n`,[ADMIN_ID,account]);
+  const result=await scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[lazada,JSON.stringify([cs140Event('normal'),{...cs140Event('pending','seller',''),orderingStatus:'unverified'}])]);
+  assert.equal(result.status,'partial');assert.equal(result.normalCount,1);assert.equal(result.pendingCount,1);
+  assert.deepEqual((await db.query("select to_jsonb(t) row from sellerpilot_private.support_tickets t where channel_key='qoo10'")).rows,before);
+  assert.equal(await scalar(db,"select body from sellerpilot_private.support_inbound_messages where channel_key='lazada' and remote_message_id='normal'"),cs140Event('normal').message);
+ }finally{await db.close();}
+});
+test('CS140 native 500-row and exact 1MB caps reject before writes while accepted normal batches commit',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedCs140Lazada(db);
+  const ingest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[credential,JSON.stringify(rows)]);
+  const rows=Array.from({length:500},(_,i)=>cs140Event('cap-'+i));
+  assert.equal((await ingest(rows)).normalCount,500);
+  const baseline=await scalar(db,'select count(*)::int from sellerpilot_private.support_inbound_messages');
+  await assert.rejects(ingest([...rows,{...cs140Event('over-count','seller',''),orderingStatus:'unverified'}]),/LAZADA_INGEST_BATCH_INVALID/);
+  // Exact native byte ceiling, using bounded bodies and actual JSONB byte size.
+  const exact=Array.from({length:50},(_,i)=>({...cs140Event('byte-'+i),message:'x'.repeat(19000)}));
+  let bytes=await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]);
+  for(let i=0;bytes<1000000;i++){const n=Math.min(20000-exact[i].message.length,1000000-bytes);exact[i].message+='x'.repeat(n);bytes+=n;}
+  assert.equal(await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]),1000000);
+  assert.equal((await ingest(exact)).normalCount,50);
+  exact[49].message+='x';
+  assert.equal(await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]),1000001);
+  await assert.rejects(ingest(exact),/LAZADA_INGEST_BATCH_INVALID/);
+  assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.support_inbound_messages'),baseline+50);
+  assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.lazada_unordered_messages'),0);
+ }finally{await db.close();}
 });

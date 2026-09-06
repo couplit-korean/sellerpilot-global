@@ -1,0 +1,17 @@
+{
+  "source": "parent cs-apply-failure-readback.json 2026-09-06T00:23:42.604674Z",
+  "functions": [
+    {
+      "name": "sellerpilot_prune_personal_data",
+      "md5": "43449ad315ec7b191abc77cc09eb980a",
+      "sha256": "a2d6f3b590daea01be633e79544a267d5a73a4c5ac0715738e7d6c258bc93732",
+      "signature": "public.sellerpilot_prune_personal_data(timestamptz)"
+    },
+    {
+      "name": "sellerpilot_service_ingest_inquiries",
+      "md5": "ad00c268d88f17d6d852c2a1dd423490",
+      "sha256": "e077db4075c02ac2d4801a2c21da9d496e3fce938c8b054d9f522ee5a12f469c",
+      "signature": "public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)"
+    }
+  ]
+}
