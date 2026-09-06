@@ -154,6 +154,42 @@ test("AI-backed initial values use only named product facts and preserve select 
   });
 });
 
+test("Coupang food notices never reuse ingredients as producer location or nutrition facts", () => {
+  const attributes = normalizeCategoryMetadata("coupang", [{ data: {
+    noticeCategories: [{
+      noticeCategoryName: "가공식품",
+      noticeCategoryDetailNames: [
+        { noticeCategoryDetailName: "생산자 및 소재지", required: "MANDATORY" },
+        { noticeCategoryDetailName: "제조사 및 소재지", required: "OPTIONAL" },
+        { noticeCategoryDetailName: "원재료명", required: "MANDATORY" },
+        { noticeCategoryDetailName: "영양성분", required: "MANDATORY" },
+      ],
+    }],
+  } }]).descriptors;
+  const material = "파스퇴르 우유 0.1%, 탈지분유 0.05%, 밀, 대두, 우유, 달걀 함유";
+
+  assert.deepEqual(suggestedCategoryAttributeValues(attributes, {
+    manufacturer: "롯데웰푸드(주)",
+    material,
+  }), {
+    "notice:category": "가공식품",
+    "notice:가공식품:원재료명": material,
+  });
+
+  assert.deepEqual(suggestedCategoryAttributeValues(attributes, {
+    manufacturer: "롯데웰푸드(주)",
+    manufacturerAddress: "서울특별시 영등포구 양평로21길 10",
+    material,
+    nutritionFacts: "100g당 열량 510kcal, 나트륨 420mg",
+  }), {
+    "notice:category": "가공식품",
+    "notice:가공식품:생산자 및 소재지": "롯데웰푸드(주), 서울특별시 영등포구 양평로21길 10",
+    "notice:가공식품:제조사 및 소재지": "롯데웰푸드(주), 서울특별시 영등포구 양평로21길 10",
+    "notice:가공식품:원재료명": material,
+    "notice:가공식품:영양성분": "100g당 열량 510kcal, 나트륨 420mg",
+  });
+});
+
 test("category changes retain only values with the same typed contract and isolate the rest", () => {
   const previous = [
     normalizeStoredCategoryAttribute({ id: "brand", name: "Brand", required: true, mode: "FREE_TEXT", inputKind: "text" })!,

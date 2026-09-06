@@ -61,7 +61,7 @@ const LOCALIZED_SECTION_ASSETS = [
 test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
   assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
-  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.4");
+  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.5");
 });
 
 function testMasterResult() {
@@ -660,6 +660,10 @@ async function runReviewedTransientPipelineFixture(options: {
       return "uploaded";
     },
     generateStructured: async (input) => observeRemoteCall(async () => {
+      if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
+        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
+      });
       structuredCalls += 1;
       if (providerScenario === "all-transient") {
         throw transientError();
@@ -1201,7 +1205,7 @@ test("reviewed transient gateway failure fails closed without mosaic catalog or 
   const run = await runReviewedTransientPipelineFixture();
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.structuredCalls, 1, "only the master provider call should be attempted");
-  assert.equal(run.segmentationCalls, 1);
+  assert.equal(run.segmentationCalls, 2);
   assert.equal(run.backgroundCalls, 0, "fail closed must not start setting-shot generation");
   assert.equal(run.auditCalls, 0);
   for (const assetId of coreFirstDraftAssetIds) {
@@ -1325,7 +1329,7 @@ test("reviewed transient failure logs the original Gateway diagnostic without an
   const run = await runReviewedTransientPipelineFixture({ transientDiagnostic: diagnostic });
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.structuredCalls, 1, "the diagnostic path must not add a provider retry");
-  assert.equal(run.segmentationCalls, 1, "the existing parallel segmentation attempt remains the only other provider call");
+  assert.equal(run.segmentationCalls, 2, "each of the two selected physical views is attempted once");
   const executionLog = run.logs.find((entry) => entry.stage === "execution");
   assert.ok(executionLog);
   assert.equal(executionLog.details.reason, "gateway_rate_limited");
@@ -1634,7 +1638,7 @@ test("a hard first-draft restore failure settles active providers before complet
   });
   assert.equal(run.response.status, 200);
   assert.deepEqual(await run.response.json(), { ok: false, status: "failed", processed: 1 });
-  assert.equal(run.peakRemoteCalls, 2, "master and segmentation should prove the initial provider overlap");
+  assert.equal(run.peakRemoteCalls, 3, "master and both selected source segmentations overlap within the shared cap");
   assert.deepEqual(run.completionActiveRemoteCounts, [0]);
   assert.deepEqual(run.wakeActiveRemoteCounts, [0]);
   assert.equal(run.wakeCalls, 1);
@@ -1897,6 +1901,10 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       return "uploaded";
     },
     generateStructured: async (input) => {
+      if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
+        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
+      });
       if (input.tags.includes("feature:product-studio-master")) {
         masterAttempts += 1;
         if (masterAttempts === 1) {
@@ -2087,6 +2095,10 @@ test("main then front segmentation quality failures fail closed instead of a ful
       return "uploaded";
     },
     generateStructured: async (input) => {
+      if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
+        role: input.images.at(-1)?.role === "main" ? "front" : input.images.at(-1)?.role ?? "unknown",
+        confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
+      });
       if (input.tags.includes("feature:product-studio-master")) {
         return input.schema.parse(testMasterResult());
       }

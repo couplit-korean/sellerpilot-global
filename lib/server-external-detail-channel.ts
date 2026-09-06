@@ -10,6 +10,8 @@ const record=(v:unknown):Record<string,unknown>=>v&&typeof v==='object'&&!Array.
 export function selectExternalDetailChannel(context:Record<string,unknown>){
  const manifest=approvedExternalDetailManifest(context.externalDetailImport);
  const row=record(context.externalDetailImport),payload=record(row.payload);
+ const approvalRevision=row.approvalRevision,contentSha256=row.contentSha256;
+ const usesContentRevision=(approvalRevision!==null&&approvalRevision!==undefined)||(contentSha256!==null&&contentSha256!==undefined);
  const channel=String(context.externalDetailChannel??''),market=String(context.externalDetailMarket??'');
  const locale=listingExpectedPublicationLocale(channel,market),language=locale?.split('-')[0];
  if(!manifest||context.externalDetailProductId!==payload.productId||row.id!==manifest.importId||Number(row.approved_detail_version)!==manifest.version)throw Error('EXTERNAL_DETAIL_APPROVAL_MISMATCH');
@@ -25,7 +27,8 @@ export function selectExternalDetailChannel(context:Record<string,unknown>){
  // Reviewed ImageStoryBlock titles may intentionally be empty. Preserve the approved copy; require a nonblank body.
  if(sections.some(s=>!s.body.trim()))throw Error('EXTERNAL_DETAIL_SECTION_COPY_REQUIRED');
  const images=manifest.images.map(image=>({role:image.role,path:image.path,sourceSha256:image.sourceSha256}));
- return {version:manifest.version,manifest:{contract:productDetailImageManifestContract as typeof productDetailImageManifestContract,algorithm:'sha256' as const,digest:createHash('sha256').update(canonicalProductDetailImageManifestInput(images)).digest('hex'),images},external:{contract:'sellerpilot_external_detail_channel_v1',productId:payload.productId,ownerId:payload.ownerId,importId:manifest.importId,version:manifest.version,productUpdatedAt:row.approved_product_updated_at,requestSha256:manifest.requestSha256,locale,language,channel,market,documentSha256:copy.documentSha256,allLocaleDocumentSha256:Object.fromEntries(Object.entries(manifest.reviewedCopy).map(([key,value])=>[key,value.documentSha256])),imageSha256s:images.map(i=>i.sourceSha256),pixelSha256s:manifest.images.map(i=>i.pixelSha256),title:title.trim(),html,plain,sections}};
+ if(usesContentRevision&&(!Number.isSafeInteger(approvalRevision)||Number(approvalRevision)<1||typeof contentSha256!=='string'||!/^[a-f0-9]{64}$/u.test(contentSha256)))throw Error('EXTERNAL_DETAIL_APPROVAL_REVISION_INVALID');
+ return {version:manifest.version,manifest:{contract:productDetailImageManifestContract as typeof productDetailImageManifestContract,algorithm:'sha256' as const,digest:createHash('sha256').update(canonicalProductDetailImageManifestInput(images)).digest('hex'),images},external:{contract:'sellerpilot_external_detail_channel_v1',productId:payload.productId,ownerId:payload.ownerId,importId:manifest.importId,version:manifest.version,productUpdatedAt:row.approved_product_updated_at,...(usesContentRevision?{approvalRevision:Number(approvalRevision),contentSha256}:{}),requestSha256:manifest.requestSha256,locale,language,channel,market,documentSha256:copy.documentSha256,allLocaleDocumentSha256:Object.fromEntries(Object.entries(manifest.reviewedCopy).map(([key,value])=>[key,value.documentSha256])),imageSha256s:images.map(i=>i.sourceSha256),pixelSha256s:manifest.images.map(i=>i.pixelSha256),title:title.trim(),html,plain,sections}};
 }
 export type ExternalDetailChannelSelection=ReturnType<typeof selectExternalDetailChannel>['external'];
 /** Replaces all provider detail copy; no old localized listing or client detail survives. */

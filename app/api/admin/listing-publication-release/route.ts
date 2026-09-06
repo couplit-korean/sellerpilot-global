@@ -21,6 +21,8 @@ const publicationChannels = [
   "temu",
 ] as const;
 
+const scopedPublicationChannels = ["qoo10", "coupang"] as const;
+
 const channelLabels: Record<(typeof publicationChannels)[number], string> = {
   qoo10: "Qoo10",
   shopee: "Shopee",
@@ -41,7 +43,7 @@ const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("open_gate") }).strict(),
   z.object({
     action: z.literal("open_channel_gate"),
-    channel: z.literal("qoo10"),
+    channel: z.enum(scopedPublicationChannels),
   }).strict(),
   z.object({ action: z.literal("close_gate") }).strict(),
 ]);
@@ -54,7 +56,7 @@ const gateStatusSchema = z.object({
   openedAt: z.string().nullable(),
   updatedAt: z.string(),
   openedRelease: releaseShaSchema,
-  openedChannel: z.literal("qoo10").nullable(),
+  openedChannel: z.enum(scopedPublicationChannels).nullable(),
   attestedRelease: releaseShaSchema,
   activeRuntimeRelease: releaseShaSchema,
   publicationAdaptersReady: z.number().int().min(0).max(publicationChannels.length),
@@ -62,6 +64,7 @@ const gateStatusSchema = z.object({
   publicationReleaseConsistent: z.boolean(),
   runtimeReleaseMatches: z.boolean(),
   orphanPendingReviews: z.number().int().nonnegative(),
+  listingMutationsRunning: z.number().int().nonnegative(),
   queuedOrRunning: z.number().int().nonnegative(),
   reconciliationRequired: z.number().int().nonnegative(),
   qoo10AdapterReady: z.boolean(),
@@ -72,6 +75,14 @@ const gateStatusSchema = z.object({
   qoo10QueuedOrRunning: z.number().int().nonnegative(),
   qoo10ReconciliationRequired: z.number().int().nonnegative(),
   qoo10EffectiveOpen: z.boolean(),
+  coupangAdapterReady: z.boolean(),
+  coupangAttestedRelease: releaseShaSchema,
+  coupangReleaseConsistent: z.boolean(),
+  coupangRuntimeReleaseMatches: z.boolean(),
+  coupangReviewViolations: z.number().int().nonnegative(),
+  coupangQueuedOrRunning: z.number().int().nonnegative(),
+  coupangReconciliationRequired: z.number().int().nonnegative(),
+  coupangEffectiveOpen: z.boolean(),
 }).superRefine((value, context) => {
   if (value.state !== (value.open ? "open" : "closed")) {
     context.addIssue({ code: "custom", message: "listing release gate state mismatch" });
@@ -90,6 +101,14 @@ const gateStatusSchema = z.object({
     // covers Qoo10; it is "qoo10" only for the exact-SHA Qoo10-only gate.
     // qoo10EffectiveOpen is legitimately true in both cases.
     context.addIssue({ code: "custom", message: "Qoo10 release gate scope mismatch" });
+  }
+  if (
+    value.coupangEffectiveOpen
+    && (!value.open || (value.openedChannel !== "coupang" && value.openedChannel !== null))
+  ) {
+    // A null scope is the global gate, which covers Coupang after every
+    // channel passes. A "coupang" scope grants only the Coupang boundary.
+    context.addIssue({ code: "custom", message: "Coupang release gate scope mismatch" });
   }
   if (!value.open && value.openedChannel !== null) {
     context.addIssue({ code: "custom", message: "closed listing release gate cannot retain a channel scope" });
@@ -134,7 +153,21 @@ function readyForQoo10Open(gate: GateStatus, currentRelease: string) {
     && gate.qoo10RuntimeReleaseMatches
     && gate.qoo10ReviewViolations === 0
     && gate.qoo10QueuedOrRunning === 0
-    && gate.qoo10ReconciliationRequired === 0;
+    && gate.qoo10ReconciliationRequired === 0
+    && gate.listingMutationsRunning === 0;
+}
+
+function readyForCoupangOpen(gate: GateStatus, currentRelease: string) {
+  return gate.coupangAdapterReady
+    && gate.publicationRecheckerReady
+    && gate.coupangReleaseConsistent
+    && gate.coupangAttestedRelease === currentRelease
+    && gate.activeRuntimeRelease === currentRelease
+    && gate.coupangRuntimeReleaseMatches
+    && gate.coupangReviewViolations === 0
+    && gate.coupangQueuedOrRunning === 0
+    && gate.coupangReconciliationRequired === 0
+    && gate.listingMutationsRunning === 0;
 }
 
 async function readGateStatus(serviceClient: SupabaseClient) {
@@ -160,6 +193,8 @@ function statusPayload(gate: GateStatus, identity: RuntimeReleaseIdentity) {
     readyForOpen: identity.status === "valid" && readyForOpen(gate, identity.release),
     readyForQoo10Open: identity.status === "valid"
       && readyForQoo10Open(gate, identity.release),
+    readyForCoupangOpen: identity.status === "valid"
+      && readyForCoupangOpen(gate, identity.release),
   };
 }
 
@@ -194,6 +229,7 @@ export async function GET(request: Request) {
       gate: null,
       readyForOpen: false,
       readyForQoo10Open: false,
+      readyForCoupangOpen: false,
       message: identity.status === "valid"
         ? "배포 SHA는 확인했습니다. 게이트 상세는 잠시 후 다시 불러옵니다."
         : "게시 릴리스 게이트 상태를 안전하게 확인하지 못했습니다.",
@@ -265,7 +301,7 @@ export async function POST(request: Request) {
       },
     );
     error = result.error;
-    message = "현재 배포에서 Qoo10 상품 작업만 허용했습니다.";
+    message = `현재 배포에서 ${channelLabels[parsed.data.channel]} 상품 작업만 허용했습니다.`;
   } else {
     const result = await admin.serviceClient.rpc("sellerpilot_service_set_listing_mutation_release_gate", {
       p_open: parsed.data.action === "open_gate",
@@ -292,7 +328,7 @@ export async function POST(request: Request) {
         : "listing_release_update_failed",
       message: preconditionFailure
         ? parsed.data.action === "open_channel_gate"
-          ? "Qoo10 어댑터·재조회기·현재 런타임 SHA와 Qoo10 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
+          ? `${channelLabels[parsed.data.channel]} 어댑터·재조회기·현재 런타임 SHA와 ${channelLabels[parsed.data.channel]} 미처리 작업을 모두 확인한 뒤 다시 열어 주세요.`
           : "8개 어댑터·재조회기·현재 런타임 SHA와 미처리 작업을 모두 확인한 뒤 다시 열어 주세요."
         : "게시 릴리스 상태 변경 결과를 확정하지 못했습니다. 상태를 다시 조회해 주세요.",
     }, preconditionFailure ? 409 : 503);

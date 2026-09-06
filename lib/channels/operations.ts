@@ -4413,7 +4413,18 @@ async function executeCoupang(input: ExecuteInput) {
       method: "GET",
       path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${categoryId}/status`,
     });
-    return result(input, [step("category-status", remote)], categoryId);
+    const statusStep = step("category-status", remote);
+    const activeLeaf = statusStep.ok
+      && String(remote.data.code ?? "").trim().toUpperCase() === "SUCCESS"
+      && remote.data.data === true;
+    statusStep.ok = activeLeaf;
+    statusStep.data = {
+      ...statusStep.data,
+      sellerpilotVerification: activeLeaf
+        ? "COUPANG_ACTIVE_LEAF_CATEGORY_VERIFIED"
+        : "COUPANG_ACTIVE_LEAF_CATEGORY_UNVERIFIED",
+    };
+    return result(input, [statusStep], categoryId);
   }
   if (input.operation === "listing.update") {
     const exactRecovery = coupangExactQaRecoveryBinding(input.arguments, "listing.update");

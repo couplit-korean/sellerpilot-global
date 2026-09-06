@@ -47,13 +47,16 @@ test("the UI names first-stage concurrency, human review, detail authoring, then
   assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
 });
 
-test("first-stage upload sends only the current main photo and approval follows editable seller fields", async () => {
+test("first-stage upload includes supporting photos and approval follows editable seller fields", async () => {
   const page = await readFile(pageUrl, "utf8");
   const firstStageStart = page.indexOf("const researchProductInformation = async () =>");
   const firstStageEnd = page.indexOf("const selectSlotPhoto", firstStageStart);
   const firstStage = page.slice(firstStageStart, firstStageEnd);
-  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto\];\s*const uploaded = await optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
-  assert.doesNotMatch(firstStage, /const sourcePhotos = \[sourceMainPhoto, \.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\]/);
+  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto, \.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\]/);
+  assert.match(firstStage, /optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
+  assert.match(firstStage, /sourceSelectionSha256/);
+  assert.equal((page.match(/invalidateSupportingPhotoResearch\(\)/g) ?? []).length, 4);
+
 
   const sellerFields = page.indexOf('className="product-context-section required-product-intake"');
   const approval = page.indexOf('className="first-draft-review"', sellerFields);

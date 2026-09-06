@@ -242,7 +242,64 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.60";
+const workerRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const localChannelExecutorClaimMode = "local_channel_executor";
+
+function readTrackedRuntimeRelease() {
+  try {
+    const releaseSha = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
+      cwd: workerRepositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim().toLowerCase();
+    if (!/^[a-f0-9]{40}$/u.test(releaseSha)) return null;
+    execFileSync("/usr/bin/git", [
+      "diff", "--quiet", "HEAD", "--",
+      "app", "lib", "scripts", "package.json", "pnpm-lock.yaml", "next.config.ts", "tsconfig.json",
+    ], { cwd: workerRepositoryRoot, stdio: "ignore" });
+    const untrackedRuntime = execFileSync("/usr/bin/git", [
+      "ls-files", "--others", "--exclude-standard", "--",
+      "app", "lib", "scripts", "package.json", "pnpm-lock.yaml", "next.config.ts", "tsconfig.json",
+    ], {
+      cwd: workerRepositoryRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return untrackedRuntime ? null : releaseSha;
+  } catch {
+    return null;
+  }
+}
+
+async function captureLocalChannelExecutorAttestation() {
+  const releaseSha = readTrackedRuntimeRelease();
+  if (!releaseSha) return null;
+  try {
+    const response = await fetch("https://api.ipify.org", {
+      redirect: "error",
+      signal: AbortSignal.timeout(8_000),
+      headers: { accept: "text/plain" },
+    });
+    if (!response.ok) return null;
+    const egressIp = (await response.text()).trim().toLowerCase();
+    if (!egressIp
+        || egressIp.length > 64
+        || /[\s,]/u.test(egressIp)
+        || (!/^(?:\d{1,3}\.){3}\d{1,3}$/u.test(egressIp)
+          && !/^[a-f0-9:]+$/u.test(egressIp))) return null;
+    const egressIpSha256 = createHash("sha256").update(egressIp, "utf8").digest("hex");
+    return { releaseSha, egressIpSha256 };
+  } catch {
+    return null;
+  }
+}
+
+const localChannelExecutorAttestation = gatewayWorkerConfigured && !localRecoveryOnly
+  ? await captureLocalChannelExecutorAttestation()
+  : null;
+const workerVersion = localChannelExecutorAttestation
+  ? `sellerpilot-cli-worker/1.61+${localChannelExecutorAttestation.releaseSha}.${localChannelExecutorAttestation.egressIpSha256.slice(0, 11)}`
+  : "sellerpilot-cli-worker/1.61";
 const periodicSyncMs = Math.max(60_000, Number(process.env.SELLERPILOT_CHANNEL_SYNC_MS ?? 5 * 60_000));
 let nextPeriodicSyncAt = 0;
 let periodicCompetitorRequest = null;
@@ -4433,6 +4490,7 @@ let gatewayHealthServer = null;
 if (gatewayOnly) {
   gatewayWorkerHealth = createGatewayWorkerHealth({
     version: workerVersion,
+    runtimeAttestation: localChannelExecutorAttestation,
     gatewayConfigured: gatewayWorkerConfigured,
     schedulerConfigured: schedulerWorkerConfigured,
     staleAfterMs: resolveGatewayReadinessStaleMs(),
@@ -4505,13 +4563,29 @@ do {
       authBackoffUntil: authBackoffUntil.gateway,
     })) {
       try {
-        const gatewayResponse = await api("/api/channel-gateway/worker/claim", {
+        let gatewayResponse = await api("/api/channel-gateway/worker/claim", {
           method: "POST",
           body: JSON.stringify({
             version: workerVersion,
-            ...(localRecoveryOnly ? { mode: LOCAL_GATEWAY_RECOVERY_CLAIM_MODE } : {}),
+            ...(localRecoveryOnly
+              ? { mode: LOCAL_GATEWAY_RECOVERY_CLAIM_MODE }
+              : localChannelExecutorAttestation
+                ? {
+                    mode: localChannelExecutorClaimMode,
+                    releaseSha: localChannelExecutorAttestation.releaseSha,
+                    egressIpSha256: localChannelExecutorAttestation.egressIpSha256,
+                  }
+                : {}),
           }),
         });
+        if (!localRecoveryOnly
+            && localChannelExecutorAttestation
+            && gatewayResponse.status === 204) {
+          gatewayResponse = await api("/api/channel-gateway/worker/claim", {
+            method: "POST",
+            body: JSON.stringify({ version: workerVersion }),
+          });
+        }
         gatewayWorkerHealth?.markGatewayResponse(gatewayResponse.status);
         if (localRecoveryOnly && gatewayResponse.status === 409) {
           console.error("로컬 복구 전용 claim 경계를 서버가 확인하지 않아 실행을 중단합니다. running 행을 유지합니다.");

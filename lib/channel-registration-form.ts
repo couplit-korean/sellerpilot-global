@@ -6,6 +6,11 @@ export type RegistrationPatch = { path: string[]; value: RegistrationValue };
 export type RegistrationField = { path: string[]; label: string; value: RegistrationValue; required: boolean; issue?: string; help?: string; inputType?: "number" | "boolean"; options?: string[] };
 const blocked = new Set(["__proto__", "prototype", "constructor"]);
 const hidden = new Set(["sellerpilotAssets", "sellerpilotLazadaPricePolicy", "sellerpilotLazadaPricePolicyRequired", "sellerpilotDraftError", "resumeRemoteId", "shopId", "country", "sku"]);
+const editableInternalPaths = [
+  ["sellerpilotAssets", "shipping", "shippingRuleReview"],
+  ["sellerpilotAssets", "shipping", "packagingRuleReview"],
+  ["sellerpilotAssets", "shipping", "coupangLeadTimeConfirmation"],
+] as const;
 const boundKeys = new Set(["SellerCode", "sellerPrdCd", "sellerManagementCode", "externalVendorSku", "externalGoodsId", "externalSkuId", "SellerSku", "sellerSku", "sku", "marketplaceId", "categoryId", "category_id", "leafCategoryId", "displayCategoryCode", "dispCtgrNo", "SecondSubCat", "PrimaryCategory", "extCatName", "sellerProductId", "productId", "vendorId"]);
 const registrationIdentityChangedMessage = "채널 상품 식별 구조(SKU·카테고리)가 변경되어 저장할 수 없습니다. 원래 채널 초안을 다시 불러온 뒤 값만 수정해 주세요.";
 const labels: Record<string,string> = {
@@ -39,8 +44,19 @@ export function setRegistrationValue(input: Record<string,unknown>, path: string
   return clone;
 }
 export function editableRegistrationPath(path: string[]) {
-  return path.length>0 && !hidden.has(path[0]) && !path.some(p=>blocked.has(p)||boundKeys.has(p))
+  const internalPathAllowed = editableInternalPaths.some((allowed) => {
+    const sharedLength = Math.min(path.length, allowed.length);
+    for (let index = 0; index < sharedLength; index += 1) if (path[index] !== allowed[index]) return false;
+    return true;
+  });
+  return path.length>0 && (!hidden.has(path[0]) || internalPathAllowed) && !path.some(p=>blocked.has(p)||boundKeys.has(p))
     && !path.some(p=>/token|password|secret|signature/i.test(p));
+}
+function editableRegistrationPatchPath(path: string[]) {
+  if (!path.length || !hidden.has(path[0])) return editableRegistrationPath(path);
+  return editableInternalPaths.some((allowed) => path.length >= allowed.length
+    && allowed.every((part, index) => path[index] === part))
+    && !path.some(p=>blocked.has(p)||boundKeys.has(p)||/token|password|secret|signature/i.test(p));
 }
 function identityPathAllowed(path: string[]) {
   return path.length>0
@@ -88,6 +104,11 @@ export function registrationIdentityIssue(base: Record<string,unknown>,current: 
 function containsBoundIdentity(value: unknown): boolean {
   return Boolean(value && typeof value==="object" && Object.entries(value).some(([key,child])=>boundKeys.has(key)||containsBoundIdentity(child)));
 }
+function containsNonEditablePath(value: unknown, path: string[]): boolean {
+  if (!editableRegistrationPath(path)) return true;
+  return Boolean(value && typeof value === "object"
+    && Object.entries(value).some(([key, child]) => containsNonEditablePath(child, [...path, key])));
+}
 export function registrationPatches(base: Record<string,unknown>, current: Record<string,unknown>): RegistrationPatch[] {
   const identityIssue=registrationIdentityIssue(base,current);
   if(identityIssue) {
@@ -116,7 +137,9 @@ export function registrationPatches(base: Record<string,unknown>, current: Recor
 }
 export function applyRegistrationPatches(base: Record<string,unknown>, patches: RegistrationPatch[]) {
   return patches.reduce((draft,patch)=>{
-    if(!editableRegistrationPath(patch.path))return draft;
+    // Ancestors of the narrow internal allowlist are traversable while deriving
+    // patches, but may never be replaced by a caller-supplied patch.
+    if(!editableRegistrationPatchPath(patch.path)||containsNonEditablePath(patch.value,patch.path))return draft;
     if(containsBoundIdentity(patch.value)) {
       const error=new Error("REGISTRATION_PATCH_IDENTITY_FORBIDDEN");
       error.name="RegistrationIdentityError";

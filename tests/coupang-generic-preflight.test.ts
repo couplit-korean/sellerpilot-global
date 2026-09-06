@@ -158,6 +158,7 @@ async function prepareGeneric(options: {
   outbound?: Record<string, unknown>;
   returnCenter?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
+  categoryStatus?: Record<string, unknown>;
 } = {}) {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ method: string; pathname: string }> = [];
@@ -167,6 +168,9 @@ async function prepareGeneric(options: {
     if (pathname.endsWith("/shipping-place/outbound")) return Response.json(options.outbound ?? outboundResponse());
     if (pathname.includes("/returnShippingCenters")) {
       return Response.json(options.returnCenter ?? returnCenterResponse());
+    }
+    if (pathname.endsWith("/status")) {
+      return Response.json(options.categoryStatus ?? { code: "SUCCESS", data: true });
     }
     return Response.json(options.metadata ?? categoryMetadataResponse());
   };
@@ -224,7 +228,8 @@ test("generic Coupang prepare uses seller-confirmed notices and contracted shipp
   const { prepared, calls } = await prepareGeneric();
   const body = prepared.arguments.body as Record<string, unknown>;
   const item = (body.items as Array<Record<string, unknown>>)[0];
-  assert.deepEqual(calls.map((call) => call.method), ["GET", "GET", "GET"]);
+  assert.deepEqual(calls.map((call) => call.method), ["GET", "GET", "GET", "GET"]);
+  assert.ok(calls.some((call) => call.pathname.endsWith("/display-categories/76890/status")));
   assert.equal(body.vendorId, "A00098765");
   assert.equal(body.deliveryCompanyCode, "HANJIN");
   assert.equal(body.returnCharge, 4500);
@@ -244,6 +249,13 @@ test("generic Coupang prepare uses seller-confirmed notices and contracted shipp
   );
   assert.equal(JSON.stringify(prepared.arguments).includes("부착형 케이블 정리 클립"), false);
   assert.equal(JSON.stringify(prepared.arguments).includes("Generic OEM"), false);
+});
+
+test("generic Coupang prepare fails before create when the selected category is inactive", async () => {
+  await assert.rejects(
+    prepareGeneric({ categoryStatus: { code: "SUCCESS", data: false } }),
+    /COUPANG_CATEGORY_INACTIVE/,
+  );
 });
 
 test("generic Coupang preparation preserves paid and conditional fees through account enrichment", async () => {

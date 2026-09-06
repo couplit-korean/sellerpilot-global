@@ -48,6 +48,10 @@ test("pending product research recovery is scoped to the signed-in owner", () =>
     pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드", sourcePhotoSha256),
     stored,
   );
+  const fullSelection = { ...stored, sourceSelectionSha256: "c".repeat(64) };
+  assert.deepEqual(pendingProductResearchForOwner(fullSelection, "owner-a", "롯데 샌드", sourcePhotoSha256, "c".repeat(64)), fullSelection);
+  assert.equal(pendingProductResearchForOwner(fullSelection, "owner-a", "롯데 샌드", sourcePhotoSha256, "d".repeat(64)), null);
+  assert.equal(pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드", sourcePhotoSha256, "c".repeat(64)), null);
   assert.equal(pendingProductResearchForOwner(stored, "owner-b", "롯데 샌드", sourcePhotoSha256), null);
   assert.equal(pendingProductResearchForOwner(stored, "owner-a", "사조 참치", sourcePhotoSha256), null);
   assert.equal(pendingProductResearchForOwner(stored, "owner-a", "롯데 샌드", "b".repeat(64)), null);
@@ -110,6 +114,9 @@ test("terminal gateway reasons become actionable Korean messages without technic
     ["gateway_forbidden", "권한 설정"],
     ["gateway_model_not_found", "모델 설정"],
     ["gateway_rate_limited", "요청이 몰려"],
+    ["source_photo_analysis_limit", "최대 10장"],
+    ["source_product_identity_mismatch", "같은 상품"],
+    ["source_view_not_compositable", "전체 모습"],
     ["gateway_timeout", "응답이 지연"],
     ["gateway_request_failed", "일시적으로 연결"],
   ] as const;

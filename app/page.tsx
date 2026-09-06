@@ -1020,7 +1020,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
   return (
     <div className="page-stack">
       <section className="daily-briefing">
-        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 즉시 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>결제완료·출고대기·미처리 CS·등록·분석 재시도 대상만 집계합니다. 이미지 재제작·상품 수정 실패와 외부 권한 대기는 별도 이력으로 표시합니다.</p></div>
+        <div className="briefing-copy"><span>{currentDate}</span><h2>현재 즉시 처리할 업무가 <b>{operationsAvailable ? `${totalTasks}건` : "확인 중"}</b> 있습니다.</h2><p>결제완료·출고대기·미처리 CS·등록·분석 재시도 대상만 집계합니다. 이미지 재제작·상품 수정 실패와 등록 확인 필요는 별도 이력으로 표시합니다.</p></div>
         <div className="briefing-tasks">
           <button onClick={() => onNavigate("orders")}><span className="task-tone order" /><small>통합 주문</small><b>{operationsAvailable ? summary.orderCount : "—"}</b><em>실주문 원장</em></button>
           <button onClick={() => onNavigate("orders")}><span className="task-tone shipping" /><small>출고 대기</small><b>{operationsAvailable ? summary.readyToShipCount : "—"}</b><em>채널 상태 동기화</em></button>
@@ -1096,7 +1096,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
               { label: "채널 등록 대기", value: livePipeline.listingQueued, tone: "blue", icon: Upload, status: "active" },
               { label: "등록 완료", value: livePipeline.listingPublished, tone: "green", icon: CheckCircle2, status: "completed" },
               { label: "등록·분석 재시도", value: livePipeline.listingFailed, tone: "red", icon: AlertCircle, status: "failed" },
-              { label: "외부 권한 대기", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck, status: "blocked" },
+              { label: "등록 확인 필요", value: livePipeline.listingBlocked, tone: "orange", icon: ShieldCheck, status: "blocked" },
             ].map((item) => <div className="interactive" role="button" tabIndex={0} onClick={() => onNavigate("registration-activity", item.status as RegistrationActivityFilter)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onNavigate("registration-activity", item.status as RegistrationActivityFilter); }} key={item.label}><span className={`pipeline-icon ${item.tone}`}><item.icon size={16} /></span><span>{item.label}</span><strong>{item.value}<small>건</small></strong></div>)}
           </div>
         </article>
@@ -2628,7 +2628,7 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         ["ready", "등록 준비", counts.ready],
         ["completed", "완료", counts.completed],
         ["failed", "오류 · 중지", counts.failed],
-        ["blocked", "외부 권한 대기", counts.blocked],
+        ["blocked", "등록 확인 필요", counts.blocked],
       ] as const).map(([value, label, count]) => <button type="button" className={filter === value ? "active" : ""} onClick={() => onFilterChange(value)} key={value}><span>{label}</span><b>{count}</b></button>)}
     </section>
     {filter === "failed" && <section className="panel registration-filter-context"><b>오류·중지 집계 기준</b><p>대시보드의 등록·분석 재시도 수는 재시도 가능한 채널 대상과 AI 분석 작업 기준입니다. 이 탭은 이미지 재제작·상품 수정 실패와 관리자가 안전하게 중지한 AI 작업을 카드 단위로 함께 표시합니다.</p></section>}
@@ -2665,9 +2665,9 @@ function RegistrationActivityPage({ activities, activityState, aiRuntime, snapsh
         return <article className={`panel registration-card ${activity.status}${isCancelled ? " cancelled" : ""}`} key={activity.id}>
           <header><span className={`registration-status ${activity.status}${isCancelled ? " cancelled" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}>{longAnalysis === "attention" ? <AlertTriangle size={14} /> : longAnalysis === "connected" ? <Activity size={14} /> : isActive ? <LoaderCircle className="spin" size={14} /> : activity.status === "ready" ? <Clock3 size={14} /> : activity.status === "completed" ? <CheckCircle2 size={14} /> : isCancelled ? <Square size={14} /> : <AlertCircle size={14} />}{longAnalysis === "connected" ? "장기 분석 진행 중 · 서버 작업 신호 확인" : longAnalysis === "attention" ? "장기 대기 · 서버 작업 신호 확인 필요" : displayStatusLabel}</span><small>{relativeTime(activity.updatedAt)}</small></header>
           <button type="button" className="registration-card-inspect" aria-expanded={expanded} aria-controls={`registration-live-${activity.id}`} onClick={() => setExpandedActivityId((current) => current === activity.id ? "" : activity.id)}><span className="registration-product"><span>{product ? <ProductVisual src={product.image} size="(max-width: 720px) 44vw, 96px" alt={activity.productName} /> : <Package size={25} />}</span><span><h3>{activity.productName}</h3><p>{activity.sku || activity.productCode || "상품 코드 생성 중"}</p></span></span><span className="registration-inspect-label">{expanded ? (isActive ? "상태 접기" : "상세 접기") : (isActive ? "실시간 상태 보기" : "작업 상세 보기")}<ChevronDown size={14} /></span></button>
-          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} 등록 진행률`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
+          <div className={`registration-progress ${progress.percent === null ? "indeterminate" : ""}${longAnalysis ? ` long-analysis-${longAnalysis}` : ""}`}><span role="progressbar" aria-label={`${activity.productName} ${activity.channelCount > 0 ? "등록 성공률" : "AI 작업 진행률"}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent ?? undefined} aria-busy={progress.percent === null}><i style={progress.percent === null ? undefined : { width: `${progress.percent}%` }} /></span><small>{retryableJobId ? activity.id.startsWith("revision:") ? "같은 상품 수정 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : activity.id.startsWith("asset:") ? "같은 이미지 재제작 작업 ID와 저장 입력으로 다시 시작할 수 있습니다." : "저장된 사진·입력으로 동일한 AI 분석을 다시 시작할 수 있습니다." : statusDetail} {longAnalysis ? "실제 lease를 읽을 수 없어 완료 여부는 추정하지 않습니다." : progress.label}</small></div>
           <dl><div><dt>시작</dt><dd>{new Date(activity.startedAt).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}</dd></div><div><dt>{elapsedLabel}</dt><dd>{formatRegistrationDuration(registrationActivityDisplayElapsedSeconds(activity))}</dd></div></dl>
-          <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">권한 {activity.blockedCount}</b></div>
+          <div className="registration-channel-summary"><span>채널 {activity.channelCount}</span><b className="success">완료 {activity.publishedCount}</b><b className="danger">오류 {activity.failedCount}</b><b className="warning">확인 필요 {activity.blockedCount}</b></div>
           {activity.channels.length > 0 && <div className="registration-channel-list">{activity.channels.slice(0, 8).map((channel) => <span className={channel.status} key={`${activity.id}-${channel.channel}-${channel.market}`} title={channel.message}><ChannelMark code={channel.channelCode} size="sm" /><i>{registrationChannelStatusLabel(channel.status)}</i></span>)}</div>}
           {expanded && <section className="registration-live-detail" id={`registration-live-${activity.id}`} aria-label={`${activity.productName} ${isActive ? "실시간 작업 상태" : "작업 상세"}`}><header><span><Activity size={14} /><b>{isActive ? "현재 작업 상태" : "작업 상세"}</b></span><em>{isActive ? "10초마다 운영 원장 갱신" : "종료 상태 · 채널 응답"}</em></header><dl><div><dt>작업 ID</dt><dd>{activity.id}</dd></div><div><dt>최근 신호</dt><dd>{new Date(activity.updatedAt).toLocaleString("ko-KR", { hour12: false })}</dd></div></dl><p>{activity.message || statusDetail} {progress.label}</p>{activity.channels.length > 0 && <div>{activity.channels.map((channel) => <article key={`${activity.id}-detail-${channel.channel}-${channel.market}`}><ChannelMark code={channel.channelCode} size="sm" /><span><b>{channel.channelName}{channel.market ? ` · ${channel.market}` : ""}</b><small>{registrationChannelStatusLabel(channel.status)} · {channel.message || "채널 응답 대기"}</small><em>{relativeTime(channel.updatedAt)}</em></span></article>)}</div>}</section>}
           {activity.message && <p className="registration-message">{activity.message}</p>}
@@ -2686,7 +2686,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const mainPhotoRef = useRef<UploadedPhoto | null>(null);
   const previousMainPhotoFileRef = useRef<File | null>(null);
   const restoredMainPhotoFileRef = useRef<File | null>(null);
-  const previousSupportingPhotoSelectionsRef = useRef<string[] | null>(null);
   const [slotPhotos, setSlotPhotos] = useState<Record<string, UploadedPhoto>>({});
   const [extraPhotos, setExtraPhotos] = useState<UploadedPhoto[]>([]);
   const [extraPhotosProcessing, setExtraPhotosProcessing] = useState(false);
@@ -3055,19 +3054,28 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     sourceResearchPhotoSha256,
   ]);
 
-  useEffect(() => {
-    const nextSelections = [...Object.values(slotPhotos), ...extraPhotos]
-      .map((photo) => `${photo.role}\u0000${photo.file.name}\u0000${photo.file.size}\u0000${photo.file.type}\u0000${photo.file.lastModified}`);
-    const previousSelections = previousSupportingPhotoSelectionsRef.current;
-    previousSupportingPhotoSelectionsRef.current = nextSelections;
-    if (!previousSelections) return;
-    const changed = previousSelections.length !== nextSelections.length
-      || previousSelections.some((selection, index) => selection !== nextSelections[index]);
-    if (!changed || !firstDraftGenerated) return;
+  const invalidateSupportingPhotoResearch = () => {
+    const hadResearch = Boolean(productResearchControllerRef.current) || firstDraftGenerated || Boolean(sourceResearchJobId);
+    productResearchControllerRef.current?.abort(new DOMException("사진 구성이 변경되었습니다.", "AbortError"));
+    productResearchControllerRef.current = null;
+    productResearchGenerationRef.current += 1;
+    window.sessionStorage.removeItem(productResearchPendingStorageKey);
+    setResearchingProduct(false);
+    if (!hadResearch) return;
+    const nextIntake = clearUnchangedResearchAppliedValues(intakeRef.current, emptyProductIntake, researchAppliedValuesRef.current);
+    researchAppliedValuesRef.current = {};
+    intakeRef.current = nextIntake;
+    setIntake(nextIntake);
+    setResearchResult(null);
     setFirstDraftReviewed(false);
+    setFirstDraftGenerated(false);
+    setFirstDraftImages([]);
+    setSourceResearchJobId("");
+    setSourceResearchPhotoSha256("");
+    setSourceResearchLineageReceipt("");
     closeGeneratedProductRegistration();
-    notify("상세페이지에 사용할 역할별·추가 사진이 변경되어 사람 검토 승인과 기존 채널 업로드 준비를 해제했습니다. 1차 정보와 이미지 6개는 그대로 유지합니다.");
-  }, [closeGeneratedProductRegistration, extraPhotos, firstDraftGenerated, notify, slotPhotos]);
+    notify("사진 구성이 변경되었습니다. 새 사진 전체를 분석하도록 1차 자동생성을 다시 실행해 주세요.");
+  };
   const [categoryDraftRef] = useState(() => crypto.randomUUID());
   const [publishRefreshVersion, setPublishRefreshVersion] = useState(0);
   const [channelSelection, setChannelSelection] = useState<Record<string, boolean>>({});
@@ -3836,7 +3844,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setFirstDraftImages([]);
     setFirstDraftReviewed(false);
     try {
-      const sourcePhotoSha256 = await productSourcePhotoSha256(sourceMainPhoto.file);
+      const sourcePhotos = [sourceMainPhoto, ...Object.values(slotPhotos), ...extraPhotos];
+      if (sourcePhotos.length > 10) throw new Error("한 번의 제작에는 대표·옆면·성분표 등 서로 다른 사진을 최대 10장 선택해 주세요.");
+      const sourceHashes: string[] = [];
+      for (const photo of sourcePhotos) sourceHashes.push(await productSourcePhotoSha256(photo.file));
+      const sourcePhotoSha256 = sourceHashes[0];
+      const sourceSelectionSha256 = await productSourcePhotoSha256(new File([JSON.stringify(sourcePhotos.map((photo, index) => [photo.role, sourceHashes[index]]))], "source-selection.json"));
       if (!productSourcePhotoSha256Pattern.test(sourcePhotoSha256)) {
         throw new Error("대표사진 원본 확인값을 만들지 못했습니다. 사진을 다시 선택해 주세요.");
       }
@@ -3854,7 +3867,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       let pendingResearch: PendingProductResearch | null = null;
       try {
         const stored = JSON.parse(window.sessionStorage.getItem(productResearchPendingStorageKey) ?? "null") as unknown;
-        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256);
+        pendingResearch = pendingProductResearchForOwner(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256);
         if (stored !== null && !pendingResearch) window.sessionStorage.removeItem(productResearchPendingStorageKey);
       } catch {
         window.sessionStorage.removeItem(productResearchPendingStorageKey);
@@ -3868,7 +3881,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         notify("이전에 접수한 1차 정보·6개 이미지 작업 상태를 다시 확인합니다.");
       } else {
         if (!pendingResearch) {
-          const sourcePhotos = [sourceMainPhoto];
           const uploaded = await optimizeAndUploadStudioPhotos(
             sourcePhotos,
             ownerId,
@@ -3887,6 +3899,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           researchInput,
           ownerId,
           sourcePhotoSha256,
+          sourceSelectionSha256,
           lineageReceipt,
           imagePaths,
           imageSpecs,
@@ -3949,6 +3962,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
             researchInput,
             ownerId,
             sourcePhotoSha256,
+            sourceSelectionSha256,
             lineageReceipt,
             imagePaths,
             imageSpecs,
@@ -4054,6 +4068,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         releasePhotoUrl(photo.url);
         throw error;
       }
+      invalidateSupportingPhotoResearch();
       setSlotPhotos((current) => {
         if (current[slotId]) releasePhotoUrl(current[slotId].url);
         return { ...current, [slotId]: photo };
@@ -4146,6 +4161,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         throw error;
       }
       for (const acceptedPhoto of accepted) photoBudgetKeyByUrlRef.current.set(acceptedPhoto.photo.url, acceptedPhoto.key);
+      if (accepted.length) invalidateSupportingPhotoResearch();
       if (accepted.length) setExtraPhotos((current) => {
         const next = [...current, ...accepted.map((acceptedPhoto) => acceptedPhoto.photo)];
         const capacity = Math.max(0, 100 - (mainPhoto ? 1 : 0) - Object.keys(slotPhotos).length);
@@ -4184,6 +4200,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const removeSlotPhoto = (slotId: string) => {
+    invalidateSupportingPhotoResearch();
     photoSelectionFence.invalidateRole(slotId);
     abortPhotoDecodeScope(`role:${slotId}`, "역할별 사진을 제거해 확인을 취소했습니다.");
     photoSelectionBudget.remove(`role:${slotId}`);
@@ -4197,6 +4214,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const removeExtraPhoto = (index: number) => {
+    invalidateSupportingPhotoResearch();
     photoSelectionFence.invalidateExtras();
     abortPhotoDecodeScope("extras", "추가 사진을 제거해 확인을 취소했습니다.");
     extraPhotoBatchRef.current = false;
@@ -4421,9 +4439,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           </section>
 
           <section className="extra-photo-section">
-            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>1차 생성 뒤 사람이 확인하며, 상세컷·구성품·포장 근거로 상세페이지 제작에 사용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
+            <div className="upload-section-heading"><div><b>추가 사진</b><span className="optional-chip">여러 장</span><small>대표사진과 함께 분석해 연출컷·성분표·구성품·포장 설명에 활용합니다.</small></div><em>{extraPhotos.length}장 추가됨</em></div>
             <input id="extra-product-photo-camera" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" disabled={extraPhotoInputDisabled} onClick={preservePublishingCaptureContext} onChange={(event) => void selectExtraPhotos(event)} />
-            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 보관 · 1차는 대표사진 1장 · 추가 사진은 상세페이지 제작에 사용"}</small></span></label>
+            <label className={`extra-photo-uploader ${extraPhotosProcessing ? "processing" : ""}`.trim()} htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined} title={extraPhotoDisabledReason || undefined}><input id="extra-product-photos" className="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp" multiple disabled={extraPhotoInputDisabled} onChange={(event) => void selectExtraPhotos(event)} />{extraPhotosProcessing ? <LoaderCircle className="spin" size={17} /> : <Plus size={17} />}<span><b>{extraPhotoDisabledReason || "추가 사진 더 넣기"}</b><small>{extraPhotosProcessing ? "모바일 메모리를 보호하며 3장씩 처리하고 있습니다." : totalPhotoCount >= 100 ? "사진을 삭제하면 다시 추가할 수 있습니다." : "최대 100장 보관 · 제작 시 최대 10장 분석 · 옆면·성분표·구성품을 함께 활용"}</small></span></label>
             <div className="photo-source-actions" aria-label="추가 사진 입력 방식" aria-disabled={extraPhotoInputDisabled || undefined}>
               <label htmlFor="extra-product-photo-camera" aria-disabled={extraPhotoInputDisabled || undefined}><Camera size={18} /><span><b>사진 촬영</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "한 장씩 바로 추가"}</small></span></label>
               <label htmlFor="extra-product-photos" aria-disabled={extraPhotoInputDisabled || undefined}><ImagePlus size={18} /><span><b>앨범에서 선택</b><small>{extraPhotoInputDisabled ? "현재 선택 불가" : "여러 장 한 번에 첨부"}</small></span></label>
@@ -4590,7 +4608,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       </div>
       </section>
       <section className="panel queue-panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE QUEUE</span><h3>실제 등록 작업 현황</h3></div><button className="ghost-button" onClick={onShowHistory}>작업 이력<ChevronRight size={15} /></button></div>
-        <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>외부 권한 대기</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
+        <div className="queue-live-summary"><div><small>AI 실행 중</small><b>{pipeline?.aiRunning ?? 0}건</b></div><div><small>등록 대기</small><b>{pipeline?.listingQueued ?? 0}건</b></div><div><small>등록 완료</small><b>{pipeline?.listingPublished ?? 0}건</b></div><div><small>재시도 가능</small><b>{pipeline?.listingFailed ?? 0}건</b></div><div><small>등록 확인 필요</small><b>{pipeline?.listingBlocked ?? 0}건</b></div></div>
         {!pipeline || pipeline.aiRunning + pipeline.listingQueued + pipeline.listingPublished + pipeline.listingFailed + pipeline.listingBlocked === 0 ? <div className="live-empty-state"><Upload size={26} /><b>실제 등록 작업이 아직 없습니다.</b><small>대표사진 분석과 카테고리 확정 후 채널 등록을 실행하면 여기에 표시됩니다.</small></div> : null}
       </section>
     </div>
