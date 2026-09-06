@@ -44,13 +44,30 @@ test("production-chain Lazada ownership preimages, physical seller conflicts, st
     const cred = await credential("A");
     const payload = (id: string, items: string[]) => [{ externalOrderId: id, customerName: "Local fixture", productName: "Unlinked local fixture", quantity: 1, amount: 1, amountKrw: 0, currency: "MYR", status: "paid", orderedAt: "2026-09-05T01:00:00Z", providerContext: { orderId: id, orderItemIds: items, deliveryType: "dropship" } }];
     const ingest = (id: string, items: string[], cid = cred) => fixture.scalar(db, "select public.sellerpilot_service_ingest_orders($1,'lazada',$2::jsonb)", [cid, JSON.stringify(payload(id, items))]);
-    await ingest("LEGACY", ["LEGACY-ITEM"]);
+    const legacyOrders = [
+      ["LEGACY", ["LEGACY-ITEM"]],
+      ["LEGACY-PRESERVED", ["PRESERVED-ITEM"]],
+      ["LEGACY-MULTI", ["MULTI-ONE", "MULTI-TWO"]],
+      ["LEGACY-OTHER", ["OTHER-ITEM"]],
+    ] as const;
+    for (const [id, items] of legacyOrders) await ingest(id, [...items]);
+    // Check every pre-existing column, not just quantity or the projected read.
+    // Only the three newly introduced ownership columns may differ on install.
+    const legacyEvidence = async () => (await db.query(`
+      select to_jsonb(o) - array['lazada_source_credential_id',
+        'lazada_seller_account_key', 'lazada_ownership_blocked'] as original
+      from sellerpilot_private.commerce_orders o order by o.id
+    `)).rows;
+    const legacyBefore = await legacyEvidence();
+    assert.equal(legacyBefore.length, 4);
     const pre = (await db.query("select count(*)::int n from sellerpilot_private.commerce_orders")).rows;
     await db.exec("grant execute on function public.sellerpilot_service_ingest_orders(uuid,text,jsonb) to authenticated");
     await assert.rejects(db.exec(source), /PREIMAGE_OR_ACL_MISMATCH/);
     await db.exec("rollback; revoke execute on function public.sellerpilot_service_ingest_orders(uuid,text,jsonb) from authenticated");
     assert.deepEqual((await db.query("select count(*)::int n from sellerpilot_private.commerce_orders")).rows, pre);
     await db.exec(source);
+    assert.deepEqual(await legacyEvidence(), legacyBefore,
+      "install must preserve all original order columns, including raw provider context");
     const row = async (id: string, own = owner) => (await db.query(`select * from sellerpilot_private.commerce_orders where external_order_id=$1 and owner_id=$2`, [id, own])).rows[0];
     const context = async (id: string, own = owner) => (await db.query("select * from public.sellerpilot_get_order_fulfillment_context_v2(array[$1::uuid])", [(await row(id, own)).id])).rows[0].provider_context;
     const blocked = async (id: string, own = owner) => {
@@ -58,7 +75,18 @@ test("production-chain Lazada ownership preimages, physical seller conflicts, st
       assert.deepEqual(ctx.orderItemIds, []);
       assert.throws(() => buildShipmentArguments({ channel: "lazada", externalOrderId: id, carrierCode: "FM49", trackingNumber: "", providerContext: ctx }), /SHIPMENT_PACKAGE_DETAILS_REQUIRED/);
     };
-    await blocked("LEGACY"); await ingest("LEGACY", ["REPLACEMENT"]); await blocked("LEGACY");
+    for (const [id, items] of legacyOrders) {
+      const legacy = await row(id);
+      assert.equal(legacy.lazada_ownership_blocked, true);
+      assert.equal(legacy.lazada_source_credential_id, null);
+      assert.equal(legacy.lazada_seller_account_key, null);
+      assert.deepEqual(legacy.provider_context, payload(id, [...items])[0].providerContext,
+        "quarantine must not erase the stored source evidence");
+      await blocked(id); // Fulfillment masks the source instead of deleting it.
+    }
+    assert.deepEqual(await legacyEvidence(), legacyBefore,
+      "fulfillment reads must not rewrite stored evidence");
+    await ingest("LEGACY", ["REPLACEMENT"]); await blocked("LEGACY");
     await ingest("FIRST", ["SHARED"]); await ingest("FIRST", ["SHARED"]);
     const stale = await context("FIRST");
     assert.deepEqual(stale.orderItemIds, ["SHARED"]);
@@ -77,6 +105,24 @@ test("production-chain Lazada ownership preimages, physical seller conflicts, st
     const installed = (await db.query("select tgname, tgattr::text columns from pg_trigger where tgrelid='sellerpilot_private.channel_gateway_jobs'::regclass and tgname like 'zzzz_guard_lazada_shipment_%' order by tgname")).rows;
     assert.equal(installed.length, 2);
     assert.ok(installed.every((trigger: { columns: string }) => trigger.columns.length > 0));
+    // A caller holding the intact legacy source must still fail the real
+    // shipment trigger. Current credential lineage cannot retroactively attest it.
+    const preserved = await row("LEGACY-PRESERVED");
+    const preservedContext = preserved.provider_context;
+    for (const operation of ["shipment.confirm", "shipment.acknowledge"]) {
+      await assert.rejects(db.query(`
+        insert into public.lazada_review_jobs(credential_id,channel,operation,
+          environment,request_payload,status,created_by,order_id,seller_account_key)
+        values($1,'lazada',$2,'production',$3,'queued',$4,$5,$6)
+      `, [cred, operation, JSON.stringify({ arguments: {
+        orderId: preserved.external_order_id, providerContext: preservedContext,
+      } }), owner, preserved.id, first.lazada_seller_account_key]),
+      /LAZADA_SHIPMENT_CURRENT_OWNERSHIP_CONFLICT/);
+    }
+    assert.deepEqual((await row("LEGACY-PRESERVED")).provider_context, preservedContext);
+    assert.equal(await fixture.scalar(db,
+      "select count(*)::int from public.lazada_review_jobs where order_id=$1",
+      [preserved.id]), 0);
     const jobId = "00000000-0000-4000-8000-000000000088";
     await db.query(`insert into public.lazada_review_jobs(id,credential_id,channel,operation,environment,request_payload,status,created_by,order_id,seller_account_key)
       values($1,$2,'lazada','shipment.confirm','production',$3,'queued',$4,$5,$6)`, [jobId, cred, JSON.stringify({ arguments: { orderId: "FIRST", providerContext: stale } }), owner, first.id, first.lazada_seller_account_key]);

@@ -45,9 +45,10 @@ revoke all on function sellerpilot_private.lazada_order_has_item_conflict(uuid) 
 
 -- Existing rows have no attested source credential. Never infer it from the
 -- currently active seller. Keep them quarantined even after a later resync.
+-- Preserve the original provider context as evidence. The fulfillment projection
+-- and shipment fences mask/reject blocked rows without destroying their source.
 update sellerpilot_private.commerce_orders
-   set lazada_ownership_blocked=true,
-       provider_context=jsonb_build_object('orderId',external_order_id,'orderItemIds','[]'::jsonb,'deliveryType','')
+   set lazada_ownership_blocked=true
  where channel_key='lazada' and not demo;
 
 create function sellerpilot_private.lazada_order_ownership_guard()
