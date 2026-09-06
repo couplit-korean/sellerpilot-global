@@ -16,6 +16,8 @@ test("listing publication release admin route derives the exact SHA server-side"
   assert.match(route, /resolveRuntimeReleaseIdentity\(\)/);
   assert.match(route, /z\.discriminatedUnion\("action"/);
   assert.equal((route.match(/\.strict\(\)/g) ?? []).length, 5);
+  assert.match(route, /const scopedPublicationChannels = \["qoo10", "coupang"\] as const/);
+  assert.match(route, /action: z\.literal\("open_channel_gate"\),\s*channel: z\.enum\(scopedPublicationChannels\)/s);
   assert.match(route, /"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*"temu"/s);
   assert.match(route, /p_release_sha: identity\.status === "valid" \? identity\.release : null/);
   assert.doesNotMatch(route, /parsed\.data\.(?:release|releaseSha|sha)/);
@@ -52,6 +54,13 @@ test("listing publication release actions call only the fenced service RPCs", as
   assert.match(route, /sellerpilot_service_set_listing_mutation_release_gate/);
   assert.match(route, /sellerpilot_service_set_listing_channel_mutation_release_gate/);
   assert.match(route, /action === "open_channel_gate"/);
+  assert.match(route, /function readyForCoupangOpen/);
+  assert.match(route, /gate\.coupangAttestedRelease === currentRelease/);
+  assert.match(route, /gate\.coupangReviewViolations === 0/);
+  assert.match(route, /gate\.coupangQueuedOrRunning === 0/);
+  assert.match(route, /gate\.coupangReconciliationRequired === 0/);
+  assert.match(route, /gate\.listingMutationsRunning === 0/);
+  assert.match(route, /readyForCoupangOpen:/);
   assert.match(route, /p_channel: parsed\.data\.channel,\s*p_open: true,/s);
   assert.match(route, /parsed\.data\.action !== "close_gate" && identity\.status !== "valid"/);
   assert.match(route, /p_open: parsed\.data\.action === "open_gate"/);
@@ -77,6 +86,11 @@ test("channel connection UI uses inline two-step confirmations for release write
   assert.match(runtimeCard, /disabled=\{!listingRelease\.readyForOpen \|\| listingReleaseBusy/);
   assert.match(runtimeCard, /게시 게이트 닫기/);
   assert.match(runtimeCard, /Qoo10만 열기/);
+  assert.match(runtimeCard, /쿠팡만 열기/);
+  assert.match(runtimeCard, /channel: "coupang"/);
+  assert.match(runtimeCard, /readyForCoupangOpen/);
+  assert.match(runtimeCard, /coupangEffectiveOpen/);
+  assert.match(runtimeCard, /전체 게시 실행 중/);
   assert.match(runtimeCard, /다른 7개 채널은 계속 차단됩니다/);
   for (const label of ["Qoo10", "Shopee", "Lazada", "쿠팡", "11번가", "스마트스토어", "eBay", "Temu"]) {
     assert.match(runtimeCard, new RegExp(`${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}.*확인 기록`, "s"));
