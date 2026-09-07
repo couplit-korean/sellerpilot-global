@@ -9,6 +9,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260908053000_enqueue_exact_coupang_price_repair.sql",
   import.meta.url,
 ), "utf8");
+const draftlessCorrection = await readFile(new URL(
+  "../supabase/migrations/20260908054500_rebind_exact_coupang_price_repair_without_publish_draft.sql",
+  import.meta.url,
+), "utf8");
 
 const id = Object.freeze({
   owner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
@@ -354,6 +358,64 @@ async function database() {
   await db.exec(migration);
   await db.exec("set request.jwt.claim.role='service_role'");
   return db;
+}
+
+async function prepareDraftlessFixture(db) {
+  await db.query(
+    `delete from sellerpilot_private.product_registration_drafts
+      where owner_id=$1 and kind='publish' and draft_id=$2`,
+    [id.owner, id.draft],
+  );
+  await db.query(
+    `insert into sellerpilot_private.product_registration_drafts(
+       owner_id,draft_id,kind,product_id,version,data
+     ) values($1,$2,'intake',$3,1,'{"channel":"coupang"}'::jsonb)`,
+    [id.owner, id.draft, id.product],
+  );
+  await db.exec(`
+    alter table sellerpilot_private.coupang_exact_live_price_drift_adjudications
+      add column provider_call_replayed boolean not null default false,
+      add column source_job_sha256 text,
+      add column source_attempt_sha256 text,
+      add column verifier_job_sha256 text,
+      add column listing_after_snapshot jsonb,
+      add column listing_after_sha256 text,
+      add column adjudication_evidence jsonb;
+    update sellerpilot_private.coupang_exact_live_price_drift_adjudications a
+       set source_job_sha256=(select encode(extensions.digest(
+             to_jsonb(job)::text,'sha256'),'hex')
+             from sellerpilot_private.channel_gateway_jobs job
+            where job.id=a.source_job_id),
+           source_attempt_sha256=(select encode(extensions.digest(
+             to_jsonb(attempt)::text,'sha256'),'hex')
+             from sellerpilot_private.channel_operation_attempts attempt
+            where attempt.id=a.source_attempt_id),
+           verifier_job_sha256=(select encode(extensions.digest(
+             to_jsonb(job)::text,'sha256'),'hex')
+             from sellerpilot_private.channel_gateway_jobs job
+            where job.id=a.verifier_job_id),
+           listing_after_snapshot=(select to_jsonb(listing)
+             from sellerpilot_private.product_listings listing
+            where listing.id=a.listing_id),
+           listing_after_sha256=(select encode(extensions.digest(
+             to_jsonb(listing)::text,'sha256'),'hex')
+             from sellerpilot_private.product_listings listing
+            where listing.id=a.listing_id),
+           adjudication_evidence=jsonb_build_object(
+             'contract','coupang_exact_live_price_drift_adjudication_v1',
+             'sourceJobId',a.source_job_id,
+             'listingId',a.listing_id,
+             'decision','provider_live_price_drift'
+           );
+    update sellerpilot_private.coupang_exact_live_price_drift_adjudications
+       set adjudication_sha256=encode(extensions.digest(
+         adjudication_evidence::text,'sha256'),'hex');
+  `);
+}
+
+async function applyDraftlessCorrection(db) {
+  await prepareDraftlessFixture(db);
+  await db.exec(draftlessCorrection);
 }
 
 test("migration is an exact price-only lane and contains no production call", () => {
@@ -848,6 +910,163 @@ test("credential, seller, draft, product and worker drift reject enqueue", async
       "update sellerpilot_private.local_channel_executor_routes set enabled=false",
       "update sellerpilot_private.local_channel_executor_routes set enabled=true",
     );
+  } finally {
+    await db.close();
+  }
+});
+
+test("draftless correction binds one repair to immutable 0515 row evidence", async () => {
+  const db = await database();
+  try {
+    const retainedBefore = (await db.query(
+      `select jsonb_agg(to_jsonb(job) order by job.id) snapshot
+         from sellerpilot_private.channel_gateway_jobs job
+        where job.id in ($1,$2)`,
+      [id.sourceJob, id.verifier],
+    )).rows[0].snapshot;
+    await applyDraftlessCorrection(db);
+
+    assert.equal(await scalar(db,
+      `select count(*)::integer from information_schema.columns
+        where table_schema='sellerpilot_private'
+          and table_name='coupang_exact_price_repair_permits'
+          and column_name in ('draft_id','draft_version','draft_data_sha256')`), 0);
+    assert.equal(await scalar(db,
+      `select count(*)::integer from information_schema.columns
+        where table_schema='sellerpilot_private'
+          and table_name='coupang_exact_price_repair_permits'
+          and column_name in ('source_job_row_sha256','source_attempt_row_sha256',
+            'verifier_job_row_sha256','listing_adjudicated_sha256')`), 4);
+    assert.equal(await scalar(db,
+      `select count(*)::integer
+         from sellerpilot_private.product_registration_drafts
+        where draft_id=$1 and kind='publish'`, [id.draft]), 0);
+    assert.equal(await scalar(db,
+      `select count(*)::integer
+         from sellerpilot_private.product_registration_drafts
+        where draft_id=$1 and kind='intake' and version=1`, [id.draft]), 1);
+
+    const first = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    const replay = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(first.status, "queued");
+    assert.equal(first.reused, false);
+    assert.equal(replay.reused, true);
+    assert.equal(replay.jobId, first.jobId);
+    assert.equal(replay.attemptId, first.attemptId);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_operation_attempts where operation='price.update'"), 1);
+
+    const marker = (await db.query(
+      `select request_payload#>'{arguments,sellerpilotCoupangExactPriceRepair}' marker
+         from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [first.jobId],
+    )).rows[0].marker;
+    assert.equal(Object.hasOwn(marker, "draftId"), false);
+    assert.equal(Object.hasOwn(marker, "draftVersion"), false);
+    assert.match(marker.sourceJobRowSha256, /^[a-f0-9]{64}$/u);
+    assert.match(marker.sourceAttemptRowSha256, /^[a-f0-9]{64}$/u);
+    assert.match(marker.verifierJobRowSha256, /^[a-f0-9]{64}$/u);
+    assert.match(marker.listingAdjudicatedSha256, /^[a-f0-9]{64}$/u);
+    assert.deepEqual((await db.query(
+      `select jsonb_agg(to_jsonb(job) order by job.id) snapshot
+         from sellerpilot_private.channel_gateway_jobs job
+        where job.id in ($1,$2)`,
+      [id.sourceJob, id.verifier],
+    )).rows[0].snapshot, retainedBefore);
+
+    const permitEvidence = (await db.query(
+      `select p.source_job_row_sha256=a.source_job_sha256 source_ok,
+              p.source_attempt_row_sha256=a.source_attempt_sha256 attempt_ok,
+              p.verifier_job_row_sha256=a.verifier_job_sha256 verifier_ok,
+              p.listing_adjudicated_sha256=a.listing_after_sha256 listing_ok
+         from sellerpilot_private.coupang_exact_price_repair_permits p
+         join sellerpilot_private.coupang_exact_live_price_drift_adjudications a
+           on a.source_job_id=p.source_job_id`,
+    )).rows[0];
+    assert.deepEqual(permitEvidence, {
+      source_ok: true,
+      attempt_ok: true,
+      verifier_ok: true,
+      listing_ok: true,
+    });
+  } finally {
+    await db.close();
+  }
+});
+
+test("draftless evidence drift blocks the exact job before provider claim", async () => {
+  const db = await database();
+  try {
+    await applyDraftlessCorrection(db);
+    const enqueued = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), true);
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set error_message='SOURCE_ROW_DRIFT'
+        where id=$1`,
+      [id.sourceJob],
+    );
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), false);
+    assert.equal(await scalar(db,
+      "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [enqueued.jobId]), null);
+    assert.equal(await scalar(db,
+      "select consumed_at from sellerpilot_private.coupang_exact_price_repair_permits"), null);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='listing.create'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='listing.publication.verify'"), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("empty permit fast path never evaluates the exact snapshot branch", async () => {
+  const db = await database();
+  try {
+    await applyDraftlessCorrection(db);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_price_repair_permits"), 0);
+    await db.exec(`
+      create or replace function
+      sellerpilot_private.coupang_exact_price_repair_local_claim_allowed(
+        p_job_id uuid,p_credential_id uuid,p_worker_token_id uuid,
+        p_worker_version text,p_release_sha text,p_egress_ip_sha256 text
+      ) returns boolean language plpgsql stable security definer
+      set search_path='' as $$
+      begin
+        raise exception 'EXPENSIVE_EXACT_BRANCH_WAS_EVALUATED';
+      end
+      $$;
+    `);
+    const result = await db.query(`
+      select count(*)::integer allowed
+        from generate_series(1,2000) candidate(i)
+       where sellerpilot_private.local_channel_executor_job_allowed(
+         ('00000000-0000-4000-8000-' || lpad(candidate.i::text,12,'0'))::uuid,
+         '${id.credential}'::uuid,'${id.worker}'::uuid,
+         '${workerVersion}','${release}','${egress}'
+       )
+    `);
+    assert.equal(result.rows[0].allowed, 0);
   } finally {
     await db.close();
   }
