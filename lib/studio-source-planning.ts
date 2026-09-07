@@ -36,6 +36,11 @@ export function effectiveStudioSourceRole(source: PlannedStudioSource) {
   return source.role;
 }
 export function isStudioSceneSource(source: PlannedStudioSource) {
+  // A photographed side can be physically complete but still be an information
+  // panel. Side rotation must never promote dense statutory text into an ad hero.
+  const text = source.observation?.readableText ?? "";
+  const informationSignals = [/원재료|ingredients/i, /영양정보|nutrition facts/i, /제조원|manufactur/i, /소비자상담|customer service/i, /품목보고|제조번호|lot number/i, /반품|교환|returns/i, /보관방법|storage instructions/i];
+  if (informationSignals.filter(signal => signal.test(text)).length >= 2) return false;
   return viewRoles.has(effectiveStudioSourceRole(source))
     && (!source.observation || (source.observation.sameProduct === "yes" && source.observation.confidence >= 0.85 && source.observation.wholeProduct));
 }
