@@ -94,7 +94,8 @@ test("local worker forwards uncached Lazada hooks and keeps other operations' or
   assert.match(worker, /const lazadaShipmentBoundary = job.channel === "lazada" && job.operation === "shipment.confirm"/);
   assert.match(worker, /writeChannelOperations.has\(job.operation\) && !lazadaShipmentBoundary/);
   assert.match(worker, /providerMutationHooks: \{\s*begin: markExternalWriteStarted,\s*assertLeaseHealthy: assertGatewayLeaseHealthy/);
-  const begin = worker.slice(worker.indexOf("const markExternalWriteStarted = async"), worker.indexOf("const markExternalMutationStarted = async"));
-  assert.match(begin, /await persistWorkerCompletion\(\s*"\/api\/channel-gateway\/worker\/begin-mutation"/);
+  const begin = worker.slice(worker.indexOf("const markExternalWriteStarted = createGatewayMutationBoundary"), worker.indexOf("const markExternalMutationStarted = async"));
+  assert.match(begin, /persist: \(\) => persistWorkerCompletion\(\s*"\/api\/channel-gateway\/worker\/begin-mutation"/);
+  assert.match(begin, /reuseRegistration: job.channel === "smartstore" && job.operation === "listing.update"/);
   assert.doesNotMatch(begin, /if \(externalWriteStarted\)|fencePromise|providerMutationFenced/);
 });

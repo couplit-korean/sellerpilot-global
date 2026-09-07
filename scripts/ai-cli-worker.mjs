@@ -151,6 +151,7 @@ import {
   startGatewayWorkerHealthServer,
 } from "./persistent-worker-health.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
+import { createGatewayMutationBoundary } from "./gateway-mutation-boundary.mjs";
 import {
   AI_HEARTBEAT_INTERVAL_MS,
   AI_HEARTBEAT_TRANSIENT_GRACE_MS,
@@ -4136,17 +4137,18 @@ async function processGatewayJob(job) {
   let credentialRefresh;
   const gatewayExecutionSignal = AbortSignal.timeout(180_000);
   const assertGatewayLeaseHealthy = () => gatewayHeartbeat.assertHealthy();
-  const markExternalWriteStarted = async () => {
-    await assertGatewayLeaseHealthy();
-    await persistWorkerCompletion(
+  const markExternalWriteStarted = createGatewayMutationBoundary({
+    reuseRegistration: job.channel === "smartstore" && job.operation === "listing.update"
+      && Boolean(smartstoreContentRepairBinding(job.request?.arguments ?? {})),
+    assertLeaseHealthy: assertGatewayLeaseHealthy,
+    persist: () => persistWorkerCompletion(
       "/api/channel-gateway/worker/begin-mutation",
       { jobId: job.id, claimToken },
       "채널 외부 호출 경계 저장 실패",
       GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
-    );
-    await assertGatewayLeaseHealthy();
-    externalWriteStarted = true;
-  };
+    ),
+    onStarted: () => { externalWriteStarted = true; },
+  });
   const markExternalMutationStarted = async () => {
     externalWriteStarted = true;
     credentialMutationInFlight = true;

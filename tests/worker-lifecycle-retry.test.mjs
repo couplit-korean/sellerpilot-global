@@ -211,7 +211,7 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.ok(finalCompletion > gatewayProcess.indexOf("await stopGatewayHeartbeat()"));
   assert.match(gatewayProcess, /effectiveError = heartbeatError/);
   assert.match(gatewayProcess, /effectiveError instanceof WorkerRequestTerminalError[\s\S]*\[채널 상태 보존\]/);
-  assert.match(gatewayProcess, /const markExternalWriteStarted = async \(\) => \{[\s\S]*"\/api\/channel-gateway\/worker\/begin-mutation"[\s\S]*await assertGatewayLeaseHealthy\(\);[\s\S]*externalWriteStarted = true/);
+  assert.match(gatewayProcess, /const markExternalWriteStarted = createGatewayMutationBoundary\(\{[\s\S]*reuseRegistration: job.channel === "smartstore" && job.operation === "listing.update"[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*"\/api\/channel-gateway\/worker\/begin-mutation"[\s\S]*onStarted:.*externalWriteStarted = true/);
   const activationContextFence = gatewayProcess.indexOf("const activationArgumentsAreRecord");
   const credentialPreparation = gatewayProcess.indexOf('if (job.channel === "shopee")', activationContextFence);
   const providerMutationFence = gatewayProcess.indexOf("await markExternalWriteStarted();", credentialPreparation);
