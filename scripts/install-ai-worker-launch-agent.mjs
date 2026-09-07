@@ -177,7 +177,7 @@ async function stageRuntime() {
   await mkdir(runtimeParent, { recursive: true, mode: 0o700 });
   const stagedRuntimeRoot = await mkdtemp(join(runtimeParent, ".worker-runtime-staging-"));
   try {
-    for (const entry of ["lib", "scripts", "prompts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]) {
+    for (const entry of ["app", "lib", "scripts", "prompts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]) {
       await cp(join(sourceRoot, entry), join(stagedRuntimeRoot, entry), { recursive: true });
     }
     command(pnpm, ["install", "--frozen-lockfile", "--ignore-scripts"], {

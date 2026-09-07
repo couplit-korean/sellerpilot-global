@@ -34,11 +34,11 @@ function harness({ missing, failedStep, failure = { code: "ETIMEDOUT" } } = {}) 
     stage: () => vm.runInContext("stageRuntime()", context) };
 }
 
-test("staging copies only approved runtime directories plus dependency manifests, including prompts", async () => {
+test("staging copies only approved runtime directories plus dependency manifests, including app-side detail rendering", async () => {
   const h = harness();
   assert.equal(await h.stage(), "/fixture/stage");
   assert.deepEqual(h.copied.map(({ from }) => from.replace("/fixture/source/", "")),
-    ["lib", "scripts", "prompts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]);
+    ["app", "lib", "scripts", "prompts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]);
   assert.equal(h.removed.length, 0);
   assert.ok(h.checked.includes("/fixture/stage/prompts/detail-pages/category-prompts.json"));
 });
