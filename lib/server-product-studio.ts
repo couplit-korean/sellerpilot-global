@@ -2204,7 +2204,7 @@ export async function buildServerSourceDerivedAsset(
   const placement = sourceCatalogPlacement(asset);
   const width = Math.max(1, Math.round(asset.width * placement.width));
   const height = Math.max(1, Math.round(asset.height * placement.height));
-  const product = await sharp(cutout).resize(width, height, { fit: "contain" }).png().toBuffer();
+  const product = await sharp(cutout).resize(width, height, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
   return sharp(background)
     .composite([{ input: product, left: Math.round(asset.width * placement.left), top: Math.round(asset.height * placement.top) }])
     .png()
