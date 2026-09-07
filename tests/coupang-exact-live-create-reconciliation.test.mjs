@@ -73,6 +73,8 @@ test("shared-admin repair binds credential owner separately from listing owner",
   assert.match(sharedAdminLineageMigration, /credential\.created_by = j\.created_by/);
   assert.match(sharedAdminLineageMigration, /v_source_rows not in \(0, 3\)/);
   assert.match(sharedAdminLineageMigration, /listing_mutation_reconciliation_resolved/);
+  assert.match(sharedAdminLineageMigration, /coupang_provider_assigned_vendor_items_v1/);
+  assert.match(sharedAdminLineageMigration, /jsonb_array_length\(readback#>'\{data,data,items\}'\) = 1/);
   assert.doesNotMatch(sharedAdminLineageMigration, /insert into sellerpilot_private\.channel_gateway_jobs/i);
   assert.doesNotMatch(sharedAdminLineageMigration, /update sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|product_listings)/i);
   assert.doesNotMatch(sharedAdminLineageMigration, /method[^\n]*(?:POST|PUT|PATCH|DELETE)/i);
@@ -160,7 +162,6 @@ async function fixture(options = {}) {
     contentSha256: String(index + 1).padStart(64, "0"),
   }));
   const item = {
-    vendorItemId: "90000000001",
     contents: [{ contentDetails: [
       ...images.map((image) => ({ detailType: "IMAGE", content: image.publicUrl })),
       { detailType: "TEXT", content: "검증 상품 상세 설명" },
@@ -271,6 +272,7 @@ async function preparedVerifier(db, fingerprint) {
   const sellerRoot = structuredClone(hydrated.sourceResponsePayload.steps.at(-1).data.data);
   sellerRoot.status = "APPROVED";
   sellerRoot.statusName = "승인완료";
+  sellerRoot.items[0].vendorItemId = "90000000001";
   sellerRoot.items[0].salePrice = 3190;
   return {
     verifier,
@@ -340,6 +342,15 @@ test("PGlite executes enqueue, hydration, immutable evidence, resolution and rep
     assert.equal(hydrated.sourceResponsePayload.steps.at(-1).name, "seller-product-publication-readback");
     assert.equal(hydrated.sourceResponsePayload.remoteState.evidence.publicationAssetBinding.contract,
       "sellerpilot_provider_asset_binding_v1");
+    assert.deepEqual(hydrated.sourceResponsePayload.remoteState.resources.vendorItemIds, []);
+    assert.deepEqual(
+      hydrated.sourceResponsePayload.remoteState.evidence.providerAssignedDescendantIdentityBinding,
+      {
+        contract: "coupang_provider_assigned_vendor_items_v1",
+        sourceJobId: exact.sourceJob,
+        sellerProductId: exact.remote,
+      },
+    );
     assert.equal((await db.query(
       `select has_function_privilege('service_role',
        'public.sellerpilot_verification_source_before_coupang_exact_live(text,uuid,uuid)',
@@ -361,6 +372,7 @@ test("PGlite executes enqueue, hydration, immutable evidence, resolution and rep
     const sellerRoot = structuredClone(hydrated.sourceResponsePayload.steps.at(-1).data.data);
     sellerRoot.status = "APPROVED";
     sellerRoot.statusName = "승인완료";
+    sellerRoot.items[0].vendorItemId = "90000000001";
     sellerRoot.items[0].salePrice = 3190;
     const success = {
       ok: true, remoteId: exact.remote, publicationFulfilled: true,

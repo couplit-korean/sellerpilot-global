@@ -1433,6 +1433,54 @@ test("every Coupang variant must expose the same ordered eight approved detail i
   assert.equal(verification.descriptionVerified, false);
 });
 
+test("Coupang exact GET reconciliation binds provider-assigned vendor items after create", () => {
+  const fixture = fixtures.find((item) => item.channel === "coupang")!;
+  const sourceReadback = structuredClone(coupangData);
+  delete sourceReadback.data.items[0].vendorItemId;
+  const source = sourceContext({
+    channel: "coupang",
+    sourceArguments: fixture.sourceArguments,
+    sourceStepName: fixture.sourceStepName,
+    sourceStepData: sourceReadback,
+    resources: { sellerProductId: fixture.remoteId, vendorItemIds: [] },
+    remoteId: fixture.remoteId,
+    locale: fixture.locale,
+    market: fixture.market,
+    targetId: fixture.targetId,
+  });
+  const evidence = source.sourceResponsePayload.remoteState.evidence as Record<string, unknown>;
+  evidence.providerAssignedDescendantIdentityBinding = {
+    contract: "coupang_provider_assigned_vendor_items_v1",
+    sourceJobId: SOURCE_JOB_ID,
+    sellerProductId: fixture.remoteId,
+  };
+  const input = {
+    channel: "coupang" as const,
+    expectedLocale: fixture.locale,
+    expectedImageCount: 8,
+    remoteId: fixture.remoteId,
+    sourceJobId: SOURCE_JOB_ID,
+    sourceArguments: fixture.sourceArguments,
+    sourceResponsePayload: source.sourceResponsePayload,
+    sourceRemotePayload: sourceReadback,
+    remotePayload: coupangData,
+    remoteResources: fixture.resources,
+  };
+  const verified = verifyListingPublicationContent(input);
+  assert.equal(verified.verified, true);
+  assert.equal(verified.sourceIdentityVerified, true);
+  assert.equal(verified.contentDigestVerified, true);
+
+  const missingBinding = structuredClone(input);
+  delete (missingBinding.sourceResponsePayload.remoteState.evidence as Record<string, unknown>)
+    .providerAssignedDescendantIdentityBinding;
+  assert.equal(verifyListingPublicationContent(missingBinding).verified, false);
+
+  const wrongSource = structuredClone(input);
+  wrongSource.sourceJobId = "5f668657-d4bd-4c32-a9e9-1d4c211db26f";
+  assert.equal(verifyListingPublicationContent(wrongSource).verified, false);
+});
+
 test("buyer-visible titles and provider-assigned identities are exact-bound for Coupang, SmartStore, and eBay", () => {
   const cases = [
     {

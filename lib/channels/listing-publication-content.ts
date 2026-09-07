@@ -877,6 +877,7 @@ export function verifyListingPublicationContent(input: {
   expectedLocale: string;
   expectedImageCount: number;
   remoteId: string;
+  sourceJobId?: string;
   sourceArguments: UnknownRecord;
   sourceResponsePayload?: UnknownRecord;
   sourceRemotePayload: UnknownRecord;
@@ -905,7 +906,8 @@ export function verifyListingPublicationContent(input: {
 
   const binding = parseListingPublicationAssetBinding(input.sourceArguments.sellerpilotPublicationAssetBinding);
   const responseState = recordValue((input.sourceResponsePayload ?? {}).remoteState);
-  const providerEvidence = parseProviderAssetEvidence(recordValue(responseState.evidence).publicationAssetBinding);
+  const responseEvidence = recordValue(responseState.evidence);
+  const providerEvidence = parseProviderAssetEvidence(responseEvidence.publicationAssetBinding);
   const sourceAssetProjectionVerified = Boolean(binding
     && source.detailImageIdentities.length === 8
     && sameOrderedValues(
@@ -962,7 +964,28 @@ export function verifyListingPublicationContent(input: {
   const sourceResources = canonicalRemoteResources(input.channel, responseState.resources);
   const remoteResources = canonicalRemoteResources(input.channel, input.remoteResources);
   const declaredResources = sourceDeclaredRemoteResources(input.channel, input.sourceArguments, input.remoteId);
-  const sourceIdentityVerified = Object.keys(sourceResources).length > 0 && digest(sourceResources) === digest(remoteResources);
+  const descendantIdentityBinding = recordValue(
+    responseEvidence.providerAssignedDescendantIdentityBinding,
+  );
+  const normalizedSourceJobId = exactText(input.sourceJobId);
+  const sourceVendorItemIds = sourceResources.vendorItemIds;
+  const remoteVendorItemIds = remoteResources.vendorItemIds;
+  const coupangProviderAssignedDescendantsVerified = input.channel === "coupang"
+    && descendantIdentityBinding.contract === "coupang_provider_assigned_vendor_items_v1"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(normalizedSourceJobId)
+    && exactText(descendantIdentityBinding.sourceJobId) === normalizedSourceJobId
+    && exactText(descendantIdentityBinding.sellerProductId) === input.remoteId
+    && sourceResources.sellerProductId === input.remoteId
+    && Array.isArray(sourceVendorItemIds)
+    && sourceVendorItemIds.length === 0
+    && remoteResources.sellerProductId === input.remoteId
+    && Array.isArray(remoteVendorItemIds)
+    && remoteVendorItemIds.length > 0
+    && remoteVendorItemIds.every((value) => /^[1-9]\d*$/u.test(value))
+    && new Set(remoteVendorItemIds).size === remoteVendorItemIds.length;
+  const sourceIdentityVerified = Object.keys(sourceResources).length > 0
+    && (digest(sourceResources) === digest(remoteResources)
+      || coupangProviderAssignedDescendantsVerified);
   const sourceDeclaredIdentityVerified = declaredResourcesMatch(
     input.channel,
     declaredResources,
@@ -971,7 +994,7 @@ export function verifyListingPublicationContent(input: {
   const sourceProjection = {
     titleParts: source.titleParts,
     description: source.description,
-    resources: sourceResources,
+    resources: coupangProviderAssignedDescendantsVerified ? remoteResources : sourceResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
     providerImageSurface: verifiedProviderImageSurface,
     ...(representativeRequired

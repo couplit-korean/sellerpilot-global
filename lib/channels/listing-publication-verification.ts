@@ -615,6 +615,7 @@ function verifiedExecution(input: {
     expectedLocale: input.expectedLocale,
     expectedImageCount: 8,
     remoteId: input.remoteId,
+    sourceJobId: input.source.sourceJobId,
     sourceArguments: input.source.sourceArguments,
     sourceResponsePayload: input.source.sourceResponsePayload,
     sourceRemotePayload: sourceRemotePayload(input.channel, input.source),
