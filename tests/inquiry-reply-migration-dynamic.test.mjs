@@ -273,9 +273,28 @@ async function applyMigrations(db, { through = CS_FIXTURE_SCHEMA_THROUGH } = {})
   assert.ok(names.includes(through), "the exact historical CS fixture schema must exist");
   for (const name of names) {
     if (name > through) break;
-    if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) continue;
+    if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) {
+      if (name === "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql") {
+        // This reduced CS fixture omits the production-specific Qoo10 claim
+        // priority migration. Later generic claimant definitions still call
+        // its predicate, so provide the inert result that an absent exact S1
+        // production tuple represents.
+        await db.exec(`
+          create or replace function
+            sellerpilot_private.qoo10_exact_s1_activation_claim_priority(uuid)
+          returns boolean language sql stable set search_path = ''
+          as $$ select false $$
+        `);
+      }
+      continue;
+    }
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
-    await db.exec(withoutUnavailableExtensions(sql));
+    try {
+      await db.exec(withoutUnavailableExtensions(sql));
+    } catch (error) {
+      error.message = `${name}: ${error.message}`;
+      throw error;
+    }
     if (name === through) break;
   }
 }

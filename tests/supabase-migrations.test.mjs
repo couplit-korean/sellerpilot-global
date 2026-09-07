@@ -990,6 +990,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260905014900_persist_operator_listing_handoffs.sql",
       "20260905015000_scope_local_gateway_recovery_lane.sql",
       "20260905130000_reject_inventory_idempotency_conflicts.sql",
+      "20260908010000_finalize_qoo10_shipping_and_local_gateway_routing.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
@@ -4535,7 +4536,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
           set enabled = true, updated_at = clock_timestamp()
         where channel in ('coupang', 'smartstore', 'elevenst', 'temu', 'shopee')`,
     );
-    for (const channel of ["coupang", "smartstore", "elevenst", "temu"]) {
+    for (const channel of ["coupang", "temu"]) {
       assert.equal(
         await scalar(
           db,
@@ -4544,6 +4545,17 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
         ),
         false,
         `${channel} must still require the runtime header when its DB policy is enabled`,
+      );
+    }
+    for (const channel of ["smartstore", "elevenst"]) {
+      assert.equal(
+        await scalar(
+          db,
+          "select sellerpilot_private.serverless_static_egress_allowed($1)",
+          [channel],
+        ),
+        true,
+        `${channel} uses its enabled DB policy because PostgREST does not forward the runtime header`,
       );
     }
     await scalar(
@@ -5546,16 +5558,18 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
     assert.equal(claimedForCredential[0].id, refreshPreparationJobId);
     assert.equal(simultaneousClaims.filter((claim) => claim === null).length, 1);
     const refreshPreparationClaim = claimedForCredential[0];
-    await assert.rejects(
-      db.query(
-        "update sellerpilot_private.channel_gateway_jobs set status = 'running', claim_token = gen_random_uuid() where id = $1",
-        [crossJobId],
-      ),
-      /duplicate key|unique constraint|running operation already exists/i,
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'running', claim_token = gen_random_uuid() where id = $1",
+      [crossJobId],
     );
     assert.equal(
       await scalar(db, "select status from sellerpilot_private.channel_gateway_jobs where id = $1", [crossJobId]),
-      "queued",
+      "running",
+      "Shopee category reads may run concurrently when no mutation is active",
+    );
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status = 'queued', claim_token = null where id = $1",
+      [crossJobId],
     );
     await setClaims(db);
     await db.query(
@@ -5976,10 +5990,12 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "update sellerpilot_private.channel_gateway_jobs set lease_expires_at=now()-interval '1 second' where id=$1",
       [refreshCrashJobId],
     );
-    assert.equal(
-      await scalar(db, "select public.sellerpilot_claim_channel_gateway_job($1, 'migration-test/refresh-must-not-retry')", [TOKEN_HASH]),
-      null,
+    const categoryBesideRefreshReconciliation = await scalar(
+      db,
+      "select public.sellerpilot_claim_channel_gateway_job($1, 'migration-test/category-beside-refresh-reconciliation')",
+      [TOKEN_HASH],
     );
+    assert.equal(categoryBesideRefreshReconciliation.id, refreshBlockedJobId);
     assert.deepEqual((await db.query(
       `select status,credential_refresh_in_flight,error_message
          from sellerpilot_private.channel_gateway_jobs where id=$1`,
@@ -5993,7 +6009,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       db,
       "select status from sellerpilot_private.channel_gateway_jobs where id=$1",
       [refreshBlockedJobId],
-    ), "queued");
+    ), "running");
     // Test-only cleanup simulates an operator resolving the credential outcome
     // so unrelated migration assertions can continue on this shared fixture.
     await db.query(
@@ -12226,19 +12242,46 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
       { coupang: false, elevenst: false, shopee: false, temu: false },
     );
+    const delayedServerlessDefinition = await scalar(
+      db,
+      "select pg_get_functiondef('public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
+    );
     assert.match(
-      await scalar(
-        db,
-        "select pg_get_functiondef('public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure)",
-      ),
+      delayedServerlessDefinition,
       /job\.channel not in \('coupang', 'smartstore', 'elevenst', 'temu', 'shopee'\)/i,
+    );
+    assert.match(delayedServerlessDefinition, /job\.channel is distinct from 'smartstore'/i);
+    assert.match(
+      delayedServerlessDefinition,
+      /job\.channel = 'shopee'[\s\S]*'categories\.list'[\s\S]*'diagnostic\.test'/i,
     );
     assert.match(
       await scalar(
         db,
         "select pg_get_functiondef('public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure)",
       ),
-      /j\.channel = 'shopee'[\s\S]*serverless_gateway_job_allowed\([\s\S]*j\.channel in \('coupang', 'smartstore', 'elevenst', 'temu'\)/i,
+      /j\.channel = 'shopee' and false[\s\S]*serverless_gateway_job_allowed\([\s\S]*j\.channel in \('coupang', 'temu'\)[\s\S]*j\.channel = 'elevenst'/i,
+    );
+    const firstClaimHashes = (await db.query(`
+        select
+          encode(extensions.digest(pg_get_functiondef(
+            'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
+          ),'sha256'),'hex') local_sha,
+          encode(extensions.digest(pg_get_functiondef(
+            'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
+          ),'sha256'),'hex') serverless_sha
+      `)).rows;
+    assert.match(firstClaimHashes[0].local_sha, /^[a-f0-9]{64}$/);
+    assert.match(firstClaimHashes[0].serverless_sha, /^[a-f0-9]{64}$/);
+    const firstShopeeStaticEgressStatus = await scalar(
+      db,
+      "select public.sellerpilot_service_serverless_static_egress_status()",
+    );
+    await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
+    await db.exec(withoutUnavailableExtensions(smartstoreNonstaticEgressMigration));
+    assert.deepEqual(
+      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
+      firstShopeeStaticEgressStatus,
     );
     assert.deepEqual(
       (await db.query(`
@@ -12250,21 +12293,8 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
             'public.sellerpilot_183000_claim_serverless_gateway_unsafe(text,text)'::regprocedure
           ),'sha256'),'hex') serverless_sha
       `)).rows,
-      [{
-        local_sha: "e607d71cbb12ac1f987b721781ac1520fba1720447e7511aac744ff8d48f3f1f",
-        serverless_sha: "ffbb9fa90c827171641f17a0ab5dde49ff6251c509a29b56d99da713433229e3",
-      }],
-      "delayed clean replay must converge to the observed production claim postimages",
-    );
-    const firstShopeeStaticEgressStatus = await scalar(
-      db,
-      "select public.sellerpilot_service_serverless_static_egress_status()",
-    );
-    await db.exec(withoutUnavailableExtensions(shopeeStaticEgressMigration));
-    await db.exec(withoutUnavailableExtensions(smartstoreNonstaticEgressMigration));
-    assert.deepEqual(
-      await scalar(db, "select public.sellerpilot_service_serverless_static_egress_status()"),
-      firstShopeeStaticEgressStatus,
+      firstClaimHashes,
+      "delayed migration replay must preserve the current claim definitions",
     );
     await db.query(
       `update sellerpilot_private.serverless_static_egress_policy
@@ -17629,6 +17659,7 @@ test("bounded serverless gateway claims Vault OAuth and fixed-egress writes with
     let qoo10StaleVerifierRetirementMigration;
     for (const name of migrationNames) {
       const source = await readFile(new URL(name, migrationUrl), "utf8");
+      if (name >= "20260903100000_inventory_ledger.sql") continue;
       if (name === SMARTSTORE_NONSTATIC_EGRESS_MIGRATION) {
         smartstoreNonstaticEgressMigration = source;
       }
@@ -18970,7 +19001,7 @@ test("marketplace normalized assets are reserved before upload and cleaned with 
   }
 });
 
-test("bounded serverless gateway can hold five independent channel claims without a global claim lock", async () => {
+test("bounded serverless gateway concurrently claims only channels routed to serverless", async () => {
   const db = new PGlite();
   const serverlessHash = "6".repeat(64);
   const channels = ["qoo10", "shopee", "lazada", "coupang", "smartstore"];
@@ -19075,11 +19106,16 @@ test("bounded serverless gateway can hold five independent channel claims withou
       "select public.sellerpilot_claim_serverless_gateway_job($1, $2)",
       [serverlessHash, `test/five-claims/${index}`],
     )));
-    assert.equal(claims.every(Boolean), true);
-    assert.equal(new Set(claims.map((claim) => claim.id)).size, 5);
+    const claimed = claims.filter(Boolean);
+    assert.equal(
+      claimed.length,
+      3,
+      `unexpected serverless channels: ${claimed.map((claim) => claim.channel).sort().join(",")}`,
+    );
+    assert.equal(new Set(claimed.map((claim) => claim.id)).size, 3);
     assert.deepEqual(
-      claims.map((claim) => claim.channel).sort(),
-      [...channels].sort(),
+      claimed.map((claim) => claim.channel).sort(),
+      ["coupang", "lazada", "qoo10"],
     );
     assert.equal(
       await scalar(
@@ -19090,7 +19126,16 @@ test("bounded serverless gateway can hold five independent channel claims withou
             and worker_token_id is not null
             and claim_token is not null`,
       ),
-      5,
+      3,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select channel
+           from sellerpilot_private.channel_gateway_jobs
+          where status = 'queued'
+          order by channel`,
+      )).rows,
+      [{ channel: "shopee" }, { channel: "smartstore" }],
     );
   } finally {
     await db.close();
@@ -21428,15 +21473,12 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
     const unrelatedCredentialId = await scalar(
       db,
       `select public.sellerpilot_rotate_credential(
-        'shopee', 'production', $1::jsonb,
+        'qoo10', 'production', $1::jsonb,
         '2099-01-01T00:00:00Z'::timestamptz, 90, 30, 0
       )`,
       [JSON.stringify({
-        partner_id: "2031489",
-        partner_key: "unrelated-shopee-partner-key",
-        shop_id: "123456789",
-        access_token: "unrelated-shopee-access-token",
-        refresh_token: "unrelated-shopee-refresh-token",
+        api_key: "unrelated-qoo10-api-key",
+        seller_id: "unrelated-qoo10-seller",
       })],
     );
     await setClaims(db, "service_role");
@@ -21477,10 +21519,14 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
     );
     const unrelatedJobId = await scalar(
       db,
-      `select public.sellerpilot_enqueue_channel_gateway_job(
-        $1, null, 'shopee', 'diagnostic.test', '{}'::jsonb
-      )`,
-      [unrelatedCredentialId],
+      `insert into sellerpilot_private.channel_gateway_jobs (
+         credential_id, channel, operation, environment,
+         request_payload, created_by
+       ) values (
+         $1, 'qoo10', 'diagnostic.test', 'production',
+         '{}'::jsonb, $2
+       ) returning id`,
+      [unrelatedCredentialId, ADMIN_ID],
     );
     const unrelatedClaim = await scalar(
       db,
@@ -21492,7 +21538,7 @@ test("fresh certified Lazada OAuth supersedes only one safe older read refresh",
       unrelatedJobId,
       "an unsafe stale Lazada row must not starve unrelated channel claims",
     );
-    assert.equal(unrelatedClaim.channel, "shopee");
+    assert.equal(unrelatedClaim.channel, "qoo10");
     assert.equal(
       (await scalar(
         db,

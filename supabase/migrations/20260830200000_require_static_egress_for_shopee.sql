@@ -182,6 +182,20 @@ begin
   end;
   if v_old_count = 0 and v_new_count = 1 then
     null;
+  elsif v_old_count = 0
+     and v_new_count = 0
+     and position(
+       $$j.channel = 'shopee' and false and j.operation not in ($$
+       in v_definition
+     ) > 0
+     and position(
+       $$false and serverless_token.scope = 'serverless_cs'$$
+       in v_definition
+     ) > 0 then
+    -- A delayed replay may see the later, operator-verified canonical local
+    -- claimant. Its explicit Shopee routing is already stricter than this
+    -- predecessor handoff. Preserve that current definition.
+    null;
   elsif v_old_count = 1 and v_new_count = 0 then
     v_rewritten := replace(v_definition, v_old, v_new);
     if v_rewritten = v_definition or position(v_old in v_rewritten) > 0 then

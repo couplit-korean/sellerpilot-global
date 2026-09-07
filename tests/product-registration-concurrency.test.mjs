@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("one queued product does not serialize another product and confirmed channels run independently", async () => {
+test("one queued product and each final channel write remain independently executable", async () => {
   const studio = await readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8");
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");

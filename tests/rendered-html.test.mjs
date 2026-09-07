@@ -198,13 +198,15 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   assert.match(page, /MarginCalculatorPage/);
   assert.match(styles, /\.margin-workspace/);
   const marginCalculator = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
+  const marginProfiles = await readFile(new URL("../lib/pricing/channel-margin.ts", import.meta.url), "utf8");
   assert.match(marginCalculator, /8 CHANNEL COMPARISON/);
   assert.match(marginCalculator, /손익분기 판매가/);
   assert.match(marginCalculator, /목표 마진 권장 판매가/);
   assert.match(marginCalculator, /계산 결과 저장/);
-  assert.match(marginCalculator, /자동 등록 가능/);
-  assert.equal((marginCalculator.match(/key: "/g) ?? []).length, 8);
-  assert.match(marginCalculator, /key: "elevenst"/);
+  assert.match(marginCalculator, /계산 상태/);
+  assert.doesNotMatch(marginCalculator, /자동 등록 가능|자동 등록 판정/);
+  assert.equal((marginProfiles.match(/key: "/g) ?? []).length, 8);
+  assert.match(marginProfiles, /key: "elevenst"/);
   assert.match(channelConfig, /Shopee Global/);
   assert.match(channelConfig, /mark: "쿠팡"/);
   assert.match(channelConfig, /mark: "11번가"/);

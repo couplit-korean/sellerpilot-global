@@ -131,4 +131,5 @@ test("admin channel-operations only opens the Smartstore static-egress exception
   // operator recovery draft must not be a prerequisite for a clean checkout.
   assert.doesNotMatch(migration, /update\s+sellerpilot_private\.channel_gateway_jobs\b/i);
   assert.doesNotMatch(migration, /credential_refresh_in_flight\s*=/i);
+  assert.doesNotMatch(migration, /20260903150000/);
 });
