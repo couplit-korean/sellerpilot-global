@@ -142,7 +142,7 @@ function exactAssetBinding(providerImageSurface = 'detail_content') {
   };
 }
 
-function legacyReadback({ arbitraryUrl = false } = {}) {
+export function legacyReadback({ arbitraryUrl = false } = {}) {
   const remoteUrls = [
     approvedDetailUrls[0], approvedDetailUrls[2], approvedDetailUrls[1],
     ...approvedDetailUrls.slice(3),
@@ -270,7 +270,7 @@ function providerReadback(transmissionPixels) {
   };
 }
 
-async function createRepairDatabase({ providerImageSurface = 'detail_content' } = {}) {
+export async function createRepairDatabase({ providerImageSurface = 'detail_content' } = {}) {
   const db = await createDatabase();
   await db.exec(`
     alter table sellerpilot_private.channel_gateway_jobs add column started_at timestamptz;
@@ -470,7 +470,7 @@ async function createRepairDatabase({ providerImageSurface = 'detail_content' } 
   return db;
 }
 
-async function createBaseline(db, options) {
+export async function createBaseline(db, options) {
   const queued = await enqueue(db);
   const claimed = await claim(db, 'recovery');
   assert.equal(claimed.id, queued.jobId);
@@ -485,14 +485,14 @@ async function repairStatus(db) {
   )).rows[0].result;
 }
 
-async function enqueueRepair(db) {
+export async function enqueueRepair(db) {
   return (await db.query(
     'select public.sellerpilot_service_enqueue_smartstore_content_repair($1,$2) result',
     [ids.owner, ids.product],
   )).rows[0].result;
 }
 
-async function completeRepair(db, claimed, completionStatus, evidence = null, error = null) {
+export async function completeRepair(db, claimed, completionStatus, evidence = null, error = null) {
   return (await db.query(`select public.sellerpilot_complete_smartstore_content_repair(
       $1,$2,$3,$4,$5::jsonb,$6
     ) result`, [
@@ -501,14 +501,14 @@ async function completeRepair(db, claimed, completionStatus, evidence = null, er
   ])).rows[0].result;
 }
 
-async function beginMutation(db, claimed) {
+export async function beginMutation(db, claimed) {
   return (await db.query(
     'select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3) value',
     [tokenHash, claimed.id, claimed.claimToken],
   )).rows[0].value;
 }
 
-async function repairEvidence(db, baselineId) {
+export async function repairEvidence(db, baselineId) {
   const baseline = (await db.query(`select *
     from sellerpilot_private.smartstore_existing_remote_repair_baselines where id=$1`,
   [baselineId])).rows[0];
