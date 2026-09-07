@@ -16,8 +16,9 @@ import {
   type ProductSettingShot,
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
+import { resolveProductSceneProfile } from "./product-scene-profiles";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.08.28-r20-contact-mode-separated";
+export const AI_ASSET_PROMPT_VERSION = "2026.09.07-r21-product-scene-profiles";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -203,6 +204,7 @@ export function resolveProductSettingShot(result: ProductStudioResult, assetId: 
     categoryStyle.id,
     detectionText,
     resolveProductSceneIdentityText(result),
+    resolveProductSceneProfile({name: result.product.name, category: result.product.category, features: result.product.features, isHealthFunctionalFood: result.product.classification.isHealthFunctionalFood, channelCategories: result.sceneCategoryHints}),
   );
   return settingPlan[assetId as keyof typeof settingPlan];
 }
@@ -232,7 +234,7 @@ export function buildAssetImagePrompt(
   const settingShot = settingShotOverride ?? resolveProductSettingShot(result, preset.id);
   const requiredShot = categoryStyle.id === "food-supplement" && settingShot
     ? "the mandatory non-ingestion package-inspection, classification-review or storage setting above; do not show a serving, dosage, tablet/capsule, water glass, mouth, hand-to-mouth action or body"
-    : assetShot(categoryStyle.shotList, preset.id);
+    : settingShot?.sceneProfile?.evidenceFocus ?? assetShot(categoryStyle.shotList, preset.id);
   const seriesRoleManifest = aiGeneratedAssetSpecs
     .map((asset) => `${asset.id}=${asset.shotClass} | purpose=${asset.purpose} | placement=${asset.subjectPlacement}`)
     .join(" || ");
@@ -259,6 +261,19 @@ export function buildAssetImagePrompt(
           `장면 분리키=${safeContract?.location.key ?? settingShot.separation.location}/${safeContract?.moment.key ?? settingShot.separation.moment}/${safeContract?.surface.key ?? settingShot.separation.surface}/${safeContract?.camera.key ?? settingShot.separation.camera}`,
         ].join(" · ")
       : "factual neutral commercial architecture appropriate to the broad category";
+    if (settingShot?.sceneProfile) return [
+      "Use the built-in image_gen tool to generate only an empty background plate with photographic lighting and material.",
+      `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}; Series slot: ${preset.id}; target aspect ratio ${preset.ratio}.`,
+      settingShot.sceneProfile.brief,
+      `Restrained background palette: ${result.design.palette.surface}, ${result.design.palette.accent}; keep the source product colors unchanged.`,
+      `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Assigned non-saleable backdrop cue: ${safeContract?.prop.description}.`,
+      `Scene mode: ${settingShot.sceneProfile.mode}. Product-editorial means a real support plane and a restrained package-led backdrop; no room is required. Contextual means the assigned local preparation area, with the product remaining dominant. Never force eight different rooms.`,
+      `IMMUTABLE PRODUCT-ZONE CONTRACT: reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}; keep this rectangle quiet and unobstructed. Never move, resize, crop or reinterpret this exact rectangle during a retry. Keep busy or high-contrast junctions outside its complete interior. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone. ${contactInstruction}`,
+      `HARD IDENTITY FIREWALL: no product, package, pouch, bottle, label, logo, barcode, certification, printed text, hand, person, contents, ingredients, serving or saleable prop. The verified source pixels are composited afterward; never redraw them or generate a stand-in silhouette or shadow.`,
+      "Keep genuine photographic support depth and a coherent brand palette across the series. Distinguish each shot by information purpose, composition, negative space and light. Do not change to an unrelated room or material merely to satisfy a slot count.",
+      noveltyGuidance,
+      `Save the generated PNG to ${outputPath}.`,
+    ].filter(Boolean).join("\n");
     return [
       "설치된 codex-image 스킬의 규칙을 사용하고 반드시 내장 image_gen 도구로 배경 이미지만 제작하세요.",
       `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}`,
@@ -296,28 +311,28 @@ export function buildAssetImagePrompt(
     `Master art direction: ${creativeStrategy.artDirection}`,
     `Conversion decision this series must clarify: ${creativeStrategy.purchaseDecision}`,
     `Information purpose: ${preset.purpose}`,
-    `Hard shot class: ${preset.shotClass}. Do not satisfy this slot with another shot class.`,
+    `Hard shot class: ${settingShot?.sceneProfile ? settingShot.label : preset.shotClass}. Preserve this information purpose.`,
     `Series slot: ${preset.id}. This slot must have a recognizably different camera, crop, setting and purchase-information purpose from the other fifteen slots.`,
     `Series role manifest (all sixteen are mutually exclusive): ${seriesRoleManifest}`,
     `Hard role-separation opponents for this slot: ${mustDifferFrom}. If the draft could plausibly be labeled as any of these slots, reject and regenerate it.`,
-    "Uniqueness contract: no SellerPilot output may reuse another slot's camera position, crop, background layout, prop arrangement or subject placement. A merely recolored or lightly reframed version counts as a duplicate and must not be produced.",
-    "Series setting-shot contract: hero and square are the only catalog-background shots. Portrait, wide, detail-overview, detail-use, detail-routine, detail-scale, detail-storage and detail-context are eight mandatory real-world setting shots, each in a different physical location, time/use moment, surface material, prop set, subject placement and camera family. A colored wall, geometric panel, gradient or pedestal is not a setting shot.",
+    "Uniqueness contract: reject visually duplicated compositions and lightly reframed copies. Coherent product color and verified source identity must remain shared across the series.",
+    settingShot?.sceneProfile ? `Product-specific scene contract: ${settingShot.sceneProfile.brief} Scene mode=${settingShot.sceneProfile.mode}. A photographic product-led set is valid; do not force different rooms or unrelated props across the series.` : "Series setting-shot contract: inspection and catalog assets remain factual views without invented lifestyle content.",
     `Input references in order: ${referenceRoles}. Image 1 anchors product identity; later images are factual views for shape, label, material and package verification, not separate products.`,
-    `Scene/backdrop: ${preset.scene}. Use ${result.design.palette.surface} and ${result.design.palette.accent} only as restrained palette guidance, not as the same repeated studio set.`,
+    `Scene/backdrop: ${settingShot?.sceneProfile ? settingShot.location : preset.scene}. Use ${result.design.palette.surface} and ${result.design.palette.accent} as restrained palette guidance.`,
     settingShot ? `Mandatory product-specific setting: ${formatProductSettingShot(settingShot)}` : "Inspection-shot assignment: keep this factual catalog, macro, form, contents, care or package view free from lifestyle staging so it cannot duplicate the eight setting shots.",
-    settingShot ? "Setting-shot validity: every 장면 분리키 dimension is a hard semantic boundary, not a naming hint. The assigned place and use moment must be immediately recognizable without text through at least two physical environmental cues. Reserve roughly 30–45% of the frame for readable spatial context while keeping the real product dominant. Do not replace it with an abstract commercial background, colored blocks, a seamless sweep or a generic pedestal." : "",
+    settingShot?.sceneProfile ? "Setting-shot validity: the product dominates. Use the assigned photographic backdrop, preserve source identity, and distinguish the role's purpose and composition. Package-led scenes do not require architecture." : "",
     `Subject: ${result.product.name}; preserve package shape, label, logo, printed information, color, count and included items exactly as visible.`,
     labelFidelityContract(preset.id),
-    `Composition/framing: ${preset.composition}; target aspect ratio ${preset.ratio}.`,
+    `Composition/framing: ${settingShot?.sceneProfile ? settingShot.staging : preset.composition}; target aspect ratio ${preset.ratio}.`,
     `Required subject placement: ${preset.subjectPlacement}.`,
-    `Camera: ${preset.camera}.`,
+    `Camera: ${settingShot?.sceneProfile ? settingShot.camera : preset.camera}.`,
     `Category direction: ${categoryStyle.thumbnailStyle}`,
     `Required shot for this slot: ${requiredShot}.`,
     storyboardSection ? `This detail image answers one buyer question only: ${storyboardSection.buyerQuestion}` : "",
     storyboardSection ? `Evidence boundary: ${storyboardSection.evidence}` : "",
     storyboardSection ? `Product-specific visual storyboard: ${storyboardSection.visualDirection}` : "",
     storyboardSection ? `Page layout destination: ${storyboardSection.layout}. Compose intentional safe space and subject placement for that layout without rendering text.` : "",
-    `Series differentiation: ${seriesExclusion(preset.id)}`,
+    `Series differentiation: ${settingShot?.sceneProfile ? "use the assigned role purpose, composition and lighting while retaining product context" : seriesExclusion(preset.id)}`,
     noveltyGuidance,
     `Marketplace adaptation references: ${channelVisuals}`,
     "Image SEO intent: make the product type, silhouette, material, count and use context visually unambiguous so the same factual master can receive accurate locale-specific alt text. Do not render SEO keywords as visible text.",
@@ -325,7 +340,7 @@ export function buildAssetImagePrompt(
     "Lighting/mood: commercially realistic lighting appropriate to this specific shot; crisp product identity and believable contact shadows.",
     "Constraints: the product must be the obvious dominant subject; every prop must explain this product's verified use, scale, material or storage and must be removed if merely decorative; no invented ingredients, certification, barcode, quantity, accessories, package text or extra product; no dosage, frequency, duration, health-function or before-and-after implication unless the supplied evidence explicitly verifies it; no watermark; no floating copy; no decorative text.",
     "Avoid: distant product, tiny subject, scenic landscape dominating the frame, illegible altered label, duplicate product, cropped package, busy props, people or hands unless a supplied reference proves them, and logos not present in the reference.",
-    settingShot ? "Mandatory self-QA before finishing: inspect the generated PNG. If the assigned physical place is not instantly identifiable, if it looks like a studio background, or if its location/time/surface/props/product-position/camera could be confused with another SellerPilot setting slot, regenerate it before saving the final file." : "Mandatory role self-QA before finishing: inspect the generated PNG against the full series role manifest. If its crop, camera, subject placement or information purpose fits another slot, regenerate it before saving.",
+    settingShot ? "Mandatory self-QA before finishing: inspect the PNG for source fidelity, the assigned product scene profile, visible product dominance, physical support and a distinct role composition. A product-editorial set is allowed. Reject unrelated environments, invented contents and near-duplicate framing." : "Mandatory role self-QA before finishing: inspect the generated PNG against the full series role manifest. If its crop, camera, subject placement or information purpose fits another slot, regenerate it before saving.",
     `생성 결과 PNG를 정확히 ${outputPath} 경로에 저장하세요. Python·SVG·Canvas로 대체 이미지를 만들지 마세요.`,
   ].filter(Boolean).join("\n");
 }

@@ -1,3 +1,5 @@
+import { buildProfileSettingShotPlan, buildProfileSettingRetry } from "./profile-setting-shots";
+import type { SceneProfileSelection } from "./product-scene-profiles";
 import {
   resolveProductPlacementVariant,
   resolveProductSceneVariantCode,
@@ -21,6 +23,10 @@ export type SettingShotDimension = (typeof settingShotDimensions)[number];
 export type SettingShotSeparation = Record<SettingShotDimension, string>;
 
 export type ProductSettingShot = {
+  sceneProfile?: {
+    id: string; label: string; mode: "product-editorial" | "contextual";
+    brief: string; selectionReason: string; forbiddenContexts: string; evidenceFocus: string;
+  };
   label: string;
   location: string;
   moment: string;
@@ -278,6 +284,7 @@ export function buildSettingShotRetryVariant(
   contactMode: "surface-supported" | "suspended-or-planar" = "surface-supported",
 ) {
   const boundedRetry = boundedSettingShotRetry(retry);
+  if (setting.sceneProfile) return buildProfileSettingRetry(setting, assetId, boundedRetry);
   const profile = settingShotRetryProfiles[boundedRetry - 1];
   const retryMoment = retryMomentsByAsset[assetId][boundedRetry - 1];
   const isSuspended = contactMode === "suspended-or-planar";
@@ -322,6 +329,14 @@ export function buildSettingShotRetryGuidance(
   contactMode: "surface-supported" | "suspended-or-planar" = "surface-supported",
 ) {
   const boundedRetry = boundedSettingShotRetry(retry);
+  if (settingVariant.sceneProfile) return [
+    `Product-specific retry ${boundedRetry} for ${assetId}; retain ${settingVariant.sceneProfile.id} and ${settingVariant.sceneProfile.mode}.`,
+    settingVariant.sceneProfile.brief,
+    `Correct rejected dimensions: ${(auditFeedback?.failedDimensions ?? []).join(", ")}. Avoid rejected layouts: ${conflictingAssetIds.join(", ")}.`,
+    formatProductSettingShot(settingVariant),
+    contactMode === "surface-supported" ? `Keep the original reserved rectangle fixed and render one horizontal support boundary at its nominal bottom. ${nominalSupportContactInstruction}` : "Preserve one unobstructed backing plane and the fixed source silhouette; do not invent a support surface.",
+    "Never replace a product-editorial set with a room or invent merchandise, labels, contents, props or people. Recheck identity, contact geometry and visual duplication.",
+  ].join("\n");
   const profile = settingShotRetryProfiles[boundedRetry - 1];
   const screenSpaceTopology = contactMode === "suspended-or-planar"
     ? suspendedRetryLocations[boundedRetry - 1]
@@ -851,7 +866,11 @@ export function buildProductSettingShotPlan(
   categoryId: string,
   detectionText: string,
   sceneIdentityText = detectionText,
+  profileSelection?: SceneProfileSelection,
 ): ProductSettingShotPlan {
+  // Runtime callers supply a semantic profile. Keep the three-argument legacy
+  // planner for old persisted workflows; it is not the current generation route.
+  if (profileSelection) return assertDistinctSettingShotPlan(buildProfileSettingShotPlan(profileSelection, sceneIdentityText), profileSelection.profile.id);
   if (categoryId === "food-staples") {
     if (/시리얼|cereal|오트밀|oatmeal|granola|그래놀라/i.test(detectionText)) {
       return applyProductSpecificSceneVariation(

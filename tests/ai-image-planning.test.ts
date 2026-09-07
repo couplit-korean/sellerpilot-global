@@ -94,9 +94,9 @@ test("the sixteen assets keep twelve mutually distinct detail roles and claim-sc
   assert.ok(prompts.every((prompt) => prompt.includes(AI_ASSET_PROMPT_VERSION)));
   assert.ok(prompts.every((prompt) => prompt.includes("all sixteen are mutually exclusive")));
   assert.ok(prompts.every((prompt) => prompt.includes("Label fidelity:")));
-  assert.match(prompts[0], /high rear overview camera/);
+  assert.match(prompts[0], /정면 전체 형태가 선명한 세로 구성/);
   assert.match(prompts[1], /direct crop from the verified source view/);
-  assert.match(prompts[2], /table-level camera/);
+  assert.match(prompts[2], /상품 높이의 준비 공간 중경/);
   assert.match(prompts[3], /direct crop from the selected supplied evidence view/);
   assert.ok(prompts.every((prompt) => prompt.includes("중립적인 상업 사진")), "unknown categories must not fall back to skincare styling");
   const hero = aiGeneratedAssetSpecs[0];
@@ -110,7 +110,8 @@ test("food use imagery selects a preparation or use shot instead of package quan
   const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-use");
   assert.ok(preset);
   const prompt = buildAssetImagePrompt(foodResult, "/tmp/detail-use.png", preset, ["main", "front"]);
-  assert.match(prompt, /Required shot for this slot: 조리 완성/);
+  assert.match(prompt, /Required shot for this slot: 포장·곡물 표시·구성량/);
+  assert.match(prompt, /사용 준비 맥락/);
   assert.doesNotMatch(prompt, /Required shot for this slot: 구성 수량/);
 });
 
@@ -151,11 +152,11 @@ test("structured food classification wins over cream-like flavor copy while true
     ...result,
     product: { ...result.product, category: "Drinkware", name: "Coffee mug", features: ["Coffee cup handle"] },
   }).id, "general-commerce", "a non-empty unknown taxonomy must not fall through to food keywords");
-  assert.match(resolveProductSettingShot(creamSnack, "portrait")?.location ?? "", /식료품|키친/);
+  assert.match(resolveProductSettingShot(creamSnack, "portrait")?.location ?? "", /과자·쿠키·크래커 제품 촬영용/);
   assert.doesNotMatch(resolveProductSettingShot(creamSnack, "portrait")?.location ?? "", /욕실|화장대/);
 });
 
-test("cereal generation assigns eight recognizably different real setting shots", () => {
+test("cereal generation assigns product-led shots and relevant breakfast context without eight forced rooms", () => {
   const cerealResult = { ...result, product: { ...result.product, category: "식품", name: "첵스초코 초코 시리얼" } };
   const prompts = settingShotAssetIds.map((assetId) => {
     const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId);
@@ -165,19 +166,13 @@ test("cereal generation assigns eight recognizably different real setting shots"
   const assignments = prompts.map((prompt) => prompt.match(/^Mandatory product-specific setting: (.+)$/m)?.[1] ?? "");
   assert.equal(new Set(assignments).size, 8);
   assert.ok(assignments.every(Boolean));
-  assert.match(assignments[0], /아침 식탁/);
-  assert.match(assignments[1], /주방.*조리대/);
-  assert.match(assignments[2], /팬트리/);
-  assert.match(assignments[3], /거실 소파/);
-  assert.match(assignments[3], /창문·주방·다이닝 가구가 보이지 않는/);
-  assert.match(assignments[3], /저녁/);
-  assert.match(assignments[4], /현관.*준비 콘솔/);
-  assert.match(assignments[5], /독립형 아일랜드/);
-  assert.match(assignments[6], /서랍형 건식 식품 수납장/);
-  assert.match(assignments[7], /홈오피스 창가 벽감/);
-  assert.ok(prompts.every((prompt) => prompt.includes("A colored wall, geometric panel, gradient or pedestal is not a setting shot.")));
+  assert.match(assignments[0], /제품 촬영용 평면 세트/);
+  assert.match(assignments[3], /아침 식사 준비용 테이블/);
+  assert.match(assignments[4], /일상 준비 맥락/);
+  assert.match(assignments[6], /보관 전 포장 확인/);
+  assert.ok(assignments.every((assignment) => !/팬트리|거실 소파|현관|홈오피스/.test(assignment)));
   assert.ok(prompts.every((prompt) => prompt.includes("Mandatory self-QA before finishing:")));
-  assert.ok(prompts.every((prompt) => prompt.includes("30–45% of the frame")));
+  assert.ok(prompts.every((prompt) => prompt.includes("the product dominates")));
 });
 
 test("all nine production product groups receive eight distinct six-dimensional setting-shot contracts", () => {
@@ -260,7 +255,7 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     assert.ok(setting);
     const contract = resolveProductIdentityBackgroundContract(setting, assetId);
     assert.ok(contract);
-    assert.match(contract.location.description, /empty fixed architectural envelope/);
+    assert.match(contract.location.description, /PRODUCT-PROFILE CONTRACT/);
     const prompt = buildAssetImagePrompt(cerealResult, `/tmp/${assetId}.png`, preset, [], "", "identity-background");
     assert.match(prompt, /HARD IDENTITY FIREWALL/);
     assert.match(prompt, /generate only an empty background plate/);
@@ -268,15 +263,14 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     assert.match(prompt, /tolerance band is only the audit search range/);
     assert.match(prompt, /after normalizing the plate to 256-by-256, the final horizontal support gradient-ridge centre must land within 2 sampled pixels of nominal y=/);
     assert.match(prompt, /assigned support material must continue below the ridge/);
-    assert.match(prompt, /OUTER-BAND ARCHITECTURE GATE/);
-    assert.match(prompt, /at least two non-collinear bands/);
-    assert.match(prompt, /A blank wall extending materially outside the rectangle/);
-    assert.match(prompt, /Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint/);
+    assert.doesNotMatch(prompt, /OUTER-BAND ARCHITECTURE GATE/);
+    assert.match(prompt, /no room is required/);
+    assert.match(prompt, /never redraw them or generate a stand-in silhouette or shadow/);
     assert.doesNotMatch(prompt, /첵스초코/);
   }
 });
 
-test("trusted contact mode keeps packages surface-supported while hung garments stay planar", () => {
+test("trusted contact mode keeps neutral garment inspection surface-supported and explicit wall-mounted products planar", () => {
   const foodResult = {
     ...result,
     product: { ...result.product, category: "일반식품", name: "롯샌 파스퇴르 순우유맛 315 g", features: ["6봉 포장"] },
@@ -293,13 +287,13 @@ test("trusted contact mode keeps packages surface-supported while hung garments 
   const menPortrait = resolveProductSettingShot(menResult, "portrait");
   const menWide = resolveProductSettingShot(menResult, "wide");
   assert.equal(resolveIdentityBackgroundContactMode(foodResult, foodWide), "surface-supported");
-  assert.equal(resolveIdentityBackgroundContactMode(menResult, menPortrait), "suspended-or-planar");
+  assert.equal(resolveIdentityBackgroundContactMode(menResult, menPortrait), "surface-supported");
   assert.equal(resolveIdentityBackgroundContactMode(menResult, menWide), "surface-supported");
   assert.equal(resolveIdentityBackgroundContactMode(wallMountedResult, resolveProductSettingShot(wallMountedResult, "portrait")), "suspended-or-planar");
 
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);
-  const garmentPrompt = buildAssetImagePrompt(menResult, "/tmp/garment.png", portrait, [], "", "identity-background", menPortrait ?? undefined);
+  const garmentPrompt = buildAssetImagePrompt(wallMountedResult, "/tmp/garment.png", portrait, [], "", "identity-background");
   assert.match(garmentPrompt, /trusted slot uses suspended-or-planar placement/);
   assert.match(garmentPrompt, /Do not force or invent a tabletop, shelf, pedestal or bottom contact line/);
   assert.doesNotMatch(garmentPrompt, /authoritative product contact line/);
@@ -331,25 +325,24 @@ test("statutory-package products use a background-only identity firewall", () =>
   const prompt = buildAssetImagePrompt(foodResult, "/tmp/background.png", preset, [], "", "identity-background");
   assert.match(prompt, /HARD IDENTITY FIREWALL/);
   assert.match(prompt, /generate only an empty background plate/);
-  assert.match(prompt, /real product will be composited afterward from a verified transparent source-pixel cutout/);
-  assert.match(prompt, /Mandatory empty-environment assignment:.*키친 아일랜드/);
-  assert.match(prompt, /fixed architecture, built-in surfaces, natural light direction and spatial depth/);
+  assert.match(prompt, /verified source pixels are composited afterward/);
+  assert.match(prompt, /Mandatory empty-environment assignment:.*food-snack/);
+  assert.match(prompt, /photographic support depth/);
   const setting = resolveProductSettingShot(foodResult, "portrait");
   assert.ok(setting);
   const contract = resolveProductIdentityBackgroundContract(setting, "portrait");
   assert.ok(contract);
-  assert.ok(prompt.includes(`Slot-specific non-merchandise environmental cue (${contract.prop.key}): ${contract.prop.description}`));
+  assert.ok(prompt.includes(`Assigned non-saleable backdrop cue: ${contract.prop.description}`));
   const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(foodResult));
   assert.notDeepEqual(placement, preset.identityPolicy.placement);
   assert.match(prompt, new RegExp(`reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}`));
   assert.match(prompt, /IMMUTABLE PRODUCT-ZONE CONTRACT/);
   assert.match(prompt, /Never move, resize, crop or reinterpret this exact rectangle during a retry/);
-  assert.match(prompt, /mandatory slot-specific fixed cue, fixtures, dominant shadows and busy or high-contrast room-recognition junctions outside its complete interior/);
+  assert.match(prompt, /busy or high-contrast junctions outside its complete interior/);
   assert.match(prompt, /broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone/);
-  assert.match(prompt, /OUTER-BAND ARCHITECTURE GATE/);
-  assert.match(prompt, /intentional quiet rectangle may occupy most of the pre-composite frame/);
-  assert.match(prompt, /one left\/right side band and one top\/bottom band/);
-  assert.match(prompt, /Deliberately omit every retail product, small saleable prop/);
+  assert.doesNotMatch(prompt, /OUTER-BAND ARCHITECTURE GATE/);
+  assert.match(prompt, /no room is required/);
+  assert.match(prompt, /no product, package/);
   assert.doesNotMatch(prompt, /투명 시리얼 볼과 접힌 흰 리넨/);
   assert.doesNotMatch(prompt, /롯데 과자/);
   assert.doesNotMatch(prompt, /Input references in order/);

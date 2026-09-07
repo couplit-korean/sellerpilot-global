@@ -1,3 +1,4 @@
+import type { SceneCategoryHint } from "../lib/product-scene-profiles";
 export type StudioMode = "cli";
 
 export type DetailImageAsset =
@@ -62,6 +63,8 @@ export type LocalizedListing = {
 };
 
 export type ProductStudioResult = {
+  /** Optional caller-supplied category names/paths; never model-generated category IDs. */
+  sceneCategoryHints?: SceneCategoryHint[];
   mode: StudioMode;
   product: {
     name: string;
