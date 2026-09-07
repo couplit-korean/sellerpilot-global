@@ -36,8 +36,10 @@ function sha256(value) {
 }
 
 function remoteImages() {
-  return Array.from({ length: 8 }, (_, index) =>
-    `https://image.coupangcdn.com/image/vendor_inventory/7f${index}/detail-${index + 1}.jpg`);
+  return Array.from({ length: 8 }, (_, index) => {
+    const digest = String(index + 1).repeat(64);
+    return `vendor_inventory/${digest.slice(0, 4)}/${digest.slice(4)}.jpg`;
+  });
 }
 
 function imageContents(images) {
@@ -558,7 +560,7 @@ test("migration pins the capture artifact and cannot create positive evidence or
   assert.match(migration, /source_price = 3190/);
   assert.match(migration, /observed_price = 6000/);
   assert.match(migration, /source_images <> captured_images/);
-  assert.match(migration, /\/vendor_inventory\//);
+  assert.match(migration, /\^vendor_inventory\//);
   assert.doesNotMatch(
     migration,
     /insert\s+into\s+sellerpilot_private\.(?:coupang_exact_live_verify_receipts|gateway_completion_receipts)/iu,

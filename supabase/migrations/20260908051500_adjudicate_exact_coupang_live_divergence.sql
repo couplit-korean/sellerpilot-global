@@ -852,7 +852,8 @@ begin
      or (select count(distinct image#>>'{}') from jsonb_array_elements(source_images) image) <> 8
      or exists (
        select 1 from jsonb_array_elements_text(source_images) image
-        where pg_catalog.strpos(image, '/vendor_inventory/') = 0
+        where image !~
+          '^vendor_inventory/[0-9a-f]{4}/[0-9a-f]{60}[.]jpg$'
      )
      or exists (
        select 1 from sellerpilot_private.coupang_exact_live_verify_receipts receipt
