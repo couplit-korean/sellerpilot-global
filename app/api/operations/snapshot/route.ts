@@ -4,6 +4,8 @@ import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../lib/admin-api";
 import { sellerSafeAiJobFailure } from "../../../../lib/ai-worker-error-safety";
 import { activeChannelKeys } from "../../../../lib/channels/catalog";
+import { MARGIN_ENGINE_VERSION } from "../../../../lib/pricing/margin-engine";
+import { verifyMarginScenarioForSave } from "../../../../lib/pricing/margin-save";
 import {
   latestMarginScenarioLimit,
   recentMarginScenarioLimit,
@@ -15,6 +17,31 @@ import { reconcileRegistrationDashboardMetrics } from "../../../../lib/registrat
 export const runtime = "nodejs";
 
 const activeSalesChannels = new Set<string>(activeChannelKeys);
+const marginAmount = z.number().finite().min(0).max(999_999_999_999);
+const marginRate = z.number().finite().min(0).max(99.99);
+const marginInputsSchema = z.object({
+  sellingPrice: marginAmount.positive(),
+  plannedSellingPriceKrw: marginAmount.positive(),
+  localSellingPrice: marginAmount.positive().nullable(),
+  localPriceIncrement: z.number().finite().positive().max(10_000),
+  marketReferencePrice: marginAmount.positive().nullable(),
+  purchaseCost: marginAmount,
+  internationalShipping: marginAmount,
+  localShipping: marginAmount,
+  fulfillmentCost: marginAmount,
+  fixedCost: marginAmount,
+  platformFee: marginRate.nullable(),
+  paymentFee: marginRate,
+  taxRate: marginRate,
+  adRate: marginRate,
+  reserveRate: marginRate,
+  targetMargin: marginRate,
+  productId: z.string().uuid(),
+  currency: z.enum(["JPY", "SGD", "MYR", "KRW", "USD"]),
+  rateToKrw: z.number().finite().positive().max(10_000_000).nullable(),
+  rateBasis: z.string().trim().min(1).max(500),
+  engineVersion: z.literal(MARGIN_ENGINE_VERSION),
+}).strict();
 
 function imageVersionForPath(path: string) {
   return createHash("sha256").update(path).digest("hex").slice(0, 20);
@@ -37,7 +64,7 @@ const mutationSchema = z.discriminatedUnion("action", [
     action: z.literal("margin_save"),
     name: z.string().trim().min(1).max(120),
     channelKey: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
-    inputs: z.record(z.string(), z.unknown()),
+    inputs: marginInputsSchema,
     result: z.record(z.string(), z.unknown()),
   }),
   z.object({
@@ -230,11 +257,47 @@ export async function POST(request: Request) {
     });
     mutationError = error ?? (data === true ? null : { message: "ticket not found" });
   } else if (parsed.data.action === "margin_save") {
+    const {
+      currency,
+      rateToKrw,
+      rateBasis,
+      engineVersion,
+      productId,
+      plannedSellingPriceKrw,
+      localSellingPrice,
+      localPriceIncrement,
+      ...engineInput
+    } = parsed.data.inputs;
+    const verification = verifyMarginScenarioForSave({
+      channelKey: parsed.data.channelKey,
+      engineInput,
+      plannedSellingPriceKrw,
+      localSellingPrice,
+      localPriceIncrement,
+      currency,
+      rateToKrw,
+      suppliedResult: parsed.data.result,
+    });
+    if (!verification.ok) {
+      return NextResponse.json({ message: "수수료·환율·목표 마진 계산 기준을 확인해 주세요." }, { status: 400 });
+    }
+    const verifiedInputs = {
+      ...engineInput,
+      productId,
+      plannedSellingPriceKrw,
+      localSellingPrice,
+      localPriceIncrement,
+      currency,
+      rateToKrw,
+      rateBasis,
+      engineVersion,
+    };
+    const verifiedResult = { ...verification.result, calculatedAt: new Date().toISOString() };
     const { data, error } = await admin.userClient.rpc("sellerpilot_save_margin_scenario", {
       p_name: parsed.data.name,
       p_channel_key: parsed.data.channelKey,
-      p_inputs: parsed.data.inputs,
-      p_result: parsed.data.result,
+      p_inputs: verifiedInputs,
+      p_result: verifiedResult,
     });
     id = typeof data === "string" ? data : null;
     mutationError = error;
