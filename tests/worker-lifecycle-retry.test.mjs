@@ -150,7 +150,7 @@ test("worker uses lifecycle retry for heartbeat and both completion endpoints", 
   assert.match(source, /\[원본 픽셀 보호 재시도\] mode=\$\{retryMode\} attempt=\$\{attempt\}/);
   assert.match(source, /const aiOnly = process\.argv\.includes\("--ai-only"\)/);
   assert.match(source, /const gatewayWorkerToken = aiOnly \? "" : loadWorkerToken/);
-  assert.match(source, /const schedulerWorkerToken = aiOnly \? "" : loadWorkerToken/);
+  assert.match(source, /const schedulerWorkerToken = \(aiOnly \|\| localRecoveryOnly\) \? "" : loadWorkerToken/);
   assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
   assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
   assert.match(source, /stage: "studio-master-repair"/);
