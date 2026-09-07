@@ -104,7 +104,11 @@ async function database({ gateOpen = false } = {}) {
       approved_by uuid not null,
       approved_at timestamptz not null,
       expires_at timestamptz not null,
-      enabled boolean not null
+      enabled boolean not null,
+      check (
+        expires_at > approved_at
+        and expires_at <= approved_at + interval '90 days'
+      )
     );
     create unique index local_channel_executor_one_active_route_idx
       on sellerpilot_private.local_channel_executor_routes(
@@ -259,8 +263,12 @@ async function database({ gateOpen = false } = {}) {
     await db.query(
       `insert into sellerpilot_private.local_channel_executor_routes values(
         $1,$2,'coupang',$3,$4,$5,$6,$7,$8,$9,
-        clock_timestamp()-interval '1 hour',
-        clock_timestamp()+interval '1 day',true
+        clock_timestamp()-interval '2 days',
+        case
+          when $3 in ('categories.attributes','categories.validate')
+            then clock_timestamp()-interval '1 hour'
+          else clock_timestamp()+interval '3 hours'
+        end,true
       )`,
       [routeId, id.owner, operation, id.credential, sellerKey, id.worker,
         priorRelease, egress, id.credentialOwner],
@@ -298,9 +306,10 @@ async function database({ gateOpen = false } = {}) {
   return db;
 }
 
-function withoutRelease(row) {
+function withoutRelease(row, { allowExpiry = false } = {}) {
   const clone = { ...row };
   delete clone.release_sha;
+  if (allowExpiry) delete clone.expires_at;
   return clone;
 }
 
@@ -313,7 +322,7 @@ async function routeIsCurrent(db, operation) {
     workerVersion]);
 }
 
-test("migration is a three-route release-only rotation with no production call", () => {
+test("migration changes only three releases and two expired read expiries", () => {
   assert.match(migration, /fd27ffd0-59d3-45af-9315-e435a14d27cb/u);
   assert.match(migration, /01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8/u);
   assert.match(migration, /73e07b05-b3bd-47e4-be92-062d537150e9/u);
@@ -321,6 +330,8 @@ test("migration is a three-route release-only rotation with no production call",
   assert.match(migration, /a81b2c7981ce4d8d2ebd996864f39d501749a484/u);
   assert.match(migration, /77f970877f755910321c882f379e8b406d552502/u);
   assert.match(migration, /set release_sha = 'f0b9af0/u);
+  assert.match(migration,
+    /expires_at = case[\s\S]*greatest\(route\.expires_at, read_routes_refreshed_until\)/u);
   assert.match(migration, /COUPANG_EXACT_ROUTE_F0_PREIMAGE_DRIFT/u);
   assert.match(migration, /prior_release_by_route/u);
   assert.match(migration, /gate_effective_at_rotation/u);
@@ -333,7 +344,7 @@ test("migration is a three-route release-only rotation with no production call",
     /sellerpilot_service_(?:enqueue|set_listing_channel_mutation_release_gate)/u);
 });
 
-test("closed-gate rotation changes only release SHA and write becomes current only after gate open", async () => {
+test("closed-gate rotation renews only expired reads and gates write current", async () => {
   const db = await database();
   try {
     const routesBefore = await snapshot(
@@ -348,6 +359,7 @@ test("closed-gate rotation changes only release SHA and write becomes current on
     const workerBefore = await snapshot(
       db, "sellerpilot_private.ai_cli_worker_tokens", "id",
     );
+    const beforeApplyMs = Date.now();
 
     await db.exec(migration);
 
@@ -358,7 +370,11 @@ test("closed-gate rotation changes only release SHA and write becomes current on
     for (let index = 0; index < routesBefore.length; index += 1) {
       const before = routesBefore[index];
       const after = routesAfter[index];
-      assert.deepEqual(withoutRelease(after), withoutRelease(before));
+      const isReadTarget = [id.attributes, id.validate].includes(before.id);
+      assert.deepEqual(
+        withoutRelease(after, { allowExpiry: isReadTarget }),
+        withoutRelease(before, { allowExpiry: isReadTarget }),
+      );
       assert.equal(
         exactRoutes.some(([routeId]) => routeId === before.id)
           ? after.release_sha
@@ -367,7 +383,19 @@ test("closed-gate rotation changes only release SHA and write becomes current on
           ? release
           : before.release_sha,
       );
+      if (isReadTarget) {
+        assert.ok(new Date(before.expires_at).getTime() < beforeApplyMs);
+        assert.ok(new Date(after.expires_at).getTime() >= beforeApplyMs + 59 * 60_000);
+        assert.ok(new Date(after.expires_at).getTime() <= Date.now() + 61 * 60_000);
+      }
     }
+    const attributesAfter = routesAfter.find((route) => route.id === id.attributes);
+    const validateAfter = routesAfter.find((route) => route.id === id.validate);
+    const createBefore = routesBefore.find((route) => route.id === id.create);
+    const createAfter = routesAfter.find((route) => route.id === id.create);
+    assert.equal(attributesAfter.expires_at, validateAfter.expires_at);
+    assert.equal(createAfter.expires_at, createBefore.expires_at);
+    assert.equal(createAfter.approved_at, createBefore.approved_at);
     const disabledBefore = routesBefore.find(
       (route) => route.id === id.disabledCreate,
     );
@@ -396,10 +424,15 @@ test("closed-gate rotation changes only release SHA and write becomes current on
       select prior_release_by_route,active_release_sha,worker_token_id,
              egress_ip_sha256,gate_effective_at_rotation,
              provider_mutation_performed,contract,
+             rotated_at,read_routes_refreshed_until,
              jsonb_array_length(prior_routes) prior_count,
              jsonb_array_length(rotated_routes) rotated_count
         from sellerpilot_private.coupang_exact_route_f0_rotations
     `)).rows[0];
+    const rotatedAt = receipt.rotated_at;
+    const readRoutesRefreshedUntil = receipt.read_routes_refreshed_until;
+    delete receipt.rotated_at;
+    delete receipt.read_routes_refreshed_until;
     assert.deepEqual(receipt, {
       prior_release_by_route: {
         [id.attributes]: readPriorRelease,
@@ -415,6 +448,10 @@ test("closed-gate rotation changes only release SHA and write becomes current on
       prior_count: 3,
       rotated_count: 3,
     });
+    assert.equal(
+      new Date(readRoutesRefreshedUntil).getTime() - new Date(rotatedAt).getTime(),
+      60 * 60_000,
+    );
 
     await assert.rejects(
       db.exec("update sellerpilot_private.coupang_exact_route_f0_rotations set rotated_at=clock_timestamp()"),
@@ -457,6 +494,7 @@ test("runtime, worker, route identity, prior release, and drain drift fail close
     ["owner", `update sellerpilot_private.local_channel_executor_routes set owner_id='${id.credentialOwner}' where id='${id.attributes}'`, /PREIMAGE_DRIFT/u],
     ["release", `update sellerpilot_private.local_channel_executor_routes set release_sha='${release}' where id='${id.validate}'`, /PREIMAGE_DRIFT/u],
     ["disabled predecessor", `update sellerpilot_private.local_channel_executor_routes set release_sha='${writePriorRelease}' where id='${id.disabledCreate}'`, /PREIMAGE_DRIFT/u],
+    ["approval ceiling", `update sellerpilot_private.local_channel_executor_routes set approved_at=clock_timestamp()-interval '90 days' where id='${id.attributes}'`, /APPROVAL_WINDOW_DRIFT/u],
     ["drain", `insert into sellerpilot_private.channel_gateway_jobs values('${id.runningJob}','coupang','categories.validate','running','${id.worker}','{}')`, /WORKER_NOT_DRAINED/u],
   ];
   for (const [name, mutation, error] of cases) {

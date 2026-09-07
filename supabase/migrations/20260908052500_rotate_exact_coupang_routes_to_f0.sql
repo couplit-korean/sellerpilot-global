@@ -2,7 +2,8 @@
 -- their exact observed releases to f0b9af0. The runtime and worker must already
 -- be on f0b9af0. The disabled predecessor listing.create route is preserved.
 -- This migration does not open the Coupang mutation gate or touch any job,
--- listing, credential, worker, seller, egress, approval, or expiry value.
+-- listing, credential, worker, seller, egress, or approval value. It renews
+-- only the two expired read-route expiries for one hour from this transaction.
 
 begin;
 
@@ -20,6 +21,7 @@ declare
   worker sellerpilot_private.ai_cli_worker_tokens%rowtype;
   credential sellerpilot_private.channel_credentials%rowtype;
   route_definition text;
+  now_at timestamptz := clock_timestamp();
 begin
   if pg_catalog.to_regprocedure(
        'sellerpilot_private.active_serverless_runtime_release_sha()'
@@ -154,8 +156,15 @@ begin
      and route.egress_ip_sha256 =
        '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01'
      and route.enabled
-     and route.approved_at <= clock_timestamp()
-     and route.expires_at > clock_timestamp()
+     and route.approved_at <= now_at
+     and route.expires_at > route.approved_at
+     and route.expires_at <= route.approved_at + interval '90 days'
+     and (
+       (expected.operation in ('categories.attributes','categories.validate')
+         and route.expires_at <= now_at)
+       or (expected.operation = 'listing.create'
+         and route.expires_at > now_at)
+     )
      and exists (
        select 1 from sellerpilot_private.admin_users admin
         where admin.user_id = route.owner_id
@@ -215,6 +224,20 @@ begin
 
   if exists (
     select 1
+      from sellerpilot_private.local_channel_executor_routes route
+     where route.id in (
+       'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
+       '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid
+     )
+       and greatest(route.expires_at, now_at + interval '1 hour') >
+         route.approved_at + interval '90 days'
+  ) then
+    raise exception 'COUPANG_EXACT_ROUTE_F0_APPROVAL_WINDOW_DRIFT'
+      using errcode = '55000';
+  end if;
+
+  if exists (
+    select 1
       from sellerpilot_private.channel_gateway_jobs job
      where job.worker_token_id = worker.id
        and job.status = 'running'
@@ -263,6 +286,9 @@ create table sellerpilot_private.coupang_exact_route_f0_rotations (
     provider_mutation_performed is false
   ),
   rotated_at timestamptz not null default clock_timestamp(),
+  read_routes_refreshed_until timestamptz not null check (
+    read_routes_refreshed_until = rotated_at + interval '1 hour'
+  ),
   contract text not null check (
     contract = 'coupang_exact_route_f0_rotation_v1'
   )
@@ -306,7 +332,10 @@ declare
   operation text;
   route_current boolean;
   expected_current boolean;
+  now_at timestamptz := clock_timestamp();
+  read_routes_refreshed_until timestamptz;
 begin
+  read_routes_refreshed_until := now_at + interval '1 hour';
   select coalesce(
            jsonb_agg(to_jsonb(route) order by route.id),
            '[]'::jsonb
@@ -329,7 +358,14 @@ begin
    );
 
   update sellerpilot_private.local_channel_executor_routes route
-     set release_sha = 'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca'
+     set release_sha = 'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca',
+         expires_at = case
+           when route.id in (
+             'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
+             '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid
+           ) then greatest(route.expires_at, read_routes_refreshed_until)
+           else route.expires_at
+         end
     from (
       values
         ('fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
@@ -374,8 +410,16 @@ begin
       from jsonb_array_elements(prior_snapshot) before_row
       join jsonb_array_elements(rotated_snapshot) after_row
         on after_row->>'id' = before_row->>'id'
-     where (before_row - 'release_sha') is distinct from
-           (after_row - 'release_sha')
+     where case
+       when before_row->>'operation' in (
+         'categories.attributes','categories.validate'
+       ) then
+         (before_row - 'release_sha' - 'expires_at') is distinct from
+         (after_row - 'release_sha' - 'expires_at')
+       else
+         (before_row - 'release_sha') is distinct from
+         (after_row - 'release_sha')
+       end
         or before_row->>'release_sha' is distinct from case
           when before_row->>'id' in (
             'fd27ffd0-59d3-45af-9315-e435a14d27cb',
@@ -388,6 +432,15 @@ begin
         end
         or after_row->>'release_sha' is distinct from
            'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca'
+        or (after_row->>'expires_at')::timestamptz is distinct from case
+          when before_row->>'operation' in (
+            'categories.attributes','categories.validate'
+          ) then greatest(
+            (before_row->>'expires_at')::timestamptz,
+            read_routes_refreshed_until
+          )
+          else (before_row->>'expires_at')::timestamptz
+        end
   )
   or jsonb_array_length(prior_snapshot) <> 3
   or jsonb_array_length(rotated_snapshot) <> 3
@@ -427,7 +480,8 @@ begin
     singleton, route_ids, prior_routes, prior_routes_sha256,
     rotated_routes, rotated_routes_sha256, prior_release_by_route,
     active_release_sha, worker_token_id, egress_ip_sha256,
-    gate_effective_at_rotation, provider_mutation_performed, contract
+    gate_effective_at_rotation, provider_mutation_performed, rotated_at,
+    read_routes_refreshed_until, contract
   ) values (
     true,
     '[
@@ -452,6 +506,8 @@ begin
     '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01',
     gate_effective,
     false,
+    now_at,
+    read_routes_refreshed_until,
     'coupang_exact_route_f0_rotation_v1'
   );
 
@@ -467,6 +523,6 @@ end;
 $rotate$;
 
 comment on table sellerpilot_private.coupang_exact_route_f0_rotations is
-  'Immutable record of the exact three-route Coupang local-executor release rotation from per-route observed preimages to f0b9af0; records no provider mutation and does not open the mutation gate.';
+  'Immutable record of the exact three-route Coupang local-executor release rotation from per-route observed preimages to f0b9af0 and the one-hour expiry renewal of only the two expired read routes; records no provider mutation and does not open the mutation gate.';
 
 commit;
