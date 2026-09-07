@@ -316,10 +316,10 @@ test("legacy eBay diagnostic stages immutable GetUser identity before privilege 
   }
 });
 
-test("publication reverification is allowlisted for the eight release channels and never opens the provider mutation fence", async () => {
+test("Coupang publication reverification never opens the provider mutation fence", async () => {
   const events: string[] = [];
   const job = {
-    ...genericClaim("qoo10", "listing.publication.verify"),
+    ...genericClaim("coupang", "listing.publication.verify"),
     request: {
       arguments: {
         remoteId: "remote-item-1",
@@ -351,7 +351,7 @@ test("publication reverification is allowlisted for the eight release channels a
     signal: new AbortController().signal,
     hooks: {
       assertLeaseHealthy: async () => { events.push("lease"); },
-      beginProviderMutation: async () => { events.push("mutation-fence"); },
+      beginProviderMutation: async () => { assert.fail("Coupang verifier must remain read-only"); },
       beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
       stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
     },

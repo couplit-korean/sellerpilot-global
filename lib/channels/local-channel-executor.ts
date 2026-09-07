@@ -12,6 +12,7 @@ const workerVersionPattern = /^sellerpilot-cli-worker\/1\.61\+([a-f0-9]{40})\.([
 const readOnlyTuples = new Set([
   "coupang:categories.attributes",
   "coupang:categories.validate",
+  "coupang:listing.publication.verify",
 ]);
 
 const writeTuples = new Set([
