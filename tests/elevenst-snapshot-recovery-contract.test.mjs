@@ -51,7 +51,12 @@ async function createDatabase(options = { includeRecovery: true }) {
   for (const name of names) {
     if (!options.includeRecovery && name >= migrationName) break;
     if (OUT_OF_SCOPE_COMPETITOR_MIGRATIONS.has(name)) continue;
-    await db.exec(stripUnavailableExtensions(await readFile(new URL(name, migrationUrl), "utf8")));
+    try {
+      await db.exec(stripUnavailableExtensions(await readFile(new URL(name, migrationUrl), "utf8")));
+    } catch (error) {
+      error.message = `${name}: ${error.message}`;
+      throw error;
+    }
   }
   return db;
 }

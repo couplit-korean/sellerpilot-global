@@ -537,7 +537,7 @@ export function useOperationsSnapshot() {
     return init?.signal ? waitForAbortablePromise(request, init.signal) : request;
   }, []);
 
-  const load = useCallback((options: LoadOptions = {}) => {
+  const load = useCallback(function loadOperationsSnapshot(options: LoadOptions = {}) {
     const startedAt = Date.now();
     const nextRefreshAt = nextDataRefreshAtRef.current.get(rangeKey) ?? 0;
     if (!options.force && startedAt < nextRefreshAt) return Promise.resolve();
@@ -680,7 +680,7 @@ export function useOperationsSnapshot() {
           timeoutRetryCountRef.current += 1;
           window.clearTimeout(timeoutRetryTimerRef.current);
           timeoutRetryTimerRef.current = window.setTimeout(() => {
-            void load({ force: true });
+            void loadOperationsSnapshot({ force: true });
           }, backoffMs);
         }
       } finally {

@@ -18,12 +18,31 @@ declare
   v_job sellerpilot_private.channel_gateway_jobs%rowtype;
   v_permit sellerpilot_private.qoo10_shipping_s1_activation_permits%rowtype;
 begin
-  select * into strict v_job
+  select * into v_job
     from sellerpilot_private.channel_gateway_jobs
    where id = '12eaf867-9ee5-45b1-aed0-b5456bc124a3'::uuid;
-  select * into strict v_permit
+  if not found then
+    if exists (
+      select 1
+        from sellerpilot_private.qoo10_shipping_s1_activation_permits
+       where activation_job_id =
+             '12eaf867-9ee5-45b1-aed0-b5456bc124a3'::uuid
+    ) then
+      raise exception 'exact Qoo10 shipping S1 expired activation preimage is partial'
+        using errcode = '55000';
+    end if;
+    -- The one-shot production tuple is intentionally absent on a fresh
+    -- database. Install the reusable retry contract below without creating
+    -- synthetic operational evidence.
+    return;
+  end if;
+  select * into v_permit
     from sellerpilot_private.qoo10_shipping_s1_activation_permits
    where activation_job_id = v_job.id;
+  if not found then
+    raise exception 'exact Qoo10 shipping S1 expired activation permit is missing'
+      using errcode = '55000';
+  end if;
   if v_job.channel is distinct from 'qoo10'
      or v_job.operation is distinct from 'listing.activate'
      or v_job.listing_id is distinct from

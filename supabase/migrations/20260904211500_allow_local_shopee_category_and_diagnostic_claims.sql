@@ -43,7 +43,15 @@ begin
     v_old_count := (
       length(v_definition) - length(replace(v_definition, v_old, ''))
     ) / length(v_old);
-    if v_old_count <> 1 then
+    if v_old_count = 0 then
+      -- This migration originally persisted a live-only overlay. A fresh
+      -- database therefore reaches this point with the older repository
+      -- claimant, which has neither overlay marker. The canonical claimant is
+      -- installed by 20260904232000 later in the same ordered replay. Leave
+      -- the predecessor untouched here instead of making a fresh install
+      -- impossible, while still rejecting duplicate or ambiguous markers.
+      return;
+    elsif v_old_count <> 1 then
       raise exception '11820 Shopee in-list marker count=%', v_old_count;
     end if;
     v_rewritten := replace(v_definition, v_old, v_new);
