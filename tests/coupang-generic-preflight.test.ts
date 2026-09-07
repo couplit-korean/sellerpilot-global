@@ -256,6 +256,9 @@ test("generic Coupang prepare uses seller-confirmed notices and contracted shipp
 });
 
 test("generic Coupang prepare skips incomplete return centers and uses the first complete provider contract", async () => {
+  const argumentsValue = genericReadyDraft();
+  (argumentsValue.body as Record<string, unknown>).deliveryCompanyCode = "CJGLS";
+  (argumentsValue.body as Record<string, unknown>).returnCharge = 6000;
   const incomplete = (returnCenterResponse({ deliverCode: "" }).data.content as Array<Record<string, unknown>>)[0];
   const complete = (returnCenterResponse({
     returnCenterCode: "RET-CJ",
@@ -264,6 +267,7 @@ test("generic Coupang prepare skips incomplete return centers and uses the first
     returnFee02kg: 6000,
   }).data.content as Array<Record<string, unknown>>)[0];
   const { prepared } = await prepareGeneric({
+    argumentsValue,
     returnCenter: { code: "SUCCESS", data: { content: [incomplete, complete] } },
   });
   const body = prepared.arguments.body as Record<string, unknown>;
@@ -459,11 +463,52 @@ test("generic Coupang prepare requires contracted delivery code instead of assum
   );
 });
 
+test("generic Coupang prepare uses an explicit operator delivery code only when the provider row omits it", async () => {
+  const argumentsValue = genericReadyDraft();
+  (argumentsValue.body as Record<string, unknown>).deliveryCompanyCode = "CJGLS";
+  const { prepared } = await prepareGeneric({
+    argumentsValue,
+    returnCenter: returnCenterResponse({ deliverCode: "" }),
+  });
+  assert.equal((prepared.arguments.body as Record<string, unknown>).deliveryCompanyCode, "CJGLS");
+});
+
 test("generic Coupang prepare requires contracted return fee instead of assuming 3000", async () => {
   await assert.rejects(
     prepareGeneric({ returnCenter: returnCenterResponse({ returnFee02kg: 0 }) }),
     /COUPANG_RETURN_FEE_MISSING/,
   );
+});
+
+test("generic Coupang prepare uses an explicit operator return fee only when the provider row omits it", async () => {
+  const argumentsValue = genericReadyDraft();
+  (argumentsValue.body as Record<string, unknown>).returnCharge = 3000;
+  const { prepared } = await prepareGeneric({
+    argumentsValue,
+    returnCenter: returnCenterResponse({ returnFee02kg: 0 }),
+  });
+  assert.equal((prepared.arguments.body as Record<string, unknown>).returnCharge, 3000);
+  assert.equal((prepared.arguments.body as Record<string, unknown>).deliveryChargeOnReturn, 3000);
+});
+
+test("generic Coupang paid shipping uses operator fallbacks without adding a second return charge", async () => {
+  const argumentsValue = genericReadyDraft();
+  Object.assign(argumentsValue.body, {
+    deliveryCompanyCode: "cjgls",
+    returnCharge: 3000,
+    deliveryChargeType: "NOT_FREE",
+    deliveryCharge: 3000,
+    freeShipOverAmount: 0,
+  });
+  argumentsValue.sellerpilotAssets.shipping.shippingFeeKrw = 3000;
+  const { prepared } = await prepareGeneric({
+    argumentsValue,
+    returnCenter: returnCenterResponse({ deliverCode: "", returnFee02kg: 0 }),
+  });
+  const body = prepared.arguments.body as Record<string, unknown>;
+  assert.equal(body.deliveryCompanyCode, "CJGLS");
+  assert.equal(body.returnCharge, 3000);
+  assert.equal(body.deliveryChargeOnReturn, 0);
 });
 
 test("generic Coupang prepare validates explicit operator delivery values against contracted GET facts", async () => {
@@ -472,6 +517,15 @@ test("generic Coupang prepare validates explicit operator delivery values agains
   await assert.rejects(
     prepareGeneric({ argumentsValue }),
     /COUPANG_DELIVERY_COMPANY_CODE_MISMATCH/,
+  );
+});
+
+test("generic Coupang prepare rejects an operator return fee that differs from provider facts", async () => {
+  const argumentsValue = genericReadyDraft();
+  (argumentsValue.body as Record<string, unknown>).returnCharge = 3000;
+  await assert.rejects(
+    prepareGeneric({ argumentsValue }),
+    /COUPANG_RETURN_FEE_MISMATCH/,
   );
 });
 

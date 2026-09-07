@@ -1976,6 +1976,18 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     .filter((row): row is UnknownRecord => Boolean(row));
   const requestedOutboundCode = recovery ? "" : String(body.outboundShippingPlaceCode ?? "").trim();
   const requestedReturnCenterCode = recovery ? "" : String(body.returnCenterCode ?? "").trim();
+  const operatorDeliveryCode = recovery
+    ? ""
+    : String(body.deliveryCompanyCode ?? "").trim().toUpperCase();
+  const operatorReturnFee = recovery
+    ? null
+    : operatorPositiveFee(body.returnCharge) ?? operatorPositiveFee(body.deliveryChargeOnReturn);
+  if (operatorDeliveryCode && !/^[A-Z0-9_-]{2,32}$/.test(operatorDeliveryCode)) {
+    throw new Error("COUPANG_OPERATOR_DELIVERY_COMPANY_CODE_INVALID");
+  }
+  if (operatorReturnFee && operatorReturnFee > 250_000) {
+    throw new Error("COUPANG_OPERATOR_RETURN_FEE_INVALID");
+  }
   const outbound = outboundCenters.find((center) =>
     coupangUsable(center.usable)
     && preferredKoreanAddress(center.placeAddresses)
@@ -1987,18 +1999,23 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     && preferredKoreanAddress(center.placeAddresses)
     && (!requestedReturnCenterCode || String(center.returnCenterCode ?? "").trim() === requestedReturnCenterCode)
   );
-  const returnCenter = matchingReturnCenters.find((center) =>
+  const providerReturnCenter = matchingReturnCenters.find((center) =>
     String(center.returnCenterCode ?? "").trim()
     && String(center.deliverCode ?? "").trim()
     && positiveFee(center));
+  const returnCenter = providerReturnCenter ?? matchingReturnCenters.find((center) =>
+    String(center.returnCenterCode ?? "").trim()
+    && (String(center.deliverCode ?? "").trim() || operatorDeliveryCode)
+    && (positiveFee(center) || operatorReturnFee));
   if (!matchingReturnCenters.length) {
     throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
   }
   if (!returnCenter) {
-    if (!matchingReturnCenters.some((center) => String(center.deliverCode ?? "").trim())) {
+    if (!operatorDeliveryCode
+        && !matchingReturnCenters.some((center) => String(center.deliverCode ?? "").trim())) {
       throw new Error("COUPANG_DELIVERY_COMPANY_CODE_MISSING");
     }
-    if (!matchingReturnCenters.some((center) => positiveFee(center))) {
+    if (!operatorReturnFee && !matchingReturnCenters.some((center) => positiveFee(center))) {
       throw new Error("COUPANG_RETURN_FEE_MISSING");
     }
     if (!matchingReturnCenters.some((center) => String(center.returnCenterCode ?? "").trim())) {
@@ -2011,17 +2028,17 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   }
   const returnAddress = preferredKoreanAddress(returnCenter.placeAddresses);
   if (!returnAddress) throw new Error("COUPANG_RETURN_ADDRESS_MISSING");
-  const contractedDeliveryCode = String(returnCenter.deliverCode ?? "").trim();
-  const returnFee = positiveFee(returnCenter);
-  const operatorDeliveryCode = String(body.deliveryCompanyCode ?? "").trim();
-  const operatorReturnFee = operatorPositiveFee(body.returnCharge)
-    ?? operatorPositiveFee(body.deliveryChargeOnReturn);
-  if (!contractedDeliveryCode) throw new Error("COUPANG_DELIVERY_COMPANY_CODE_MISSING");
+  const providerDeliveryCode = String(returnCenter.deliverCode ?? "").trim().toUpperCase();
+  const providerReturnFee = positiveFee(returnCenter);
+  const resolvedDeliveryCode = providerDeliveryCode || operatorDeliveryCode;
+  const returnFee = providerReturnFee ?? operatorReturnFee;
+  if (!resolvedDeliveryCode) throw new Error("COUPANG_DELIVERY_COMPANY_CODE_MISSING");
   if (!returnFee) throw new Error("COUPANG_RETURN_FEE_MISSING");
-  if (operatorDeliveryCode && operatorDeliveryCode !== contractedDeliveryCode) {
+  if (providerDeliveryCode && operatorDeliveryCode
+      && operatorDeliveryCode !== providerDeliveryCode) {
     throw new Error("COUPANG_DELIVERY_COMPANY_CODE_MISMATCH");
   }
-  if (operatorReturnFee && operatorReturnFee !== returnFee) {
+  if (providerReturnFee && operatorReturnFee && operatorReturnFee !== providerReturnFee) {
     throw new Error("COUPANG_RETURN_FEE_MISMATCH");
   }
   const returnCenterCode = String(returnCenter.returnCenterCode ?? "").trim();
@@ -2059,7 +2076,7 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       saleStartedAt: body.saleStartedAt
         || new Date(Date.now() - 60_000).toISOString().slice(0, 19),
       saleEndedAt: body.saleEndedAt || "2099-01-01T23:59:59",
-      deliveryCompanyCode: contractedDeliveryCode,
+      deliveryCompanyCode: resolvedDeliveryCode,
       ...shippingFees,
       deliveryChargeOnReturn: shippingFees.deliveryChargeType === "FREE" ? returnFee : 0,
       remoteAreaDeliverable: recovery ? "N" : body.remoteAreaDeliverable ?? "N",

@@ -36,6 +36,8 @@ export function ChannelRegistrationFields({channel,draft,requirements,editedPath
   const coupangPackagingRule=channel==="coupang"?coupangDraftPackagingRule(draft):"";
   const coupangShippingRuleReview=registrationValueAt(draft,["sellerpilotAssets","shipping","shippingRuleReview"]);
   const coupangPackagingRuleReview=registrationValueAt(draft,["sellerpilotAssets","shipping","packagingRuleReview"]);
+  const coupangDeliveryCompanyCode=registrationValueAt(draft,["body","deliveryCompanyCode"]);
+  const coupangReturnCharge=registrationValueAt(draft,["body","returnCharge"]);
   const coupangLeadTime=readCoupangLeadTimeDraftConfirmation(draft);
   const coupangItemPaths=channel==="coupang"?coupangLeadTimeItemPaths(draft):[];
   const coupangCommonDay=coupangCommonLeadTimeDay(draft);
@@ -63,6 +65,8 @@ export function ChannelRegistrationFields({channel,draft,requirements,editedPath
     })}</div>
     {!visible.length&&<p className="registration-empty">{search?"일치하는 항목이 없습니다.":"현재 보기에서 추가로 입력할 항목이 없습니다. 전체 항목에서 자동 입력값을 확인할 수 있습니다."}</p>}
     {channel==="coupang"&&<fieldset className="registration-shipping-form"><legend>쿠팡 출고 설정 확인</legend><p>WING의 현재 설정에서 출고 소요일과 기준을 직접 대조하세요. 문구의 범위나 기본값으로 일수를 추정하지 않습니다.</p>
+      <label><span>택배사 코드</span><input value={typeof coupangDeliveryCompanyCode==="string"||typeof coupangDeliveryCompanyCode==="number"?String(coupangDeliveryCompanyCode):""} onChange={event=>onChange(["body","deliveryCompanyCode"],event.target.value.trim().toUpperCase())} placeholder="예: CJGLS" /><small>반품지 API의 계약 택배사 코드를 우선 사용합니다. API가 빈값을 반환할 때만 여기에서 WING으로 확인한 코드를 사용합니다.</small></label>
+      <label><span>반품 편도 배송비 KRW</span><input type="number" min="1" max="250000" step="1" value={typeof coupangReturnCharge==="string"||typeof coupangReturnCharge==="number"?String(coupangReturnCharge):""} onChange={event=>onChange(["body","returnCharge"],event.target.value===""?null:Number(event.target.value))} /><small>반품지 API의 양수 비용을 우선 사용합니다. API가 빈값일 때만 WING에서 확인한 편도 비용을 사용하며, 왕복 비용은 편도 비용의 두 배로 확인하세요.</small></label>
       <label><span>승인된 배송 규칙</span><textarea rows={2} value={coupangShippingRule} readOnly /></label>
       {coupangShippingRule&&<label><span>배송 규칙 적용 확인</span><select value={coupangShippingRuleReview==="확인"?"확인":""} onChange={event=>onChange(["sellerpilotAssets","shipping","shippingRuleReview"],event.target.value)}><option value="">확인 필요</option><option value="확인">확인</option></select>{coupangRequirement("shipping-shippingRule")?.status==="manual"&&<small className="registration-field-error">현재 승인 규칙이 실제 출고 절차에 적용되는지 확인하세요.</small>}</label>}
       {coupangPackagingRule&&<><label><span>승인된 포장 규칙</span><textarea rows={2} value={coupangPackagingRule} readOnly /></label><label><span>포장 규칙 적용 확인</span><select value={coupangPackagingRuleReview==="확인"?"확인":""} onChange={event=>onChange(["sellerpilotAssets","shipping","packagingRuleReview"],event.target.value)}><option value="">확인 필요</option><option value="확인">확인</option></select>{coupangRequirement("shipping-packagingRule")?.status==="manual"&&<small className="registration-field-error">현재 포장 규칙이 실제 포장 절차에 적용되는지 확인하세요.</small>}</label></>}

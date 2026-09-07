@@ -116,7 +116,9 @@ export function coupangCommonLeadTimeDay(draft: Record<string, unknown>): {
 
 export function isCoupangStructuredShippingPath(path: string[]): boolean {
   const key = path.join(".");
-  return key === "sellerpilotAssets.shipping.shippingRuleReview"
+  return key === "body.deliveryCompanyCode"
+    || key === "body.returnCharge"
+    || key === "sellerpilotAssets.shipping.shippingRuleReview"
     || key === "sellerpilotAssets.shipping.packagingRuleReview"
     || key === "sellerpilotAssets.shipping.coupangLeadTimeConfirmation"
     || key.startsWith("sellerpilotAssets.shipping.coupangLeadTimeConfirmation.")

@@ -308,6 +308,7 @@ function categoryMetadataResponse(noticeCategoryName = "기타 재화") {
 async function prepareExactRecoveryWithFetch(
   noticeCategoryName = "기타 재화",
   returnCenter = returnCenterResponse(),
+  argumentsValue = baseRecoveryArguments(),
 ) {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ method: string; pathname: string }> = [];
@@ -329,7 +330,7 @@ async function prepareExactRecoveryWithFetch(
         secret_key: "secret",
         requested_by: "wing-user",
       },
-      arguments: baseRecoveryArguments(),
+      arguments: argumentsValue,
       environment: "production",
       signal: new AbortController().signal,
       hooks: {
@@ -441,6 +442,21 @@ test("exact recovery fails before PUT without an active return center and carrie
   await assert.rejects(
     prepareExactRecoveryWithFetch("기타 재화", unavailable),
     /COUPANG_USABLE_RETURN_CENTER_MISSING/,
+  );
+});
+
+test("exact recovery never uses create-only operator shipping fallbacks", async () => {
+  const incomplete = returnCenterResponse();
+  incomplete.data.content[0].deliverCode = "";
+  incomplete.data.content[0].returnFee02kg = 0;
+  const argumentsValue = baseRecoveryArguments();
+  Object.assign(argumentsValue.body, {
+    deliveryCompanyCode: "CJGLS",
+    returnCharge: 3000,
+  });
+  await assert.rejects(
+    prepareExactRecoveryWithFetch("기타 재화", incomplete, argumentsValue),
+    /COUPANG_DELIVERY_COMPANY_CODE_MISSING/,
   );
 });
 
