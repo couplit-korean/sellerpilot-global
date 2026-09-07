@@ -4449,6 +4449,20 @@ async function processGatewayJob(job) {
         ? smartstoreContentRepairBinding(operationArguments)
         : null;
       if (contentRepair && result.ok) {
+        // Preserve the accepted PUT before the independent image reader can
+        // fail. The final completion replaces this provisional journal only
+        // after the full readback has been collected.
+        await stageSmartstoreListingUpdateCompletionJournal({
+          jobId: job.id,
+          claimToken,
+          status: "reconciliation_required",
+          error: "SMARTSTORE_CONTENT_REPAIR_POSTWRITE_VERIFICATION_PENDING",
+          result,
+        }).catch(() => {
+          console.error(`[채널 완료 증거 보존 실패] ${job.id} · 후속 조회 전 응답을 보존하지 못했습니다.`);
+        });
+      }
+      if (contentRepair && result.ok) {
         const mutationEvidence = result.smartstoreContentRepair;
         if (!mutationEvidence
             || mutationEvidence.contract !== "smartstore_existing_content_repair_mutation_v1"

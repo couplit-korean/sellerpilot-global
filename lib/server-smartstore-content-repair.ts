@@ -88,6 +88,18 @@ export const smartstoreContentRepairStateSchema = z.union([
   }),
   stateBase.extend({
     status: z.literal("verified"),
+    reason: z.literal("POST_REPAIR_REMOTE_STATE_VERIFIED"),
+    jobId: uuidSchema,
+    baselineId: uuidSchema,
+    listingId: uuidSchema,
+    verificationJobId: uuidSchema,
+    reused: z.literal(true),
+    contentVerified: z.literal(true),
+    providerMutationPerformed: z.literal(false),
+    normalUpdateEligible: z.literal(true),
+  }),
+  stateBase.extend({
+    status: z.literal("verified"),
     reason: z.literal("ADOPTION_ALREADY_VERIFIED"),
     jobId: uuidSchema.nullable(),
     baselineId: uuidSchema,

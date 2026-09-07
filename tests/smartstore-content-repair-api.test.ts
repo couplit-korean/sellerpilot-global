@@ -103,6 +103,32 @@ async function callRoute(input: {
   return { calls, logs, routeResponse };
 }
 
+test("fresh remote-state reconciliation is readable without claiming a successful provider write", async () => {
+  const verified = {
+    ...stateBase,
+    status: "verified",
+    reason: "POST_REPAIR_REMOTE_STATE_VERIFIED",
+    verificationJobId,
+    contentVerified: true,
+    providerMutationPerformed: false,
+    normalUpdateEligible: true,
+  };
+  const response = await callRoute({ method: "GET", rpcData: verified });
+  assert.equal(response.routeResponse.status, 200);
+  const body = await response.routeResponse.json();
+  assert.equal(body.providerMutationPerformed, false);
+  assert.equal(body.contentVerified, true);
+  assert.equal(body.apiCreateSucceeded, false);
+  for (const invalid of [
+    { ...verified, providerMutationPerformed: true },
+    { ...verified, verificationJobId: null },
+    { ...verified, contentVerified: false },
+    { ...verified, apiCreateSucceeded: true },
+  ]) {
+    assert.equal(smartstoreContentRepairStateSchema.safeParse(invalid).success, false);
+  }
+});
+
 test("browser repair request accepts only an explicit approved-content confirmation", () => {
   assert.deepEqual(
     smartstoreContentRepairRequestSchema.parse({ confirmApprovedContentRepair: true }),

@@ -91,6 +91,27 @@ test("non-SmartStore and non-update results never create a journal", async () =>
   })), null);
 });
 
+test("an accepted repair survives a failed later readback without claiming verified completion", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "sellerpilot-provisional-repair-"));
+  try {
+    const payload = repairCompletion({
+      error: "SMARTSTORE_CONTENT_REPAIR_POSTWRITE_VERIFICATION_PENDING",
+    });
+    payload.result.ok = true;
+    const target = await stageSmartstoreListingUpdateCompletionJournal(payload, { directory });
+    const stored = JSON.parse(await readFile(target, "utf8"));
+    assert.equal(stored.completionStatus, "reconciliation_required");
+    assert.equal(stored.result.steps[0].status, 200);
+    assert.equal(stored.result.steps[0].data.sellerpilotVerification, "REMOTE_WRITE_ACCEPTED");
+    assert.equal(smartstoreListingUpdateCompletionEvidenceStored(payload, {
+      completionStatus: "reconciliation_required", durableEvidenceStored: false,
+    }), false);
+    assert.equal((await lstat(target)).isFile(), true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("only a succeeded repair with a durable evidence receipt can clear its journal", () => {
   const succeeded = repairCompletion({ status: "succeeded", error: undefined });
   assert.equal(smartstoreListingUpdateCompletionEvidenceStored(succeeded, {

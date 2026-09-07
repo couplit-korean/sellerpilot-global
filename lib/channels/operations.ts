@@ -155,6 +155,7 @@ import {
   smartstoreContentRepairBinding,
   smartstoreContentRepairBodyHashes,
 } from "./smartstore-content-repair";
+import { verifySmartstoreContentRepairPostwrite } from "./smartstore-content-repair-readback";
 import { executeListingPublicationVerification } from "./listing-publication-verification";
 import { uploadChannelNativeImages } from "./native-image-upload";
 import {
@@ -5186,6 +5187,103 @@ async function executeSmartstore(input: ExecuteInput) {
     const remote = await request({ method: "PUT", path: `/v2/products/origin-products/${originProductNo}`, body: mergedBody });
     const updateStep = step("product-update", remote);
     if (!updateStep.ok) return result(input, [preflightStep, channelPreflightStep, updateStep], remoteId);
+    if (contentRepair) {
+      let searchPostwriteRemote: RemoteResponse | undefined;
+      let originPostwriteRemote: RemoteResponse | undefined;
+      let channelPostwriteRemote: RemoteResponse | undefined;
+      let verification: ReturnType<typeof verifySmartstoreContentRepairPostwrite>;
+      try {
+        const postwriteIdentity = await readSmartstoreUpdateIdentity({
+          request: async (requestInput) => {
+            const postwriteRemote = await request(requestInput);
+            if (requestInput.path === "/v1/products/search") searchPostwriteRemote = postwriteRemote;
+            else if (requestInput.path === `/v2/products/origin-products/${remoteId}`) {
+              originPostwriteRemote = postwriteRemote;
+            } else if (requestInput.path.startsWith("/v2/products/channel-products/")) {
+              channelPostwriteRemote = postwriteRemote;
+            }
+            return postwriteRemote;
+          },
+          originProductNo: remoteId,
+          sellerSku: contentRepair.sellerSku,
+          expectedChannelProductNo: contentRepair.channelProductNo,
+        });
+        if (!searchPostwriteRemote || !originPostwriteRemote || !channelPostwriteRemote) {
+          throw new Error("NAVER_UPDATE_POSTWRITE_IDENTITY_READBACK_INCOMPLETE");
+        }
+        verification = verifySmartstoreContentRepairPostwrite({
+          expectedBody: mergedBody,
+          currentOriginProduct: postwriteIdentity.currentOriginProduct,
+          currentChannelProduct: postwriteIdentity.currentChannelProduct,
+          expectedProtectedBodySha256: contentRepair.protectedBodySha256,
+        });
+      } catch (error) {
+        const safeCode = error instanceof Error && /^NAVER_UPDATE_[A-Z0-9_]+$/u.test(error.message)
+          ? error.message
+          : "NAVER_UPDATE_POSTWRITE_IDENTITY_UNVERIFIED";
+        return result(input, [
+          preflightStep,
+          channelPreflightStep,
+          updateStep,
+          ...(searchPostwriteRemote
+            ? [step("seller-code-postwrite-readback", searchPostwriteRemote)]
+            : []),
+          ...(originPostwriteRemote
+            ? [step("origin-product-postwrite-readback", originPostwriteRemote)]
+            : []),
+          ...(channelPostwriteRemote
+            ? [step("channel-product-postwrite-readback", channelPostwriteRemote)]
+            : []),
+          {
+            name: "smartstore-content-repair-postwrite-identity",
+            ok: false,
+            status: 422,
+            data: {
+              sellerpilotVerification: "SMARTSTORE_CONTENT_REPAIR_POSTWRITE_IDENTITY_UNVERIFIED",
+              sellerpilotFailureCode: safeCode,
+            },
+          },
+        ], remoteId);
+      }
+      const verificationStep: ChannelOperationStep = {
+        name: "smartstore-content-repair-postwrite-verification",
+        ok: verification.ok,
+        status: verification.ok ? 200 : 422,
+        data: {
+          sellerpilotVerification: verification.ok
+            ? "SMARTSTORE_CONTENT_REPAIR_MUTABLE_FIELDS_VERIFIED"
+            : "SMARTSTORE_CONTENT_REPAIR_MUTABLE_FIELDS_MISMATCH",
+          sellerpilotMismatchPaths: verification.mismatches.slice(0, 40),
+        },
+      };
+      const listingResult = result(input, [
+        preflightStep,
+        channelPreflightStep,
+        updateStep,
+        step("seller-code-postwrite-readback", searchPostwriteRemote),
+        step("origin-product-postwrite-readback", originPostwriteRemote),
+        step("channel-product-postwrite-readback", channelPostwriteRemote),
+        verificationStep,
+      ], remoteId);
+      if (!listingResult.ok) return listingResult;
+      const prewriteHashes = smartstoreContentRepairBodyHashes(currentBody);
+      return {
+        ...listingResult,
+        smartstoreContentRepair: {
+          contract: "smartstore_existing_content_repair_mutation_v1" as const,
+          originProductNo: identity.originProductNo,
+          channelProductNo: identity.channelProductNo,
+          baselineBodySha256: prewriteHashes.baselineBodySha256,
+          prewriteProtectedBodySha256: prewriteHashes.protectedBodySha256,
+          prewriteOriginResponseSha256: createHash("sha256")
+            .update(externalDetailCanonical(preflightRemote.data))
+            .digest("hex"),
+          prewriteChannelResponseSha256: createHash("sha256")
+            .update(externalDetailCanonical(channelPreflightRemote.data))
+            .digest("hex"),
+        },
+      };
+    }
     const readbackRemote = await request({ method: "GET", path: `/v2/products/origin-products/${originProductNo}` });
     const readbackStep = listingUpdateReadbackStep("product-readback", readbackRemote, input.channel, input.arguments);
     const listingResult = await smartstoreListingResultWithPublicationReadback(
@@ -5194,24 +5292,7 @@ async function executeSmartstore(input: ExecuteInput) {
       remoteId,
       request,
     );
-    if (!contentRepair || !listingResult.ok) return listingResult;
-    const prewriteHashes = smartstoreContentRepairBodyHashes(currentBody);
-    return {
-      ...listingResult,
-      smartstoreContentRepair: {
-        contract: "smartstore_existing_content_repair_mutation_v1" as const,
-        originProductNo: identity.originProductNo,
-        channelProductNo: identity.channelProductNo,
-        baselineBodySha256: prewriteHashes.baselineBodySha256,
-        prewriteProtectedBodySha256: prewriteHashes.protectedBodySha256,
-        prewriteOriginResponseSha256: createHash("sha256")
-          .update(externalDetailCanonical(preflightRemote.data))
-          .digest("hex"),
-        prewriteChannelResponseSha256: createHash("sha256")
-          .update(externalDetailCanonical(channelPreflightRemote.data))
-          .digest("hex"),
-      },
-    };
+    return listingResult;
   }
   if (input.operation === "listing.stop") {
     const originProductNo = pathSegment(stringArgument(input.arguments, "originProductNo"));
