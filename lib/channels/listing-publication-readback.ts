@@ -118,7 +118,7 @@ function coupangDetailImageUrls(item: Record<string, unknown>) {
   return [...new Set(urls)];
 }
 
-function coupangStatusFamily(statusValue: unknown) {
+export function coupangStatusFamily(statusValue: unknown) {
   const status = String(statusValue ?? "").trim();
   const normalized = status.toUpperCase();
   if (!normalized) return { status, family: "unknown" as const };
@@ -260,7 +260,6 @@ export async function readCoupangListingPublicationState(input: {
   if (status.family === "rejected") visibility = "rejected";
   else if (status.family === "withdrawn") visibility = "withdrawn";
   else if (status.family === "approved"
-      && requested === true
       && everyItemBound
       && vendorStatesVerified
       && allOnSale) visibility = "live";

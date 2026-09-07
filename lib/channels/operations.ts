@@ -144,6 +144,7 @@ import {
   type LazadaPublicationReadbackVerification,
 } from "./provider-lazada-publication-readback";
 import {
+  coupangStatusFamily,
   listingPublicationReadbackExpectation,
   readCoupangListingPublicationState,
   readEbayListingPublicationState,
@@ -4652,32 +4653,26 @@ async function executeCoupang(input: ExecuteInput) {
     });
     const verifyReadback = (name: string) => {
       const readbackStep = step(name, readbackRemote);
-      const stateValues: unknown[] = [];
-      let readbackId: unknown;
-      let requested: unknown;
-      const inspect = (value: unknown, depth = 0) => {
-        if (depth > 5 || !value || typeof value !== "object") return;
-        if (Array.isArray(value)) {
-          value.forEach((item) => inspect(item, depth + 1));
-          return;
-        }
-        for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-          if (readbackId === undefined && key === "sellerProductId") readbackId = item;
-          if (requested === undefined && key === "requested") requested = item;
-          if (/^(?:mdId|status|statusName|requested|approvalStatus)$/i.test(key)) stateValues.push(item);
-          inspect(item, depth + 1);
-        }
-      };
-      inspect(readbackRemote.data);
-      const stateIndicators = stateValues
-        .filter((value) => value !== undefined && value !== null && String(value).length > 0)
-        .map(String)
-        .join(" ")
-        .toUpperCase();
+      // Approval belongs to the seller-product resource itself. Item-level
+      // status fields can remain SAVED after the seller product has already
+      // advanced to APPROVAL_REQUESTED, so folding every nested status into
+      // one string incorrectly turns an idempotent approval into a failure.
+      const sellerProduct = objectValue(readbackRemote.data, "data", false);
+      const readbackId = sellerProduct.sellerProductId;
+      const requested = sellerProduct.requested;
+      const state = coupangStatusFamily(
+        sellerProduct.statusName
+          ?? sellerProduct.approvalStatus
+          ?? sellerProduct.status
+          ?? sellerProduct.mdId,
+      );
       const identityMatches = readbackId !== undefined && String(readbackId) === remoteId;
-      const saved = /(TEMP_SAVED|\bSAVED\b)/.test(stateIndicators);
+      const saved = state.family === "draft"
+        && [sellerProduct.statusName, sellerProduct.approvalStatus, sellerProduct.status, sellerProduct.mdId]
+          .some((value) => /(?:임시저장|TEMP_SAVED|\bSAVED\b)/u.test(String(value ?? "").toUpperCase()));
       const approvalObserved = requested === true
-        || (stateIndicators.length > 0 && !saved && !/ID_GEN/.test(stateIndicators));
+        || state.family === "pending"
+        || state.family === "approved";
       const providerAndIdentityOk = readbackStep.ok && identityMatches;
       readbackStep.ok = providerAndIdentityOk && (body.requested !== true || approvalObserved);
       return { readbackStep, providerAndIdentityOk, approvalObserved, saved };

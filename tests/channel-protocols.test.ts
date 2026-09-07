@@ -1440,6 +1440,90 @@ test("Coupang listing resume waits for SAVED before requesting approval without 
   }
 });
 
+test("Coupang approval readback trusts the seller-product state when nested items remain SAVED", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; init?: RequestInit }> = [];
+  let readbackCount = 0;
+  const detailContents = Array.from({ length: 8 }, (_, index) => ({
+    contentsType: "IMAGE",
+    contentDetails: [{
+      detailType: "IMAGE",
+      content: `https://sellerpilot.example/detail-${index + 1}.jpg`,
+    }],
+  }));
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    calls.push({ url, init });
+    if (url.endsWith("/approvals") && init?.method === "PUT") {
+      return Response.json({
+        code: "ERROR",
+        message: "'임시저장' 상태의 상품만 승인 요청 가능합니다.",
+      });
+    }
+    if (init?.method === "POST") throw new Error("resume must not create another seller product");
+    if (url.includes("/vendor-items/4444/inventories")) {
+      return Response.json({ code: "SUCCESS", data: { sellerItemId: 3333, onSale: true } });
+    }
+    readbackCount += 1;
+    return Response.json({
+      code: "SUCCESS",
+      data: readbackCount === 1
+        ? {
+            sellerProductId: 987654321,
+            requested: false,
+            status: "TEMP_SAVED",
+            statusName: "임시저장중",
+            items: [{ status: "SAVED", vendorItemId: 4444, contents: detailContents }],
+          }
+        : {
+            sellerProductId: 987654321,
+            requested: false,
+            mdId: "NLUP_ID_GEN",
+            status: "APPROVAL_REQUESTED",
+            statusName: "승인대기중",
+            items: [{ status: "SAVED", vendorItemId: 4444, contents: detailContents }],
+          },
+    });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "listing.create",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
+      arguments: {
+        resumeRemoteId: "987654321",
+        body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] },
+        publicationIntent: "live",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "ko-KR",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 8,
+      },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "987654321");
+    assert.deepEqual(result.steps.map((item) => [item.name, item.ok]), [
+      ["listing.resume", true],
+      ["listing-readback", true],
+      ["listing-approval-request", true],
+      ["listing-approval-readback", true],
+      ["seller-product-publication-readback", true],
+      ["vendor-item-publication-readback:1", true],
+      ["publication-state-verification", true],
+    ]);
+    assert.equal(result.remoteState?.visibility, "pending_review");
+    assert.deepEqual(result.remoteState?.resources, {
+      sellerProductId: "987654321",
+      vendorItemIds: ["4444"],
+    });
+    assert.equal(calls.filter((call) => call.url.endsWith("/approvals")).length, 1);
+    assert.equal(calls.some((call) => call.init?.method === "POST"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Coupang product update reads first, preserves remote policy fields, and verifies requested content", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];

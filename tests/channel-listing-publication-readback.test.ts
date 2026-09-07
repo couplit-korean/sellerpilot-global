@@ -330,6 +330,29 @@ test("Coupang approval acceptance without a vendor item remains pending review",
   }
 });
 
+test("Coupang approved seller-product with on-sale inventory is live even when requested remains false", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const readback = await readCoupangListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "987654321",
+    expected,
+    readSellerProduct: async () => remote(coupangSellerProduct({
+      requested: false,
+      statusName: "승인완료",
+      vendorItemId: "4444",
+    })),
+    readVendorItem: async () => remote({
+      code: "SUCCESS",
+      data: { sellerItemId: 3333, onSale: true },
+    }),
+  });
+  assert.equal(readback.failureCode, undefined);
+  assert.equal(readback.state?.visibility, "live");
+  assert.equal(readback.state?.providerStatus, "승인완료|requested=false|onSale=true");
+});
+
 test("Coupang rejected seller-product state cannot be overridden by stale on-sale vendor inventory", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
