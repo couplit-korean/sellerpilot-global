@@ -988,8 +988,7 @@ test("Supabase migrations apply in order and core RPC flows persist safely", asy
       "20260905014800_route_smartstore_reads_to_local_gateway.sql",
       "20260905014900_persist_operator_listing_handoffs.sql",
       "20260905015000_scope_local_gateway_recovery_lane.sql",
-      "20260907152129_restore_qoo10_observed_shipping_identity.sql",
-      "20260907153240_keep_shopee_restricted_operations_on_local_gateway.sql",
+      "20260908010000_finalize_qoo10_shipping_and_local_gateway_routing.sql",
     ]);
     assert.ok(
       migrationNames.indexOf(CS_REPLY_LEDGER_MIGRATION)
