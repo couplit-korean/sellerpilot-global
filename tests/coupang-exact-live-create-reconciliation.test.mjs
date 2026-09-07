@@ -8,6 +8,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260907191500_reconcile_exact_coupang_live_create_get_only.sql",
   import.meta.url,
 ), "utf8");
+const sharedAdminLineageMigration = await readFile(new URL(
+  "../supabase/migrations/20260907194500_fix_exact_coupang_shared_admin_lineage.sql",
+  import.meta.url,
+), "utf8");
 
 const exact = {
   sourceJob: "25adf712-1e9a-432b-8b0d-09cf35a826c5",
@@ -61,13 +65,29 @@ test("resolution preserves the terminal source and writes an immutable GET recei
   assert.doesNotMatch(migration, /update sellerpilot_private\.channel_operation_attempts/i);
 });
 
+test("shared-admin repair binds credential owner separately from listing owner", () => {
+  assert.match(sharedAdminLineageMigration, /attempt\.owner_id <> job\.created_by/);
+  assert.match(sharedAdminLineageMigration, /credential\.created_by = job\.created_by/);
+  assert.match(sharedAdminLineageMigration, /listing\.owner_id = attempt\.owner_id/);
+  assert.match(sharedAdminLineageMigration, /a\.owner_id <> j\.created_by/);
+  assert.match(sharedAdminLineageMigration, /credential\.created_by = j\.created_by/);
+  assert.match(sharedAdminLineageMigration, /v_source_rows not in \(0, 3\)/);
+  assert.match(sharedAdminLineageMigration, /listing_mutation_reconciliation_resolved/);
+  assert.doesNotMatch(sharedAdminLineageMigration, /insert into sellerpilot_private\.channel_gateway_jobs/i);
+  assert.doesNotMatch(sharedAdminLineageMigration, /update sellerpilot_private\.(?:channel_gateway_jobs|channel_operation_attempts|product_listings)/i);
+  assert.doesNotMatch(sharedAdminLineageMigration, /method[^\n]*(?:POST|PUT|PATCH|DELETE)/i);
+});
+
 async function fixture(options = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(String.raw`
     create role anon; create role authenticated; create role service_role;
     create schema extensions; create extension pgcrypto with schema extensions;
     create schema sellerpilot_private;
-    create table sellerpilot_private.channel_credentials(id uuid primary key);
+    create table sellerpilot_private.channel_credentials(
+      id uuid primary key,created_by uuid,channel text,environment text,status text,
+      seller_account_key text,expires_at timestamptz
+    );
     create table sellerpilot_private.channel_operation_attempts(
       id uuid primary key,owner_id uuid,credential_id uuid,channel text,operation text,
       status text,remote_id text,request_fingerprint text,seller_account_key text
@@ -127,6 +147,7 @@ async function fixture(options = {}) {
   `);
 
   const owner = "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c";
+  const credentialOwner = "21eb1892-0894-4f9f-b414-4c9464182dd6";
   const credential = "32de2968-d4b7-4fda-a84b-16a7ce0257cc";
   const product = "1ed4acfc-7603-48ec-a638-241131e59358";
   const fingerprint = "a".repeat(64);
@@ -167,33 +188,72 @@ async function fixture(options = {}) {
       providerTransportImages: images.map(({ approvedObjectPath, approvedSourceSha256, ...image }) => image),
     },
   } };
-  await db.query("insert into sellerpilot_private.channel_credentials values($1)", [credential]);
-  await db.query(`insert into sellerpilot_private.channel_operation_attempts(
-    id,owner_id,credential_id,channel,operation,status,remote_id,request_fingerprint,
-    seller_account_key
-  ) values($1,$2,$3,'coupang','listing.create',$4,$5,$6,$7)`,
-  [exact.sourceAttempt, owner, credential, options.attemptStatus ?? "manual_required",
-    exact.remote, fingerprint, "c".repeat(64)]);
-  await db.query("insert into sellerpilot_private.products values($1)", [product]);
-  await db.query(`insert into sellerpilot_private.product_listings(
-    id,owner_id,product_id,channel_key,status,failure_class,remote_visibility,
-    remote_resources,updated_at,market,target_id,requested_publication_intent,
-    operation_attempt_id,seller_account_key,marketplace_sku,remote_id
-  ) values($1,$2,$3,'coupang','failed','external_action','unknown','{}',clock_timestamp(),
-    'KR','', 'live',$4,null,null,$5)`,
-  [exact.listing, owner, product, exact.sourceAttempt, exact.remote]);
-  await db.query(`insert into sellerpilot_private.channel_gateway_jobs(
-    id,credential_id,attempt_id,listing_id,channel,operation,environment,
-    request_payload,response_payload,status,seller_account_key,request_fingerprint,
-    created_by,created_at,updated_at,provider_mutation_started_at
-  ) values($1,$2,$3,$4,'coupang','listing.create','production',$5,$6,
-    'reconciliation_required',$7,$8,$9,clock_timestamp(),clock_timestamp(),clock_timestamp())`,
-  [exact.sourceJob, credential, exact.sourceAttempt, exact.listing, sourceRequest,
-    sourceResponse, "c".repeat(64), fingerprint, owner]);
+  if (!options.omitExactSource) {
+    await db.query(`insert into sellerpilot_private.channel_credentials(
+      id,created_by,channel,environment,status,seller_account_key
+    ) values($1,$2,'coupang','production',$3,$4)`,
+    [credential, credentialOwner, options.credentialStatus ?? "active",
+      options.credentialSellerAccountKey ?? "c".repeat(64)]);
+    await db.query(`insert into sellerpilot_private.channel_operation_attempts(
+      id,owner_id,credential_id,channel,operation,status,remote_id,request_fingerprint,
+      seller_account_key
+    ) values($1,$2,$3,'coupang','listing.create',$4,$5,$6,$7)`,
+    [exact.sourceAttempt, owner, credential, options.attemptStatus ?? "manual_required",
+      exact.remote, fingerprint, "c".repeat(64)]);
+    await db.query("insert into sellerpilot_private.products values($1)", [product]);
+    await db.query(`insert into sellerpilot_private.product_listings(
+      id,owner_id,product_id,channel_key,status,failure_class,remote_visibility,
+      remote_resources,updated_at,market,target_id,requested_publication_intent,
+      operation_attempt_id,seller_account_key,marketplace_sku,remote_id
+    ) values($1,$2,$3,'coupang','failed','external_action','unknown','{}',clock_timestamp(),
+      'KR','', 'live',$4,null,null,$5)`,
+    [exact.listing, owner, product, exact.sourceAttempt, exact.remote]);
+    await db.query(`insert into sellerpilot_private.channel_gateway_jobs(
+      id,credential_id,attempt_id,listing_id,channel,operation,environment,
+      request_payload,response_payload,status,seller_account_key,request_fingerprint,
+      created_by,created_at,updated_at,provider_mutation_started_at
+    ) values($1,$2,$3,$4,'coupang','listing.create','production',$5,$6,
+      'reconciliation_required',$7,$8,$9,clock_timestamp(),clock_timestamp(),clock_timestamp())`,
+    [exact.sourceJob, credential, exact.sourceAttempt, exact.listing, sourceRequest,
+      sourceResponse, "c".repeat(64), fingerprint, options.jobCreator ?? credentialOwner]);
+  }
   await db.exec(migration);
+  try {
+    await db.exec(sharedAdminLineageMigration);
+  } catch (error) {
+    await db.close();
+    throw error;
+  }
   await db.exec("select set_config('request.jwt.claim.role','service_role',false)");
-  return { db, fingerprint };
+  return { db, fingerprint, owner, credentialOwner };
 }
+
+test("PGlite applies and reapplies the repair when the exact production tuple is absent", async () => {
+  const { db } = await fixture({ omitExactSource: true });
+  try {
+    await db.exec(sharedAdminLineageMigration);
+    assert.equal((await db.query(
+      "select sellerpilot_private.coupang_exact_live_source_current() current",
+    )).rows[0].current, false);
+  } finally {
+    await db.close();
+  }
+});
+
+test("PGlite rejects an inactive or mismatched credential owner before enqueue", async () => {
+  await assert.rejects(
+    fixture({ credentialStatus: "revoked" }),
+    /shared-admin lineage is unavailable/,
+  );
+  await assert.rejects(
+    fixture({ jobCreator: "5f668657-d4bd-4c32-a9e9-1d4c211db26f" }),
+    /shared-admin lineage is unavailable/,
+  );
+  await assert.rejects(
+    fixture({ credentialSellerAccountKey: "d".repeat(64) }),
+    /shared-admin lineage is unavailable/,
+  );
+});
 
 async function preparedVerifier(db, fingerprint) {
   const verifier = (await db.query(
@@ -243,7 +303,7 @@ async function preparedVerifier(db, fingerprint) {
 }
 
 test("PGlite executes enqueue, hydration, immutable evidence, resolution and replay", async () => {
-  const { db, fingerprint } = await fixture();
+  const { db, fingerprint, owner, credentialOwner } = await fixture();
   try {
     const [firstEnqueue, concurrentEnqueue] = await Promise.all([
       db.query("select public.sellerpilot_service_enqueue_exact_coupang_live_verifier() id"),
@@ -251,14 +311,24 @@ test("PGlite executes enqueue, hydration, immutable evidence, resolution and rep
     ]);
     const verifier = firstEnqueue.rows[0].id;
     assert.equal(concurrentEnqueue.rows[0].id, verifier);
+    const sourceBefore = (await db.query(`
+      select to_jsonb(job) source_job,to_jsonb(attempt) source_attempt
+        from sellerpilot_private.channel_gateway_jobs job
+        join sellerpilot_private.channel_operation_attempts attempt
+          on attempt.id=$2
+       where job.id=$1
+    `, [exact.sourceJob, exact.sourceAttempt])).rows[0];
     const job = (await db.query(
-      "select operation,status,attempt_id,provider_mutation_started_at,write_resource_kind from sellerpilot_private.channel_gateway_jobs where id=$1",
+      "select operation,status,attempt_id,provider_mutation_started_at,write_resource_kind,write_resource_key,created_by from sellerpilot_private.channel_gateway_jobs where id=$1",
       [verifier],
     )).rows[0];
     assert.deepEqual(job, {
       operation: "listing.publication.verify", status: "queued", attempt_id: null,
       provider_mutation_started_at: null, write_resource_kind: null,
+      write_resource_key: null,
+      created_by: credentialOwner,
     });
+    assert.notEqual(owner, credentialOwner);
     const claim = "a19d0ce2-9049-409f-bfaf-77713f6f7bb1";
     await db.query("update sellerpilot_private.channel_gateway_jobs set status='running',claim_token=$2 where id=$1", [verifier, claim]);
     const hydrated = (await db.query(
@@ -328,6 +398,15 @@ test("PGlite executes enqueue, hydration, immutable evidence, resolution and rep
     assert.equal(listing.remote_resources.providerMutationPerformed, false);
     assert.equal((await db.query("select count(*)::int count from sellerpilot_private.coupang_exact_live_verify_receipts")).rows[0].count, 1);
     assert.equal((await db.query("select sellerpilot_private.listing_mutation_reconciliation_resolved($1) ok", [exact.sourceJob])).rows[0].ok, true);
+    const sourceAfter = (await db.query(`
+      select to_jsonb(job) source_job,to_jsonb(attempt) source_attempt
+        from sellerpilot_private.channel_gateway_jobs job
+        join sellerpilot_private.channel_operation_attempts attempt
+          on attempt.id=$2
+       where job.id=$1
+    `, [exact.sourceJob, exact.sourceAttempt])).rows[0];
+    assert.deepEqual(sourceAfter, sourceBefore);
+    await db.exec(sharedAdminLineageMigration);
     await db.query("select set_config('sellerpilot.coupang_exact_live_reconcile',$1,false)", [verifier]);
     await assert.rejects(db.query(
       "update sellerpilot_private.product_listings set remote_resources='{\"arbitrary\":true}' where id=$1",
@@ -415,15 +494,8 @@ test("PGlite rejects quantity/price drift and a non-current source attempt", asy
   await expectRejectedCompletion((value) => {
     delete value.steps[1].data.data.salePrice;
   });
-  const { db } = await fixture({ attemptStatus: "failed" });
-  try {
-    await assert.rejects(db.query(
-      "select public.sellerpilot_service_enqueue_exact_coupang_live_verifier()",
-    ), /source evidence drifted/);
-    assert.equal((await db.query(
-      "select count(*)::int count from sellerpilot_private.coupang_exact_live_verify_runs",
-    )).rows[0].count, 0);
-  } finally {
-    await db.close();
-  }
+  await assert.rejects(
+    fixture({ attemptStatus: "failed" }),
+    /shared-admin source predicate remains false/,
+  );
 });
