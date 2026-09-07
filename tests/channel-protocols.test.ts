@@ -21,6 +21,7 @@ import {
   lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests, orderSyncRequests } from "../lib/channels/sync-arguments";
 import {
   buildShipmentAcknowledgeArguments,
@@ -1282,7 +1283,10 @@ test("Coupang operation routing uses the documented item price endpoint", async 
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
     calls.push({ url: String(input), init });
-    return new Response(JSON.stringify({ code: "SUCCESS", message: "ok" }), {
+    const data = String(input).includes("/inventories")
+      ? { code: "SUCCESS", message: "", data: { sellerItemId: 3572784698, amountInStock: 1, salePrice: 49_000, onSale: true } }
+      : { code: "SUCCESS", message: "ok" };
+    return new Response(JSON.stringify(data), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -1298,6 +1302,32 @@ test("Coupang operation routing uses the documented item price endpoint", async 
     assert.equal(result.ok, true);
     assert.match(calls[0].url, /vendor-items\/3572784698\/prices\/49000\?forceSalePriceUpdate=false$/);
     assert.match(String(new Headers(calls[0].init?.headers).get("authorization")), /^CEA algorithm=HmacSHA256/);
+    assert.match(calls[1].url, /vendor-items\/3572784698\/inventories$/);
+    assert.equal(calls[1].init?.method, "GET");
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "COUPANG_VENDOR_ITEM_PRICE_VERIFIED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Coupang price update fails closed when the exact vendor item readback has another price", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => new Response(JSON.stringify(
+    String(input).includes("/inventories")
+      ? { code: "SUCCESS", data: { sellerItemId: 3572784698, amountInStock: 1, salePrice: 50_000, onSale: true } }
+      : { code: "SUCCESS", message: "ok" },
+  ), { status: 200, headers: { "content-type": "application/json" } });
+  try {
+    const result = await executeChannelOperation({
+      channel: "coupang",
+      operation: "price.update",
+      payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
+      arguments: { vendorItemId: "3572784698", price: 49_000, forceSalePriceUpdate: false },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "COUPANG_VENDOR_ITEM_PRICE_MISMATCH");
+    assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
   } finally {
     globalThis.fetch = originalFetch;
   }

@@ -4803,7 +4803,35 @@ async function executeCoupang(input: ExecuteInput) {
     if (price % 10 !== 0) throw new Error("CHANNEL_ARGUMENT_INVALID:price_must_be_10_won_unit");
     const query = new URLSearchParams({ forceSalePriceUpdate: String(booleanArgument(input.arguments, "forceSalePriceUpdate")) });
     const remote = await coupangRequest({ payload: input.payload, method: "PUT", path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${vendorItemId}/prices/${price}`, query });
-    return result(input, [step("price", remote)], vendorItemId);
+    const priceStep = step("price", remote);
+    if (!priceStep.ok) return result(input, [priceStep], vendorItemId);
+    const readback = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `${sellerProductsPath.replace("seller-products", "vendor-items")}/${vendorItemId}/inventories`,
+    });
+    const readbackStep = step("price-readback", readback);
+    const root = readback.data.data && typeof readback.data.data === "object" && !Array.isArray(readback.data.data)
+      ? readback.data.data as Record<string, unknown>
+      : {};
+    const observedItemId = String(root.vendorItemId ?? root.sellerItemId ?? "").trim();
+    const observedPrice = Number(root.salePrice);
+    const priceVerified = readbackStep.ok
+      && observedItemId === vendorItemId
+      && Number.isSafeInteger(observedPrice)
+      && observedPrice === price;
+    readbackStep.ok = priceVerified;
+    readbackStep.data = {
+      ...readbackStep.data,
+      sellerpilotVendorItemId: vendorItemId,
+      sellerpilotRequestedPrice: price,
+      sellerpilotObservedPrice: Number.isSafeInteger(observedPrice) ? observedPrice : null,
+      sellerpilotCurrency: "KRW",
+      sellerpilotVerification: priceVerified
+        ? "COUPANG_VENDOR_ITEM_PRICE_VERIFIED"
+        : "COUPANG_VENDOR_ITEM_PRICE_MISMATCH",
+    };
+    return result(input, [priceStep, readbackStep], vendorItemId);
   }
   if (input.operation === "inventory.update") {
     const quantity = integerArgument(input.arguments, "quantity", { min: 0, max: 99_999_999 });

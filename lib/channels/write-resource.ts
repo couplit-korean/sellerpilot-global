@@ -63,10 +63,23 @@ export function channelListingRemoteIdentity(channel: ActiveChannelKey, operatio
 export function listingLedgerRemoteIdentity(
   channel: ActiveChannelKey,
   operation: ChannelOperationName,
-  listing: { remoteId?: unknown; marketplaceSku?: unknown },
+  listing: { remoteId?: unknown; marketplaceSku?: unknown; remoteResources?: unknown },
 ) {
   if (channel === "ebay" && operation === "inventory.update") {
     return text(listing.marketplaceSku);
+  }
+  if (channel === "coupang" && (operation === "price.update" || operation === "inventory.update")) {
+    const remoteResources = record(listing.remoteResources);
+    const resources = record(remoteResources.resources);
+    const rawVendorItemIds = Array.isArray(resources.vendorItemIds)
+      ? resources.vendorItemIds
+      : Array.isArray(remoteResources.vendorItemIds)
+        ? remoteResources.vendorItemIds
+        : [];
+    const vendorItemIds = rawVendorItemIds.map((value) => text(value)).filter(Boolean);
+    return vendorItemIds.length === 1 && new Set(vendorItemIds).size === 1
+      ? vendorItemIds[0]
+      : "";
   }
   return text(listing.remoteId);
 }

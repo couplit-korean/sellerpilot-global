@@ -698,6 +698,9 @@ export function gatewayJobCompletionStatus(
   ok: boolean,
   steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
 ): "succeeded" | "failed" | "reconciliation_required" {
+  if (!ok && operation === "listing.publication.verify") {
+    return "reconciliation_required";
+  }
   if (!ok && steps.some((step) => step.data?.sellerpilotReconciliationRequired === true)) {
     return "reconciliation_required";
   }

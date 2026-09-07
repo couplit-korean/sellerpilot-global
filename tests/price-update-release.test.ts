@@ -5,6 +5,7 @@ import { activeChannelKeys } from "../lib/channels/catalog";
 import { channelOperationRelease } from "../lib/channels/operation-availability";
 import { channelPriceUpdateRelease } from "../lib/channels/price-update-release";
 import { serverlessGatewayOperationAllowed } from "../lib/channels/serverless-gateway-provider";
+import { channelListingRemoteIdentity, listingLedgerRemoteIdentity } from "../lib/channels/write-resource";
 
 test("가격 출시는 쓰기·식별값·동일상품 통화가격 readback·불일치 차단을 모두 요구한다", () => {
   for (const channel of activeChannelKeys) {
@@ -16,8 +17,8 @@ test("가격 출시는 쓰기·식별값·동일상품 통화가격 readback·�
       release.evidence.failClosedOnMismatch,
     ];
     assert.equal(release.available, requirements.every(Boolean), channel);
-    assert.equal(release.available, false, channel);
-    assert.equal(release.mode, "release_verification_required", channel);
+    assert.equal(release.available, channel === "coupang", channel);
+    assert.equal(release.mode, channel === "coupang" ? "available" : "release_verification_required", channel);
     assert.ok(release.reason.length > 20, channel);
   }
 });
@@ -33,7 +34,7 @@ test("현재 구현된 가격 쓰기와 미구현 채널을 구분하되 readbac
   assert.equal(channelPriceUpdateRelease("qoo10").evidence.failClosedOnMismatch, true);
   assert.equal(channelPriceUpdateRelease("qoo10").evidence.sameProductPriceCurrencyReadback, false);
   assert.match(channelPriceUpdateRelease("qoo10").reason, /ItemCode.*통화·가격/);
-  assert.match(channelPriceUpdateRelease("coupang").reason, /vendorItemId.*readback/);
+  assert.match(channelPriceUpdateRelease("coupang").reason, /vendorItemId.*GET.*가격/);
   assert.match(channelPriceUpdateRelease("ebay").reason, /offer ID·SKU.*통화·가격/);
 });
 
@@ -64,6 +65,34 @@ test("Qoo10 가격 대상은 게시 원장의 ItemCode와 검증된 판매자 �
   const releaseFence = adminRoute.indexOf("const operationRelease", lineageFence);
   assert.ok(exactListing >= 0 && lineageFence > exactListing && releaseFence > lineageFence);
   assert.match(lineageVerification, /method: "GetItemDetailInfo"[\s\S]*identities\.size === 1[\s\S]*identities\.has\(argumentsValue\.expectedRemoteId\)/);
+});
+
+test("Coupang 가격 작업은 게시 원장의 단일 vendorItemId와 요청 대상을 결속한다", () => {
+  const argumentsValue = { vendorItemId: "96027942778", price: 3190 };
+  const listing = {
+    remoteId: "16375780938",
+    remoteResources: {
+      resources: {
+        sellerProductId: "16375780938",
+        vendorItemIds: ["96027942778"],
+      },
+    },
+  };
+  assert.equal(
+    channelListingRemoteIdentity("coupang", "price.update", argumentsValue),
+    "96027942778",
+  );
+  assert.equal(
+    listingLedgerRemoteIdentity("coupang", "price.update", listing),
+    "96027942778",
+  );
+  assert.equal(
+    listingLedgerRemoteIdentity("coupang", "price.update", {
+      ...listing,
+      remoteResources: { resources: { vendorItemIds: ["96027942778", "96027942779"] } },
+    }),
+    "",
+  );
 });
 
 test("Vercel claim·serverless drain·로컬 gateway worker가 차단된 가격 작업을 공급자 호출 전에 종료한다", async () => {
