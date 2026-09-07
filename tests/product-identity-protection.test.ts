@@ -535,7 +535,7 @@ test("identity background plates fail closed when the reserved product zone is v
   await assert.rejects(assertIdentityBackgroundPlate(busy, portrait, "suspended-or-planar"), /고대비 물체/);
 });
 
-test("background-only alpha normalization replaces every non-opaque pixel with an explicit safe color", async () => {
+test("background-only alpha normalization preserves near-opaque scene color and discards fully hidden RGB", async () => {
   const portrait = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait");
   assert.ok(portrait);
   const spec = { ...portrait, width: 32, height: 40 };
@@ -555,7 +555,7 @@ test("background-only alpha normalization replaces every non-opaque pixel with a
     assert.equal(pixels.info.width, spec.width);
     assert.equal(pixels.info.height, spec.height);
     for (let offset = 0; offset < pixels.data.length; offset += 4) {
-      assert.deepEqual([...pixels.data.subarray(offset, offset + 4)], [255, 255, 255, 255]);
+      assert.deepEqual([...pixels.data.subarray(offset, offset + 4)], alpha === 0 ? [255, 255, 255, 255] : [12, 74, 149, 255]);
     }
   }
 });
@@ -582,7 +582,7 @@ test("background-only alpha normalization preserves opaque pixels and flattens o
   const pixels = await sharp(normalized).ensureAlpha().raw().toBuffer();
   assert.deepEqual([...pixels.subarray(0, 4)], [42, 88, 123, 255]);
   const partialOffset = (spec.width - 1) * 4;
-  assert.deepEqual([...pixels.subarray(partialOffset, partialOffset + 4)], [255, 255, 255, 255]);
+  assert.deepEqual([...pixels.subarray(partialOffset, partialOffset + 4)], [222, 137, 162, 255]);
 });
 
 test("opaque background normalization is byte-identical and retains stripe and geometry audits", async () => {

@@ -1,5 +1,5 @@
 /** Creative routing only: never assigns marketplace category IDs or changes publication data. */
-export const PRODUCT_SCENE_PROFILE_VERSION = "2026-09-07-v1";
+export const PRODUCT_SCENE_PROFILE_VERSION = "2026-09-07-v2-food-presentation";
 export const sceneCategoryChannels = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"] as const;
 export type SceneCategoryHint = {
   channel: typeof sceneCategoryChannels[number];
@@ -15,6 +15,7 @@ type ProfileRow = readonly [string, string, string, string, string, string, stri
 // Korean, English and Japanese are semantic aliases, NOT official channel paths or IDs.
 // Each subtype owns its context: broad Food, Beauty or Home categories cannot choose a room.
 const rows: readonly ProfileRow[] = [
+  ["food-cup-noodles", "컵라면·컵누들", "컵라면|컵누들|신라면컵|육개장사발면|cup noodle|cup noodles|instant cup noodle|カップ麺", "끓는 물을 준비한 편의점·탕비실의 작은 식사 상판", "브랜드색과 조화되는 깨끗한 내열 상판", "밀봉 제품·용량·조리 안내와 열린 컵 속 완성 면·국물", "밀봉 뚜껑에서 나는 김, 제품 없는 라면, 별도 그릇, 확인되지 않은 계란·파·고기 토핑, 봉지라면·큰사발·다른 맛 패키지"],
   ["food-jelly-stick", "젤리스틱·휴대 젤리", "젤리스틱|스틱젤리|애사비|jelly stick|stick jelly|ゼリースティック", "간식을 챙기는 책상 가장자리", "패키지 색과 조화되는 무광 단색 상판", "정면 패키지·휴대 형태·실제 포 수·라벨", "주방 조리대, 냄비, 팬트리, 원료 사과 더미, 보이지 않은 낱개 젤리"],
   ["food-snack", "과자·쿠키·크래커", "과자|쿠키|비스킷|크래커|cookie|biscuit|cracker|snack|お菓子|クッキー", "간식 시간의 작은 라운지 테이블", "밝은 무광 테이블", "포장·맛 표기·확인된 구성", "조리 중인 주방, 미확인 내용물, 임의 접시 플레이팅"],
   ["food-chocolate", "초콜릿·캔디", "초콜릿|초콜렛|캔디|사탕|chocolate|candy|チョコレート|キャンディ", "선물 포장을 살펴보는 테이블", "차분한 무광 색지 상판", "포장 마감·종류·구성 수량", "녹은 초콜릿, 미확인 단면, 과장된 선물 구성"],
@@ -26,7 +27,7 @@ const rows: readonly ProfileRow[] = [
   ["food-beverage", "병·캔·팩 음료", "주스|탄산수|탄산음료|캔음료|생수|juice|soda|sparkling water|bottled water|ジュース", "휴식 공간의 음료 테이블", "밝고 건조한 무광 상판", "밀봉 포장·용량·당류 표시", "미확인 냉장 보관, 물방울로 방수 암시, 추가 음료"],
   ["food-protein", "단백질 분말·바", "단백질|프로틴|protein powder|protein bar|プロテイン", "운동 준비 공간의 정리 벤치", "매트한 스포츠 벤치 상판", "성분표·포장·섭취 안내", "근육 변화, 체형 전후, 확인되지 않은 쉐이크나 스쿱"],
   ["food-rice", "쌀·잡곡", "백미|잡곡|쌀|rice grain|white rice|mixed grains|白米|雑穀", "건조한 식료품 정리 작업대", "내추럴 목재 정리 상판", "품종·중량·생산 정보 표시", "미확인 논과 산지, 임의 밥상"],
-  ["food-noodles", "면·라면·파스타", "라면|파스타|스파게티|소면|ramen|noodles|pasta|spaghetti|ラーメン|パスタ", "식사 준비용 건조 조리대", "정돈된 밝은 조리 상판", "밀봉 제품·수량·조리 안내", "근거 없는 완성 요리, 재료 추가, 불꽃"],
+  ["food-noodles", "면·라면·파스타", "라면|파스타|스파게티|소면|ramen|noodles|pasta|spaghetti|ラーメン|パスタ", "식사 준비용 건조 조리대", "정돈된 밝은 조리 상판", "밀봉 제품·수량·조리 안내와 기본 조리 결과", "확인되지 않은 토핑·소스·그릇, 제품 없는 완성 요리, 불꽃"],
   ["food-ready-meal", "즉석밥·즉석식품", "즉석밥|즉석식품|레토르트|cooked rice|ready meal|retort|ご飯パック", "간편 식사를 준비하는 테이블", "무광 식사 준비 상판", "밀봉 상태·조리법·내용량", "미확인 완성 음식, 포장을 임의로 연 장면"],
   ["food-condiment", "소스·오일·조미료", "소스|드레싱|식용유|올리브유|양념|조미료|sauce|dressing|olive oil|seasoning|調味料", "요리 준비용 작업대 가장자리", "어두운 무광 조리 상판", "용기·원료·용량·사용 안내", "미확인 재료와 요리, 향이나 효능 시각화"],
   ["food-baking", "베이킹 재료", "밀가루|베이킹파우더|베이킹믹스|flour|baking mix|baking powder|小麦粉", "베이킹 준비 작업대", "건조한 밝은 목재 상판", "포장·재료 종류·중량", "가루 날림, 미확인 완성 빵과 반죽"],

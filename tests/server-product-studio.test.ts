@@ -15,6 +15,7 @@ import {
   buildReviewedServerStudioFallbackMaster,
   buildPortableProductCutout,
   buildServerImageAuditReference,
+  buildServerPreparedFoodPrompt,
   buildServerSourceDerivedAsset,
   buildServerSourceEvidencePanel,
   buildServerStudioMasterPrompt,
@@ -61,7 +62,28 @@ const LOCALIZED_SECTION_ASSETS = [
 test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
   assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
-  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.5");
+  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.6-food-presentation");
+});
+
+test("server prepared-food contract keeps cup ramen, opened contents and steam physically linked", () => {
+  const base = testMasterResult();
+  const result = {
+    ...base,
+    product: {
+      ...base.product,
+      name: "농심 신라면컵 65g",
+      category: "식품 > 컵라면",
+      features: ["끓는 물 조리", "약 3분", "컵 용기", "매운 라면"],
+      cautions: ["뜨거운 물 주의", "실제 표시사항 확인"],
+    },
+  };
+  const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === "detail-context");
+  assert.ok(asset);
+  const prompt = buildServerPreparedFoodPrompt(studioMasterResultSchema.parse(result), asset, 1, []);
+  assert.match(prompt, /active-serving/);
+  assert.match(prompt, /젓가락으로 익은 면을 들어 올린/);
+  assert.match(prompt, /sealed packaging, a closed lid/);
+  assert.match(prompt, /another size, flavor, package/);
 });
 
 function testMasterResult() {
@@ -187,6 +209,10 @@ function passingPortableAudit() {
     candidateTokens: [],
     unsupportedTokens: [],
     missingTokens: [],
+    preparedFoodVisible: true,
+    packageStatePlausible: true,
+    noInventedFoodAdditions: true,
+    steamOriginPlausible: true,
   };
 }
 
@@ -363,7 +389,17 @@ async function quietSettingPlate(
       },
     },
   }).png().toBuffer();
-  return repairMissingIdentitySupportSurface(solid, serverStudioIdentitySpec(asset));
+  // Vary actual backdrop structure; rotation of the same product must not be
+  // the only reason synthetic scenes pass the distinct-shot check.
+  const p = asset.identityPolicy.placement;
+  const bands = Array.from({ length: 17 }, (_, index) => {
+    const x = index * asset.width / 17;
+    const value = (digest[index] % 2) ? 18 : -18;
+    return `<rect x="${x}" width="${asset.width / 17 + 1}" height="${asset.height}" fill="${value > 0 ? 'white' : 'black'}" opacity="0.12"/>`;
+  }).join('');
+  const quietZone = `<rect x="${p.left * asset.width}" y="${p.top * asset.height}" width="${p.width * asset.width}" height="${p.height * asset.height}" fill="rgb(${luminance},${luminance},${luminance})"/>`;
+  const plate = await sharp(solid).composite([{ input: Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${asset.width}" height="${asset.height}">${bands}${quietZone}</svg>`) }]).png().toBuffer();
+  return repairMissingIdentitySupportSurface(plate, serverStudioIdentitySpec(asset));
 }
 
 async function firstDraftPreflightFixture(
@@ -1040,7 +1076,7 @@ test("source evidence roles remain visually distinct even when they share one so
   }
 });
 
-test("cover evidence audits the exact role crop embedded in the candidate", async () => {
+test("evidence audits the entire isolated label without cover cropping", async () => {
   const sourceBytes = await sharp({
     create: { width: 1600, height: 900, channels: 3, background: "#f6f1e8" },
   }).composite([{
@@ -1056,8 +1092,8 @@ test("cover evidence audits the exact role crop embedded in the candidate", asyn
   const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === "detail-material");
   assert.ok(asset && asset.identityPolicy.mode === "source-evidence" && asset.identityPolicy.fit === "cover");
   const variant = 2;
-  const panel = await buildServerSourceEvidencePanel(asset, source, variant);
-  const auditReference = await buildServerImageAuditReference(asset, source, variant);
+  const panel = await buildServerSourceEvidencePanel(asset, source, variant, await sharp(sourceBytes).ensureAlpha().png().toBuffer());
+  const auditReference = await buildServerImageAuditReference(asset, source, variant, await sharp(sourceBytes).ensureAlpha().png().toBuffer());
   const candidate = await buildServerSourceDerivedAsset(asset, source, sourceBytes, variant);
   assert.equal(createHash("sha256").update(auditReference.bytes).digest("hex"), createHash("sha256").update(panel.bytes).digest("hex"));
   assert.notEqual(createHash("sha256").update(auditReference.bytes).digest("hex"), createHash("sha256").update(source.bytes).digest("hex"));
@@ -1094,6 +1130,40 @@ test("source catalog requires natural cutout edges without pretending it is an e
   );
   assert.throws(
     () => assertPortableAudit(audit, "source-evidence"),
+    /portable_image_identity_audit_failed/u,
+  );
+});
+
+test("prepared-food audit permits naturally hidden microtext but rejects missing food or implausible steam", () => {
+  const audit = {
+    sameProduct: true,
+    samePackageCount: true,
+    brandCaseMatches: true,
+    quantityUnitMatches: true,
+    assignedSceneVisible: true,
+    exactlyOneProduct: true,
+    backgroundContainsResidualProductOrPackage: false,
+    productEdgesNatural: true,
+    evidencePanelIntact: false,
+    referenceHasReadableText: true,
+    candidateHasReadableText: true,
+    referenceTokens: ["NONGSHIM", "65g"],
+    requiredTokens: ["NONGSHIM", "65g"],
+    candidateTokens: ["NONGSHIM"],
+    unsupportedTokens: [],
+    missingTokens: ["65g"],
+    preparedFoodVisible: true,
+    packageStatePlausible: true,
+    noInventedFoodAdditions: true,
+    steamOriginPlausible: true,
+  };
+  assert.doesNotThrow(() => assertPortableAudit(audit, "reference-generated-food"));
+  assert.throws(
+    () => assertPortableAudit({ ...audit, preparedFoodVisible: false }, "reference-generated-food"),
+    /portable_image_identity_audit_failed/u,
+  );
+  assert.throws(
+    () => assertPortableAudit({ ...audit, steamOriginPlausible: false }, "reference-generated-food"),
     /portable_image_identity_audit_failed/u,
   );
 });
@@ -1273,7 +1343,7 @@ test("an attested cable-clip revision fails closed after aggregate-only master c
 
 test("a semantic master repair completes before localization and preserves the 34-market contract", async () => {
   const run = await runReviewedTransientPipelineFixture({ providerScenario: "terminal-master-repaired" });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 }, JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }));
   assert.equal(run.structuredCalls - run.structuredChunkCalls.length, 2);
   assert.equal(run.structuredChunkCalls.length, 9);
   const payload = run.completionCalls[0].p_result_payload as { localizedListings: unknown[] };
@@ -1283,7 +1353,7 @@ test("a semantic master repair completes before localization and preserves the 3
 for (const providerScenario of ["terminal-localization-repaired", "structural-localization-repaired", "coverage-localization-repaired"] as const) {
   test(`${providerScenario} regenerates only the rejected chunk and preserves approved pixels`, async () => {
     const run = await runReviewedTransientPipelineFixture({ providerScenario });
-    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 }, JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }));
     const repairedChunk = providerScenario === "structural-localization-repaired" ? "chunk:2" : "chunk:1";
     assert.equal(run.structuredChunkCalls.length, 10);
     assert.equal(run.structuredChunkCalls.filter((chunk) => chunk === repairedChunk).length, 2);
@@ -1462,7 +1532,7 @@ test("reviewed classification copy follows the exact channel market locale key a
   const run = await runReviewedTransientPipelineFixture({
     providerScenario: "reordered-localization",
   });
-  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+  assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 }, JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }));
   const completion = run.completionCalls.at(-1);
   assert.equal(completion?.p_status, "succeeded");
   const payload = completion?.p_result_payload as {
@@ -1504,10 +1574,10 @@ test("the shared remote gate caps all lanes at three and one image 429 cancels q
   });
   await assertFailedClosed(run, "gateway_rate_limited");
   assert.equal(run.peakRemoteCalls, 3, "text and image lanes must remain concurrent up to the shared cap");
-  assert.deepEqual(
-    run.backgroundAssetIds,
-    ["detail-storage"],
-    "the first image 429 must cancel the queued sibling before it reaches the provider",
+  assert.equal(run.backgroundAssetIds.length, 1, "the first image 429 must cancel every queued sibling before it reaches the provider");
+  assert.ok(
+    ["detail-context", "detail-storage"].includes(run.backgroundAssetIds[0] ?? ""),
+    "the single admitted image may be either concurrent final-wave role",
   );
   assert.equal(run.imageCallsStartedAfterRateLimit, 0);
   assert.equal(run.backgroundCalls, 1, "the failed image must not receive a blind retry");
@@ -1534,7 +1604,7 @@ for (const providerScenario of ["image-preprovider-rate-limit-repaired", "text-p
         upstreamProviderAttempted: false,
       },
     });
-    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 });
+    assert.deepEqual(await run.response.json(), { ok: true, status: "succeeded", processed: 1 }, JSON.stringify({ logs: run.logs, completion: run.completionCalls.at(-1) }));
     assert.equal(run.uploaded.size, 16);
     assert.ok(run.peakRemoteCalls <= 3);
     assert.ok(run.completionActiveRemoteCounts.every((count) => count === 0));

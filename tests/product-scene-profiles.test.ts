@@ -27,6 +27,23 @@ test("jelly is not routed to tea or cooking by an ingredient or broad food label
   assert.equal(plan["detail-use"].sceneProfile?.mode,"contextual");
   for(const s of Object.values(plan))assert.doesNotMatch(s.location,/주방|팬트리|조리|냄비/);
 });
+test("cup ramen receives opened prepared-food shots while catalog and evidence roles stay source protected",()=>{
+  const selection=resolveProductSceneProfile({name:"농심 신라면컵 65g",category:"식품 > 컵라면",features:["끓는 물 조리", "약 3분"],isHealthFunctionalFood:false});
+  assert.equal(selection.profile.id,"food-cup-noodles");
+  const cupResult={...result,product:{...result.product,name:"농심 신라면컵 65g",category:"식품 > 컵라면",features:["끓는 물 조리", "약 3분"]}};
+  const use=resolveProductSettingShot(cupResult,"detail-use")!;
+  const context=resolveProductSettingShot(cupResult,"detail-context")!;
+  assert.equal(use.foodPresentation?.state,"prepared-hero");
+  assert.equal(context.foodPresentation?.state,"active-serving");
+  assert.equal(resolveProductSettingShot(cupResult,"portrait")?.foodPresentation,undefined);
+  const useAsset=aiGeneratedAssetSpecs.find(asset=>asset.id==="detail-use")!;
+  const prompt=buildAssetImagePrompt(cupResult,"/tmp/cup-prepared.png",useAsset,["main","front"],"","prepared-food",use);
+  assert.match(prompt,/prepared-food-reference/);
+  assert.match(prompt,/익은 면과 따뜻한 국물/);
+  assert.match(prompt,/Steam may appear only/);
+  assert.match(prompt,/no empty-background result/i);
+  assert.match(prompt,/계란·파·고기/);
+});
 test("the eight channels accept semantic category text, never numeric category IDs",()=>{
   for(const channel of sceneCategoryChannels){
     assert.equal(resolveProductSceneProfile({name:"제품 A",channelCategories:[{channel,path:["Beauty","Skin Care","Serum"]}]}).profile.id,"beauty-serum");

@@ -18,7 +18,7 @@ import {
 import type { ProductStudioResult } from "../app/product-studio-types";
 import { resolveProductSceneProfile } from "./product-scene-profiles";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.09.07-r21-product-scene-profiles";
+export const AI_ASSET_PROMPT_VERSION = "2026.09.07-r22-food-presentation";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -215,7 +215,7 @@ export function buildAssetImagePrompt(
   preset: AssetSpec,
   inputRoles: string[] = [],
   noveltyGuidance = "",
-  generationMode: "product" | "identity-background" = "product",
+  generationMode: "product" | "identity-background" | "prepared-food" = "product",
   settingShotOverride?: ProductSettingShot,
   contactModeOverride?: IdentityBackgroundContactMode,
 ) {
@@ -239,6 +239,27 @@ export function buildAssetImagePrompt(
     .map((asset) => `${asset.id}=${asset.shotClass} | purpose=${asset.purpose} | placement=${asset.subjectPlacement}`)
     .join(" || ");
   const mustDifferFrom = preset.mustDifferFrom.join(", ");
+
+  if (generationMode === "prepared-food") {
+    if (!settingShot?.foodPresentation) throw new Error(`${preset.id} 조리·개봉 식품 연출 계약이 없습니다.`);
+    const presentation = settingShot.foodPresentation;
+    return [
+      "Use the built-in image_gen tool to create a finished photorealistic food product image, including the actual referenced retail product and its prepared contents.",
+      `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}; use case: prepared-food-reference; slot=${preset.id}; ratio=${preset.ratio}.`,
+      `Authoritative product identity: ${result.product.name}. Image 1 is the primary package reference. Preserve the recognizable container shape, brand color, main brand mark and product variant; do not substitute another size, flavor, package or generic container.`,
+      `Food presentation mode=${presentation.mode}; state=${presentation.state}; scene=${presentation.scene}.`,
+      `Required prepared-state visual: ${presentation.requiredVisuals}.`,
+      `Hard exclusions: ${presentation.forbiddenVisuals}.`,
+      "Exactly one retail product/container must remain identifiable. The opened container and the food inside it are one product presentation, not two products. Keep enough of the original front package visible to identify the item while making the edible result clear.",
+      "Steam may appear only when the depicted food or drink is visibly hot and exposed. Never emit steam from sealed packaging, a closed lid or a dry product. Keep steam translucent and physically plausible.",
+      "Do not invent nutrition, capacity, certification, ingredients, origin, price, promotional copy or small package text. Preserve readable source text when it remains visible; hide uncertain microtext through natural angle or depth of field instead of replacing it with gibberish.",
+      `Seller-reviewed product context, for visual meaning only: category=${result.product.category}; features=${result.product.features.join(" | ")}; cautions=${result.product.cautions.join(" | ")}. Do not turn these strings into visible copy or infer extra toppings from them.`,
+      `Composition: ${settingShot.staging}. Camera: ${settingShot.camera}. Product and edible result together occupy the visual center; no empty-background result is acceptable.`,
+      noveltyGuidance,
+      "Mandatory self-QA: reject the image if the product is absent, sealed while food is supposedly ready, food appears in an unrelated bowl, steam comes from the wrong surface, extra garnish is invented, or the package variant changes.",
+      `Save the generated PNG to ${outputPath}.`,
+    ].filter(Boolean).join("\n");
+  }
 
   if (generationMode === "identity-background") {
     const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result));

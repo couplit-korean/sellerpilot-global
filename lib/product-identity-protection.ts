@@ -837,7 +837,7 @@ export async function compositeIdentityForeground(
   let foregroundPipeline = sharp(foreground.buffer, {
     failOn: "warning",
     limitInputPixels: MAXIMUM_IDENTITY_SOURCE_PIXELS,
-  }).rotate(sourceCompositeRotationDegrees[spec.id] ?? 0, {
+  }).rotate(surfaceSupported ? 0 : sourceCompositeRotationDegrees[spec.id] ?? 0, {
     background: { r: 0, g: 0, b: 0, alpha: 0 },
   });
   if (sourceComposite) {
@@ -1236,9 +1236,12 @@ export async function normalizeIdentityBackgroundPlate(
   }
   for (let offset = 0; offset < decoded.data.length; offset += 4) {
     if (decoded.data[offset + 3] === 255) continue;
-    decoded.data[offset] = 255;
-    decoded.data[offset + 1] = 255;
-    decoded.data[offset + 2] = 255;
+    // Alpha is coverage, not a binary validity flag. Preserve the visible
+    // scene at alpha=254; discard hidden RGB only when coverage is zero.
+    const coverage = decoded.data[offset + 3] / 255;
+    for (let channel = 0; channel < 3; channel += 1) {
+      decoded.data[offset + channel] = Math.round(decoded.data[offset + channel] * coverage + 255 * (1 - coverage));
+    }
     decoded.data[offset + 3] = 255;
   }
   const flattened = await sharp(decoded.data, {

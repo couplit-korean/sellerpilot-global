@@ -23,7 +23,7 @@ import {
   type AiDetailAssetId,
   type AiGeneratedAssetId,
 } from "./ai-generated-assets";
-import { resolveProductSettingShot } from "./ai-image-planning";
+import { buildAssetImagePrompt, resolveProductSettingShot } from "./ai-image-planning";
 import { resolveProductSceneProfile, formatSceneProfileBrief } from "./product-scene-profiles";
 import {
   buildReviewedJapaneseFallbackTitle,
@@ -78,7 +78,7 @@ import {
   serverStudioIdentityFailureDimensions,
 } from "./server-studio-identity";
 
-export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.5";
+export const SERVER_PRODUCT_STUDIO_VERSION = "sellerpilot-vercel-product-studio/1.6-food-presentation";
 export const SERVER_PRODUCT_STUDIO_TEXT_MODEL = "openai/gpt-5.4-mini";
 export const SERVER_PRODUCT_STUDIO_IMAGE_MODEL = "openai/gpt-image-2";
 export const SERVER_PRODUCT_STUDIO_ASSET_BATCH_SIZE = 3;
@@ -143,6 +143,7 @@ export type ServerStudioAsset = {
 
 export type ServerStudioImageAuditMode =
   | "scene-composite"
+  | "reference-generated-food"
   | "source-evidence"
   | "source-catalog"
   | "source-photo-catalog";
@@ -421,6 +422,10 @@ const portableVisionAuditSchema = z.object({
   candidateTokens: z.array(z.string().min(1).max(160)).max(256),
   unsupportedTokens: z.array(z.string().min(1).max(160)).max(128),
   missingTokens: z.array(z.string().min(1).max(160)).max(128),
+  preparedFoodVisible: z.boolean().optional().default(false),
+  packageStatePlausible: z.boolean().optional().default(false),
+  noInventedFoodAdditions: z.boolean().optional().default(false),
+  steamOriginPlausible: z.boolean().optional().default(false),
 }).strict();
 
 const portableSegmentationSchema = z.object({
@@ -641,6 +646,8 @@ async function defaultAuditImage(input: {
     "backgroundContainsResidualProductOrPackage is true if the background model left any second product, package, label, logo or product-like ghost.",
     input.auditMode === "scene-composite"
       ? "productEdgesNatural is false for a rectangular photo patch, clipped product, halo, missing edge or low-confidence composite; evidencePanelIntact may be true."
+      : input.auditMode === "reference-generated-food"
+        ? "This is an explicit prepared-food reference image. Missing source microtext is permitted when the opened package angle or food naturally occludes it, but invented or contradictory readable package text is forbidden. productEdgesNatural is false for malformed cup, lid, food, utensil, steam or package geometry."
       : input.auditMode === "source-evidence"
         ? "This is an explicit source-evidence role. A deliberate neutral evidence panel is allowed; evidencePanelIntact is true only if the complete role-specific crop is unaltered and not presented as a lifestyle composite. productEdgesNatural may be false for this permitted evidence panel."
         : input.auditMode === "source-photo-catalog"
@@ -648,6 +655,8 @@ async function defaultAuditImage(input: {
           : "This is a source-catalog role made from a source-derived isolated cutout on a neutral background. productEdgesNatural is false for a rectangular photo patch, clipped product, halo or missing edge. evidencePanelIntact is not required.",
     input.auditMode === "scene-composite"
       ? "assignedSceneVisible is true only if a photographic support/backdrop with visible depth and light is present around the unchanged source product. Product-editorial sets are valid; a lifestyle room is not mandatory. Reject unrelated room staging, flat placeholder blocks and floating products."
+      : input.auditMode === "reference-generated-food"
+        ? "assignedSceneVisible is true only when the prepared product is the visual subject in its assigned local food context. preparedFoodVisible requires visibly opened/prepared edible contents. packageStatePlausible requires lid, opening, container and food state to agree physically. noInventedFoodAdditions is false when unverified garnish, toppings, side dishes or ingredients appear. steamOriginPlausible is true only when restrained steam originates from visibly exposed hot food or drink; it is false when steam comes from a sealed package, closed lid or background."
       : "assignedSceneVisible is not required for this factual evidence or catalog role.",
     `Asset role: ${input.assetId}. Return only the structured audit.`,
   ].join("\n");
@@ -676,7 +685,7 @@ async function defaultSegmentSource(source: ServerStudioSource, signal: AbortSig
     "Use 12-160 ordered boundary points per polygon. Use multiple polygons only for truly disconnected product parts.",
     "containsSingleProduct is false if the subject is ambiguous or more than one saleable product is visible.",
     "touchesFrame is true if any product boundary is clipped by the image edge.",
-    "Set confidence below 0.97 on uncertain identity, occlusion, clipping or approximate rectangle selection.",
+    "Confidence describes the visible silhouette. Set it below 0.97 on uncertain identity, occlusion or approximate rectangle selection. Report frame clipping separately with touchesFrame; never invent missing edges.",
   ].join("\n");
   const result = await defaultGenerateStructured({
     schema: portableSegmentationSchema,
@@ -1766,13 +1775,15 @@ export function createStudioSourceCutoutResolver(
   signal: AbortSignal,
 ) {
   const cache = new Map<string, Promise<Uint8Array>>();
-  return (source: ServerStudioSource) => {
-    if (!isStudioSceneSource(source)) throw new ServerProductStudioError("source_view_not_compositable", true);
-    let pending = cache.get(source.path);
+  return (source: ServerStudioSource, purpose: "scene" | "evidence" = "scene") => {
+    if (purpose === "scene" && !isStudioSceneSource(source)) throw new ServerProductStudioError("source_view_not_compositable", true);
+    if (source.observation?.sameProduct === "no") throw new ServerProductStudioError("source_product_identity_mismatch", true);
+    const cacheKey = `${source.path}:${purpose}`;
+    let pending = cache.get(cacheKey);
     if (!pending) {
       pending = (dependencies.segmentSource ?? defaultSegmentSource)(source, signal)
-        .then(buildPortableProductCutout).then(bytes => new Uint8Array(bytes));
-      cache.set(source.path, pending);
+        .then(input => buildPortableProductCutout({ ...input, allowPartialProduct: purpose === "evidence" })).then(bytes => new Uint8Array(bytes));
+      cache.set(cacheKey, pending);
     }
     return pending;
   };
@@ -1955,9 +1966,9 @@ async function generateStudioLocalizedResult(
   } as const;
 }
 
-function segmentationMaskSvg(segmentation: PortableProductSegmentation, size = 1024) {
+function segmentationMaskSvg(segmentation: PortableProductSegmentation, size = 1024, allowPartialProduct = false) {
   const parsed = portableSegmentationSchema.parse(segmentation);
-  if (!parsed.containsSingleProduct || parsed.touchesFrame
+  if (!parsed.containsSingleProduct || (parsed.touchesFrame && !allowPartialProduct)
     || parsed.foregroundConfidence < 0.97 || parsed.edgeConfidence < 0.94) {
     throw new ServerProductStudioError("product_segmentation_low_confidence", true);
   }
@@ -1975,8 +1986,9 @@ function segmentationMaskSvg(segmentation: PortableProductSegmentation, size = 1
 export async function buildPortableProductCutout(input: {
   segmentation: PortableProductSegmentation;
   segmentationSource: Uint8Array;
+  allowPartialProduct?: boolean;
 }) {
-  const mask = segmentationMaskSvg(input.segmentation);
+  const mask = segmentationMaskSvg(input.segmentation, 1024, input.allowPartialProduct);
   const maskStats = await sharp(mask).ensureAlpha().extractChannel("alpha").raw().toBuffer();
   const selected = maskStats.reduce((total, value) => total + (value > 127 ? 1 : 0), 0);
   const coverage = selected / maskStats.byteLength;
@@ -2132,11 +2144,12 @@ export async function buildServerSourceEvidencePanel(
   asset: (typeof aiGeneratedAssetSpecs)[number],
   source: ServerStudioSource,
   variant: number,
+  cutout: Uint8Array,
 ) {
   if (asset.identityPolicy.mode !== "source-evidence") {
     throw new ServerProductStudioError("source_evidence_panel_role_invalid", true);
   }
-  const fit = "fit" in asset.identityPolicy && asset.identityPolicy.fit === "cover" ? "cover" : "contain";
+  const fit = "contain"; // Keep the complete visible label; never crop nutrition or manufacturer text.
   const assetIndex = aiGeneratedAssetSpecs.findIndex((candidate) => candidate.id === asset.id);
   const pressure = 0.72 + (((assetIndex + variant) % 4) * 0.055);
   const width = Math.round(asset.width * Math.min(0.94, pressure));
@@ -2146,8 +2159,11 @@ export async function buildServerSourceEvidencePanel(
   const left = Math.round((asset.width - width) * (horizontalLane / 2));
   const top = Math.round((asset.height - height) * (verticalLane / 2));
   const positions = ["north", "centre", "south", "east", "west"] as const;
-  const bytes = await sharp(source.bytes, { failOn: "warning", limitInputPixels: 16_000_000 })
+  const cutoutMetadata = await sharp(cutout).metadata();
+  if (!cutoutMetadata.hasAlpha) throw new ServerProductStudioError("source_evidence_cutout_required", true);
+  const bytes = await sharp(cutout, { failOn: "warning", limitInputPixels: 16_000_000 })
     .rotate()
+    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 }, threshold: 1 })
     .resize(width, height, {
       fit,
       position: positions[(assetIndex + variant) % positions.length],
@@ -2162,9 +2178,10 @@ export async function buildServerImageAuditReference(
   asset: (typeof aiGeneratedAssetSpecs)[number],
   source: ServerStudioSource,
   variant: number,
+  cutout: Uint8Array,
 ) {
   if (asset.identityPolicy.mode !== "source-evidence") return source;
-  const panel = await buildServerSourceEvidencePanel(asset, source, variant);
+  const panel = await buildServerSourceEvidencePanel(asset, source, variant, cutout);
   return {
     ...source,
     path: `${source.path}#role-crop:${asset.id}:${variant}`,
@@ -2195,7 +2212,7 @@ export async function buildServerSourceDerivedAsset(
       + "</svg>",
   );
   if (renderMode === "source-evidence") {
-    const panel = await buildServerSourceEvidencePanel(asset, source, variant);
+    const panel = await buildServerSourceEvidencePanel(asset, source, variant, cutout);
     return sharp(background)
       .composite([{ input: Buffer.from(panel.bytes), left: panel.left, top: panel.top }])
       .png()
@@ -2266,7 +2283,7 @@ export function buildServerStudioBackgroundPrompt(
   const placement = asset.identityPolicy.placement;
   const contactMode = resolveServerStudioContactMode(result as CliStudioResult, asset.id);
   return [
-    "Generate only an empty photorealistic product background plate. Do not render, redraw, copy or imply the supplied product.",
+    "Generate only an empty photorealistic product background plate. Output a fully opaque photograph, alpha=255 everywhere, with no transparent fade or cutout. Do not render, redraw, copy or imply the supplied product.",
     setting.sceneProfile?.brief ?? "",
     setting.sceneProfile ? `Scene mode=${setting.sceneProfile.mode}. Product-editorial needs a photographic support plane and restrained backdrop, not a room. Contextual uses only the assigned local preparation context. Product visibility takes priority over room variety.` : "",
     rejectedReferenceCount > 0
@@ -2282,6 +2299,28 @@ export function buildServerStudioBackgroundPrompt(
     `Composition=${setting.sceneProfile ? setting.staging : asset.composition}; distinct retry=${attempt}; preserve brand palette and product identity, distinguish purchase purpose and composition without forcing unrelated rooms.`,
     retryLineagePrompt(asset, retryLineage),
   ].join("\n");
+}
+
+export function buildServerPreparedFoodPrompt(
+  result: z.infer<typeof studioMasterResultSchema>,
+  asset: (typeof aiGeneratedAssetSpecs)[number],
+  attempt: number,
+  retryLineage: readonly ServerStudioCandidateRejection[],
+) {
+  const setting = resolveProductSettingShot(result as CliStudioResult, asset.id);
+  if (!setting?.foodPresentation) throw new ServerProductStudioError(`prepared_food_plan_missing_${asset.id}`, true);
+  return buildAssetImagePrompt(
+    result as CliStudioResult,
+    `/tmp/${asset.file}`,
+    asset,
+    [...asset.referenceRoles],
+    [
+      `Prepared-food attempt=${attempt}. Keep the same product identity and presentation state while changing only a rejected camera, surface or local context.`,
+      retryLineagePrompt(asset, retryLineage),
+    ].join("\n"),
+    "prepared-food",
+    setting,
+  );
 }
 
 async function settingShotAsset(input: {
@@ -2334,6 +2373,30 @@ async function settingShotAsset(input: {
   };
 }
 
+async function preparedFoodAsset(input: {
+  result: z.infer<typeof studioMasterResultSchema>;
+  asset: (typeof aiGeneratedAssetSpecs)[number];
+  sources: readonly ServerStudioSource[];
+  attempt: number;
+  retryLineage: readonly ServerStudioCandidateRejection[];
+  dependencies: ServerProductStudioDependencies;
+  signal: AbortSignal;
+}) {
+  const generateImage = input.dependencies.generateBackground ?? defaultGenerateBackground;
+  const generated = await generateImage({
+    asset: input.asset,
+    prompt: buildServerPreparedFoodPrompt(input.result, input.asset, input.attempt, input.retryLineage),
+    references: input.sources.slice(0, MAX_AI_REFERENCE_IMAGES),
+    signal: input.signal,
+  });
+  const bytes = await sharp(generated, { failOn: "warning", limitInputPixels: 16_000_000 })
+    .rotate()
+    .resize(input.asset.width, input.asset.height, { fit: "cover", position: "centre" })
+    .png()
+    .toBuffer();
+  return { bytes, rejectedBackground: null };
+}
+
 async function fingerprintAsset(assetId: AiGeneratedAssetId, bytes: Uint8Array) {
   const grayscale = await sharp(bytes, { failOn: "warning" })
     .resize(17, 16, { fit: "fill" })
@@ -2350,6 +2413,7 @@ async function fingerprintAsset(assetId: AiGeneratedAssetId, bytes: Uint8Array) 
 function evaluatePortableAudit(input: unknown, auditMode: ServerStudioImageAuditMode) {
   const audit = portableVisionAuditSchema.parse(input);
   const label = evaluateImageLabelFidelityReport(audit, {
+    allowMissingRequiredTokens: auditMode === "reference-generated-food",
     allowEmptySourceText: !audit.referenceHasReadableText && !audit.candidateHasReadableText,
   });
   const failureDimensions = [
@@ -2362,6 +2426,12 @@ function evaluatePortableAudit(input: unknown, auditMode: ServerStudioImageAudit
     ...(audit.backgroundContainsResidualProductOrPackage ? ["composition:residual-product"] : []),
     ...(auditMode === "scene-composite" && !audit.productEdgesNatural ? ["geometry:product-edges"] : []),
     ...(auditMode === "scene-composite" && !audit.assignedSceneVisible ? ["semantic:assigned-scene"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.productEdgesNatural ? ["geometry:prepared-food"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.assignedSceneVisible ? ["semantic:prepared-food-scene"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.preparedFoodVisible ? ["semantic:prepared-food-missing"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.packageStatePlausible ? ["semantic:package-food-state"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.noInventedFoodAdditions ? ["semantic:invented-food-addition"] : []),
+    ...(auditMode === "reference-generated-food" && !audit.steamOriginPlausible ? ["semantic:steam-origin"] : []),
     ...(auditMode === "source-evidence" && !audit.evidencePanelIntact ? ["geometry:evidence-panel"] : []),
     ...(auditMode === "source-photo-catalog" && !audit.evidencePanelIntact ? ["geometry:source-photo-frame"] : []),
     ...(auditMode === "source-catalog" && !audit.productEdgesNatural ? ["geometry:product-edges"] : []),
@@ -2408,7 +2478,7 @@ async function generateCandidate(input: {
   attempt: number;
   retryLineage: readonly ServerStudioCandidateRejection[];
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
-  sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
+  sourceCutout?: (source: ServerStudioSource, purpose?: "scene" | "evidence") => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
   dependencies: ServerProductStudioDependencies;
   signal: AbortSignal;
@@ -2418,15 +2488,22 @@ async function generateCandidate(input: {
   }
   const sourceResolution = resolveServerAssetSource(input.asset, input.sources);
   const source = input.sourcePlan?.get(input.asset.id) ?? sourceResolution.source;
-  const auditMode = input.sourcePlan && input.asset.identityPolicy.mode === "source-evidence"
+  const setting = resolveProductSettingShot(input.result as CliStudioResult, input.asset.id);
+  const preparedFood = sourceResolution.auditMode === "scene-composite" && Boolean(setting?.foodPresentation);
+  const auditMode = preparedFood
+    ? "reference-generated-food"
+    : input.sourcePlan && input.asset.identityPolicy.mode === "source-evidence"
     ? (source.role === "main" && requiresDedicatedEvidence(input.asset) ? "source-catalog" : "source-evidence")
     : sourceResolution.auditMode;
-  const cutout = auditMode === "source-evidence" ? input.cutout
-    : input.sourceCutout ? await input.sourceCutout(source) : input.cutout;
+  const cutout = preparedFood ? input.cutout : input.sourceCutout
+    ? await input.sourceCutout(source, auditMode === "source-evidence" ? "evidence" : "scene")
+    : input.cutout;
   const sceneRequired = auditMode === "scene-composite";
   let generated: { bytes: Buffer; rejectedBackground: ServerStudioSource | null };
   try {
-    generated = sceneRequired
+    generated = preparedFood
+      ? await preparedFoodAsset({ ...input, sources: [source, ...input.sources.filter(candidate => candidate.path !== source.path)] })
+      : sceneRequired
       ? await settingShotAsset({ ...input, cutout, sources: [source, ...input.sources.filter(candidate => candidate.path !== source.path)] })
       : {
         bytes: await buildServerSourceDerivedAsset(
@@ -2473,7 +2550,7 @@ async function generateCandidate(input: {
   }
   const bytes = generated.bytes;
   const auditSource = auditMode === "source-evidence"
-    ? await buildServerImageAuditReference(input.asset, source, input.attempt)
+    ? await buildServerImageAuditReference(input.asset, source, input.attempt, cutout)
     : source;
   const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
   if (metadata.width !== input.asset.width || metadata.height !== input.asset.height || metadata.format !== "png") {
@@ -2523,7 +2600,7 @@ async function generateAssetWave(input: {
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
-  sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
+  sourceCutout?: (source: ServerStudioSource, purpose?: "scene" | "evidence") => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
   restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
   jobId: string;
@@ -2571,9 +2648,14 @@ async function generateAssetWave(input: {
         continue;
       }
       const candidate = outcome.candidate.asset;
-      const conflict = findDuplicateShot(candidate.fingerprint, [
-        ...input.restored.values(),
-      ].map((value) => value.fingerprint));
+      const existing = [...input.restored.values()];
+      // Exact output duplicates are always invalid. Perceptual scene diversity
+      // compares creative shots only: a faithful label/catalog view must not
+      // be distorted just to differ from a staged view of the same package.
+      const conflict = findDuplicateShot(candidate.fingerprint, existing.map(value => value.fingerprint), 0)
+        ?? (candidate.auditMode === "scene-composite" || candidate.auditMode === "reference-generated-food"
+          ? findDuplicateShot(candidate.fingerprint, existing.filter(value => value.auditMode === "scene-composite" || value.auditMode === "reference-generated-food").map(value => value.fingerprint))
+          : null);
       if (conflict) {
         const rejection: ServerStudioCandidateRejection = {
           attempt,
@@ -2614,7 +2696,7 @@ async function generateAssetSet(input: {
   sources: readonly ServerStudioSource[];
   cutout: Uint8Array;
   sourcePlan?: ReadonlyMap<AiGeneratedAssetId, ServerStudioSource>;
-  sourceCutout?: (source: ServerStudioSource) => Promise<Uint8Array>;
+  sourceCutout?: (source: ServerStudioSource, purpose?: "scene" | "evidence") => Promise<Uint8Array>;
   catalogFallbackSource?: ServerStudioSource | null;
   restored: Map<AiGeneratedAssetId, ServerStudioAsset>;
   jobId: string;
@@ -2975,7 +3057,7 @@ async function runRegenerationClaim(
   const selectedSource = sourcePlan.get(asset.id)!;
   const regenerationAuditMode = resolveServerAssetSource(asset, sources).auditMode;
   const sourceCutout = createStudioSourceCutoutResolver(dependencies, signal);
-  const cutout = regenerationAuditMode === "source-evidence" ? selectedSource.bytes : await sourceCutout(selectedSource);
+  const cutout = await sourceCutout(selectedSource, regenerationAuditMode === "source-evidence" ? "evidence" : "scene");
   const history = await loadRegenerationComparisonHistory(request.data, asset.id, dependencies, signal);
   await generateAssetSet({
     result: sourceResult.data,
