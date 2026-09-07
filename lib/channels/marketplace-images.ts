@@ -552,6 +552,27 @@ function record(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
+const marketplaceShippingEvidenceKeys = [
+  "shippingFeeKrw",
+  "shippingRule",
+  "packagingRule",
+  "policyReview",
+  "shippingRuleReview",
+  "packagingRuleReview",
+  "coupangLeadTimeConfirmation",
+] as const;
+
+function marketplaceShippingEvidence(value: unknown) {
+  const shipping = record(value);
+  if (!shipping) return null;
+  const evidence = Object.fromEntries(
+    marketplaceShippingEvidenceKeys
+      .filter((key) => Object.hasOwn(shipping, key))
+      .map((key) => [key, shipping[key]]),
+  );
+  return Object.keys(evidence).length ? evidence : null;
+}
+
 function strings(value: unknown) {
   return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
 }
@@ -839,7 +860,12 @@ export async function prepareMarketplaceImages(
   };
 
   const assets = record(next.sellerpilotAssets);
+  // Image metadata is consumed by this server-side stage and must not enter the
+  // provider HTTP payload. The separately verified shipping contract is still needed
+  // by the worker's final pre-provider guard, so preserve only that subdocument.
+  const shipping = marketplaceShippingEvidence(assets?.shipping);
   delete next.sellerpilotAssets;
+  if (shipping) next.sellerpilotAssets = { shipping };
   const manualSourceMode = assets?.contentMode === "manual_mvp"
     && assets.detailAssetMode === "manual_source";
   if (manualSourceMode) next.sellerpilotContentMode = "manual_mvp";

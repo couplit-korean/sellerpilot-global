@@ -254,6 +254,27 @@ test("eBay exact no-effect retry prepares all images before one atomic enqueue a
   );
 });
 
+test("the post-image shipping contract is checked before any gateway enqueue", async () => {
+  const route = await readFile(routeUrl, "utf8");
+  const prepareIndex = route.indexOf(
+    "await prepareMarketplaceImages(serviceClient, channel, effectiveArguments",
+  );
+  const shippingGuardIndex = route.indexOf(
+    "assertListingShippingReady(channel, gatewayArguments, operation)",
+  );
+  const atomicEnqueueIndex = route.indexOf(
+    '"sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry"',
+  );
+  const genericEnqueueIndex = route.indexOf(
+    "gatewayExecution = await executeViaChannelGateway({",
+  );
+
+  assert.ok(prepareIndex >= 0, "marketplace images must be prepared on the server");
+  assert.ok(shippingGuardIndex > prepareIndex, "the guard must inspect the transformed payload");
+  assert.ok(atomicEnqueueIndex > shippingGuardIndex, "the atomic path must not enqueue an unchecked payload");
+  assert.ok(genericEnqueueIndex > shippingGuardIndex, "the generic path must not enqueue an unchecked payload");
+});
+
 test("Qoo10 rollback UPDATE independently confirms the S1 create rollback before fingerprinting or claiming", async () => {
   const route = await readFile(routeUrl, "utf8");
   const lineageIndex = route.indexOf('"sellerpilot_service_validate_listing_write_lineage"');

@@ -173,6 +173,7 @@ import {
   verifiedListingPublicationResult,
 } from "../../../../lib/channels/listing-publication-state";
 import { prepareMarketplaceImages } from "../../../../lib/channels/marketplace-images";
+import { assertListingShippingReady } from "../../../../lib/channels/listing-shipping";
 import { marketplaceChannelDetailImageCount } from "../../../../lib/channels/marketplace-image-contract";
 import type { ProductDetailImageManifest } from "../../../../lib/product-detail-image-manifest";
 import {
@@ -2928,6 +2929,9 @@ export async function POST(request: NextRequest) {
             return prepared;
           })
         : effectiveArguments;
+      if (operation === "listing.create" || operation === "listing.update") {
+        assertListingShippingReady(channel, gatewayArguments, operation);
+      }
       if (boundEbayExactExistingQaRecovery) {
         assertEbayExactExistingQaProviderCopyRequest(gatewayArguments);
       }
