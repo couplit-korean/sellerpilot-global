@@ -1385,6 +1385,30 @@ test("asset binding rejects an attacker host even when every normalized path and
   assert.equal(parseListingPublicationAssetBinding(malicious), null);
 });
 
+test("asset binding accepts canonical external-detail approved source paths", () => {
+  const binding = structuredClone(assetBinding());
+  const ownerId = "11111111-1111-4111-8111-111111111111";
+  const productId = "22222222-2222-4222-8222-222222222222";
+  const detailJobId = "33333333-3333-4333-8333-333333333333";
+  const claimId = "44444444-4444-4444-8444-444444444444";
+  for (const image of binding.approvedDetailImages) {
+    image.approvedObjectPath = [
+      "external-detail",
+      ownerId,
+      productId,
+      detailJobId,
+      claimId,
+      `${image.approvedSourceSha256}.png`,
+    ].join("/");
+  }
+  assert.ok(parseListingPublicationAssetBinding(binding));
+
+  const traversal = structuredClone(binding);
+  traversal.approvedDetailImages[0].approvedObjectPath =
+    `external-detail/${ownerId}/${productId}/${detailJobId}/${claimId}/../escape.png`;
+  assert.equal(parseListingPublicationAssetBinding(traversal), null);
+});
+
 test("every Coupang variant must expose the same ordered eight approved detail images", () => {
   const fixture = fixtures.find((item) => item.channel === "coupang")!;
   const multiVariantSourceArguments = structuredClone(fixture.sourceArguments);

@@ -564,6 +564,11 @@ function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function approvedSourceObjectPath(value: string) {
+  return /^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(value)
+    || /^external-detail\/(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/){4}[0-9a-f]{64}\.png$/iu.test(value);
+}
+
 function parseAssetIdentities(
   value: unknown,
   allowGalleryRole = false,
@@ -599,7 +604,7 @@ function parseAssetIdentities(
   };
   if (identities.some((item) =>
     ((!allowGalleryRole || item.role !== "gallery-representative") && !/^detail-[a-z0-9-]+$/u.test(item.role))
-    || (requireApprovedObjectPath && !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(item.approvedObjectPath ?? ""))
+    || (requireApprovedObjectPath && !approvedSourceObjectPath(item.approvedObjectPath ?? ""))
     || (requireApprovedObjectPath && !/^[a-f0-9]{64}$/u.test(item.approvedSourceSha256 ?? ""))
     || !canonicalStorageUrl(item)
     || !/^normalized\/[0-9a-f]{2}\/[0-9a-f]{64}\.jpg$/u.test(item.objectPath)
