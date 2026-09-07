@@ -162,9 +162,10 @@ test("a valid minute response remains usable when the daily comparison provider 
 });
 
 test("both exchange-rate UIs poll every minute with in-flight and unmount fences", async () => {
-  const [page, margin, route, mobileCss] = await Promise.all([
+  const [page, margin, marginProfiles, route, mobileCss] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/pricing/channel-margin.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/exchange-rates/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
   ]);
@@ -197,7 +198,7 @@ test("both exchange-rate UIs poll every minute with in-flight and unmount fences
   assert.match(margin, /rateRequestRef\.current\?\.abort/);
   assert.match(margin, /window\.clearInterval\(interval\)/);
   assert.match(margin, /document\.removeEventListener\("visibilitychange", refreshWhenVisible\)/);
-  assert.match(margin, /rateToKrw: null/);
+  assert.match(marginProfiles, /rateToKrw: null/);
   assert.match(margin, /실시간 환율 수신 전 · 해외 채널 계산 잠김/);
   assert.doesNotMatch(margin, /rateToKrw: 8\.7789|rateToKrw: 1098\.9|rateToKrw: 344\.83|rateToKrw: 1388\.89/);
 

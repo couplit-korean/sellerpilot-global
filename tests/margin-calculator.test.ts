@@ -1,116 +1,46 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import {
-  calculateMargins,
   fetchMarginReferenceRates,
+  MarginCalculatorPage,
   marginExchangeRateRefreshMs,
   marginExchangeRateTimeoutMs,
 } from "../app/margin-calculator";
-import type { ChannelKey } from "../app/channel-config";
 
-const form = {
-  sellingPrice: 100_000,
-  marketReferencePrice: 90_000,
-  purchaseCost: 40_000,
-  internationalShipping: 10_000,
-  localShipping: 0,
-  fulfillmentCost: 0,
-  fixedCost: 0,
-  taxRate: 3,
-  adRate: 2,
-  reserveRate: 1,
-  targetMargin: 25,
-};
-
-const paymentFees: Record<ChannelKey, number> = {
-  qoo10: 2,
-  shopee: 0,
-  lazada: 0,
-  coupang: 0,
-  elevenst: 0,
-  smartstore: 0,
-  ebay: 0,
-  temu: 0,
-};
-
-const feeOverrides = (elevenst: number | null): Record<ChannelKey, number | null> => ({
-  qoo10: 10,
-  shopee: 0,
-  lazada: 0,
-  coupang: 0,
-  elevenst,
-  smartstore: 0,
-  ebay: 0,
-  temu: null,
+test("margin calculator server render keeps all eight channel tabs and comparison rows", () => {
+  const html = renderToStaticMarkup(createElement(MarginCalculatorPage, {
+    notify: () => undefined,
+    scenarios: [],
+    scenarioState: "ready",
+    scenarioMessage: null,
+    products: [],
+  }));
+  assert.equal((html.match(/role="tab"/g) ?? []).length, 8);
+  assert.equal((html.match(/class="margin-channel-cell"/g) ?? []).length, 8);
+  assert.match(html, /배송 · 고정비/);
+  assert.match(html, /환율 확인 필요/);
+  assert.doesNotMatch(html, /자동 등록 가능|자동 등록 판정/);
 });
 
-const profiles = [
-  { key: "qoo10" as const, currency: "JPY" as const, symbol: "¥", rateToKrw: 8.7789, platformFee: 10, paymentFee: 2 },
-  { key: "elevenst" as const, currency: "KRW" as const, symbol: "₩", rateToKrw: 1, platformFee: null, paymentFee: 0, requiresManualFee: true },
-];
-
-test("manual-fee channels remain locked for null and zero, then calculate after a positive fee", () => {
-  const missing = calculateMargins(form, feeOverrides(null), paymentFees, profiles).find((result) => result.key === "elevenst");
-  const zero = calculateMargins(form, feeOverrides(0), paymentFees, profiles).find((result) => result.key === "elevenst");
-  const entered = calculateMargins(form, feeOverrides(12), paymentFees, profiles).find((result) => result.key === "elevenst");
-
-  assert.equal(missing?.feeReady, false);
-  assert.equal(missing?.exchangeRateReady, true);
-  assert.equal(missing?.calculationReady, false);
-  assert.equal(zero?.feeReady, false);
-  assert.equal(entered?.feeReady, true);
-  assert.equal(entered?.calculationReady, true);
-  assert.equal(entered?.variableRate, 18);
-  assert.equal(entered?.profit, 32_000);
-  assert.equal(entered?.margin, 32);
-  assert.equal(entered?.breakEvenPrice, 61_000);
-  assert.equal(entered?.recommendedPrice, 87_800);
-});
-
-test("known-fee channel calculation is unchanged and manual UI fails closed", async () => {
-  const qoo10 = calculateMargins(form, feeOverrides(null), paymentFees, profiles).find((result) => result.key === "qoo10");
-  assert.equal(qoo10?.feeReady, true);
-  assert.equal(qoo10?.exchangeRateReady, true);
-  assert.equal(qoo10?.calculationReady, true);
-  assert.equal(qoo10?.variableRate, 18);
-  assert.equal(qoo10?.profit, 32_000);
-  assert.equal(qoo10?.margin, 32);
-  assert.equal(qoo10?.breakEvenPrice, 61_000);
-  assert.equal(qoo10?.recommendedPrice, 87_800);
-
-  const source = await readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8");
-  assert.match(source, /key: "elevenst"[^\n]*platformFee: null/);
-  assert.match(source, /key: "temu"[^\n]*platformFee: null/);
-  assert.match(source, /!channel\.requiresManualFee \|\| platformFee > 0/);
-  assert.match(source, /플랫폼 수수료를 직접 입력하세요/);
-  assert.match(source, /selectedResult\.calculationReady \? formatWon\(selectedResult\.profit\) : "계산 대기"/);
-  assert.match(source, /selectedResult\.calculationReady \? formatWon\(selectedResult\.recommendedPrice\) : "—"/);
-  assert.match(source, /selectedResult\.calculationReady \? <><div className="margin-stack-bar"/);
-  assert.match(source, /disabled=\{!selectedResult\.calculationReady \|\| !selectedResult\.recommendedPrice\}/);
-  assert.match(source, /disabled=\{savingScenario \|\| !selectedResult\.calculationReady\}/);
-});
-
-test("foreign channels fail closed until a real exchange rate is supplied while KRW remains usable", () => {
-  const missingForeignRate = calculateMargins(form, feeOverrides(null), paymentFees, [
-    { key: "qoo10" as const, currency: "JPY" as const, symbol: "¥", rateToKrw: null, platformFee: 10, paymentFee: 2 },
-  ])[0];
-  assert.equal(missingForeignRate.feeReady, true);
-  assert.equal(missingForeignRate.exchangeRateReady, false);
-  assert.equal(missingForeignRate.calculationReady, false);
-  assert.equal(missingForeignRate.status, "환율 확인 필요");
-  assert.equal(missingForeignRate.profit, 0);
-  assert.equal(missingForeignRate.margin, 0);
-  assert.equal(missingForeignRate.breakEvenPrice, 0);
-  assert.equal(missingForeignRate.recommendedPrice, 0);
-
-  const krwWithoutExternalRate = calculateMargins(form, feeOverrides(12), paymentFees, [
-    { key: "elevenst" as const, currency: "KRW" as const, symbol: "₩", rateToKrw: 1, platformFee: null, paymentFee: 0, requiresManualFee: true },
-  ])[0];
-  assert.equal(krwWithoutExternalRate.exchangeRateReady, true);
-  assert.equal(krwWithoutExternalRate.calculationReady, true);
-  assert.equal(krwWithoutExternalRate.profit, 32_000);
-  assert.equal(krwWithoutExternalRate.recommendedPrice, 87_800);
+test("margin UI isolates per-channel shipping, explains exchange conversion and avoids registration claims", async () => {
+  const [source, route] = await Promise.all([
+    readFile(new URL("../app/margin-calculator.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, /createChannelCostOverrides/);
+  assert.match(source, /changeCostValue\("internationalShipping"/);
+  assert.match(source, /매입 원가는 공통이고 배송·3PL·통관 비용은 현재 선택한 채널에만 적용/);
+  assert.match(source, /현지 판매가 환산 후 1건 배분/);
+  assert.match(source, /확인된 0%라면 0을 직접 입력/);
+  assert.match(source, /engineVersion: MARGIN_ENGINE_VERSION/);
+  assert.match(source, /productId: selectedProduct\.id/);
+  assert.doesNotMatch(source, /자동 등록 가능|자동 등록 판정/);
+  assert.match(route, /verifyMarginScenarioForSave/);
+  assert.match(route, /p_inputs: verifiedInputs/);
+  assert.match(route, /p_result: verifiedResult/);
 });
 
 test("margin exchange-rate request times out and aborts a stalled fetch", async () => {
