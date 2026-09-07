@@ -2595,9 +2595,12 @@ async function generateDistinctAsset({
     let missingIdentityEvidence = false;
     let usedVerifiedSourceComposite = false;
     let identitySourceCandidateCount = 0;
-    const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
+    const sourceCompositeRole = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
+    const plannedSettingShot = sourceCompositeRole ? resolveProductSettingShot(result, preset.id) : null;
+    const preparedFood = Boolean(plannedSettingShot?.foodPresentation);
+    const backgroundOnly = sourceCompositeRole && !preparedFood;
     const retryIndex = attempt - 1;
-    const baseSettingShot = backgroundOnly ? resolveProductSettingShot(result, preset.id) : null;
+    const baseSettingShot = sourceCompositeRole ? plannedSettingShot : null;
     const backgroundContactMode = backgroundOnly
       ? resolveIdentityBackgroundContactMode(result, baseSettingShot)
       : "surface-supported";
@@ -2617,7 +2620,9 @@ async function generateDistinctAsset({
         }
       : preset;
     const deterministicRetryGuidance = retrySettingShot && retryIndex > 0
-      ? buildSettingShotRetryGuidance(
+      ? preparedFood
+        ? `Prepared-food retry ${retryIndex}: preserve the same opened or prepared product state and exact product variant. Replace the rejected camera and local surface; do not fall back to a sealed package, empty background or product-free food. ${noveltyGuidance}`
+        : buildSettingShotRetryGuidance(
           preset.id,
           retryConflictAssetIds,
           retryIndex,
@@ -2679,7 +2684,7 @@ async function generateDistinctAsset({
         generationPreset,
         backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role),
         [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
-        backgroundOnly ? "identity-background" : "product",
+        preparedFood ? "prepared-food" : backgroundOnly ? "identity-background" : "product",
         retrySettingShot ?? undefined,
         backgroundContactMode,
       );
@@ -2942,7 +2947,9 @@ async function generateDistinctAsset({
               ],
               leaseSignal,
               assetId: preset.id,
-              sourcePixelEvidencePolicy: identityCutouts && preset.identityPolicy.mode === "source-evidence"
+              sourcePixelEvidencePolicy: preparedFood
+                ? "crop"
+                : identityCutouts && preset.identityPolicy.mode === "source-evidence"
                 ? strictLabelEvidenceAssetIds.has(preset.id) ? "strict-label" : "crop"
                 : "none",
             });

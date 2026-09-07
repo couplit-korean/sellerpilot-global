@@ -1,4 +1,5 @@
 import { resolveProductSceneVariantCode } from "./ai-generated-assets";
+import { resolveFoodPresentationSlot } from "./food-presentation";
 import { formatSceneProfileBrief, type SceneProfileSelection } from "./product-scene-profiles";
 import type { ProductSettingShot, ProductSettingShotPlan, SettingShotAssetId } from "./product-setting-shots";
 
@@ -17,7 +18,8 @@ export function buildProfileSettingShotPlan(selection:SceneProfileSelection,iden
   const profile=selection.profile;
   const variant=resolveProductSceneVariantCode(identity, "portrait", "moment", 3);
   return Object.fromEntries(slots.map(([id,purpose,camera,light,cue,depth])=>{
-    const contextual=selection.confidence!=="fallback"&&(id==="detail-use"||id==="detail-routine");
+    const foodPresentation=selection.confidence!=="fallback"?resolveFoodPresentationSlot(profile.id,id):null;
+    const contextual=selection.confidence!=="fallback"&&(id==="detail-use"||id==="detail-routine"||Boolean(foodPresentation));
     const prefix=`${profile.id}-${id}`;
     const setting:ProductSettingShot={
       label:purpose,
@@ -27,6 +29,7 @@ export function buildProfileSettingShotPlan(selection:SceneProfileSelection,iden
       supportingObjects:`${cue}만 배경 구조로 허용한다. 판매 소품·원료·사용 결과·내용물·사람은 추가하지 않는다`,
       staging:`${depth}; ${purpose}. 해당 슬롯의 지정 합성 사각형과 원본 실루엣을 유지한다. 제품이 시각적 중심이고 배경은 보조다`,
       camera:`${camera}. 상품 자체는 원본 사진의 시점 그대로 합성하고 제공되지 않은 측면을 만들지 않는다`,
+      ...(foodPresentation?{foodPresentation}:{}),
       separation:{location:`${prefix}-set`,moment:`${prefix}-light-${variant}`,surface:`${prefix}-plane`,supportingObjects:`${prefix}-cue`,staging:`${prefix}-depth`,camera:`${prefix}-camera`},
       sceneProfile:{id:profile.id,label:profile.label,mode:contextual?"contextual":"product-editorial",brief:formatSceneProfileBrief(selection),selectionReason:selection.reason,forbiddenContexts:profile.forbiddenContexts,evidenceFocus:profile.evidenceFocus},
     };

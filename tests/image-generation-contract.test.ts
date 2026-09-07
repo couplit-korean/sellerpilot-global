@@ -762,13 +762,15 @@ test("cross-product UUID fences canonicalize case variants before self and dupli
   );
 });
 
-test("protected products never send source pixels to image generation and preserve legacy input compatibility", async () => {
+test("protected products keep source-pixel compositing except dedicated prepared-food slots and preserve legacy input compatibility", async () => {
   const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
   const cutout = await readFile(new URL("../scripts/source-product-cutout.swift", import.meta.url), "utf8");
   assert.match(worker, /preset\.identityPolicy\.mode !== "source-composite"[\s\S]*renderIdentityOnNeutralCanvas/);
-  assert.match(worker, /const backgroundOnly = Boolean\(identityCutouts && preset\.identityPolicy\.mode === "source-composite"\)/);
+  assert.match(worker, /const sourceCompositeRole = Boolean\(identityCutouts && preset\.identityPolicy\.mode === "source-composite"\)/);
+  assert.match(worker, /const preparedFood = Boolean\(plannedSettingShot\?\.foodPresentation\)/);
+  assert.match(worker, /const backgroundOnly = sourceCompositeRole && !preparedFood/);
   assert.match(worker, /\.\.\.\(!backgroundOnly \? referenceIndexes\.map[\s\S]*: \[\]\)/);
-  assert.match(worker, /backgroundOnly \? "identity-background" : "product"/);
+  assert.match(worker, /preparedFood \? "prepared-food" : backgroundOnly \? "identity-background" : "product"/);
   assert.match(worker, /compositeIdentityForeground\([\s\S]*generated,[\s\S]*compositeSource\.foreground,[\s\S]*generationPreset,[\s\S]*backgroundContactMode,[\s\S]*\)/);
   assert.match(worker, /originalMediaType[\s\S]*image\/jpeg[\s\S]*return "\.jpg"/);
   assert.match(worker, /trustedLegacyStudioImagePath\.test/);

@@ -92,6 +92,8 @@ test("cutout cache segments each selected physical source once and never segment
   await resolve(sources[3]);
   assert.deepEqual(calls, ["extra-1", "extra-3"]);
   assert.throws(() => resolve(sources[2]), /source_view_not_compositable/);
+  await resolve(sources[2], "evidence");
+  assert.equal(calls.at(-1), "extra-2", "information photos must get their own segmentation, not the main cutout");
 });
 
 test("source loader keeps multiple label photos and input order without silently dropping the second panel", async () => {

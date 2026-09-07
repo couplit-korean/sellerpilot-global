@@ -1,5 +1,6 @@
 import { buildProfileSettingShotPlan, buildProfileSettingRetry } from "./profile-setting-shots";
 import type { SceneProfileSelection } from "./product-scene-profiles";
+import type { FoodPresentationSlot } from "./food-presentation";
 import {
   resolveProductPlacementVariant,
   resolveProductSceneVariantCode,
@@ -23,6 +24,7 @@ export type SettingShotDimension = (typeof settingShotDimensions)[number];
 export type SettingShotSeparation = Record<SettingShotDimension, string>;
 
 export type ProductSettingShot = {
+  foodPresentation?: FoodPresentationSlot;
   sceneProfile?: {
     id: string; label: string; mode: "product-editorial" | "contextual";
     brief: string; selectionReason: string; forbiddenContexts: string; evidenceFocus: string;
