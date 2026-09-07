@@ -285,9 +285,8 @@ async function renderedRoleGuardRetry(db) {
         where job_id='${id.verifier}') as exact_route_sha,
       (select encode(extensions.digest(p.prosrc::bytea,'sha256'),'hex')
          from pg_catalog.pg_proc p
-         join pg_catalog.pg_namespace n on n.oid=p.pronamespace
-        where n.nspname='public'
-          and p.proname='sellerpilot_service_resolve_exact_coupang_live_verifier')
+        where p.oid=
+          'public.sellerpilot_service_resolve_exact_coupang_live_verifier(uuid)'::regprocedure)
         as resolver_source_sha
   `);
   return roleGuardRetryMigration
@@ -322,6 +321,12 @@ test("role-guard retry is exact-row-only, GET-only and pins every production pre
   ]) assert.ok(roleGuardRetryMigration.includes(digest), digest);
   assert.match(roleGuardRetryMigration, /status = 'queued'[\s\S]*attempt_count = 3/);
   assert.match(roleGuardRetryMigration, /refreshed_expiry := clock_timestamp\(\) \+ interval '20 minutes'/);
+  assert.match(roleGuardRetryMigration, /worker\.last_seen_at is null/);
+  assert.match(roleGuardRetryMigration, /worker\.expires_at <= refreshed_expiry/);
+  assert.match(roleGuardRetryMigration, /credential\.expires_at is not null[\s\S]*credential\.expires_at <= refreshed_expiry/);
+  assert.match(roleGuardRetryMigration, /serverless_static_egress_policy/);
+  assert.match(roleGuardRetryMigration, /sellerpilot_service_resolve_exact_coupang_live_verifier\(uuid\)'::regprocedure/);
+  assert.match(roleGuardRetryMigration, /to_jsonb\(source_job\)[\s\S]*run\.source_job_sha256/);
   assert.doesNotMatch(
     roleGuardRetryMigration,
     /listing\.(create|update|stop)|provider_mutation_started_at\s*=|write_resource_(?:kind|key)\s*=/,
@@ -492,4 +497,59 @@ test("role-guard recovery rolls back its ledger and route refresh on exact job d
   assert.equal(recoveryTable, null);
   assert.equal(expiryAfter.getTime(), expiryBefore.getTime());
   await db.close();
+});
+
+test("role-guard recovery fails closed when a claim prerequisite drifts", async () => {
+  const cases = [
+    ["credential expired", `update sellerpilot_private.channel_credentials set expires_at=clock_timestamp()+interval '5 minutes' where id='${id.credential}'`],
+    ["credential seller binding", `update sellerpilot_private.channel_credentials set seller_account_key_source='manual' where id='${id.credential}'`],
+    ["worker missing heartbeat", `update sellerpilot_private.ai_cli_worker_tokens set last_seen_at=null where id='${id.worker}'`],
+    ["worker short lifetime", `update sellerpilot_private.ai_cli_worker_tokens set expires_at=clock_timestamp()+interval '5 minutes' where id='${id.worker}'`],
+    ["admin ownership removed", `delete from sellerpilot_private.admin_users where user_id='${id.tokenOwner}'`],
+    ["static egress reopened", `update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang'`],
+  ];
+  for (const [name, mutation] of cases) {
+    const db = await database();
+    await db.exec(await renderedMigration(db));
+    const rendered = await renderedRoleGuardRetry(db);
+    await db.exec(mutation);
+    await assert.rejects(
+      db.exec(rendered),
+      /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_ROUTE_DRIFT/,
+      name,
+    );
+    await db.exec("rollback");
+    const { rows: [{ status, attempt_count: attempts }] } = await db.query(
+      `select status,attempt_count from sellerpilot_private.channel_gateway_jobs where id='${id.verifier}'`,
+    );
+    assert.equal(status, "failed", name);
+    assert.equal(attempts, 4, name);
+    await db.close();
+  }
+});
+
+test("role-guard recovery fails closed when immutable source binding drifts", async () => {
+  const cases = [
+    ["source job", `update sellerpilot_private.channel_gateway_jobs set response_payload='{"ok":false}' where id='${id.source}'`],
+    ["source attempt", `update sellerpilot_private.channel_operation_attempts set owner_id='${id.credentialOwner}' where id='${id.attempt}'`],
+    ["source listing", `update sellerpilot_private.product_listings set owner_id='${id.credentialOwner}' where id='${id.listing}'`],
+  ];
+  for (const [name, mutation] of cases) {
+    const db = await database();
+    await db.exec(await renderedMigration(db));
+    const rendered = await renderedRoleGuardRetry(db);
+    await db.exec(mutation);
+    await assert.rejects(
+      db.exec(rendered),
+      /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_JOB_DRIFT/,
+      name,
+    );
+    await db.exec("rollback");
+    const { rows: [{ status, attempt_count: attempts }] } = await db.query(
+      `select status,attempt_count from sellerpilot_private.channel_gateway_jobs where id='${id.verifier}'`,
+    );
+    assert.equal(status, "failed", name);
+    assert.equal(attempts, 4, name);
+    await db.close();
+  }
 });

@@ -131,6 +131,10 @@ declare
   prior_recovery sellerpilot_private.coupang_exact_live_completion_recoveries%rowtype;
   source_route sellerpilot_private.local_channel_executor_routes%rowtype;
   exact_route sellerpilot_private.coupang_exact_live_local_claim_routes%rowtype;
+  run sellerpilot_private.coupang_exact_live_verify_runs%rowtype;
+  source_job sellerpilot_private.channel_gateway_jobs%rowtype;
+  source_attempt sellerpilot_private.channel_operation_attempts%rowtype;
+  source_listing sellerpilot_private.product_listings%rowtype;
   credential sellerpilot_private.channel_credentials%rowtype;
   worker sellerpilot_private.ai_cli_worker_tokens%rowtype;
   recovery sellerpilot_private.coupang_exact_live_role_guard_retry_recoveries%rowtype;
@@ -226,6 +230,22 @@ begin
         from sellerpilot_private.local_channel_executor_routes
        where id = exact_route.source_read_route_id
        for update;
+      select * into strict run
+        from sellerpilot_private.coupang_exact_live_verify_runs
+       where verifier_job_id = verifier.id
+       for share;
+      select * into strict source_job
+        from sellerpilot_private.channel_gateway_jobs
+       where id = run.source_job_id
+       for share;
+      select * into strict source_attempt
+        from sellerpilot_private.channel_operation_attempts
+       where id = run.source_attempt_id
+       for share;
+      select * into strict source_listing
+        from sellerpilot_private.product_listings
+       where id = run.listing_id
+       for share;
       select * into strict credential
         from sellerpilot_private.channel_credentials
        where id = verifier.credential_id
@@ -287,6 +307,31 @@ begin
          or sellerpilot_private.coupang_exact_live_verifier_job_matches(verifier)
            is not true
          or sellerpilot_private.coupang_exact_live_source_current() is not true
+         or (select count(*)
+               from sellerpilot_private.coupang_exact_live_verify_runs) <> 1
+         or run.source_job_id is distinct from
+           '25adf712-1e9a-432b-8b0d-09cf35a826c5'::uuid
+         or run.source_attempt_id is distinct from
+           'd771421b-f408-4f75-addd-03879393fab8'::uuid
+         or run.listing_id is distinct from
+           'fe4ed8ac-7a49-4ccf-97a1-ee435388cbf4'::uuid
+         or run.remote_id is distinct from '16375780938'
+         or run.source_job_sha256 is distinct from prior_recovery.source_job_sha256
+         or run.source_attempt_sha256 is distinct from
+           prior_recovery.source_attempt_sha256
+         or run.source_listing_sha256 is distinct from
+           prior_recovery.source_listing_sha256
+         or encode(
+           extensions.digest(to_jsonb(source_job)::text, 'sha256'), 'hex'
+         ) is distinct from run.source_job_sha256
+         or encode(
+           extensions.digest(to_jsonb(source_attempt)::text, 'sha256'), 'hex'
+         ) is distinct from run.source_attempt_sha256
+         or encode(
+           extensions.digest(to_jsonb(source_listing)::text, 'sha256'), 'hex'
+         ) is distinct from run.source_listing_sha256
+         or source_listing.owner_id is distinct from source_attempt.owner_id
+         or source_attempt.owner_id is not distinct from source_job.created_by
          or exists (
            select 1
              from sellerpilot_private.gateway_completion_receipts receipt
@@ -301,6 +346,8 @@ begin
         raise exception 'COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_JOB_DRIFT'
           using errcode = '55000';
       end if;
+
+      refreshed_expiry := clock_timestamp() + interval '20 minutes';
 
       if prior_recovery_sha256 is distinct from
            '855e30f766bc98895b247871d8d0b7017553c05821a391513eef5eac46ebbcd5'
@@ -329,6 +376,7 @@ begin
          or source_route.egress_ip_sha256 is distinct from
            '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01'
          or source_route.enabled is not true
+         or source_route.approved_at > clock_timestamp()
          or exact_route.job_id is distinct from verifier.id
          or exact_route.owner_id is distinct from
            '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c'::uuid
@@ -343,24 +391,57 @@ begin
          or sellerpilot_private.active_serverless_runtime_release_sha()
            is distinct from exact_route.release_sha
          or exact_route.egress_ip_sha256 is distinct from source_route.egress_ip_sha256
+         or exact_route.activated_by is distinct from verifier.created_by
+         or exact_route.activated_at > clock_timestamp()
+         or credential.id is distinct from
+           '32de2968-d4b7-4fda-a84b-16a7ce0257cc'::uuid
+         or credential.channel is distinct from 'coupang'
+         or credential.environment is distinct from 'production'
          or credential.status is distinct from 'active'
+         or (credential.expires_at is not null
+           and credential.expires_at <= refreshed_expiry)
          or credential.last_check_status is distinct from 'passed'
+         or credential.seller_account_key is distinct from verifier.seller_account_key
+         or credential.seller_account_key_source not in (
+           'provider_certified_v1', 'credential_incarnation_v1'
+         )
          or credential.created_by is distinct from verifier.created_by
          or worker.id is distinct from exact_route.worker_token_id
          or worker.scope is distinct from 'gateway'
          or worker.status is distinct from 'active'
-         or worker.expires_at <= clock_timestamp()
+         or worker.expires_at <= refreshed_expiry
+         or worker.last_seen_at is null
          or worker.last_seen_at < clock_timestamp() - interval '3 minutes'
          or worker.last_version is distinct from
            'sellerpilot-cli-worker/1.61+' || exact_route.release_sha || '.' ||
            left(exact_route.egress_ip_sha256, 11)
          or not exists (
+           select 1 from sellerpilot_private.admin_users admin
+            where admin.user_id = credential.created_by
+         )
+         or not exists (
+           select 1 from sellerpilot_private.admin_users admin
+            where admin.user_id = worker.created_by
+         )
+         or not exists (
+           select 1 from sellerpilot_private.admin_users admin
+            where admin.user_id = exact_route.owner_id
+         )
+         or not exists (
+           select 1 from sellerpilot_private.admin_users admin
+            where admin.user_id = source_route.approved_by
+         )
+         or not exists (
+           select 1
+             from sellerpilot_private.serverless_static_egress_policy policy
+            where policy.channel = 'coupang'
+              and policy.enabled is false
+         )
+         or not exists (
            select 1
              from pg_catalog.pg_proc p
-             join pg_catalog.pg_namespace n on n.oid = p.pronamespace
-            where n.nspname = 'public'
-              and p.proname =
-                'sellerpilot_service_resolve_exact_coupang_live_verifier'
+            where p.oid =
+              'public.sellerpilot_service_resolve_exact_coupang_live_verifier(uuid)'::regprocedure
               and encode(extensions.digest(p.prosrc::bytea, 'sha256'), 'hex') =
                 'af8340dcac984a197adf6dd7a9f3d54b61c32cdfeb5e5d6b040827266c1c8193'
          )
@@ -368,8 +449,6 @@ begin
         raise exception 'COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_ROUTE_DRIFT'
           using errcode = '55000';
       end if;
-
-      refreshed_expiry := clock_timestamp() + interval '20 minutes';
 
       insert into
       sellerpilot_private.coupang_exact_live_role_guard_retry_recoveries (
