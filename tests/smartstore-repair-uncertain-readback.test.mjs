@@ -16,7 +16,7 @@ async function preserved(db) {
   'completions',(select jsonb_agg(to_jsonb(c) order by job_id) from sellerpilot_private.smartstore_existing_content_repair_completion_receipts c)
  ) value`,[ids.listing])).rows[0].value;
 }
-async function setup() {
+export async function createUncertainRepairDatabase() {
  const db=await createRepairDatabase();
  try {
   await createBaseline(db); await enqueueRepair(db);
@@ -35,7 +35,7 @@ async function setup() {
  } catch(error) { await db.close(); throw error; }
 }
 test('uncertain successor captures one fresh official result without changing mutation or listing records',async()=>{
- const {db,successor,proof}=await setup();
+ const {db,successor,proof}=await createUncertainRepairDatabase();
  try {
   const before=await preserved(db);
   const queued=await enqueueCapture(db); assert.equal(queued.status,'queued'); assert.equal(queued.repairJobId,successor.id);
@@ -60,7 +60,7 @@ test('uncertain successor captures one fresh official result without changing mu
 });
 test('stale and different-product official results cannot create a captured receipt',async()=>{
  for (const kind of ['stale','identity']) {
-  const {db,proof}=await setup();
+  const {db,proof}=await createUncertainRepairDatabase();
   try {
    const before=await preserved(db); await enqueueCapture(db); const claimed=await claim(db,'recovery');
    const evidence=proof.postwriteReadback; evidence.observedAt=kind==='stale'?'2020-01-01T00:00:00Z':new Date().toISOString();
@@ -72,10 +72,10 @@ test('stale and different-product official results cannot create a captured rece
  }
 });
 test('capture rejects oversize data and wrong caller and allows a failed read-only completion',async()=>{
- const {db,proof}=await setup();
+ const {db,proof}=await createUncertainRepairDatabase();
  try {
   const before=await preserved(db);
-  await assert.rejects(db.query('select public.sellerpilot_service_enqueue_smartstore_repair_result_readback($1,$2)',[ids.credentialOwner,ids.product]),/ACCESS_DENIED/u);
+  await assert.rejects(db.query('select public.sellerpilot_service_enqueue_smartstore_repair_result_readback($1,$2)',[ids.manager,ids.product]),/ACCESS_DENIED/u);
   await enqueueCapture(db); const claimed=await claim(db,'recovery');
   await assert.rejects(complete(db,claimed,'succeeded',{...proof.postwriteReadback,overflow:'x'.repeat(2097153)}),/COMPLETION_INVALID/u);
   const failed=await complete(db,claimed,'failed',null,'READBACK_NETWORK_FAILED'); assert.equal(failed.status,'failed');
