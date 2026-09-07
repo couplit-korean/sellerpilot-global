@@ -47,6 +47,7 @@ import {
   resolveProductSettingShot,
   selectAssetReferenceIndexes,
 } from "../lib/ai-image-planning.ts";
+import { formatProductProductionModifiers } from "../lib/product-production-modifiers.ts";
 import {
   buildSettingShotRetryGuidance,
   buildSettingShotRetryVariant,
@@ -1497,24 +1498,36 @@ function buildStudioMasterPrompt(job, referenceText, competitorContext) {
     job.request?.description,
     researchInput,
   ].map((value) => String(value || "").trim()).filter(Boolean).join(" · "));
+  const physicalProductionBrief = formatProductProductionModifiers({
+    name: job.request?.manualFields?.productName,
+    category: job.request?.manualFields?.categoryHint,
+    features: [job.request?.manualFields?.description, job.request?.description, researchInput]
+      .map((value) => String(value || "").trim()).filter(Boolean),
+    material: job.request?.manualFields?.material,
+    packageContents: job.request?.manualFields?.packageContents,
+  }, (Array.isArray(job.request?.imageSpecs) ? job.request.imageSpecs : []).map((spec) => String(spec?.role || "")), "detail-overview");
   return [
     "첨부 상품 이미지를 분석해 SellerPilot의 간결한 이미지 중심 상세페이지 마스터 기획 JSON을 작성하세요.",
     "당신은 한국·일본·동남아·미국 마켓플레이스를 이해하는 시니어 이커머스 아트디렉터이자 상품정보 검수자입니다.",
+    physicalProductionBrief,
     "이미지를 사실 근거로 사용하고 OCR이 불확실하거나 이미지와 판매자 설명이 충돌하면 warnings에 기록하세요.",
     "내부적으로 먼저 ① 확인 사실과 출처 ② 구매자가 결정 전에 묻는 질문 ③ 상품 고유 차별점 ④ 필요한 이미지 증거를 정리한 뒤 JSON 필드에만 반영하세요. 내부 추론 과정은 출력하지 마세요.",
     "product.classification에는 상품의 법적·표시상 분류, 확인 상태, 근거와 건강기능식품 여부를 분리해 기록하세요. 포장이나 공식 판매자 자료로 확인되지 않으면 verificationStatus=needs-review, isHealthFunctionalFood=null로 두고 추정하지 마세요.",
     "design.creativeStrategy에서 이 상품의 주 구매 결정 하나를 정의하고, 8개 designArchetype 중 가장 타당한 주축을 선택하세요. 카테고리가 같아도 상품의 형태·사용 순간·구성·증거가 다르면 다른 전개와 아트디렉션을 선택하세요.",
     `제작 변주 식별자: ${String(job.id || "sellerpilot").slice(0, 12)}. 상품 사실에 맞는 선택지가 여러 개일 때만 이 식별자를 사용해 색 대비, 레이아웃 시작점, 카메라 방향의 반복을 피하고, 사실과 맞지 않는 임의 스타일을 만들지는 마세요.`,
     "themeName, differentiationKey, artDirection은 상품명만 바꾸면 다른 상품에도 붙일 수 있는 '프리미엄·모던·감성·클린' 같은 일반론으로 쓰지 말고, 이 상품에서 확인된 물성·형태·사용 장면을 결합한 고유한 지시문으로 작성하세요.",
-    "contentDensity는 concise로 설정하세요. hero와 최종 안내를 제외한 design.sections는 8~12개, 단순 상품은 8개로 구성하세요. 확인 근거가 있는 추가 정보만 확장하세요.",
+    "contentDensity는 long으로 설정하세요. hero와 최종 안내를 제외한 design.sections는 16~20개로 구성하고, 확인 근거가 있는 서로 다른 구매 질문으로 분량을 채우세요.",
     "긴 분량은 반복이 아니라 정보 범위로 확보하세요. 제품 분류, 숫자로 보는 핵심 사실, 대상과 비대상, 실제 형태, 핵심 특징, 근거, 사용 전 준비, 단계별 사용, 규격·구성, 옵션/호환, 관리·보관, 주의·제한, FAQ, 정보고시 중 상품에 해당하는 서로 다른 질문을 해결하세요.",
-    "현지화 시 concise 마스터에 배정된 이미지 역할 8개를 각 listing에서 그대로 한 번씩 사용하세요.",
+    "마스터 상세페이지에는 서로 다른 이미지 역할 12개를 모두 한 번씩 사용하고 페이지 상단·중단·하단에 4개씩 가깝게 분산하세요. 현지화 listing은 채널 게시 계약에 맞춰 그중 구매 결정에 중요한 8개를 선택합니다.",
+    "히어로와 본문 12개 이미지에는 서로 다른 결과 파일과 서로 다른 실제 촬영 장면을 배정하세요. 같은 이미지를 두 섹션에 재사용하거나 확대·축소·크롭·좌우반전·색상 변경으로 새 이미지처럼 보이게 하면 실패입니다. 각 슬롯은 카메라, 상품 상태, 사용 동작 또는 확인 정보가 눈에 띄게 달라야 합니다.",
     "각 section의 buyerQuestion은 이전 섹션과 다른 실제 구매 질문이어야 하고 evidence에는 그 답을 뒷받침하는 입력 이미지 역할·판매자 확정 필드·참고 페이지 항목을 짧게 적으세요. 근거가 없으면 주장을 만들지 말고 확인 필요 사실로 표현하세요.",
     "각 section body는 20~120자 중심의 1~3문장(최대 240자)으로 작성하고 points는 중복 없는 보조 정보 0~3개만 작성하세요. buyerQuestion과 evidence는 내부 검수용이며 구매자 본문에 작업 지침을 노출하지 마세요.",
+    "구매자 화면에 노출되는 product 요약·hero·section의 buyerQuestion, evidence, eyebrow, title, body, points와 thumbnail 문구에는 이미지 제작 방식, 생성 프롬프트, 배경 합성 지침, 원본 우선 원칙, 내부 검수 과정, 만들지 않았다는 해명 문구를 절대 쓰지 마세요. 구매자가 알고 싶은 상품 특징·구성·사용법·주의사항만 자연스러운 판매 문장으로 작성하세요.",
     "어느 두 섹션도 같은 장점·규격·사용법·주의사항을 표현만 바꿔 반복하면 안 됩니다. 이미 설명한 사실을 다음 섹션의 제목·본문·포인트·CTA에서 다시 요약하지 마세요.",
     "section type은 benefit, story, howto, proof, spec, caution, comparison, faq, notice를 내용에 맞게 사용하세요. spec과 caution은 필수이며 다른 유형은 확인된 사실에 맞게 선택하세요.",
-    "section layout은 split, full-bleed, cards, steps, spec-grid, editorial 중 내용에 맞춰 고르고 8개 섹션에는 최소 2종, 9~12개에는 최소 3종을 사용하세요. 같은 layout을 연속 사용하지 마세요.",
-    "detail-overview, detail-feature, detail-use, detail-package, detail-routine, detail-dimensions, detail-contents, detail-care의 8개 imageAsset을 각각 한 번씩 배정하고 추가 텍스트 섹션은 none으로 두세요. visualDirection에는 그 섹션에서 새로 보여줘야 할 정보, 카메라, 피사체 비중, 배경 맥락을 구체적으로 쓰세요.",
+    "section layout은 split, full-bleed, cards, steps, spec-grid, editorial 중 최소 5종을 사용하고 같은 layout을 연속 사용하지 마세요. 이미지 12개를 한 구간에 몰지 말고 전체 흐름에 균등하게 배치하며 imageAsset=none인 텍스트 섹션은 3개 이상 연속될 수 없습니다.",
+    "detail-overview, detail-feature, detail-use, detail-package, detail-routine, detail-dimensions, detail-contents, detail-care, detail-material, detail-scale, detail-storage, detail-context의 12개 imageAsset을 각각 정확히 한 번씩 배정하세요. 각 이미지 섹션의 title·body·points는 바로 그 visualDirection에서 실제로 보이는 형태·구성·사용 상태만 설명하고 다른 이미지의 문안을 재사용하지 마세요.",
+    "최종 이미지 묶음은 저장 경로, SHA-256, 지각 해시 중 어느 기준에서도 동일·근접 중복을 통과할 수 없습니다. 중복이면 해당 슬롯만 새 장면으로 다시 생성하세요.",
     "motion은 웹 미리보기에서 의미 있는 순서가 있는 섹션만 reveal 또는 stagger를 쓰고 나머지는 none으로 두세요. motionPolicy는 static-first이며 모션이 없어도 정보 위계와 전체 의미가 그대로 남아야 합니다.",
     "의학적 효능, 인증, 원산지, 성분·함량은 확인되지 않으면 단정하지 마세요.",
     "일반식품에는 면역·혈당·체중감량·체지방·소화 개선 또는 질병 예방·치료 효능을 추론해 넣지 마세요. 흔한 카테고리 인식이나 원재료의 일반적 특성도 이 상품의 효능 근거가 아닙니다.",
@@ -1559,8 +1572,9 @@ function buildStudioLocalizedPrompt(masterOutput, targets, { draft = null, issue
     "description은 확인된 핵심 사실만 담은 2~4문장으로, shortDescription은 모바일 검색·목록 화면에서 독립적으로 이해되는 요약으로 작성하세요.",
     "각 localizedListing에 thumbnailAltText와 서로 다른 detailSections 8개를 작성하세요. type은 overview, feature, howto, spec, routine, contents, care, proof를 각각 한 번 사용하세요.",
     "각 classification은 마스터 product.classification의 verificationStatus와 isHealthFunctionalFood를 한 글자도 의미 변경 없이 유지하고 displayName과 evidence만 대상 locale로 번역하세요.",
-    "현지화 상세 이미지 역할은 concise 마스터 design.sections에 배정된 8개 역할을 그대로 각각 한 번 사용하세요. 기존 long/deep-dive 마스터만 12개 중 8개를 선택하세요. detail-overview, detail-feature, detail-use, detail-package, detail-routine, detail-contents는 필수이고 나머지 2개는 구매 결정에 가장 중요한 역할로 선택하세요.",
+    "현지화 상세 이미지 역할은 long 마스터 design.sections의 12개 역할 중 구매 결정에 중요한 8개를 선택해 각각 한 번 사용하세요. detail-overview, detail-feature, detail-use, detail-package, detail-routine, detail-contents는 필수이고 나머지 2개는 구매 결정에 가장 중요한 역할로 선택하세요.",
     "detailSections의 buyerQuestion, evidence, heading, body, imageAltText도 지정 locale로 작성하세요. 각 body는 60자 이상의 2~4문장으로 서로 다른 구매 판단 정보와 제한 조건을 구체화하세요.",
+    "구매자에게 보이는 title·description·detailSections 전체에는 이미지 생성·프롬프트·합성·내부 검수·원본 우선 같은 제작 과정이나 '임의로 만들지 않았다'는 해명을 번역하거나 노출하지 마세요. 각 locale의 자연스러운 상품 설명, 구성, 사용법, 주의사항만 작성하세요.",
     "thumbnailAltText와 imageAltText는 실제 보이는 상품 유형·형태·구성만 설명하고 키워드 나열이나 보이지 않는 주장을 넣지 마세요.",
     "일반식품을 건강기능식품처럼 표현하거나 확인되지 않은 섭취량·의학 효능을 생성하지 마세요. 채널에서 금지될 수 있는 과장·최상급·의학 표현도 사용하지 마세요.",
     "title·shortDescription·description에는 처방형 섭취 수치·횟수·기간을 항상 생략하세요. detailSections에서는 immutable_master_json 안에 동일한 수치와 라벨·제조사 직접 근거가 함께 있을 때만 그 근거를 같은 section.evidence에 대상 locale로 완전히 번역하여 제한적으로 유지하세요.",
@@ -1771,6 +1785,16 @@ async function normalizeGeneratedAsset(outputFile, preset) {
     await rm(normalizedTemp, { force: true });
   }
   return normalized;
+}
+
+async function publishGeneratedAsset(outputFile, normalized) {
+  const candidateFile = join(dirname(outputFile), `.sellerpilot-final-${randomUUID()}.png`);
+  try {
+    await writeFile(candidateFile, normalized, { flag: "wx", mode: 0o600 });
+    await rename(candidateFile, outputFile);
+  } finally {
+    await rm(candidateFile, { force: true });
+  }
 }
 
 const maximumBackgroundAuditBytes = 64 * 1024;
@@ -2599,6 +2623,9 @@ async function generateDistinctAsset({
     const plannedSettingShot = sourceCompositeRole ? resolveProductSettingShot(result, preset.id) : null;
     const preparedFood = Boolean(plannedSettingShot?.foodPresentation);
     const backgroundOnly = sourceCompositeRole && !preparedFood;
+    // Empty plates are generation intermediates. Keep them off the public
+    // output path so file watchers can only observe a completed product image.
+    const generationOutputFile = backgroundOnly ? backgroundPlateFile : outputFile;
     const retryIndex = attempt - 1;
     const baseSettingShot = sourceCompositeRole ? plannedSettingShot : null;
     const backgroundContactMode = backgroundOnly
@@ -2680,7 +2707,7 @@ async function generateDistinctAsset({
     } else {
       const assetPrompt = buildAssetImagePrompt(
         result,
-        outputFile,
+        generationOutputFile,
         generationPreset,
         backgroundOnly ? [] : referenceIndexes.map((index) => imageFiles[index].role),
         [priorTerminalBlacklistGuidance, noveltyGuidance, deterministicRetryGuidance].filter(Boolean).join("\n"),
@@ -2695,7 +2722,7 @@ async function generateDistinctAsset({
         "--sandbox", "workspace-write",
         "--skip-git-repo-check",
         "--ephemeral",
-        "--cd", dirname(outputFile),
+        "--cd", dirname(generationOutputFile),
         ...(!backgroundOnly ? referenceIndexes.map((index) => `--image=${imageFiles[index].file}`) : []),
         assetPrompt,
       ];
@@ -2715,7 +2742,7 @@ async function generateDistinctAsset({
       }
       let generated;
       try {
-        generated = await normalizeGeneratedAsset(outputFile, generationPreset);
+        generated = await normalizeGeneratedAsset(generationOutputFile, generationPreset);
       } catch (error) {
         const retryableMissingOrUndecodableOutput = attempt < maximumAttempt
           && error instanceof RetryableGeneratedImageOutputError;
@@ -2728,7 +2755,7 @@ async function generateDistinctAsset({
       if (backgroundOnly && !compositeSource) throw new Error(`${preset.id} 설정샷의 검증 원본 배정이 없습니다.`);
       if (backgroundOnly) {
         generated = await normalizeIdentityBackgroundPlate(generated, generationPreset);
-        await writeFile(outputFile, generated);
+        await writeFile(backgroundPlateFile, generated, { mode: 0o600 });
         try {
           let semanticAudit = null;
           const settingShot = retrySettingShot;
@@ -2743,12 +2770,12 @@ async function generateDistinctAsset({
             if (!mayRepairSupportBoundary) throw error;
             generated = await repairMissingIdentitySupportSurface(generated, generationPreset);
             await assertIdentityBackgroundPlate(generated, generationPreset, backgroundContactMode);
-            await writeFile(outputFile, generated);
+            await writeFile(backgroundPlateFile, generated, { mode: 0o600 });
             console.warn(`[배경 지지면 결정 보정] ${jobId} · ${preset.id} · attempt=${attempt}`);
           }
-          await executeSourceProductCutout("background", "", "", [{ file: outputFile }], leaseSignal);
+          await executeSourceProductCutout("background", "", "", [{ file: backgroundPlateFile }], leaseSignal);
           semanticAudit = await auditGeneratedIdentityBackground({
-            outputFile,
+            outputFile: backgroundPlateFile,
             preset: generationPreset,
             expectedEnvironment: [
               `장소=${backgroundContract.location.description}`,
@@ -2885,7 +2912,6 @@ async function generateDistinctAsset({
           noveltyGuidance = `Background diversity retry reason ${attempt}: the previous empty plate remained perceptually close to ${conflictingAssetId}. Follow the deterministic trusted retry contract and its hard role blacklist.`;
           continue;
         }
-        await writeFile(backgroundPlateFile, generated, { flag: "wx", mode: 0o600 });
         backgroundPlateSnapshot = {
           semanticAssetId: preset.id,
           plateFile: backgroundPlateFile,
@@ -2901,7 +2927,6 @@ async function generateDistinctAsset({
           backgroundContactMode,
         );
         usedVerifiedSourceComposite = true;
-        await writeFile(outputFile, normalized);
       } else {
         normalized = generated;
       }
@@ -2979,6 +3004,7 @@ async function generateDistinctAsset({
         : [...existingShots, ...comparisonShots],
     );
     if (!duplicate) {
+      if (backgroundOnly) await publishGeneratedAsset(outputFile, normalized);
       const acceptedBackgroundShot = backgroundFingerprint
         ? { ...backgroundFingerprint, ...backgroundPlateSnapshot }
         : null;
@@ -3320,12 +3346,13 @@ function buildStudioMasterRepairPrompt(job, referenceText, competitorContext, dr
   return [
     buildStudioMasterPrompt(job, referenceText, competitorContext),
     "이전 마스터 결과가 운영 의미 검증을 통과하지 못했습니다. 아래 오류만 정확히 고치고 정상 필드와 확인된 사실은 유지하세요.",
-    "contentDensity=concise, design.sections는 8~12개를 유지하고 구매 질문·핵심 주장·근거·본문·포인트의 의미 중복을 제거하세요.",
+    "contentDensity=long, design.sections는 16~20개를 유지하고 구매 질문·핵심 주장·근거·본문·포인트의 의미 중복을 제거하세요.",
     "design.creativeStrategy.targetSectionCount는 수정 후 design.sections의 실제 개수와 정확히 같아야 합니다.",
-    "마스터에 선택된 8개 상세 이미지 역할은 서로 다른 구매 질문에 정확히 한 번씩만 배정하고, 분류·효능·인증·섭취량을 새로 추측하지 마세요.",
+    "마스터의 상세 이미지 역할 12개는 서로 다른 구매 질문에 정확히 한 번씩 배정하고 상단·중단·하단에 균형 있게 분산하세요. 분류·효능·인증·섭취량을 새로 추측하지 마세요.",
     "일반식품에서는 면역·혈당·체중감량·체지방·소화 개선과 질병 예방·치료 주장을 product와 design 전체에서 완전히 제거하세요. 순중량·포장 수량은 유지할 수 있지만 효능이나 섭취 지시로 바꾸면 안 됩니다.",
     "처방형 섭취 수치·횟수·기간은 product 요약 필드와 hero에서는 완전히 제거하고, 동일 수치와 라벨·제조사 직접 근거가 이전 마스터의 해당 section.evidence에 함께 있을 때만 그 design section에서 유지하세요.",
     "검증 오류를 피하려고 근거 문구를 새로 만들거나 금지 주장을 완곡하게 바꾸지 마세요.",
+    "구매자 문구에서 이미지 제작 프롬프트·합성 지침·내부 검수·원본 우선·생성하지 않았다는 해명을 모두 제거하고, 확인된 상품 정보로만 자연스럽게 다시 작성하세요.",
     `<validation_issues>${promptData(issues)}</validation_issues>`,
     `<previous_master_json>${promptData(draft)}</previous_master_json>`,
     "제공된 마스터 JSON Schema를 충족하는 JSON만 최종 응답으로 반환하세요.",

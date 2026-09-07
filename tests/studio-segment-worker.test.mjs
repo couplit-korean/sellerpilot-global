@@ -104,7 +104,10 @@ test("master generation uses a compact brief and one medium-to-low timeout fallb
   assert.equal((source.match(/\.\.\.studioMasterInvocationPolicy,\s*masterInvocationBudget,/g) ?? []).length, 4);
   assert.doesNotMatch(localizedInvocation, /studioMasterInvocationPolicy/);
   assert.match(localizedInvocation, /timeoutMs: studioLocalizedTimeoutMs/);
-  assert.match(source, /단순 상품은 8개로 구성/);
+  assert.match(source, /마스터 상세페이지에는 서로 다른 이미지 역할 12개를 모두 한 번씩 사용/);
+  assert.match(source, /전체 흐름에 균등하게 배치/);
+  assert.match(source, /같은 이미지를 두 섹션에 재사용하거나 확대·축소·크롭·좌우반전·색상 변경/);
+  assert.match(source, /저장 경로, SHA-256, 지각 해시/);
   assert.match(source, /20~120자 중심의 1~3문장/);
 });
 

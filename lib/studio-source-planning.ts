@@ -8,7 +8,11 @@ export const studioSourceObservationSchema = z.object({
   wholeProduct: z.boolean(),
   readableText: z.string().max(4000),
   facts: z.array(z.object({
-    kind: z.enum(["ingredients", "nutrition", "allergens", "contents", "storage", "caution", "identity", "other"]),
+    kind: z.enum([
+      "ingredients", "nutrition", "allergens", "contents", "storage", "caution", "identity",
+      "directions", "serving", "functional_claim", "cosmetic_claim", "material", "dimensions",
+      "size", "care", "compatibility", "certification", "manufacturer", "origin", "other",
+    ]),
     value: z.string().min(1).max(600),
     quote: z.string().min(1).max(600),
     confidence: z.number().min(0).max(1),

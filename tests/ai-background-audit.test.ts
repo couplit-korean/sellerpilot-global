@@ -271,6 +271,8 @@ test("background audit prompt treats the image as untrusted and distinguishes pa
   assert.match(prompt, /broad low-contrast fixed backing plane or quiet architectural seam/);
   assert.match(prompt, /wall, vertical panel, empty air or ambiguous seam/);
   assert.match(prompt, /product-shaped shadow, reflection, silhouette, footprint or imprint/);
+  assert.match(prompt, /visible card, picture mat, poster, border, outline, lightbox/);
+  assert.match(prompt, /zone is coordinates only and must remain visually frameless/);
   assert.match(prompt, /Outer-band audit map outside the declared zone: left x=0\.\.0\.08, right x=0\.7\.\.1, top y=0\.\.0\.1, bottom y=0\.84\.\.1/);
   assert.match(prompt, /MANDATED QUIET-ZONE EXCLUSION/);
   assert.match(prompt, /ignore blankness, low detail and the absence of perspective junctions caused solely by pixels inside the exact declared zone/);

@@ -17,8 +17,9 @@ import {
 } from "./product-setting-shots";
 import type { ProductStudioResult } from "../app/product-studio-types";
 import { resolveProductSceneProfile } from "./product-scene-profiles";
+import { formatProductProductionModifiers } from "./product-production-modifiers";
 
-export const AI_ASSET_PROMPT_VERSION = "2026.09.07-r22-food-presentation";
+export const AI_ASSET_PROMPT_VERSION = "2026.09.07-r24-composable-product-production";
 
 type AssetSpec = (typeof aiGeneratedAssetSpecs)[number];
 
@@ -231,10 +232,11 @@ export function buildAssetImagePrompt(
     return listing.thumbnailAltText ? [`${listing.channel}:${listing.market} ${listing.thumbnailAltText}`] : [];
   }))].join(" | ").slice(0, 2_400);
   const referenceRoles = inputRoles.length ? inputRoles.join(", ") : "main";
+  const physicalProductionBrief = formatProductProductionModifiers(result.product, inputRoles, preset.id);
   const settingShot = settingShotOverride ?? resolveProductSettingShot(result, preset.id);
   const requiredShot = categoryStyle.id === "food-supplement" && settingShot
     ? "the mandatory non-ingestion package-inspection, classification-review or storage setting above; do not show a serving, dosage, tablet/capsule, water glass, mouth, hand-to-mouth action or body"
-    : settingShot?.sceneProfile?.evidenceFocus ?? assetShot(categoryStyle.shotList, preset.id);
+    : settingShot?.sceneProfile?.shotDirective ?? settingShot?.sceneProfile?.evidenceFocus ?? assetShot(categoryStyle.shotList, preset.id);
   const seriesRoleManifest = aiGeneratedAssetSpecs
     .map((asset) => `${asset.id}=${asset.shotClass} | purpose=${asset.purpose} | placement=${asset.subjectPlacement}`)
     .join(" || ");
@@ -248,6 +250,9 @@ export function buildAssetImagePrompt(
       `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}; use case: prepared-food-reference; slot=${preset.id}; ratio=${preset.ratio}.`,
       `Authoritative product identity: ${result.product.name}. Image 1 is the primary package reference. Preserve the recognizable container shape, brand color, main brand mark and product variant; do not substitute another size, flavor, package or generic container.`,
       `Food presentation mode=${presentation.mode}; state=${presentation.state}; scene=${presentation.scene}.`,
+      `Category production contract: ${settingShot.sceneProfile?.brief ?? "Use the supplied food package and facts as the only product evidence."}`,
+      `Physical package and prepared-state contract: ${physicalProductionBrief}`,
+      `Slot-specific purchase purpose: ${settingShot.sceneProfile?.shotDirective ?? settingShot.staging}.`,
       `Required prepared-state visual: ${presentation.requiredVisuals}.`,
       `Hard exclusions: ${presentation.forbiddenVisuals}.`,
       "Exactly one retail product/container must remain identifiable. The opened container and the food inside it are one product presentation, not two products. Keep enough of the original front package visible to identify the item while making the edible result clear.",
@@ -286,10 +291,12 @@ export function buildAssetImagePrompt(
       "Use the built-in image_gen tool to generate only an empty background plate with photographic lighting and material.",
       `SellerPilot asset prompt version: ${AI_ASSET_PROMPT_VERSION}; Series slot: ${preset.id}; target aspect ratio ${preset.ratio}.`,
       settingShot.sceneProfile.brief,
+      `Later-composited product geometry contract: ${physicalProductionBrief} Use it only to prepare truthful support, clearance and lighting for the later source-pixel composite. The plate must still contain no product or product-shaped stand-in.`,
       `Restrained background palette: ${result.design.palette.surface}, ${result.design.palette.accent}; keep the source product colors unchanged.`,
       `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Assigned non-saleable backdrop cue: ${safeContract?.prop.description}.`,
       `Scene mode: ${settingShot.sceneProfile.mode}. Product-editorial means a real support plane and a restrained package-led backdrop; no room is required. Contextual means the assigned local preparation area, with the product remaining dominant. Never force eight different rooms.`,
       `IMMUTABLE PRODUCT-ZONE CONTRACT: reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height}; keep this rectangle quiet and unobstructed. Never move, resize, crop or reinterpret this exact rectangle during a retry. Keep busy or high-contrast junctions outside its complete interior. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone. ${contactInstruction}`,
+      "FRAMELESS COMPOSITE CONTRACT: the reserved rectangle is coordinates only and must never become a visible card, mat, poster, frame, border, outline, lightbox, niche, pedestal block, display case or contrasting rectangular patch. Continue the photographic surface and light naturally through the zone so the later cutout sits directly in the scene.",
       `HARD IDENTITY FIREWALL: no product, package, pouch, bottle, label, logo, barcode, certification, printed text, hand, person, contents, ingredients, serving or saleable prop. The verified source pixels are composited afterward; never redraw them or generate a stand-in silhouette or shadow.`,
       "Keep genuine photographic support depth and a coherent brand palette across the series. Distinguish each shot by information purpose, composition, negative space and light. Do not change to an unrelated room or material merely to satisfy a slot count.",
       noveltyGuidance,
@@ -301,9 +308,11 @@ export function buildAssetImagePrompt(
       "Use case: background-plate-only",
       `Series slot: ${preset.id}; target aspect ratio ${preset.ratio}.`,
       `Background environment: ${preset.scene}`,
+      `Later-composited product geometry contract: ${physicalProductionBrief} Use it only to reserve truthful support, clearance and lighting. Do not render any product or product-shaped placeholder.`,
       `Mandatory empty-environment assignment: ${safeEnvironmentAssignment}. Make it readable with fixed architecture, built-in surfaces, natural light direction and spatial depth. Slot-specific non-merchandise environmental cue (${safeContract?.prop.key ?? "fixed-architectural-detail"}): ${safeContract?.prop.description ?? "one fixed architectural detail"}. Deliberately omit every retail product, small saleable prop, serving item, loose ingredient, use-result object and container from the product setting plan; those cannot be trusted before source-pixel compositing.`,
       `Hard series visual split: visibly auditable time-light ${safeContract?.moment.key ?? "distinct-visible-time-light"} (${safeContract?.moment.description ?? "a clearly distinct time-of-day lighting pattern"}); palette-family ${safeContract?.palette.key ?? "distinct-category-palette"} (${safeContract?.palette.description ?? "a clearly distinct palette"}); spatial-depth ${safeContract?.spatialDepth.key ?? "distinct-spatial-depth"} (${safeContract?.spatialDepth.description ?? "a clearly distinct depth layout"}). A beige/cream generic room or shelf repeated across slots fails even if the fixture geometry changes.`,
       `IMMUTABLE PRODUCT-ZONE CONTRACT: reserve the normalized rectangle left=${placement.left}, top=${placement.top}, width=${placement.width}, height=${placement.height} as a visually quiet product-placement zone. Never move, resize, crop or reinterpret this exact rectangle during a retry. Keep the mandatory slot-specific fixed cue, fixtures, dominant shadows and busy or high-contrast room-recognition junctions outside its complete interior. A broad low-contrast fixed backing plane or quiet architectural seam may continue through the zone only when it remains subordinate to the later source-pixel product composite and cannot read as merchandise or a dominant obstruction; the independent pixel-density audit remains fail-closed. ${contactInstruction}`,
+      "FRAMELESS COMPOSITE CONTRACT: the reserved rectangle is an invisible coordinate region, not a design element. Do not draw a card, mat, poster, frame, border, outline, lightbox, niche, pedestal block, display case or contrasting rectangle around or behind it. The support and backdrop must flow continuously through the product zone.",
       `OUTER-BAND ARCHITECTURE GATE: the uncovered bands are left x=0..${placement.left}, right x=${reservedRight}..1, top y=0..${placement.top}, bottom y=${reservedBottom}..1. The intentional quiet rectangle may occupy most of the pre-composite frame and must not be treated as a reason to squeeze the room into one narrow reveal. Make the assigned room, every hard room-recognition structure, the mandatory slot-specific cue and readable foreground/middle/rear convergence visible outside the rectangle across at least two non-collinear bands: one left/right side band and one top/bottom band. A blank wall extending materially outside the rectangle, or all functional evidence confined to one ambiguous side sliver, is a generation failure.`,
       "HARD IDENTITY FIREWALL: generate only an empty background plate. No source product, staged saleable good, package, pouch, carton, bottle, can, jar, tube, label, logo, barcode, certification mark, printed text, small movable consumer prop, loose unit, ingredient, serving, accessory or hand may appear anywhere. The declared fixed non-merchandise cue and other necessary fixed architectural context are allowed, but every contextual cue must be visually distinct from the other slots.",
       "The real product will be composited afterward from a verified transparent source-pixel cutout. Never anticipate, reconstruct, trace, imitate or redraw any part of it. Do not pre-render a product-shaped shadow, reflection, silhouette, footprint or imprint; the empty support plane itself must remain physically coherent.",
@@ -338,6 +347,7 @@ export function buildAssetImagePrompt(
     `Hard role-separation opponents for this slot: ${mustDifferFrom}. If the draft could plausibly be labeled as any of these slots, reject and regenerate it.`,
     "Uniqueness contract: reject visually duplicated compositions and lightly reframed copies. Coherent product color and verified source identity must remain shared across the series.",
     settingShot?.sceneProfile ? `Product-specific scene contract: ${settingShot.sceneProfile.brief} Scene mode=${settingShot.sceneProfile.mode}. A photographic product-led set is valid; do not force different rooms or unrelated props across the series.` : "Series setting-shot contract: inspection and catalog assets remain factual views without invented lifestyle content.",
+    `Composable physical-product contract: ${physicalProductionBrief}`,
     `Input references in order: ${referenceRoles}. Image 1 anchors product identity; later images are factual views for shape, label, material and package verification, not separate products.`,
     `Scene/backdrop: ${settingShot?.sceneProfile ? settingShot.location : preset.scene}. Use ${result.design.palette.surface} and ${result.design.palette.accent} as restrained palette guidance.`,
     settingShot ? `Mandatory product-specific setting: ${formatProductSettingShot(settingShot)}` : "Inspection-shot assignment: keep this factual catalog, macro, form, contents, care or package view free from lifestyle staging so it cannot duplicate the eight setting shots.",

@@ -1,4 +1,5 @@
 import { resolveProductSceneVariantCode } from "./ai-generated-assets";
+import { resolveCategoryProductionGuideline } from "./category-production-guidelines";
 import { resolveFoodPresentationSlot } from "./food-presentation";
 import { formatSceneProfileBrief, type SceneProfileSelection } from "./product-scene-profiles";
 import type { ProductSettingShot, ProductSettingShotPlan, SettingShotAssetId } from "./product-setting-shots";
@@ -16,6 +17,7 @@ const slots = [
 
 export function buildProfileSettingShotPlan(selection:SceneProfileSelection,identity:string):ProductSettingShotPlan {
   const profile=selection.profile;
+  const productionGuideline=resolveCategoryProductionGuideline(profile.id);
   const variant=resolveProductSceneVariantCode(identity, "portrait", "moment", 3);
   return Object.fromEntries(slots.map(([id,purpose,camera,light,cue,depth])=>{
     const foodPresentation=selection.confidence!=="fallback"?resolveFoodPresentationSlot(profile.id,id):null;
@@ -31,7 +33,7 @@ export function buildProfileSettingShotPlan(selection:SceneProfileSelection,iden
       camera:`${camera}. 상품 자체는 원본 사진의 시점 그대로 합성하고 제공되지 않은 측면을 만들지 않는다`,
       ...(foodPresentation?{foodPresentation}:{}),
       separation:{location:`${prefix}-set`,moment:`${prefix}-light-${variant}`,surface:`${prefix}-plane`,supportingObjects:`${prefix}-cue`,staging:`${prefix}-depth`,camera:`${prefix}-camera`},
-      sceneProfile:{id:profile.id,label:profile.label,mode:contextual?"contextual":"product-editorial",brief:formatSceneProfileBrief(selection),selectionReason:selection.reason,forbiddenContexts:profile.forbiddenContexts,evidenceFocus:profile.evidenceFocus},
+      sceneProfile:{id:profile.id,label:profile.label,mode:contextual?"contextual":"product-editorial",brief:formatSceneProfileBrief(selection),selectionReason:selection.reason,forbiddenContexts:profile.forbiddenContexts,evidenceFocus:profile.evidenceFocus,shotDirective:productionGuideline.slotDirectives[id]},
     };
     return [id,setting];
   })) as ProductSettingShotPlan;

@@ -28,6 +28,7 @@ export type ProductSettingShot = {
   sceneProfile?: {
     id: string; label: string; mode: "product-editorial" | "contextual";
     brief: string; selectionReason: string; forbiddenContexts: string; evidenceFocus: string;
+    shotDirective: string;
   };
   label: string;
   location: string;

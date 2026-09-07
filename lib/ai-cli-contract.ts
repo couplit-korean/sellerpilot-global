@@ -1331,10 +1331,45 @@ function validateGeneralFoodClaim(
   }
 }
 
+const customerVisibleProductionInstructionPattern = /(?:생성\s*(?:이미지|배경)|이미지\s*(?:제작|생성)\s*(?:프롬프트|지침)?|(?:내부|시스템)\s*(?:제작|검수|프롬프트|지침)|원본\s*우선\s*원칙|임의로\s*(?:만들|생성|추가|표현)|(?:합성|생성|제작)하지\s*않|\bSOURCE\s+VERIFIED\b|\bOFFICIAL\s+VISUAL\s+EVIDENCE\b|\bCURRENT\s+LOGIC\b|\b(?:image\s+generation|generation|internal)\s+(?:prompt|instruction|guideline|review)\b)/iu;
+
+function validateCustomerVisibleCopy(
+  context: RefinementCtx,
+  path: Array<string | number>,
+  copy: string,
+) {
+  if (!customerVisibleProductionInstructionPattern.test(copy)) return;
+  context.addIssue({
+    code: "custom",
+    path,
+    message: "구매자에게 보이는 상세 문구에는 이미지 제작 프롬프트·내부 검수 지침을 포함할 수 없습니다.",
+  });
+}
+
 function refineStudioMasterResult(
   value: z.infer<typeof studioMasterResultSchema>,
   context: RefinementCtx,
 ) {
+  const customerVisibleMasterCopy: Array<[Array<string | number>, string]> = [
+    [["product", "oneLine"], value.product.oneLine],
+    [["product", "targetCustomer"], value.product.targetCustomer],
+    ...value.product.features.map((copy, index): [Array<string | number>, string] => [["product", "features", index], copy]),
+    ...value.product.cautions.map((copy, index): [Array<string | number>, string] => [["product", "cautions", index], copy]),
+    [["design", "heroCopy"], value.design.heroCopy],
+    [["design", "heroSubcopy"], value.design.heroSubcopy],
+    [["design", "cta"], value.design.cta],
+    [["thumbnail", "headline"], value.thumbnail.headline],
+    [["thumbnail", "subline"], value.thumbnail.subline],
+    [["thumbnail", "badge"], value.thumbnail.badge],
+    ...value.design.sections.flatMap((section, index): Array<[Array<string | number>, string]> => [
+      [["design", "sections", index, "eyebrow"], section.eyebrow],
+      [["design", "sections", index, "title"], section.title],
+      [["design", "sections", index, "body"], section.body],
+      ...section.points.map((copy, pointIndex): [Array<string | number>, string] => [["design", "sections", index, "points", pointIndex], copy]),
+    ]),
+  ];
+  for (const [path, copy] of customerVisibleMasterCopy) validateCustomerVisibleCopy(context, path, copy);
+
   const classificationSignals = [
     value.product.category,
     value.product.classification.displayName,
@@ -1498,6 +1533,7 @@ export const cliStudioResultSchema = studioCoreSchema.extend({ mode: z.literal("
       ]),
     ];
     for (const [fieldPath, fieldValue] of localizedFields) {
+      validateCustomerVisibleCopy(context, ["localizedListings", index, ...fieldPath], fieldValue);
       if (locale !== "ko-KR" && /\p{Script=Hangul}/u.test(fieldValue)) {
         context.addIssue({ code: "custom", path: ["localizedListings", index, ...fieldPath], message: `${key} 현지화 필드에 한국어가 남아 있습니다.` });
       }

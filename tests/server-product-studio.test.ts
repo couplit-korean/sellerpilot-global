@@ -62,7 +62,7 @@ const LOCALIZED_SECTION_ASSETS = [
 test("server Studio uses GPT-5.4 mini for text and preserves GPT Image 2", () => {
   assert.equal(SERVER_PRODUCT_STUDIO_TEXT_MODEL, "openai/gpt-5.4-mini");
   assert.equal(SERVER_PRODUCT_STUDIO_IMAGE_MODEL, "openai/gpt-image-2");
-  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.6-food-presentation");
+  assert.equal(SERVER_PRODUCT_STUDIO_VERSION, "sellerpilot-vercel-product-studio/1.8-composable-product-production");
 });
 
 test("server prepared-food contract keeps cup ramen, opened contents and steam physically linked", () => {
@@ -201,6 +201,7 @@ function passingPortableAudit() {
     exactlyOneProduct: true,
     backgroundContainsResidualProductOrPackage: false,
     productEdgesNatural: true,
+    presentationFrameAbsent: true,
     evidencePanelIntact: true,
     referenceHasReadableText: false,
     candidateHasReadableText: false,
@@ -1114,6 +1115,7 @@ test("source catalog requires natural cutout edges without pretending it is an e
     exactlyOneProduct: true,
     backgroundContainsResidualProductOrPackage: false,
     productEdgesNatural: true,
+    presentationFrameAbsent: true,
     evidencePanelIntact: false,
     referenceHasReadableText: false,
     candidateHasReadableText: false,
@@ -1127,6 +1129,13 @@ test("source catalog requires natural cutout edges without pretending it is an e
   assert.throws(
     () => assertPortableAudit({ ...audit, productEdgesNatural: false }, "source-catalog"),
     /portable_image_identity_audit_failed/u,
+  );
+  assert.throws(
+    () => assertPortableAudit({ ...audit, presentationFrameAbsent: false }, "source-catalog"),
+    /portable_image_identity_audit_failed/u,
+  );
+  assert.doesNotThrow(
+    () => assertPortableAudit({ ...audit, presentationFrameAbsent: false, evidencePanelIntact: true }, "source-evidence"),
   );
   assert.throws(
     () => assertPortableAudit(audit, "source-evidence"),
@@ -1144,6 +1153,7 @@ test("prepared-food audit permits naturally hidden microtext but rejects missing
     exactlyOneProduct: true,
     backgroundContainsResidualProductOrPackage: false,
     productEdgesNatural: true,
+    presentationFrameAbsent: true,
     evidencePanelIntact: false,
     referenceHasReadableText: true,
     candidateHasReadableText: true,
@@ -1833,12 +1843,16 @@ test("single-main master prompt labels package imagery as catalog fallback, neve
       fit: "contain",
     }],
   });
-  assert.match(prompt, /contentDensity는 concise/u);
-  assert.match(prompt, /8~12개/u);
-  assert.match(prompt, /최대 240자/u);
-  assert.match(prompt, /detail-package, detail-contents/u);
+  assert.match(prompt, /contentDensity는 long/u);
+  assert.match(prompt, /16~20개/u);
+  assert.match(prompt, /상세 이미지 역할은 detail-overview, detail-feature, detail-use, detail-package, detail-routine/u);
+  assert.match(prompt, /12개를 각각 한 번 배정/u);
+  assert.match(prompt, /이미지 섹션을 상단·중단·하단에 균등하게 배치/u);
+  assert.match(prompt, /동일 파일 재사용이나 확대·축소·크롭·좌우반전·색상 변경은 별도 이미지가 아닙니다/u);
   assert.match(prompt, /대표사진에서 분리한 동일상품의 중립 카탈로그 보기/u);
   assert.match(prompt, /라벨·바코드·후면·숨은 구성품의 이미지 근거라고 쓰지 마세요/u);
+  assert.match(prompt, /상품 물리 제작 지침 2026-09-07-v1-composable-physical-signals/u);
+  assert.match(prompt, /측후면·내부·내용물·착용·설치 상태는 별도 원본이 없으므로 생성 근거로 간주하지 않는다/u);
 });
 
 test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 assets, and completes idempotently", async () => {

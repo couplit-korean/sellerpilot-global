@@ -110,7 +110,8 @@ test("food use imagery selects a preparation or use shot instead of package quan
   const preset = aiGeneratedAssetSpecs.find((asset) => asset.id === "detail-use");
   assert.ok(preset);
   const prompt = buildAssetImagePrompt(foodResult, "/tmp/detail-use.png", preset, ["main", "front"]);
-  assert.match(prompt, /Required shot for this slot: 포장·곡물 표시·구성량/);
+  assert.match(prompt, /Required shot for this slot: 실제 내용물이 확인될 때만 그릇 또는 우유와 준비 상태/);
+  assert.match(prompt, /원본사진 우선순위: 정면 패키지 → 실제 개봉·내용물 사진/);
   assert.match(prompt, /사용 준비 맥락/);
   assert.doesNotMatch(prompt, /Required shot for this slot: 구성 수량/);
 });
@@ -266,6 +267,9 @@ test("supplemental setting shots retain an explicit source-pixel background-only
     assert.doesNotMatch(prompt, /OUTER-BAND ARCHITECTURE GATE/);
     assert.match(prompt, /no room is required/);
     assert.match(prompt, /never redraw them or generate a stand-in silhouette or shadow/);
+    assert.match(prompt, /FRAMELESS COMPOSITE CONTRACT/);
+    assert.match(prompt, /reserved rectangle is coordinates only/);
+    assert.match(prompt, /must never become a visible card, mat, poster, frame, border/);
     assert.doesNotMatch(prompt, /첵스초코/);
   }
 });
@@ -326,6 +330,8 @@ test("statutory-package products use a background-only identity firewall", () =>
   assert.match(prompt, /HARD IDENTITY FIREWALL/);
   assert.match(prompt, /generate only an empty background plate/);
   assert.match(prompt, /verified source pixels are composited afterward/);
+  assert.match(prompt, /FRAMELESS COMPOSITE CONTRACT/);
+  assert.match(prompt, /reserved rectangle is coordinates only/);
   assert.match(prompt, /Mandatory empty-environment assignment:.*food-snack/);
   assert.match(prompt, /photographic support depth/);
   const setting = resolveProductSettingShot(foodResult, "portrait");

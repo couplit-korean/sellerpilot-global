@@ -224,6 +224,30 @@ test("AI studio contract accepts all 34 exact channel-market locales", () => {
   if (!parsed.success) assert.fail(JSON.stringify(parsed.error.issues, null, 2));
 });
 
+test("AI studio contract rejects image-production instructions from buyer-visible detail copy", () => {
+  const masterLeak = validResult();
+  masterLeak.design.sections[0].body += " 생성 이미지 제작 프롬프트와 내부 검수 지침은 이 영역에 표시합니다.";
+  const parsedMasterLeak = cliStudioResultSchema.safeParse(masterLeak);
+  assert.equal(parsedMasterLeak.success, false);
+  if (parsedMasterLeak.success) assert.fail("buyer-visible master copy leak must be rejected");
+  assert.ok(parsedMasterLeak.error.issues.some((issue) => (
+    issue.path.join(".") === "design.sections.0.body"
+      && issue.message.includes("이미지 제작 프롬프트")
+  )));
+
+  const localizedLeak = validResult();
+  const koreanListingIndex = localizedLeak.localizedListings.findIndex((listing) => listing.locale === "ko-KR");
+  assert.ok(koreanListingIndex >= 0);
+  localizedLeak.localizedListings[koreanListingIndex].detailSections[0].body += " 원본 우선 원칙과 이미지 제작 지침을 구매자에게 함께 안내합니다.";
+  const parsedLocalizedLeak = cliStudioResultSchema.safeParse(localizedLeak);
+  assert.equal(parsedLocalizedLeak.success, false);
+  if (parsedLocalizedLeak.success) assert.fail("buyer-visible localized copy leak must be rejected");
+  assert.ok(parsedLocalizedLeak.error.issues.some((issue) => (
+    issue.path.join(".") === `localizedListings.${koreanListingIndex}.detailSections.0.body`
+      && issue.message.includes("내부 검수 지침")
+  )));
+});
+
 test("AI studio contract rejects conflicting health-functional-food classification", () => {
   const result = validResult();
   result.product.category = "당류가공품";

@@ -70,6 +70,14 @@ test("pet food cannot become a human snack scene",()=>{
   const selection=resolveProductSceneProfile({name:"강아지간식 쿠키",category:"식품"});
   assert.equal(selection.profile.id,"pet-treat");assert.match(selection.profile.forbiddenContexts,/사람 식탁/);
 });
+test("health-functional ampoules do not collide with cosmetic ampoules and hoodie wording reaches apparel",()=>{
+  const health=resolveProductSceneProfile({name:"정관장 에브리타임 샷",category:"건강기능식품 > 홍삼 > 액상 앰플",isHealthFunctionalFood:true});
+  assert.equal(health.profile.id,"health-liquid-ampoule");
+  assert.equal(health.confidence,"category");
+  const apparel=resolveProductSceneProfile({name:"AIRism UV 프로텍션 메쉬 풀집 후디",category:"의류 > 여성 아우터 > 기능성 후디"});
+  assert.equal(apparel.profile.id,"fashion-tops");
+  assert.equal(apparel.confidence,"specific");
+});
 test("manufacturing side stays evidence and front stays the scene subject",()=>{
   const obs={role:"front" as const,confidence:1,sameProduct:"yes" as const,wholeProduct:true,readableText:"애사비 젤리스틱 15g",facts:[],warnings:[]};
   const front={path:"front",name:"front",role:"main",mediaType:"image/png",bytes:new Uint8Array(),observation:obs};
