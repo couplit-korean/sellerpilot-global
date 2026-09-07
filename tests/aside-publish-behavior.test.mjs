@@ -44,10 +44,61 @@ test('different product never takes external receipt override branch', async () 
   assert.equal(r.publishContext.externalDetailImport.receipts, r.receipts);
   assert.equal(r.publishContext.detailAssetSource, undefined);
 });
+const finalExternalRecheck = between(
+  route,
+  '  if (approvedDetailBinding?.external) {',
+  '  const { data: claimData, error: claimError }',
+);
+const executableFinalExternalRecheck = finalExternalRecheck.replace(
+  'parsed.data.productId!',
+  'parsed.data.productId',
+);
+async function recheck({ strictError = false, drift = false } = {}) {
+  const external = {
+    contract: 'sellerpilot_external_detail_channel_v1',
+    approvalRevision: 1,
+    contentSha256: 'f'.repeat(64),
+  };
+  let strictReads = 0;
+  let originalChecks = 0;
+  const result = await runInNewContext(`(async()=>{${executableFinalExternalRecheck};return {accepted:true};})()`, {
+    approvedDetailBinding: { external },
+    readApprovedExternalDetailPublishContext: async () => {
+      strictReads++;
+      if (strictError) throw Error('EXTERNAL_DETAIL_APPROVAL_MISMATCH');
+      return { externalDetailImport: { approvalRevision: 1, contentSha256: 'f'.repeat(64) } };
+    },
+    verifyExternalDetailOriginalSnapshot: async () => { originalChecks++; },
+    approvedProductDetailManifestFromPublishContext: () => ({
+      ok: true,
+      value: { external: drift ? { ...external, approvalRevision: 2 } : external },
+    }),
+    externalDetailDigest: value => JSON.stringify(value),
+    userData: { user: {} }, userClient: {}, serviceClient: {},
+    parsed: { data: { productId: 'fixture-product', market: 'KR' } },
+    channel: 'coupang', NextResponse: response,
+  });
+  return { result, strictReads, originalChecks };
+}
+test('final external preclaim recheck uses the strict revision-backed snapshot and accepts an unchanged approval', async () => {
+  assert.doesNotMatch(finalExternalRecheck, /readExternalDetailImportContext/);
+  const value = await recheck();
+  assert.equal(value.result.accepted, true);
+  assert.equal(value.strictReads, 1);
+  assert.equal(value.originalChecks, 1);
+});
+test('final external preclaim recheck remains fail-closed before claim on strict read error or approval drift', async () => {
+  for (const options of [{ strictError: true }, { drift: true }]) {
+    const value = await recheck(options);
+    assert.equal(value.strictReads, 1);
+    assert.equal(value.result.status, 409);
+    assert.equal(value.result.body.mode, 'external_detail_changed_before_claim');
+  }
+});
 const predicates = between(route, '    const globalReleaseGateIsExact =', '    if (boundQoo10ExactLocalizationUpdate');
 const decision = between(route, '    const channelReleaseGateIsEffective =', '\n  if (boundShopeeSgExistingUpdate?.phase === "inventory")');
 function gate(status, overrides = {}) {
-  return runInNewContext(`(()=>{${predicates}${decision.replace(/\n  }\s*$/, '')};return {accepted:true};})()`, {
+  return runInNewContext(`(()=>{${predicates}${decision.replace(/\n {2}}\s*$/, '')};return {accepted:true};})()`, {
     releaseGateStatus: status, releaseGateError: null,
     runtimeRelease: { status: 'valid', release: 'a'.repeat(40) },
     isRecord: v => Boolean(v && typeof v === 'object' && !Array.isArray(v)),

@@ -2723,7 +2723,10 @@ export async function POST(request: NextRequest) {
   }
   if (approvedDetailBinding?.external) {
     try {
-      const fresh = await readExternalDetailImportContext({user:userData.user,userClient,serviceClient}, parsed.data.productId!);
+      // Re-read the same strict approval snapshot used for the initial binding.
+      // The legacy context omits approvalRevision/contentSha256, which makes an
+      // unchanged revision-backed approval look different before claim.
+      const fresh = await readApprovedExternalDetailPublishContext({user:userData.user,userClient,serviceClient}, parsed.data.productId!);
       await verifyExternalDetailOriginalSnapshot({user:userData.user,userClient,serviceClient}, fresh);
       const selected = approvedProductDetailManifestFromPublishContext({detailAssetSource:"external_generated",externalDetailImport:fresh.externalDetailImport,externalDetailProductId:parsed.data.productId,externalDetailChannel:channel,externalDetailMarket:parsed.data.market});
       if (!selected.ok || externalDetailDigest(selected.value.external) !== externalDetailDigest(approvedDetailBinding.external)) throw Error("EXTERNAL_DETAIL_VERSION_CONFLICT");
