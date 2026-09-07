@@ -46,6 +46,9 @@ const id = Object.freeze({
   tokenCreator: "61000000-0000-4000-8000-000000000002",
   token: "61000000-0000-4000-8000-000000000003",
   sourceRoute: "61000000-0000-4000-8000-000000000004",
+  serverlessToken: "61000000-0000-4000-8000-000000000006",
+  serverlessJob: "61000000-0000-4000-8000-000000000007",
+  serverlessClaim: "61000000-0000-4000-8000-000000000008",
   credential: "32de2968-d4b7-4fda-a84b-16a7ce0257cc",
   attempt: "d771421b-f408-4f75-addd-03879393fab8",
   listing: "fe4ed8ac-7a49-4ccf-97a1-ee435388cbf4",
@@ -146,7 +149,9 @@ async function database() {
     create function sellerpilot_private.serverless_gateway_job_allowed(
       p_channel text,p_operation text
     )returns boolean language sql immutable as $$
-      select p_operation in('orders.list','inquiries.list')
+      select p_operation in(
+        'orders.list','inquiries.list','listing.publication.verify'
+      )
     $$;
     create function sellerpilot_private.serverless_cs_job_is_owned(
       p_token_hash text,p_job_id uuid,p_claim_token uuid,
@@ -402,6 +407,8 @@ test("forward patch hydrates only the exact GET verifier and leaves every mutati
     /categories\.attributes', 'categories\.validate/u);
   assert.match(hydrationMigration,
     /coupang_exact_live_generic_claim_exclusion_v1/u);
+  assert.doesNotMatch(hydrationMigration,
+    /serverless_gateway_job_allowed\([\s\S]{0,100}listing\.publication\.verify[\s\S]{0,40}is true/u);
   assert.match(hydrationMigration,
     /provider_mutation_started_at is null/u);
   assert.match(hydrationMigration,
@@ -441,6 +448,32 @@ test("PGlite atomically claims and returns the exact source contract without mut
       [tokenHash, version],
     )).rows[0].result;
     assert.equal(generic, null, "the no-mode fallback cannot preempt the exact row");
+
+    await db.query(`insert into sellerpilot_private.ai_cli_worker_tokens values(
+      $1,$2,'serverless_cs','active',clock_timestamp()+interval '1 day',
+      clock_timestamp(),'serverless-fixture',$3)`, [
+      id.serverlessToken, "c".repeat(64), id.tokenCreator,
+    ]);
+    await db.query(`insert into sellerpilot_private.channel_gateway_jobs(
+      id,credential_id,channel,operation,environment,request_payload,
+      response_payload,status,seller_account_key,request_fingerprint,created_by,
+      created_at,updated_at,worker_token_id,claim_token,lease_expires_at
+    )values($1,$2,'coupang','orders.list','production','{}','{}','running',
+      $3,$4,$5,clock_timestamp(),clock_timestamp(),$6,$7,
+      clock_timestamp()+interval '2 minutes')`, [
+      id.serverlessJob, id.credential, sellerKey, fingerprint,
+      id.credentialOwner, id.serverlessToken, id.serverlessClaim,
+    ]);
+    assert.equal((await db.query(
+      `select sellerpilot_private.serverless_cs_job_is_owned(
+        $1,$2,$3,true
+      ) owned`,
+      ["c".repeat(64), id.serverlessJob, id.serverlessClaim],
+    )).rows[0].owned, true, "the existing serverless ownership path remains open");
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set status='succeeded' where id=$1",
+      [id.serverlessJob],
+    );
 
     const claimed = await claim(db);
     assert.equal(claimed.id, id.verifier);

@@ -13,6 +13,7 @@ select pg_catalog.pg_advisory_xact_lock(1637578093, 8072038);
 do $preflight$
 declare
   claim_definition text;
+  predecessor_definition text;
   allowed_definition text;
   unsafe_claim_definition text;
   source_definition text;
@@ -37,6 +38,9 @@ begin
     'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
   ) into strict unsafe_claim_definition;
   select pg_catalog.pg_get_functiondef(
+    'public.sellerpilot_claim_local_channel_executor_before_coupang_get(text,text,text,text)'::regprocedure
+  ) into strict predecessor_definition;
+  select pg_catalog.pg_get_functiondef(
     'sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)'::regprocedure
   ) into strict allowed_definition;
   select pg_catalog.pg_get_functiondef(
@@ -50,6 +54,8 @@ begin
        'sellerpilot_claim_local_channel_executor_before_coupang_get') = 0
      or pg_catalog.strpos(claim_definition,
        '86d2cb63-d382-4cc9-8153-654cf7ccec80') = 0
+     or pg_catalog.strpos(predecessor_definition,
+       'sellerpilot_claim_channel_gateway_job') = 0
      or pg_catalog.strpos(allowed_definition,
        'coupang_exact_live_local_claim_allowed') = 0
      or pg_catalog.strpos(unsafe_claim_definition,
@@ -63,10 +69,7 @@ begin
      or pg_catalog.strpos(source_definition,
        'coupang_provider_assigned_vendor_items_v1') = 0
      or pg_catalog.strpos(ownership_definition,
-       $$token.scope = 'serverless_cs'$$) = 0
-     or sellerpilot_private.serverless_gateway_job_allowed(
-       'coupang', 'listing.publication.verify'
-     ) is true then
+       $$token.scope = 'serverless_cs'$$) = 0 then
     raise exception 'COUPANG_EXACT_LOCAL_HYDRATION_PREIMAGE_DRIFT'
       using errcode = '55000';
   end if;
@@ -357,6 +360,20 @@ declare
   queued_marker constant text := $marker$   where j.status = 'queued'$marker$;
   exclusion_marker constant text :=
     'sellerpilot.coupang_exact_live_generic_claim_exclusion_v1';
+  exclusion_clause constant text := $patch$
+     and (
+       coalesce(current_setting(
+         'sellerpilot.local_channel_executor_lane', true
+       ), '') = 'enabled'
+       or (
+         current_setting(
+           'sellerpilot.coupang_exact_live_generic_claim_exclusion_v1', true
+         ) is null
+         and sellerpilot_private.coupang_exact_live_verifier_job_matches(j)
+           is not true
+       )
+     )
+$patch$;
   first_at integer;
 begin
   source := pg_catalog.pg_get_functiondef(
@@ -376,31 +393,17 @@ begin
   end if;
   patched := pg_catalog.substr(
     source, 1, first_at + pg_catalog.length(queued_marker) - 1
-  ) || $patch$
-     and (
-       coalesce(current_setting(
-         'sellerpilot.local_channel_executor_lane', true
-       ), '') = 'enabled'
-       or (
-         current_setting(
-           'sellerpilot.coupang_exact_live_generic_claim_exclusion_v1', true
-         ) is null
-         and sellerpilot_private.coupang_exact_live_verifier_job_matches(j)
-           is not true
-       )
-     )
-$patch$ || pg_catalog.substr(
+  ) || exclusion_clause || pg_catalog.substr(
     source, first_at + pg_catalog.length(queued_marker)
   );
   execute patched;
   source := pg_catalog.pg_get_functiondef(
     'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure
   );
-  if pg_catalog.strpos(source, exclusion_marker) = 0
+  if pg_catalog.strpos(source, queued_marker || exclusion_clause) = 0
+     or pg_catalog.strpos(source, exclusion_marker) = 0
      or pg_catalog.strpos(source,
-       'coupang_exact_live_verifier_job_matches') = 0
-     or pg_catalog.strpos(source,
-       'sellerpilot.local_channel_executor_lane') = 0 then
+       'coupang_exact_live_verifier_job_matches') = 0 then
     raise exception 'COUPANG_EXACT_GENERIC_CLAIM_EXCLUSION_FAILED'
       using errcode = '55000';
   end if;
