@@ -9,7 +9,8 @@ const migration = await readFile(new URL(
   import.meta.url,
 ), "utf8");
 
-const oldRelease = "a78cc371969f4954db4bcfa986d7494631e84cfb";
+const readPriorRelease = "a81b2c7981ce4d8d2ebd996864f39d501749a484";
+const writePriorRelease = "77f970877f755910321c882f379e8b406d552502";
 const release = "f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca";
 const egress = "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01";
 const sellerKey = "e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd";
@@ -23,7 +24,8 @@ const id = Object.freeze({
   worker: "02955cb4-fa9f-466b-824f-b61f06276190",
   attributes: "fd27ffd0-59d3-45af-9315-e435a14d27cb",
   validate: "01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8",
-  create: "b23cb3cd-5a04-4000-8218-a914d2b22461",
+  create: "73e07b05-b3bd-47e4-be92-062d537150e9",
+  disabledCreate: "b23cb3cd-5a04-4000-8218-a914d2b22461",
   unrelatedRoute: "81000000-0000-4000-8000-000000000001",
   unrelatedCredential: "81000000-0000-4000-8000-000000000002",
   runningJob: "81000000-0000-4000-8000-000000000003",
@@ -32,9 +34,9 @@ const id = Object.freeze({
 });
 
 const exactRoutes = Object.freeze([
-  [id.attributes, "categories.attributes"],
-  [id.validate, "categories.validate"],
-  [id.create, "listing.create"],
+  [id.attributes, "categories.attributes", readPriorRelease],
+  [id.validate, "categories.validate", readPriorRelease],
+  [id.create, "listing.create", writePriorRelease],
 ]);
 
 async function scalar(db, sql, parameters = []) {
@@ -253,7 +255,7 @@ async function database({ gateOpen = false } = {}) {
       values ('coupang', false), ('smartstore', false);
   `);
 
-  for (const [routeId, operation] of exactRoutes) {
+  for (const [routeId, operation, priorRelease] of exactRoutes) {
     await db.query(
       `insert into sellerpilot_private.local_channel_executor_routes values(
         $1,$2,'coupang',$3,$4,$5,$6,$7,$8,$9,
@@ -261,9 +263,18 @@ async function database({ gateOpen = false } = {}) {
         clock_timestamp()+interval '1 day',true
       )`,
       [routeId, id.owner, operation, id.credential, sellerKey, id.worker,
-        oldRelease, egress, id.credentialOwner],
+        priorRelease, egress, id.credentialOwner],
     );
   }
+  await db.query(
+    `insert into sellerpilot_private.local_channel_executor_routes values(
+      $1,$2,'coupang','listing.create',$3,$4,$5,$6,$7,$8,
+      clock_timestamp()-interval '2 hours',
+      clock_timestamp()+interval '2 days',false
+    )`,
+    [id.disabledCreate, id.owner, id.credential, sellerKey, id.worker,
+      readPriorRelease, egress, id.credentialOwner],
+  );
   await db.query(
     `insert into sellerpilot_private.local_channel_executor_routes values(
       $1,$2,'smartstore','listing.create',$3,$4,$5,$6,$7,$8,
@@ -271,7 +282,7 @@ async function database({ gateOpen = false } = {}) {
       clock_timestamp()+interval '2 days',true
     )`,
     [id.unrelatedRoute, id.owner, id.unrelatedCredential, "b".repeat(64),
-      id.worker, oldRelease, egress, id.credentialOwner],
+      id.worker, readPriorRelease, egress, id.credentialOwner],
   );
   await db.query(
     `insert into sellerpilot_private.channel_gateway_jobs values
@@ -305,9 +316,13 @@ async function routeIsCurrent(db, operation) {
 test("migration is a three-route release-only rotation with no production call", () => {
   assert.match(migration, /fd27ffd0-59d3-45af-9315-e435a14d27cb/u);
   assert.match(migration, /01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8/u);
+  assert.match(migration, /73e07b05-b3bd-47e4-be92-062d537150e9/u);
   assert.match(migration, /b23cb3cd-5a04-4000-8218-a914d2b22461/u);
+  assert.match(migration, /a81b2c7981ce4d8d2ebd996864f39d501749a484/u);
+  assert.match(migration, /77f970877f755910321c882f379e8b406d552502/u);
   assert.match(migration, /set release_sha = 'f0b9af0/u);
   assert.match(migration, /COUPANG_EXACT_ROUTE_F0_PREIMAGE_DRIFT/u);
+  assert.match(migration, /prior_release_by_route/u);
   assert.match(migration, /gate_effective_at_rotation/u);
   assert.match(migration, /provider_mutation_performed/u);
   assert.doesNotMatch(migration,
@@ -353,6 +368,15 @@ test("closed-gate rotation changes only release SHA and write becomes current on
           : before.release_sha,
       );
     }
+    const disabledBefore = routesBefore.find(
+      (route) => route.id === id.disabledCreate,
+    );
+    const disabledAfter = routesAfter.find(
+      (route) => route.id === id.disabledCreate,
+    );
+    assert.deepEqual(disabledAfter, disabledBefore);
+    assert.equal(disabledAfter.enabled, false);
+    assert.equal(disabledAfter.release_sha, readPriorRelease);
     assert.deepEqual(await snapshot(
       db, "sellerpilot_private.channel_gateway_jobs", "id",
     ), jobsBefore);
@@ -369,7 +393,7 @@ test("closed-gate rotation changes only release SHA and write becomes current on
     assert.equal(await scalar(db,
       "select count(*)::integer from sellerpilot_private.coupang_exact_route_f0_rotations"), 1);
     const receipt = (await db.query(`
-      select prior_release_sha,active_release_sha,worker_token_id,
+      select prior_release_by_route,active_release_sha,worker_token_id,
              egress_ip_sha256,gate_effective_at_rotation,
              provider_mutation_performed,contract,
              jsonb_array_length(prior_routes) prior_count,
@@ -377,7 +401,11 @@ test("closed-gate rotation changes only release SHA and write becomes current on
         from sellerpilot_private.coupang_exact_route_f0_rotations
     `)).rows[0];
     assert.deepEqual(receipt, {
-      prior_release_sha: oldRelease,
+      prior_release_by_route: {
+        [id.attributes]: readPriorRelease,
+        [id.validate]: readPriorRelease,
+        [id.create]: writePriorRelease,
+      },
       active_release_sha: release,
       worker_token_id: id.worker,
       egress_ip_sha256: egress,
@@ -424,10 +452,11 @@ test("open-gate rotation preserves gate state and makes all three routes current
 
 test("runtime, worker, route identity, prior release, and drain drift fail closed", async () => {
   const cases = [
-    ["runtime", "update sellerpilot_private.runtime_fixture set active_release='a78cc371969f4954db4bcfa986d7494631e84cfb'", /RUNTIME_NOT_ACTIVE/u],
+    ["runtime", `update sellerpilot_private.runtime_fixture set active_release='${readPriorRelease}'`, /RUNTIME_NOT_ACTIVE/u],
     ["worker", "update sellerpilot_private.ai_cli_worker_tokens set last_version='sellerpilot-cli-worker/1.61+wrong'", /WORKER_PREIMAGE_DRIFT/u],
     ["owner", `update sellerpilot_private.local_channel_executor_routes set owner_id='${id.credentialOwner}' where id='${id.attributes}'`, /PREIMAGE_DRIFT/u],
     ["release", `update sellerpilot_private.local_channel_executor_routes set release_sha='${release}' where id='${id.validate}'`, /PREIMAGE_DRIFT/u],
+    ["disabled predecessor", `update sellerpilot_private.local_channel_executor_routes set release_sha='${writePriorRelease}' where id='${id.disabledCreate}'`, /PREIMAGE_DRIFT/u],
     ["drain", `insert into sellerpilot_private.channel_gateway_jobs values('${id.runningJob}','coupang','categories.validate','running','${id.worker}','{}')`, /WORKER_NOT_DRAINED/u],
   ];
   for (const [name, mutation, error] of cases) {

@@ -1,5 +1,6 @@
--- Rotate only the three already-attested Coupang local-executor routes from
--- a78cc371 to f0b9af0. The runtime and worker must already be on f0b9af0.
+-- Rotate only the three currently enabled Coupang local-executor routes from
+-- their exact observed releases to f0b9af0. The runtime and worker must already
+-- be on f0b9af0. The disabled predecessor listing.create route is preserved.
 -- This migration does not open the Coupang mutation gate or touch any job,
 -- listing, credential, worker, seller, egress, approval, or expiry value.
 
@@ -114,7 +115,7 @@ begin
    where route.id in (
      'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-     'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
    )
    order by route.id
    for update;
@@ -124,19 +125,22 @@ begin
    where route.id in (
      'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-     'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
    );
 
   select count(*) into matched_route_count
     from (
       values
         ('fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
-         'categories.attributes'::text),
+         'categories.attributes'::text,
+         'a81b2c7981ce4d8d2ebd996864f39d501749a484'::text),
         ('01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-         'categories.validate'::text),
-        ('b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid,
-         'listing.create'::text)
-    ) expected(id, operation)
+         'categories.validate'::text,
+         'a81b2c7981ce4d8d2ebd996864f39d501749a484'::text),
+        ('73e07b05-b3bd-47e4-be92-062d537150e9'::uuid,
+         'listing.create'::text,
+         '77f970877f755910321c882f379e8b406d552502'::text)
+    ) expected(id, operation, prior_release_sha)
     join sellerpilot_private.local_channel_executor_routes route
       on route.id = expected.id
      and route.owner_id = '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c'::uuid
@@ -146,7 +150,7 @@ begin
      and route.seller_account_key =
        'e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd'
      and route.worker_token_id = worker.id
-     and route.release_sha = 'a78cc371969f4954db4bcfa986d7494631e84cfb'
+     and route.release_sha = expected.prior_release_sha
      and route.egress_ip_sha256 =
        '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01'
      and route.enabled
@@ -174,6 +178,24 @@ begin
   if exact_id_count <> 3
      or matched_route_count <> 3
      or enabled_identity_count <> 3
+     or not exists (
+       select 1
+         from sellerpilot_private.local_channel_executor_routes route
+        where route.id = 'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
+          and route.owner_id =
+            '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c'::uuid
+          and route.channel = 'coupang'
+          and route.operation = 'listing.create'
+          and route.credential_id = credential.id
+          and route.seller_account_key =
+            'e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33dfacd'
+          and route.worker_token_id = worker.id
+          and route.release_sha =
+            'a81b2c7981ce4d8d2ebd996864f39d501749a484'
+          and route.egress_ip_sha256 =
+            '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01'
+          and route.enabled is false
+     )
      or exists (
        select 1
          from sellerpilot_private.local_channel_executor_routes route
@@ -209,15 +231,22 @@ create table sellerpilot_private.coupang_exact_route_f0_rotations (
     route_ids = '[
       "fd27ffd0-59d3-45af-9315-e435a14d27cb",
       "01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8",
-      "b23cb3cd-5a04-4000-8218-a914d2b22461"
+      "73e07b05-b3bd-47e4-be92-062d537150e9"
     ]'::jsonb
   ),
   prior_routes jsonb not null,
   prior_routes_sha256 text not null check (prior_routes_sha256 ~ '^[a-f0-9]{64}$'),
   rotated_routes jsonb not null,
   rotated_routes_sha256 text not null check (rotated_routes_sha256 ~ '^[a-f0-9]{64}$'),
-  prior_release_sha text not null check (
-    prior_release_sha = 'a78cc371969f4954db4bcfa986d7494631e84cfb'
+  prior_release_by_route jsonb not null check (
+    prior_release_by_route = jsonb_build_object(
+      'fd27ffd0-59d3-45af-9315-e435a14d27cb',
+      'a81b2c7981ce4d8d2ebd996864f39d501749a484',
+      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8',
+      'a81b2c7981ce4d8d2ebd996864f39d501749a484',
+      '73e07b05-b3bd-47e4-be92-062d537150e9',
+      '77f970877f755910321c882f379e8b406d552502'
+    )
   ),
   active_release_sha text not null check (
     active_release_sha = 'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca'
@@ -270,29 +299,48 @@ do $rotate$
 declare
   prior_snapshot jsonb;
   rotated_snapshot jsonb;
+  other_routes_before jsonb;
+  other_routes_after jsonb;
   updated_count integer;
   gate_effective boolean;
   operation text;
   route_current boolean;
   expected_current boolean;
 begin
+  select coalesce(
+           jsonb_agg(to_jsonb(route) order by route.id),
+           '[]'::jsonb
+         )
+    into strict other_routes_before
+    from sellerpilot_private.local_channel_executor_routes route
+   where route.id not in (
+     'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
+     '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
+   );
+
   select jsonb_agg(to_jsonb(route) order by route.operation)
     into strict prior_snapshot
     from sellerpilot_private.local_channel_executor_routes route
    where route.id in (
      'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-     'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
    );
 
   update sellerpilot_private.local_channel_executor_routes route
      set release_sha = 'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca'
-   where route.id in (
-     'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
-     '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-     'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
-   )
-     and route.release_sha = 'a78cc371969f4954db4bcfa986d7494631e84cfb';
+    from (
+      values
+        ('fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
+         'a81b2c7981ce4d8d2ebd996864f39d501749a484'::text),
+        ('01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
+         'a81b2c7981ce4d8d2ebd996864f39d501749a484'::text),
+        ('73e07b05-b3bd-47e4-be92-062d537150e9'::uuid,
+         '77f970877f755910321c882f379e8b406d552502'::text)
+    ) expected(id, prior_release_sha)
+   where route.id = expected.id
+     and route.release_sha = expected.prior_release_sha;
   get diagnostics updated_count = row_count;
   if updated_count <> 3 then
     raise exception 'COUPANG_EXACT_ROUTE_F0_UPDATE_COUNT_DRIFT'
@@ -305,18 +353,39 @@ begin
    where route.id in (
      'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
-     'b23cb3cd-5a04-4000-8218-a914d2b22461'::uuid
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
    );
 
-  if exists (
+  select coalesce(
+           jsonb_agg(to_jsonb(route) order by route.id),
+           '[]'::jsonb
+         )
+    into strict other_routes_after
+    from sellerpilot_private.local_channel_executor_routes route
+   where route.id not in (
+     'fd27ffd0-59d3-45af-9315-e435a14d27cb'::uuid,
+     '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'::uuid,
+     '73e07b05-b3bd-47e4-be92-062d537150e9'::uuid
+   );
+
+  if other_routes_after is distinct from other_routes_before
+  or exists (
     select 1
       from jsonb_array_elements(prior_snapshot) before_row
       join jsonb_array_elements(rotated_snapshot) after_row
         on after_row->>'id' = before_row->>'id'
      where (before_row - 'release_sha') is distinct from
            (after_row - 'release_sha')
-        or before_row->>'release_sha' is distinct from
-           'a78cc371969f4954db4bcfa986d7494631e84cfb'
+        or before_row->>'release_sha' is distinct from case
+          when before_row->>'id' in (
+            'fd27ffd0-59d3-45af-9315-e435a14d27cb',
+            '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8'
+          ) then 'a81b2c7981ce4d8d2ebd996864f39d501749a484'
+          when before_row->>'id' =
+            '73e07b05-b3bd-47e4-be92-062d537150e9'
+            then '77f970877f755910321c882f379e8b406d552502'
+          else null
+        end
         or after_row->>'release_sha' is distinct from
            'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca'
   )
@@ -356,7 +425,7 @@ begin
 
   insert into sellerpilot_private.coupang_exact_route_f0_rotations (
     singleton, route_ids, prior_routes, prior_routes_sha256,
-    rotated_routes, rotated_routes_sha256, prior_release_sha,
+    rotated_routes, rotated_routes_sha256, prior_release_by_route,
     active_release_sha, worker_token_id, egress_ip_sha256,
     gate_effective_at_rotation, provider_mutation_performed, contract
   ) values (
@@ -364,13 +433,20 @@ begin
     '[
       "fd27ffd0-59d3-45af-9315-e435a14d27cb",
       "01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8",
-      "b23cb3cd-5a04-4000-8218-a914d2b22461"
+      "73e07b05-b3bd-47e4-be92-062d537150e9"
     ]'::jsonb,
     prior_snapshot,
     encode(extensions.digest(prior_snapshot::text, 'sha256'), 'hex'),
     rotated_snapshot,
     encode(extensions.digest(rotated_snapshot::text, 'sha256'), 'hex'),
-    'a78cc371969f4954db4bcfa986d7494631e84cfb',
+    jsonb_build_object(
+      'fd27ffd0-59d3-45af-9315-e435a14d27cb',
+      'a81b2c7981ce4d8d2ebd996864f39d501749a484',
+      '01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8',
+      'a81b2c7981ce4d8d2ebd996864f39d501749a484',
+      '73e07b05-b3bd-47e4-be92-062d537150e9',
+      '77f970877f755910321c882f379e8b406d552502'
+    ),
     'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca',
     '02955cb4-fa9f-466b-824f-b61f06276190',
     '92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01',
@@ -391,6 +467,6 @@ end;
 $rotate$;
 
 comment on table sellerpilot_private.coupang_exact_route_f0_rotations is
-  'Immutable record of the exact three-route Coupang local-executor release rotation from a78cc371 to f0b9af0; records no provider mutation and does not open the mutation gate.';
+  'Immutable record of the exact three-route Coupang local-executor release rotation from per-route observed preimages to f0b9af0; records no provider mutation and does not open the mutation gate.';
 
 commit;
