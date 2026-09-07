@@ -1982,15 +1982,29 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
     && (!requestedOutboundCode || String(center.outboundShippingPlaceCode ?? "").trim() === requestedOutboundCode)
     && (!recovery || (Number.isSafeInteger(Number(center.outboundShippingPlaceCode))
       && Number(center.outboundShippingPlaceCode) > 0)));
-  const returnCenter = returnCenters.find((center) =>
+  const matchingReturnCenters = returnCenters.filter((center) =>
     coupangUsable(center.usable)
     && preferredKoreanAddress(center.placeAddresses)
     && (!requestedReturnCenterCode || String(center.returnCenterCode ?? "").trim() === requestedReturnCenterCode)
-    && (!recovery || (String(center.returnCenterCode ?? "").trim()
-      && String(center.deliverCode ?? "").trim()
-      && positiveFee(center))));
-  if (!returnCenter) {
+  );
+  const returnCenter = matchingReturnCenters.find((center) =>
+    String(center.returnCenterCode ?? "").trim()
+    && String(center.deliverCode ?? "").trim()
+    && positiveFee(center));
+  if (!matchingReturnCenters.length) {
     throw new Error(`COUPANG_USABLE_RETURN_CENTER_MISSING:${safeCoupangCenterSummary(returnCenters)}`);
+  }
+  if (!returnCenter) {
+    if (!matchingReturnCenters.some((center) => String(center.deliverCode ?? "").trim())) {
+      throw new Error("COUPANG_DELIVERY_COMPANY_CODE_MISSING");
+    }
+    if (!matchingReturnCenters.some((center) => positiveFee(center))) {
+      throw new Error("COUPANG_RETURN_FEE_MISSING");
+    }
+    if (!matchingReturnCenters.some((center) => String(center.returnCenterCode ?? "").trim())) {
+      throw new Error("COUPANG_RETURN_CENTER_CODE_MISSING");
+    }
+    throw new Error("COUPANG_COMPLETE_RETURN_CENTER_MISSING");
   }
   if (!outbound) {
     throw new Error(`COUPANG_USABLE_OUTBOUND_CENTER_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);

@@ -255,6 +255,23 @@ test("generic Coupang prepare uses seller-confirmed notices and contracted shipp
   assert.equal(JSON.stringify(prepared.arguments).includes("Generic OEM"), false);
 });
 
+test("generic Coupang prepare skips incomplete return centers and uses the first complete provider contract", async () => {
+  const incomplete = (returnCenterResponse({ deliverCode: "" }).data.content as Array<Record<string, unknown>>)[0];
+  const complete = (returnCenterResponse({
+    returnCenterCode: "RET-CJ",
+    deliverCode: "CJGLS",
+    shippingPlaceName: "CJ 계약 반품지",
+    returnFee02kg: 6000,
+  }).data.content as Array<Record<string, unknown>>)[0];
+  const { prepared } = await prepareGeneric({
+    returnCenter: { code: "SUCCESS", data: { content: [incomplete, complete] } },
+  });
+  const body = prepared.arguments.body as Record<string, unknown>;
+  assert.equal(body.returnCenterCode, "RET-CJ");
+  assert.equal(body.deliveryCompanyCode, "CJGLS");
+  assert.equal(body.returnCharge, 6000);
+});
+
 test("generic Coupang prepare fails before create when the selected category is inactive", async () => {
   await assert.rejects(
     prepareGeneric({ categoryStatus: { code: "SUCCESS", data: false } }),
