@@ -8,6 +8,10 @@ const migrationUrl = new URL(
   import.meta.url,
 );
 const migration = await readFile(migrationUrl, "utf8");
+const unboundCreateMigration = await readFile(new URL(
+  "../supabase/migrations/20260907180000_allow_unbound_listing_create_local_claim.sql",
+  import.meta.url,
+), "utf8");
 const smartstoreUpdateMigration = await readFile(new URL(
   "../supabase/migrations/20260907161000_smartstore_local_update_executor.sql",
   import.meta.url,
@@ -162,6 +166,7 @@ async function createDatabase() {
   const db = new PGlite();
   await db.exec(fixture);
   await db.exec(migration);
+  await db.exec(unboundCreateMigration);
   return db;
 }
 
@@ -195,7 +200,7 @@ insert into sellerpilot_private.channel_operation_attempts values(
  '${ids.owner}','${sellerKey}'
 );
 insert into sellerpilot_private.product_listings values(
- '${ids.listing}','${ids.product}','${ids.owner}','coupang','${sellerKey}','${ids.attempt}'
+ '${ids.listing}','${ids.product}','${ids.owner}','coupang',null,'${ids.attempt}'
 );
 insert into sellerpilot_private.channel_gateway_jobs values(
  '${ids.job}','${ids.credential}','${ids.attempt}','${ids.listing}',
@@ -256,6 +261,110 @@ test("different admin identities remain explicitly bound while current approval 
   }
 });
 
+test("listing create accepts an unbound listing and rejects a conflicting bound seller", async () => {
+  const db = await createDatabase();
+  try {
+    await seedAllowedListing(db);
+    const allowed = async () => (await db.query(
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6
+      ) as allowed`,
+      [ids.job, ids.credential, ids.token, version, release, egress],
+    )).rows[0].allowed;
+
+    assert.equal(await allowed(), true, "a new create remains unbound until verified completion");
+    await db.query(
+      "update sellerpilot_private.product_listings set seller_account_key=$1 where id=$2",
+      ["f".repeat(64), ids.listing],
+    );
+    assert.equal(await allowed(), false, "a conflicting non-null lineage must fail closed");
+    await db.query(
+      "update sellerpilot_private.product_listings set seller_account_key=$1 where id=$2",
+      [sellerKey, ids.listing],
+    );
+    assert.equal(await allowed(), true, "an already matching lineage remains claimable");
+  } finally {
+    await db.close();
+  }
+});
+
+test("the create fix preserves an already installed SmartStore update identity guard", async () => {
+  const db = new PGlite();
+  try {
+    await db.exec(fixture);
+    await db.exec(migration);
+    await db.exec(`
+      alter table sellerpilot_private.product_listings add column remote_id text;
+      create function sellerpilot_private.smartstore_manual_adoption_reconciliation_resolved(uuid)
+      returns boolean language sql stable as $$select false$$;
+    `);
+    await db.exec(smartstoreUpdateMigration);
+    const beforeMetadata = (await db.query(`
+      select pg_get_userbyid(proowner) as owner, prosecdef, proconfig, provolatile
+        from pg_proc
+       where oid =
+        'sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)'::regprocedure
+    `)).rows[0];
+    await db.exec(unboundCreateMigration);
+    await seedAllowedListing(db);
+
+    const definition = (await db.query(
+      `select pg_get_functiondef(
+        'sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)'::regprocedure
+      ) as source`,
+    )).rows[0].source;
+    assert.match(definition, /SMARTSTORE_LOCAL_UPDATE_REMOTE_IDENTITY/u);
+    assert.match(definition, /LISTING_CREATE_UNBOUND_SELLER_LINEAGE/u);
+
+    const afterMetadata = (await db.query(`
+      select pg_get_userbyid(proowner) as owner, prosecdef, proconfig, provolatile,
+             coalesce(proacl::text, '') as acl
+        from pg_proc
+       where oid =
+        'sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)'::regprocedure
+    `)).rows[0];
+    assert.deepEqual({
+      owner: afterMetadata.owner,
+      prosecdef: afterMetadata.prosecdef,
+      proconfig: afterMetadata.proconfig,
+      provolatile: afterMetadata.provolatile,
+    }, beforeMetadata);
+    assert.doesNotMatch(afterMetadata.acl, /(anon|authenticated|service_role)=/u);
+
+    const allowed = async () => (await db.query(
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6
+      ) as allowed`,
+      [ids.job, ids.credential, ids.token, version, release, egress],
+    )).rows[0].allowed;
+    assert.equal(await allowed(), true, "a production-order create accepts an unbound listing");
+
+    await db.exec(`
+      update sellerpilot_private.channel_credentials set channel='smartstore';
+      update sellerpilot_private.serverless_static_egress_policy set channel='smartstore';
+      update sellerpilot_private.channel_operation_attempts
+         set channel='smartstore',operation='listing.update';
+      update sellerpilot_private.product_listings
+         set channel_key='smartstore',remote_id='13688607602';
+      update sellerpilot_private.channel_gateway_jobs
+         set channel='smartstore',operation='listing.update',
+             request_payload=jsonb_set(jsonb_set(request_payload,
+               '{arguments,sellerpilotExternalDetail,channel}','"smartstore"'::jsonb),
+               '{arguments,originProductNo}','"13688607602"'::jsonb);
+      update sellerpilot_private.local_channel_executor_routes
+         set channel='smartstore',operation='listing.update';
+    `);
+    assert.equal(await allowed(), false, "an existing listing update cannot use an unbound seller");
+    await db.query(
+      "update sellerpilot_private.product_listings set seller_account_key=$1 where id=$2",
+      [sellerKey, ids.listing],
+    );
+    assert.equal(await allowed(), true, "the same update becomes claimable only with the exact seller");
+  } finally {
+    await db.close();
+  }
+});
+
 test("SmartStore UPDATE uses the existing origin and keeps release, approval and gate fences", async () => {
   const db = await createDatabase();
   try {
@@ -270,7 +379,8 @@ test("SmartStore UPDATE uses the existing origin and keeps release, approval and
       update sellerpilot_private.channel_credentials set channel='smartstore';
       update sellerpilot_private.serverless_static_egress_policy set channel='smartstore';
       update sellerpilot_private.channel_operation_attempts set channel='smartstore',operation='listing.update';
-      update sellerpilot_private.product_listings set channel_key='smartstore',remote_id='13688607602';
+      update sellerpilot_private.product_listings set channel_key='smartstore',
+        seller_account_key='${sellerKey}',remote_id='13688607602';
       update sellerpilot_private.channel_gateway_jobs set channel='smartstore',operation='listing.update',
         request_payload=jsonb_set(jsonb_set(request_payload,
           '{arguments,sellerpilotExternalDetail,channel}','"smartstore"'::jsonb),
