@@ -331,6 +331,17 @@ async function database(options = {}) {
              )
              and job.status = 'reconciliation_required'
              and not sellerpilot_private.listing_mutation_reconciliation_resolved(job.id)
+        ),
+        'coupangEffectiveOpen', false
+      ) || jsonb_build_object(
+        'reconciliationRequired', (
+          select count(*)::integer
+            from sellerpilot_private.channel_gateway_jobs job
+           where job.operation in (
+             'listing.create', 'listing.update', 'listing.stop'
+           )
+             and job.status = 'reconciliation_required'
+             and not sellerpilot_private.listing_mutation_reconciliation_resolved(job.id)
         )
       )
       from sellerpilot_private.listing_mutation_release_gate gate

@@ -478,28 +478,61 @@ declare
   procedure_name constant regprocedure :=
     'public.sellerpilot_071510_listing_gate_status_pre_smartstore_scope()'::regprocedure;
   definition text;
+  scoped_tail text;
   patched_definition text;
+  scoped_marker_position integer;
+  scoped_end_position integer;
   before_pattern constant text :=
     E'and[[:space:]]+not[[:space:]]+sellerpilot_private\\.listing_mutation_reconciliation_resolved\\(job\\.id\\)';
   after_fragment constant text := E'and not (\n             sellerpilot_private.listing_mutation_reconciliation_resolved(job.id)\n             or sellerpilot_private.coupang_exact_live_price_drift_reconciliation_resolved(job.id)\n           )';
 begin
   select pg_catalog.pg_get_functiondef(procedure_name) into strict definition;
+  scoped_marker_position := pg_catalog.strpos(
+    definition,
+    '''coupangReconciliationRequired'''
+  );
+  if scoped_marker_position = 0 then
+    raise exception 'COUPANG_EXACT_PRICE_DRIFT_STATUS_PREIMAGE_DRIFT'
+      using errcode = '55000';
+  end if;
+  scoped_tail := pg_catalog.substr(definition, scoped_marker_position);
+  scoped_end_position := pg_catalog.strpos(
+    scoped_tail,
+    '''coupangEffectiveOpen'''
+  );
+  if scoped_end_position = 0 then
+    raise exception 'COUPANG_EXACT_PRICE_DRIFT_STATUS_PREIMAGE_DRIFT'
+      using errcode = '55000';
+  end if;
   if pg_catalog.strpos(
-       definition,
+       pg_catalog.substr(scoped_tail, 1, scoped_end_position),
        'coupang_exact_live_price_drift_reconciliation_resolved'
      ) > 0 then
-    if definition ~ before_pattern then
+    if pg_catalog.substr(scoped_tail, 1, scoped_end_position)
+         ~ before_pattern then
       raise exception 'COUPANG_EXACT_PRICE_DRIFT_STATUS_POSTIMAGE_AMBIGUOUS'
         using errcode = '55000';
     end if;
     return;
   end if;
-  patched_definition := pg_catalog.regexp_replace(
-    definition,
-    before_pattern,
-    after_fragment
+  scoped_tail := pg_catalog.regexp_replace(
+    scoped_tail, before_pattern, after_fragment
   );
-  if patched_definition = definition or patched_definition ~ before_pattern then
+  patched_definition := pg_catalog.substr(
+    definition, 1, scoped_marker_position - 1
+  ) || scoped_tail;
+  scoped_end_position := pg_catalog.strpos(
+    scoped_tail,
+    '''coupangEffectiveOpen'''
+  );
+  if patched_definition = definition
+     or scoped_end_position = 0
+     or pg_catalog.substr(scoped_tail, 1, scoped_end_position)
+          ~ before_pattern
+     or pg_catalog.strpos(
+          pg_catalog.substr(scoped_tail, 1, scoped_end_position),
+          'coupang_exact_live_price_drift_reconciliation_resolved'
+        ) = 0 then
     raise exception 'COUPANG_EXACT_PRICE_DRIFT_STATUS_PREIMAGE_DRIFT'
       using errcode = '55000';
   end if;
