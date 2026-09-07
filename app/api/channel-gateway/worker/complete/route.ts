@@ -153,6 +153,21 @@ function completionNormalizationTimestamp(value: unknown) {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function completionPayloadBytes(value: unknown) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return null;
+  }
+}
+
+function completionSchemaDiagnostics(error: z.ZodError) {
+  return error.issues.slice(0, 12).map((issue) => ({
+    path: issue.path,
+    code: issue.code,
+  }));
+}
+
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const workerToken = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
@@ -167,8 +182,15 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
-  const parsed = gatewayWorkerCompletionSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
+  const completionPayload = await request.json().catch(() => null);
+  const parsed = gatewayWorkerCompletionSchema.safeParse(completionPayload);
+  if (!parsed.success) {
+    console.error("channel gateway completion payload rejected", {
+      payloadBytes: completionPayloadBytes(completionPayload),
+      issues: completionSchemaDiagnostics(parsed.error),
+    });
+    return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
+  }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -327,6 +349,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ message: "실행 중인 스마트스토어 승인 내용 복구 claim이 만료됐습니다." }, { status: 409 });
     }
     return NextResponse.json({
+      completionStatus: repairCompletion.data.status,
+      durableEvidenceStored: repairCompletion.data.status === "verification_queued",
       message: repairCompletion.data.status === "verification_queued"
         ? "스마트스토어 승인 내용 복구를 기록하고 공식 재검증 작업을 등록했습니다."
         : repairCompletion.data.status === "reconciliation_required"

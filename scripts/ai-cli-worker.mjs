@@ -153,6 +153,12 @@ import {
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
 import { createGatewayMutationBoundary } from "./gateway-mutation-boundary.mjs";
 import {
+  boundedGatewayCompletionError,
+  clearSmartstoreListingUpdateCompletionJournal,
+  smartstoreListingUpdateCompletionEvidenceStored,
+  stageSmartstoreListingUpdateCompletionJournal,
+} from "./gateway-worker-completion.mjs";
+import {
   AI_HEARTBEAT_INTERVAL_MS,
   AI_HEARTBEAT_TRANSIENT_GRACE_MS,
   GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
@@ -4495,21 +4501,36 @@ async function processGatewayJob(job) {
       }
     }
     const completionStatus = gatewayJobCompletionStatus(result.operation, result.ok, result.steps ?? []);
+    result = { ...result, safeMessage: boundedGatewayCompletionError(result.safeMessage) };
     const completionPayload = completionStatus === "failed"
       ? { jobId: job.id, claimToken, status: "failed", error: result.safeMessage, ...(credentialRefresh ? { credentialRefresh } : {}) }
       : completionStatus === "reconciliation_required"
         ? { jobId: job.id, claimToken, status: "reconciliation_required", error: result.safeMessage, result, ...(credentialRefresh ? { credentialRefresh } : {}) }
         : { jobId: job.id, claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}) };
+    const completionJournalPath = await stageSmartstoreListingUpdateCompletionJournal(completionPayload)
+      .catch(() => {
+        console.error(`[채널 완료 증거 보존 실패] ${job.id} · 로컬 journal을 기록하지 못했습니다.`);
+        return null;
+      });
     // Stop new heartbeats and await any in-flight renewal before persisting a
     // terminal result. A lost lease must preserve remote state for reconciliation.
     await assertGatewayLeaseHealthy();
     await stopGatewayHeartbeat();
-    await persistWorkerCompletion(
+    const completionResponse = await persistWorkerCompletion(
       "/api/channel-gateway/worker/complete",
       completionPayload,
       "채널 작업 결과 저장 실패",
       GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
     );
+    const completionResponseBody = completionJournalPath
+      ? await completionResponse.clone().json().catch(() => null)
+      : null;
+    if (completionJournalPath
+        && smartstoreListingUpdateCompletionEvidenceStored(completionPayload, completionResponseBody)) {
+      await clearSmartstoreListingUpdateCompletionJournal(completionJournalPath).catch(() => {
+        console.error(`[채널 완료 증거 정리 보류] ${job.id} · 로컬 journal을 자동 재사용하지 않습니다.`);
+      });
+    }
     if (result.ok) console.log(`[채널 완료] ${job.channel} · ${job.operation} · ${job.id}`);
     else console.error(`[채널 원격 실패] ${job.channel} · ${job.operation} · ${job.id} · ${result.safeMessage}`);
   } catch (error) {
@@ -4541,7 +4562,7 @@ async function processGatewayJob(job) {
             jobId: job.id,
             claimToken,
             status: "reconciliation_required",
-            error: message,
+            error: boundedGatewayCompletionError(message),
             ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
           },
           "채널 작업 수동 확인 상태 저장 실패",
@@ -4557,7 +4578,7 @@ async function processGatewayJob(job) {
     } else {
       await persistWorkerCompletion(
         "/api/channel-gateway/worker/complete",
-        { jobId: job.id, claimToken, status: "failed", error: message },
+        { jobId: job.id, claimToken, status: "failed", error: boundedGatewayCompletionError(message) },
         "채널 작업 실패 상태 저장 실패",
       ).catch((completionError) => {
         const completionMessage = completionError instanceof Error ? completionError.message : "완료 상태 저장 오류";
