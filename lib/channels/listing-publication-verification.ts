@@ -16,7 +16,7 @@ import {
   verifiedListingRemoteStateSchema,
   type VerifiedListingRemoteState,
 } from "./listing-publication-state";
-import type { ChannelOperationStep } from "./operations";
+import type { ChannelOperationStep } from "./commerce-operations";
 import {
   coupangRequest,
   ebayRequest,

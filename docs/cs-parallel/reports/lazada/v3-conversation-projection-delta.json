@@ -1,0 +1,74 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "preservedDeltas": [
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-followup-delta.json",
+      "sha256": "0e0ec4f3a9d20e4bf86c94baeb29bc59376e6c51b308761d5b0b9c47d4db5ba1"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/authenticated-web-projection-delta.json",
+      "sha256": "44dd39ac3b25f11d684fcf880dc9128fa0fe3d75dca838ba62746d05d6424e48"
+    }
+  ],
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-008-v3-conversation-projection.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "834e098b9509360d9b3286b34237cb8c086ab5627896488cfa61c523425942cb",
+      "reason": "Provide an integration-owned, read-only projection migration that masks evidence-backed recalls and exposes conflicts without choosing a changed body or attachment as latest."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-008-v3-conversation-projection.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7e9d9df067150e63befdd3cf68b0e3abb935177672c3c14529058e83c5d1f481",
+      "reason": "Add the minimal shared Zod and UI state contract required because current clients strip unknown V3 projection-state fields."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-008-v3-conversation-projection.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "84ba20af764328e6df3239d0ef139e408e750b87791cd7d00f0f42d0dc108efe",
+      "reason": "Record exact integrated preimage hashes, reproduced GET defect, evidence rules, integration order, and non-goals."
+    },
+    {
+      "path": "tests/cs-lazada-v3-conversation-projection-get.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f268de7ca4b1e411454565032396ebfb67fcbd2abe8c24954ac85ac3600e4131",
+      "reason": "Reproduce current exposure and verify PGlite through actual exported conversation/archive GET routes for recall order, edit conflict, unknown order, replay, credential/seller isolation, and auth."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-conversation-projection-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "78d578f8fe74e001a807aacaac99f76bfb7d93b1e9647f5123727e3f2703a63f",
+      "reason": "Separate locally verified proposal status from unapplied integration, deployment, and live-account evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-conversation-projection-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f3d9c566c692a2dedfdcc69002d7e78804cc1c0898f9300c3e23ae4cb3fe5ff1",
+      "reason": "Pin exact commands, exits, focused 15-test result, proposal behavior, and excluded external mutations."
+    }
+  ],
+  "commonFilesModifiedDirectly": [],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/v3-conversation-projection-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "provider mutation",
+    "real customer reply"
+  ]
+}

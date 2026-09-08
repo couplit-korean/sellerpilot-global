@@ -4,7 +4,7 @@ import test from "node:test";
 
 test("CS navigation remains reachable from dashboard, channels and mobile", async () => {
   const [page, readiness, mobileStyles, layout] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    Promise.all([readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), readFile(new URL("../app/cs/workspace.tsx", import.meta.url), "utf8")]).then(parts => parts.join("\n")),
     readFile(new URL("../app/channel-readiness.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
@@ -38,7 +38,7 @@ test("CS navigation remains reachable from dashboard, channels and mobile", asyn
 
 test("CS remote reply UI is queue-first and polls with stable dependencies", async () => {
   const [page, snapshotRoute] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    Promise.all([readFile(new URL("../app/page.tsx", import.meta.url), "utf8"), readFile(new URL("../app/cs/workspace.tsx", import.meta.url), "utf8")]).then(parts => parts.join("\n")),
     readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
   ]);
 

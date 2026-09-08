@@ -47,6 +47,9 @@ async function call(query: string, options: { denied?: boolean; accounts?: unkno
     if (name.endsWith("/provider-account-identity")) return identity;
     if (name.endsWith("/ebay-message-pages")) return {
       ebayConversationMessageRole: pages.ebayConversationMessageRole,
+      ebayConversationMessagePageSize: pages.ebayConversationMessagePageSize,
+      ebayConversationPageSize: pages.ebayConversationPageSize,
+      ebayVerifiedMessageAccountIdentifiers: pages.ebayVerifiedMessageAccountIdentifiers,
       readEbayConversationMessagesPage: readPage,
       readEbayConversationsPage: async (input: Record<string, unknown>) => ({ ...await readPage(input), entries: [conversation] }),
     };

@@ -1,0 +1,201 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "kind": "coordinator-integrated-ebay-through-supplemental-03",
+  "verifiedAt": "2026-09-08T13:58:36.597277+00:00",
+  "files": [
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/history/route.ts",
+      "integratedSha256": "d0be1106528cc1b44a70c46e153dce380be4b30748f4f405516ba2dacb31e84c"
+    },
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/history/sync/route.ts",
+      "integratedSha256": "ffe860c50f3f59c51a35b78cd172600b870eb35a71770fef651e51743e0f3fe5"
+    },
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/route.ts",
+      "integratedSha256": "bc61b8cea7fc8bc93aba4e7ac157bb06ad7bfac1886ecf5fab4e2f697d560276"
+    },
+    {
+      "path": "app/cs/channels/ebay/case-dispute-history.tsx",
+      "integratedSha256": "0d5bbafb553d34117bc480894cafa1e0a24eedd93e8d0de97326bac2d78a51e8"
+    },
+    {
+      "path": "app/cs/channels/ebay/cases-disputes.module.css",
+      "integratedSha256": "ccd5c881857d5f2d388c5e0c69a478f65416a226c35921196aa1aa0fdc9a1876"
+    },
+    {
+      "path": "app/cs/channels/ebay/cases-disputes.tsx",
+      "integratedSha256": "20a0d5a3019efb95dc37511ee446c2743566f822e9162795b865bc322cf6f0e3"
+    },
+    {
+      "path": "app/cs/ebay-messages.tsx",
+      "integratedSha256": "23cd42d1cd44c78c8740449e7390c6a808cf2002a270a6b26cca2578ca7365dd"
+    },
+    {
+      "path": "app/page.tsx",
+      "integratedSha256": "30612b5384a489897c4678371f5e215931f5e2105efd248cab3f3c52ce695c6e"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-ingest-api-ui-supplement-03.md",
+      "integratedSha256": "3529ea7c8ec38551ec95eba991f0e1f8538b084612c527d0ab4c79930654e4be"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-normalization-web-supplement.md",
+      "integratedSha256": "e0b84b92ac9886de1ff5de9eb84da62241de93a30a8adf6f1c889eee226b7a0d"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-route-history-supplement-02.md",
+      "integratedSha256": "ecf8a64448a863c6f5b009ec472a3e90ecf3d7f7b242c07ce89e9249d11f33ad"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-shared-integration.md",
+      "integratedSha256": "346c13c8c57b0b3a624cd5fde25fa75ca21a4505e02c5928942820b0cf2708b8"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "integratedSha256": "7bb4627620cb96662c24ed47be273fcecc2d3c67c00434b3e9622c34e5ae14c6"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-read-v2.sql",
+      "integratedSha256": "3dea9b07cde7623ea3b27c8130f174b693bbef771333e8711d669e3b3929b64b"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/case-dispute-read-evidence.json",
+      "integratedSha256": "64f15e0983a7c7e35022a5b2da72416417fdfbf5af9922d989ec0c92fd1ef5bf"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/first-read-evidence.json",
+      "integratedSha256": "cc97825c415147847688f87df67ecafd3a0df4fb3e7e41f07033e68ffc4d32c5"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "integratedSha256": "07f83488935b081d828e88556b6ca0c758463682a3cced061f0bca87b4e5f0af"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-01.json",
+      "integratedSha256": "b131a8701c0ffd93229b817893db8ec5a4e337c4e2ad141267b7396d95d6bd4e"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-02.json",
+      "integratedSha256": "6f886e2d945b5f9c509651ca5b8e071ad91618dcdcbce08d466768d557409a27"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-03.json",
+      "integratedSha256": "3ef44b27078d7a767deb447863188b43ed22db462e53f708fbb492cfd944dd2c"
+    },
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-history-sync.ts",
+      "integratedSha256": "7e0bbdc8108134aa0aee4d9ecfdceff1ebf93a5c6ac5d6f8d3d9b3bbbee96478"
+    },
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-history.ts",
+      "integratedSha256": "e9040d1aaaf737975f1eaa2ee871b05ea33b2a647f6f0ccb39c004f4e1844797"
+    },
+    {
+      "path": "lib/channels/cs/ebay/cases-disputes.ts",
+      "integratedSha256": "3f3421d21d2d13176891c2d4b36b37cd39a67678303fc0b08560e4c44de2c5e1"
+    },
+    {
+      "path": "lib/channels/ebay-inquiries.ts",
+      "integratedSha256": "eeccbf6828667964b0c32b805a6893a1f2a3c590588588781c8162415d65af00"
+    },
+    {
+      "path": "lib/channels/ebay-message-history.ts",
+      "integratedSha256": "9f7d5eaf84fe2f7702e3ba861210ea90e97d869eed838c502611aadb5ede2306"
+    },
+    {
+      "path": "lib/channels/ebay-message-pages.ts",
+      "integratedSha256": "1f2abec8f017522c41248ccc05564f4e577518cb0258a9cc2f5af36d45405275"
+    },
+    {
+      "path": "lib/cs/capability-inventory.ts",
+      "integratedSha256": "bd4f5a778567e0712ec0e18e8b2aab2b409f7a4c1ad893fe5c2bed91bdb84445"
+    },
+    {
+      "path": "lib/cs/channels/ebay/case-dispute-history.ts",
+      "integratedSha256": "7be03a21c34701bf52449fc3d91dc9c86975a076688a93d1e71bf8a8d1412579"
+    },
+    {
+      "path": "lib/cs/channels/ebay/cases-disputes.ts",
+      "integratedSha256": "81cbd48ebb61412bf1548bb23bd345340ede8d63df54ac47fd12ff1c2628d081"
+    },
+    {
+      "path": "lib/cs/ebay-messages.ts",
+      "integratedSha256": "35175c1c486a1da4c70af57c9707f2f0deb2e659ccc4423d6af1e88c7e6196f4"
+    },
+    {
+      "path": "scripts/cs-ebay-cases-disputes-get-only.mjs",
+      "integratedSha256": "8503f3e1a55255923f84d60754f301660e22016dc6ffd4954aa44bb85c1feb7f"
+    },
+    {
+      "path": "supabase/migrations/20260908135249_ebay_case_dispute_history_ledger.sql",
+      "integratedSha256": "c271569f05a2aa83f907da4499bb845ac505eadcd0cdc538b290cccf8e9aed1f"
+    },
+    {
+      "path": "supabase/migrations/20260908135323_ebay_case_dispute_history_read_v2.sql",
+      "integratedSha256": "7499cce63d6ee50e0c92948aea4f67c0a1290d169e7edbf9833238aa8bb7d341"
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-db.test.mjs",
+      "integratedSha256": "f97a600e2df77b9863588cf0c239ec3d0fdbe50334bc19daacc92a11dda2e3ed"
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-history-flow.test.ts",
+      "integratedSha256": "16e1e08579ea3c932ad7eea5fd6544de1d93443b49097ffc6ef6907c3af41bce"
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-route.test.ts",
+      "integratedSha256": "876d2347150dc39e8b6a7e013ad91c3d8f82803d6263457b633112758d1f4a7d"
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-web.test.ts",
+      "integratedSha256": "e2cf3d0fbd787992e0a49a5e60a2f00b929e96a0e5d44182ab0e65b9276994b8"
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes.test.ts",
+      "integratedSha256": "79a04fe822052e4acd3b01b63461b5d26df4aaed677bce00211b3896b853f8a3"
+    },
+    {
+      "path": "tests/ebay-asq.test.ts",
+      "integratedSha256": "aaa2a899a447beae8e82898a6d82ef0be2f1c6121b85b4101ef265dc7ac1996d"
+    },
+    {
+      "path": "tests/ebay-conversation-sync.test.ts",
+      "integratedSha256": "a57ea197a5999bfadd9ac6b86635b74d55f9e8f91b51c1eb287381f076f5767e"
+    },
+    {
+      "path": "tests/ebay-mailbox-history.test.ts",
+      "integratedSha256": "4d16f7c12e3c9f7f518757e972360406324c2aa5a97c62bf1719055d0dfbd30a"
+    },
+    {
+      "path": "tests/ebay-message-history.test.ts",
+      "integratedSha256": "bfa2eb6dbd50856383d809c462cf6b4b45795c3ade96b64a6e22d9c7c2eb9e92"
+    },
+    {
+      "path": "tests/ebay-message-pages.test.ts",
+      "integratedSha256": "b5ad80785b323dbeda78e50c996c6c4a322eced759fb6a1afe73a5e153891b97"
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-activity.json",
+      "integratedSha256": "0f5d283e648e5b6fc8007a222b471290de34a4969d9bae2120b7e3e273cfd269"
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-detail.json",
+      "integratedSha256": "d8104c50d2792013df11bd9127b2ad463ce89a747dd9d222e9c9f8e2b8c2e905"
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-summary-page.json",
+      "integratedSha256": "5484d5b3398a43bf1f85164c9145ea078c76fb6f728a571e3d1e289b35a6c4c0"
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/resolution-case-detail.json",
+      "integratedSha256": "ed92847f7a6bfb4778045147acf51b0042972c2aa92c4f33eca17dd38d1ca161"
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/resolution-case-search-page.json",
+      "integratedSha256": "126305fb6f77d278d3a88554266af6ff1bdffe5a3ab0f8601ddc1a0301401e0a"
+    }
+  ],
+  "sourceManifestsPreserved": true,
+  "productionApplied": false
+}

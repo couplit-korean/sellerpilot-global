@@ -1,0 +1,59 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "baseDelta": {
+    "path": "docs/cs-parallel/reports/lazada/v3-delta.json",
+    "sha256": "0a02b66ae1b7feef010044e956b589d757b434ab48ef9370a657066a34c6dabf"
+  },
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "change": "modify",
+      "beforeSha256": "1c30844981e8713accc9573944dbd19f22a64c05d1f8c64b6a97c0974d3d277a",
+      "afterSha256": "b67d6901906ea6022471ba124520ae3a83a17e0708866ede8ab706dd9ddbeed7",
+      "reason": "Replace revision metadata denylisting with a validated scalar allowlist, reject pending-batch identity or TTL failures before ingest, and distinguish receipt-backed replay from payload equality."
+    },
+    {
+      "path": "tests/cs-lazada-ingest-v3-db.test.mjs",
+      "change": "modify",
+      "beforeSha256": "5e79cb44f97a41478dea6f4706ce9a854df420a35a96c012458deb9cc2db99bb",
+      "afterSha256": "f201017b757d9e10ef71892226f756e56bff565630fa2a89cbf97c478cd8df8a",
+      "reason": "Cover unknown and nested payload omission, invalid metadata rejection, pre-ingest mismatch and expiry invariance, and receipt-bound different-payload replay invariance."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-006-v3-ledger-and-pending-hardening.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e5baf85fcf60b93d5ea930942c1247508a7cdce646c024e4c158e5096a89b9fa",
+      "reason": "Document the allowlist contract, mutation-before-identity defect, completion receipt evidence, replay limitation, and integration order."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-followup-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "6c51c30a09cd7aaf55164ff1461bb1774e31e11a7aebfb0516c9b5392f9c6dc1",
+      "reason": "Record the final PGlite, combined parser and patch, and lint outcomes for the review fixes."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-followup-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a3e8109d22748ca2a9ec000af96b9d27e3390c85053fdb377f1544efe9b89fe2",
+      "reason": "Separate the two locally closed defects from the unchanged integration and production observation dependencies."
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/v3-followup-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "real customer reply"
+  ]
+}

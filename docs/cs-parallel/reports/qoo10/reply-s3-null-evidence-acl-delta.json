@@ -1,0 +1,76 @@
+{
+  "reviewRequest": "qoo10-reply-s3-null-evidence-acl-hardening",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/006-reply-compat-s3-readback.md",
+      "beforeSha256": "9d1afa284293eeb36ac419249e83ed6cab729b5e5b9929b1d170c7be3ab29e13",
+      "afterSha256": "793309675b88da3ca77a2368ace8a64bac9e1d51976581d56ba9f2f43bc2fb57",
+      "change": "Make the stored completion response the status source, fix completion-before-status ordering, and state the terminal response immutability trust boundary."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "beforeSha256": "742f30c17441c90534339c989082f88a4e6ecb85dbc2819dbd91dd87f21dd835",
+      "afterSha256": "89a51d43800ea1621c646f7ed213f5ffdc32dcde4bcef2d5d08755925ed7e182",
+      "change": "Reject NULL arguments, eliminate nullable CHECK unknown bypasses, derive exact status from stored provider rows, and enforce channel, credential, owner, seller-account, scope, and token lineage."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "beforeSha256": "2ae4986a8a0dcef188856e7c134198eea1035a703016d331bc5ea3dc9ff894ee",
+      "afterSha256": "b9b9e82900377309b522d94f5663fcb3a126055127292fd695038a2a0d8e733b",
+      "change": "Replay NULL, CHECK, stored-result mismatch, execute ACL, and channel, credential, owner, scope, revoked, and expired-token counterexamples with delivery invariance."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/runtime-integration-followup.md",
+      "beforeSha256": "c7a2bafb3b1cf923df6a8f33cbfec0b61d7d75ad2521c367b7714e357f2c3b47",
+      "afterSha256": "967826adfe85bb16ebbfdeffd5498523189a5ba1f5e236c4f46c3d964291e6e2",
+      "change": "Record the second integration review, 8-case SQL replay, 34-test regression, and remaining terminal response seal prerequisite."
+    }
+  ],
+  "behavior": {
+    "nullStateAccepted": false,
+    "nullReasonAccepted": false,
+    "nullableCheckUnknownAccepted": false,
+    "statusSource": "stored channel_gateway_jobs.response_payload",
+    "callerStateMustMatchStoredResult": true,
+    "genericVerificationStatusAfterExactS3": "provider_accepted",
+    "replyContentObserved": false,
+    "automaticResendAllowed": false,
+    "functionExecuteRoles": ["service_role"]
+  },
+  "failedAttempts": [
+    {
+      "command": "node --test tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "exitCode": 127,
+      "cause": "The shell PATH did not contain a Node executable, so no test started.",
+      "resolution": "Use the absolute Codex bundled Node executable; the same test then passed 8/8."
+    }
+  ],
+  "verification": [
+    {
+      "command": "bundled-node --test tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "exitCode": 0,
+      "result": "8/8 passed"
+    },
+    {
+      "command": "bundled-node --import tsx --test six Qoo10 contract, runtime, isolated-ledger, S3-RPC, and claim files",
+      "exitCode": 0,
+      "result": "34/34 passed"
+    },
+    {
+      "command": "bundled-node eslint Qoo10 dedicated sources and tests",
+      "exitCode": 0,
+      "result": "passed with no output"
+    },
+    {
+      "command": "bundled-node tsc strict Qoo10 dedicated modules",
+      "exitCode": 0,
+      "result": "passed with no output"
+    }
+  ],
+  "remainingPrerequisite": "Before production activation, common integration must prove terminal response_payload immutability or add a completion-transaction response SHA seal.",
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "customerRepliesSent": false
+}

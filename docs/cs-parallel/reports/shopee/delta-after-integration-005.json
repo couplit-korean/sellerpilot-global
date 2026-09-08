@@ -1,0 +1,137 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "branch": "codex/cs-shopee-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "createdAt": "2026-09-09T00:21:17+09:00",
+  "parentDelta": {
+    "path": "docs/cs-parallel/reports/shopee/delta-after-integration-004.json",
+    "sha256": "6c98e6bf5f26a3618155c3fef0cd78489dc69f7d1233ee263d6f32955f42261a",
+    "frozen": true
+  },
+  "reservedCanonicalMigration": {
+    "path": "supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql",
+    "sourcePath": "docs/cs-parallel/proposals/shopee/shopee-012-history-date-intent-cutoff-draft.sql",
+    "sha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c",
+    "reservationLedger": "docs/cs-parallel/reports/coordinator/shopee005-migration-reservation.json",
+    "owner": "coordinator"
+  },
+  "actualTargets": [
+    { "country": "SG", "shopId": "1719148844" },
+    { "country": "TW", "shopId": "1758392145" },
+    { "country": "TH", "shopId": "1758392144" },
+    { "country": "MY", "shopId": "1758392135" },
+    { "country": "VN", "shopId": "1758392139" },
+    { "country": "PH", "shopId": "1758392137" },
+    { "country": "BR", "shopId": "1758392161" },
+    { "country": "MX", "shopId": "1758392178" }
+  ],
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-012-history-date-intent-cutoff-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c",
+      "reason": "Persist the first database-owned cutoff for a request UUID and calendar intent, expose date-intent v2, and revoke direct service use of epoch v1."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-013-history-date-intent-worker.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1f82de8adb8bac9014a181bceb6a63fd75694758eca8c2820b945ce7e01e084d",
+      "reason": "Send calendar intent from the route, preserve exact Shopee history 401/403 codes, and validate a same-day route replay against the reserved canonical migration."
+    },
+    {
+      "path": "tests/cs-shopee-history-final-chain-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "17ea978fa4559332a536b9295dbe7fc26961e43869e6d993f723d4c9082557cb",
+      "reason": "Run canonical 004, 007, 009, 010 and reserved 012 through the actual worker page, continuation, interruption, bad-metadata and expired-lease paths."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/follow-up-after-delta-004.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3a25f900073386b2d41d6c712c452f1573d03df0eeaa60824b61ec120a39528d",
+      "reason": "Record the date-intent design, final atomic chain evidence, authorization-code fix and unchanged external boundary."
+    }
+  ],
+  "patchTargets": [
+    {
+      "path": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+      "beforeSha256": "ba5f0981437ae86c0197db399a6670e6d073e89d1fb4b62cad4e12a04974938d",
+      "afterSha256": "461f5842f3fe764fe7717303fd07b5f345b4b9c06e7054b24895dac46bd19b21"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "beforeSha256": "c8bfa7422aa87efa16c7cca5317e718b4cddc13799e3bf3370affa7d48267e31",
+      "afterSha256": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf"
+    },
+    {
+      "path": "tests/cs-shopee-history-route-db.test.mjs",
+      "beforeSha256": "71d500890a8cdbef833a5667766c6407dee16917c81b8e1beae9530c4c2e30e8",
+      "afterSha256": "af7cf76ca3252a33e4bdd69043ccea496662756d64354f98a39c74d5435981d7"
+    }
+  ],
+  "canonicalChain": [
+    {
+      "path": "supabase/migrations/20260908142023_cs_shopee_history_ledger.sql",
+      "sha256": "cd06a37df2b598e128f3def2088dd6104b7859bab43539bc118f2649a5147dd8"
+    },
+    {
+      "path": "supabase/migrations/20260908142028_cs_shopee_history_start.sql",
+      "sha256": "adb3bf4f30bee3e78b1d4e512ddf6ce155adf49cc4e1e8e5bdca0089f405e3ce"
+    },
+    {
+      "path": "supabase/migrations/20260908142029_cs_shopee_atomic_history_completion.sql",
+      "sha256": "01491db0840bd5b91de55ee4ff78af61de38720f67b7112a11f547d062ac4c89"
+    },
+    {
+      "path": "supabase/migrations/20260908145331_cs_shopee_history_request_invariants.sql",
+      "sha256": "126e546ae02965953e2f4e5fc80d0face84d47a4826d6c9e57bdaec86dea8ceb"
+    },
+    {
+      "path": "supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql",
+      "sha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c",
+      "state": "reserved overlay verified; coordinator creates canonical file"
+    }
+  ],
+  "reviewFindingsClosed": [
+    "same UUID and same KST calendar intent reuse the first database cutoff after response loss",
+    "same intent remains reusable after the to-date becomes yesterday while a different date is rejected",
+    "the route sends dates to v2 instead of a newly calculated epoch cutoff",
+    "canonical atomic completion is exercised after the request invariant migration",
+    "actual worker page, continuation and interruption reach the atomic history RPC",
+    "invalid sequence metadata and an expired lease store zero receipt, event and continuation",
+    "exact Shopee history 401 and 403 authorization errors remain shop-local interruptions"
+  ],
+  "verification": {
+    "canonicalFinalChainTests": "3/3 passed",
+    "patchedRealRouteTest": "1/1 passed",
+    "combinedFocusedTests": "4/4 passed",
+    "integratedPatchApplyCheck": "passed against the latest shared preimages",
+    "patchedIntegratedTypescriptNoEmit": "passed",
+    "patchedIntegratedEslint": "passed",
+    "diffCheck": "passed",
+    "secretAndCustomerBodyScan": "synthetic credential strings and synthetic review content only; no real credential or customer original added"
+  },
+  "evidenceBoundary": {
+    "providerReadSuccessfulShops": 0,
+    "providerGetPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "authenticatedOperatingWebReadback": false,
+    "customerReplyPerformed": false,
+    "buyerChatImplemented": false,
+    "commitPushDeployPerformed": false
+  },
+  "integrationOrder": [
+    "verify this delta and all listed hashes without changing frozen delta 004",
+    "create the reserved canonical migration 20260908151735 with the exact SQL 012 bytes",
+    "copy the final-chain test and report, then apply patch 013 against the three recorded preimages",
+    "run the canonical final-chain and patched route tests in an isolated database",
+    "rerun TypeScript, ESLint and shared regression checks",
+    "do not perform an operating migration, credential refresh, provider mutation or customer reply without separate authorization"
+  ]
+}

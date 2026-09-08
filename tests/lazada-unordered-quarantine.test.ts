@@ -8,6 +8,7 @@ registerHooks({ resolve(s,c,n) { return s === "server-only" ? { shortCircuit: tr
 const { normalizeChannelInquiries } = await import("../lib/channels/inquiry-sync");
 const unordered = () => parseLazadaImPush({ timestamp: 1788600000000, data: {
   session_id: "s", message_id: "m", from_account_type: 2,
+  status: 0, type: 1, template_id: 1,
   buyer_name: "unnecessary personal name", content: { txt: "  Original seller body\n", translateTxt: "not original" },
 } })!;
 
@@ -17,19 +18,19 @@ test("unordered seller push preserves original body and refuses an old database 
   assert.equal(inquiry.receivedAt, "");
   assert.equal(inquiry.status, "waiting");
   let writes = 0;
-  const ingest = async () => { writes++; return { data: { contract: "lazada_ingest_v2", status: "complete" }, error: null }; };
+  const ingest = async () => { writes++; return { data: { contract: "lazada_ingest_v3", status: "complete" }, error: null }; };
   assert.deepEqual(await persistLazadaImInquiry("credential", inquiry, ingest), { ok: false, status: 503 });
   for (const result of [{ data: false, error: null }, { data: null, error: { message: "missing RPC" } }]) {
-    assert.deepEqual(await persistLazadaImInquiry("credential", inquiry, ingest, async () => result), { ok: false, status: 503 });
+    assert.deepEqual(await persistLazadaImInquiry("credential", inquiry, ingest, async () => result, async () => ({ data: true, error: null })), { ok: false, status: 503 });
   }
   assert.equal(writes, 0);
-  assert.deepEqual(await persistLazadaImInquiry("credential", inquiry, ingest, async () => ({ data: true, error: null })), { ok: true });
+  assert.deepEqual(await persistLazadaImInquiry("credential", inquiry, ingest, async () => ({ data: true, error: null }), async () => ({ data: true, error: null })), { ok: true });
   assert.equal(writes, 1);
   assert.equal(await lazadaQuarantineReady([{}]), true);
 });
 
 test("normalization retains quarantine marker and prefers confirmed duplicate evidence", () => {
-  const seller = { message_id: "m", from_account_type: 2, content: { txt: "original" } };
+  const seller = { message_id: "m", from_account_type: 2, status: 0, type: 1, template_id: 1, content: { txt: "original" } };
   const step = (messages: unknown[]) => ({ name: "inquiries-message:s:1", ok: true, status: 200, data: { sellerpilotSession: { session_id: "s" }, data: { message_list: messages } } });
   const result = { ok: true, channel: "lazada" as const, operation: "inquiries.list" as const, safeMessage: "fixture", steps: [step([seller])] };
   const [normalized] = normalizeChannelInquiries("lazada", result, "2026-09-05T10:00:00Z");
@@ -45,7 +46,7 @@ test("normalization retains quarantine marker and prefers confirmed duplicate ev
 });
 
 test("both worker completion boundaries check quarantine readiness before committing", async () => {
-  for (const file of ["../lib/channels/serverless-cs-gateway.ts", "../app/api/channel-gateway/worker/complete/route.ts"]) {
+  for (const file of ["../lib/cs/operations/complete.ts", "../lib/cs/operations/worker-completion.ts"]) {
     const source = await readFile(new URL(file, import.meta.url), "utf8");
     const guard = source.indexOf('!await lazadaQuarantineReady(normalizedInquiries');
     const completion = source.indexOf('p_normalized_inquiries: normalizedInquiries', guard);
@@ -55,13 +56,13 @@ test("both worker completion boundaries check quarantine readiness before commit
 });
 
 
-test("webhook never acknowledges V2 partial quarantine as complete", async () => {
-  const result = await persistLazadaImInquiry("credential", unordered(), async () => ({ data: { contract: "lazada_ingest_v2", status: "partial", normalCount: 1, pendingCount: 1 }, error: null }), async () => ({ data: true, error: null }));
+test("webhook never acknowledges V3 partial quarantine as complete", async () => {
+  const result = await persistLazadaImInquiry("credential", unordered(), async () => ({ data: { contract: "lazada_ingest_v3", status: "partial", normalCount: 1, pendingCount: 1 }, error: null }), async () => ({ data: true, error: null }), async () => ({ data: true, error: null }));
   assert.deepEqual(result, { ok: false, status: 503, partial: true });
 });
 
 test("final normalization preserves both conflict originals and excludes either from answered state", () => {
-  const seller = { message_id: "same", from_account_type: 2, content: { txt: "ORIGINAL" } };
+  const seller = { message_id: "same", from_account_type: 2, status: 0, type: 1, template_id: 1, content: { txt: "ORIGINAL" } };
   const result = { ok: true, channel: "lazada" as const, operation: "inquiries.list" as const, safeMessage: "fixture", steps: [{ name: "inquiries-message:s:1", ok: true, status: 200, data: { sellerpilotSession: { session_id: "s" }, data: { message_list: [seller, { ...seller, send_time: "2026-09-05T09:02:00Z", content: { txt: "CONFLICTING" } }] } } }] };
   const rows = normalizeChannelInquiries("lazada", result, "2026-09-05T10:00:00Z");
   assert.deepEqual(rows.map(row => row.message).sort(), ["CONFLICTING", "ORIGINAL"]);

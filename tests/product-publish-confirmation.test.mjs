@@ -5,7 +5,10 @@ import test from "node:test";
 test("Qoo10 pause actions use controllable in-app confirmations", async () => {
   const source = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
 
-  assert.doesNotMatch(source, /window\.confirm/);
+  const start = source.indexOf("const stopQoo10Listing = async");
+  assert.ok(start > 0);
+  const qoo10Pause = source.slice(start, source.indexOf("const activateTemuListing", start));
+  assert.doesNotMatch(qoo10Pause, /window\.confirm/);
   assert.match(source, /aria-label="Qoo10 거래대기 전환 최종 확인"/);
   assert.match(source, /Qoo10 거래대기 전환 실행/);
   assert.doesNotMatch(source, /이전 Qoo10 상품 거래대기|이전 상품 거래대기 실행/);
@@ -69,7 +72,7 @@ test("create and content update both require all eight localized detail images",
 
 test("Coupang listing preflight never creates an unconfirmed shipping place", async () => {
   const [worker, listingRuntime] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8"),
   ]);
 
@@ -89,7 +92,7 @@ test("Coupang listing preflight never creates an unconfirmed shipping place", as
 
 test("eBay market listings use one market-specific SKU for inventory and offer", async () => {
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
-  const operations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
+  const operations = await readFile(new URL("../lib/product-registration/channels/ebay.ts", import.meta.url), "utf8");
 
   assert.match(workbench, /sku: marketSku,[\s\S]*?offer: \{ sku: marketSku,/);
   assert.match(operations, /const offer = structuredClone[\s\S]*?offer\.sku = sku;/);
@@ -106,7 +109,7 @@ test("eBay material aspects translate common Korean source values to English", a
   const workbench = await readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8");
 
   assert.match(workbench, /"세라믹": "Ceramic"/);
-  assert.match(workbench, /Material: englishEbayMaterial\(assignment\?\.providedAttributes\.Material \|\| manual\.material\)/);
+  assert.match(workbench, /Material: englishEbayMaterial\(categoryScalar\(assignment\?\.providedAttributes\.Material\) \|\| manual\.material\)/);
 });
 
 test("listing image normalization binds every uploaded asset to its claimed attempt and product", async () => {

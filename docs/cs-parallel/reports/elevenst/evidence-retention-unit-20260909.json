@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T15:56:10Z",
+  "sourceObservation": {
+    "surface": "seller_talk",
+    "sellerId": "couplit",
+    "sellerName": "커플릿",
+    "sellerOfficeNotice": "maximum_three_months",
+    "exactDays": null
+  },
+  "correctedContracts": {
+    "authenticatedReadState": "sellerpilot-elevenst-authenticated-read-state/3",
+    "limitedAccessProjection": "sellerpilot-elevenst-limited-access-projection/2",
+    "retention": {
+      "maximum": 3,
+      "unit": "month",
+      "exactDays": null
+    },
+    "retentionDaysFieldPresent": false
+  },
+  "usageAudit": {
+    "productionHistoryCutoffConsumers": 0,
+    "liveCodeConsumersOutsideElevenstProjection": 0,
+    "remainingNinetyDayTextLocations": "frozen_reports_and_proposal_only",
+    "automaticHistoryCutoffChanged": false
+  },
+  "authenticatedLocalWeb": {
+    "runtime": "next-dev",
+    "port": 3214,
+    "unauthorizedStatus": 401,
+    "invalidTokenStatus": 401,
+    "authorizedStatus": 200,
+    "sellerTalkRemoteCount": null,
+    "sellerTalkRetention": {
+      "maximum": 3,
+      "unit": "month",
+      "exactDays": null
+    },
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "portCleanAfterExit": true
+  }
+}

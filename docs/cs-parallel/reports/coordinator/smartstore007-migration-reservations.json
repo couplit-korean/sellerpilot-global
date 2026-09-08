@@ -1,0 +1,18 @@
+[
+  {
+    "source": "docs/cs-parallel/proposals/smartstore/smartstore-009-continuation-safe-window-v7.sql",
+    "name": "20260908155617_cs_smartstore_continuation_safe_window_v7.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-smartstore007-migrations-9telmg0h/supabase/migrations/20260908155617_cs_smartstore_continuation_safe_window_v7.sql",
+    "owner": "CS root integration",
+    "sourceSha256": "8eb6a1e9900cf328b02915949fc4bca63e909fbf422cd2a9235e273e3e41bc85",
+    "state": "created_local_candidate"
+  },
+  {
+    "source": "docs/cs-parallel/proposals/smartstore/smartstore-009-checkpoint-deferred-cutoff-v4.sql",
+    "name": "20260908155620_cs_smartstore_checkpoint_deferred_cutoff_v4.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-smartstore007-migrations-9telmg0h/supabase/migrations/20260908155620_cs_smartstore_checkpoint_deferred_cutoff_v4.sql",
+    "owner": "CS root integration",
+    "sourceSha256": "7f7096901dab9a77ac5cb09d4ba47cabaaaea28cfe27ec83bfd4d387542a9b61",
+    "state": "created_local_candidate"
+  }
+]

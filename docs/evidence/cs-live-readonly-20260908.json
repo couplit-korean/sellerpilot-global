@@ -1,0 +1,100 @@
+{
+  "contract": "sellerpilot_cs_live_readonly_evidence_v1",
+  "observedAt": "2026-09-08T01:55:52+09:00",
+  "profiles": {
+    "sellerChannels": "CHANGHEE",
+    "platformOperations": "JEONGHUN"
+  },
+  "production": {
+    "credentialSummary": {
+      "registered": 7,
+      "total": 8,
+      "readDiagnosticsPassed": 6
+    },
+    "csInbox": {
+      "openTickets": 0,
+      "attentionChannels": 5,
+      "passedZeroLedgers": ["qoo10", "smartstore", "ebay"],
+      "queued": ["coupang"],
+      "connectionUnmet": ["lazada"],
+      "notIntegrated": ["shopee_buyer_chat", "elevenst"],
+      "unverified": ["temu"]
+    },
+    "archiveUi": {
+      "legacyFilters": ["query", "channel", "status", "from", "to"],
+      "localPendingFilters": ["accountId", "shopId", "ticketKind", "source"],
+      "historicalJobShown": {
+        "channel": "smartstore",
+        "status": "succeeded",
+        "jobs": 2,
+        "remoteReconciliationSeparate": true
+      }
+    }
+  },
+  "sellerCenters": {
+    "qoo10": {
+      "authenticated": true,
+      "unansweredBuyerInquiries": 0,
+      "answeringBuyerInquiries": 0
+    },
+    "shopee": {
+      "authenticated": true,
+      "scope": "single_visible_shop",
+      "chatEnquiryThirtyDays": 0,
+      "sellerChatMenuVisible": true
+    },
+    "lazada": {
+      "authenticated": true,
+      "sellerFullAccessLabelVisible": true,
+      "imEntryVisible": true,
+      "apiImPermissionVerified": false
+    },
+    "smartstore": {
+      "authenticated": false,
+      "apiCredentialDiagnosticSeparate": true
+    },
+    "ebay": {
+      "authenticated": true,
+      "sellerHubInboxTotal": 21,
+      "sellerHubUnreadFromEbay": 18,
+      "sellerHubFromMembers": 0,
+      "tradingApiMailboxTotal": 9,
+      "tradingApiMailboxUnread": 9,
+      "recentSixDayMailboxImport": {
+        "pages": 1,
+        "messages": 1,
+        "memberMessages": 0,
+        "platformMessages": 1,
+        "fullyPaginated": true
+      },
+      "retainedOneYearMailboxImport": {
+        "checkedWindows": 13,
+        "pages": 13,
+        "messages": 9,
+        "memberMessages": 1,
+        "platformMessages": 8,
+        "fullyPaginated": true
+      },
+      "countsReconciled": false,
+      "reconciliation": "The seller-center Inbox showed 21 rows and an unread-from-eBay counter of 18. Trading ReturnSummary reported 9/9 and a disjoint full-retention detailed read also returned 9 unique messages: one older member message and eight platform messages. Twelve seller-center platform rows are outside the observed Trading API set."
+    },
+    "temu": {
+      "partnerAuthenticated": true,
+      "applicationActive": false,
+      "complianceQuestionnaire": "rejected",
+      "securityQuestionnaire": "approved",
+      "blockingField": "cloud_vendor_completeness",
+      "legalAttestationSubmitted": false
+    },
+    "elevenst": {
+      "authenticated": false,
+      "sellerOfficePageReached": true,
+      "loginRequired": true
+    }
+  },
+  "limits": [
+    "Seller-center login does not prove API permission.",
+    "A zero shown for one shop or date range is not an all-history proof.",
+    "No customer reply, app submission, credential change, production SQL, deployment, commit or push was performed."
+  ]
+}

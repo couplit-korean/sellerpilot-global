@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { providerFetch } from "./channels/protocols";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   databaseServerlessStaticEgressAllows,
@@ -1487,7 +1488,7 @@ export async function searchNaverShopping(
   url.searchParams.set("sort", "sim");
   const payload = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(10_000));
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       headers: { "X-Naver-Client-Id": credentials.clientId, "X-Naver-Client-Secret": credentials.clientSecret },
       cache: "no-store",
       signal: requestSignal,
@@ -1601,7 +1602,7 @@ export async function searchElevenstProducts(
   url.search = new URLSearchParams({ key: credentials.apiKey, apiCode: "ProductSearch", keyword: query, pageNum: "1", pageSize: String(Math.max(1, Math.min(display, 200))), sortCd: "CP", targetSearchPrd: /[A-Za-z]/.test(query) && !/[가-힣]/.test(query) ? "ENG" : "KOR" }).toString();
   const { responseOk, xml } = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       method: "GET",
       cache: "no-store",
       signal: requestSignal,
@@ -1651,7 +1652,7 @@ async function ebayApplicationAccessToken(credentials: EbayBrowseCredentials, si
   const scope = "https://api.ebay.com/oauth/api_scope";
   const { responseOk, payload } = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
-    const response = await fetch(`${apiHost}/identity/v1/oauth2/token`, {
+    const response = await providerFetch(`${apiHost}/identity/v1/oauth2/token`, {
       method: "POST",
       cache: "no-store",
       signal: requestSignal,
@@ -1684,7 +1685,7 @@ export async function searchEbayBrowse(
   url.searchParams.set("filter", "buyingOptions:{FIXED_PRICE}");
   const payload = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(15_000));
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       method: "GET",
       cache: "no-store",
       signal: requestSignal,
@@ -1828,7 +1829,7 @@ export async function searchBraveMarketplaceWeb(
   url.searchParams.set("operators", "true");
   const payload = await withCompetitorFetchSlot(async () => {
     const requestSignal = competitorRequestSignal(signal, AbortSignal.timeout(BRAVE_MARKETPLACE_TIMEOUT_MS));
-    const response = await fetch(url, {
+    const response = await providerFetch(url, {
       method: "GET",
       cache: "no-store",
       signal: requestSignal,

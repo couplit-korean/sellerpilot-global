@@ -1,0 +1,85 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-005.json",
+  "baseManifestSha256": "08b9b668545978c09d447f3bc1b01de37f87ceb1ac6d89efa5849bf526b02b76",
+  "reason": "005를 동결한 채 SmartStore history의 KST timestamp 범위, current cutoff와 full-day 완료, root request와 checkpoint 결속을 보완",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-008-explicit-coverage-bounds-v1.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8901628b91d38e0e76a0ccf5e937565acf2dbe62275ba81e353639037bb9d028",
+      "reason": "공용 recorder insert에서 SmartStore v6 explicit bounds와 provider query를 검증하고 KST coverage timestamp를 고정하는 private trigger/helper"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-008-exact-history-window-v6.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a98b0f9d333e9fe851c87b302b13eb0c7a7e62c76fa85249151c7c59779fe6b0",
+      "reason": "current KST day cutoff와 past full-day를 별도 request lineage로 enqueue하고 명시적 coverage bounds를 두 kind root job에 봉인"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-008-checkpoint-full-day-v3.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2836efef554655d066d5c764e20d43f42c000859750a10017966ca1a993fdae3",
+      "reason": "same succeeded run의 두 kind가 exact full KST day 및 immutable root request임을 독립 검증하는 checkpoint v3"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-008-route-full-day-v3-v6.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0391a92055f8ee1e8fd1bec2e21cc22d2f47e68157b81132e90e852b7bc7f11e",
+      "reason": "history resume route의 checkpoint contract/RPC/advance rule 및 enqueue RPC를 v3/v6로 원자적 전환"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-008-full-day-coverage-binding.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "25bdb1ac96e8213dd5d7029f718b1b28bd15036995f448d009e9cab4e2670e0a",
+      "reason": "timestamp 결함, 최소 입력·출력 계약, 적용 순서와 검증 경계를 기록"
+    },
+    {
+      "path": "tests/cs-smartstore-explicit-coverage-cutoff-v1.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "06f58dd4b99cd99acd5782dee11a6fd612de0d352b1e7696af1710d0250f75b2",
+      "reason": "v6 enqueue에서 공용 recorder와 trigger를 거쳐 v3까지 KST 양끝, 좁은 scan, query 변조, cutoff 재개, ACL을 검증"
+    },
+    {
+      "path": "tests/cs-smartstore-full-day-route-v6.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a478e9b42c1507ed9b2c93aff76795d6565ef08825144101024a04e43d393a3f",
+      "reason": "frozen route patch chain 뒤 008 patch 실제 적용, TypeScript diagnostics 0, v3/v6 호출만 남는지 확인"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence-006.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5d0d6844b8cbed776c0ad8e26dc8e7d49486f21de69757aa3c3d79c37f10d7a7",
+      "reason": "PGlite 실제 연쇄 5/5, 결합 회귀 19/19, 정적 검사와 비변경 경계 기록"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status-supplement-006.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "77887fad560355c700e9b1e8d48d0da54ed59603c662a6cb296a8b5a369646f4",
+      "reason": "핵심 2종 timestamp 완료 판정 보완과 톡톡·리뷰 포함 전체 미완료 상태를 분리"
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence-006.md",
+    "tests/cs-smartstore-explicit-coverage-cutoff-v1.test.mjs",
+    "tests/cs-smartstore-full-day-route-v6.test.mjs"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

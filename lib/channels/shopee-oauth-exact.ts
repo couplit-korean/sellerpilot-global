@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { gatewayClaimSchema } from "./gateway-contract";
+import { providerFetch } from "./protocols";
 export const shopeeExactAdminInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("prepare"), credentialId: z.string().uuid() }).strict(),
   z.object({ action: z.literal("start"), sessionId: z.string().uuid(), credentialId: z.string().uuid() }).strict(),
@@ -11,7 +12,7 @@ export const shopeeExactWorkerInput = z.discriminatedUnion("action", [
 ]);
 export function shopeeExactAuthenticatedFetch(input: RequestInfo | URL, init?: RequestInit) {
   const timeout = AbortSignal.timeout(25_000);
-  return fetch(input, { ...init, redirect: "error", signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
+  return providerFetch(input, { ...init, redirect: "error", signal: init?.signal ? AbortSignal.any([init.signal, timeout]) : timeout });
 }
 export function parseShopeeExactClaim(value: unknown, sessionId: string) {
   const job = gatewayClaimSchema.parse(value);

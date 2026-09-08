@@ -1,0 +1,21 @@
+diff --git a/lib/channels/sync-arguments.ts b/lib/channels/sync-arguments.ts
+--- a/lib/channels/sync-arguments.ts
++++ b/lib/channels/sync-arguments.ts
+@@ -458,6 +458,8 @@ export function inquiryHistorySyncRequests(
+   }
+ 
+   if (channel === "temu") {
++    const firstCalendarDate = firstDay.toISOString().slice(0, 10);
++    const firstSeoulSecond = Math.floor(Date.parse(`${firstCalendarDate}T00:00:00+09:00`) / 1000);
+     return [{
+       periodicKey: `inquiries:history:${firstDay.toISOString().slice(0, 10)}:${lastDay.toISOString().slice(0, 10)}:after_sales`,
+       arguments: {
+@@ -466,7 +468,7 @@ export function inquiryHistorySyncRequests(
+         includeDetails: true,
+         pageNo: 1,
+         pageSize: 200,
+-        updateAtStart: Math.floor(firstDay.getTime() / 1000),
++        updateAtStart: firstSeoulSecond,
+         updateAtEnd: Math.floor(now.getTime() / 1000),
+       },
+     }];

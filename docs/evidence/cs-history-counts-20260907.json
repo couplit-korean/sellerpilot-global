@@ -1,0 +1,183 @@
+{
+  "as_of": "2026-09-07T07:08:35.742439+00:00",
+  "channels": [
+    {
+      "active_credentials": 1,
+      "channel": "coupang",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "smartstore",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "qoo10",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "ebay",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "lazada",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "shopee",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 1,
+      "channel": "elevenst",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    },
+    {
+      "active_credentials": 0,
+      "channel": "temu",
+      "latest_ticket": null,
+      "messages": 0,
+      "oldest_ticket": null,
+      "tickets": 0
+    }
+  ],
+  "history_runs": [
+    {
+      "channels": [
+        "coupang",
+        "smartstore"
+      ],
+      "end": "2026-08-28",
+      "failed": 0,
+      "queued": 0,
+      "running": 0,
+      "start": "2026-07-30",
+      "status": "blocked",
+      "succeeded": 0,
+      "updated": "2026-08-28T11:28:45.47413+00:00"
+    },
+    {
+      "channels": [
+        "smartstore"
+      ],
+      "end": "2026-09-07",
+      "failed": 0,
+      "queued": 0,
+      "running": 0,
+      "start": "2026-08-09",
+      "status": "succeeded",
+      "succeeded": 2,
+      "updated": "2026-09-06T19:47:14.907595+00:00"
+    },
+    {
+      "channels": [
+        "smartstore"
+      ],
+      "end": "2026-08-08",
+      "failed": 0,
+      "queued": 0,
+      "running": 0,
+      "start": "2026-07-10",
+      "status": "succeeded",
+      "succeeded": 2,
+      "updated": "2026-09-07T06:29:43.615656+00:00"
+    }
+  ],
+  "job_status": [
+    {
+      "channel": "coupang",
+      "count": 51,
+      "status": "failed"
+    },
+    {
+      "channel": "smartstore",
+      "count": 488,
+      "status": "failed"
+    },
+    {
+      "channel": "lazada",
+      "count": 3,
+      "status": "succeeded"
+    },
+    {
+      "channel": "qoo10",
+      "count": 5,
+      "status": "failed"
+    },
+    {
+      "channel": "smartstore",
+      "count": 1,
+      "status": "cancelled"
+    },
+    {
+      "channel": "coupang",
+      "count": 6,
+      "status": "queued"
+    },
+    {
+      "channel": "smartstore",
+      "count": 2823,
+      "status": "succeeded"
+    },
+    {
+      "channel": "lazada",
+      "count": 15,
+      "status": "failed"
+    },
+    {
+      "channel": "qoo10",
+      "count": 2545,
+      "status": "succeeded"
+    },
+    {
+      "channel": "ebay",
+      "count": 1235,
+      "status": "succeeded"
+    },
+    {
+      "channel": "ebay",
+      "count": 1,
+      "status": "cancelled"
+    },
+    {
+      "channel": "ebay",
+      "count": 10,
+      "status": "failed"
+    },
+    {
+      "channel": "coupang",
+      "count": 168,
+      "status": "cancelled"
+    },
+    {
+      "channel": "coupang",
+      "count": 4558,
+      "status": "succeeded"
+    }
+  ]
+}

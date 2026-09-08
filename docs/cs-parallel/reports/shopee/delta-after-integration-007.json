@@ -1,0 +1,103 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "branch": "codex/cs-shopee-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "createdAt": "2026-09-09T01:08:27+09:00",
+  "parentDelta": {
+    "path": "docs/cs-parallel/reports/shopee/delta-after-integration-006.json",
+    "sha256": "b8df55818d8e6173d72b3a47a23ec2441c0c66c1785ce3704d7df99e0c73bde1",
+    "frozen": true
+  },
+  "latestCanonicalCompletionSource": {
+    "path": "supabase/migrations/20260908153341_cs_qoo10_reply_s3_actual_completion.sql",
+    "sha256": "1b6a391f392a12622b6d6f76bd5b95502f4e250b25e8d7890f552e70b6e3e827",
+    "includedFunctions": [
+      "public.sellerpilot_service_complete_gateway_transaction(text,uuid,uuid,text,jsonb,text,jsonb,jsonb,jsonb,jsonb)",
+      "public.sellerpilot_service_complete_serverless_cs_transaction(text,uuid,uuid,text,jsonb,text,jsonb,jsonb,jsonb,jsonb)"
+    ],
+    "excludedMigrationSections": [
+      "Qoo10-only unsealed S3 status RPC scope rewrite"
+    ],
+    "claim": "exact latest completion function subset tested; not a full Qoo10 S3 migration installation test"
+  },
+  "files": [
+    {
+      "path": "tests/cs-shopee-history-latest-completion-entrypoints-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1f66dbe2c037e5c2780d9ae10043bfa7f4b6a99eeb2623aff62b92c2371dcb57",
+      "reason": "Extend the frozen delta-006 fixture in memory with the latest exact common and serverless completion functions, test both direct entrypoints, then run Shopee history completion and owner GET."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/follow-up-after-delta-006.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8f37cdc44618c5cb7dc456718073424df6ab12b3b1352f0701e58c2bdb695ba8",
+      "reason": "State the exact included migration range, separate canonical and substitute functions, and preserve external evidence boundaries."
+    }
+  ],
+  "frozenFixtureDependency": {
+    "path": "tests/cs-shopee-history-canonical-completion-route-db.test.mjs",
+    "sha256": "9853790ab04c09e0a629a35a5e2fe61d7369c6fd135df45ab8e85aab91fd91e4",
+    "modified": false
+  },
+  "entrypointsVerified": [
+    "public.sellerpilot_service_complete_gateway_transaction",
+    "public.sellerpilot_service_complete_serverless_cs_transaction",
+    "public.sellerpilot_service_complete_serverless_cs_shopee_history_v1",
+    "GET app/api/admin/cs/channels/shopee/history-progress"
+  ],
+  "canonicalRuntimeResults": {
+    "genericGatewayDirect": "completed with exact claim and one receipt",
+    "serverlessDirect": "completed with exact claim and one receipt",
+    "shopeeHistory": "SG product_review partial then continuation complete; TW product_review authorization_required; both return_refund pending",
+    "buyerChat": "absent from product_review history projection and still unimplemented",
+    "latestQoo10WrapperDecision": "Shopee request delegated to sellerpilot_145336_complete_before_qoo10_reply_s3"
+  },
+  "substituteFunctions": [
+    "lowest generic channel job row finalizer",
+    "inquiry ingest and sync marker side effects",
+    "credential refresh and diagnostic side effects",
+    "unreachable non-Shopee exact resolver and recorder helpers",
+    "localhost owner Auth and REST transport"
+  ],
+  "notSubstituted": [
+    "atomic completion fingerprint context and body",
+    "current common completion wrapper chain and both latest entrypoints",
+    "continuation enqueue and gateway completion receipt",
+    "Shopee history planning event persistence and owner read RPC",
+    "serverless worker history evidence and authenticated Shopee owner GET route"
+  ],
+  "verification": {
+    "latestCompletionEntrypointsTest": "1/1 passed",
+    "combinedFrozenCanonicalFinalChainRouteAndLatestTests": "6/6 passed",
+    "coordinatorDelta006CanonicalTests": "3 passed",
+    "coordinatorShopeeCoupangCommonFocusedTests": "25/25 passed",
+    "newTestEslint": "passed",
+    "typescriptNoEmit": "passed after this JavaScript-only follow-up",
+    "secretAndCustomerBodyScan": "synthetic shops, credentials and review body only; no real credential or customer original added"
+  },
+  "sharedImplementationChange": null,
+  "evidenceBoundary": {
+    "providerReadSuccessfulShops": 0,
+    "providerGetPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "authenticatedOperatingWebReadback": false,
+    "customerReplyPerformed": false,
+    "api403Resolved": false,
+    "buyerChatImplemented": false,
+    "buyerChatOfficialContractConfirmed": false,
+    "commitPushDeployPerformed": false
+  },
+  "integrationOrder": [
+    "verify frozen delta 006 and its frozen fixture hash",
+    "verify the latest canonical completion source hash",
+    "copy the new test and report only",
+    "run the latest-entrypoint test together with frozen canonical, final-chain and route tests",
+    "rerun TypeScript and focused ESLint",
+    "do not report this function-subset test as full Qoo10 S3 migration or any provider/operational/permission completion"
+  ]
+}

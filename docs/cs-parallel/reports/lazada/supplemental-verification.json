@@ -1,0 +1,42 @@
+{
+  "observedAt": "2026-09-08T21:15:03+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDeltaSha256": "0d145209f31b779e6ffc6e8cc08405f10f55679906e0fe6c1afe7cdadd660480",
+  "environment": {
+    "node": "bundled Node.js 22 runtime",
+    "database": "not used by this targeted pure RPC-contract regression",
+    "productionMutation": false
+  },
+  "targetedTest": {
+    "command": "node --import tsx --test tests/lazada-raw-reprocess.test.ts",
+    "exitCode": 0,
+    "tests": 6,
+    "passed": 6,
+    "failed": 0,
+    "skipped": 0,
+    "newCase": "attempt 5 retry completed by DB as terminal failed is counted as failed, not retried"
+  },
+  "targetedLint": {
+    "command": "Node 22 node_modules/eslint/bin/eslint.js lib/channels/lazada-raw-reprocess.ts tests/lazada-raw-reprocess.test.ts",
+    "exitCode": 0,
+    "passed": true
+  },
+  "toolingNote": {
+    "pnpmWrapperAttemptExitCode": 1,
+    "cause": "The bundled pnpm wrapper detected a different pnpm-managed node_modules and attempted an interactive reinstall.",
+    "sourceOrLockfileChanged": false,
+    "replacement": "Invoked the already-installed ESLint entrypoint directly with bundled Node 22."
+  },
+  "sourceHashes": {
+    "lib/channels/lazada-raw-reprocess.ts": "abb5ee158fbc4bd47e35561949fa2ce33d76c55ce55ee1099ebd08c67f0e45e6",
+    "tests/lazada-raw-reprocess.test.ts": "a3ab309d28c96da714824f4ce46053cac0fa9d442519851b5b43e9ff0fae1afd"
+  },
+  "boundaries": {
+    "fullSuiteRepeated": false,
+    "reason": "The restart instruction requested only new or regression-risk tests; the earlier 108-test evidence remains tied to the base delta.",
+    "providerReadRepeated": false,
+    "realReplySent": false,
+    "webhookConfigurationChanged": false,
+    "databaseChanged": false
+  }
+}

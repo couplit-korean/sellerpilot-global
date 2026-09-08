@@ -1,0 +1,228 @@
+diff --git a/lib/channels/gateway-contract.ts b/lib/channels/gateway-contract.ts
+--- a/lib/channels/gateway-contract.ts
++++ b/lib/channels/gateway-contract.ts
+@@ -619,6 +619,95 @@ export const listingLineageVerificationResultSchema = z.object({
+   }
+ });
+ 
++const TEMU_AFTER_SALES_RETRYABLE_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
++const TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS = new Set([
++  "parentAfterSalesSn",
++  "parentOrderSn",
++  "afterSalesStatusGroup",
++  "operateExpireTimeMs",
++  "availableOperateList",
++  "returnDeliveryType",
++  "parentAfterSalesStatus",
++  "updateAt",
++  "afterSalesType",
++  "createAt",
++]);
++
++function validTemuAfterSalesRetryQueue(value: unknown, allowEmpty: boolean) {
++  if (!Array.isArray(value) || value.length > 200 || !allowEmpty && value.length === 0) return false;
++  const serials = new Set<string>();
++  for (const item of value) {
++    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
++    const row = item as Record<string, unknown>;
++    if (Object.keys(row).some((key) => !TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS.has(key))) return false;
++    const afterSalesSn = row.parentAfterSalesSn;
++    const orderSn = row.parentOrderSn;
++    if (typeof afterSalesSn !== "string"
++        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(afterSalesSn)
++        || typeof orderSn !== "string"
++        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(orderSn)
++        || serials.has(afterSalesSn)) return false;
++    serials.add(afterSalesSn);
++    const operations = row.availableOperateList;
++    if (!Array.isArray(operations)
++        || operations.length > 100
++        || operations.some((operation) => typeof operation !== "string"
++          && (typeof operation !== "number" || !Number.isFinite(operation)))) return false;
++    if (row.operateExpireTimeMs !== null
++        && (!Number.isSafeInteger(row.operateExpireTimeMs)
++          || Number(row.operateExpireTimeMs) <= 0)) return false;
++    for (const key of [
++      "afterSalesStatusGroup", "returnDeliveryType", "parentAfterSalesStatus",
++      "updateAt", "afterSalesType", "createAt",
++    ]) {
++      const scalar = row[key];
++      if (scalar !== null && typeof scalar !== "string"
++          && (typeof scalar !== "number" || !Number.isFinite(scalar))) return false;
++    }
++  }
++  return true;
++}
++
++export const temuAfterSalesDetailRetryContinuationSchema = z.object({
++  reason: z.literal("retryable_read_failure"),
++  arguments: z.record(z.string(), z.unknown()),
++  retryCount: z.number().int().min(1).max(3),
++  retryAfterSeconds: z.number().int().positive(),
++  deferredCount: z.number().int().min(1).max(200),
++  replayCount: z.number().int().min(0).max(199),
++  providerStatus: z.number().int(),
++}).strict().superRefine((value, context) => {
++  const arguments_ = value.arguments;
++  const detailQueue = arguments_.detailQueue;
++  const replayQueue = arguments_.retryReplayQueue ?? [];
++  const detailLength = Array.isArray(detailQueue) ? detailQueue.length : -1;
++  const replayLength = Array.isArray(replayQueue) ? replayQueue.length : -1;
++  const queuesValid = validTemuAfterSalesRetryQueue(detailQueue, false)
++    && validTemuAfterSalesRetryQueue(replayQueue, true);
++  const serials = queuesValid
++    ? [...replayQueue as Array<Record<string, unknown>>, ...detailQueue as Array<Record<string, unknown>>]
++      .map((row) => row.parentAfterSalesSn)
++    : [];
++  const serialized = JSON.stringify(arguments_);
++  if (arguments_.kind !== "after_sales"
++      || arguments_.includeDetails !== true
++      || arguments_.sellerpilotTemuDetailRetryCount !== value.retryCount
++      || value.retryAfterSeconds !== 5 * 2 ** (value.retryCount - 1)
++      || detailLength !== value.deferredCount
++      || replayLength !== value.replayCount
++      || detailLength + replayLength > 200
++      || !queuesValid
++      || new Set(serials).size !== serials.length
++      || !TEMU_AFTER_SALES_RETRYABLE_STATUSES.has(value.providerStatus)
++      || serialized.length > 64_000
++      || /"(phone|phoneNumber|address|contact|email|mobile)"\s*:/iu.test(serialized)
++      || "sellerpilotPaginationDepth" in arguments_
++      || "sellerpilotPaginationEpoch" in arguments_
++      || "sellerpilotPaginationTrail" in arguments_) {
++    context.addIssue({ code: "custom", message: "invalid Temu after-sales detail retry continuation" });
++  }
++});
++
+ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
+   z.object({
+     jobId: z.string().uuid(),
+@@ -660,7 +749,8 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
+     status: z.literal("failed"),
+     error: z.string().min(1).max(500),
+     result: operationResultSchema.optional(),
+     credentialRefresh: credentialRefreshSchema.optional(),
++    retryContinuation: temuAfterSalesDetailRetryContinuationSchema.optional(),
+   }),
+   z.object({
+     jobId: z.string().uuid(),
+@@ -687,6 +777,14 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
+       context.addIssue({ code: "custom", path: ["credentialBinding"], message: "credential binding result mismatch" });
+     }
+   }
++  if (value.status === "failed"
++      && value.retryContinuation
++      && value.credentialRefresh) {
++    context.addIssue({
++      code: "custom", path: ["credentialRefresh"],
++      message: "Temu detail retry cannot rotate credentials",
++    });
++  }
+   if (value.status !== "succeeded" || value.result.operation !== "oauth.exchange") return;
+   if (!value.credentialRefresh || value.credentialRefresh.oauthComplete !== true) {
+     context.addIssue({
+diff --git a/scripts/ai-cli-worker.mjs b/scripts/ai-cli-worker.mjs
+--- a/scripts/ai-cli-worker.mjs
++++ b/scripts/ai-cli-worker.mjs
+@@ -4526,7 +4526,17 @@ async function processGatewayJob(job, claimToken) {
+       })
+       : null;
++    const retryContinuation = completionStatus === "failed"
++        && job.channel === "temu"
++        && job.operation === "inquiries.list"
++        && result.retryContinuation?.reason === "retryable_read_failure"
++      ? result.retryContinuation
++      : null;
+     const completionPayload = completionStatus === "failed"
+-      ? { jobId: job.id, claimToken, status: "failed", error: result.safeMessage, ...(credentialRefresh ? { credentialRefresh } : {}) }
++      ? {
++        jobId: job.id, claimToken, status: "failed", error: result.safeMessage,
++        ...(credentialRefresh ? { credentialRefresh } : {}),
++        ...(retryContinuation ? { retryContinuation } : {}),
++      }
+       : completionStatus === "reconciliation_required"
+         ? { jobId: job.id, claimToken, status: "reconciliation_required", error: result.safeMessage, result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) }
+         : { jobId: job.id, claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) };
+diff --git a/app/api/channel-gateway/worker/complete/route.ts b/app/api/channel-gateway/worker/complete/route.ts
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -31,6 +31,7 @@ import {
+   workerRpcErrorMessage,
+   workerRpcErrorStatus,
+ } from "../../../../../lib/worker-rpc";
++import { recordTemuDetailRetryWithReplay } from "../../../../../lib/channels/cs/temu/retry-rpc";
+ 
+ export const runtime = "nodejs";
+ 
+@@ -188,6 +189,18 @@ function completionPayloadBytes(value: unknown) {
+   }
+ }
+ 
++const SAFE_TEMU_DETAIL_RETRY_ERRORS = new Set([
++  "TEMU_AFTER_SALES_DETAIL_RETRY_SCHEMA_NOT_READY",
++  "TEMU_AFTER_SALES_DETAIL_RETRY_RECORDING_FAILED",
++  "TEMU_AFTER_SALES_DETAIL_RETRY_RECEIPT_INVALID",
++]);
++
++function safeTemuDetailRetryError(error: unknown) {
++  return error instanceof Error && SAFE_TEMU_DETAIL_RETRY_ERRORS.has(error.message)
++    ? error.message
++    : "TEMU_AFTER_SALES_DETAIL_RETRY_RECORDING_FAILED";
++}
++
+ function completionSchemaDiagnostics(error: z.ZodError) {
+   return error.issues.slice(0, 12).map((issue) => ({
+     path: issue.path,
+@@ -226,5 +239,52 @@ export async function POST(request: Request) {
+   });
+   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
++
++  // The retry RPC authenticates the exact worker token/job/claim and owns the
++  // queued-state replay contract. Run it before the generic completion
++  // snapshot so a lost HTTP response can safely re-enter with the old claim.
++  if (parsed.data.status === "failed" && parsed.data.retryContinuation) {
++    const retry = parsed.data.retryContinuation;
++    const retryArguments = {
++      p_token_hash: tokenHash,
++      p_job_id: parsed.data.jobId,
++      p_claim_token: parsed.data.claimToken,
++      p_retry_arguments: retry.arguments,
++      p_retry_count: retry.retryCount,
++      p_retry_after_seconds: retry.retryAfterSeconds,
++      p_deferred_count: retry.deferredCount,
++      p_replay_count: retry.replayCount,
++      p_provider_status: retry.providerStatus,
++    };
++    try {
++      const receipt = await recordTemuDetailRetryWithReplay(async () => {
++        const rpc = await serviceClient.rpc(
++          "sellerpilot_service_requeue_temu_after_sales_detail_v2",
++          retryArguments,
++        );
++        return { data: rpc.data, error: rpc.error };
++      }, retry);
++      return NextResponse.json({
++        message: "Temu 상세 조회 실패를 성공으로 완료하지 않고 같은 작업에 재조회 예약했습니다.",
++        completionStatus: "retry_scheduled",
++        jobCompleted: false,
++        providerReadSucceeded: false,
++        retryScheduled: true,
++        retryReceiptReplayed: receipt.replayed,
++        retryCount: retry.retryCount,
++        retryAfterSeconds: retry.retryAfterSeconds,
++        deferredCount: retry.deferredCount,
++        replayCount: retry.replayCount,
++      }, {
++        status: 202,
++        headers: { "retry-after": String(retry.retryAfterSeconds) },
++      });
++    } catch (error) {
++      const code = safeTemuDetailRetryError(error);
++      console.error("Temu detail retry completion RPC failed", { code });
++      return NextResponse.json({ message: workerRpcErrorMessage(503), code }, { status: 503 });
++    }
++  }
++
+   const { data: snapshot, error: snapshotError } = await serviceClient.rpc("sellerpilot_service_gateway_completion_context", {
+     p_token_hash: tokenHash,
+     p_job_id: parsed.data.jobId,

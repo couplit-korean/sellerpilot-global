@@ -1,0 +1,136 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-001.json",
+  "baseManifestSha256": "a2a4604f8417abb42a347393c51d1a049915c5bb52bb4a35724438c8adb1ea04",
+  "supersedesUnintegratedDraftAtSamePath": true,
+  "reason": "리뷰 결함을 수정한 주문 상태 투영, 동일 계정·기간 대조, 실제 SQL draft/PGlite, 전체 30일 창 checkpoint와 공용 연결 patch",
+  "files": [
+    {
+      "path": "lib/channels/cs/smartstore/history-recovery.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "bf3e5dcd84df06a370262658fb54afa431fe81a900947aaa942673a9c948c2e5",
+      "reason": "전체 기간을 최신부터 30일 이하 창으로 계획하고 완료 key 기반 중단 재개와 중복 완료 계수 제공"
+    },
+    {
+      "path": "lib/cs/channels/smartstore/order-binding-projection.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "756c7b61b623bf959e5194daeb50621a39fbdf7232db8fe76604b0c08edd40ac",
+      "reason": "invalid array 원소를 제거하지 않고 exact 오축소를 차단하는 SmartStore 7상태 projector"
+    },
+    {
+      "path": "lib/cs/channels/smartstore/reconciliation.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a34e274007c8b4f457902ce6cef05943636fbd5e0db3323700a7b4f335969b3c",
+      "reason": "live evidence hash와 동일 seller account, credential, shop, environment, 기간의 원격·원장·웹 digest 대조; auth claim 분리"
+    },
+    {
+      "path": "tests/cs-smartstore-recovery.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "43af333f15d13be3dfa2272c3f06ac92864b870708d38e523e6383582ce5ab90",
+      "reason": "30일 경계, 46창, 중단 재개, malformed 배열, 중복·누락·기간·seller/credential/shop/environment provenance 반례"
+    },
+    {
+      "path": "tests/cs-smartstore-common-proposals.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a035283a5363b24ec7cea3635bcb0ea73efd68a589a111d06ff5057b09506408",
+      "reason": "003/004 SQL의 PGlite 설치, ACL, shared admin, 다른 seller, revoked credential, 양 종류 checkpoint 시험"
+    },
+    {
+      "path": "tests/fixtures/cs/smartstore/live-zero-reconciliation-v2.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1f9dcead5398ced78fa15b1b7fbfadea579d2cf6e9f56b36e4c9ee3985291280",
+      "reason": "실제 body-free evidence hash와 seller/credential/shop scope를 묶은 46/46·0건 재현 fixture"
+    },
+    {
+      "path": "scripts/cs-smartstore-reconcile-snapshot.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8bf84c5e3e335c1305664d5b1779960375f06d2ecf40058d523d194efbd35f89",
+      "reason": "secret·고객본문 필드를 거부하고 v2 snapshot을 읽기 전용으로 검증하는 CLI"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-003-order-binding-health-projection.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "805fc56ebfe0b508114552e829460ce795708988b3b277f3783ce314cb358487",
+      "reason": "shared admin과 seller owner를 분리한 body-free 주문결속 상태 UI 공용 요청"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-003-order-binding-health-v2.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8771e2c8b8ef769d0ca43011c23aa66317c15676fe348aea9cd2e7516e6f0c0a",
+      "reason": "활성 SmartStore seller scope의 7상태 aggregate와 admin-only ACL SQL draft"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-004-durable-history-resume.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e20692b8432bb6f2d8355aae9a3119f795bdb718fe3677fdda5092c28d77e3be",
+      "reason": "동일 seller/credential/environment의 product/customer 두 scan 완료 후에만 이동하는 공용 요청"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-004-next-history-window-v1.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2030f6c603330098675fc5c66dc0a2dcacfc8d95e607a4c51f0eec42e2261b20",
+      "reason": "실제 run UUID scope 형식을 인식하는 read-only next-window checkpoint SQL draft"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-003-004-common-integration.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d9646bce63239b35beac60b6ee29c46fa89fb2ce7de054b8b9814ec5b3adf042",
+      "reason": "v1 타 채널을 보존하며 SmartStore v2를 합성하고 다음 한 창만 접수하는 검토용 공용 patch"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/recovery-reconciliation-procedure.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f58a829f274786a4cd9c6780b09d73fde0032288f6ee0efcdec804ee81172316",
+      "reason": "동일 계정·기간 provenance, auth claim 분리, 중단 재개, SQL 실행 절차"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence.md",
+      "change": "modify",
+      "beforeSha256": "e1a6155fdd8cb49583468acf3f008c4a44fd6e09c43279c7d0a746df10d6622c",
+      "afterSha256": "6a167e692f607e6d3b6b7dc63af31bc49a0ade419bf652db5c1436cf5566ed32",
+      "reason": "전용 11/11, proposal SQL 2/2, auth claim과 자동화 route/운영 UI 증거 분리 기록"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status.md",
+      "change": "modify",
+      "beforeSha256": "47c6aedba10c2f9d88752079c7d65b51bf697d4fc906dbc9c2ba8c7b7a6a93ff",
+      "afterSha256": "b99d1efe78227344927eb3eabf7def10c55c8fe5224093af8ac0d0027f06a078",
+      "reason": "G2/G4/G7를 malformed ID, scoped provenance, SQL/PGlite와 미완료 UI 인증 증거에 맞춰 갱신"
+    }
+  ],
+  "removedUnintegratedDraftPaths": [
+    "tests/fixtures/cs/smartstore/live-zero-reconciliation-v1.json"
+  ],
+  "sharedProposals": [
+    "smartstore-003",
+    "smartstore-004"
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence.md",
+    "docs/cs-parallel/reports/smartstore/recovery-reconciliation-procedure.md",
+    "tests/fixtures/cs/smartstore/live-zero-reconciliation-v2.json",
+    "tests/cs-smartstore-common-proposals.test.mjs"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

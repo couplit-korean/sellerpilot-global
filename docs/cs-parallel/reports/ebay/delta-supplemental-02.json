@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "supplement": 2,
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-01.json",
+  "baseDeltaStatus": "integration_review_pending",
+  "fixedPriorManifestHashes": {
+    "docs/cs-parallel/reports/ebay/delta.json": "1bed81dff1522af64b302417b106468e2f5f0e35cd1e89385142f2bcef8c945c",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-01.json": "1071d5b02f4a2f66b24cc172ae789b446fc66dbe503149bc1dc167881106d31b"
+  },
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "files": [
+    {
+      "path": "lib/cs/channels/ebay/cases-disputes.ts",
+      "change": "modify_after_supplemental_01",
+      "beforeSha256": "aa6de71a6448c5248cb69588851d31a089c034a30cf43afb2121328f7e5fc9d9",
+      "afterSha256": "81cbd48ebb61412bf1548bb23bd345340ede8d63df54ac47fd12ff1c2628d081",
+      "reason": "Add the exact UI authenticated-fetch client that validates query and response contracts."
+    },
+    {
+      "path": "app/cs/channels/ebay/cases-disputes.tsx",
+      "change": "modify_after_supplemental_01",
+      "beforeSha256": "dd88e94e2f6fda8196e930d4ccc7220340cdf0ed0bdd42f7361aa3a46a9cd529",
+      "afterSha256": "20a0d5a3019efb95dc37511ee446c2743566f822e9162795b865bc322cf6f0e3",
+      "reason": "Bind the read-only component to the tested UI client request path."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-web.test.ts",
+      "change": "modify_after_supplemental_01",
+      "beforeSha256": "84a527182d320df8891a0590b31e05c82dc90c242642e924699fd977f0ccb7f6",
+      "afterSha256": "e2cf3d0fbd787992e0a49a5e60a2f00b929e96a0e5d44182ab0e65b9276994b8",
+      "reason": "Require the component to use the isolated authenticated UI client."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-route.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "876d2347150dc39e8b6a7e013ad91c3d8f82803d6263457b633112758d1f4a7d",
+      "reason": "Execute the exported GET route with the full authenticateAdminRequest implementation across auth, owner, seller, 404, 403, and UI-client boundaries."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7bb4627620cb96662c24ed47be273fcecc2d3c67c00434b3e9622c34e5ae14c6",
+      "reason": "Provide an executable GET-only safe-state history ledger migration draft with strict roles and resource namespaces."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5a0c17378c13282159a6813c88263886335e88c73e379d76f1e41ad109b10e54",
+      "reason": "Apply the entire SQL draft in PGlite and verify idempotency, state history, unsafe-field rejection, identity binding, owner isolation, and privileges."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-route-history-supplement-02.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ecf8a64448a863c6f5b009ec472a3e90ecf3d7f7b242c07ce89e9249d11f33ad",
+      "reason": "Submit exact route/UI/history inputs, outputs, shared patches, evidence limits, and integration order."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "change": "modify_after_supplemental_01",
+      "beforeSha256": "447a3fd42d438f8f89bd59a44dd7e85305c83e3dd052149eb76cd5e49eecbf2e",
+      "afterSha256": "07203c07779a789a8ba81e16ac2de93c81e5f4cd861473d9f382e71ac75c3aaf",
+      "reason": "Distinguish local auth/UI/DB integration evidence from production provider and browser evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-02.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "6f886e2d945b5f9c509651ca5b8e071ad91618dcdcbce08d466768d557409a27",
+      "reason": "Record initial SQL failure, correction, focused route/UI/DB tests, typecheck, lint, and safety boundaries."
+    }
+  ],
+  "sharedFilesModified": [],
+  "sharedProposalIds": ["EBAY-SHARED-004"],
+  "verification": {
+    "combinedFocusedTests": { "tests": 20, "passed": 20, "failed": 0, "exitCode": 0 },
+    "routeAuthUiClient": { "tests": 4, "passed": 4, "failed": 0, "exitCode": 0 },
+    "isolatedDatabaseAfterCorrection": { "tests": 3, "passed": 3, "failed": 0, "exitCode": 0 },
+    "typescript": { "exitCode": 0 },
+    "eslint": { "exitCode": 0 },
+    "jsonWhitespaceAndHashes": { "exitCode": 0 }
+  },
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "credentialRefresh": true,
+    "realProviderReadInRouteTests": true,
+    "realBrowserSession": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true,
+    "sharedSourceWrite": true
+  }
+}

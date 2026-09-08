@@ -1,0 +1,65 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "branch": "codex/cs-lazada-v1",
+  "contract": "sellerpilot-cs-channel-delta/1",
+  "createdAt": "2026-09-08T16:09:13Z",
+  "status": "frozen_for_coordinator_review",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-010-concurrent-revision-reply-fence.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f1c5d9a0fc5c8c47292a340255d80603ea2c8380cb17567587427b8cd52a9878",
+      "reason": "Propose exact-lineage current-revision locks, post-enqueue revision cancellation, and both provider-boundary guards without applying shared SQL."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-010-concurrent-revision-reply-fence.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "03831d3a56e8419ec3b621346ec77f94b0a64de8442b5d2918004155519e5847",
+      "reason": "Record the reproduced cutoff defect, lock graph, worker call paths, linearization boundary, and mandatory two-session acceptance test."
+    },
+    {
+      "path": "tests/cs-lazada-v3-concurrent-reply-fence.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "65b8844d6c32ad9bd163391333d3651b03f83452af3efcf9a7ff03efc170bade",
+      "reason": "Verify same-request cutoff closure, recall/conflict mutation guards, post-enqueue fencing, local/serverless provider boundaries, call paths, and ACL in synthetic PGlite."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/concurrent-revision-reply-fence-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f5fdcb7a7cc76f581b5d52278a2588af44869be78f8a3c4b339bd3c723ad2b41",
+      "reason": "Separate verified single-connection outcomes, browser/auth observations, and the unresolved real PostgreSQL concurrency gate."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/concurrent-revision-reply-fence-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "651e497ea6623b09e966834816c5184247f76f0784ce3f9f7b1b0d025a09beed",
+      "reason": "Record exact commands, outcomes, source preimages, non-operation boundary, and test limitation."
+    }
+  ],
+  "sharedSourceChanges": [],
+  "sharedProposal": {
+    "sql": "docs/cs-parallel/proposals/lazada/lazada-010-concurrent-revision-reply-fence.sql",
+    "applyAfter": [
+      "supabase/migrations/20260908140409_cs_lazada_im_ingest_v3.sql",
+      "supabase/migrations/20260908145831_cs_lazada_v3_conversation_projection.sql",
+      "supabase/migrations/20260908153837_cs_lazada_ordinary_workspace_reply_guard.sql"
+    ],
+    "coordinatorMustAssignMigrationVersion": true,
+    "productionApplyAuthorized": false
+  },
+  "verification": {
+    "focusedTests": "6/6 pass",
+    "relatedSequentialTests": "24/24 pass",
+    "eslint": "pass",
+    "realPostgresTwoSession": "not_run_runtime_unavailable",
+    "providerCalls": 0,
+    "customerReplies": 0
+  },
+  "frozen": true
+}

@@ -20,7 +20,7 @@ registerHooks({
 const {
   deriveServerlessCsGatewayCredentials,
   runOneServerlessCsGatewayJob,
-} = await import("../lib/channels/serverless-cs-gateway");
+} = await import("../lib/channels/serverless-gateway");
 
 const JOB_ID = "faee01e1-2d68-4f99-951c-15684822fc43";
 const CLAIM_TOKEN = "99d45dd4-b36b-4da9-a269-8ee65720a3ac";
@@ -254,6 +254,9 @@ test("serverless completion preserves only allowlisted Lazada provider failure e
         if (name === "sellerpilot_service_mark_lazada_oauth_provider_call_started") {
           events.push("provider-call-boundary");
           return { data: true, error: null };
+        }
+        if (name === "sellerpilot_service_reserve_provider_rate_budget_v1") {
+          return { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null };
         }
         if (name === "sellerpilot_service_serverless_cs_completion_context") {
           return {

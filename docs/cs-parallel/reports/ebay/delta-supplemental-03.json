@@ -1,0 +1,116 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "supplement": 3,
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-02.json",
+  "baseDeltaStatus": "integration_review_pending",
+  "fixedPriorManifestHashes": {
+    "docs/cs-parallel/reports/ebay/delta.json": "1bed81dff1522af64b302417b106468e2f5f0e35cd1e89385142f2bcef8c945c",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-01.json": "1071d5b02f4a2f66b24cc172ae789b446fc66dbe503149bc1dc167881106d31b",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-02.json": "2ce9f39b1dfe5be454e2778b9ea81cb9f526468d51c5d0f216cfe3e951cd0404"
+  },
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "files": [
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-history.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e9040d1aaaf737975f1eaa2ee871b05ea33b2a647f6f0ccb39c004f4e1844797",
+      "reason": "Validate and record only provider-normalized safe case and dispute history through the service RPC."
+    },
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-history-sync.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7e0bbdc8108134aa0aee4d9ecfdceff1ebf93a5c6ac5d6f8d3d9b3bbbee96478",
+      "reason": "Connect strict GET adapters to exact pagination and safe ledger ingest while preserving unavailable results as unknown."
+    },
+    {
+      "path": "lib/cs/channels/ebay/case-dispute-history.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "22ef669468035103ec164535c7813d2597e534e56c973b88abb106da243e1705",
+      "reason": "Define owner history and explicit GET-collection UI request and response contracts with a stable composite cursor."
+    },
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/history/route.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d0be1106528cc1b44a70c46e153dce380be4b30748f4f405516ba2dacb31e84c",
+      "reason": "Expose authenticated owner-only ledger history reads without provider or vault access."
+    },
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/history/sync/route.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ffe860c50f3f59c51a35b78cd172600b870eb35a71770fef651e51743e0f3fe5",
+      "reason": "Provide a bounded admin-triggered provider GET to internal service-ledger ingest path with account and seller gates."
+    },
+    {
+      "path": "app/cs/channels/ebay/case-dispute-history.tsx",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d422345000ab1644b389fb6db66162ff25a5bf354136dc1cafe7f91982541cf5",
+      "reason": "Render resource-separated safe history and the explicit GET collection receipt without reply or dispute actions."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-history-flow.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8d6bb8a559f8df1eba7e495b108ce903a499b3a11ab65733a615f136d7f879b4",
+      "reason": "Execute the fixture provider to production normalizer to sync route to PGlite ledger to owner API to UI flow and safety failures."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-read-v2.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3dea9b07cde7623ea3b27c8130f174b693bbef771333e8711d669e3b3929b64b",
+      "reason": "Add an owner-only history read v2 proposal with an observed-at plus event-id cursor and source-drift guard."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-ingest-api-ui-supplement-03.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3529ea7c8ec38551ec95eba991f0e1f8538b084612c527d0ab4c79930654e4be",
+      "reason": "Submit exact provider-to-ledger-to-API-to-UI integration order, shared patches, dependencies, and external blockers."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "change": "modify_after_supplemental_02",
+      "beforeSha256": "07203c07779a789a8ba81e16ac2de93c81e5f4cd861473d9f382e71ac75c3aaf",
+      "afterSha256": "07f83488935b081d828e88556b6ca0c758463682a3cced061f0bca87b4e5f0af",
+      "reason": "Distinguish the locally connected ingest and history path from production provider, database, browser, and shared-page integration evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-03.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3ef44b27078d7a767deb447863188b43ed22db462e53f708fbb492cfd944dd2c",
+      "reason": "Record focused end-to-end local flow tests, typecheck, lint, shared hash checks, and mutation exclusions."
+    }
+  ],
+  "sharedFilesModified": [],
+  "sharedProposalIds": ["EBAY-SHARED-005"],
+  "verification": {
+    "providerLedgerApiUiHistoryFlow": { "tests": 5, "passed": 5, "failed": 0, "exitCode": 0 },
+    "combinedFocusedTests": { "tests": 25, "passed": 25, "failed": 0, "exitCode": 0 },
+    "typescript": { "exitCode": 0 },
+    "eslint": { "exitCode": 0 },
+    "jsonWhitespaceAndHashes": { "exitCode": 0 }
+  },
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "credentialRefresh": true,
+    "actualProviderReadDuringSupplemental03": true,
+    "realBrowserSession": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true,
+    "sharedSourceWrite": true
+  }
+}

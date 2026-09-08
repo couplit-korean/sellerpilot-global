@@ -21,9 +21,9 @@ registerHooks({
   },
 });
 
-const [{ normalizeChannelInquiries }, { executeInquiryReplyViaChannelGateway }] = await Promise.all([
+const [{ normalizeChannelInquiries }, { enqueueInquiryReplyViaChannelGateway }] = await Promise.all([
   import("../lib/channels/inquiry-sync"),
-  import("../lib/channels/gateway"),
+  import("../lib/cs/operations/enqueue-reply"),
 ]);
 
 test("eBay readiness reports ASQ implementation without claiming live remote CS", () => {
@@ -31,10 +31,10 @@ test("eBay readiness reports ASQ implementation without claiming live remote CS"
   assert.ok(readiness);
   assert.equal(readiness.overall, "partial");
   assert.equal(readiness.checks.some((check) => check.label === "상품 문의 ASQ" && check.state === "partial"), true);
-  assert.match(readiness.summary, /ASQ 조회·답변과 계보 검증까지 구현/);
+  assert.match(readiness.summary, /Trading ASQ·Inbox와 Commerce 일반 대화의 수신·1년 복구·대화 답변 계보를 구현/);
   assert.match(readiness.summary, /원격 CS 연결 완료로 표시하지 않습니다/);
   assert.doesNotMatch(readiness.summary, /공통 문의함 미지원/);
-  assert.match(readiness.nextAction, /상시 작업자 연결/);
+  assert.match(readiness.nextAction, /commerce\.message 권한 재동의/);
 });
 
 function memberMessagesXml(options: {
@@ -287,6 +287,30 @@ test("eBay ASQ processes one Trading API page per job and persists the next page
   }
 });
 
+test("eBay ASQ continues an empty provider page when pagination says data remains", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(`<?xml version="1.0"?>
+    <GetMemberMessagesResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+      <Ack>Success</Ack><MemberMessage/>
+      <PaginationResult><TotalNumberOfPages>2</TotalNumberOfPages><TotalNumberOfEntries>25</TotalNumberOfEntries></PaginationResult>
+      <HasMoreItems>true</HasMoreItems>
+    </GetMemberMessagesResponse>`, { status: 200 });
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "inquiries.list",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_US"),
+      environment: "sandbox",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.steps.find(step => step.name === "inquiries")?.data.memberMessages, []);
+    assert.equal(result.continuation?.arguments.pageNumber, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("eBay ASQ bounds GetItem concurrency and preserves provider order through the site cache", async () => {
   const originalFetch = globalThis.fetch;
   const itemIds = Array.from({ length: 25 }, (_, index) => String(7_000_000_000_000_000_000n + BigInt(index)));
@@ -496,7 +520,7 @@ test("periodic eBay ASQ sync uses the credential marketplace while manual reads 
 
 test("eBay provider rate fence reaches the CS route as a retryable rate error", async () => {
   await assert.rejects(
-    executeInquiryReplyViaChannelGateway({
+    enqueueInquiryReplyViaChannelGateway({
       serviceClient: {
         rpc: async () => ({
           data: null,
@@ -514,16 +538,42 @@ test("eBay provider rate fence reaches the CS route as a retryable rate error", 
 });
 
 test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official environments", () => {
+  const now = new Date("2026-08-28T00:00:00.000Z");
+  const mailbox = {
+    kind: "mailbox",
+    startTime: "2026-08-22T00:00:00.000Z",
+    endTime: now.toISOString(),
+    folderId: 0,
+    pageNumber: 1,
+    entriesPerPage: 25,
+  };
+  const memberConversations = {
+    kind: "conversation",
+    conversationType: "FROM_MEMBERS",
+    startTime: "2026-08-22T00:00:00.000Z",
+    endTime: now.toISOString(),
+    conversationOffset: 0,
+  };
+  const systemConversations = {
+    kind: "conversation",
+    conversationType: "FROM_EBAY",
+    conversationOffset: 0,
+  };
   assert.deepEqual(
-    inquirySyncArguments("ebay", new Date("2026-08-28T00:00:00.000Z")),
-    [ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"))],
+    inquirySyncArguments("ebay", now),
+    [ebayAsqInquirySyncArguments(now), mailbox, memberConversations, systemConversations],
   );
   assert.deepEqual(
-    inquirySyncArguments("ebay", new Date("2026-08-28T00:00:00.000Z"), {
+    inquirySyncArguments("ebay", now, {
       environment: "sandbox",
       marketplaceId: "EBAY_DE",
     }),
-    [ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_DE")],
+    [
+      ebayAsqInquirySyncArguments(now, "EBAY_DE"),
+      { ...mailbox, marketplaceId: "EBAY_DE" },
+      memberConversations,
+      systemConversations,
+    ],
   );
   assert.equal(channelOperationAvailable("ebay", "inquiries.list"), true);
   assert.equal(channelOperationAvailable("ebay", "inquiries.list", "sandbox"), true);
@@ -541,9 +591,9 @@ test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official envi
     marketplaceBound: true,
   }), true);
   assert.equal(csReplySavePlan("ticket", "ebay", "reply", "ebay:test:message").remote, true);
-  assert.deepEqual(csChannelVerification("ebay", "passed", 3), {
-    readLabel: "eBay 상품 문의(ASQ) 최근 조회 작업 통과 · 누적 원장 3건",
-    replyLabel: "답변: 검증된 계정·사이트·문의 계보만 보안 게이트웨이 전송",
+  assert.deepEqual(csChannelVerification("ebay", "passed", 3, null, "2026-09-07T06:55:00.000Z", new Date("2026-09-07T07:00:00.000Z")), {
+    readLabel: "eBay ASQ·Trading·Commerce 메시지 최근 조회 작업 통과 · 누적 원장 3건",
+    replyLabel: "답변: ASQ 또는 Commerce 중 검증된 계정·문의 계보만 보안 게이트웨이 전송",
     badge: "최근 조회 통과",
     tone: "passed",
   });

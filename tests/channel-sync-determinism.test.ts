@@ -115,6 +115,7 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
       inquiryRegistrationDateTime: "2026-08-26T09:00:00.000+09:00",
       answered: false,
       orderId: "ORDER-1",
+      productOrderIdList: "10001",
       productName: "테스트 상품",
       customerId: "buyer-1",
       customerName: "구매자",
@@ -174,8 +175,8 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-26T00:00:00.000Z",
-    externalOrderReference: "ORDER-1",
-    providerContext: { kind: "customer", inquiryNo: "987654", unsequencedAnswers: [] },
+    externalOrderReference: "10001",
+    providerContext: { kind: "customer", inquiryNo: "987654", orderReferenceState: "exact_product_order", orderId: "ORDER-1", productOrderIds: ["10001"], unsequencedAnswers: [] },
     replyContext: { kind: "customer", inquiryNo: "987654" },
     remoteMessageId: "987654",
     providerStatus: "waiting",
@@ -219,25 +220,25 @@ test("Temu after-sales identity advances only for a trusted provider revision", 
     afterSalesType: 2,
     afterSalesStatusGroup: "1",
     availableOperateList: ["refund", "return"],
-    updateAt: "2026-08-25T09:00:00.000Z",
+    updateAt: Date.parse("2026-08-25T09:00:00.000Z") / 1000,
   };
-  const first = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-1", {
+  const first = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "inquiries", {
     result: { data: [baseRow] },
   }), NORMALIZATION_TIMESTAMP)[0];
-  const transitioned = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-2", {
+  const transitioned = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "inquiries", {
     result: { data: [{
       ...baseRow,
       afterSalesStatusGroup: "2",
       availableOperateList: ["approve"],
-      updateAt: "2026-08-25T10:00:00.000Z",
+      updateAt: Date.parse("2026-08-25T10:00:00.000Z") / 1000,
     }] },
   }), "2026-08-30T11:00:00.000Z")[0];
-  const transitionedReplay = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-revision-3", {
+  const transitionedReplay = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "inquiries", {
     result: { data: [{
       ...baseRow,
       afterSalesStatusGroup: "2",
       availableOperateList: ["approve"],
-      updateAt: "2026-08-25T10:00:00+00:00",
+      updateAt: String(Date.parse("2026-08-25T10:00:00+00:00") / 1000),
     }] },
   }), "2026-08-31T12:00:00.000Z")[0];
   assert.notEqual(first?.remoteMessageId, transitioned?.remoteMessageId);
@@ -246,17 +247,17 @@ test("Temu after-sales identity advances only for a trusted provider revision", 
   assert.equal(transitioned?.inboundKey, transitionedReplay?.inboundKey);
   assert.equal(transitioned?.providerContext.afterSalesSn, "AFTER-SALES-REVISION");
 
-  const fallbackA = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-state-a", {
+  const fallbackA = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "inquiries", {
     result: { data: [{ ...baseRow, updateAt: undefined, availableOperateList: ["return", "refund"] }] },
   }), "2026-08-30T11:00:00.000Z")[0];
-  const fallbackB = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "temu-state-b", {
+  const fallbackB = normalizeChannelInquiries("temu", result("temu", "inquiries.list", "inquiries", {
     result: { data: [{ ...baseRow, updateAt: undefined, availableOperateList: ["refund", "return"] }] },
   }), "2026-08-31T12:00:00.000Z")[0];
   assert.equal(fallbackA?.remoteMessageId, fallbackB?.remoteMessageId);
   assert.equal(fallbackA?.inboundKey, fallbackB?.inboundKey);
 });
 
-test("Lazada history with no provider time uses the same immutable completion timestamp", () => {
+test("Lazada history with no provider time stays unverified without fabricating a timestamp", () => {
   const inquiryResult = result("lazada", "inquiries.list", "inquiries-message:session-1:1", {
     sellerpilotSession: {
       session_id: "session-1",
@@ -268,6 +269,8 @@ test("Lazada history with no provider time uses the same immutable completion ti
         message_id: "message-1",
         from_account_type: 1,
         status: 0,
+        type: 1,
+        template_id: 1,
         content: JSON.stringify({ txt: "상품 문의입니다." }),
       }],
     },
@@ -276,5 +279,7 @@ test("Lazada history with no provider time uses the same immutable completion ti
   const first = normalizeChannelInquiries("lazada", inquiryResult, NORMALIZATION_TIMESTAMP);
   const replay = normalizeChannelInquiries("lazada", inquiryResult, NORMALIZATION_TIMESTAMP);
   assert.deepEqual(first, replay);
-  assert.equal(first[0]?.receivedAt, NORMALIZATION_TIMESTAMP);
+  assert.equal(first[0]?.receivedAt, "");
+  assert.equal(first[0]?.orderingStatus, "unverified");
+  assert.equal(first[0]?.senderRole, "customer");
 });

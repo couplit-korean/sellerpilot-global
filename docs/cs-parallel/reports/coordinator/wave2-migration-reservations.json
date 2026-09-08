@@ -1,0 +1,20 @@
+[
+  {
+    "source": "docs/cs-parallel/proposals/shopee/shopee-010-history-request-invariants-draft.sql",
+    "name": "20260908145331_cs_shopee_history_request_invariants.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-migrations-wave2-n1yz551o/supabase/migrations/20260908145331_cs_shopee_history_request_invariants.sql",
+    "owner": "CS root integration; channel source shopee"
+  },
+  {
+    "source": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.sql",
+    "name": "20260908145334_cs_coupang_local_read_executor.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-migrations-wave2-n1yz551o/supabase/migrations/20260908145334_cs_coupang_local_read_executor.sql",
+    "owner": "CS root integration; channel source coupang"
+  },
+  {
+    "source": "docs/cs-parallel/proposals/qoo10/009-reply-s3-common-paths.sql",
+    "name": "20260908145336_cs_qoo10_reply_s3_common_paths.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-migrations-wave2-n1yz551o/supabase/migrations/20260908145336_cs_qoo10_reply_s3_common_paths.sql",
+    "owner": "CS root integration; channel source qoo10"
+  }
+]

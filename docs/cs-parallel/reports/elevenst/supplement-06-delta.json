@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-06-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-05-delta.json",
+    "sha256": "613bc09413e8441844a04c6eeb8787d044b98c1bfdbad694778d4ce4327faac7"
+  },
+  "files": [
+    {
+      "path": "lib/cs/channels/elevenst/limited-access.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ed8808c4233eea99348a0131d11316e94636c13fbdc50739c6954fb0d54f0de9",
+      "reason": "Represent SellerTalk session-only and review export-only access without fabricating remote or stored counts."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/web-rpc.ts",
+      "change": "modify",
+      "beforeSha256": "7765eed3341bf3edb850fc0bafa7fa16a87787091f45df2d2f05dfb39f3a6388",
+      "afterSha256": "c38f13384a7092874d4d7db9cd84cdffa8cb9b4dfc4b24f87129fc8d1461d346",
+      "reason": "Project both limited-access surfaces beside the two provider-backed read surfaces in authenticated API v2."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/read-state-contract.ts",
+      "change": "modify",
+      "beforeSha256": "aae9bf7f1afbee3d1ed20a547a58a8192db37a65c5793b37ce654d674a917b2f",
+      "afterSha256": "e5e8912e593dad12d48dea3261907f76158c7beac6b8f856f1a4122d95381ca9",
+      "reason": "Validate the additive v2 SellerTalk and review limits with strict false/null invariants."
+    },
+    {
+      "path": "app/cs/channels/elevenst/read-state.tsx",
+      "change": "modify",
+      "beforeSha256": "d9a80294a4ab78fca988fe90ff1b73e5633eae0e7634dc966a97a0de16c2d721",
+      "afterSha256": "29b018c5a8dde2b6f6e1cdc73f746046a1a6c9c7adf69d41a395dccc0d3ed5ce",
+      "reason": "Show SellerTalk and review access, retention and automation blockers in the existing owner read panel."
+    },
+    {
+      "path": "tests/cs-elevenst-limited-access.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "08e899c6ce71fe2a80317c034fba5f4baaeb6d0a530fb9fce1ce83efe85d2821",
+      "reason": "Reject fabricated counts or automatic support for session and export-only surfaces."
+    },
+    {
+      "path": "tests/cs-elevenst-read-state-web-panel.test.tsx",
+      "change": "modify",
+      "beforeSha256": "f6f0dab075628a867414838bcc11abb97cf94705d37a141d2ceb655358f3aeff",
+      "afterSha256": "69c50c7a39dff411b4db59560ac05bb44a662fb01cd647e82ddd6eb6c5ee9e4f",
+      "reason": "Verify all four CS surfaces render and contradictory limited-access claims are rejected."
+    },
+    {
+      "path": "scripts/cs-elevenst-isolated-auth-web-smoke.mjs",
+      "change": "modify",
+      "beforeSha256": "1f61120f767f09d5d55e9519c5e8f783945e76f03cb0d11eb0500c9b13db9419",
+      "afterSha256": "b62188cdcd4d4d4e017fb8eceac46a5ec9021bf0e07dc49b0cd0d3f3277714bf",
+      "reason": "Exercise API v2 and four-surface server rendering through actual authenticated Next HTTP."
+    },
+    {
+      "path": "tests/cs-elevenst-isolated-auth-web.test.mjs",
+      "change": "modify",
+      "beforeSha256": "8c4471264387beb9e5271b92799170f4772892aafe8438edd198d467f603c124",
+      "afterSha256": "571b737ed228574e2f839a161db7c8d01de0ea8f3803e307a782abcb09250299",
+      "reason": "Require session/export-only values and null counts from the authenticated web smoke."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-limited-surfaces-20260909.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e8afe8596239379749aed75d585a5ae7ed3a1997e8cf61428d5b498ef44c6ee3",
+      "reason": "Record current Seller Office observations and the isolated authenticated API/UI result without customer content."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-06-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e52763b527306200c3836b2fe48938a3520cda76bf55380e431c20db9c8c1502",
+      "reason": "Separate visible current zeros, unsupported automation, integration proof and remaining provider blockers."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-06-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9c65527f6a6790f5275ebdea296d47a1401ce26914d4f7680783af8b8998a7ab",
+      "reason": "Record Node 22, isolated Next, integrated overlay, type and lint verification."
+    }
+  ],
+  "commonProposals": [],
+  "alreadyIntegratedLocally": [
+    "elevenst-supplement-05-20260909",
+    "elevenst-008-worker-failed-read-sender"
+  ],
+  "remainingExternalDependencies": [
+    "Product Q&A API service permission or current Key linkage for business resultCode 500",
+    "official SellerTalk automatic read and reply contract",
+    "official review read and comment contract or reviewed real Seller Office export columns"
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

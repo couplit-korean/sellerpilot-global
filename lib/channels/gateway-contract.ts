@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
-import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operations";
+import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operation-names";
 import {
   listingOperationRequiresVerifiedRemoteState,
   listingOperationUsesPublicationIntent,
@@ -98,6 +98,33 @@ export const gatewayClaimSchema = z.object({
     }
   }
 });
+
+function validShopeeInquiryContinuation(next: Record<string, unknown>) {
+  const integer = (value: unknown, min: number, max: number) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+  if (!integer(next.pageSize, 1, 100)) return false;
+  if (next.sellerpilotPaginationEpoch !== undefined
+      && !integer(next.sellerpilotPaginationEpoch, 0, Number.MAX_SAFE_INTEGER)) return false;
+  const trail = next.sellerpilotPaginationTrail;
+  if (trail !== undefined && (!Array.isArray(trail) || trail.length > 50
+      || trail.some((entry) => typeof entry !== "string" || !/^[a-f0-9]{64}$/.test(entry)))) return false;
+  if (next.kind === "product_review") {
+    return typeof next.cursor === "string" && next.cursor.trim().length > 0 && next.cursor.length <= 500;
+  }
+  if (next.kind !== "return_refund"
+      || !integer(next.createTimeFrom, 1, 9_999_999_999)
+      || !integer(next.createTimeTo, 1, 9_999_999_999)
+      || Number(next.createTimeTo) <= Number(next.createTimeFrom)
+      || Number(next.createTimeTo) - Number(next.createTimeFrom) > 15 * 86_400
+      || !integer(next.pageNo, 1, 1_000_000)) return false;
+  if (next.returnQueue === undefined) return next.nextPageNo === undefined;
+  const queue = next.returnQueue;
+  return Array.isArray(queue) && queue.length > 0 && queue.length <= Number(next.pageSize)
+    && queue.every((serial) => typeof serial === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(serial))
+    && new Set(queue).size === queue.length
+    && (next.nextPageNo === undefined
+      || (integer(next.nextPageNo, 2, 1_000_000) && next.nextPageNo === next.pageNo));
+}
 
 const paginationContinuationSchema = z.object({
   reason: z.literal("page_cap_reached"),
@@ -217,23 +244,32 @@ const operationResultSchema = z.object({
       : {};
     const positiveInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 1;
     const nonNegativeInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 0;
+    const nonNegativeMultiple = (item: unknown, divisor: number) => nonNegativeInteger(item) && Number(item) % divisor === 0;
     const nonEmpty = (item: unknown) => typeof item === "string" && item.trim().length > 0;
     const valid = value.channel === "shopee" && value.operation === "orders.list"
       ? nonEmpty(query.cursor)
+      : value.channel === "shopee" && value.operation === "inquiries.list"
+        ? validShopeeInquiryContinuation(next)
       : value.channel === "lazada" && value.operation === "orders.list"
         ? nonNegativeInteger(queryParams.offset)
         : value.channel === "coupang" && value.operation === "orders.list"
           ? nonEmpty(query.nextToken)
           : value.channel === "coupang" && value.operation === "inquiries.list"
-            ? positiveInteger(query.pageNum)
+            ? next.kind === "exchange_request" ? nonEmpty(query.nextToken) : positiveInteger(query.pageNum)
             : value.channel === "smartstore" && value.operation === "orders.list"
               ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
               : value.channel === "smartstore" && value.operation === "inquiries.list"
                 ? positiveInteger(query.page)
                 : value.channel === "ebay" && value.operation === "orders.list"
                   ? nonNegativeInteger(query.offset)
-                  : value.channel === "ebay" && value.operation === "inquiries.list"
-                    ? positiveInteger(next.pageNumber)
+                : value.channel === "ebay" && value.operation === "inquiries.list"
+                    ? next.kind === "conversation"
+                      ? next.conversationType === "FROM_MEMBERS" || next.conversationType === "FROM_EBAY"
+                        ? typeof next.conversationId === "string" && next.conversationId.length > 0
+                          ? nonNegativeMultiple(next.messageOffset, 25)
+                          : nonNegativeMultiple(next.conversationOffset, 10)
+                        : false
+                      : positiveInteger(next.pageNumber)
                     : value.channel === "temu" && value.operation === "orders.list"
                       ? positiveInteger(next.pageNumber)
                       : value.channel === "temu" && value.operation === "inquiries.list"
@@ -249,6 +285,15 @@ const credentialRefreshSchema = z.object({
   recoveryOnly: z.boolean().optional(),
   oauthComplete: z.boolean().optional(),
 });
+const credentialBindingSchema = z.object({
+  contract: z.literal("sellerpilot-cs-credential-binding/1"),
+  channel: gatewayChannelSchema,
+  operation: z.enum(["inquiries.list", "inquiries.reply"]),
+  appFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  tokenFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  targetFingerprints: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).min(1).max(100),
+  country: z.string().regex(/^[A-Z0-9_-]{1,40}$/u),
+}).strict();
 
 export const gatewayCredentialRefreshStageSchema = z.object({
   action: z.literal("stage"),
@@ -574,6 +619,95 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
   }
 });
 
+const TEMU_AFTER_SALES_RETRYABLE_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
+const TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS = new Set([
+  "parentAfterSalesSn",
+  "parentOrderSn",
+  "afterSalesStatusGroup",
+  "operateExpireTimeMs",
+  "availableOperateList",
+  "returnDeliveryType",
+  "parentAfterSalesStatus",
+  "updateAt",
+  "afterSalesType",
+  "createAt",
+]);
+
+function validTemuAfterSalesRetryQueue(value: unknown, allowEmpty: boolean) {
+  if (!Array.isArray(value) || value.length > 200 || !allowEmpty && value.length === 0) return false;
+  const serials = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Record<string, unknown>;
+    if (Object.keys(row).some((key) => !TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS.has(key))) return false;
+    const afterSalesSn = row.parentAfterSalesSn;
+    const orderSn = row.parentOrderSn;
+    if (typeof afterSalesSn !== "string"
+        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(afterSalesSn)
+        || typeof orderSn !== "string"
+        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(orderSn)
+        || serials.has(afterSalesSn)) return false;
+    serials.add(afterSalesSn);
+    const operations = row.availableOperateList;
+    if (!Array.isArray(operations)
+        || operations.length > 100
+        || operations.some((operation) => typeof operation !== "string"
+          && (typeof operation !== "number" || !Number.isFinite(operation)))) return false;
+    if (row.operateExpireTimeMs !== null
+        && (!Number.isSafeInteger(row.operateExpireTimeMs)
+          || Number(row.operateExpireTimeMs) <= 0)) return false;
+    for (const key of [
+      "afterSalesStatusGroup", "returnDeliveryType", "parentAfterSalesStatus",
+      "updateAt", "afterSalesType", "createAt",
+    ]) {
+      const scalar = row[key];
+      if (scalar !== null && typeof scalar !== "string"
+          && (typeof scalar !== "number" || !Number.isFinite(scalar))) return false;
+    }
+  }
+  return true;
+}
+
+export const temuAfterSalesDetailRetryContinuationSchema = z.object({
+  reason: z.literal("retryable_read_failure"),
+  arguments: z.record(z.string(), z.unknown()),
+  retryCount: z.number().int().min(1).max(3),
+  retryAfterSeconds: z.number().int().positive(),
+  deferredCount: z.number().int().min(1).max(200),
+  replayCount: z.number().int().min(0).max(199),
+  providerStatus: z.number().int(),
+}).strict().superRefine((value, context) => {
+  const arguments_ = value.arguments;
+  const detailQueue = arguments_.detailQueue;
+  const replayQueue = arguments_.retryReplayQueue ?? [];
+  const detailLength = Array.isArray(detailQueue) ? detailQueue.length : -1;
+  const replayLength = Array.isArray(replayQueue) ? replayQueue.length : -1;
+  const queuesValid = validTemuAfterSalesRetryQueue(detailQueue, false)
+    && validTemuAfterSalesRetryQueue(replayQueue, true);
+  const serials = queuesValid
+    ? [...replayQueue as Array<Record<string, unknown>>, ...detailQueue as Array<Record<string, unknown>>]
+      .map((row) => row.parentAfterSalesSn)
+    : [];
+  const serialized = JSON.stringify(arguments_);
+  if (arguments_.kind !== "after_sales"
+      || arguments_.includeDetails !== true
+      || arguments_.sellerpilotTemuDetailRetryCount !== value.retryCount
+      || value.retryAfterSeconds !== 5 * 2 ** (value.retryCount - 1)
+      || detailLength !== value.deferredCount
+      || replayLength !== value.replayCount
+      || detailLength + replayLength > 200
+      || !queuesValid
+      || new Set(serials).size !== serials.length
+      || !TEMU_AFTER_SALES_RETRYABLE_STATUSES.has(value.providerStatus)
+      || serialized.length > 64_000
+      || /"(phone|phoneNumber|address|contact|email|mobile)"\s*:/iu.test(serialized)
+      || "sellerpilotPaginationDepth" in arguments_
+      || "sellerpilotPaginationEpoch" in arguments_
+      || "sellerpilotPaginationTrail" in arguments_) {
+    context.addIssue({ code: "custom", message: "invalid Temu after-sales detail retry continuation" });
+  }
+});
+
 export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   z.object({
     jobId: z.string().uuid(),
@@ -607,13 +741,16 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       }),
     ]),
     credentialRefresh: credentialRefreshSchema.optional(),
+    credentialBinding: credentialBindingSchema.optional(),
   }),
   z.object({
     jobId: z.string().uuid(),
     claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
+    result: operationResultSchema.optional(),
     credentialRefresh: credentialRefreshSchema.optional(),
+    retryContinuation: temuAfterSalesDetailRetryContinuationSchema.optional(),
   }),
   z.object({
     jobId: z.string().uuid(),
@@ -622,8 +759,34 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     error: z.string().min(1).max(500),
     result: operationResultSchema.optional(),
     credentialRefresh: credentialRefreshSchema.optional(),
+    credentialBinding: credentialBindingSchema.optional(),
   }),
 ]).superRefine((value, context) => {
+  if (value.status === "failed" && value.result
+      && (value.result.ok !== false
+        || (value.result.channel !== "elevenst"
+          && !(value.result.channel === "ebay" && value.result.steps.length === 1 && value.result.steps[0]?.name === "ebay-case-dispute-history-page"))
+        || value.result.operation !== "inquiries.list")) {
+    context.addIssue({
+      code: "custom",
+      path: ["result"],
+      message: "failed result evidence is limited to supported inquiry read envelopes",
+    });
+  }
+  if ("credentialBinding" in value && value.credentialBinding) {
+    const result = "result" in value ? value.result : undefined;
+    if (!result || result.channel !== value.credentialBinding.channel || result.operation !== value.credentialBinding.operation) {
+      context.addIssue({ code: "custom", path: ["credentialBinding"], message: "credential binding result mismatch" });
+    }
+  }
+  if (value.status === "failed"
+      && value.retryContinuation
+      && value.credentialRefresh) {
+    context.addIssue({
+      code: "custom", path: ["credentialRefresh"],
+      message: "Temu detail retry cannot rotate credentials",
+    });
+  }
   if (value.status !== "succeeded" || value.result.operation !== "oauth.exchange") return;
   if (!value.credentialRefresh || value.credentialRefresh.oauthComplete !== true) {
     context.addIssue({

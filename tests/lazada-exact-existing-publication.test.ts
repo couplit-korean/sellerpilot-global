@@ -182,7 +182,7 @@ test("Lazada exact binding accepts only server-owned immutable lineage fields", 
 
 test("serverless gateway rejects a stale exact create before OAuth preparation", () => {
   const source = readFileSync(
-    new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url),
+    new URL("../lib/channels/commerce-provider.ts", import.meta.url),
     "utf8",
   );
   const fence = source.indexOf("lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })");

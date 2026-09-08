@@ -142,5 +142,22 @@ export async function POST(request: Request) {
       return new NextResponse(null, { status: 204 });
     }
   }
+  const { data: rateBudget, error: rateBudgetError } = await serviceClient.rpc(
+    "sellerpilot_service_reserve_provider_rate_budget_v1",
+    { p_token_hash: tokenHash, p_job_id: parsed.data.id, p_claim_token: parsed.data.claim_token },
+  );
+  const rateReceipt = rateBudget && typeof rateBudget === "object" && !Array.isArray(rateBudget)
+    ? rateBudget as Record<string, unknown>
+    : null;
+  if (rateBudgetError
+      || rateReceipt?.contract !== "sellerpilot-provider-rate-budget/1"
+      || !["reserved", "deferred"].includes(String(rateReceipt.status))) {
+    const status = rateBudgetError ? workerRpcErrorStatus(rateBudgetError) : 503;
+    console.error("channel gateway provider rate budget RPC failed", {
+      code: rateBudgetError?.code ?? "invalid_contract", status,
+    });
+    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+  }
+  if (rateReceipt.status === "deferred") return new NextResponse(null, { status: 204 });
   return NextResponse.json(parsed.data, { headers: { "cache-control": "no-store, max-age=0" } });
 }

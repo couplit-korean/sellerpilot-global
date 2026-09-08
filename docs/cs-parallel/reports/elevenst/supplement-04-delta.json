@@ -1,0 +1,153 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-04-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-03-delta.json",
+    "sha256": "c743f4fdb8f14401948c2ff830621ad15a7a194a15044502215c26c81890833f"
+  },
+  "files": [
+    {
+      "path": "app/cs/channels/elevenst/read-state.tsx",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d9a80294a4ab78fca988fe90ff1b73e5633eae0e7634dc966a97a0de16c2d721",
+      "reason": "Render Product Q&A and urgent Alimi remote evidence separately from the same shared CS stored ledger counts."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/read-state-contract.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "aae9bf7f1afbee3d1ed20a547a58a8192db37a65c5793b37ce654d674a917b2f",
+      "reason": "Reject wrong seller scope and contradictory zero/failure evidence at the client boundary."
+    },
+    {
+      "path": "scripts/cs-elevenst-isolated-auth-web-smoke.mjs",
+      "change": "modify_from_integrated_supplement_03",
+      "beforeSha256": "da1873379fb1ed39b104bc0f1ba76ac9231deb758213e28114e9eb38ce81a22b",
+      "afterSha256": "1f61120f767f09d5d55e9519c5e8f783945e76f03cb0d11eb0500c9b13db9419",
+      "reason": "Render the authorized API result through the actual 11st read-state UI and assert stored counts and token non-disclosure."
+    },
+    {
+      "path": "tests/cs-elevenst-isolated-auth-web.test.mjs",
+      "change": "modify_from_integrated_supplement_03",
+      "beforeSha256": "42cb4e7f1c0e3624430b79338815def3b8b32e3e0c51c38d12e0e52bef506441",
+      "afterSha256": "8c4471264387beb9e5271b92799170f4772892aafe8438edd198d467f603c124",
+      "reason": "Require successful UI rendering and exact shared stored counts in the actual Next auth smoke."
+    },
+    {
+      "path": "tests/cs-elevenst-read-state-rpc-db.test.mjs",
+      "change": "modify_from_integrated_supplement_03",
+      "beforeSha256": "b1081e3d028f8cfce8ab3233ae18ff99190075624f2e1ca22a6e4c8f3377c855",
+      "afterSha256": "dc6edf8bf043ba3cfc7299185532c1cf0c4278d17c5631725c0aa57dc259f311",
+      "reason": "Use the integrated migration when present and compare projected storedCount to the exact same support_tickets ledger query."
+    },
+    {
+      "path": "tests/cs-elevenst-read-state-web-panel.test.tsx",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f6f0dab075628a867414838bcc11abb97cf94705d37a141d2ceb655358f3aeff",
+      "reason": "Verify display semantics, authenticated no-store endpoint reuse and malformed auth/seller/empty counterexamples."
+    },
+    {
+      "path": "tests/cs-elevenst-runtime-read-observation.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "39fd5c9f365d64eb8003103c7f01947d9574cd3f610653724a8df89ccdfe9594",
+      "reason": "Reproduce the failed-run observation loss and verify the exact business-error, transport and response-loss behavior after 006."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-006-failed-read-observation-runtime.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "669257f71e7eb9878e09307ab0e0e50a08a9480fab0266963f239fe2bce0c498",
+      "reason": "Preserve exact failed 11st inquiry read evidence through durable completion and retry a lost observation response once."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-006-failed-read-observation-runtime.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "92c358b27e673c19250f5dac5f6719faf9171c8d2a64bef70cbd80646bea97fa",
+      "reason": "Record defect reproduction, exact preimages, safety boundaries and regression evidence."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-007-cs-read-state-panel-common.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "732a2a79b89023e34ac436ba050dfcbacbb98f62b150d36033aa1a9b0a0b3cc7",
+      "reason": "Connect the channel-owned read-state panel to the existing shared CS screen without adding a duplicate API."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-007-cs-read-state-panel-common.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "01c7738a93d43b2c97bae9be89919547a266d0e8de240f7bb68a4e2411fa14f7",
+      "reason": "Record existing endpoint reuse, exact screen preimage and authenticated DB/UI counterexamples."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-isolated-auth-web-20260908-v3.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "441479a25ee6e001bd736eb22fe8e8ec1afe3b7197956202c16abdf2629e0ddc",
+      "reason": "Record the actual Next port 3214 authenticated API and UI rendering evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-04-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "648d649f24ce92707e3be789b32ae96aa1cf6264fd44bebec07cc72db3528152",
+      "reason": "Separate local development, integration proposal, production and provider completion states."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-04-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f17f6a3087712577b5ec726ac18da431a9f8afded1fb9c253325207899bb8f8b",
+      "reason": "Record the latest 97-test regression, worker contracts, type/lint, PGlite and auth-web evidence."
+    }
+  ],
+  "commonProposals": [
+    {
+      "id": "elevenst-006-failed-read-observation-runtime",
+      "state": "not_applied",
+      "patchSha256": "669257f71e7eb9878e09307ab0e0e50a08a9480fab0266963f239fe2bce0c498",
+      "before": {
+        "lib/channels/gateway-contract.ts": "9b16f3e8cd1b8c4163f45ebe8f248257cc180e35a975447ce6058b5661daa516",
+        "lib/channels/serverless-gateway.ts": "bbfd8b122b6dcf3f0d16f760ccd75f7a2db34fd14252c4d2ce1fec3a259d5286",
+        "app/api/channel-gateway/worker/complete/route.ts": "5dd9777403d145791fba116152837a3b53c95059985d9d9eab542b73ab4e57ef"
+      },
+      "after": {
+        "lib/channels/gateway-contract.ts": "3210bedf2fd93342f23ceec0474bac3ccdb3901d84d5eb8e059c950e361fc037",
+        "lib/channels/serverless-gateway.ts": "620adcd291f775cf2ab8d9efd52fcbacac8d82fe62129409d2985ba26447857c",
+        "app/api/channel-gateway/worker/complete/route.ts": "b7218a1075776407d67d1498aec5ee34dde39b98ad0edd6cfe073b335de656f7"
+      }
+    },
+    {
+      "id": "elevenst-007-cs-read-state-panel-common",
+      "state": "not_applied",
+      "patchSha256": "732a2a79b89023e34ac436ba050dfcbacbb98f62b150d36033aa1a9b0a0b3cc7",
+      "before": {
+        "app/cs/archive.tsx": "fc989d35678d98f89f782d8508b9c21c5e99a821df054bdc63d29d377ff4fec0"
+      },
+      "after": {
+        "app/cs/archive.tsx": "9989494b9d6825fb4a9d71f24eddfedd375858f1305f5ebe535632ab1a49a82a"
+      }
+    }
+  ],
+  "alreadyIntegratedLocally": [
+    "supabase/migrations/20260908140411_cs_elevenst_read_state_alimi_ledger.sql",
+    "elevenst-005-read-observation-common"
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

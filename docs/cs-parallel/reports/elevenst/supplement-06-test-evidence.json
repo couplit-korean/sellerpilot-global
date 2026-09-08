@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-06-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T15:43:01Z",
+  "checks": [
+    {
+      "name": "seller-office-current-read",
+      "environment": "Chrome profile CHANGHEE",
+      "sellerId": "couplit",
+      "sellerName": "커플릿",
+      "sellerTalkConversationRoomsVisible": 0,
+      "sellerTalkRetentionNotice": "maximum_three_months",
+      "reviewScope": "2026-09-02/2026-09-09 Asia/Seoul",
+      "reviewVisibleCount": 0,
+      "reviewExcelVisible": true,
+      "providerWrites": 0
+    },
+    {
+      "name": "limited-access-model-db-and-auth-web",
+      "runtime": "Node v22.23.2",
+      "command": "node --import tsx --test tests/cs-elevenst-limited-access.test.ts tests/cs-elevenst-read-state-web-panel.test.tsx tests/cs-elevenst-read-model.test.ts tests/cs-elevenst-read-state-rpc-db.test.mjs tests/cs-elevenst-isolated-auth-web.test.mjs",
+      "exitCode": 0,
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-regression",
+      "runtime": "Node v22.23.2",
+      "target": "/tmp/sellerpilot-elevenst-006-verify.SuOs6E",
+      "exitCode": 0,
+      "passed": 216,
+      "failed": 0,
+      "includes": [
+        "required Product Q&A and shared CS suites",
+        "all cs-elevenst tests",
+        "integrated failed-read sender and observation paths",
+        "authenticated Next read-state smoke"
+      ]
+    },
+    {
+      "name": "actual-next-authenticated-read-state",
+      "runtime": "Next dev",
+      "port": 3214,
+      "exitCode": 0,
+      "unauthorizedStatus": 401,
+      "invalidTokenStatus": 401,
+      "authorizedStatus": 200,
+      "contractVersion": "sellerpilot-elevenst-authenticated-read-state/2",
+      "databaseReadCount": 1,
+      "sellerTalkRemoteCount": null,
+      "reviewRemoteCount": null,
+      "providerWrites": 0,
+      "productionDatabaseWrites": 0,
+      "portCleanAfterExit": true
+    },
+    {
+      "name": "typescript",
+      "command": "tsc --noEmit",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    },
+    {
+      "name": "changed-path-eslint",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    },
+    {
+      "name": "dedicated-workspace-shared-preimage-boundary",
+      "result": "expected_not_integrated",
+      "detail": "The dedicated workspace retains shared 006/008 preimages by ownership. Five shared-integration assertions fail there and pass in the latest integrated temporary copy; no common file was modified in the dedicated workspace."
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

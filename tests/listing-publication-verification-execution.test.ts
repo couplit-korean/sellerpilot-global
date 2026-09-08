@@ -39,7 +39,7 @@ const { executeServerlessGatewayProviderJob } = await import(
 const {
   deriveServerlessCsGatewayCredentials,
   runOneServerlessCsGatewayJob,
-} = await import("../lib/channels/serverless-cs-gateway");
+} = await import("../lib/channels/serverless-gateway");
 
 const JOB_ID = "71000000-0000-4000-8000-000000000001";
 const SOURCE_JOB_ID = "72000000-0000-4000-8000-000000000001";
@@ -2028,6 +2028,9 @@ test("the scheduled worker hydrates the immutable source by owned service RPC an
         }
         if (name === "sellerpilot_touch_serverless_cs_job") {
           return { data: "running", error: null };
+        }
+        if (name === "sellerpilot_service_reserve_provider_rate_budget_v1") {
+          return { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null };
         }
         if (name === "sellerpilot_service_listing_publication_verification_source") {
           return { data: sourceResponse(fixture), error: null };

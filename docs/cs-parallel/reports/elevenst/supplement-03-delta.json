@@ -1,0 +1,122 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-03-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-02-delta.json",
+    "sha256": "cb5e4fccaea59f8b71a151856e787f27f2b527aef0354ac27cd53cab8356506b"
+  },
+  "files": [
+    {
+      "path": "lib/cs/channels/elevenst/read-observation.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "34bb41dfa927cf1f84f75af000b1635c3c775f3a1f51d8fb385624935a48a99e",
+      "reason": "Build a body-free, exact-scope provider read receipt for Product Q&A and Alimi."
+    },
+    {
+      "path": "scripts/cs-elevenst-isolated-auth-web-smoke.mjs",
+      "change": "modify_from_supplement_02",
+      "beforeSha256": "4f53708207e754cfb487cac750bf1332b7d827f1c65286553f559587284a235f",
+      "afterSha256": "35671b6585664dee6056add6b469db6409978b13187a9a103d7e98b39ea6dfc8",
+      "reason": "Launch the actual Next CLI with process.execPath so verification is independent of a shell node PATH entry."
+    },
+    {
+      "path": "tests/cs-elevenst-read-observation.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "510d6d1aa629fc66265619f35e9e341b432cea9ca02d91ff0a7fefe062127223",
+      "reason": "Verify business errors, accepted Alimi row binding, incomplete 5001 evidence and exact scope rejection."
+    },
+    {
+      "path": "tests/cs-elevenst-read-state-rpc-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "028c070f8f7befe4372509da61c2937602b4e42d25308f41a841bdc4abc9aabf",
+      "reason": "Apply the exact SQL draft to PGlite and test ACL, collection, rerequest, system notice, dedupe, account boundary and read projection."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-rpc.md",
+      "change": "modify_from_supplement_02",
+      "beforeSha256": "15eb2ba1786381cdb35f853fd70d2c2dbe09e024ce932b62dcfa25ee98f2dd3e",
+      "afterSha256": "605f13575a93e6e0b18f6beb56362abe84435cb034904e75ea54d8f0be8f2069",
+      "reason": "Replace the shape-only request with the tested ledger, ACL and integration contract."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "72b7296be794cbe1e3c7c40b3b18f8158a396252395675e6bd30a862e1853d23",
+      "reason": "Provide the actual integration-only migration draft for read evidence, Alimi ingestion and admin read RPC."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-005-read-observation-common.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1e7b536cba3c52b88b9b31e602e8b0b3e8e942de7a5ef149b84e5c69b069ebe1",
+      "reason": "Connect both serverless gateway completion paths to the body-free read observation RPC after atomic ingestion."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-005-read-observation-common.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0505dd36d0105f8264839d993caa1bfb1d63fcf41d82755e449719b4470528f6",
+      "reason": "Record exact current-integrated preimages, proposed after hashes, ordering and regression evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-isolated-auth-web-20260908-v2.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9c5f6318e484441dce7e67ef8d0b96410508f98f0aecfcd7094543ffa5b26022",
+      "reason": "Record the repeated actual Next auth route proof on reserved port 3214 with the PATH-independent launcher."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-03-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c2b1b3554e462854e63220e5f2d5ef08f3af955ac0bc5d520a77102f3cf14b8f",
+      "reason": "Record the 40 dedicated checks, SQL/helper proof, common clone typecheck and baseline-separated gateway suite."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-03-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "dbcd404a96ee63228db900928e869275fca8b3898d929a1f8806564c6a312d11",
+      "reason": "Separate implemented local evidence, pending integration, pending production and remaining 11st surfaces."
+    }
+  ],
+  "commonProposals": [
+    {
+      "id": "elevenst-004-read-state-and-alimi-ledger",
+      "state": "not_applied",
+      "sqlSha256": "72b7296be794cbe1e3c7c40b3b18f8158a396252395675e6bd30a862e1853d23"
+    },
+    {
+      "id": "elevenst-005-read-observation-common",
+      "state": "not_applied",
+      "patchSha256": "1e7b536cba3c52b88b9b31e602e8b0b3e8e942de7a5ef149b84e5c69b069ebe1",
+      "before": {
+        "lib/channels/serverless-gateway.ts": "07b99bea1c41a7d2cad259a06302f49f4654d599b1f4fb7197bc9f4ffb49896a",
+        "app/api/channel-gateway/worker/complete/route.ts": "41435b65a23dc4d12a9c47a37f8ac20d572a81afe8af1fb9171d004edb0f7e64",
+        "tests/serverless-cs-gateway.test.ts": "c605db504d54b0bbdffa82a012e39782a138d7202c2a56ad461df910269fe073"
+      },
+      "after": {
+        "lib/channels/serverless-gateway.ts": "4f5b2e784ddba4d793aab837987e9da6ac1063e1b451c6dc680918d2536ff6e7",
+        "app/api/channel-gateway/worker/complete/route.ts": "baaa20bf5eaf501a08d9110955ebc019a2b614983b5836388d15815d695d8c8d",
+        "tests/serverless-cs-gateway.test.ts": "b8259f8ea6bf9ffbb837757e2fcef8e7d181128a3f90d99784ac17ecea6679c5"
+      }
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

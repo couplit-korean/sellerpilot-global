@@ -1,0 +1,201 @@
+diff --git a/lib/channels/protocols.ts b/lib/channels/protocols.ts
+--- a/lib/channels/protocols.ts
++++ b/lib/channels/protocols.ts
+@@ -2123,8 +2123,37 @@ export async function elevenstSellerXmlRequest(input: {
+     ordNoDe: elevenstNamespacedXmlValue(node, "ordNoDe"),
+     ordStlEndDt: elevenstNamespacedXmlValue(node, "ordStlEndDt"),
+   }));
++  const isAlimiList = input.method === "GET"
++    && input.path.startsWith("/rest/alimi/getalimilist/");
++  const alimiNodes = isAlimiList ? elevenstXmlNodes(xml, "alimListInfo") : [];
++  const alimiParseIncomplete = alimiNodes.length > 5_000;
++  const alimListInfos = isAlimiList && !alimiParseIncomplete
++    ? alimiNodes.map((node) => {
++        const replyNodes = elevenstXmlNodes(node, "emerReplyList");
++        return {
++          emerNtceSeq: elevenstNamespacedXmlValue(node, "emerNtceSeq"),
++          emerCtntSeq: elevenstNamespacedXmlValue(node, "emerCtntSeq"),
++          emerTypeCd: elevenstNamespacedXmlValue(node, "emerTypeCd"),
++          emerNtceCrntCd: elevenstNamespacedXmlValue(node, "emerNtceCrntCd"),
++          emerNtceClfNo1: elevenstNamespacedXmlValue(node, "emerNtceClfNo1"),
++          emerNtceSubject: elevenstNamespacedXmlValue(node, "emerNtceSubject"),
++          emerCtnt: elevenstNamespacedXmlValue(node, "emerCtnt"),
++          createDt: elevenstNamespacedXmlValue(node, "createDt"),
++          createTm: elevenstNamespacedXmlValue(node, "createTm"),
++          emerReplyDt: elevenstNamespacedXmlValue(node, "emerReplyDt"),
++          ordNo: elevenstNamespacedXmlValue(node, "ordNo"),
++          ordPrdSeq: elevenstNamespacedXmlValue(node, "ordPrdSeq"),
++          emerReplyList: replyNodes.flatMap((replyNode) => {
++            const emerReplyCtnt = elevenstNamespacedXmlValue(replyNode, "emerReplyCtnt");
++            return emerReplyCtnt ? [{ emerReplyCtnt }] : [];
++          }),
++        };
++      })
++    : [];
+   const replyBoardInfoNo = elevenstNamespacedXmlValue(xml, "brdInfoNo");
+-  const acceptedCode = !resultCode || ["0", "200", "210"].includes(resultCode);
++  const acceptedCode = isAlimiList
++    ? !alimiParseIncomplete && (resultCode === "0" || (!resultCode && alimListInfos.length > 0))
++    : !resultCode || ["0", "200", "210"].includes(resultCode);
+   return {
+     response,
+     text: "",
+@@ -2146,6 +2175,15 @@ export async function elevenstSellerXmlRequest(input: {
+         : {}),
+       products,
+       productQnas,
++      ...(isAlimiList ? {
++        alimListInfos,
++        sellerpilotElevenstAlimiParseContract: "sellerpilot-elevenst-alimi-parser/1",
++        sellerpilotElevenstAlimiObservedRows: alimiNodes.length,
++        sellerpilotElevenstAlimiParseIncomplete: alimiParseIncomplete,
++        ...(alimiParseIncomplete ? {
++          sellerpilotElevenstAlimiParseError: "ELEVENST_ALIMI_ROW_LIMIT_EXCEEDED",
++        } : {}),
++      } : {}),
+     },
+   } satisfies RemoteResponse;
+ }
+diff --git a/lib/channels/inquiry-sync.ts b/lib/channels/inquiry-sync.ts
+--- a/lib/channels/inquiry-sync.ts
++++ b/lib/channels/inquiry-sync.ts
+@@ -10,6 +10,7 @@ import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./n
+ import { originalMessageBody } from "./cs-history-values.ts";
+ import { normalizeSmartstoreInquiries } from "./smartstore-inquiry-history.ts";
+ import { projectShopeeReturnDetail, shopeeReturnDetailRevision } from "./cs/shopee/return-detail.ts";
++import { normalizeElevenstAlimiRow } from "./cs/elevenst/contracts.ts";
+ 
+ export type BaseNormalizedChannelInquiry = {
+   externalTicketId: string;
+@@ -215,6 +216,45 @@ function elevenstKoreaTimestamp(value: unknown) {
+ }
+ 
+ function normalizeElevenst(data: Record<string, unknown>) {
++  const kind = text(data.sellerpilotInquiryKind);
++  if (kind === "urgent_alimi") {
++    const rows = inquiryRows("elevenst", data.alimListInfos);
++    return rows.map((row): BaseNormalizedChannelInquiry => {
++      const record = normalizeElevenstAlimiRow(row);
++      const resolved = ["03", "05", "06"].includes(record.status);
++      const providerContext = {
++        kind: record.kind,
++        emerNtceSeq: record.emerNtceSeq,
++        emerCtntSeq: record.emerCtntSeq,
++        type: record.type,
++        status: record.status,
++        replyDueDate: record.replyDueDate,
++        orderNo: record.orderNo,
++        orderProductSequence: record.orderProductSequence,
++        replySupported: false,
++        sourceDigest: record.sourceDigest,
++        unsequencedReplies: record.replies.map((body) => ({
++          body,
++          reason: "provider_timestamp_unavailable",
++        })),
++      };
++      return {
++        externalTicketId: `elevenst:alimi:${record.emerNtceSeq}`,
++        customerName: record.kind === "urgent_notice" ? "11번가 시스템" : "11번가 고객",
++        subject: record.subject,
++        message: record.body,
++        status: resolved ? "resolved" : "waiting",
++        priority: 1,
++        receivedAt: record.createdAt,
++        remoteMessageId: `alimi:${record.emerNtceSeq}:${record.emerCtntSeq}:inbound`,
++        senderRole: record.kind === "urgent_notice" ? "system" : "customer",
++        ...(record.orderNo ? { externalOrderReference: record.orderNo } : {}),
++        providerContext,
++        replyContext: {},
++      };
++    });
++  }
++  if (kind && kind !== "product_qna") throw new Error("INQUIRY_RECORD_INVALID:elevenstKind");
+   const rows = inquiryRows("elevenst", data.productQnas);
+   return rows.flatMap((row): BaseNormalizedChannelInquiry[] => {
+     const brdInfoNo = text(row.brdInfoNo);
+diff --git a/lib/cs/capability-inventory.ts b/lib/cs/capability-inventory.ts
+--- a/lib/cs/capability-inventory.ts
++++ b/lib/cs/capability-inventory.ts
+@@ -25,7 +25,8 @@ export const csCapabilityInventory:Record<ActiveChannelKey,CsCapabilitySurface[]
+  elevenst:[
+   {key:"product_qna",label:"상품 Q&A",state:"conditional",receive:true,reply:true,history:true,attachments:false,note:"공식 최대 7일 목록 조회와 brdInfoNo·prdNo 결속 답변 구현; couplit 계정 로그인과 API 관리 화면 확인, 운영 Key로 원격 읽기 readback 필요"},
+   {key:"seller_talk",label:"셀러톡",state:"unverified",receive:false,reply:false,history:false,attachments:false,note:"상품 Q&A와 합치지 않음"},
+-  {key:"urgent_notice",label:"긴급알리미",state:"unverified",receive:false,reply:false,history:false,attachments:false,note:"알림과 고객 문의 분리"},
++  {key:"urgent_inquiry",label:"긴급알리미 고객 문의",state:"conditional",receive:true,reply:false,history:true,attachments:false,note:"공식 GET result_code 0과 emerNtceClfNo1 10만 수신; 고객 ID 제외, 답변 PUT은 미개방"},
++  {key:"urgent_notice",label:"긴급알리미 시스템 알림",state:"conditional",receive:true,reply:false,history:true,attachments:false,note:"공식 GET result_code 0과 emerNtceClfNo1 11만 시스템 발신으로 보존; 고객 문의와 분리"},
+   {key:"review",label:"리뷰",state:"provider_unavailable",receive:false,reply:false,history:false,attachments:false,note:"현재 인증된 상품 Q&A 공식 가이드에는 목록 조회·답변 처리만 있으며 구매후기 조회·댓글 계약은 확인되지 않음"},
+  ],
+  smartstore:[
+diff --git a/tests/cs-elevenst-alimi-common-integration.test.ts b/tests/cs-elevenst-alimi-common-integration.test.ts
+new file mode 100644
+--- /dev/null
++++ b/tests/cs-elevenst-alimi-common-integration.test.ts
+@@ -0,0 +1,68 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { executeChannelOperation } from "../lib/channels/operations";
++import { normalizeChannelInquiries } from "../lib/channels/inquiry-sync";
++
++test("11st common Alimi parser and inquiry projection preserve safe exact identifiers", async () => {
++  const originalFetch = globalThis.fetch;
++  globalThis.fetch = async () => new Response(`<?xml version="1.0" encoding="UTF-8"?>
++    <alimi><result_code>0</result_code><alimListInfo>
++      <emerNtceSeq>5590778</emerNtceSeq><emerCtntSeq>1</emerCtntSeq>
++      <emerTypeCd>01</emerTypeCd><emerNtceCrntCd>04</emerNtceCrntCd>
++      <emerNtceClfNo1>10</emerNtceClfNo1><emerNtceSubject>배송 확인 요청</emerNtceSubject>
++      <emerCtnt>확인이 필요합니다.</emerCtnt><createDt>20260908</createDt><createTm>12:30:30</createTm>
++      <emerReplyDt>20260909</emerReplyDt><ordNo>202609080001</ordNo><ordPrdSeq>1</ordPrdSeq>
++      <memId>must-not-survive</memId><memNm>must-not-survive</memNm>
++      <emerReplyList><emerReplyCtnt>과거 답변</emerReplyCtnt></emerReplyList>
++    </alimListInfo></alimi>`, { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } });
++  try {
++    const operation = await executeChannelOperation({
++      channel: "elevenst",
++      operation: "inquiries.list",
++      payload: { api_key: "fixture-key" },
++      arguments: { kind: "urgent_alimi", startDate: "20260810", endDate: "20260908" },
++      environment: "production",
++    });
++    assert.equal(operation.ok, true);
++    assert.doesNotMatch(JSON.stringify(operation), /must-not-survive|memId|memNm/u);
++    const rows = normalizeChannelInquiries("elevenst", operation, "2026-09-08T07:30:00.000Z");
++    assert.equal(rows.length, 1);
++    assert.equal(rows[0]?.externalTicketId, "elevenst:alimi:5590778");
++    assert.equal(rows[0]?.remoteMessageId, "alimi:5590778:1:inbound");
++    assert.equal(rows[0]?.senderRole, "customer");
++    assert.equal(rows[0]?.providerContext.kind, "urgent_inquiry");
++    assert.equal(rows[0]?.providerStatus, "waiting");
++    assert.equal(rows[0]?.providerContext.replySupported, false);
++    assert.deepEqual(rows[0]?.providerContext.unsequencedReplies, [{
++      body: "과거 답변", reason: "provider_timestamp_unavailable",
++    }]);
++    assert.deepEqual(rows[0]?.replyContext, {});
++  } finally {
++    globalThis.fetch = originalFetch;
++  }
++});
++
++test("11st common Alimi parser rejects 5001 rows as incomplete instead of truncating to success", async () => {
++  const originalFetch = globalThis.fetch;
++  const row = `<alimListInfo><emerNtceSeq>1</emerNtceSeq></alimListInfo>`;
++  globalThis.fetch = async () => new Response(
++    `<alimi><result_code>0</result_code>${row.repeat(5_001)}</alimi>`,
++    { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
++  );
++  try {
++    const operation = await executeChannelOperation({
++      channel: "elevenst",
++      operation: "inquiries.list",
++      payload: { api_key: "fixture-key" },
++      arguments: { kind: "urgent_alimi", startDate: "20260810", endDate: "20260908" },
++      environment: "production",
++    });
++    assert.equal(operation.ok, false);
++    assert.equal(operation.steps[0]?.data.sellerpilotElevenstAlimiObservedRows, 5_001);
++    assert.equal(operation.steps[0]?.data.sellerpilotElevenstAlimiParseIncomplete, true);
++    assert.equal(operation.steps[0]?.data.sellerpilotElevenstAlimiParseError, "ELEVENST_ALIMI_ROW_LIMIT_EXCEEDED");
++    assert.deepEqual(operation.steps[0]?.data.alimListInfos, []);
++  } finally {
++    globalThis.fetch = originalFetch;
++  }
++});

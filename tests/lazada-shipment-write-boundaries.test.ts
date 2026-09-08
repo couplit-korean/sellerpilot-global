@@ -77,7 +77,7 @@ test("serverless passes Lazada per-write hooks without consuming a whole-operati
   }).payload;
   const job: GatewayClaim = { id: "51000000-0000-4000-8000-000000000001", claim_token: "52000000-0000-4000-8000-000000000001", credential_id: "53000000-0000-4000-8000-000000000001", channel: "lazada", operation: "shipment.confirm", environment: "production", request: { arguments: shipment.arguments }, credential: attested, attempt_count: 1 };
   await executeServerlessGatewayProviderJob({ job, signal: new AbortController().signal, hooks: {
-    assertLeaseHealthy: async () => {}, beginProviderMutation: async () => { begins += 1; },
+    assertLeaseHealthy: async () => {}, beginProviderMutation: async (options) => { assert.equal(options?.fresh, true); begins += 1; },
     beginCredentialMutation: async () => { throw new Error("unexpected OAuth mutation"); }, stageCredentialRefresh: async () => {},
   } }, async (input) => {
     assert.equal(begins, 0);
@@ -89,13 +89,13 @@ test("serverless passes Lazada per-write hooks without consuming a whole-operati
   assert.equal(begins, 2);
 });
 
-test("local worker forwards uncached Lazada hooks and keeps other operations' original fence", async () => {
-  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
-  assert.match(worker, /const lazadaShipmentBoundary = job.channel === "lazada" && job.operation === "shipment.confirm"/);
-  assert.match(worker, /writeChannelOperations.has\(job.operation\) && !lazadaShipmentBoundary/);
-  assert.match(worker, /providerMutationHooks: \{\s*begin: markExternalWriteStarted,\s*assertLeaseHealthy: assertGatewayLeaseHealthy/);
-  const begin = worker.slice(worker.indexOf("const markExternalWriteStarted = createGatewayMutationBoundary"), worker.indexOf("const markExternalMutationStarted = async"));
-  assert.match(begin, /persist: \(\) => persistWorkerCompletion\(\s*"\/api\/channel-gateway\/worker\/begin-mutation"/);
-  assert.match(begin, /reuseRegistration: job.channel === "smartstore" && job.operation === "listing.update"/);
-  assert.doesNotMatch(begin, /if \(externalWriteStarted\)|fencePromise|providerMutationFenced/);
+test("local shipping worker and serverless share uncached Lazada write fences", async () => {
+  const worker = await readFile(new URL("../scripts/shipping-gateway-job.mjs", import.meta.url), "utf8");
+  const provider = await readFile(new URL("../lib/shipping/provider.ts", import.meta.url), "utf8");
+  assert.match(worker, /executeShippingProviderJob/);
+  assert.match(worker, /createGatewayMutationBoundary/);
+  assert.doesNotMatch(worker, /reuseRegistration: true|fencePromise|providerMutationFenced/);
+  assert.match(provider, /operation.startsWith\("shipment\."\) && !delayedLazadaBoundary/);
+  assert.match(provider, /input.hooks.beginProviderMutation\(\{ fresh: true \}\)/);
+  assert.match(provider, /assertLeaseHealthy: input.hooks.assertLeaseHealthy/);
 });

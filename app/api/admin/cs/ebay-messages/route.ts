@@ -3,7 +3,14 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
 import { readProviderAccountIdentity } from "../../../../../lib/channels/provider-account-identity";
-import { readEbayConversationsPage, readEbayConversationMessagesPage, ebayConversationMessageRole } from "../../../../../lib/channels/ebay-message-pages";
+import {
+  ebayConversationMessageRole,
+  ebayConversationMessagePageSize,
+  ebayConversationPageSize,
+  ebayVerifiedMessageAccountIdentifiers,
+  readEbayConversationMessagesPage,
+  readEbayConversationsPage,
+} from "../../../../../lib/channels/ebay-message-pages";
 import { ebayConversationTypeSchema } from "../../../../../lib/cs/ebay-messages";
 
 export const runtime = "nodejs";
@@ -12,10 +19,12 @@ const querySchema = z.object({
   view: z.enum(["accounts", "conversations", "messages"]).default("accounts"),
   credentialId: z.string().uuid().optional(), type: ebayConversationTypeSchema.default("FROM_MEMBERS"),
   conversationId: z.string().min(1).max(240).optional(),
-  offset: z.string().regex(/^(0|[1-9]\d*)$/).transform(Number).pipe(z.number().int().min(0).max(10_000_000).multipleOf(25)).default(0),
+  offset: z.string().regex(/^(0|[1-9]\d*)$/).transform(Number).pipe(z.number().int().min(0).max(10_000_000)).default(0),
 }).strict().superRefine((value, ctx) => {
   if (value.view !== "accounts" && !value.credentialId) ctx.addIssue({ code: "custom", message: "credential required" });
   if ((value.view === "messages") !== Boolean(value.conversationId)) ctx.addIssue({ code: "custom", message: "conversation selection mismatch" });
+  const pageSize = value.view === "conversations" ? ebayConversationPageSize : ebayConversationMessagePageSize;
+  if (value.view !== "accounts" && value.offset % pageSize !== 0) ctx.addIssue({ code: "custom", message: "invalid page offset" });
 });
 function fail(status: number, code: string, message: string) { return NextResponse.json({ code, message }, { status, headers }); }
 function record(value: unknown): Record<string, unknown> {
@@ -31,7 +40,8 @@ export async function GET(request: Request) {
   if (!parsed.success) return fail(400, "INVALID_QUERY", "eBay 계정·대화·페이지 선택을 확인해 주세요.");
   const query = parsed.data;
   try {
-    // The user-scoped RPC checks ownership before the service can decrypt a key.
+    // The authenticated RPC enforces approved shared-workspace membership.
+    // Its historical name is retained for compatibility with deployed clients.
     const credentials = await admin.userClient.rpc("sellerpilot_list_owned_ebay_message_accounts");
     if (credentials.error || !Array.isArray(credentials.data)) return fail(503, "CREDENTIALS_UNAVAILABLE", "연결 계정을 확인하지 못했습니다.");
     const accounts = credentials.data.map(record).filter(row => row.environment === "production" || row.environment === "sandbox");
@@ -52,8 +62,7 @@ export async function GET(request: Request) {
     if (!identity) return fail(409, "ACCOUNT_UNVERIFIED", "eBay 판매자 계정 인증이 필요합니다.");
     const accountKey = createHash("sha256").update(["ebay", account.environment, identity.subject].join("\u001f")).digest("hex");
     if (accountKey !== account.seller_account_key) return fail(409, "ACCOUNT_UNVERIFIED", "eBay 연결 계정과 인증 정보가 일치하지 않습니다.");
-    const sellerUsername = typeof payload.ebay_user_id === "string" ? payload.ebay_user_id : "";
-    const verifiedIdentifiers = sellerUsername && sellerUsername.trim() === sellerUsername ? [sellerUsername] : [];
+    const verifiedIdentifiers = ebayVerifiedMessageAccountIdentifiers(payload);
     const input = { payload, environment: account.environment as "sandbox" | "production", type: query.type, offset: query.offset };
     const withRole = <T extends Parameters<typeof ebayConversationMessageRole>[0]>(message: T) => ({
       ...message, role: ebayConversationMessageRole(message, query.type, verifiedIdentifiers),

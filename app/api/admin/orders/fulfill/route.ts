@@ -153,7 +153,7 @@ export async function POST(request: Request) {
     .filter((row): row is Credential => Boolean(row) && typeof row === "object" && typeof row.id === "string" && row.environment === "production" && row.status === "active")
     .map((row) => [row.channel, row]));
   const authorization = request.headers.get("authorization") ?? "";
-  const operationUrl = new URL("/api/admin/channel-operations", request.url);
+  const operationUrl = new URL("/api/admin/shipping/operations", request.url);
   const results: ShipmentFulfillmentResult[] = [];
 
   const executeShipmentOperation = async (input: {

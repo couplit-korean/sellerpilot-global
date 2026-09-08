@@ -1,0 +1,63 @@
+{
+  "status": "local_product_cs_shipping_business_code_separation_complete",
+  "verifiedAt": "2026-09-08T18:58:38.603915+00:00",
+  "root": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "checkpoint": "/Users/kimchangheemac/dev/sellerpilot-cs-snapshots/shipping-separation-20260909T032323",
+  "scope": "Independent business code, UI state, provider execution, worker completion and read models; shared auth/protocols/physical gateway infrastructure retained",
+  "regression": {
+    "tests": 656,
+    "pass": 656,
+    "fail": 0,
+    "skipped": 0,
+    "log": "regression.tap"
+  },
+  "businessImportViolations": {
+    "productTocs": 0,
+    "productToshipping": 0,
+    "csToproduct": 0,
+    "csToshipping": 0,
+    "shippingToproduct": 0,
+    "shippingTocs": 0
+  },
+  "typescript": "passed as part of next webpack production build",
+  "nextWebpackBuildExit": 0,
+  "eslint": {
+    "exit": 0,
+    "files": 52,
+    "warnings": 0
+  },
+  "newSqlTests": {
+    "engine": "PGlite",
+    "tests": 4,
+    "pass": 4,
+    "source": "tests/shipping-product-independent-db.test.mjs",
+    "productWithoutShippingAndCsTables": true,
+    "shippingWithoutProductAndCsTables": true,
+    "authDenied": true,
+    "exactAttemptReplayBinding": true
+  },
+  "browser": {
+    "origin": "http://127.0.0.1:3198",
+    "routes": [
+      "/shipping",
+      "/cs",
+      "/?view=products"
+    ],
+    "meaningfulContent": true,
+    "errorOverlay": false,
+    "browserErrors": 0,
+    "localSupabaseConfigured": false,
+    "authenticatedProductionDataVerified": false,
+    "scope": "standalone config-missing states, product login shell and navigation; authenticated data exercised only in local SQL/API fixtures"
+  },
+  "newMigration": "20260908183507_isolate_shipping_and_product_read_models.sql",
+  "newMigrationAppliedTo": "local PGlite only",
+  "liveChannelCalls": 0,
+  "commit": false,
+  "push": false,
+  "deploy": false,
+  "productionDatabaseMutation": false,
+  "customerReply": false,
+  "agentsUsed": false,
+  "runtimeSourceFilesChanged": 55
+}

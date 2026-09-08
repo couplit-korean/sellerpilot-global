@@ -1,0 +1,73 @@
+{
+  "checkedAt": "2026-09-08T16:20:02.123Z",
+  "source": "Compact wait_threads snapshot; task activity does not prove completion",
+  "automation": "sellerpilot-8-cs",
+  "automationStatus": "ACTIVE",
+  "intervalMinutes": 10,
+  "tasks": [
+    {
+      "channel": "coupang",
+      "threadId": "01a08060-5ba0-7b80-b952-51c2062262f2",
+      "hostId": "local",
+      "cursor": "ef456273-c676-4ed4-a6c5-d7266c8780e3:15",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "smartstore",
+      "threadId": "01a08060-2160-74e2-90f8-4eb714ad45a7",
+      "hostId": "local",
+      "cursor": "1d7a3af0-d682-4f2a-b2c1-372ae8f8ba24:16",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "qoo10",
+      "threadId": "01a0805f-ea26-7491-ac59-6852c4f67809",
+      "hostId": "local",
+      "cursor": "80e5c90f-c1d2-4c80-9c2b-db35f65b0499:9",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "elevenst",
+      "threadId": "01a0805f-9610-7320-9931-429340e79aee",
+      "hostId": "local",
+      "cursor": "5e97d050-f974-4c7d-9e4a-2f1129b02c7b:10",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "shopee",
+      "threadId": "01a0805f-62a1-7543-938b-49659ba98352",
+      "hostId": "local",
+      "cursor": "07e25f1b-2334-47c5-b009-c2631a8906a1:9",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "lazada",
+      "threadId": "01a0805f-2511-7463-8a38-3fa28e18b81e",
+      "hostId": "local",
+      "cursor": "2f113ab3-4ea5-47a3-bbcd-75e294e7dac9:12",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "ebay",
+      "threadId": "01a0805e-d2a8-78e3-80c7-25dff033f75f",
+      "hostId": "local",
+      "cursor": "aacbcf5c-ad48-4cb1-a84a-a92248545fc5:11",
+      "status": "active",
+      "turnStatus": "inProgress"
+    },
+    {
+      "channel": "temu",
+      "threadId": "01a0805e-7bd0-7d53-a592-61c56e26c657",
+      "hostId": "local",
+      "cursor": "f1af1e84-720f-4a36-af6c-ee010f6a9e2e:11",
+      "status": "active",
+      "turnStatus": "inProgress"
+    }
+  ]
+}

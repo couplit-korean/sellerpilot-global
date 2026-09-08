@@ -1,0 +1,79 @@
+{
+  "contract": "sellerpilot-lazada-concurrent-revision-reply-fence-verification/1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "checkedAt": "2026-09-08T16:09:13Z",
+  "environment": "local PGlite 0.3.16 single-user/single-connection",
+  "productionMutation": false,
+  "providerCalls": 0,
+  "customerReplies": 0,
+  "results": {
+    "canonicalV3LockOrderStatic": "pass",
+    "directAndGatewayV3SameLockStatic": "pass",
+    "serverlessProviderBoundaryCallPathStatic": "pass",
+    "localProviderBoundaryCallPathStatic": "pass",
+    "sameStatementCutoffRegression": "pass_fail_closed",
+    "recallDraftResolveAiEnqueue": "pass_blocked",
+    "conflictDraftResolveAiEnqueue": "pass_blocked",
+    "normalControl": "pass",
+    "postEnqueueRevisionFence": "pass",
+    "localProviderBoundary": "pass_fail_closed",
+    "serverlessProviderBoundary": "pass_fail_closed",
+    "postProviderStartRevision": "pass_reconciliation_required",
+    "unsafeAcl": "pass",
+    "trueTwoSessionPostgres": "not_run_runtime_unavailable"
+  },
+  "commands": [
+    {
+      "name": "initial fixture permission diagnostic",
+      "exitCode": 1,
+      "result": "2/5; fixture test role could not seed private schema; implementation SQL had already parsed"
+    },
+    {
+      "name": "fixture parameter typing diagnostic",
+      "exitCode": 1,
+      "result": "2/5; fixture jsonb_build_object parameter required explicit text cast"
+    },
+    {
+      "name": "SELLERPILOT_INTEGRATED_ROOT=/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908 node22 --import tsx --test tests/cs-lazada-v3-concurrent-reply-fence.test.mjs",
+      "exitCode": 0,
+      "result": "6/6 pass; 1918.447583 ms"
+    },
+    {
+      "name": "pnpm exec eslint tests/cs-lazada-v3-concurrent-reply-fence.test.mjs",
+      "exitCode": 127,
+      "result": "shell node path unavailable"
+    },
+    {
+      "name": "PATH=node22:$PATH pnpm exec eslint tests/cs-lazada-v3-concurrent-reply-fence.test.mjs",
+      "exitCode": 0,
+      "result": "pass"
+    },
+    {
+      "name": "node22 --import tsx --test --test-concurrency=1 six related 005/008/009/010 files",
+      "exitCode": 0,
+      "result": "24/24 pass; 14257.990708 ms"
+    },
+    {
+      "name": "local PostgreSQL runtime inventory",
+      "exitCode": 0,
+      "result": "postgres/pg_ctl/initdb/docker/supabase local executables not found; PGlite package documents single connection"
+    }
+  ],
+  "boundaries": {
+    "readCursor": "stable as-of unchanged",
+    "mutationProjection": "all currently visible exact-lineage revisions",
+    "linearizationPoint": "provider_mutation_started_at",
+    "afterLinearizationRevision": "reconciliation_required and no automatic retry",
+    "multiSessionClaim": "not proven until isolated real PostgreSQL test"
+  },
+  "sourcePreimages": {
+    "20260908140409_cs_lazada_im_ingest_v3.sql": "b67d6901906ea6022471ba124520ae3a83a17e0708866ede8ab706dd9ddbeed7",
+    "20260908145831_cs_lazada_v3_conversation_projection.sql": "834e098b9509360d9b3286b34237cb8c086ab5627896488cfa61c523425942cb",
+    "20260908153837_cs_lazada_ordinary_workspace_reply_guard.sql": "f6a20872cac2295a37e9c9e6c94989e611765a5d35dca63322d76a0d9025cb20",
+    "lib/channels/serverless-gateway.ts": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf",
+    "app/api/channel-gateway/worker/begin-mutation/route.ts": "2a5253f73363bd98bcf7f34e201738bde27927593be4567d631a782d835ab028",
+    "scripts/ai-cli-worker.mjs": "9174bd48ea554318dc9500021004fa2fd27b1669edef2ec8abc5f4cebaaac102",
+    "app/api/admin/cs/reply/route.ts": "505c25ad45974728de50a487076fe4a19cd792ec3464c1d097cc677ef71aba5d"
+  },
+  "secretsOrCustomerContentRecorded": false
+}

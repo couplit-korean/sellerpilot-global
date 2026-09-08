@@ -1,0 +1,66 @@
+[
+  {
+    "channel": "coupang",
+    "cursor": "ef456273-c676-4ed4-a6c5-d7266c8780e3:5",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "smartstore",
+    "cursor": "1d7a3af0-d682-4f2a-b2c1-372ae8f8ba24:6",
+    "status": {
+      "type": "idle"
+    },
+    "changed": true
+  },
+  {
+    "channel": "qoo10",
+    "cursor": "80e5c90f-c1d2-4c80-9c2b-db35f65b0499:4",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "elevenst",
+    "cursor": "5e97d050-f974-4c7d-9e4a-2f1129b02c7b:6",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "shopee",
+    "cursor": "07e25f1b-2334-47c5-b009-c2631a8906a1:5",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "lazada",
+    "cursor": "2f113ab3-4ea5-47a3-bbcd-75e294e7dac9:5",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "ebay",
+    "cursor": "aacbcf5c-ad48-4cb1-a84a-a92248545fc5:5",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  },
+  {
+    "channel": "temu",
+    "cursor": "f1af1e84-720f-4a36-af6c-ee010f6a9e2e:4",
+    "status": {
+      "type": "idle"
+    },
+    "changed": false
+  }
+]

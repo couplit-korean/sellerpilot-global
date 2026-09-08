@@ -1,0 +1,166 @@
+{
+  "contract": "sellerpilot_ebay_first_read_evidence_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "checkedAt": "2026-09-08T09:54:23.770Z",
+  "range": {
+    "from": "2025-09-08T09:54:10.389Z",
+    "to": "2026-09-08T09:54:10.389Z",
+    "timezone": "UTC",
+    "windowCount": 13,
+    "maximumWindowDays": 30
+  },
+  "credential": {
+    "environment": "production",
+    "marketplaceId": "EBAY_US",
+    "sellerAccountFingerprint": "23d294f164e1e4ef65dd29d46927b6214802b64aed753167b93ad00d2a39557f",
+    "credentialFingerprint": "e31d06626ed8b7bbca66a9aa13357cb0381790fde66b869a83d9831d53cdcf91",
+    "applicationFingerprint": "26512d03d46d68e3e0e624433f2a52b1554e7bf7197079f9678a04d3debf9ff0",
+    "recordedScopes": [
+      "https://api.ebay.com/oauth/api_scope",
+      "https://api.ebay.com/oauth/api_scope/sell.account",
+      "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
+      "https://api.ebay.com/oauth/api_scope/sell.inventory"
+    ],
+    "commerceMessageScopeRecorded": false,
+    "developerPortalAssignment": "unverified_sign_in_required"
+  },
+  "tradingSummary": {
+    "scope": "account_wide_not_same_range_total",
+    "httpStatus": 200,
+    "providerCode": "SUCCESS",
+    "total": 9,
+    "unread": 9
+  },
+  "sameRangeIdSets": {
+    "asq": {
+      "status": "readable_complete",
+      "uniqueCount": 0,
+      "idFingerprints": [],
+      "emptyHasMorePages": 0,
+      "windowObservedUniqueCounts": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+    },
+    "tradingInbox": {
+      "status": "readable_complete",
+      "folderId": 0,
+      "uniqueCount": 9,
+      "idFingerprints": [
+        "161a736393068ee2e2e3e9072033221205380150534a015a7929c51ed349e691",
+        "18bc24d76d15bb27b09cd3914403dc18ae36b2ef264f91cddb2e7e0bddab1fad",
+        "2c68582d7267fcec389592096771ee47af7155038ab1042d965ee9744c63083d",
+        "511380f448185c1ced281c951aa2fe90da89b0ca96e47ee8a5bd63f1c5c9afbe",
+        "56deea0b852ac3027f4fa106abe554293d7bbe70f523444c4a1d4aedf2c128b3",
+        "57ab0f0d84f87ed9cb4105cf13ebb136f62912da28ab9010cb9ce048eaa91e69",
+        "6522e295ec5c4aae34a6ec7dc192c0448acc67a76e9e9563eb2c9245e180641c",
+        "bcc7ef7e87cdc14d4cc5c89ff1c25ad08487ba9ed9ec3cc4bc82b2a8f0f00291",
+        "cff802e4f2c18619a0f6b93c7e819c0b58a91197eb110684ab998352c8669525"
+      ],
+      "externalMessageIdFingerprints": [],
+      "headerDetailMismatchCount": 0,
+      "emptyHasMorePages": 0,
+      "roles": { "customer": 1, "seller": 0, "system": 8, "unverified": 0 },
+      "sameBodyDifferentIdGroups": 0,
+      "windowObservedUniqueCounts": [0, 0, 0, 0, 0, 0, 1, 1, 1, 0, 0, 6, 0],
+      "windowTotals": "unknown_all_13_windows"
+    },
+    "commerceFromMembers": {
+      "status": "authorization_required",
+      "httpStatus": 403,
+      "providerCode": "1100",
+      "providerDomain": "ACCESS",
+      "providerCategory": "REQUEST",
+      "total": null,
+      "conversationIdFingerprints": null,
+      "messageIdFingerprints": null
+    },
+    "commerceFromEbay": {
+      "status": "authorization_required",
+      "httpStatus": 403,
+      "providerCode": "1100",
+      "providerDomain": "ACCESS",
+      "providerCategory": "REQUEST",
+      "total": null,
+      "conversationIdFingerprints": null,
+      "messageIdFingerprints": null
+    }
+  },
+  "officialMappings": {
+    "tradingInboxExternalMessageIdToAsqCount": 0,
+    "mailboxWithoutOfficialAsqMappingCount": 9,
+    "commerceCrossApiMapping": "unavailable_no_official_mapping_and_api_403",
+    "classification": "No source is inferred from count differences. GetMyMessages ExternalMessageID is used only when actually present."
+  },
+  "officialRetentionAndRecovery": {
+    "tradingInbox": {
+      "providerContract": "GetMyMessages messages expire after one year",
+      "observedRange": "full_configured_one_year_in_13_windows",
+      "olderProviderRecovery": "not_guaranteed"
+    },
+    "asq": {
+      "providerContract": "active_listing_questions_with_start_and_end_creation_time_filters",
+      "explicitRetentionFound": false,
+      "observedRange": "full_configured_one_year_in_13_windows"
+    },
+    "commerceMessage": {
+      "providerContract": "commerce.message scope with FROM_MEMBERS and FROM_EBAY filters",
+      "explicitRetentionFound": false,
+      "observedRange": "unavailable_authorization_required"
+    },
+    "casesAndDisputes": {
+      "explicitCollectionRetentionFound": false,
+      "resolutionCaseDiscovery": "corrected_after_capture: GET /post-order/v2/casemanagement/search is supported for sellers; search start is limited to 18 months"
+    },
+    "delayedDelivery": {
+      "officialMaximumRareDelayHours": 24,
+      "recoveryRule": "overlap_last_24_hours_and_dedupe_by_provider_native_id",
+      "currentDelayedMessageObserved": false
+    },
+    "officialSources": [
+      "https://developer.ebay.com/Devzone/xml/docs/Reference/ebay/GetMyMessages.html",
+      "https://developer.ebay.com/devzone/xml/docs/reference/ebay/GetMemberMessages.html",
+      "https://developer.ebay.com/devzone/xml/docs/reference/ebay/types/GetMemberMessagesRequestType.html",
+      "https://developer.ebay.com/develop/api/commerce/message_api/conversation/getConversations",
+      "https://developer.ebay.com/develop/guides/buy/buy-communication-guide",
+      "https://www.developer.ebay.com/support/kb-article?KBid=1400",
+      "https://developer.ebay.com/api-docs/user-guides/static/post-order-user-guide/post-order-resolutions.html",
+      "https://developer.ebay.com/devzone/post-order/post-order_v2_casemanagement_search__get.html",
+      "https://www.developer.ebay.com/Devzone/post-order/concepts/MakingACall.html",
+      "https://developer.ebay.com/develop/api/sell/fulfillment_api"
+    ]
+  },
+  "webReadOnlyObservation": {
+    "profileVerified": "CHANGHEE",
+    "sellerAccountMatched": true,
+    "folderScope": "seller_hub_current_visible_folder_without_date_filter",
+    "fromMembersRows": 0,
+    "fromEbayRows": 21,
+    "fromEbayUnread": 18,
+    "messagesOpened": 0,
+    "readStateMutations": 0,
+    "comparison": "not_same_range_and_no_remote_id_mapping"
+  },
+  "casesAndDisputes": {
+    "paymentDisputeSummary": {
+      "httpStatus": 404,
+      "status": "not_available_or_not_found",
+      "total": null,
+      "meaning": "not_zero_and_not_readable"
+    },
+    "resolutionCases": {
+      "listStatus": "corrected_after_capture: official seller search is supported in production with IAF authorization and an 18-month maximum search age",
+      "knownCaseRead": "supported_in_production_with_case_id",
+      "observedKnownCaseRead": "not_run_no_case_id",
+      "supersededBy": "docs/cs-parallel/reports/ebay/case-dispute-read-evidence.json"
+    }
+  },
+  "safety": {
+    "providerMethods": ["GET", "Trading read calls"],
+    "credentialRefresh": false,
+    "messagesOpened": false,
+    "messagesSent": false,
+    "productionDatabaseWrites": false,
+    "rawCustomerContentPersisted": false,
+    "rawProviderIdsPersisted": false,
+    "sourceHelperSha256": "ffdcdeb8ef752f9a90ad4c7cc3aa32fb33bcfae311617eabf32e5368503aa052"
+  }
+}

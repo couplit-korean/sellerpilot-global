@@ -8,6 +8,7 @@ import {
   coupangRequest,
   runWithChannelRequestSignal,
 } from "../lib/channels/protocols";
+import { replyAcceptanceMarker } from "../lib/channels/reply-verification";
 
 registerHooks({
   resolve(specifier, context, nextResolve) {
@@ -31,7 +32,8 @@ const {
   runServerlessCsGatewayDrain,
   serverlessGatewayExecutionTimeoutMs,
   serverlessCsCurrentInquiryEnqueues,
-} = await import("../lib/channels/serverless-cs-gateway");
+  serverlessCsRepairInquiryEnqueues,
+} = await import("../lib/channels/serverless-gateway");
 
 const CRON_SECRET = "serverless-cs-gateway-cron-secret";
 const JOB_ID = "10000000-0000-4000-8000-000000000001";
@@ -48,7 +50,7 @@ function authorizedRequest(extraHeaders: Record<string, string> = {}) {
 }
 
 function claim(
-  channel: "ebay" | "coupang" | "smartstore" | "qoo10" | "lazada" = "ebay",
+  channel: "ebay" | "coupang" | "elevenst" | "smartstore" | "qoo10" | "lazada" = "ebay",
   operation: ChannelOperationName = "inquiries.list",
 ) {
   return {
@@ -70,6 +72,8 @@ function claim(
           }
           : channel === "coupang"
             ? { inquiryId: "inquiry-1", kind: "product", reply: "bounded test reply" }
+            : channel === "elevenst"
+              ? { brdInfoNo: "81234567", prdNo: "13749310594", reply: "bounded test reply" }
             : channel === "smartstore"
               ? { questionId: "question-1", reply: "bounded test reply" }
               : {
@@ -88,7 +92,7 @@ function claim(
             entriesPerPage: 25,
             pageNumber: 1,
           }
-          : channel === "qoo10"
+        : channel === "qoo10"
             ? {
               params: {
                 search_start_dt: "20260822",
@@ -96,6 +100,8 @@ function claim(
                 proc_status: "S1",
               },
             }
+            : channel === "elevenst"
+              ? { startDate: "20260902", endDate: "20260908", answerStatus: "00" }
             : { query: { pageNum: 1, pageSize: 25, page: 1, size: 25 } },
     },
     credential: channel === "ebay"
@@ -112,7 +118,9 @@ function claim(
           vendor_id: "vendor-1",
           requested_by: "wing-user",
         }
-        : channel === "smartstore"
+        : channel === "elevenst"
+          ? { api_key: "private-elevenst-api-key" }
+          : channel === "smartstore"
           ? {
             client_id: "private-smartstore-client",
             client_secret: "private-smartstore-secret",
@@ -177,15 +185,61 @@ function inquiryListResult(
 }
 
 function inquiryReplyResult(
-  channel: "ebay" | "coupang" | "smartstore" | "qoo10",
+  channel: "ebay" | "coupang" | "elevenst" | "smartstore" | "qoo10",
 ): ChannelOperationResult {
   return {
     ok: true,
     channel,
     operation: "inquiries.reply",
-    steps: [{ name: "inquiry-reply", ok: true, status: 200, data: { accepted: true } }],
+    steps: [{
+      name: "inquiry-reply",
+      ok: true,
+      status: 200,
+      data: {
+        accepted: true,
+        sellerpilotReplyAcceptance: replyAcceptanceMarker(channel, "fixture", {
+          remoteId: "reply-parent-1",
+        }),
+      },
+    }],
     remoteId: "reply-parent-1",
     safeMessage: "Inquiry reply accepted.",
+  };
+}
+
+function elevenstInquiryListResult(): ChannelOperationResult {
+  return {
+    ok: true,
+    channel: "elevenst",
+    operation: "inquiries.list",
+    steps: [{
+      name: "inquiries",
+      ok: true,
+      status: 200,
+      data: {
+        accepted: true,
+        sellerpilotInquiryKind: "product_qna",
+        productQnas: [{
+          answerCont: "",
+          answerDt: "",
+          answerYn: "N",
+          brdInfoClfNo: "13749310594",
+          brdInfoCont: "배송은 언제 시작하나요?",
+          brdInfoNo: "81234567",
+          brdInfoSbjct: "배송 문의",
+          buyYn: "Y",
+          createDt: "2026-09-08 10:15:30",
+          dispYn: "Y",
+          customerName: "11번가 고객",
+          prdNm: "테스트 상품",
+          qnaDtlsCd: "02",
+          qnaDtlsCdNm: "배송",
+          ordNoDe: "202609080001",
+          ordStlEndDt: "2026-09-08",
+        }],
+      },
+    }],
+    safeMessage: "11번가 상품 Q&A 동기화를 완료했습니다.",
   };
 }
 
@@ -231,6 +285,29 @@ function baseRpc(
       claimCount += 1;
       return { data: claimCount === 1 ? claimedJob : null, error: null };
     }
+    if (name === "sellerpilot_service_reserve_provider_rate_budget_v1") {
+      return {
+        data: {
+          contract: "sellerpilot-provider-rate-budget/1",
+          status: "reserved",
+          retryAfterSeconds: 0,
+        },
+        error: null,
+      };
+    }
+    if (name === "sellerpilot_service_reserve_provider_request_rate_budget_v1") {
+      return { data: { contract: "sellerpilot-provider-request-rate-budget/1", status: "reserved", retryAfterMs: 0, operationLane: "cs_current" }, error: null };
+    }
+    if (name === "sellerpilot_service_report_provider_rate_limit_v1") {
+      return {
+        data: {
+          contract: "sellerpilot-provider-rate-budget/1",
+          status: "recorded",
+          retryAfterSeconds: Number(arguments_.p_retry_after_seconds ?? 60),
+        },
+        error: null,
+      };
+    }
     if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
     if (name === "sellerpilot_service_begin_serverless_gateway_provider_mutation") return { data: true, error: null };
     if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") return { data: true, error: null };
@@ -250,6 +327,50 @@ function baseRpc(
     }
     if (name === "sellerpilot_service_complete_serverless_cs_transaction") {
       return { data: { status: "completed" }, error: null };
+    }
+    if (name === "sellerpilot_service_record_elevenst_cs_read_v1") {
+      return {
+        data: { contract: "sellerpilot-elevenst-cs-read-record/1" },
+        error: null,
+      };
+    }
+    if (name === "sellerpilot_service_observe_inquiry_replies_v1") {
+      const received = Array.isArray(arguments_.p_observations)
+        ? arguments_.p_observations.length
+        : 0;
+      return {
+        data: {
+          contract: "sellerpilot-reply-observation-result/1",
+          received,
+          stored: received,
+          matched: 0,
+          unmatched: received,
+          ambiguous: 0,
+        },
+        error: null,
+      };
+    }
+    if (name === "sellerpilot_service_record_cs_history_page_v1") {
+      return {
+        data: {
+          contract: "cs_history_coverage_v1",
+          status: "completed",
+          jobId: claimedJob.id,
+        },
+        error: null,
+      };
+    }
+    if (name === "sellerpilot_service_record_cs_credential_binding_v1") {
+      return {
+        data: {
+          contract: "sellerpilot-cs-credential-binding/1",
+          status: "recorded",
+          bindingCount: Array.isArray((arguments_.p_evidence as { targetFingerprints?: unknown[] } | undefined)?.targetFingerprints)
+            ? (arguments_.p_evidence as { targetFingerprints: unknown[] }).targetFingerprints.length
+            : 0,
+        },
+        error: null,
+      };
     }
     return { data: null, error: { code: "unexpected_rpc" } };
   };
@@ -500,7 +621,7 @@ test("an unknown explicit drain mode fails closed without claiming", async () =>
   assert.equal(rpcCalls, 0);
 });
 
-test("normal drain enqueues only current supported inquiries before eight bounded claims", async () => {
+test("normal drain enqueues only current supported inquiries before bounded concurrent claims", async () => {
   const fixedNow = new Date("2026-08-28T07:00:00.000Z");
   const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
   let activeEnqueues = 0;
@@ -519,7 +640,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
         completedEnqueues += 1;
         return { data: { status: "already_pending" }, error: null };
       }
-      assert.equal(completedEnqueues, 4);
+      assert.equal(completedEnqueues, 10);
       return { data: null, error: null };
     },
   });
@@ -531,9 +652,9 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 4,
+      attempted: 10,
       queued: 0,
-      pending: 4,
+      pending: 10,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -543,7 +664,7 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     jobs: [],
   });
   const enqueues = calls.filter(({ name }) => name === "sellerpilot_service_enqueue_periodic_sync");
-  assert.equal(enqueues.length, 4);
+  assert.equal(enqueues.length, 10);
   assert.equal(maxActiveEnqueues, Math.min(SERVERLESS_CS_ENQUEUE_CONCURRENCY, enqueues.length));
   assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
   assert.equal(
@@ -554,15 +675,15 @@ test("normal drain enqueues only current supported inquiries before eight bounde
     SERVERLESS_CS_DRAIN_CONCURRENCY * 5 > serverlessCsCurrentInquiryEnqueues(fixedNow).length,
     true,
   );
-  assert.equal(SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES, 27);
+  assert.equal(SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES, 79);
   assert.ok(
-    SERVERLESS_CS_DRAIN_CONCURRENCY * 5
+    SERVERLESS_CS_DRAIN_CONCURRENCY * 10
       > SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
   );
   assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
   assert.deepEqual(
     enqueues.map(({ arguments_ }) => arguments_.p_channel).sort(),
-    ["ebay", "qoo10", "qoo10", "qoo10"],
+    ["ebay", "ebay", "ebay", "ebay", "qoo10", "qoo10", "qoo10", "qoo10", "shopee", "shopee"],
   );
   assert.ok(enqueues.every(({ arguments_ }) =>
     arguments_.p_operation === "inquiries.list"
@@ -573,19 +694,28 @@ test("normal drain enqueues only current supported inquiries before eight bounde
       return `${arguments_.p_channel}:${payload.periodicKey}`;
     }).sort(),
     [
-      "ebay:inquiries:0",
+      "ebay:inquiries:asq",
+      "ebay:inquiries:conversation:from_ebay",
+      "ebay:inquiries:conversation:from_members",
+      "ebay:inquiries:mailbox",
       "qoo10:inquiries:0",
       "qoo10:inquiries:1",
       "qoo10:inquiries:2",
+      "qoo10:inquiries:claim:all",
+      "shopee:inquiries:product_review",
+      "shopee:inquiries:return_refund",
     ],
   );
   const serializedEnqueues = JSON.stringify(enqueues);
-  assert.doesNotMatch(serializedEnqueues, /orders\.list|inquiries:history|lazada|shopee|elevenst|temu/i);
-  const ebayEnqueue = enqueues.find(({ arguments_ }) => arguments_.p_channel === "ebay");
-  assert.equal(
-    (ebayEnqueue?.arguments_.p_request_payload as { periodicKey?: string })?.periodicKey,
-    "inquiries:0",
-  );
+  assert.doesNotMatch(serializedEnqueues, /orders\.list|inquiries:history|lazada|elevenst|temu/i);
+  assert.deepEqual(enqueues.filter(({ arguments_ }) => arguments_.p_channel === "ebay")
+    .map(({ arguments_ }) => (arguments_.p_request_payload as { periodicKey?: string }).periodicKey)
+    .sort(), [
+      "inquiries:asq",
+      "inquiries:conversation:from_ebay",
+      "inquiries:conversation:from_members",
+      "inquiries:mailbox",
+    ]);
 });
 
 test("missing generic claim RPC falls back to the inquiries-only compatibility claimant", async () => {
@@ -614,10 +744,10 @@ test("Smartstore and Coupang current reads require explicit static egress", () =
     new Date("2026-08-28T07:00:00.000Z"),
     ["coupang", "smartstore"],
   );
-  assert.equal(enqueues.length, 9);
+  assert.equal(enqueues.length, 18);
   assert.deepEqual(
     enqueues.map(({ channel }) => channel).sort(),
-    ["coupang", "coupang", "coupang", "ebay", "qoo10", "qoo10", "qoo10", "smartstore", "smartstore"],
+    ["coupang", "coupang", "coupang", "coupang", "coupang", "coupang", "ebay", "ebay", "ebay", "ebay", "qoo10", "qoo10", "qoo10", "qoo10", "shopee", "shopee", "smartstore", "smartstore"],
   );
 });
 
@@ -626,14 +756,97 @@ test("explicit Temu static egress enables its current inquiry read", () => {
     new Date("2026-08-28T07:00:00.000Z"),
     ["temu"],
   );
-  assert.equal(enqueues.length, 5);
+  assert.equal(enqueues.length, 11);
   assert.deepEqual(
     enqueues.map(({ channel }) => channel).sort(),
-    ["ebay", "qoo10", "qoo10", "qoo10", "temu"],
+    ["ebay", "ebay", "ebay", "ebay", "qoo10", "qoo10", "qoo10", "qoo10", "shopee", "shopee", "temu"],
   );
   const temu = enqueues.find(({ channel }) => channel === "temu");
   assert.equal(temu?.operation, "inquiries.list");
-  assert.equal(temu?.payload.periodicKey, "inquiries:0");
+  assert.equal(temu?.payload.periodicKey, "inquiries:after_sales");
+  assert.equal(temu?.payload.arguments.includeDetails, true);
+  assert.ok(Number(temu?.payload.arguments.updateAtEnd) < 10_000_000_000);
+});
+
+test("explicit 11st static egress enables the exact Product Q&A current read", () => {
+  const enqueues = serverlessCsCurrentInquiryEnqueues(
+    new Date("2026-09-08T03:00:00.000Z"),
+    ["elevenst"],
+  );
+  const elevenst = enqueues.filter(({ channel }) => channel === "elevenst");
+  assert.equal(elevenst.length, 1);
+  assert.equal(elevenst[0]?.payload.periodicKey, "inquiries:product_qna:all");
+  assert.deepEqual(elevenst[0]?.payload.arguments, {
+    startDate: "20260902", endDate: "20260908", answerStatus: "00",
+  });
+});
+
+test("daily repair pass rechecks Qoo10, Shopee and Temu returns, retained eBay history and Smartstore while rotating one bounded Coupang window", () => {
+  const repair = serverlessCsRepairInquiryEnqueues(
+    new Date("2026-09-06T18:02:00.000Z"),
+    ["coupang", "smartstore", "temu"],
+  );
+  assert.equal(repair.length, 54);
+  assert.equal(repair.filter(({ channel }) => channel === "coupang").length, 8);
+  assert.equal(repair.filter(({ channel }) => channel === "smartstore").length, 2);
+  assert.equal(repair.filter(({ channel }) => channel === "qoo10").length, 4);
+  assert.equal(repair.filter(({ channel }) => channel === "shopee").length, 2);
+  assert.equal(repair.filter(({ channel }) => channel === "temu").length, 1);
+  assert.equal(repair.filter(({ channel }) => channel === "ebay").length, 37);
+  assert.ok(repair.every(({ payload }) => payload.periodicKey.startsWith("inquiries:history:")));
+  const coupangRanges = new Set(repair.filter(({ channel }) => channel === "coupang")
+    .map(({ payload }) => payload.periodicKey.split(":").slice(2, 4).join(":")));
+  assert.equal(coupangRanges.size, 1);
+  assert.deepEqual(serverlessCsRepairInquiryEnqueues(
+    new Date("2026-09-06T18:05:00.000Z"),
+    ["coupang", "smartstore", "temu"],
+  ), []);
+  const repairWithoutStaticEgress = serverlessCsRepairInquiryEnqueues(
+    new Date("2026-09-06T18:02:00.000Z"),
+    [],
+  );
+  assert.equal(repairWithoutStaticEgress.filter(({ channel }) => channel === "qoo10").length, 4);
+  assert.equal(repairWithoutStaticEgress.filter(({ channel }) => channel === "shopee").length, 2);
+  assert.equal(repairWithoutStaticEgress.filter(({ channel }) => channel === "ebay").length, 37);
+  assert.equal(serverlessCsRepairInquiryEnqueues(
+    new Date("2026-09-06T19:02:00.000Z"),
+    ["coupang", "smartstore", "temu"],
+  ).length, 54, "the next KST hour catches up after a missed 03:00 run");
+});
+
+test("11st daily repair offers five disjoint seven-day-or-smaller Product Q&A windows", () => {
+  const repair = serverlessCsRepairInquiryEnqueues(
+    new Date("2026-09-06T18:02:00.000Z"),
+    ["elevenst"],
+  ).filter(({ channel }) => channel === "elevenst");
+  assert.equal(repair.length, 5);
+  assert.ok(repair.every(({ payload }) => payload.periodicKey.endsWith(":product_qna:all")));
+});
+
+test("configured repair enqueues use a daily cooldown with hourly catch-up offers", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    now: () => new Date("2026-09-06T18:02:00.000Z"),
+    staticEgressChannels: ["coupang", "smartstore", "temu"],
+    enableHistoryRepair: true,
+    rpc: async (name, arguments_ = {}) => {
+      calls.push({ name, arguments_ });
+      if (name === "sellerpilot_service_enqueue_periodic_sync") {
+        return { data: { status: "already_pending" }, error: null };
+      }
+      return { data: null, error: null };
+    },
+  });
+  assert.equal(response.status, 200);
+  const enqueues = calls.filter(({ name }) => name === "sellerpilot_service_enqueue_periodic_sync");
+  assert.equal(enqueues.length, 73);
+  const repair = enqueues.filter(({ arguments_ }) =>
+    String((arguments_.p_request_payload as { periodicKey?: string }).periodicKey).startsWith("inquiries:history:"));
+  assert.equal(repair.length, 54);
+  assert.ok(repair.every(({ arguments_ }) => arguments_.p_min_interval_minutes === 1440));
+  assert.ok(enqueues.filter((entry) => !repair.includes(entry))
+    .every(({ arguments_ }) => arguments_.p_min_interval_minutes === 5));
 });
 
 test("fixed-egress claims fail closed before provider execution without runtime attestation", async () => {
@@ -766,9 +979,9 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(body.processed, 1);
   assert.equal(body.needsAttention, true);
   assert.deepEqual(body.enqueue, {
-    attempted: 4,
+    attempted: 10,
     queued: 0,
-    pending: 3,
+    pending: 9,
     notConnected: 0,
     reconnectRequired: 0,
     reconciliationRequired: 0,
@@ -778,7 +991,7 @@ test("one enqueue failure is safely aggregated and does not block an existing qu
   assert.equal(providerCalls, 1);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 1, total: 4 }],
+    ["enqueue", { status: 503, failed: 1, total: 10 }],
   ]);
   assert.doesNotMatch(responseText, /Qoo10 민감 구매자|배송 상태를 알려 주세요|private_provider_body/);
   assert.doesNotMatch(JSON.stringify(logged), /private_provider_body/);
@@ -810,14 +1023,14 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
     processed: 0,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 4,
+      attempted: 10,
       queued: 0,
       pending: 0,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
       fixedEgressRequired: 0,
-      failed: 4,
+      failed: 10,
     },
     needsAttention: true,
     jobs: [],
@@ -825,11 +1038,11 @@ test("a total enqueue transport outage is visible as 503 after bounded drain att
   assert.equal(claimCalls, SERVERLESS_CS_DRAIN_CONCURRENCY);
   assert.deepEqual(logged, [
     ["publication_review_enqueue", { status: 503, code: "unexpected_rpc" }],
-    ["enqueue", { status: 503, failed: 4, total: 4 }],
+    ["enqueue", { status: 503, failed: 10, total: 10 }],
   ]);
 });
 
-test("two fenced jobs run concurrently within eight-worker drain capacity", async () => {
+test("two fenced jobs run concurrently within configured drain capacity", async () => {
   const firstJob = claim("qoo10", "inquiries.list");
   const secondJob = claim("ebay", "inquiries.list");
   secondJob.id = "10000000-0000-4000-8000-000000000002";
@@ -852,6 +1065,9 @@ test("two fenced jobs run concurrently within eight-worker drain capacity", asyn
         const job = jobs[claimIndex] ?? null;
         claimIndex += 1;
         return { data: job, error: null };
+      }
+      if (name === "sellerpilot_service_reserve_provider_rate_budget_v1") {
+        return { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null };
       }
       if (name === "sellerpilot_touch_serverless_cs_job") {
         return { data: "running", error: null };
@@ -919,9 +1135,9 @@ test("inquiry list completion normalizes provider data in the atomic transaction
     processed: 1,
     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
     enqueue: {
-      attempted: 4,
+      attempted: 10,
       queued: 0,
-      pending: 4,
+      pending: 10,
       notConnected: 0,
       reconnectRequired: 0,
       reconciliationRequired: 0,
@@ -1027,13 +1243,76 @@ test("Smartstore customer inquiry arguments and reply lineage survive direct exe
     priority: 3,
     receivedAt: "2026-08-28T01:23:45.000Z",
     remoteMessageId: "987654321",
-    providerContext: { kind: "customer", inquiryNo: "987654321", unsequencedAnswers: [] },
+    providerContext: { kind: "customer", inquiryNo: "987654321", orderReferenceState: "unavailable", unsequencedAnswers: [] },
     replyContext: { kind: "customer", inquiryNo: "987654321" },
     providerStatus: "waiting",
     ticketKind: "conversation",
   }]);
   const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
   assert.doesNotMatch(durableResponse, /배송지를 변경할 수 있나요\?|구매자|배송 문의|987654321/);
+});
+
+test("11st Product Q&A crosses the fixed-egress executor and reaches sanitized atomic ingestion", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const job = claim("elevenst", "inquiries.list");
+  let observedArguments: unknown;
+  const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
+    cronSecret: CRON_SECRET,
+    staticEgressChannels: ["elevenst"],
+    rpc: baseRpc(job, calls),
+    executeProvider: input => executeServerlessCsProviderJob(input, async (operationInput) => {
+      observedArguments = structuredClone(operationInput.arguments);
+      return elevenstInquiryListResult();
+    }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(observedArguments, {
+    startDate: "20260902",
+    endDate: "20260908",
+    answerStatus: "00",
+  });
+  const complete = calls.find(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction");
+  const inquiries = structuredClone(complete?.arguments_.p_normalized_inquiries) as Array<Record<string, unknown>>;
+  assert.match(String(inquiries[0]?.inboundKey ?? ""), /^elevenst:[0-9a-f]{64}$/u);
+  delete inquiries[0]?.inboundKey;
+  assert.deepEqual(inquiries, [{
+    externalTicketId: "elevenst:81234567",
+    externalOrderReference: "202609080001",
+    customerName: "11번가 고객",
+    subject: "배송 문의",
+    message: "배송은 언제 시작하나요?",
+    status: "waiting",
+    priority: 2,
+    receivedAt: "2026-09-08T01:15:30.000Z",
+    remoteMessageId: "qna:81234567:question",
+    senderRole: "customer",
+    providerContext: {
+      kind: "product_qna",
+      brdInfoNo: "81234567",
+      prdNo: "13749310594",
+      qnaTypeCode: "02",
+      qnaType: "배송",
+      buyYn: "Y",
+      dispYn: "Y",
+      answerYn: "N",
+      answerDate: "",
+      orderNo: "202609080001",
+      orderPaymentDate: "2026-09-08",
+      unsequencedAnswers: [],
+    },
+    replyContext: { brdInfoNo: "81234567", prdNo: "13749310594" },
+    providerStatus: "waiting",
+    ticketKind: "conversation",
+  }]);
+  const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+  assert.match(durableResponse, /normalized_inquiries_v1/u);
+  assert.doesNotMatch(durableResponse, /배송은 언제 시작하나요|11번가 고객|81234567|13749310594/u);
+  const readObservation = calls.find(
+    ({ name }) => name === "sellerpilot_service_record_elevenst_cs_read_v1",
+  );
+  assert.deepEqual(readObservation?.arguments_.p_inquiries, []);
+  assert.equal((readObservation?.arguments_.p_observation as { accepted?: boolean }).accepted, true);
+  assert.doesNotMatch(JSON.stringify(readObservation), /배송은 언제 시작하나요|11번가 고객|81234567|13749310594/u);
 });
 
 test("Qoo10 inquiry list keeps the verified one-call contract and stores only normalized PII", async () => {
@@ -1174,13 +1453,17 @@ test("direct Smartstore customer reply crosses the mutation fence before operati
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "operation"]);
 });
 
-for (const channel of ["ebay", "coupang", "smartstore", "qoo10"] as const) {
+for (const channel of ["ebay", "coupang", "elevenst", "smartstore", "qoo10"] as const) {
   test(`${channel} inquiry reply crosses the exact mutation fence before execution`, async () => {
     const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
     let fenceObserved = false;
     const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
       cronSecret: CRON_SECRET,
-      staticEgressChannels: channel === "coupang" || channel === "smartstore" ? [channel] : [],
+      staticEgressChannels: channel === "coupang"
+        || channel === "elevenst"
+        || channel === "smartstore"
+        ? [channel]
+        : [],
       rpc: baseRpc(claim(channel, "inquiries.reply"), calls),
       executeProvider: async ({ hooks }) => {
         await hooks.beginProviderMutation();
@@ -1516,12 +1799,12 @@ test("request deadline composition is isolated across concurrent provider execut
   }
 });
 
-test("bounded drain route is direct, eight-job, Node-only, and excludes child workers", async () => {
+test("bounded drain route is direct, uses configured capacity, is Node-only, and excludes child workers", async () => {
   const [route, gateway, gatewayRuntime, provider, protocols] = await Promise.all([
     readFile(new URL("../app/api/internal/channel-gateway-drain/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-cs-gateway.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-cs-gateway-runtime.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
+    Promise.all(["../lib/channels/serverless-gateway.ts", "../lib/cs/operations/schedule.ts"].map(path => readFile(new URL(path, import.meta.url), "utf8"))).then(parts => parts.join("\n")),
+    readFile(new URL("../lib/channels/serverless-gateway-runtime.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/commerce-provider.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8"),
   ]);
   assert.match(route, /export const runtime = "nodejs"/);
@@ -1532,11 +1815,12 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(gateway, /SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS = 50_000/);
   assert.match(gateway, /serverlessGatewayExecutionTimeoutMs\(/);
   assert.match(gateway, /SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3/);
-  assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 8/);
-  assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 27/);
+  assert.match(gateway, /SERVERLESS_CS_DRAIN_CONCURRENCY = 10/);
+  assert.match(gateway, /SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES = 79/);
   assert.match(gatewayRuntime, /releaseId: process\.env\.SELLERPILOT_RELEASE_SHA/);
   assert.match(gatewayRuntime, /vercelGitCommitSha: process\.env\.VERCEL_GIT_COMMIT_SHA/);
   assert.match(gatewayRuntime, /requireActiveRuntime: true/);
+  assert.match(gatewayRuntime, /enableHistoryRepair: true/);
   assert.match(gateway, /sellerpilot_claim_serverless_gateway_job/);
   assert.match(gateway, /sellerpilot_claim_serverless_cs_job/);
   assert.match(gateway, /sellerpilot_claim_ebay_asq_serverless_job/);
@@ -1545,36 +1829,47 @@ test("bounded drain route is direct, eight-job, Node-only, and excludes child wo
   assert.match(provider, /"listing\.create"[\s\S]*"elevenst"/);
   assert.match(provider, /import \{ channelPriceUpdateRelease \} from "\.\/price-update-release"/);
   assert.match(provider, /if \(operation === "price\.update"\) return channelPriceUpdateRelease\(channel\)\.available/);
-  assert.match(protocols, /AsyncLocalStorage<AbortSignal>/);
+  assert.match(protocols, /AsyncLocalStorage<Readonly<ProviderTransportContext>>/);
   assert.match(protocols, /AbortSignal\.any\(\[ownerSignal, timeoutSignal\]\)/);
 });
 
 
-test("Lazada partial V2 ingestion does not complete a gateway job; complete retries avoid double ingestion", async () => {
+test("Lazada partial V3 ingestion does not complete a gateway job; complete retries avoid double ingestion", async () => {
   for (const status of ["partial", "complete"]) {
     const calls: Array<{name:string;arguments_:Record<string,unknown>}> = [];
     const lazadaJob = { ...claim("lazada"), request: { arguments: { bootstrap: true } } };
     const response = await runOneServerlessCsGatewayJob({
       rpc: baseRpc(lazadaJob, calls, {
-        sellerpilot_service_lazada_quarantine_ready: () => ({ data: true, error: null }),
-        sellerpilot_service_ingest_lazada_gateway_v2: () => ({ data: { contract: "lazada_ingest_v2", status, normalCount: 1, pendingCount: status === "partial" ? 1 : 0 }, error: null }),
+        sellerpilot_service_store_lazada_im_raw_event_v1: () => ({ data: {
+          contract: "lazada_im_raw_inbox_v1", status: "stored",
+          id: "00000000-0000-4000-8000-000000000099", processingStatus: "pending",
+        }, error: null }),
+        sellerpilot_service_mark_lazada_im_raw_event_v1: (arguments_) => ({ data: {
+          contract: "lazada_im_raw_mark_v1", status: arguments_.p_processing_status, id: arguments_.p_id,
+        }, error: null }),
+        sellerpilot_service_lazada_im_ingest_ready_v3: () => ({ data: true, error: null }),
+        sellerpilot_service_lazada_quarantine_ready_v3: () => ({ data: true, error: null }),
+        sellerpilot_service_ingest_lazada_gateway_v3: () => ({ data: { contract: "lazada_ingest_v3", status, normalCount: 1, pendingCount: status === "partial" ? 1 : 0 }, error: null }),
       }),
       executeProvider: async () => ({ ok: true, channel: "lazada", operation: "inquiries.list", safeMessage: "fixture", steps: [{ name: "inquiries-message:s:1", ok: true, status: 200, data: { sellerpilotSession: { session_id: "s" }, data: { message_list: [
         { message_id: "buyer", from_account_type: 1, send_time: "2026-09-05T09:01:00Z", content: { txt: "buyer" } },
         { message_id: "seller", from_account_type: 2, content: { txt: "unordered original" } },
       ] } } }] }),
     }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
-    const ingest = calls.find(call => call.name === "sellerpilot_service_ingest_lazada_gateway_v2");
+    const ingest = calls.find(call => call.name === "sellerpilot_service_ingest_lazada_gateway_v3");
     assert.ok(ingest);
     assert.equal(ingest.arguments_.p_job_id, JOB_ID);
     assert.equal(ingest.arguments_.p_claim_token, CLAIM_TOKEN);
     assert.equal((ingest.arguments_.p_inquiries as unknown[]).length, 2);
     const completion = calls.find(call => call.name === "sellerpilot_service_complete_serverless_cs_transaction");
+    const rawStore = calls.find(call => call.name === "sellerpilot_service_store_lazada_im_raw_event_v1");
+    assert.equal(rawStore?.arguments_.p_source_kind, "history_page");
     if (status === "partial") {
       assert.equal(completion, undefined);
       assert.equal(response.status, 503);
     } else {
       assert.ok(completion);
+      assert.ok(calls.some(call => call.name === "sellerpilot_service_mark_lazada_im_raw_event_v1"));
       assert.deepEqual(completion.arguments_.p_normalized_inquiries, []);
       assert.equal(response.status, 200);
     }
@@ -1596,9 +1891,9 @@ for (const allowSecondWrite of [true, false]) {
         }),
       }),
       executeProvider: async ({ hooks }) => {
-        await hooks.beginProviderMutation();
+        await hooks.beginProviderMutation({ fresh: true });
         providerWrites += 1; // Pack has already changed remote state.
-        await hooks.beginProviderMutation();
+        await hooks.beginProviderMutation({ fresh: true });
         providerWrites += 1; // RTS must not run after a newly denied fence.
         return { ok: true, channel: "lazada", operation: "shipment.confirm", steps: [{ name: "shipment", ok: true, status: 200, data: { accepted: true } }], remoteId: "test-order-1", safeMessage: "Test shipment complete." };
       },
@@ -1624,4 +1919,74 @@ test("non-shipment operations retain their existing one-time provider fence", as
   assert.equal(response.status, 200);
   assert.equal((await response.json() as { status: string }).status, "succeeded");
   assert.equal(calls.filter(({ name }) => name === "sellerpilot_service_begin_serverless_gateway_provider_mutation").length, 1);
+});
+
+test("a denied provider rate reservation is durably deferred before execution", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  let executed = false;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(claim("ebay", "inquiries.list"), calls, {
+      sellerpilot_service_reserve_provider_rate_budget_v1: () => ({
+        data: {
+          contract: "sellerpilot-provider-rate-budget/1",
+          status: "deferred",
+          retryAfterSeconds: 17,
+        },
+        error: null,
+      }),
+    }),
+    executeProvider: async () => {
+      executed = true;
+      return inquiryListResult("ebay");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+  assert.equal(response.status, 200);
+  assert.equal(executed, false);
+  assert.equal((await response.json() as { deferred: number; retryAfterSeconds: number }).deferred, 1);
+  assert.equal(calls.some(({ name }) => name === "sellerpilot_touch_serverless_cs_job"), false);
+});
+
+test("the first HTTP request consumes the job reservation and later requests reserve individually", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(claim("ebay", "inquiries.list"), calls),
+    executeProvider: async ({ hooks }) => {
+      await hooks.reserveProviderRequest?.();
+      await hooks.reserveProviderRequest?.();
+      await hooks.reserveProviderRequest?.();
+      return inquiryListResult("ebay");
+    },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+  assert.equal(response.status,200);
+  assert.equal(calls.filter(({name})=>name==="sellerpilot_service_reserve_provider_rate_budget_v1").length,1);
+  assert.equal(calls.filter(({name})=>name==="sellerpilot_service_reserve_provider_request_rate_budget_v1").length,2);
+});
+
+test("a retry-safe 429 is requeued through the durable rate ledger without completion", async () => {
+  const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
+  const limited = inquiryListResult("ebay");
+  limited.ok = false;
+  limited.steps[0] = {
+    ...limited.steps[0],
+    ok: false,
+    status: 429,
+    data: { responseHeaders: { "retry-after": "23" } },
+  };
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(claim("ebay", "inquiries.list"), calls, {
+      sellerpilot_service_report_provider_rate_limit_v1: (arguments_) => ({
+        data: {
+          contract: "sellerpilot-provider-rate-budget/1",
+          status: "deferred",
+          retryAfterSeconds: arguments_.p_retry_after_seconds,
+        },
+        error: null,
+      }),
+    }),
+    executeProvider: async () => limited,
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+  const body = await response.json() as { deferred: number; retryAfterSeconds: number };
+  assert.equal(body.deferred, 1);
+  assert.equal(body.retryAfterSeconds, 23);
+  assert.equal(calls.some(({ name }) => name === "sellerpilot_service_complete_serverless_cs_transaction"), false);
 });

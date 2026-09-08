@@ -1,0 +1,32 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 14px 0;
+}
+
+.filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+  color: #526078;
+  font-size: 12px;
+}
+
+.filters input {
+  max-width: 100%;
+  padding: 10px;
+  border: 1px solid #c6cfda;
+  border-radius: 8px;
+  background: white;
+  color: #17243a;
+  font: inherit;
+}
+
+@media (max-width: 600px) {
+  .filters label,
+  .filters button {
+    width: 100%;
+  }
+}

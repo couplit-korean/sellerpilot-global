@@ -1,0 +1,21 @@
+# 공통 변경 요청 temu-001
+
+- 목적: 고정 egress 설정만으로 Temu CS job이 활성화되지 않도록 현재 app/compliance/security/seller/permission/scope를 provider 증거와 결속해 fail-closed 처리한다.
+- 요청 채널: temu
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-channel-gateway-result/1`
+- 수정할 공통 파일과 함수: `lib/channels/serverless-cs-gateway-runtime.ts`의 runtime config parser, `lib/channels/serverless-cs-gateway.ts`의 Temu enqueue/claim gate, 필요 시 공통 credential 상태 readback 경로
+- 현재 파일 SHA-256: `lib/channels/serverless-cs-gateway-runtime.ts` `9bb618dada44af001955cbbc9711c08fd166e14e956658e83a48160a9544dae2`; `lib/channels/serverless-cs-gateway.ts` `81362d608f9e7f90b979e71c7a63aff2c57a6e31ddcd7649834e2a2fc5be30dd`
+- DB 객체(해당 시 이름과 signature): 기존 credential/scope 조회 객체를 재사용하되, provider UI/API에서 검증된 상태를 보관할 공통 객체가 없다면 통합 담당이 별도 migration 번호와 ACL을 배정한다.
+- 기존 동작: `staticEgressChannels`에 `temu`가 있으면 current inquiry enqueue가 가능하고, fixed-egress attestation은 확인하지만 Partner 앱 활성/심사/판매자 승인/after-sales permission을 provider 실행 전에 확인하지 않는다.
+- 문제를 재현하는 최소 입력: `staticEgressChannels:["temu"]`이고 app=`Inactive`, compliance=`Rejected`, seller authorization=`Rejected`, permission packages=`[]`인 상태.
+- 원하는 동작: enqueue와 provider 실행 양쪽에서 최신 검증 상태가 모두 `Active/Approved/Approved`, region과 seller credential scope가 일치하고 `Semi Aftersales Management View` 또는 `Aftersales Management View`가 있을 때만 `after_sales`를 허용한다. evidence가 없거나 만료되면 차단 사유 코드를 노출하고 provider 요청은 0회여야 한다.
+- 전용 모듈 경로와 export: `lib/channels/cs/temu/runtime-readiness.ts`의 `temuCsReadiness`
+- 기존/새 입력·출력 계약: 기존 `{staticEgressChannels}` → 새 `{staticEgressChannels, temuRuntimeState}`. 출력에는 `TEMU_APP_INACTIVE`, `TEMU_COMPLIANCE_NOT_APPROVED`, `TEMU_SECURITY_QUESTIONNAIRE_NOT_APPROVED`, `TEMU_SELLER_AUTHORIZATION_NOT_APPROVED`, `TEMU_SELLER_SCOPE_MISMATCH`, `TEMU_AFTER_SALES_VIEW_PERMISSION_MISSING` 중 해당 blocker를 포함한다.
+- 최소 변경안: 공통 runtime parser가 검증 시각/출처/region/seller hash/permission package를 읽고 `temuCsReadiness("after_sales", state)`를 enqueue와 execute 직전에 각각 호출한다. 사용자 입력 문자열만으로 Approved를 만들지 않는다.
+- 다른 채널 영향: 없음. Temu `inquiries.list`에만 추가 gate를 둔다.
+- 상품/주문/배송 mutation 영향: 없음. read-only 문의 enqueue를 더 엄격하게 차단한다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-temu-history-runtime-event.test.ts tests/serverless-cs-gateway.test.ts`
+- migration 선행/preimage/ACL 요구: 상태 저장이 필요하면 service role write/admin read-only로 제한하고 원본 token, IP, 고객정보는 저장하지 않는다. live provider evidence의 만료 정책이 선행돼야 한다.
+- 우선순위: 첫 실제 읽기/웹 차단
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 미반영

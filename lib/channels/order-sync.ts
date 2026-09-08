@@ -1,6 +1,6 @@
 import "server-only";
 import type { ActiveChannelKey } from "./catalog";
-import type { ChannelOperationResult } from "./operations";
+import type { ShippingOperationResult as ChannelOperationResult } from "../shipping/contracts";
 import { firstFiniteNonNegative } from "./normalize-value";
 import { createTimestampNormalizer } from "./normalization-time";
 import { lazadaShipmentItemIds } from "./shipment-draft";

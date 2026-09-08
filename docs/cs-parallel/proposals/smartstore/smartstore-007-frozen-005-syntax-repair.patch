@@ -1,0 +1,8 @@
+diff --git a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+--- a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
++++ b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+@@ -68,3 +68,4 @@ export async function POST(request: Request) {
+     message: "다음 스마트스토어 읽기 창을 접수하지 못했습니다." }, { status: 409, headers });
+   return NextResponse.json({ ok: true, checkpointBeforeEnqueue: resolved.checkpoint,
+     historyBackfill: data, acceptedNotCompleted: true }, { status: 202, headers });
++}

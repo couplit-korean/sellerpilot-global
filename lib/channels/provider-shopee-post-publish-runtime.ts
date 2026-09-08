@@ -1,4 +1,4 @@
-import type { ChannelOperationResult } from "./operations";
+import type { ChannelOperationResult } from "./commerce-operations";
 import {
   listingRemoteStateFulfillsOperation,
   listingRemoteStateMatchesOperation,

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "submission": "20260908-v5-external-worker-retry",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+  "branch": "codex/cs-temu-v1",
+  "port": 3218,
+  "previousSubmissionFrozen": "docs/cs-parallel/reports/temu/20260908-v4-rpc-shape/delta.json",
+  "proposalFiles": {
+    "docs/cs-parallel/proposals/temu/005-external-worker-detail-retry.md": "e73661810673d6a9b9ef3b4c0f64acdfbdea288fd6918b051ac9b0d8ac7fe12e",
+    "docs/cs-parallel/proposals/temu/patches/temu-007-external-worker-detail-retry.patch": "b60734412ea35a8486d24a0a8c7f5281794b884325e9977d22b4c3053d2c3ea6",
+    "docs/cs-parallel/proposals/temu/tests/temu-007-external-worker-detail-retry.test.ts": "b97eca451669d92bf1a988f2339ed71b077226d8c0860d917ff53a47032e1b7f"
+  },
+  "commonTransitions": {
+    "app/api/channel-gateway/worker/complete/route.ts": {
+      "beforeSha256": "eead0bd2e6619093fe9ca229460c05f11f8b81f1b01be7823136bf4eb60b3160",
+      "afterSha256": "8d3c1b41f5db38c4eb6275ab82b7014206ba108d362c7200ffdc045a610bdd96"
+    },
+    "lib/channels/gateway-contract.ts": {
+      "beforeSha256": "3210bedf2fd93342f23ceec0474bac3ccdb3901d84d5eb8e059c950e361fc037",
+      "afterSha256": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4"
+    },
+    "scripts/ai-cli-worker.mjs": {
+      "beforeSha256": "354d75b065eba9e266978820915c7e53c7dae8d907e1db3b058c01340fb4541c",
+      "afterSha256": "8bbff07389d304b5c2a7149dfe911cc48edae6d59448f8dcb046f35f81324563"
+    }
+  },
+  "verification": {
+    "actualPostEntrypointFixture": "6/6 passed",
+    "temuAndGatewayRegressions": "64/64 passed",
+    "total": "70/70 passed",
+    "proposalPatchApply": "passed",
+    "isolatedPatchedIntegrationTypecheck": "passed",
+    "targetedLint": "passed",
+    "originalCommonFilesModified": false
+  },
+  "external": {
+    "providerApiReads": 0,
+    "providerMutations": 0,
+    "customerReplies": 0,
+    "productionDatabaseChanges": 0,
+    "credentialChanges": 0,
+    "deployments": 0,
+    "buyerChatImplemented": false
+  }
+}

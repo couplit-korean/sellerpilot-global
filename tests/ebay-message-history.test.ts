@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { ebayMessageScope, hasRecordedEbayMessageScope, probeEbayMessageAccess } from "../lib/channels/ebay-message-history";
+import {
+  ebayMessageScope,
+  hasRecordedEbayMessageScope,
+  probeEbayMessageAccess,
+  probeEbayTradingMyMessages,
+} from "../lib/channels/ebay-message-history.ts";
 
 const payload = { access_token: "fixture-secret", scopes: ebayMessageScope };
 async function probe(body: unknown, status = 200) {
@@ -31,9 +36,18 @@ test("empty successful read reports zero without claiming history or reply compl
 });
 
 test("probe exposes only counts and HTTP evidence, never customer bodies or identifiers", async () => {
-  const result = await probe({ conversations: [{ conversationId: "private-id", latestMessage: { messageBody: "private customer body" } }], total: 17, limit: 1, offset: 0, next: "https://attacker.invalid/private" });
+  const result = await probe({ conversations: [{ conversationId: "private-id", latestMessage: { messageBody: "private customer body" } }], total: 17, limit: 1, offset: 0, next: "https://api.ebay.com/commerce/message/v1/conversation?conversation_type=FROM_MEMBERS&limit=1&offset=1" });
   assert.deepEqual(result, { recordedScope: true, httpStatus: 200, status: "readable", pageCount: 1, total: 17, hasMore: true });
-  assert.doesNotMatch(JSON.stringify(result), /private|fixture-secret|attacker/);
+  assert.doesNotMatch(JSON.stringify(result), /private|fixture-secret/);
+});
+
+test("probe keeps an omitted total unknown and validates next before claiming continuation", async () => {
+  assert.deepEqual(await probe({ conversations: [], limit: 1, offset: 0 }), {
+    recordedScope: true, httpStatus: 200, status: "readable", pageCount: 0, total: null, hasMore: false,
+  });
+  const hostile = await probe({ conversations: [], limit: 1, offset: 0, next: "https://attacker.invalid/private?conversation_type=FROM_MEMBERS&limit=1&offset=1" });
+  assert.equal(hostile.status, "unverified");
+  assert.equal(hostile.total, null);
 });
 
 test("HTTP rejection is not an empty mailbox and API errors are not exposed", async () => {
@@ -53,4 +67,27 @@ test("malformed or inconsistent successful pages stay unverified", async () => {
     { conversations: [], total: "0", limit: 1, offset: 0 },
     { conversations: [{}, {}], total: 2, limit: 1, offset: 0 },
   ]) assert.equal((await probe(body)).status, "unverified");
+});
+
+test("Trading mailbox probe returns counts only and keeps the call read-only", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(init?.method, "POST");
+    assert.equal(new Headers(init?.headers).get("x-ebay-api-call-name"), "GetMyMessages");
+    const body = String(init?.body ?? "");
+    assert.match(body, /<DetailLevel>ReturnSummary<\/DetailLevel>/);
+    assert.doesNotMatch(body, /ReturnMessages|ReturnHeaders|MessageIDs|StartTime|EndTime/);
+    return new Response(`<?xml version="1.0"?><GetMyMessagesResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><Summary><NewMessageCount>18</NewMessageCount><TotalMessageCount>21</TotalMessageCount><FlaggedMessageCount>0</FlaggedMessageCount><NewHighPriorityCount>0</NewHighPriorityCount><TotalHighPriorityCount>0</TotalHighPriorityCount></Summary></GetMyMessagesResponse>`, { status: 200 });
+  };
+  try {
+    const result = await probeEbayTradingMyMessages({
+      payload: { access_token: "fixture-secret", marketplace_id: "EBAY_US" },
+      environment: "production",
+      now: new Date("2026-09-07T00:00:00Z"),
+    });
+    assert.deepEqual(result, { httpStatus: 200, status: "readable", pageCount: 0, total: 21, unread: 18 });
+    assert.doesNotMatch(JSON.stringify(result), /private|fixture/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

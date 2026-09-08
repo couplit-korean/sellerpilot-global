@@ -1,0 +1,18 @@
+--- a/app/cs/archive.tsx
++++ b/app/cs/archive.tsx
+@@ -14,6 +14,7 @@
+ import { CsOrderBindingHealth } from "./order-binding-health";
+ import { CsRecoveryReadiness } from "./recovery-readiness";
+ import { ShopeeHistoryProgress } from "./channels/shopee/history-progress";
++import { ElevenstReadStatePanel } from "./channels/elevenst/read-state";
+ import styles from "./archive.module.css";
+ 
+ type FetchArchive=(input:string,init?:RequestInit)=>Promise<Response>;
+@@ -42,6 +43,6 @@
+   }catch{if(!abort.signal.aborted&&run===generation.current){setPage(null);setSelected(null);setError("보관 문의 검색에 실패했습니다. 다시 검색해 주세요.");}}
+   finally{if(run===generation.current)setLoading(false);}
+  };
+- return <><CsCapabilityInventory /><CsCredentialBindings authenticatedFetch={authenticatedFetch} /><CsScopeHealth authenticatedFetch={authenticatedFetch} /><CsOrderBindingHealth authenticatedFetch={authenticatedFetch} /><CsHistoryCoverage authenticatedFetch={authenticatedFetch} /><ShopeeHistoryProgress authenticatedFetch={authenticatedFetch} /><CsImportStaging authenticatedFetch={authenticatedFetch} /><CsRecoveryReadiness authenticatedFetch={authenticatedFetch} /><LazadaRawInbox authenticatedFetch={authenticatedFetch} /><LazadaQuarantine authenticatedFetch={authenticatedFetch} /><details className={`panel ${styles.archive}`}><summary>전체 보관 문의 검색 · 과거 대화 보기</summary>
++ return <><CsCapabilityInventory /><ElevenstReadStatePanel authenticatedFetch={authenticatedFetch} /><CsCredentialBindings authenticatedFetch={authenticatedFetch} /><CsScopeHealth authenticatedFetch={authenticatedFetch} /><CsOrderBindingHealth authenticatedFetch={authenticatedFetch} /><CsHistoryCoverage authenticatedFetch={authenticatedFetch} /><ShopeeHistoryProgress authenticatedFetch={authenticatedFetch} /><CsImportStaging authenticatedFetch={authenticatedFetch} /><CsRecoveryReadiness authenticatedFetch={authenticatedFetch} /><LazadaRawInbox authenticatedFetch={authenticatedFetch} /><LazadaQuarantine authenticatedFetch={authenticatedFetch} /><details className={`panel ${styles.archive}`}><summary>전체 보관 문의 검색 · 과거 대화 보기</summary>
+   <p>이미 수집한 문의와 판매자 답변을 전체 기간에서 검색합니다. 기간은 한국 시간의 문의 등록일 기준입니다.</p>
+   <form className={styles.filters} onSubmit={event=>{event.preventDefault();void search();}}>

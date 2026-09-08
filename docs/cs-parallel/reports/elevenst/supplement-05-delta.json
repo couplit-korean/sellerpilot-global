@@ -1,0 +1,112 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-05-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-04-delta.json",
+    "sha256": "be04d11c6b9ac4210e8c2e25f259f131f565ff17b6cc6e9ab4c332213c5c478b"
+  },
+  "files": [
+    {
+      "path": "lib/channels/cs/elevenst/worker-completion.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e2677956574e94a91eee94f3090df79de990e42f3a3387a176cc46708bd44566",
+      "reason": "Build the actual failed worker payload with a minimal 11st business-500 result, preserve Temu continuation, and normalize failed storage."
+    },
+    {
+      "path": "tests/cs-elevenst-worker-failed-completion.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "632d86abfcb6fd9f276ed1e5cf3c8e20f18fbd176c19db90d1979d63d6b3bc99",
+      "reason": "Verify safe 11st result selection, actual worker wiring, transport omission, Temu preservation and stored-response equivalence."
+    },
+    {
+      "path": "scripts/cs-elevenst-worker-failed-completion-web-smoke.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3b0a66a0b540409809db2adbfdf97ed9d94d7d741ad94cec779ca7eca85a6063",
+      "reason": "Run the safe worker payload through the actual Next completion POST against isolated RPCs on port 3214."
+    },
+    {
+      "path": "tests/cs-elevenst-worker-failed-completion-web.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2720757f8db74fd3a983afee4580d3b60235b753800c0ba258941cf0ce98105b",
+      "reason": "Require business observation and normalized storage while transport failures remain result-free and unobserved."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-008-worker-failed-read-sender.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "25c877917b8c6b8323675c08d66d4ca21f2223c94175017df0c5c50e4e8c7b55",
+      "reason": "Wire the safe result into the external worker sender and align its failed POST storage with serverless."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/elevenst/elevenst-008-worker-failed-read-sender.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "73861bc42871b1991c8d4de79266ac185154b56fdaf16255be854d3cf41b0006",
+      "reason": "Record the sender gap, latest Temu-aware preimages, safety boundaries and actual POST evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-worker-failed-completion-20260909.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "000fb87888b1b483c2d269c3125c52b063175d729bf7a479bdcc27b2009ebed6",
+      "reason": "Record isolated actual Next POST storage and observation outcomes for business and transport failures."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-05-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8db9d9cbb5abe2bd041045753ca3d2a36350301431327c319894b9613b5099af",
+      "reason": "Separate the repaired local sender path from central integration, production and provider completion."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-05-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2612f2a1f77bd7dedafed590467e2fdc6c50e6cfa0b5b1d9236c00a6575b0132",
+      "reason": "Record 133 focused regressions, type/lint/syntax checks, the actual POST smoke and root restoration proof."
+    }
+  ],
+  "commonProposals": [
+    {
+      "id": "elevenst-008-worker-failed-read-sender",
+      "state": "not_applied",
+      "patchSha256": "25c877917b8c6b8323675c08d66d4ca21f2223c94175017df0c5c50e4e8c7b55",
+      "preserves": {
+        "temuRetryContinuation": true,
+        "transportResultAbsence": true
+      },
+      "before": {
+        "scripts/ai-cli-worker.mjs": "8bbff07389d304b5c2a7149dfe911cc48edae6d59448f8dcb046f35f81324563",
+        "app/api/channel-gateway/worker/complete/route.ts": "8d3c1b41f5db38c4eb6275ab82b7014206ba108d362c7200ffdc045a610bdd96",
+        "lib/channels/gateway-contract.ts": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4"
+      },
+      "after": {
+        "scripts/ai-cli-worker.mjs": "9174bd48ea554318dc9500021004fa2fd27b1669edef2ec8abc5f4cebaaac102",
+        "app/api/channel-gateway/worker/complete/route.ts": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383",
+        "lib/channels/gateway-contract.ts": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4"
+      }
+    }
+  ],
+  "alreadyIntegratedLocally": [
+    "elevenst-supplement-04-20260908",
+    "elevenst-006-failed-read-observation-runtime",
+    "elevenst-007-cs-read-state-panel-common"
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

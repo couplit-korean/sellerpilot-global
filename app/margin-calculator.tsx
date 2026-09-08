@@ -469,7 +469,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       const { data } = await createClient().auth.getSession();
       const accessToken = data.session?.access_token;
       if (!accessToken) throw new Error("마진 계산을 저장하려면 다시 로그인해 주세요.");
-      const response = await fetch("/api/operations/snapshot", {
+      const response = await fetch("/api/admin/products/snapshot", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({
@@ -513,7 +513,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       const { data } = await createClient().auth.getSession();
       const accessToken = data.session?.access_token;
       if (!accessToken) throw new Error("마진 계산을 삭제하려면 다시 로그인해 주세요.");
-      const response = await fetch("/api/operations/snapshot", {
+      const response = await fetch("/api/admin/products/snapshot", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ action: "margin_delete", id: scenario.id }),

@@ -1,0 +1,106 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "baseDelta": {
+    "path": "docs/cs-parallel/reports/lazada/supplemental-delta.json",
+    "sha256": "37a7f5843c783d2eca318f3a64cde09a0501401f8f77041e5213a826c938889d"
+  },
+  "files": [
+    {
+      "path": "lib/channels/lazada-im.ts",
+      "change": "modify",
+      "beforeSha256": "2330fbf480d8df15e4cd0bcfa6eb0d626b60f3e0b2ff56b7aea1bd4ed5914446",
+      "afterSha256": "e2919cedd133395db7ac76ec0b052e1330f89b59cf7b40e8ee38878138f4287d",
+      "reason": "Add a body-free native content fingerprint to every normalized revision so V3 can distinguish an exact recall from a body or attachment conflict."
+    },
+    {
+      "path": "tests/lazada-im.test.ts",
+      "change": "modify",
+      "beforeSha256": "fc8b601d941f27786e774e653b3f053b45c333c7b94f8a779ffe2708cb208217",
+      "afterSha256": "aabbb94603e8b48f5f66327fa6c1ea3665097c646eb2636d67a3972169f4e80a",
+      "reason": "Pin deterministic content fingerprints for customer and seller text revisions."
+    },
+    {
+      "path": "tests/lazada-history-completeness.test.ts",
+      "change": "modify",
+      "beforeSha256": "3879a8e222e623676fb5963a25e79acbef9d330f1ef2ca7214792aea58d4c5ac",
+      "afterSha256": "a0e22a2037303cb2c674db820c9f2d0f0cbe761b7492952614baa175e2e60235",
+      "reason": "Verify the fingerprint includes native attachment identity and remains body-free in shared evidence."
+    },
+    {
+      "path": "tests/lazada-inquiry-sync.test.ts",
+      "change": "modify",
+      "beforeSha256": "045291912cf0b336d891963fb174c150e599e1d6e2ff9d3387d808ca2974b29a",
+      "afterSha256": "80a7d95e22878b836e3572342df7eeb740d2f7489e3d9a872d28595253dba2bd",
+      "reason": "Verify bootstrap customer projection carries the deterministic fingerprint."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3-call-path.md",
+      "change": "modify",
+      "beforeSha256": "c7ba0a326a24882925c740b12ea6b3fa7e128ca6ecdab225bc53537f8fb0184d",
+      "afterSha256": "bb003523db9e27930f3ca0944f4516e9f69d11372798440e03abc180bddf8609",
+      "reason": "Replace the intended migration description with the executable SQL, exact runtime patch, verified tests, and ordered release transition."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1c30844981e8713accc9573944dbd19f22a64c05d1f8c64b6a97c0974d3d277a",
+      "reason": "Provide an executable forward SQL draft for readiness, payload-free append-only revision evidence, direct V3 ingest, and gateway V3 claim handling."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-runtime-v3.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8e6c7d84f7dbbf2e7b11d1d31fa54c5b7843a317c28ed2c06bb43ca9894e1d56",
+      "reason": "Provide an applyable coordinator-owned patch that fences webhook, worker, serverless, and reprocessor ingestion with credential-specific V3 readiness."
+    },
+    {
+      "path": "tests/cs-lazada-ingest-v3-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5e79cb44f97a41478dea6f4706ce9a854df420a35a96c012458deb9cc2db99bb",
+      "reason": "Apply the real SQL draft to PGlite and verify readiness, ACL, payload-free revision evidence, role invariants, revision convergence, quarantine, seller isolation, and gateway claims."
+    },
+    {
+      "path": "tests/cs-lazada-runtime-v3-patch.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d0c10ecdf667fe74a6d629a306a692c657d2b652e2ba75188a4a7c1bb4b448be",
+      "reason": "Lock the exact runtime preimages, run git apply check, and require readiness before each V3 ingest entrypoint."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-isolated-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c85a9e904f27d6f852cd4c927ffa6cba95ff471f8299342dafb67a4f1dd2879f",
+      "reason": "Record exact artifact hashes and final parser, PGlite, patch, lint, and isolated typecheck outcomes without production claims."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "6c93853889dc1442866c66a2e0ea0e4fc2d1fb32e8174bffb42e9fe058d15ebe",
+      "reason": "Separate locally completed G1-G8 evidence from integration, permission, Push, reply, and production observation conditions."
+    }
+  ],
+  "sharedProposals": [
+    "lazada-005-ingest-v3.sql",
+    "lazada-005-runtime-v3.patch"
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/v3-isolated-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "real customer reply"
+  ]
+}

@@ -1,18 +1,11 @@
 "use client";
+import type { OperationMarginScenario } from "../lib/product-margin-scenario-contract";
+export type { OperationMarginScenario } from "../lib/product-margin-scenario-contract";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createClient } from "../lib/supabase/client";
-import {
-  mergeOperationProductImages,
-  type OperationProductImageCacheEntry,
-} from "../lib/operation-product-image-cache";
-import {
-  createBoundedRequestSignal,
-  OperationsSnapshotRequestCoordinator,
-  operationsSnapshotRangeKey,
-  unavailableOperationsSnapshot,
-  waitForAbortablePromise,
-} from "./operations-snapshot-request-coordinator";
+import { authenticatedFetch, AuthenticationRequiredError } from "../lib/authenticated-fetch";
+import { mergeOperationProductImages, type OperationProductImageCacheEntry } from "../lib/operation-product-image-cache";
+import { createBoundedRequestSignal, OperationsSnapshotRequestCoordinator, operationsSnapshotRangeKey, unavailableOperationsSnapshot, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
 const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
 const RETRY_INTERVAL_MS = 30_000;
@@ -124,62 +117,6 @@ export type OperationOrder = {
   demo: boolean;
 };
 
-export type OperationTicketDelivery = {
-  jobId: string;
-  ticketId: string;
-  channel: string;
-  inboundKey: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "cancelled" | "reconciliation_required";
-  safeMessage: string | null;
-  reconciliationReason: string | null;
-  providerRequestId: string | null;
-  providerMessageId: string | null;
-  queuedAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-  updatedAt: string;
-};
-
-export type OperationTicket = {
-  id: string;
-  externalTicketId: string;
-  channelKey: string;
-  channelCode: string;
-  customerName: string;
-  subject: string;
-  message: string;
-  translatedMessage: string | null;
-  replyDraft: string | null;
-  replyDeliveryStatus: "never" | "preparing" | "sending" | "succeeded" | "failed" | "reconciliation_required";
-  replyDeliveryError: string | null;
-  replyOperationAttemptId: string | null;
-  replyGatewayJobId: string | null;
-  orderId: string | null;
-  externalOrderReference?: string | null;
-  providerStatus?: "unknown" | "waiting" | "answered" | "closed";
-  providerStatusUpdatedAt?: string | null;
-  providerContext?: Record<string, unknown>;
-  latestInboundKey?: string | null;
-  ticketKind?: "conversation" | "after_sales";
-  delivery?: OperationTicketDelivery | null;
-  blockingDelivery?: OperationTicketDelivery | null;
-  status: "urgent" | "waiting" | "in_progress" | "resolved";
-  priority: number;
-  receivedAt: string;
-  updatedAt: string;
-  demo: boolean;
-};
-
-export type OperationMarginScenario = {
-  id: string;
-  productId: string | null;
-  name: string;
-  channelKey: string;
-  inputs: Record<string, unknown>;
-  result: Record<string, unknown>;
-  createdAt: string;
-};
-
 export type OperationsSnapshot = {
   generatedAt: string;
   aiRecovery: {
@@ -206,7 +143,7 @@ export type OperationsSnapshot = {
   } | null;
   syncStatus: Array<{
     channel_key: string;
-    data_type: "orders" | "inquiries";
+    data_type: "orders";
     status: "never" | "queued" | "running" | "passed" | "failed" | "unsupported";
     imported_count: number;
     last_started_at: string | null;
@@ -231,18 +168,11 @@ export type OperationsSnapshot = {
     revenue30dKrw: number;
     orderCount: number;
     readyToShipCount: number;
-    openTicketCount: number;
     failedAttemptCount: number;
     lastOperationAt: string | null;
   }>;
   products: OperationProduct[];
   orders: OperationOrder[];
-  tickets: OperationTicket[];
-  csDeliverySummary?: {
-    queued: number;
-    running: number;
-    reconciliationRequired: number;
-  } | null;
   marginScenarios: OperationMarginScenario[];
   marginScenarioState: "checking" | "ready" | "unavailable";
   marginScenarioMessage: string | null;
@@ -302,7 +232,6 @@ export type OperationsSnapshot = {
     orderCount: number;
     paidOrderCount: number;
     readyToShipCount: number;
-    openTicketCount: number;
     lowStockCount: number;
     productCount: number;
     registrationErrorCount: number;
@@ -516,27 +445,6 @@ export function useOperationsSnapshot() {
     requestCoordinatorRef.current.abortCurrent();
   }, [rangeKey]);
 
-  const authenticatedFetch = useCallback(async (input: string, init?: RequestInit) => {
-    const sessionPromise = createClient().auth.getSession();
-    const { data: sessionData } = init?.signal
-      ? await waitForAbortablePromise(sessionPromise, init.signal)
-      : await sessionPromise;
-    if (init?.signal?.aborted) {
-      throw init.signal.reason ?? new DOMException("운영 데이터 요청이 취소되었습니다.", "AbortError");
-    }
-    const accessToken = sessionData.session?.access_token;
-    if (!accessToken) throw new OperationsSnapshotLoadError("운영 데이터를 보려면 다시 로그인해 주세요.", false);
-    const headers = new Headers(init?.headers);
-    if (!headers.has("content-type")) headers.set("content-type", "application/json");
-    headers.set("authorization", `Bearer ${accessToken}`);
-    const request = fetch(input, {
-      ...init,
-      cache: "no-store",
-      headers,
-    });
-    return init?.signal ? waitForAbortablePromise(request, init.signal) : request;
-  }, []);
-
   const load = useCallback(function loadSnapshot(options: LoadOptions = {}): Promise<void> {
     const startedAt = Date.now();
     const nextRefreshAt = nextDataRefreshAtRef.current.get(rangeKey) ?? 0;
@@ -600,7 +508,7 @@ export function useOperationsSnapshot() {
           marginScenarioState: "unavailable",
           marginScenarioMessage: "저장된 마진 계산 이력을 불러오지 못했습니다. 잠시 후 다시 확인해 주세요.",
         })).finally(() => readinessBounded.dispose());
-        const response = await authenticatedFetch(`/api/operations/snapshot?${params}`, {
+        const response = await authenticatedFetch(`/api/admin/products/snapshot?${params}`, {
           signal: bounded.signal,
         });
         const payload = await waitForAbortablePromise(
@@ -662,7 +570,7 @@ export function useOperationsSnapshot() {
       } catch (error) {
         if (!isSelectedRequest()) return;
         const failureMessage = error instanceof Error ? error.message : "운영 DB에 연결하지 못했습니다.";
-        const retainLastGood = !(error instanceof OperationsSnapshotLoadError) || error.retainLastGood;
+        const retainLastGood = !(error instanceof AuthenticationRequiredError) && (!(error instanceof OperationsSnapshotLoadError) || error.retainLastGood);
         coordinator.commitIfCurrent(request, selectedRangeKeyRef.current, () => {
           nextDataRefreshAtRef.current.set(request.key, startedAt + RETRY_INTERVAL_MS);
           const unavailable = unavailableOperationsSnapshot(lastGoodDataRef.current, failureMessage, retainLastGood);
@@ -687,7 +595,7 @@ export function useOperationsSnapshot() {
         bounded.dispose();
       }
     });
-  }, [authenticatedFetch, range.from, range.to, rangeKey]);
+  }, [range.from, range.to, rangeKey]);
 
   const reload = useCallback(() => load({ force: true, refreshProductImages: true }), [load]);
   const refresh = useCallback(() => load({ force: true }), [load]);

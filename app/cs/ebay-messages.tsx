@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  ebayConversationMessagePageSize, ebayConversationPageSize,
   ebayMessageAccountsSchema, ebayConversationPageSchema, ebayConversationMessagesSchema,
   type EbayMessageAccounts, type EbayConversationPage, type EbayConversationMessages,
 } from "../../lib/cs/ebay-messages";
@@ -79,11 +80,11 @@ export function EbayMessages({ authenticatedFetch }: { authenticatedFetch: Fetch
         <button type="button" className="filter-button" disabled={loading || !credentialId} onClick={() => void read("conversations")}>대화 조회</button>
       </> : null}
     </div>
-    {accounts?.length === 0 ? <p>본인 계정으로 연결된 활성 eBay 키가 없습니다. 채널 연결 관리에서 확인해 주세요.</p> : null}
+    {accounts?.length === 0 ? <p>운영 공간에 연결된 활성 eBay 키가 없습니다. 채널 연결 관리에서 확인해 주세요.</p> : null}
     {loading ? <p role="status">eBay 대화를 조회하고 있습니다…</p> : null}
     {error ? <p role="alert" className={styles.error}>{error}</p> : null}
     {page ? <>
-      <p role="status">eBay 조회 결과 {page.total}개 대화 · 이 페이지 {page.entries.length}개{page.total === 0 ? " · 선택한 계정과 대화 종류의 조회 결과입니다." : ""}</p>
+      <p role="status">eBay 조회 결과 {page.total === null ? "전체 건수 미제공" : `전체 ${page.total}개`} · 이 페이지 {page.entries.length}개{page.total === 0 ? " · 선택한 계정과 대화 종류의 조회 결과입니다." : ""}</p>
       <div className={styles.conversations}>{page.entries.map(row => <button key={row.conversationId} type="button" disabled={loading}
         aria-pressed={selected === row.conversationId} onClick={() => void read("messages", 0, row.conversationId)}>
         <strong>{row.title || "제목 없는 대화"}</strong><span>{roles[row.latestMessage.role]} · {date(row.latestMessage.createdAt)}</span>
@@ -91,14 +92,14 @@ export function EbayMessages({ authenticatedFetch }: { authenticatedFetch: Fetch
         <small>대화 {row.conversationId}{row.referenceId ? ` · 상품 ${row.referenceId}` : ""}</small>
       </button>)}</div>
       <nav className={styles.pages} aria-label="eBay 대화 목록 페이지">
-        <button type="button" className="filter-button" disabled={loading || page.offset === 0} onClick={() => void read("conversations", page.offset - 25)}>이전 대화 목록</button>
-        <span>{page.offset / 25 + 1}페이지</span>
+        <button type="button" className="filter-button" disabled={loading || page.offset === 0} onClick={() => void read("conversations", page.offset - ebayConversationPageSize)}>이전 대화 목록</button>
+        <span>{page.offset / ebayConversationPageSize + 1}페이지</span>
         <button type="button" className="filter-button" disabled={loading || page.nextOffset === null} onClick={() => page.nextOffset !== null && void read("conversations", page.nextOffset)}>다음 대화 목록</button>
       </nav>
     </> : null}
     {messages ? <section className={styles.detail} aria-label="eBay 일반 대화 내용">
       <h3>{messages.title || "제목 없는 대화"}</h3>
-      <p>전체 {messages.total}개 메시지 · 이 페이지 {messages.entries.length}개 · 시간은 한국 시간입니다.</p>
+      <p>{messages.total === null ? "전체 메시지 건수 미제공" : `전체 ${messages.total}개 메시지`} · 이 페이지 {messages.entries.length}개 · 시간은 한국 시간입니다.</p>
       {messages.entries.map(message => <article key={message.messageId} className={styles.message}>
         <header><strong>{roles[message.role]}</strong><time dateTime={message.createdAt} title={message.createdAt}>{date(message.createdAt)}</time></header>
         <small>{message.senderUsername} → {message.recipientUsername}</small>
@@ -109,8 +110,8 @@ export function EbayMessages({ authenticatedFetch }: { authenticatedFetch: Fetch
         </li>)}</ul> : null}
       </article>)}
       <nav className={styles.pages} aria-label="eBay 메시지 페이지">
-        <button type="button" className="filter-button" disabled={loading || messages.offset === 0} onClick={() => void read("messages", messages.offset - 25, messages.conversationId)}>이전 메시지</button>
-        <span>{messages.offset / 25 + 1}페이지</span>
+        <button type="button" className="filter-button" disabled={loading || messages.offset === 0} onClick={() => void read("messages", messages.offset - ebayConversationMessagePageSize, messages.conversationId)}>이전 메시지</button>
+        <span>{messages.offset / ebayConversationMessagePageSize + 1}페이지</span>
         <button type="button" className="filter-button" disabled={loading || messages.nextOffset === null} onClick={() => messages.nextOffset !== null && void read("messages", messages.nextOffset, messages.conversationId)}>다음 메시지</button>
       </nav>
     </section> : null}

@@ -1,5 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
+test("Shopee inquiry gateway preserves review and return continuation boundaries", () => {
+  const accepts = (args: Record<string, unknown>, channel = "shopee", operation = "inquiries.list") => gatewayWorkerCompletionSchema.safeParse({
+    jobId: "00000000-0000-4000-8000-000000000001",
+    claimToken: "00000000-0000-4000-8000-000000000002",
+    status: "succeeded",
+    result: { ok: true, channel, operation, safeMessage: "next page",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: {} }],
+      continuation: { reason: "page_cap_reached", arguments: { sellerpilotPaginationDepth: 1, ...args } } },
+  }).success;
+  const review = { kind: "product_review", cursor: "cursor-4", pageSize: 100 };
+  const returns = { kind: "return_refund", createTimeFrom: 1_700_000_000,
+    createTimeTo: 1_700_000_000 + 15 * 86_400, pageNo: 2, pageSize: 100 };
+  assert.equal(accepts(review), true);
+  assert.equal(accepts(returns), true);
+  assert.equal(accepts({ ...returns, returnQueue: ["RETURN_11"], nextPageNo: 2 }), true);
+  assert.equal(accepts({ ...returns, returnQueue: ["RETURN_11"] }), true);
+  for (const patch of [{ cursor: " " }, { cursor: "a".repeat(501) }, { pageSize: 101 },
+    { sellerpilotPaginationDepth: 51 }, { sellerpilotPaginationEpoch: -1 },
+    { sellerpilotPaginationTrail: ["invalid"] }]) {
+    assert.equal(accepts({ ...review, ...patch }), false);
+  }
+  for (const patch of [{ returnQueue: [] }, { returnQueue: ["a", "a"] },
+    { returnQueue: ["a"], nextPageNo: 3 }, { nextPageNo: 2 },
+    { createTimeTo: returns.createTimeTo + 1 }, { createTimeFrom: returns.createTimeTo },
+    { returnQueue: ["a", "b"], pageSize: 1 }, { pageNo: 0 }]) {
+    assert.equal(accepts({ ...returns, ...patch }), false);
+  }
+  assert.equal(accepts(review, "qoo10"), false);
+  assert.equal(accepts(review, "shopee", "inquiries.reply"), false);
+});
 import {
   gatewayClaimSchema,
   gatewayCredentialRefreshLifecycleSchema,

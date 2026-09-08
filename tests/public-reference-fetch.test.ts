@@ -244,7 +244,7 @@ test("the total deadline covers DNS and external aborts retain cancellation sema
 });
 
 test("the AI worker uses the shared fetcher and propagates both research leases", async () => {
-  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
   assert.match(worker, /import \{[\s\S]*fetchPublicReferenceDocument,[\s\S]*\} from "\.\.\/lib\/public-reference-fetch\.ts";/);
   assert.doesNotMatch(worker, /function isPrivateAddress|function assertPublicUrl|function requestPublicReference/);
   assert.match(worker, /fetchPublicReferenceDocument\(value, \{ signal: leaseSignal \}\)/);

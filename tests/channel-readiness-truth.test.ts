@@ -93,7 +93,7 @@ test("stale historic Rejected is dated context and not silent live approval", ()
   assert.equal(resolved.apiReadPassed, false);
   assert.doesNotMatch(resolved.appState, /Rejected/);
   assert.match(resolved.summary, new RegExp(`${temuHistoricComplianceRejectedOn}[\\s\\S]*Rejected`));
-  assert.match(resolved.summary, /현재 live 승인 상태가 아닙니다/);
+  assert.match(resolved.summary, /실연동 완료가 아닙니다/);
   assert.equal(resolved.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
 });
 
@@ -125,6 +125,8 @@ test("Coupang static WING/API normal is historical until live evidence arrives",
   assert.match(coupang.appState, /당시 WING 로그인·Open API 읽기 정상/);
   assert.match(coupang.appState, /현재 연결은 운영 live로만 판정/);
   assert.equal(coupang.checks.some((check) => check.label === "현재 읽기 진단"), false);
+  assert.equal(coupang.checks.some((check) => check.label === "취소·반품 이력"), true);
+  assert.equal(coupang.checks.some((check) => check.label === "교환 이력"), true);
 
   const missing = resolveChannelReadiness(coupang, liveMetric({
     credentialStatus: "missing",

@@ -4,13 +4,14 @@ import vm from "node:vm";
 import test from "node:test";
 import ts from "typescript";
 import { z } from "zod";
+import * as qoo10ReplyGuard from "../lib/channels/cs/qoo10/reply-guard.ts";
 
 const source = await readFile(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8");
 const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 const ticketId = "11111111-1111-4111-8111-111111111111";
 const jobId = "22222222-2222-4222-8222-222222222222";
 const secret = "PRIVATE_RPC_ERROR_MUST_NOT_ESCAPE";
-const context = { channel_key: "qoo10", environment: "production", external_ticket_id: "fixture-ticket", status: "waiting", provider_status: "waiting", latest_inbound_key: "inbound-1", provider_context: {} };
+const context = { channel_key: "qoo10", environment: "production", external_ticket_id: "qoo10:MSG:700:701", status: "waiting", provider_status: "waiting", latest_inbound_key: "inbound-1", provider_context: { inquiryType: "MSG", questionNo: "700", sequenceNo: "701", processingStatus: "S1" } };
 
 async function run({ current = { data: context, error: null }, dispatch = { data: context, error: null }, rejectCurrent = false, rejectDispatch = false, expectedInboundKey = "inbound-1" } = {}) {
   const calls = [];
@@ -30,9 +31,10 @@ async function run({ current = { data: context, error: null }, dispatch = { data
     if (name === "next/server") return { NextResponse: Response };
     if (name === "zod") return { z };
     if (name.endsWith("/admin-api")) return { authenticateAdminRequest: async () => ({ userClient, serviceClient: {} }), isAdminApiError: () => false };
-    if (name.endsWith("/channels/gateway")) return { enqueueInquiryReplyViaChannelGateway: async () => { calls.push("enqueue"); return { jobId }; } };
+    if (name.endsWith("/cs/operations/enqueue-reply")) return { enqueueInquiryReplyViaChannelGateway: async () => { calls.push("enqueue"); return { jobId }; } };
     if (name.endsWith("/channels/inquiry-reply")) return { supportsInquiryReply: () => true, buildInquiryReplyArguments: () => ({}) };
     if (name.endsWith("/channels/ebay-asq")) return { ebayAsqMarketplaceId: () => null };
+    if (name.endsWith("/channels/cs/qoo10/reply-guard")) return qoo10ReplyGuard;
     if (name.endsWith("/channels/serverless-static-egress")) return {};
     throw new Error(`Unexpected import: ${name}`);
   } });
@@ -88,4 +90,20 @@ test("CS reply accepts the supported row-array current context shape", async () 
   const result = await run({ current: { data: [context], error: null } });
   assert.equal(result.response.status, 202);
   assert.equal(result.enqueued, 1);
+});
+
+for (const [state, allowed, expectedStatus] of [
+  ["normal", true, 202],
+  ["recalled", false, 409],
+  ["conflict_review_required", false, 409],
+  ["normal", false, 409],
+  [undefined, undefined, 409],
+]) test(`Lazada current state ${state}/${allowed} overrides stale normal dispatch context`, async () => {
+  const normal = { ...context, channel_key: "lazada", external_ticket_id: "lazada-im:fixture-session", latest_message_state: "normal", reply_allowed: true };
+  const result = await run({
+    current: { data: { ...normal, latest_message_state: state, reply_allowed: allowed }, error: null },
+    dispatch: { data: normal, error: null },
+  });
+  assert.equal(result.response.status, expectedStatus);
+  assert.equal(result.enqueued, expectedStatus === 202 ? 1 : 0);
 });

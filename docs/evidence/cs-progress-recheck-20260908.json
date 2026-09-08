@@ -1,0 +1,35 @@
+{
+  "mode": "isolated PGlite synthetic fixture; no production access",
+  "evidence": [
+    {
+      "name": "order_reference_changed",
+      "expected": "invalid bindings are removed and no longer marked exact",
+      "observed": {
+        "still_linked": true,
+        "status": "exact",
+        "actually_exact": false
+      },
+      "defectReproduced": true
+    },
+    {
+      "name": "order_owner_changed",
+      "expected": "invalid bindings are removed and no longer marked exact",
+      "observed": {
+        "still_linked": true,
+        "status": "exact",
+        "actually_exact": false
+      },
+      "defectReproduced": true
+    },
+    {
+      "name": "credential_channel_changed",
+      "expected": "invalid bindings are removed and no longer marked exact",
+      "observed": {
+        "still_linked": true,
+        "status": "exact",
+        "actually_exact": false
+      },
+      "defectReproduced": true
+    }
+  ]
+}

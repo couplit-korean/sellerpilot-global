@@ -12,6 +12,61 @@ type LazadaInquiryIngestRpc = (
   arguments_: LazadaInquiryIngestArguments,
 ) => PromiseLike<{ data?: unknown; error: unknown }>;
 
+type LazadaRawStoreRpc = (arguments_: {
+  p_credential_id: string;
+  p_raw_body: string;
+  p_source_kind: "webhook" | "history_page";
+}) => PromiseLike<{ data?: unknown; error: unknown }>;
+
+type LazadaRawMarkRpc = (arguments_: {
+  p_credential_id: string;
+  p_id: string;
+  p_processing_status: "normalized" | "unsupported";
+}) => PromiseLike<{ data?: unknown; error: unknown }>;
+
+export type LazadaRawReceipt = { id: string; processingStatus: "pending" | "normalized" | "unsupported" };
+
+export async function persistLazadaImRawEvent(
+  credentialId: string,
+  raw: string,
+  store: LazadaRawStoreRpc,
+  sourceKind: "webhook" | "history_page" = "webhook",
+): Promise<{ ok: true; receipt: LazadaRawReceipt } | { ok: false }> {
+  if (!credentialId.trim() || Buffer.byteLength(raw, "utf8") > 256_000) return { ok: false };
+  try {
+    const { data, error } = await store({ p_credential_id: credentialId, p_raw_body: raw, p_source_kind: sourceKind });
+    if (error || !record(data) || data.contract !== "lazada_im_raw_inbox_v1"
+        || !["stored", "duplicate"].includes(String(data.status))
+        || typeof data.id !== "string" || !data.id.trim()
+        || !["pending", "normalized", "unsupported"].includes(String(data.processingStatus))) return { ok: false };
+    return { ok: true, receipt: {
+      id: data.id,
+      processingStatus: data.processingStatus as LazadaRawReceipt["processingStatus"],
+    } };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export async function markLazadaImRawEvent(
+  credentialId: string,
+  receiptId: string,
+  processingStatus: "normalized" | "unsupported",
+  mark: LazadaRawMarkRpc,
+): Promise<boolean> {
+  try {
+    const { data, error } = await mark({
+      p_credential_id: credentialId,
+      p_id: receiptId,
+      p_processing_status: processingStatus,
+    });
+    return !error && record(data) && data.contract === "lazada_im_raw_mark_v1"
+      && data.status === processingStatus && data.id === receiptId;
+  } catch {
+    return false;
+  }
+}
+
 export type LazadaInquiryIngestResult =
   | { ok: true }
   | { ok: false; status: 500 | 503; partial?: boolean };
@@ -56,16 +111,19 @@ export async function persistLazadaImInquiry(
   inquiry: LazadaImInquiry,
   ingest: LazadaInquiryIngestRpc,
   verifyQuarantine?: () => PromiseLike<{ data: unknown; error: unknown }>,
+  verifyV3?: () => PromiseLike<{ data: unknown; error: unknown }>,
 ): Promise<LazadaInquiryIngestResult> {
   if (!credentialId.trim()) return { ok: false, status: 503 };
   try {
+    const readiness = verifyV3 ? await verifyV3() : null;
+    if (!readiness || readiness.error || readiness.data !== true) return { ok: false, status: 503 };
     if (!await lazadaQuarantineReady([inquiry], verifyQuarantine)) return { ok: false, status: 503 };
     const { data, error } = await ingest({
       p_credential_id: credentialId,
       p_channel: "lazada",
       p_inquiries: [inquiry],
     });
-    if (error || !record(data) || data.contract !== "lazada_ingest_v2") return { ok: false, status: 500 };
+    if (error || !record(data) || data.contract !== "lazada_ingest_v3") return { ok: false, status: 500 };
     return data.status === "complete" ? { ok: true } : { ok: false, status: 503, partial: true };
   } catch {
     return { ok: false, status: 500 };
@@ -124,6 +182,7 @@ export function boundLazadaImCredentialId(credential: unknown, payload: Record<s
 
 export type LazadaImWebhookSelection =
   | { ok: true; kind: "ignored" }
+  | { ok: true; kind: "raw"; credentialId: string }
   | { ok: true; kind: "inquiry"; credentialId: string; inquiry: LazadaImInquiry }
   | { ok: false; status: 400 | 401 | 503 };
 
@@ -152,12 +211,19 @@ export function selectLazadaImWebhookRoute(
   const payload = parseLazadaImWebhookBody(raw);
   if (!payload) return { ok: false, status: 400 };
   const inquiry = parseLazadaImPush(payload);
-  // Verify authenticates an app, not a seller. Shared-app duplicates are fine
-  // here: a signed non-message probe has no customer persistence or owner.
-  if (!inquiry) return { ok: true, kind: "ignored" };
+  // Only the official signed Verify probe is safe to acknowledge without an
+  // owner or storage. IM media, recalls, system/session updates and malformed
+  // message envelopes must not disappear behind a successful ignored=true.
+  const data = record(payload.data) ? payload.data : {};
+  const isVerifyProbe = (payload.message_type === 0 || payload.message_type === "0")
+    && !webhookText(payload.message_id) && !webhookText(data.message_id)
+    && !webhookText(payload.session_id) && !webhookText(data.session_id)
+    && !("content" in data) && !("sync_type" in data) && !("message" in data);
+  if (!inquiry && isVerifyProbe) return { ok: true, kind: "ignored" };
   const boundIds = verified.map((value) => boundLazadaImCredentialId(value, payload)).filter(Boolean);
   // Count credential rows, not distinct owners/app keys; duplicate matching
   // credentials (even for one seller) are ambiguous and must not ingest.
   if (boundIds.length !== 1) return { ok: false, status: 503 };
+  if (!inquiry) return { ok: true, kind: "raw", credentialId: boundIds[0] };
   return { ok: true, kind: "inquiry", credentialId: boundIds[0], inquiry };
 }

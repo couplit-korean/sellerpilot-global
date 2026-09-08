@@ -1,0 +1,68 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-5.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/status.md",
+      "change": "modify",
+      "beforeSha256": "7e2b6818b10d77f43d41b558e0d1abb2658f179678d94dbd5e7eb064f5c07a51",
+      "afterSha256": "bdb18f82d055765a969a1548d935101c046613a9de19fb8ca94a16f3a8447da5",
+      "reason": "Record integrated 90-test evidence and executable local-read SQL verification."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/008-live-read-only-runtime.md",
+      "change": "modify",
+      "beforeSha256": "8eba274528ca9d68141f54ebd6167fbbdf40d8e426b36498570790ecccfb8527",
+      "afterSha256": "0c817baf8e6a3381cc77110237f367b9c58f8024e518b1e427988e18deaad837",
+      "reason": "Document the applicable unified diff and executed canonical-chain SQL evidence."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.patch",
+      "change": "modify",
+      "beforeSha256": "36b657ea0addca31787b14c0d90a5956fdf241c9e2b5eb0e4f0597349b7e0150",
+      "afterSha256": "dff2651fd503b331e5164cd56c6ecf4b573eb80c53bbb85e8573e9bc9cf526bf",
+      "reason": "Replace range-less pseudo hunks with a git-applyable unified diff against the latest integrated preimage."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.sql",
+      "change": "modify",
+      "beforeSha256": "86ba046c2a7df334664ef4b688ff4ee95240daa840d1f9648686e68043452c29",
+      "afterSha256": "07a22a0c9bfbc7629bf5d6ba09488775a1d09ceb1edd95b4cfe786e3ebbb4852",
+      "reason": "Keep production MD5 preflight while extending postflight deny checks to listing update and another channel."
+    },
+    {
+      "path": "tests/cs-coupang-read-only-runtime-proposal.test.mjs",
+      "change": "modify",
+      "beforeSha256": "a2f4e491bf34879fb0d62fff211fa0edbb6d705c3d9ae9409918d4b3c0c90a85",
+      "afterSha256": "8ad9b8d689c301cd4959b1f202cd54fe8e63a85c863451366b490a99b7bde69d",
+      "reason": "Require git apply --check in addition to tuple and production-preimage source contracts."
+    },
+    {
+      "path": "tests/cs-coupang-read-only-runtime-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "438e27ab9647703161b2dfc833397b198a7e8aca18ccea428ee37cb81d74b4c0",
+      "reason": "Execute the canonical local-executor wrapper chain and the full SQL with exact claim and deny counterexamples."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-6-local-read-executable-20260908.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8d500e0b61dc7e58f9e9986dad44c953ad2eeee1d2ebccc15b237273214f50ea",
+      "reason": "Report executable patch, SQL, route-zero and exact claim evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260908-supplement-6-local-read.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "90aafe5a8d81a91d1fde24b01362bb531fee0ec13b9b366436d43905e64e23d9",
+      "reason": "Record the local-read execution and deny-matrix command outcomes."
+    }
+  ],
+  "sharedProposals": ["coupang-008"],
+  "testEvidence": [
+    "docs/cs-parallel/reports/coupang/logs/20260908-supplement-6-local-read.md"
+  ]
+}

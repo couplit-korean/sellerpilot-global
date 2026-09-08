@@ -256,7 +256,7 @@ test('read-only jobs, terminal writes and other-product jobs do not fail bootstr
 });
 
 test('bootstrap operation fence exactly covers current source-defined product-resource writes',async()=>{
- const operationSource=await readFile(new URL('../lib/channels/operations.ts',import.meta.url),'utf8');
+ const operationSource=await readFile(new URL('../lib/product-registration/execution-shared.ts',import.meta.url),'utf8');
  const names=operationSource.match(/export const channelOperationNames = \[([\s\S]*?)\] as const/)?.[1];
  const writes=operationSource.match(/export const writeChannelOperations = new Set<ChannelOperationName>\(\[([\s\S]*?)\]\)/)?.[1];
  assert.ok(names);assert.ok(writes);

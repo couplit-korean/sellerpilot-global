@@ -8,6 +8,7 @@ const smart = '00000000-0000-4000-8000-000000000002';
 const coupang = '00000000-0000-4000-8000-000000000003';
 const source = await readFile(new URL('../supabase/migrations/20260828145900_durable_korean_inquiry_history_backfill.sql', import.meta.url), 'utf8');
 const migration = await readFile(new URL('../supabase/migrations/20260907100000_scope_cs_history_by_channel.sql', import.meta.url), 'utf8');
+const elevenMigration = await readFile(new URL('../supabase/migrations/20260908049000_enable_elevenst_product_qna_cs.sql', import.meta.url), 'utf8');
 function definition(name) {
   const start = source.indexOf(`create function ${name}(`);
   return source.slice(start, source.indexOf('\n$$;', start) + 4);
@@ -22,7 +23,7 @@ async function fixture() {
     create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
     create function public.sellerpilot_is_admin() returns boolean language sql stable as $$select auth.uid()='${owner}'::uuid$$;
     create function extensions.digest(value text, algorithm text) returns bytea language sql immutable as $$ select sha256(convert_to(value,'UTF8')) $$;
-    create table sellerpilot_private.channel_credentials(id uuid primary key, channel text, environment text default 'production', status text default 'active', expires_at timestamptz, version int default 1, created_by uuid);
+    create table sellerpilot_private.channel_credentials(id uuid primary key, channel text, environment text default 'production', status text default 'active', expires_at timestamptz, version int default 1, created_by uuid, created_at timestamptz default now(), seller_account_key text, seller_account_key_source text, seller_account_verified_at timestamptz);
     create table sellerpilot_private.serverless_static_egress_policy(channel text primary key, enabled boolean);
     create table sellerpilot_private.channel_gateway_jobs(id uuid primary key default gen_random_uuid(), credential_id uuid, channel text, operation text, request_payload jsonb, status text default 'queued', created_at timestamptz default now(), updated_at timestamptz default now(), worker_token_id uuid, claim_token uuid, lease_expires_at timestamptz, completed_at timestamptz, error_message text, attempt_count int default 0, credential_refresh_in_flight boolean default false, credential_refresh_recovery_vault_id uuid);
     create function public.sellerpilot_service_enqueue_periodic_sync(p_channel text,p_operation text,p_payload jsonb,p_minutes int) returns jsonb language plpgsql as $$declare j uuid; begin
@@ -37,7 +38,11 @@ async function fixture() {
   await db.exec(definition('sellerpilot_private.enqueue_inquiry_history_backfill_item'));
   await db.exec(migration);
   await db.exec(await readFile(new URL("../supabase/migrations/20260907105000_select_past_cs_history_windows.sql", import.meta.url),"utf8"));
-  await db.exec(`insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${smart}','smartstore','${owner}'); insert into sellerpilot_private.serverless_static_egress_policy values ('smartstore',true),('coupang',false);`);
+  await db.exec(await readFile(new URL("../supabase/migrations/20260908047100_extend_coupang_after_sales_history.sql", import.meta.url),"utf8"));
+  const elevenHistoryStart = elevenMigration.indexOf('alter function sellerpilot_private.enqueue_inquiry_history_backfill_item(uuid,text,text,jsonb)');
+  const elevenHistoryEnd = elevenMigration.indexOf("\ndo $elevenst_remote_reply_resolution_fence$", elevenHistoryStart);
+  await db.exec(elevenMigration.slice(elevenHistoryStart, elevenHistoryEnd));
+  await db.exec(`insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${smart}','smartstore','${owner}'); insert into sellerpilot_private.serverless_static_egress_policy values ('smartstore',true),('coupang',false),('elevenst',false);`);
   return db;
 }
 const start = async (db, channels, days = 30) => (await db.query('select public.sellerpilot_start_inquiry_history_backfill_v2($1::text[],$2::int) as result',[channels,days])).rows[0].result;
@@ -64,11 +69,33 @@ test('requested disabled channels still fail closed, including the legacy two-ch
   assert.equal((await db.query('select count(*)::int n from sellerpilot_private.channel_gateway_jobs')).rows[0].n,0);
  }finally{await db.close();}
 });
-test('Coupang-only scopes all five daily-window read types without Smartstore jobs',async()=>{
+test('Coupang-only scopes all eight seven-day-window read types without Smartstore jobs',async()=>{
  const db=await fixture();try{
   await db.exec(`update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang';insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${coupang}','coupang','${owner}');`);
-  const run=await start(db,['coupang']);assert.deepEqual(run.channels,['coupang']);assert.equal(run.totalJobs,25);
-  const both=await start(db,['smartstore','coupang']);assert.equal(both.totalJobs,27);assert.deepEqual(both.channels,['coupang','smartstore']);
+  const run=await start(db,['coupang']);assert.deepEqual(run.channels,['coupang']);assert.equal(run.totalJobs,40);
+  const both=await start(db,['smartstore','coupang']);assert.equal(both.totalJobs,42);assert.deepEqual(both.channels,['coupang','smartstore']);
+  const kinds=(await db.query("select request_payload#>>'{arguments,kind}' kind,count(*)::int n from sellerpilot_private.channel_gateway_jobs where channel='coupang' group by 1 order by 1")).rows;
+  assert.deepEqual(kinds,[
+   {kind:'call-center',n:40},{kind:'cancel_request',n:10},{kind:'exchange_request',n:10},
+   {kind:'product',n:10},{kind:'return_request',n:10},
+  ]);
+ }finally{await db.close();}
+});
+test('11st history accepts the verified production credential lineage and splits 30 days into five exact Q&A windows',async()=>{
+ const db=await fixture();try{
+  await db.exec(`update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='elevenst';insert into sellerpilot_private.channel_credentials(id,channel,created_by,seller_account_key,seller_account_key_source,seller_account_verified_at) values (gen_random_uuid(),'elevenst','${owner}',repeat('e',64),'credential_incarnation_v1',now());`);
+  const result=(await db.query("select public.sellerpilot_start_inquiry_history_backfill_v4(array['elevenst'],30,date '2024-02-29') result")).rows[0].result;
+  assert.deepEqual(result.channels,['elevenst']);assert.equal(result.totalJobs,5);assert.equal(result.expectedInitialJobs,5);
+  const jobs=(await db.query(`select request_payload#>>'{arguments,startDate}' start_date,request_payload#>>'{arguments,endDate}' end_date,request_payload#>>'{arguments,answerStatus}' answer_status from sellerpilot_private.channel_gateway_jobs where channel='elevenst' order by start_date`)).rows;
+  assert.deepEqual(jobs,[
+   {start_date:'20240131',end_date:'20240206',answer_status:'00'},
+   {start_date:'20240207',end_date:'20240213',answer_status:'00'},
+   {start_date:'20240214',end_date:'20240220',answer_status:'00'},
+   {start_date:'20240221',end_date:'20240227',answer_status:'00'},
+   {start_date:'20240228',end_date:'20240229',answer_status:'00'},
+  ]);
+  assert.equal((await db.query("select has_function_privilege('authenticated','public.sellerpilot_start_inquiry_history_backfill_v4(text[],integer,date)','execute') ok")).rows[0].ok,true);
+  await assert.rejects(db.query("select public.sellerpilot_start_inquiry_history_backfill_v4(array['elevenst','smartstore'],30,null)"),/independently/);
  }finally{await db.close();}
 });
 test('invalid scopes, nonadmin, expired credentials and privilege grants',async()=>{
@@ -129,9 +156,9 @@ test('current history keeps its legacy request key and past Coupang windows rema
   assert.equal(current.runId,legacy.runId);
   await db.exec(`update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang';insert into sellerpilot_private.channel_credentials(id,channel,created_by) values ('${coupang}','coupang','${owner}');`);
   const run=(await db.query("select public.sellerpilot_start_inquiry_history_backfill_v3(array['coupang'],30,date '2024-02-29') result")).rows[0].result;
-  assert.equal(run.totalJobs,25);
+  assert.equal(run.totalJobs,40);
   const jobs=(await db.query("select request_payload from sellerpilot_private.channel_gateway_jobs where channel='coupang'")).rows;
-  for(const job of jobs){const q=job.request_payload.arguments.query;assert.ok(q.inquiryStartAt>='2024-01-31');assert.ok(q.inquiryEndAt<='2024-02-29');assert.ok(Date.parse(q.inquiryEndAt)-Date.parse(q.inquiryStartAt)<=6*86400000);}
+  for(const job of jobs){const q=job.request_payload.arguments.query;const start=q.inquiryStartAt??String(q.createdAtFrom).slice(0,10);const end=q.inquiryEndAt??String(q.createdAtTo).slice(0,10);assert.ok(start>='2024-01-31');assert.ok(end<='2024-02-29');assert.ok(Date.parse(end)-Date.parse(start)<=6*86400000);}
  }finally{await db.close();}
 });
 test('historical end date rejects future and unsupported early dates without enqueuing, and remains admin only',async()=>{

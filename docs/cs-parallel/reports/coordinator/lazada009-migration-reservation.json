@@ -1,0 +1,40 @@
+{
+  "name": "20260908153837_cs_lazada_ordinary_workspace_reply_guard.sql",
+  "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-lazada009-migration-u2y7ogdu/supabase/migrations/20260908153837_cs_lazada_ordinary_workspace_reply_guard.sql",
+  "source": "docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.sql",
+  "sourceSha256": "f6a20872cac2295a37e9c9e6c94989e611765a5d35dca63322d76a0d9025cb20",
+  "owner": "CS root integration",
+  "state": "created_local_candidate",
+  "sharedFiles": [
+    {
+      "path": "app/use-operations-snapshot.ts",
+      "beforeSha256": "b4c9c4eb5f44fad2600cf37b70e95d6859dbf2f63aaa4f5f516ca531bf95fd61",
+      "afterSha256": "86102cca0ea64d971ffa517a05bd3f6b77af924808e642ce3519e535f28961aa"
+    },
+    {
+      "path": "app/page.tsx",
+      "beforeSha256": "7413dc062691f0f0dbb78e15568dc8ca9707ed449dedccacba1fcc9a16d81f4e",
+      "afterSha256": "ccab9d1c2858389df6c61fd77dcee1521b0c5e2f764bc986b0e4af2a7165374a"
+    },
+    {
+      "path": "app/api/ai/support-reply/route.ts",
+      "beforeSha256": "193eb0ae3b15f3688abd3d2d45de12b878b4fd15aa59162b2a6e1aa87fa44e3e",
+      "afterSha256": "46254b6a6845876d8283a180f5eb8feff2e7dfd925cef9f841efff98a5594188"
+    },
+    {
+      "path": "app/api/operations/snapshot/route.ts",
+      "beforeSha256": "26a9479e21a788fee3ad09d4778d5fedc790b0a40e4e84dba322297645c622bd",
+      "afterSha256": "f947667347beb6ff78cca91d7b0d0d8d4ce251304f68c6d898ca5a17f1dd4efb"
+    },
+    {
+      "path": "app/api/admin/cs/reply/route.ts",
+      "beforeSha256": "b10b33b5fda7054ab55b76c107cd2491fc28e804e7c4be6bfbed8d7c9c763259",
+      "afterSha256": "505c25ad45974728de50a487076fe4a19cd792ec3464c1d097cc677ef71aba5d"
+    },
+    {
+      "path": "lib/channels/gateway.ts",
+      "beforeSha256": "2071e526fcdfd8b284c1ddf51f73870ec68e4e887f1063efcfe6d4fe354a4981",
+      "afterSha256": "45c41f147131ca1ca0c9a8a298718ec23f995f083465fc1c108162ab11a882c1"
+    }
+  ]
+}

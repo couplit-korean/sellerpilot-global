@@ -18,6 +18,7 @@ const egressSha256 = "a".repeat(64);
 test("the local executor has an exact read/write operation whitelist", () => {
   assert.equal(localChannelExecutorAccess("coupang", "categories.attributes"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "categories.validate"), "read");
+  assert.equal(localChannelExecutorAccess("coupang", "inquiries.list"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "listing.publication.verify"), "read");
   assert.equal(localChannelExecutorAccess("coupang", "listing.create"), "write");
   assert.equal(localChannelExecutorAccess("smartstore", "listing.create"), "write");
@@ -27,6 +28,8 @@ test("the local executor has an exact read/write operation whitelist", () => {
   assert.equal(localChannelExecutorAccess("ebay", "listing.publication.verify"), null);
   assert.equal(isLocalChannelExecutorTuple("smartstore", "listing.stop"), false);
   assert.equal(isLocalChannelExecutorTuple("coupang", "orders.list"), false);
+  assert.equal(isLocalChannelExecutorTuple("coupang", "inquiries.reply"), false);
+  assert.equal(isLocalChannelExecutorTuple("coupang", "shipment.confirm"), false);
   assert.equal(isLocalChannelExecutorTuple("smartstore", "orders.list"), false);
   assert.equal(isLocalChannelExecutorTuple("coupang", "listing.update"), false);
   assert.equal(isLocalChannelExecutorTuple("elevenst", "listing.create"), false);

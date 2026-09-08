@@ -1,0 +1,82 @@
+{
+  "contract": "sellerpilot_channel_test_evidence_supplement_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta.json",
+  "capturedThrough": "2026-09-08T12:49:59Z",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "version": "22.23.2",
+    "packageManager": "pnpm 10.28.0"
+  },
+  "runs": [
+    {
+      "name": "production_case_dispute_get_only_readback",
+      "exitCode": 0,
+      "checkedAt": "2026-09-08T12:34:20.772Z",
+      "evidence": "docs/cs-parallel/reports/ebay/case-dispute-read-evidence.json",
+      "resolutionCaseSearch": {
+        "httpStatus": 200,
+        "rangeMonths": 18,
+        "windows": 19,
+        "pages": 19,
+        "uniqueIds": 0
+      },
+      "paymentDisputeSummary": {
+        "httpStatus": 404,
+        "availability": "not_available_or_not_found",
+        "uniqueIds": null,
+        "total": null
+      }
+    },
+    {
+      "name": "case_dispute_normalization_and_web_tests",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes.test.ts tests/cs-ebay-cases-disputes-web.test.ts",
+      "exitCode": 0,
+      "tests": 13,
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "name": "typescript",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_file_eslint",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/eslint/bin/eslint.js <7 eBay supplemental source/test/script files>",
+      "exitCode": 0
+    },
+    {
+      "name": "case_dispute_diagnostic_default_dry_run",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx scripts/cs-ebay-cases-disputes-get-only.mjs",
+      "exitCode": 0,
+      "providerRequests": 0,
+      "mutations": 0
+    },
+    {
+      "name": "environment_wrapper_attempts",
+      "exitCode": 127,
+      "scope": "tooling wrapper only",
+      "detail": "pnpm exec tsc/eslint found the package binaries but their shell wrappers could not resolve node; both commands were rerun with the exact Node binary and passed"
+    },
+    {
+      "name": "supplemental_delta_hash_and_scope_audit",
+      "exitCode": 0,
+      "supplementalFilesChecked": 19,
+      "supplementalHashMismatches": 0,
+      "baseDeltaNonOverlappingFilesChecked": 10,
+      "baseDeltaHashMismatches": 0,
+      "sharedFilesModifiedBySupplement": 0,
+      "jsonAndWhitespaceValidation": "passed"
+    }
+  ],
+  "mutations": {
+    "productionDatabaseWrites": 0,
+    "providerReplies": 0,
+    "caseOrDisputeActions": 0,
+    "credentialRefreshes": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

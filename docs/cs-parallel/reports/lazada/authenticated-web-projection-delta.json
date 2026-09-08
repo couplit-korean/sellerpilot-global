@@ -1,0 +1,53 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "baseDelta": {
+    "path": "docs/cs-parallel/reports/lazada/v3-followup-delta.json",
+    "sha256": "0e0ec4f3a9d20e4bf86c94baeb29bc59376e6c51b308761d5b0b9c47d4db5ba1"
+  },
+  "files": [
+    {
+      "path": "tests/cs-lazada-authenticated-raw-projection-get.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "06f56c933c0221e08f23e291786484c819b0a6eb99a179dcc28545889fb3e041",
+      "reason": "Execute the actual admin helper and exported raw/quarantine GETs against a V3 PGlite fixture, including projection display and authorization boundary checks."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-007-authenticated-raw-projection-web.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7c37b1ad7cec0531ad72a592e78fb7cdc17b06fb2dcb88efb37abca8ff435205",
+      "reason": "Record the exact helper, user RPC, DB and UI path, explain the shared-admin owner boundary, and require explicit receipt lineage before any future semantic raw badge."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/authenticated-web-projection-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "493cd040caad944a5bfef87ae4862ac92e3b97a2198c32739c35002cd25f02af",
+      "reason": "Pin the 2-test actual-helper result, 25-test combined result, source hashes, projection observations, and denial outcomes."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/authenticated-web-projection-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4f87c07adf379ed121eb6928d2cc16473e1c7e647a78c7fe3e8405c6ab782600",
+      "reason": "Separate the verified local web path from the still-unapplied V3 SQL and production Push, web, and reply observations."
+    }
+  ],
+  "productionSourcePatchRequired": false,
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/authenticated-web-projection-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "real customer reply"
+  ]
+}

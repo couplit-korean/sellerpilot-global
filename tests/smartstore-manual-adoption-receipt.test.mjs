@@ -6,7 +6,7 @@ import { PGlite } from '@electric-sql/pglite';
 // Isolated SQL contract tests only. Production request/response preimages are
 // NOT copied into tests. Only the two pinned payload hashes are replaced with
 // hashes computed by PostgreSQL for this explicit synthetic fixture.
-const migration = await readFile(new URL('../supabase/migrations/20260907103000_exact_smartstore_manual_adoption_receipt.sql', import.meta.url), 'utf8');
+const migration = await readFile(new URL('../supabase/migrations/20260907103100_exact_smartstore_manual_adoption_receipt.sql', import.meta.url), 'utf8');
 const owner = '768ce4ac-0ef2-4e01-89dc-05aa4fa8543c';
 const product = '1ed4acfc-7603-48ec-a638-241131e59358';
 const listing = '7b260562-1e41-4ddc-8509-cb78dc7292c5';

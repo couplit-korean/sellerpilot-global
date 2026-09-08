@@ -1,0 +1,63 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "baseDelta": {
+    "path": "docs/cs-parallel/reports/lazada/delta.json",
+    "sha256": "0d145209f31b779e6ffc6e8cc08405f10f55679906e0fe6c1afe7cdadd660480"
+  },
+  "files": [
+    {
+      "path": "lib/channels/lazada-raw-reprocess.ts",
+      "change": "modify",
+      "beforeSha256": "6b977f8ff06b9ae51b47a05fb82d82538804a43742f62c96008f731b1d11f375",
+      "afterSha256": "abb5ee158fbc4bd47e35561949fa2ce33d76c55ce55ee1099ebd08c67f0e45e6",
+      "reason": "Preserve the completion RPC status so an exhausted retry is reported as terminal failed rather than as another scheduled retry."
+    },
+    {
+      "path": "tests/lazada-raw-reprocess.test.ts",
+      "change": "modify",
+      "beforeSha256": "4b33ede45074fe462e9954809c563d8981f0703ea452f29d1e67e4a637263b0d",
+      "afterSha256": "a3ab309d28c96da714824f4ce46053cac0fa9d442519851b5b43e9ff0fae1afd",
+      "reason": "Regress attempt-five retry completion returning failed and pin the public summary to failed=1/retried=0."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3-call-path.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c7ba0a326a24882925c740b12ea6b3fa7e128ca6ecdab225bc53537f8fb0184d",
+      "reason": "Give the integration owner an exact call-path and isolated DB regression proposal for the system/official and recall V2 contract gap."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/supplemental-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a3287d5b0996b6d8ccf727505cfa41ca3796a33fa9f28e1bfd85cbfdfe7b3e49",
+      "reason": "Record the restart call-graph audit and separate code wiring from permission, Push, DB, and approved-reply blockers."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/supplemental-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9715b91954d6be2142576628e612615260e51e77505bf17154187f944fe51c28",
+      "reason": "Tie the focused 6-test result to the exact supplemental source hashes without overstating a full-suite rerun."
+    }
+  ],
+  "sharedProposals": [
+    "lazada-005"
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/supplemental-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "real customer reply"
+  ]
+}

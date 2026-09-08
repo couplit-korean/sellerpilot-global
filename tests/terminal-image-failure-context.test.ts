@@ -89,7 +89,7 @@ test("terminal context rejects extra fields, unsafe prompt text, and oversized h
 
 test("worker and routes keep terminal context on the fenced image-only completion path", async () => {
   const [worker, claimRoute, completionRoute, migration, imagePlanning] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/worker/claim/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/worker/complete/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260828004000_persist_terminal_image_failure_context.sql", import.meta.url), "utf8"),

@@ -1,0 +1,21 @@
+# 공통 변경 요청 lazada-001
+
+- 목적: `inquiries.list`와 `inquiries.reply`의 capability 증거가 Commerce 앱/토큰이 아니라 실제 CS Bot 앱/토큰과 provider-certified seller/country를 가리키게 한다.
+- 요청 채널: lazada
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-cs-credential-binding/1`
+- 수정할 공통 파일과 함수: `lib/channels/cs-credential-binding.ts`의 `csCredentialBindingEvidence`, `lib/channels/lazada-oauth-exact.ts`의 CS Bot OAuth overlay 저장·refresh 계보
+- 현재 파일 SHA-256: `cs-credential-binding.ts=bf7e4db7ad408677b55b9c0d714f5a339521480fe4253139f9bb6fd09cf0c024`, `lazada-oauth-exact.ts=e5438e1b21147c847dff5654c74eb7f9ac364438691b239f303a8a73d430a574`
+- DB 객체: `sellerpilot_private.cs_credential_capability_bindings`, `sellerpilot_private.channel_credentials`
+- 기존 동작: Lazada credential에 Commerce와 IM 자격이 함께 있어도 generic `app_key/access_token`만 fingerprint한다. 현재 운영 credential은 `provider_account_subject`와 `country_user_info`가 없고 `seller_account_key_source=legacy_unattested`다.
+- 문제를 재현하는 최소 입력: 서로 다른 `app_key/access_token`과 `im_app_key/im_access_token`이 든 Lazada credential로 `inquiries.list` binding을 만들면 Commerce fingerprint가 나온다.
+- 원하는 동작: `/im/*` operation은 `im_app_key/im_access_token`만 fingerprint하고, CS Bot OAuth가 반환한 seller/country를 `provider_account_subject`와 `country_user_info`로 인증해 저장한다. Commerce 자격은 그대로 분리한다.
+- 전용 모듈 경로와 export: 기존 `lib/channels/lazada-inquiries.ts`; 새 export 불필요
+- 기존/새 입력·출력 계약: 입력 ABI 유지. binding 출력의 app/token/target fingerprint 의미만 실제 IM 요청 계보와 일치시킨다. seller identity가 미인증이면 binding은 `null`로 fail closed한다.
+- 최소 변경안: Lazada inquiries 분기에서 IM 필드만 선택하고, OAuth overlay refresh 시 IM seller/country lineage와 개별 만료를 원자적으로 갱신한다. Commerce refresh가 IM 필드를 덮지 않게 한다.
+- 다른 채널 영향: Lazada 분기만 추가; 다른 채널 fingerprint 계산은 byte-identical 유지
+- 상품/주문/배송 mutation 영향: 없음. 읽기/답변 capability 증거만 수정
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-credential-binding.test.ts tests/lazada-im-app-binding.test.ts tests/lazada-im-credential-overlay.test.ts`
+- migration 선행/preimage/ACL 요구: capability binding migration 적용 전후 모두 함수 단위 시험. 운영 row 수정은 별도 승인과 exact credential version preimage 필요
+- 우선순위: 첫 실제 읽기/웹 차단, 오연결·손실
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

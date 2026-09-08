@@ -1,0 +1,93 @@
+--- a/app/api/admin/cs/channels/shopee/history-progress/route.ts
++++ b/app/api/admin/cs/channels/shopee/history-progress/route.ts
+@@ -61,18 +61,17 @@
+     if (!parsed.success) {
+       return NextResponse.json({ message: "Shopee 과거수집 기간을 확인해 주세요." }, { status: 400, headers });
+     }
+-    let range: ReturnType<typeof shopeeHistoryRangeEpoch>;
+     try {
+-      range = shopeeHistoryRangeEpoch(parsed.data);
++      shopeeHistoryRangeEpoch(parsed.data);
+     } catch {
+       return NextResponse.json({ message: "Shopee Returns 기간은 오늘까지 최대 10년 범위로 선택해 주세요." },
+         { status: 400, headers });
+     }
+-    const { data, error } = await admin.serviceClient.rpc("sellerpilot_service_start_cs_shopee_history_v1", {
++    const { data, error } = await admin.serviceClient.rpc("sellerpilot_service_start_cs_shopee_history_v2", {
+       p_owner_id: admin.user.id,
+       p_request_key: parsed.data.requestKey,
+-      p_from: range.from,
+-      p_to: range.to,
++      p_from_date: parsed.data.fromDate,
++      p_to_date: parsed.data.toDate,
+     });
+     if (error) {
+       return NextResponse.json({ message: "Shopee shop별 과거수집 작업을 접수하지 못했습니다." },
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -301,6 +301,9 @@
+     if (error.message === "SHOPEE_CATEGORY_READ_TOKEN_REFRESH_BLOCKED") {
+       return error.message;
+     }
++    if (/^SHOPEE_(?:401|403)_AUTHORIZATION_REQUIRED$/u.test(error.message)) {
++      return error.message;
++    }
+     if (error.message === "NAVER_CREDENTIALS_MISSING") return "NAVER_AUTH_FAILED";
+     if (SAFE_NAVER_EXECUTION_ERRORS.has(error.message)) {
+       return error.message;
+--- a/tests/cs-shopee-history-route-db.test.mjs
++++ b/tests/cs-shopee-history-route-db.test.mjs
+@@ -17,6 +17,10 @@
+   "../supabase/migrations/20260908145331_cs_shopee_history_request_invariants.sql",
+   import.meta.url,
+ ), "utf8");
++const dateIntentSql = await readFile(new URL(
++  "../supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql",
++  import.meta.url,
++), "utf8");
+ const owner = "00000000-0000-4000-8000-000000007001";
+ const credential = "00000000-0000-4000-8000-000000007002";
+ const worker = "00000000-0000-4000-8000-000000007003";
+@@ -114,6 +118,7 @@
+     ) values($1,$2,'shopee','production',$3,$4)`, [owner, credential, shopIds[index], countries[index]]);
+   }
+   await db.exec(invariantSql);
++  await db.exec(dateIntentSql);
+   await db.query(`select public.sellerpilot_service_plan_cs_shopee_history_v1(
+     $1,$2,$3,$4,$5::jsonb
+   )`, [tokenHash, planJob, planClaim, runId, JSON.stringify(shopeeHistoryResumeFixture.plannedScopes)]);
+@@ -171,12 +176,12 @@
+     const token = String(request.headers.authorization ?? "").replace(/^Bearer\s+/u, "");
+     const serviceRequest = request.headers.apikey === serviceKey && token === serviceKey;
+     if (serviceRequest && request.method === "POST"
+-        && request.url === "/rest/v1/rpc/sellerpilot_service_start_cs_shopee_history_v1") {
++        && request.url === "/rest/v1/rpc/sellerpilot_service_start_cs_shopee_history_v2") {
+       try {
+         const body = await requestBody(request);
+-        const result = (await db.query(`select public.sellerpilot_service_start_cs_shopee_history_v1(
+-          $1,$2,$3,$4
+-        ) result`, [body.p_owner_id, body.p_request_key, body.p_from, body.p_to])).rows[0].result;
++        const result = (await db.query(`select public.sellerpilot_service_start_cs_shopee_history_v2(
++          $1,$2,$3::date,$4::date
++        ) result`, [body.p_owner_id, body.p_request_key, body.p_from_date, body.p_to_date])).rows[0].result;
+         json(response, 200, body.p_request_key === uuid(7996)
+           ? { ...result, historyRunId: `shopee-history-${"f".repeat(32)}` } : result);
+       } catch {
+@@ -299,6 +304,17 @@
+     const todayBody = await todayResponse.json();
+     assert.equal(todayResponse.status, 202, JSON.stringify(todayBody));
+     assert.equal(todayBody.queuedJobCount, 16);
++    const todayReplayResponse = await POST(new Request(
++      "http://sellerpilot.invalid/api/admin/cs/channels/shopee/history-progress", {
++        method: "POST",
++        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
++        body: JSON.stringify({ requestKey: uuid(7997), fromDate: yesterday, toDate: today }),
++      },
++    ));
++    const todayReplayBody = await todayReplayResponse.json();
++    assert.equal(todayReplayResponse.status, 200, JSON.stringify(todayReplayBody));
++    assert.equal(todayReplayBody.status, "reused");
++    assert.equal(todayReplayBody.queuedJobCount, 0);
+ 
+     const mismatchedRun = await POST(new Request(
+       "http://sellerpilot.invalid/api/admin/cs/channels/shopee/history-progress", {

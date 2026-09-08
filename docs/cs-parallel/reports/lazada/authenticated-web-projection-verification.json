@@ -1,0 +1,59 @@
+{
+  "contract": "sellerpilot-lazada-authenticated-raw-projection-verification/1",
+  "checkedAt": "2026-09-08T22:55:00+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDeltaSha256": "0e0ec4f3a9d20e4bf86c94baeb29bc59376e6c51b308761d5b0b9c47d4db5ba1",
+  "environment": "PGlite isolated database with actual admin helper and exported GET source",
+  "newTest": {
+    "path": "tests/cs-lazada-authenticated-raw-projection-get.test.mjs",
+    "sha256": "06f56c933c0221e08f23e291786484c819b0a6eb99a179dcc28545889fb3e041",
+    "tests": 2,
+    "passed": 2,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "durationMs": 2193.252208
+  },
+  "combinedRun": {
+    "files": [
+      "tests/cs-lazada-authenticated-raw-projection-get.test.mjs",
+      "tests/lazada-im-raw-inbox-db.test.mjs",
+      "tests/lazada-quarantine-read-db.test.mjs",
+      "tests/lazada-quarantine-route.test.ts",
+      "tests/cs-lazada-ingest-v3-db.test.mjs"
+    ],
+    "tests": 25,
+    "passed": 25,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "durationMs": 4627.247625
+  },
+  "lint": {
+    "path": "tests/cs-lazada-authenticated-raw-projection-get.test.mjs",
+    "exitCode": 0
+  },
+  "observed": {
+    "systemRawStatus": "normalized",
+    "systemProjectionRole": "system",
+    "recallRawStatus": "normalized",
+    "recallProjectionEventKind": "recalled",
+    "conflictRawStatus": "pending",
+    "conflictQuarantineReason": "conflict",
+    "rawUiPreservesExactBody": true,
+    "quarantineUiShowsConflictLabel": true
+  },
+  "authorization": {
+    "anonymousHttpStatus": 401,
+    "expiredSessionHttpStatus": 401,
+    "nonAdminOtherOwnerHttpStatus": 403,
+    "expiredOrDeniedReadRpcCalls": 0,
+    "crossOwnerReceiptMarkRejected": true,
+    "wrongSellerCredentialIngestRejected": true,
+    "anonymousReadFunctionsDenied": true,
+    "privateTablesDeniedToAnonAuthenticatedAndServiceRole": true,
+    "approvedCrossCreatorAdminReadExpected": true
+  },
+  "productionPatchRequired": false,
+  "productionMutation": false
+}

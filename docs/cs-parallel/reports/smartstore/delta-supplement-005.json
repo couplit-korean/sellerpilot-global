@@ -1,0 +1,70 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-004.json",
+  "baseManifestSha256": "fb72c1b60abcdee0a680c1fb735b14db35ff3d1e59bf025dcdfe9681fe2f84c6",
+  "reason": "004를 동결한 채 orphan/cross-run/incomplete history scan false completion을 재현하고 exact succeeded run scope checkpoint v2를 제안",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-007-checkpoint-run-scope-v2.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2c8064cfddf55a464e0e7c8f67bf7dc8d8d5064fd0ac62ea7a5d677c7cb037d2",
+      "reason": "동일 succeeded exact-scope run과 product/customer 두 reconciled scan을 함께 요구하는 checkpoint v2 SQL draft"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-007-common-integration.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "37126fc8d4ddffc33c74d007edbf305cbbbaa7b85dc6ec840f500aed45e0ba84",
+      "reason": "구문이 정상인 history-resume-v5 route의 checkpoint contract, RPC, advance rule을 v2로 함께 전환"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-007-frozen-005-syntax-repair.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8055ead30eccf27baf9339a40c003968f36ee9cb257fbaec4c4a5f5dd3f7a64d",
+      "reason": "frozen 005 route patch를 처음부터 적용할 때 누락되는 마지막 POST 함수 중괄호만 복구"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-007-checkpoint-scope-review.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f6749dfe99ac07d8920badceabcc2fa8b691ea701368a1d50db5dfa452d918ff",
+      "reason": "003/004/005 NULL·scope·미완료 리뷰, v1 결함, v2 계약과 통합 순서 기록"
+    },
+    {
+      "path": "tests/cs-smartstore-checkpoint-run-scope-v2.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "06a5736ac695e9ac2dc0e70114c22222035b65fb774c863d9f4da8a6690f71da",
+      "reason": "v1 false completion 재현, v2 차단, exact boundary, ACL, route diagnostics 0과 실제 GET 실행 시험"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence-005.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ab20bff0733faa8c5705677397300c8c8f76a2fdf0ad2e1d006e2e1717615240",
+      "reason": "checkpoint v2 7/7, 결합 회귀 34/34, frozen route 진단 한계와 정적 검사 증거"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status-supplement-005.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "50b8e07268b26ea68ec8522cec7730695aabf55ab4cb67c2abf98b0f8a984637",
+      "reason": "004 동결, checkpoint v1 통합 금지, v2 필요성과 운영 미완료 경계 기록"
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence-005.md",
+    "tests/cs-smartstore-checkpoint-run-scope-v2.test.mjs"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

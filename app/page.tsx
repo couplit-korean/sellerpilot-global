@@ -1,82 +1,15 @@
 "use client";
+import { OrdersPage } from "./shipping/workspace";
+import { useShippingWorkspace } from "./shipping/use-workspace";
+import { displayShippingOrders } from "./shipping/display-orders";
+import { composeWorkspaceSnapshot } from "./workspace-composition";
+import { displayCsTickets } from "./cs/display-tickets";
+import dynamic from "next/dynamic";
+import { useCsWorkspace } from "./cs/use-workspace";
 
 import Image from "next/image";
-import { ConversationTimeline } from "./cs/conversation-timeline";
-import { CsHistoryWindow } from "./cs/history-window";
-import { CsArchive } from "./cs/archive";
-import { EbayMessages } from "./cs/ebay-messages";
 import { getSafeSignInError } from "../lib/auth-sign-in-error-safety";
-import {
-  Activity,
-  AlertCircle,
-  AlertTriangle,
-  ArrowDownRight,
-  ArrowLeft,
-  ArrowRight,
-  ArrowUpRight,
-  BadgeCheck,
-  Bell,
-  Bot,
-  Box,
-  Calculator,
-  Camera,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleDollarSign,
-  Clock3,
-  CloudUpload,
-  ClipboardCheck,
-  Command,
-  Download,
-  Eye,
-  EyeOff,
-  ExternalLink,
-  FileText,
-  Filter,
-  Globe2,
-  Headphones,
-  HelpCircle,
-  ImagePlus,
-  ImageIcon,
-  Inbox,
-  Languages,
-  LayoutDashboard,
-  Link2,
-  ListFilter,
-  LoaderCircle,
-  LockKeyhole,
-  KeyRound,
-  LogOut,
-  Menu,
-  MessageCircleMore,
-  MoreHorizontal,
-  Package,
-  PackageCheck,
-  PackageSearch,
-  PanelLeftClose,
-  PencilRuler,
-  Plus,
-  RefreshCw,
-  Search,
-  Send,
-  ServerCog,
-  ShieldCheck,
-  ShoppingBag,
-  ShoppingCart,
-  Sparkles,
-  Square,
-  Store,
-  TrendingUp,
-  Trash2,
-  Truck,
-  Upload,
-  UserRound,
-  WandSparkles,
-  X,
-  Zap,
-} from "lucide-react";
+import { Activity, AlertCircle, AlertTriangle, ArrowDownRight, ArrowLeft, ArrowRight, ArrowUpRight, Bell, Bot, Box, Calculator, Camera, Check, CheckCircle2, ChevronDown, ChevronRight, CircleDollarSign, Clock3, CloudUpload, ClipboardCheck, Command, Eye, EyeOff, ExternalLink, FileText, Filter, Globe2, Headphones, HelpCircle, ImagePlus, ImageIcon, Inbox, LayoutDashboard, Link2, ListFilter, LoaderCircle, LockKeyhole, KeyRound, LogOut, Menu, MessageCircleMore, MoreHorizontal, Package, PackageCheck, PackageSearch, PanelLeftClose, PencilRuler, Plus, RefreshCw, Search, ServerCog, ShieldCheck, ShoppingBag, ShoppingCart, Sparkles, Square, Store, TrendingUp, Trash2, Truck, Upload, UserRound, WandSparkles, X, Zap } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { AiProductStudio, cleanupUnenqueuedStudioPhotos, optimizeAndUploadStudioPhotos, type StudioCompetitorContext, type StudioPhoto, type StudioSubmissionMode } from "./ai-product-studio";
@@ -86,12 +19,7 @@ import { CategoryClassificationWorkbench } from "./category-classification-workb
 import { ProductPublishWorkbench } from "./product-publish-workbench";
 import { resolveHydratedProductEditDraft } from "./product-edit-draft-fence";
 import { ProductRevisionImagePicker } from "./product-revision-image-picker";
-import {
-  parseProductDetailPageEnvelope,
-  parseProductDetailSource,
-  SavedProductDetailPage,
-  type ProductDetailPageEnvelope,
-} from "./saved-product-detail-page";
+import { parseProductDetailPageEnvelope, parseProductDetailSource, SavedProductDetailPage, type ProductDetailPageEnvelope } from "./saved-product-detail-page";
 import { StyleLearningCenter } from "./style-learning-center";
 import { MarginCalculatorPage } from "./margin-calculator";
 import { hasActiveModalInteractionSurface, useModalInteraction } from "./use-modal-interaction";
@@ -99,45 +27,16 @@ import { MobilePushManager } from "./mobile-push-manager";
 import { PlatformUsagePage } from "./platform-usage-page";
 import { marketplaceListingLinkLabel, marketplaceListingUrl, type RemoteListingReference } from "./channel-links";
 import { channels, type ChannelKey } from "./channel-config";
-import {
-  channelOverviewHealthLabel,
-  channelStepSelectionLabel,
-} from "./channel-readiness-data";
-import { activeChannelKeys, isActiveChannelKey } from "../lib/channels/catalog";
+import { channelOverviewHealthLabel, channelStepSelectionLabel } from "./channel-readiness-data";
+import { activeChannelKeys } from "../lib/channels/catalog";
 import { coreFirstDraftAssetIds, type AiGeneratedAssetId } from "../lib/ai-generated-assets";
-import { shipmentVerificationSummary, shipmentWriteAvailability } from "../lib/channels/shipment-release";
-import {
-  useOperationsSnapshot,
-  type OperationsSnapshot,
-  type OperationMarginScenario,
-  type OperationProduct,
-  type OperationTicket,
-  type OperationTicketDelivery,
-  type SalesRange,
-} from "./use-operations-snapshot";
+import { useOperationsSnapshot, type OperationsSnapshot, type OperationMarginScenario, type OperationProduct, type SalesRange } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
 import { canonicalizeStudioCompetitorUrl } from "../lib/studio-competitor-evidence";
-import {
-  emptyProductIntake,
-  emptyProductIntakeDraftDecisions,
-  isProductIntakePublicationReady,
-  productConditions,
-  productCurrencies,
-  productEditSchema,
-  productIntakeDraftSchema,
-  productIntakeSchema,
-  productRegistrationIntakeDraftSchema,
-  type ProductIntakeDraft,
-  type ProductIntakeDraftDecisions,
-  type ProductRegistrationIntakeDraft,
-} from "../lib/product-intake";
-import {
-  getProductRegistrationDraft,
-  putProductRegistrationDraft,
-  ProductRegistrationDraftClientError,
-} from "../lib/product-registration-draft-client";
+import { emptyProductIntake, emptyProductIntakeDraftDecisions, isProductIntakePublicationReady, productConditions, productCurrencies, productEditSchema, productIntakeDraftSchema, productIntakeSchema, productRegistrationIntakeDraftSchema, type ProductIntakeDraft, type ProductIntakeDraftDecisions, type ProductRegistrationIntakeDraft } from "../lib/product-intake";
+import { getProductRegistrationDraft, putProductRegistrationDraft, ProductRegistrationDraftClientError } from "../lib/product-registration-draft-client";
 import { isResolvedProductFact } from "../lib/product-facts";
 import { normalizeProductSaleConfiguration, productSaleConfigurations } from "../lib/product-sale-configuration";
 import { recoverAmbiguousProductRevision } from "../lib/product-revision-recovery";
@@ -154,107 +53,24 @@ import { createStudioPhotoSelectionBudget, type StudioPhotoBudgetReservation } f
 import { createAbortableConcurrencyGate } from "../lib/abortable-concurrency-gate";
 import { createStudioPhotoEditSession } from "../lib/studio-photo-edit-session";
 import { deadlineAfter, deadlineIsActive, deadlineRemaining } from "../lib/time-deadline";
-import {
-  parseCompetitorProviderSnapshot,
-  savedCompetitorPriceState,
-  validCompetitorProviderFetchedAt,
-  type CompetitorProviderDisplayStatus,
-} from "../lib/competitor-provider-snapshot";
-
-import { buildPaidOrdersExcelWorkbook, paidOrdersExcelFilename } from "../lib/order-excel";
-import {
-  editedProductSellingPriceKrw,
-  evaluateProductMarginLossWarnings,
-  latestProductMarginScenario,
-  productMarginListingChannelKeys,
-  type ProductMarginWarningEvaluation,
-} from "../lib/product-margin-loss-warning";
-import {
-  clampWorkspaceIdleTimeoutMs,
-  createUserWorkspaceRecord,
-  parseUserWorkspaceRecord,
-  readUserWorkspaceStorage,
-  selectWorkspaceInitialRouteSource,
-  serializeUserWorkspaceRecord,
-  userWorkspaceStorageKey,
-} from "../lib/user-workspace-session";
-import {
-  adminVerificationState,
-  nextAdminAccessState,
-  switchAccountWithLocalSessionCleanup,
-  type AccountSwitchCleanupState,
-  type AdminAccessState,
-} from "./_auth/admin-access-state";
+import { parseCompetitorProviderSnapshot, savedCompetitorPriceState, validCompetitorProviderFetchedAt, type CompetitorProviderDisplayStatus } from "../lib/competitor-provider-snapshot";
+import { editedProductSellingPriceKrw, evaluateProductMarginLossWarnings, latestProductMarginScenario, productMarginListingChannelKeys, type ProductMarginWarningEvaluation } from "../lib/product-margin-loss-warning";
+import { clampWorkspaceIdleTimeoutMs, createUserWorkspaceRecord, parseUserWorkspaceRecord, readUserWorkspaceStorage, selectWorkspaceInitialRouteSource, serializeUserWorkspaceRecord, userWorkspaceStorageKey } from "../lib/user-workspace-session";
+import { adminVerificationState, nextAdminAccessState, switchAccountWithLocalSessionCleanup, type AccountSwitchCleanupState, type AdminAccessState } from "./_auth/admin-access-state";
 import { formatCompactWon } from "./_dashboard/format-compact-won";
 import { waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 import { RevenueCalendar } from "./_dashboard/revenue-calendar";
 import { SalesRangeControl } from "./_dashboard/sales-range-control";
-import {
-  buildCompetitorResearchRetryPath,
-  isCompetitorResearchBlockingAnalysis,
-  pollCompetitorResearch,
-  shouldInvalidateCompetitorResearch,
-  type CompetitorResearchUiState,
-} from "./_publishing/competitor-research-polling";
-import {
-  CompetitorPriceSlots,
-  isEligibleCompetitorObservation,
-  type CompetitorDisplayItem,
-  type CompetitorResearchItem,
-} from "./_publishing/competitor-price-v3-ui";
-import {
-  clearUnchangedResearchAppliedValues,
-  collectResearchAppliedValues,
-} from "./_publishing/product-research-provenance";
-import {
-  confirmedProductResearchValue,
-  isProductResearchJobId,
-  pendingProductResearchForOwner,
-  productResearchPendingStorageKey,
-  ProductResearchNotFoundError,
-  ProductResearchTerminalError,
-  shouldClearPendingProductResearch,
-  type PendingProductResearch,
-} from "./_publishing/product-research-lifecycle";
-import { csChannelAttentionCount, csChannelVerification, csReplyDraftValue, isRemoteCsReplyChannel, selectedCsTicket, withCsReplyDraft, type CsReplyDrafts } from "./cs-release-state";
-import {
-  csChannelFilterFromValue,
-  csNavigationParams,
-  csStatusFilterFromValue,
-  csTicketMatchesFilter,
-  type CsChannelFilter,
-  type CsStatusFilter,
-} from "./cs-navigation";
+import { buildCompetitorResearchRetryPath, isCompetitorResearchBlockingAnalysis, pollCompetitorResearch, shouldInvalidateCompetitorResearch, type CompetitorResearchUiState } from "./_publishing/competitor-research-polling";
+import { CompetitorPriceSlots, isEligibleCompetitorObservation, type CompetitorDisplayItem, type CompetitorResearchItem } from "./_publishing/competitor-price-v3-ui";
+import { clearUnchangedResearchAppliedValues, collectResearchAppliedValues } from "./_publishing/product-research-provenance";
+import { confirmedProductResearchValue, isProductResearchJobId, pendingProductResearchForOwner, productResearchPendingStorageKey, ProductResearchNotFoundError, ProductResearchTerminalError, shouldClearPendingProductResearch, type PendingProductResearch } from "./_publishing/product-research-lifecycle";
+import { csChannelFilterFromValue, csNavigationParams, csStatusFilterFromValue, type CsChannelFilter, type CsStatusFilter } from "./cs-navigation";
+import { authenticatedFetch as authenticatedWorkspaceFetch } from "../lib/authenticated-fetch";
 import { operationEventNotifications, operationEventState, type OperationEventState } from "./_notifications/operation-event-notifications";
 import { toastToneForMessage, useToastQueue } from "./_notifications/use-toast-queue";
-import {
-  isSmartstoreExistingAdoptionActivity,
-  parsePendingSmartstoreContentRepair,
-  parsePendingSmartstoreExistingAdoption,
-  parseRepairRequiredSmartstoreExistingAdoption,
-  parseVerifiedSmartstoreContentRepair,
-  parseVerifiedSmartstoreExistingAdoption,
-  smartstoreExistingAdoptionErrorMessage,
-  smartstoreExistingAdoptionState,
-} from "./_products/smartstore-existing-adoption-ui";
-import {
-  controllableRegistrationActivityJobId,
-  isCancelledRegistrationActivity,
-  isRegistrationActivityRunning,
-  isRegistrationImageActivity,
-  retryableRegistrationActivityJobId,
-  registrationActivityDisplayStatusLabel,
-  registrationActivityDisplayElapsedSeconds,
-  registrationActivityFilterFromValue,
-  registrationActivityMatchesFilter,
-  registrationActivityNotificationTransition,
-  registrationActivityProgress,
-  registrationChannelStatusLabel,
-  registrationStatusMeta,
-  type RegistrationActivity,
-  type RegistrationActivityEventState,
-  type RegistrationActivityFilter,
-} from "./_registration/registration-status";
+import { isSmartstoreExistingAdoptionActivity, parsePendingSmartstoreContentRepair, parsePendingSmartstoreExistingAdoption, parseRepairRequiredSmartstoreExistingAdoption, parseVerifiedSmartstoreContentRepair, parseVerifiedSmartstoreExistingAdoption, smartstoreExistingAdoptionErrorMessage, smartstoreExistingAdoptionState } from "./_products/smartstore-existing-adoption-ui";
+import { controllableRegistrationActivityJobId, isCancelledRegistrationActivity, isRegistrationActivityRunning, isRegistrationImageActivity, retryableRegistrationActivityJobId, registrationActivityDisplayStatusLabel, registrationActivityDisplayElapsedSeconds, registrationActivityFilterFromValue, registrationActivityMatchesFilter, registrationActivityNotificationTransition, registrationActivityProgress, registrationChannelStatusLabel, registrationStatusMeta, type RegistrationActivity, type RegistrationActivityEventState, type RegistrationActivityFilter } from "./_registration/registration-status";
 
 type FirstDraftGeneratedImage = {
   id: AiGeneratedAssetId;
@@ -375,6 +191,8 @@ function createPageAbortScope(
     },
   };
 }
+
+const CsPage = dynamic(() => import("./cs/workspace").then(module => module.CsPage));
 
 type View =
   | "overview"
@@ -505,16 +323,6 @@ function persistWorkspaceView(userId: string, view: View, now = Date.now(), rout
   return true;
 }
 
-const ticketChannelCodes: Record<string, string> = {
-  Qoo10: "Q",
-  Shopee: "S",
-  Lazada: "L",
-  쿠팡: "C",
-  "11번가": "11",
-  "네이버 스마트스토어": "N",
-  eBay: "E",
-  Temu: "T",
-};
 
 const channelByCode = new Map(Object.values(channels).map((channel) => [channel.letter, channel]));
 const enabledSalesChannelCount = Object.values(channels).filter((channel) => channel.enabled).length;
@@ -582,69 +390,7 @@ function dashboardProductCategoryLabel(product: Pick<DisplayProduct, "categoryHi
   return confirmedCategory || product.categoryHint || "미입력";
 }
 
-type DisplayOrder = {
-  sourceId: string;
-  id: string;
-  channelKey: string;
-  channel: string;
-  customer: string;
-  product: string;
-  amount: string;
-  status: string;
-  time: string;
-  shippedAt: string | null;
-  deliveredAt: string | null;
-  carrierCode: string | null;
-  trackingNumber: string | null;
-  settlementStatus: string;
-  settlementAmount: number | null;
-  settlementCurrency: string | null;
-  exchangeLossPercent: number | null;
-};
-
-type DisplayTicket = {
-  sourceId: string;
-  id: string;
-  channelKey: string;
-  customer: string;
-  channel: string;
-  subject: string;
-  originalMessage: string;
-  preview: string;
-  replyDraft: string | null;
-  replyDeliveryStatus: OperationTicket["replyDeliveryStatus"];
-  replyDeliveryError: string | null;
-  orderId: string | null;
-  externalOrderReference: string | null;
-  providerStatus: "unknown" | "waiting" | "answered" | "closed";
-  latestInboundKey: string | null;
-  ticketKind: "conversation" | "after_sales";
-  delivery: OperationTicketDelivery | null;
-  blockingDelivery: OperationTicketDelivery | null;
-  time: string;
-  status: "긴급" | "답변 대기" | "처리 중" | "처리 완료";
-};
-
-type ReplyQueueResult = {
-  jobId: string;
-  message: string;
-  delivery: OperationTicketDelivery;
-};
-
-type SupportLocale = "ko-KR" | "en-US" | "ja-JP" | "zh-TW" | "th-TH" | "vi-VN" | "id-ID" | "ms-MY" | "pt-BR" | "es-MX";
-
 type CommerceTemplate = { id: string; name: string; kind: "shipping_fee" | "packaging_shipping"; values: Record<string, string | number | boolean | null>; is_default: boolean; updated_at: string };
-
-const supportLocaleLabels: Record<SupportLocale, string> = {
-  "ko-KR": "한국어", "en-US": "영어", "ja-JP": "일본어", "zh-TW": "중국어(번체)", "th-TH": "태국어",
-  "vi-VN": "베트남어", "id-ID": "인도네시아어", "ms-MY": "말레이어", "pt-BR": "포르투갈어", "es-MX": "스페인어",
-};
-
-const supportReplyTemplates = [
-  { label: "주문 확인 안내", value: "문의해 주셔서 감사합니다. 주문 내역과 현재 처리 상태를 확인한 뒤 정확한 내용으로 다시 안내드리겠습니다." },
-  { label: "배송 확인 안내", value: "배송으로 불편을 드려 죄송합니다. 판매채널에 등록된 배송 상태와 운송장 정보를 확인한 뒤 안내드리겠습니다." },
-  { label: "교환·반품 확인", value: "교환·반품 요청 내용을 확인했습니다. 상품 상태와 판매채널 정책을 확인한 뒤 가능한 처리 방법을 안내드리겠습니다." },
-];
 
 type UnifiedSearchResult = {
   kind: "product" | "order" | "inquiry";
@@ -671,31 +417,6 @@ const productStatusLabel = {
   low_stock: "재고주의",
   out_of_stock: "품절",
   archived: "판매 종료",
-} as const;
-
-const orderStatusLabel = {
-  paid: "결제완료",
-  ready_to_ship: "출고대기",
-  shipped: "배송중",
-  delivered: "배송완료",
-  cancelled: "취소완료",
-  refunded: "환불완료",
-} as const;
-
-const ticketStatusLabel = {
-  urgent: "긴급",
-  waiting: "답변 대기",
-  in_progress: "처리 중",
-  resolved: "처리 완료",
-} as const;
-
-const replyDeliveryMeta = {
-  queued: { label: "전송 대기", detail: "안전한 작업 대기열에 등록됐습니다.", tone: "queued" },
-  running: { label: "판매채널 처리 중", detail: "작업자가 판매채널 응답을 확인하고 있습니다.", tone: "running" },
-  succeeded: { label: "전달 확인", detail: "판매채널의 성공 응답과 내부 원장이 일치합니다.", tone: "succeeded" },
-  failed: { label: "전달 실패", detail: "판매채널이 수락하지 않은 것으로 확인됐습니다. 오류를 확인한 뒤 수동으로 다시 시도하세요.", tone: "failed" },
-  cancelled: { label: "전송 취소", detail: "답변이 판매채널에 전달되지 않았습니다.", tone: "failed" },
-  reconciliation_required: { label: "전송 여부 확인 필요", detail: "판매채널이 답변을 받았을 가능성이 있어 자동 재전송을 차단했습니다.", tone: "reconciliation" },
 } as const;
 
 const channelNameByKey: Record<string, string> = {
@@ -921,7 +642,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
   onOpenCs: (status: CsStatusFilter) => void;
   onOpenProduct: (product: DisplayProduct) => void;
   displayProducts: DisplayProduct[];
-  operationSummary: OperationsSnapshot["summary"] | null;
+  operationSummary: (OperationsSnapshot["summary"] & { openTicketCount: number }) | null;
   channelMetrics: OperationsSnapshot["channelMetrics"];
   pipeline: OperationsSnapshot["pipeline"] | null;
   analytics: OperationsSnapshot["analytics"] | null;
@@ -4841,500 +4562,11 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   );
 }
 
-type ShipmentInput = {
-  id: string;
-  carrierCode: string;
-  trackingNumber: string;
-  tracxReferenceKind?: "packing_no" | "reference_order_no";
-  tracxReference?: string;
-};
-type ShipmentDraftInput = Omit<ShipmentInput, "id">;
-type ShipmentResult = {
-  succeeded: number;
-  failed: number;
-  reconciliationRequired: number;
-  results: Array<{ id: string; channel: string; ok: boolean; message: string; reconciliationRequired?: boolean }>;
-};
-
-type InquiryHistoryBackfill = {
-  runId: string;
-  status: "queued" | "running" | "succeeded" | "failed" | "blocked";
-  historyDays: number;
-  fromDate: string;
-  toDate: string;
-  channels: Array<"coupang" | "smartstore">;
-  expectedInitialJobs: number;
-  totalJobs: number;
-  queuedJobs: number;
-  runningJobs: number;
-  succeededJobs: number;
-  failedJobs: number;
-  progressPercent: number;
-  startedAt: string;
-  updatedAt: string;
-  completedAt: string | null;
-  blockedReason?: "STATIC_EGRESS_REQUIRED";
-  reused?: boolean;
-  retriedJobs?: number;
-};
-
-function parseInquiryHistoryBackfill(value: unknown): InquiryHistoryBackfill | null {
-  if (!isRecord(value)
-      || typeof value.runId !== "string"
-      || !["queued", "running", "succeeded", "failed", "blocked"].includes(String(value.status))
-      || !Array.isArray(value.channels)
-      || value.channels.length < 1 || value.channels.length > 2
-      || new Set(value.channels).size !== value.channels.length
-      || value.channels.some((channel) => channel !== "coupang" && channel !== "smartstore")) return null;
-  const numericKeys = [
-    "historyDays", "expectedInitialJobs", "totalJobs", "queuedJobs", "runningJobs",
-    "succeededJobs", "failedJobs", "progressPercent",
-  ] as const;
-  if (numericKeys.some((key) => typeof value[key] !== "number" || !Number.isInteger(value[key]) || Number(value[key]) < 0)
-      || typeof value.fromDate !== "string"
-      || typeof value.toDate !== "string"
-      || typeof value.startedAt !== "string"
-      || typeof value.updatedAt !== "string"
-      || value.completedAt !== null && typeof value.completedAt !== "string"
-      || value.blockedReason !== undefined && value.blockedReason !== "STATIC_EGRESS_REQUIRED") return null;
-  return value as InquiryHistoryBackfill;
-}
-
-const fulfillmentRequestBatchSize = 3;
-
-function OrdersPage({ notify, displayOrders, onFulfill, syncStatus, initialQuery = "", initialOrderId = null }: {
-  notify: (message: string) => void;
-  displayOrders: DisplayOrder[];
-  onFulfill: (shipments: ShipmentInput[]) => Promise<ShipmentResult>;
-  syncStatus: OperationsSnapshot["syncStatus"];
-  initialQuery?: string;
-  initialOrderId?: string | null;
-}) {
-  const [active, setActive] = useState("전체 주문");
-  const [query, setQuery] = useState(initialQuery);
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [shipmentDrafts, setShipmentDrafts] = useState<Record<string, ShipmentDraftInput>>({});
-  const [fulfillmentOpen, setFulfillmentOpen] = useState(false);
-  const [detailOrder, setDetailOrder] = useState<DisplayOrder | null>(() => displayOrders.find((order) => order.id === initialOrderId) ?? null);
-  const [fulfilling, setFulfilling] = useState(false);
-  const invoiceInputRef = useRef<HTMLInputElement>(null);
-  const detailDialogRef = useRef<HTMLElement>(null);
-  const fulfillmentDialogRef = useRef<HTMLElement>(null);
-  useModalInteraction(Boolean(detailOrder), detailDialogRef, () => setDetailOrder(null));
-  useModalInteraction(fulfillmentOpen, fulfillmentDialogRef, () => {
-    if (!fulfilling) setFulfillmentOpen(false);
-  }, { dismissible: !fulfilling });
-  const paidCount = displayOrders.filter((order) => order.status === "결제완료").length;
-  const readyCount = displayOrders.filter((order) => order.status === "출고대기").length;
-  const fulfillmentCandidateCount = displayOrders.filter((order) => ["결제완료", "출고대기"].includes(order.status)
-    && isActiveChannelKey(order.channelKey)
-    && shipmentWriteAvailability(order.channelKey).available).length;
-  const shipmentVerification = shipmentVerificationSummary(fulfillmentCandidateCount);
-  const shippingCount = displayOrders.filter((order) => order.status === "배송중").length;
-  const deliveredCount = displayOrders.filter((order) => order.status === "배송완료").length;
-  const settledCount = displayOrders.filter((order) => order.settlementStatus === "정산 완료").length;
-  const exchangeRiskCount = displayOrders.filter((order) => (order.exchangeLossPercent ?? 0) >= 2).length;
-  const lastSuccess = syncStatus.filter((item) => item.data_type === "orders" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
-  const failedCount = syncStatus.filter((item) => item.data_type === "orders" && item.status === "failed").length;
-  const downloadPaidOrders = () => {
-    const workbook = buildPaidOrdersExcelWorkbook(displayOrders);
-    if (workbook.count === 0) {
-      notify("내려받을 결제완료 주문이 없습니다.");
-      return;
-    }
-    const url = URL.createObjectURL(new Blob(["\uFEFF", workbook.xml], { type: "application/vnd.ms-excel;charset=utf-8" }));
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = paidOrdersExcelFilename();
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    notify(`결제완료 주문 ${workbook.count}건을 Excel 파일로 내려받았습니다.`);
-  };
-  const filteredOrders = displayOrders.filter((order) => {
-    const matchesTab = active === "전체 주문"
-      || active === "완료 · 취소" && ["배송완료", "취소완료", "환불완료"].includes(order.status)
-      || order.status === active;
-    return matchesTab && (!query.trim() || matchesSearch(`${order.id} ${order.customer} ${order.product} ${order.status}`, query));
-  });
-  const eligibleOrders = filteredOrders.filter((order) => ["결제완료", "출고대기"].includes(order.status)
-    && isActiveChannelKey(order.channelKey)
-    && shipmentWriteAvailability(order.channelKey).available);
-  const selectedOrders = displayOrders.filter((order) => selectedIds.has(order.sourceId)
-    && isActiveChannelKey(order.channelKey)
-    && shipmentWriteAvailability(order.channelKey).available);
-  const allEligibleSelected = eligibleOrders.length > 0 && eligibleOrders.every((order) => selectedIds.has(order.sourceId));
-  const toggleAllEligible = () => setSelectedIds((current) => {
-    const next = new Set(current);
-    if (allEligibleSelected) eligibleOrders.forEach((order) => next.delete(order.sourceId));
-    else eligibleOrders.forEach((order) => next.add(order.sourceId));
-    return next;
-  });
-  const toggleOrder = (order: DisplayOrder) => {
-    if (!isActiveChannelKey(order.channelKey) || !shipmentWriteAvailability(order.channelKey).available) {
-      notify("이 채널은 자동 발송 API 범위가 검증되지 않아 선택할 수 없습니다. 판매자센터에서 처리해 주세요.");
-      return;
-    }
-    setSelectedIds((current) => {
-      const next = new Set(current);
-      if (next.has(order.sourceId)) next.delete(order.sourceId);
-      else next.add(order.sourceId);
-      return next;
-    });
-  };
-  const openFulfillment = () => {
-    if (!selectedOrders.length) {
-      notify("결제완료 또는 출고대기 주문을 먼저 선택해 주세요.");
-      return;
-    }
-    setShipmentDrafts((current) => Object.fromEntries(selectedOrders.map((order) => [order.sourceId, current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }])));
-    setFulfillmentOpen(true);
-  };
-  const importInvoices = async (file: File | null) => {
-    if (!file) return;
-    try {
-      const lines = (await file.text()).replace(/^\uFEFF/, "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-      if (!lines.length) throw new Error("empty");
-      const rows = lines.map((line) => line.split(",").map((value) => value.trim().replace(/^"|"$/g, "")));
-      const header = rows[0].map((value) => normalizeSearchText(value));
-      const hasHeader = header.some((value) => ["orderid", "주문번호", "tracking", "운송장번호"].includes(value.replace(/\s/g, "")));
-      const dataRows = hasHeader ? rows.slice(1) : rows;
-      const nextDrafts: Record<string, ShipmentDraftInput> = {};
-      const nextSelected = new Set<string>();
-      for (const row of dataRows) {
-        const [externalOrderId, carrierCode, trackingNumber, tracxReference = "", rawTracxReferenceKind = "packing_no"] = row;
-        const matchingOrders = displayOrders.filter((candidate) => candidate.id === externalOrderId);
-        const order = matchingOrders.length === 1 ? matchingOrders[0] : null;
-        if (!order || !carrierCode || !trackingNumber || !isActiveChannelKey(order.channelKey) || !shipmentWriteAvailability(order.channelKey).available) continue;
-        nextSelected.add(order.sourceId);
-        nextDrafts[order.sourceId] = {
-          carrierCode,
-          trackingNumber,
-          tracxReference,
-          tracxReferenceKind: rawTracxReferenceKind === "reference_order_no" ? "reference_order_no" : "packing_no",
-        };
-      }
-      if (!nextSelected.size) throw new Error("unmatched");
-      setSelectedIds(nextSelected);
-      setShipmentDrafts(nextDrafts);
-      setFulfillmentOpen(true);
-      notify(`${nextSelected.size}건의 송장 정보를 불러왔습니다.`);
-    } catch {
-      notify("CSV를 ‘주문번호,택배사코드,운송장번호[,TracX참조번호,참조종류]’ 순서로 확인해 주세요.");
-    } finally {
-      if (invoiceInputRef.current) invoiceInputRef.current.value = "";
-    }
-  };
-  const confirmFulfillment = async () => {
-    const shipments = selectedOrders.map((order) => ({ id: order.sourceId, ...shipmentDrafts[order.sourceId] }));
-    if (shipments.some((shipment) => {
-      const order = selectedOrders.find((candidate) => candidate.sourceId === shipment.id);
-      return !shipment.carrierCode?.trim() || order?.channelKey !== "lazada" && !shipment.trackingNumber?.trim();
-    })) {
-      notify("택배사 코드와 Lazada 외 채널의 실제 운송장번호를 입력해 주세요.");
-      return;
-    }
-    setFulfilling(true);
-    try {
-      const result = await onFulfill(shipments);
-      if (result.succeeded) setSelectedIds((current) => {
-        const next = new Set(current);
-        result.results.filter((item) => item.ok).forEach((item) => next.delete(item.id));
-        return next;
-      });
-      if (result.failed === 0 && result.reconciliationRequired === 0) setFulfillmentOpen(false);
-    } finally {
-      setFulfilling(false);
-    }
-  };
-  return (
-    <div className="page-stack">
-      <section className="order-summary-grid"><article><span className="metric-icon blue"><ShoppingCart size={19} /></span><div><small>통합 주문</small><strong>{displayOrders.length}</strong></div><em>운영 원장</em></article><article><span className="metric-icon orange"><Clock3 size={19} /></span><div><small>출고 대기</small><strong>{readyCount}</strong></div><em className="neutral">결제완료 {paidCount}건</em></article><article><span className="metric-icon violet"><Truck size={19} /></span><div><small>배송 중 · 완료</small><strong>{shippingCount} · {deliveredCount}</strong></div><em className="neutral">운송장 추적</em></article><article><span className={`metric-icon ${exchangeRiskCount ? "orange" : "green"}`}><CircleDollarSign size={19} /></span><div><small>정산 완료</small><strong>{settledCount}</strong></div><em className={exchangeRiskCount ? "negative" : "neutral"}>{exchangeRiskCount ? `환율 손실주의 ${exchangeRiskCount}건` : "환율 손실주의 없음"}</em></article><article><span className={`metric-icon ${failedCount ? "orange" : "green"}`}><RefreshCw size={19} /></span><div><small>최근 동기화</small><strong>{lastSuccess ? relativeTime(lastSuccess) : "대기"}</strong></div><em className={failedCount ? "neutral" : ""}>{failedCount ? `${failedCount}개 채널 확인 필요` : "실제 채널 API"}</em></article></section>
-      <section className="shipment-warning shipment-release-status" role="status"><AlertTriangle size={16} /><span><b>{shipmentVerification.title}</b><small>{shipmentVerification.detail}</small></span></section>
-      <section className="panel data-panel"><div className="tab-toolbar"><div>{["전체 주문", "결제완료", "출고대기", "배송중", "완료 · 취소"].map((tab) => <button className={active === tab ? "active" : ""} onClick={() => setActive(tab)} key={tab}>{tab}{tab === "출고대기" && <span>{readyCount}</span>}</button>)}</div><label className="search-field"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="주문번호, 구매자, 상품 검색" aria-label="주문 검색" /></label><button type="button" className="icon-text-button paid-orders-export-button" onClick={downloadPaidOrders} title="결제완료 상태의 주문만 Excel 파일로 내려받기"><Download size={15} />결제완료 Excel <b>{paidCount}</b>건</button><span className="automatic-sync-label"><RefreshCw size={14} />5분마다 자동 업데이트</span></div>
-        <div className="table-wrap"><table className="data-table order-table"><thead><tr><th><label className="order-checkbox-control"><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} /></label></th><th>주문번호</th><th>채널</th><th>구매자</th><th>상품</th><th>결제금액</th><th>주문 · 배송</th><th>정산</th><th>주문시간</th><th /></tr></thead><tbody>{filteredOrders.map((order) => { const supported = isActiveChannelKey(order.channelKey) && shipmentWriteAvailability(order.channelKey).available; const eligible = ["결제완료", "출고대기"].includes(order.status) && supported; return <tr key={order.sourceId} className={`${initialOrderId === order.id ? "search-target-row" : ""} ${selectedIds.has(order.sourceId) ? "selected-row" : ""}`.trim()}><td><label className="order-checkbox-control"><input type="checkbox" aria-label={`${order.id} 출고 선택`} checked={selectedIds.has(order.sourceId)} disabled={!eligible} title={!supported ? "자동 발송 API 검증 전" : undefined} onChange={() => toggleOrder(order)} /></label></td><td><button type="button" className="order-detail-link mono" onClick={() => setDetailOrder(order)}>{order.id}</button></td><td><ChannelMark code={order.channel} size="sm" /></td><td><b>{order.customer}</b></td><td><button type="button" className="order-product-button truncate-product" onClick={() => setDetailOrder(order)}>{order.product}</button></td><td><b>{order.amount}</b></td><td><StatusBadge status={order.status} />{order.trackingNumber ? <small className="tracking-fact">{order.carrierCode} · {order.trackingNumber}</small> : !supported && ["결제완료", "출고대기"].includes(order.status) ? <small className="tracking-fact">자동 발송 미검증 · 판매자센터 처리</small> : null}</td><td><StatusBadge status={order.settlementStatus} />{(order.exchangeLossPercent ?? 0) >= 2 ? <small className="exchange-loss-warning">환율 -{order.exchangeLossPercent}%</small> : null}</td><td><span className="muted-cell">{order.time}</span></td><td><button className="table-action" title="주문 상세정보 보기" aria-label={`${order.id} 주문 상세정보 보기`} onClick={() => setDetailOrder(order)}><ChevronRight size={16} /></button></td></tr>; })}</tbody></table></div>
-        {displayOrders.length === 0 ? <div className="live-empty-state table-empty"><ShoppingCart size={28} /><b>동기화된 실제 주문이 없습니다.</b><small>채널 API 키 연결 후 주문 조회를 실행하면 표시됩니다.</small></div> : filteredOrders.length === 0 ? <div className="live-empty-state table-empty"><Search size={28} /><b>검색 조건에 맞는 주문이 없습니다.</b><small>주문번호, 구매자명 또는 상품명을 다시 확인해 주세요.</small></div> : null}
-        <div className="bulk-order-bar"><label className="bulk-order-selection"><input type="checkbox" aria-label="출고 가능 주문 전체 선택" checked={allEligibleSelected} onChange={toggleAllEligible} />선택한 주문 <b>{selectedIds.size}</b>건</label><button type="button" disabled={!selectedIds.size || fulfilling} onClick={openFulfillment}><Truck size={15} />일괄 출고 처리</button><button type="button" disabled={fulfilling} onClick={() => invoiceInputRef.current?.click()}><Upload size={15} />송장 CSV 업로드</button><input ref={invoiceInputRef} className="sr-only" type="file" accept=".csv,text/csv" aria-label="송장 CSV 파일 선택" onChange={(event) => void importInvoices(event.target.files?.[0] ?? null)} /><span className="toolbar-spacer" /><small>{syncStatus.length ? "채널별 동기화 상태 기록 중 · 5분 자동 업데이트" : "채널 연결 상태 확인 중"}</small></div>
-      </section>
-      {detailOrder && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setDetailOrder(null); }}><section ref={detailDialogRef} tabIndex={-1} className="shipment-dialog order-detail-dialog" role="dialog" aria-modal="true" aria-labelledby="order-detail-title"><header><div><span className="metric-icon blue"><ShoppingCart size={18} /></span><span><h3 id="order-detail-title">주문 상세정보</h3><small>주문 · 배송 · 정산 원장을 한곳에서 확인합니다.</small></span></div><button className="icon-only-button" aria-label="주문 상세 닫기" onClick={() => setDetailOrder(null)}><X size={17} /></button></header><dl className="order-detail-ledger"><div><dt>주문번호</dt><dd>{detailOrder.id}</dd></div><div><dt>판매 채널</dt><dd><ChannelMark code={detailOrder.channel} size="sm" /></dd></div><div><dt>구매 상품</dt><dd>{detailOrder.product}</dd></div><div><dt>구매자</dt><dd>{detailOrder.customer}</dd></div><div><dt>결제금액</dt><dd>{detailOrder.amount}</dd></div><div><dt>주문상태</dt><dd><StatusBadge status={detailOrder.status} /></dd></div><div><dt>배송 추적</dt><dd>{detailOrder.trackingNumber ? `${detailOrder.carrierCode ?? "택배사"} · ${detailOrder.trackingNumber}` : "운송장 등록 전"}</dd></div><div><dt>배송 완료</dt><dd>{detailOrder.deliveredAt ? formatProductUpdatedAt(detailOrder.deliveredAt) : "완료 전"}</dd></div><div><dt>정산 상태</dt><dd><StatusBadge status={detailOrder.settlementStatus} /></dd></div><div><dt>정산 금액</dt><dd>{detailOrder.settlementAmount != null && detailOrder.settlementCurrency ? new Intl.NumberFormat("ko-KR", { style: "currency", currency: detailOrder.settlementCurrency }).format(detailOrder.settlementAmount) : "정산 데이터 대기"}</dd></div><div><dt>환율 손익 참고</dt><dd className={(detailOrder.exchangeLossPercent ?? 0) >= 2 ? "exchange-loss-warning" : ""}>{detailOrder.exchangeLossPercent == null ? "기준환율 데이터 대기" : `${detailOrder.exchangeLossPercent > 0 ? "손실 " : "이익 "}${Math.abs(detailOrder.exchangeLossPercent).toFixed(2)}%`}</dd></div><div><dt>주문시간</dt><dd>{detailOrder.time}</dd></div></dl><footer><button type="button" className="credential-secondary" onClick={() => setDetailOrder(null)}>닫기</button>{["결제완료", "출고대기"].includes(detailOrder.status) && isActiveChannelKey(detailOrder.channelKey) && shipmentWriteAvailability(detailOrder.channelKey).available ? <button type="button" className="publish-execute" onClick={() => { setSelectedIds(new Set([detailOrder.sourceId])); setShipmentDrafts({ [detailOrder.sourceId]: shipmentDrafts[detailOrder.sourceId] ?? { carrierCode: "", trackingNumber: "" } }); setDetailOrder(null); setFulfillmentOpen(true); }}><Truck size={15} />출고 정보 입력</button> : null}</footer></section></div>}
-      {fulfillmentOpen && <div className="shipment-dialog-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !fulfilling) setFulfillmentOpen(false); }}>
-        <section ref={fulfillmentDialogRef} tabIndex={-1} className="shipment-dialog" role="dialog" aria-modal="true" aria-labelledby="shipment-dialog-title">
-          <header><div><span className="metric-icon violet"><Truck size={18} /></span><span><h3 id="shipment-dialog-title">판매채널 발송 처리</h3><small>선택한 {selectedOrders.length}건을 외부 판매채널에 실제 발송 처리합니다.</small></span></div><button className="icon-only-button" aria-label="출고 창 닫기" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}><X size={17} /></button></header>
-          <div className="shipment-warning"><AlertTriangle size={16} /><span><b>실제 판매 상태가 변경됩니다.</b><small>판매채널이 성공 응답한 주문만 SellerPilot에서 배송중으로 변경됩니다. TracX 참조번호는 운송장이나 마켓 주문번호 대신 SmartShip 원문 값을 입력해야 합니다.</small></span></div>
-          <fieldset className="shipment-draft-list" disabled={fulfilling} aria-busy={fulfilling}>{selectedOrders.map((order) => <article key={order.sourceId}>
-            <div><ChannelMark code={order.channel} size="sm" /><span><b>{order.id}</b><small>{order.product}</small></span></div>
-            <label><span>택배사 코드</span><input value={shipmentDrafts[order.sourceId]?.carrierCode ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { trackingNumber: "" }), carrierCode: event.target.value } }))} placeholder="채널 공식 택배사 코드" /></label>
-            <label><span>{order.channelKey === "lazada" ? "운송장번호 · 자동 발급" : "운송장번호"}</span><input disabled={order.channelKey === "lazada"} value={order.channelKey === "lazada" ? "Pack 완료 후 Lazada 발급" : shipmentDrafts[order.sourceId]?.trackingNumber ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "" }), trackingNumber: event.target.value } }))} placeholder="숫자·영문 운송장번호" /></label>
-            <label><span>TracX 참조 종류 · 선택</span><select value={shipmentDrafts[order.sourceId]?.tracxReferenceKind ?? "packing_no"} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }), tracxReferenceKind: event.target.value as "packing_no" | "reference_order_no" } }))}><option value="packing_no">PackingNo</option><option value="reference_order_no">RefOrderNo</option></select></label>
-            <label><span>TracX 정확한 참조번호 · 선택</span><input value={shipmentDrafts[order.sourceId]?.tracxReference ?? ""} onChange={(event) => setShipmentDrafts((current) => ({ ...current, [order.sourceId]: { ...(current[order.sourceId] ?? { carrierCode: "", trackingNumber: "" }), tracxReference: event.target.value } }))} placeholder="SmartShip 원문 그대로 입력" /></label>
-          </article>)}</fieldset>
-          <footer><button type="button" className="credential-secondary" disabled={fulfilling} onClick={() => setFulfillmentOpen(false)}>취소</button><button type="button" className="publish-execute" disabled={fulfilling || selectedOrders.some((order) => !shipmentDrafts[order.sourceId]?.carrierCode.trim() || order.channelKey !== "lazada" && !shipmentDrafts[order.sourceId]?.trackingNumber.trim())} onClick={() => void confirmFulfillment()}>{fulfilling ? <LoaderCircle className="spin" size={15} /> : <Truck size={15} />}{fulfilling ? "판매채널 처리 중" : "확인 후 실제 발송 처리"}</button></footer>
-        </section>
-      </div>}
-    </div>
-  );
-}
-
-function CsPage({ authenticatedFetch, notify, displayTickets, displayOrders, onSend, onDeliveryStatus, onDraft, onStatus, onSync, onBackfill, syncing, syncStatus, historyBackfill, initialQuery = "", initialTicketId = null, initialChannel = "all", initialStatus = "open", onFilterChange }: {
-  notify: (message: string) => void;
-  displayTickets: DisplayTicket[];
-  displayOrders: DisplayOrder[];
-  onSend: (ticket: DisplayTicket, reply: string) => Promise<ReplyQueueResult | null>;
-  onDeliveryStatus: (ticketId: string, jobId: string) => Promise<OperationTicketDelivery | null>;
-  onDraft: (ticket: DisplayTicket, targetLocale: SupportLocale) => Promise<string | null>;
-  onStatus: (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => Promise<boolean>;
-  onSync: () => Promise<void>;
-  onBackfill: (channel: "coupang" | "smartstore", endDate?: string) => Promise<void>;
-  authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
-  syncing: boolean;
-  syncStatus: OperationsSnapshot["syncStatus"];
-  historyBackfill: InquiryHistoryBackfill | null;
-  initialQuery?: string;
-  initialTicketId?: string | null;
-  initialChannel?: CsChannelFilter;
-  initialStatus?: CsStatusFilter;
-  onFilterChange: (channel: CsChannelFilter, status: CsStatusFilter, ticketId?: string | null) => void;
-}) {
-  const initialTicket = displayTickets.find((ticket) => ticket.sourceId === initialTicketId) ?? null;
-  const resolvedInitialStatus = initialTicket && !csTicketMatchesFilter(initialTicket, initialStatus)
-    ? initialTicket.replyDeliveryStatus === "reconciliation_required"
-      ? "reconciliation"
-      : initialTicket.status === "처리 완료"
-        ? "resolved"
-        : initialTicket.status === "처리 중"
-          ? "in_progress"
-          : "waiting"
-    : initialStatus;
-  const [query, setQuery] = useState(initialQuery);
-  const [replyDrafts, setReplyDrafts] = useState<CsReplyDrafts>({});
-  const currentInboundByTicketRef = useRef(new Map<string, string | null>());
-  const [targetLocale, setTargetLocale] = useState<SupportLocale>("ko-KR");
-  const [drafting, setDrafting] = useState(false);
-  const [sendingByTicket, setSendingByTicket] = useState<Record<string, boolean>>({});
-  const [deliveryByTicket, setDeliveryByTicket] = useState<Record<string, OperationTicketDelivery>>(() => Object.fromEntries(
-    displayTickets.filter((ticket) => ticket.delivery).map((ticket) => [ticket.sourceId, ticket.delivery as OperationTicketDelivery]),
-  ));
-  const [reviewReply, setReviewReply] = useState<{ ticket: DisplayTicket; reply: string } | null>(null);
-  const reviewDialogRef = useRef<HTMLElement>(null);
-  const reviewCloseButtonRef = useRef<HTMLButtonElement>(null);
-  const [mobileConversationOpen, setMobileConversationOpen] = useState(Boolean(initialTicketId));
-  const effectiveDeliveryByTicket = useMemo(() => {
-    const next = new Map<string, OperationTicketDelivery>();
-    for (const ticket of displayTickets) {
-      if (ticket.delivery && ticket.delivery.inboundKey === ticket.latestInboundKey) next.set(ticket.sourceId, ticket.delivery);
-    }
-    for (const [ticketId, localDelivery] of Object.entries(deliveryByTicket)) {
-      const ticket = displayTickets.find((candidate) => candidate.sourceId === ticketId);
-      if (!ticket || localDelivery.inboundKey !== ticket.latestInboundKey) continue;
-      const snapshotDelivery = next.get(ticketId);
-      if (!snapshotDelivery || Date.parse(localDelivery.updatedAt) >= Date.parse(snapshotDelivery.updatedAt)) {
-        next.set(ticketId, localDelivery);
-      }
-    }
-    return next;
-  }, [deliveryByTicket, displayTickets]);
-  useEffect(() => {
-    currentInboundByTicketRef.current = new Map(displayTickets.map((ticket) => [ticket.sourceId, ticket.latestInboundKey]));
-  }, [displayTickets]);
-  const channelTickets = displayTickets.filter((ticket) => initialChannel === "all" || ticket.channelKey === initialChannel);
-  const channelOrders = displayOrders.filter((order) => initialChannel === "all" || order.channelKey === initialChannel);
-  const statusTickets = channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, resolvedInitialStatus));
-  const filteredTickets = statusTickets.filter((ticket) => !query.trim() || matchesSearch(`${ticket.id} ${ticket.customer} ${ticket.channel} ${ticket.subject} ${ticket.preview}`, query));
-  const selected = selectedCsTicket(initialTicketId ? statusTickets : filteredTickets, initialTicketId ? initialTicket?.sourceId ?? "__missing_ticket__" : null);
-  const selectedDraftTicket = selected ? { ...selected, sourceId: `${selected.sourceId}:${selected.latestInboundKey ?? "unbound"}` } : null;
-  const reply = csReplyDraftValue(replyDrafts, selectedDraftTicket);
-  const remoteReplyChannel = Boolean(selected && isRemoteCsReplyChannel(selected.channelKey));
-  const providerConfirmed = selected?.providerStatus === "answered" || selected?.providerStatus === "closed";
-  const providerReplyReady = selected?.providerStatus === "waiting" && Boolean(selected.latestInboundKey);
-  const delivery = selected ? effectiveDeliveryByTicket.get(selected.sourceId) ?? null : null;
-  const blockingDelivery = selected?.blockingDelivery ?? null;
-  const sending = Boolean(selected && sendingByTicket[selected.sourceId]);
-  const deliveryActive = delivery?.status === "queued" || delivery?.status === "running" || blockingDelivery?.status === "queued" || blockingDelivery?.status === "running";
-  const deliveryReconciliation = delivery?.status === "reconciliation_required" || blockingDelivery?.status === "reconciliation_required";
-  const completed = selected?.status === "처리 완료";
-  const composerLocked = !selected || completed || !providerReplyReady || sending || deliveryActive || deliveryReconciliation || !remoteReplyChannel;
-  const composerLockReason = completed
-    ? "처리 완료된 문의는 수정하거나 재전송할 수 없습니다."
-    : providerConfirmed
-      ? "판매채널에서 이미 답변 또는 종료가 확인됐습니다. 채널 확인 후 처리 완료로 정리해 주세요."
-    : blockingDelivery
-      ? "이전 고객 메시지의 답변 작업 결과를 먼저 확인해야 합니다. 새 답변 전송을 차단했습니다."
-    : !providerReplyReady
-      ? "최신 고객 메시지 연결을 확인할 수 없습니다. 문의를 새로고침해 주세요."
-    : sending
-      ? "답변을 안전한 작업 대기열에 등록하는 중입니다."
-      : deliveryActive && delivery
-        ? replyDeliveryMeta[delivery.status].detail
-        : deliveryReconciliation
-          ? replyDeliveryMeta.reconciliation_required.detail
-          : !remoteReplyChannel
-            ? "이 채널은 현재 SellerPilot 답변 API를 지원하지 않아 판매자센터에서 수동 처리해야 합니다."
-            : null;
-
-  useModalInteraction(Boolean(reviewReply), reviewDialogRef, () => setReviewReply(null), {
-    initialFocusRef: reviewCloseButtonRef,
-  });
-
-  const activeDeliveryKey = [...effectiveDeliveryByTicket.entries(), ...displayTickets
-    .filter((ticket) => ticket.blockingDelivery)
-    .map((ticket) => [ticket.sourceId, ticket.blockingDelivery as OperationTicketDelivery] as const)]
-    .filter(([, item]) => item.status === "queued" || item.status === "running")
-    .map(([ticketId, item]) => `${ticketId}:${item.jobId}`)
-    .sort()
-    .join("|");
-
-  useEffect(() => {
-    if (!activeDeliveryKey) return;
-    let cancelled = false;
-    let checking = false;
-    const targets = activeDeliveryKey.split("|").map((entry) => {
-      const separator = entry.indexOf(":");
-      return { ticketId: entry.slice(0, separator), jobId: entry.slice(separator + 1) };
-    });
-    const check = async () => {
-      if (checking) return;
-      checking = true;
-      try {
-        const updates = await Promise.all(targets.map(async ({ ticketId, jobId }) => ({
-          ticketId,
-          delivery: await onDeliveryStatus(ticketId, jobId),
-        })));
-        if (cancelled) return;
-        setDeliveryByTicket((current) => {
-          const next = { ...current };
-          let changed = false;
-          for (const update of updates) {
-            if (!update.delivery) continue;
-            const previous = current[update.ticketId];
-            if (previous
-                && previous.jobId === update.delivery.jobId
-                && previous.status === update.delivery.status
-                && previous.updatedAt === update.delivery.updatedAt) continue;
-            next[update.ticketId] = update.delivery;
-            changed = true;
-          }
-          return changed ? next : current;
-        });
-      } finally {
-        checking = false;
-      }
-    };
-    void check();
-    const timer = window.setInterval(() => void check(), 2_500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(timer);
-    };
-  }, [activeDeliveryKey, onDeliveryStatus]);
-  const setSelectedReply = (value: string) => {
-    if (!selectedDraftTicket || composerLocked) return;
-    setReplyDrafts((current) => withCsReplyDraft(current, selectedDraftTicket, value));
-  };
-  const sendReply = async () => {
-    if (!reviewReply) return;
-    const { ticket, reply: replyToSend } = reviewReply;
-    if (sendingByTicket[ticket.sourceId]) return;
-    setReviewReply(null);
-    setSendingByTicket((current) => ({ ...current, [ticket.sourceId]: true }));
-    try {
-      const queued = await onSend(ticket, replyToSend);
-      if (queued) {
-        setDeliveryByTicket((current) => ({ ...current, [ticket.sourceId]: queued.delivery }));
-        notify(queued.message);
-      }
-    } finally {
-      setSendingByTicket((current) => ({ ...current, [ticket.sourceId]: false }));
-    }
-  };
-  const requestReplyReview = () => {
-    if (!selected || composerLocked || !reply.trim() || !remoteReplyChannel) return;
-    setReviewReply({ ticket: selected, reply });
-  };
-  const createDraft = async () => {
-    if (!selected || drafting || composerLocked) return;
-    const expectedInboundKey = selected.latestInboundKey;
-    setDrafting(true);
-    try {
-      const draft = await onDraft(selected, targetLocale);
-      if (draft && selectedDraftTicket && currentInboundByTicketRef.current.get(selected.sourceId) === expectedInboundKey) {
-        setReplyDrafts((current) => withCsReplyDraft(current, selectedDraftTicket, draft));
-        notify(`${supportLocaleLabels[targetLocale]} CLI 답변 초안을 불러왔습니다. 외부 전송 여부를 확인해 주세요.`);
-      }
-    } finally {
-      setDrafting(false);
-    }
-  };
-  const updateStatus = async (status: "waiting" | "in_progress" | "resolved") => {
-    if (!selected || sending || deliveryActive || deliveryReconciliation) return;
-    if (remoteReplyChannel && status === "resolved" && !providerConfirmed) return;
-    await onStatus(selected, status);
-  };
-  const unresolvedCount = channelTickets.filter((ticket) => ticket.status !== "처리 완료").length;
-  const lastSuccess = syncStatus.filter((item) => item.data_type === "inquiries" && item.last_succeeded_at).sort((left, right) => Date.parse(right.last_succeeded_at ?? "") - Date.parse(left.last_succeeded_at ?? ""))[0]?.last_succeeded_at ?? null;
-  const inquiryChannelStates = activeChannelKeys.map((channelKey) => {
-    const rows = syncStatus.filter((item) => item.channel_key === channelKey && item.data_type === "inquiries").sort((left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at));
-    const state = rows[0] ?? null;
-    return { channelKey, state };
-  });
-  const inquiryAttentionCount = csChannelAttentionCount(inquiryChannelStates.map(({ channelKey, state }) => ({
-    channelKey,
-    status: state?.status,
-    importedCount: state?.imported_count,
-    lastError: state?.last_error,
-    needsAttention: Boolean(
-      historyBackfill
-      && historyBackfill.channels.some((channel) => channel === channelKey)
-      && historyBackfill.status !== "succeeded"
-    ),
-  })));
-  const historyBackfillActive = historyBackfill?.status === "queued" || historyBackfill?.status === "running";
-  const historyBackfillDays = historyBackfill?.historyDays ?? 30;
-  const historyBackfillTitle = historyBackfill?.status === "succeeded"
-    ? `${historyBackfillDays}일 문의 읽기 작업 완료`
-    : historyBackfill?.status === "blocked" || historyBackfill?.blockedReason === "STATIC_EGRESS_REQUIRED"
-      ? "채널 송신 경로 설정 필요"
-    : historyBackfill?.status === "failed"
-      ? `${historyBackfillDays}일 문의 이력 일부 실패`
-      : `${historyBackfillDays}일 문의 이력 처리 중`;
-  const applyFilters = (nextChannel: CsChannelFilter, nextStatus: CsStatusFilter) => {
-    setMobileConversationOpen(false);
-    onFilterChange(nextChannel, nextStatus, null);
-  };
-  const selectTicket = (ticket: DisplayTicket) => {
-    setMobileConversationOpen(true);
-    onFilterChange(initialChannel, resolvedInitialStatus, ticket.sourceId);
-  };
-  return (
-    <div className="page-stack cs-page">
-      <CsArchive authenticatedFetch={authenticatedFetch} />
-      <EbayMessages authenticatedFetch={authenticatedFetch} />
-      <section className="cs-summary"><button type="button" aria-pressed={resolvedInitialStatus === "open"} className={resolvedInitialStatus === "open" ? "active" : ""} onClick={() => applyFilters(initialChannel, "open")}><span className="metric-icon violet"><Inbox size={18} /></span><span><small>미처리 문의</small><strong>{unresolvedCount}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "urgent"} className={resolvedInitialStatus === "urgent" ? "active" : ""} onClick={() => applyFilters(initialChannel, "urgent")}><span className="metric-icon orange"><Clock3 size={18} /></span><span><small>긴급 문의</small><strong>{channelTickets.filter((ticket) => ticket.status === "긴급").length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "all"} className={resolvedInitialStatus === "all" ? "active" : ""} onClick={() => applyFilters(initialChannel, "all")}><span className="metric-icon green"><BadgeCheck size={18} /></span><span><small>전체 문의 · 주문</small><strong>{channelTickets.length} · {channelOrders.length}</strong></span></button><button type="button" aria-pressed={resolvedInitialStatus === "reconciliation"} className={resolvedInitialStatus === "reconciliation" ? "active" : ""} onClick={() => applyFilters(initialChannel, "reconciliation")}><span className="metric-icon blue"><Bot size={18} /></span><span><small>원장 확인 필요</small><strong>{channelTickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length}</strong></span></button></section>
-      <section className="panel-heading table-title cs-live-heading"><div><span className="panel-kicker">LIVE INQUIRIES</span><h3>{lastSuccess ? `최근 동기화 ${relativeTime(lastSuccess)}` : "채널 문의 동기화 대기"}{inquiryAttentionCount ? ` · ${inquiryAttentionCount}개 채널 확인 필요` : ""}</h3></div><div className="cs-filter-actions"><label className="filter-select compact"><span className="sr-only">문의 채널 필터</span><select value={initialChannel} onChange={(event) => applyFilters(csChannelFilterFromValue(event.target.value), resolvedInitialStatus)}><option value="all">전체 채널</option>{activeChannelKeys.map((channelKey) => <option value={channelKey} key={channelKey}>{channels[channelKey].name}</option>)}</select><ChevronDown size={14} /></label><CsHistoryWindow onBackfill={onBackfill} disabled={syncing} /><button className="filter-button" type="button" onClick={() => void onSync()} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={15} /> : <RefreshCw size={15} />}{syncing ? "요청 중" : "주문·문의 새로고침"}</button></div></section>
-      {historyBackfill ? <section className={`panel cs-history-backfill ${historyBackfill.status}`} role="status" aria-live="polite"><div className="cs-history-backfill-heading"><span className="metric-icon blue">{historyBackfillActive ? <LoaderCircle className="spin" size={17} /> : historyBackfill.status === "succeeded" ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}</span><span><b>{historyBackfillTitle}</b><small>{historyBackfill.fromDate}~{historyBackfill.toDate} · {historyBackfill.channels.map((channel) => channels[channel].name).join("·")} · 읽기 작업 기준</small></span><em>{historyBackfill.progressPercent}%</em></div><div className="cs-history-progress" role="progressbar" aria-label={`${historyBackfill.historyDays}일 문의 이력 처리율`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={historyBackfill.progressPercent}><i style={{ width: `${historyBackfill.progressPercent}%` }} /></div><div className="cs-history-counts"><span>완료 <b>{historyBackfill.succeededJobs}</b></span><span>대기 <b>{historyBackfill.queuedJobs}</b></span><span>처리 중 <b>{historyBackfill.runningJobs}</b></span><span className={historyBackfill.failedJobs ? "failed" : ""}>실패 <b>{historyBackfill.failedJobs}</b></span><small>{historyBackfill.status === "blocked" ? "고정 egress가 확인될 때까지 작업을 접수하거나 자동 재시도하지 않습니다." : <>총 {historyBackfill.totalJobs}개 작업 · 최초 범위 {historyBackfill.expectedInitialJobs}개{historyBackfill.status === "failed" ? " · 버튼을 다시 누르면 재전송 위험이 없는 실패 읽기만 재시도합니다." : historyBackfillActive ? " · 첫 작업 성공만으로 전체 완료 처리하지 않습니다." : " · 읽기 작업 완료이며 원격 이력 대조는 별도 확인합니다."}</>}</small></div></section> : null}
-      <section className="panel cs-channel-verification"><div className="panel-heading"><div><span className="panel-kicker">CHANNEL VERIFICATION</span><h3>채널별 문의 조회 · 답변 범위</h3></div><ShieldCheck size={18} /></div><div className="cs-channel-verification-grid">{inquiryChannelStates.map(({ channelKey, state }) => { const verification = csChannelVerification(channelKey, state?.status, state?.imported_count ?? 0, state?.last_error ?? null); const historyChannel = Boolean(historyBackfill && historyBackfill.channels.some((channel) => channel === channelKey)); const historyBlocked = historyBackfill?.status === "blocked" || historyBackfill?.blockedReason === "STATIC_EGRESS_REQUIRED"; const historyOverride = historyChannel && historyBackfill?.status !== "succeeded" ? historyBlocked ? { readLabel: "채널 송신 경로 확인 후 이력 조회 가능", badge: "설정 필요", tone: "unsupported" } as const : { readLabel: historyBackfill?.status === "failed" ? `${historyBackfill.historyDays}일 이력 일부 실패 · 성공 ${historyBackfill.succeededJobs}/${historyBackfill.totalJobs}` : `${historyBackfill?.historyDays ?? 30}일 이력 처리 중 · 성공 ${historyBackfill?.succeededJobs ?? 0}/${historyBackfill?.totalJobs ?? 0}`, badge: historyBackfill?.status === "failed" ? "재시도 필요" : "이력 처리 중", tone: historyBackfill?.status === "failed" ? "failed" : "unsupported" } as const : null; return <button type="button" aria-pressed={initialChannel === channelKey} className={initialChannel === channelKey ? "active" : ""} key={channelKey} onClick={() => applyFilters(channelKey, resolvedInitialStatus)}><ChannelMark code={channels[channelKey].letter} /><span><b>{channels[channelKey].name}</b><small>{historyOverride?.readLabel ?? verification.readLabel}{!historyOverride && state?.status === "passed" && state.last_succeeded_at ? ` · ${relativeTime(state.last_succeeded_at)}` : ""}</small><small>{verification.replyLabel}</small></span><em className={historyOverride?.tone ?? verification.tone}>{historyOverride?.badge ?? verification.badge}</em></button>; })}</div></section>
-      {displayTickets.length === 0 ? <section className="panel live-empty-state large"><Inbox size={32} /><b>운영 원장에 실제 문의가 0건입니다.</b><small>지원·승인된 채널의 문의 조회가 성공하고 실제 문의가 있으면 고객 정보와 원문이 표시됩니다.</small><button className="ghost-button" type="button" onClick={() => void onSync()} disabled={syncing}>지금 확인</button></section> :
-      <section className={`cs-workspace panel ${mobileConversationOpen || initialTicketId ? "mobile-conversation-open" : ""}`}>
-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => { const ticketDelivery = effectiveDeliveryByTicket.get(ticket.sourceId) ?? ticket.blockingDelivery ?? null; return <button type="button" key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><span className="ticket-state-row"><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} />{ticketDelivery ? <em className={`ticket-delivery-state ${replyDeliveryMeta[ticketDelivery.status].tone}`}>{ticket.blockingDelivery?.jobId === ticketDelivery.jobId ? `이전 메시지 · ${replyDeliveryMeta[ticketDelivery.status].label}` : replyDeliveryMeta[ticketDelivery.status].label}</em> : null}</span></div></button>; })}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
-        {!selected ? <article className="conversation conversation-empty"><div className="live-empty-state"><MessageCircleMore size={30} /><b>표시할 문의를 선택해 주세요.</b><small>목록이 비어 있으면 다른 상태 또는 채널 필터를 선택할 수 있습니다.</small></div></article> : <>
-        <article className="conversation"><header><div><button className="mobile-back" type="button" aria-label="문의 목록으로 돌아가기" onClick={() => { setMobileConversationOpen(false); onFilterChange(initialChannel, resolvedInitialStatus, null); }}><ArrowLeft size={16} /></button><span className="ticket-avatar large">{selected.customer.charAt(0)}</span><span><b>{selected.customer}</b><small>{selected.channel} · {selected.id}</small></span></div><div className="cs-ticket-status-control">{completed ? <span className="cs-status-locked"><CheckCircle2 size={14} />처리 완료</span> : <label className="filter-select compact"><span className="sr-only">문의 처리 상태</span><select disabled={sending || deliveryActive || deliveryReconciliation} value={selected.status === "처리 중" ? "in_progress" : "waiting"} onChange={(event) => void updateStatus(event.target.value as "waiting" | "in_progress" | "resolved")}><option value="waiting">답변 대기</option><option value="in_progress">처리 중</option>{!remoteReplyChannel ? <option value="resolved">수동 처리 완료</option> : providerConfirmed ? <option value="resolved">채널 확인 후 처리 완료</option> : null}</select><ChevronDown size={14} /></label>}</div></header>
-          <div className="conversation-body"><div className={`order-context ${selected.orderId || selected.externalOrderReference ? "" : "order-context-unlinked"}`}><Package size={16} /><span><small>{selected.ticketKind === "after_sales" ? "반품·환불 주문" : "문의 주문"}</small><b>{selected.orderId ?? selected.externalOrderReference ?? "주문 연결 필요"}</b></span><div className="order-context-meta"><em>{selected.orderId ? "내부 원장" : selected.externalOrderReference ? "채널 참조" : "미연결"}</em><StatusBadge status={selected.orderId || selected.externalOrderReference ? "식별값 확인" : "확인 필요"} /><small>{selected.orderId || selected.externalOrderReference ? "저장된 식별값만 표시합니다." : "고객명만으로 주문을 추정하지 않습니다."}</small></div></div><ConversationTimeline key={selected.sourceId} ticketId={selected.sourceId} refreshKey={`${selected.replyDeliveryStatus}:${selected.time}`} authenticatedFetch={authenticatedFetch} /></div>
-          {delivery ? <section className={`cs-delivery-banner ${replyDeliveryMeta[delivery.status].tone}`} role="status" aria-live="polite"><span>{delivery.status === "succeeded" ? <CheckCircle2 size={18} /> : delivery.status === "failed" || delivery.status === "cancelled" || delivery.status === "reconciliation_required" ? <AlertTriangle size={18} /> : <LoaderCircle className={delivery.status === "running" ? "spin" : ""} size={18} />}</span><div><b>{replyDeliveryMeta[delivery.status].label}</b><p>{delivery.reconciliationReason ?? delivery.safeMessage ?? replyDeliveryMeta[delivery.status].detail}</p><small>작업 {delivery.jobId.slice(0, 8)} · {relativeTime(delivery.updatedAt)}</small></div>{delivery.status === "reconciliation_required" ? <em>자동 재전송 차단</em> : null}</section> : null}
-          <footer className={`reply-composer ${composerLocked ? "is-locked" : ""}`}><div className="ai-draft-head"><span><Sparkles size={14} />{composerLockReason ?? "문의 원문을 바탕으로 검토용 초안을 생성합니다."}</span><button type="button" disabled={drafting || composerLocked} onClick={() => void createDraft()}>{drafting ? <LoaderCircle className="spin" size={13} /> : <RefreshCw size={13} />}{drafting ? "CLI 작성 중" : "CLI 초안 생성"}</button></div><label className="reply-label" htmlFor={`cs-reply-${selected.sourceId}`}><span>답변 내용</span><small>{reply.length.toLocaleString()} / 4,000자</small></label><textarea id={`cs-reply-${selected.sourceId}`} value={reply} maxLength={4000} disabled={composerLocked} onChange={(event) => setSelectedReply(event.target.value)} placeholder={remoteReplyChannel ? "판매채널로 전송할 실제 답변을 입력하세요." : "판매자센터에서 수동 처리할 채널입니다."} /><p className={`reply-composer-help ${composerLocked ? "locked" : ""}`}>{composerLockReason ?? "판매채널 성공 응답이 원장에 기록된 뒤에만 처리 완료로 표시됩니다."}</p><div><span><label className="reply-tool-select"><Languages size={15} /><span className="sr-only">답변 언어</span><select value={targetLocale} disabled={composerLocked} onChange={(event) => setTargetLocale(event.target.value as SupportLocale)}>{Object.entries(supportLocaleLabels).map(([locale, label]) => <option key={locale} value={locale}>{label}</option>)}</select><ChevronDown size={13} /></label><label className="reply-tool-select"><FileText size={15} /><span className="sr-only">답변 템플릿</span><select defaultValue="" disabled={composerLocked} onChange={(event) => { const template = supportReplyTemplates.find((item) => item.label === event.target.value); if (template) setSelectedReply(template.value); event.target.value = ""; }}><option value="">템플릿</option>{supportReplyTemplates.map((template) => <option value={template.label} key={template.label}>{template.label}</option>)}</select><ChevronDown size={13} /></label></span><button type="button" className="send-button" disabled={composerLocked || !reply.trim()} onClick={requestReplyReview}>{sending || deliveryActive ? <LoaderCircle className="spin" size={15} /> : deliveryReconciliation ? <AlertTriangle size={15} /> : <Send size={15} />}{sending ? "대기열 등록 중" : delivery?.status === "queued" ? "답변 처리 대기" : delivery?.status === "running" ? "판매채널 처리 중" : deliveryReconciliation ? "전송 여부 확인 필요" : completed ? "처리 완료" : remoteReplyChannel ? "검토 후 답변 전송" : "채널 답변 API 미지원"}</button></div></footer>
-        </article>
-        <aside className="customer-panel"><div className="customer-profile"><div className="ticket-avatar xl">{selected.customer.charAt(0)}</div><h4>{selected.customer}</h4><span>{selected.channel} 구매자</span></div><div className="customer-facts"><div><small>문의 연결 주문</small><b>{selected.orderId ? "원장 연결" : selected.externalOrderReference ? "채널 참조" : "확인 필요"}</b></div><div><small>데이터 출처</small><b>{selected.ticketKind === "after_sales" ? "After-sales 원문" : "실제 채널 API"}</b></div></div><div className="detail-section"><h5>연결 주문</h5><div className="mini-order"><span className="tiny-thumb"><Package size={17} /></span><span><b>{selected.orderId ?? selected.externalOrderReference ?? "주문 연결 필요"}</b><small>{selected.orderId || selected.externalOrderReference ? "저장된 식별값만 표시합니다." : "고객명으로 주문을 추측하지 않습니다."}</small></span></div><dl><div><dt>내부 주문 ID</dt><dd>{selected.orderId ?? "-"}</dd></div><div><dt>채널 주문 참조</dt><dd>{selected.externalOrderReference ?? "-"}</dd></div><div><dt>공급자 상태</dt><dd>{selected.providerStatus === "waiting" ? "고객 응답 대기" : selected.providerStatus === "answered" ? "채널 답변 확인" : selected.providerStatus === "closed" ? "채널 종료" : "확인 전"}</dd></div></dl></div><div className="detail-section"><h5>응대 원칙</h5><p className="ai-guide"><Bot size={16} />{selected.orderId || selected.externalOrderReference ? "표시된 주문 식별값과 판매채널 원문을 함께 확인하세요." : "주문 연결 전에는 주문·배송 상태를 단정하지 마세요."}</p></div></aside>
-        </>}
-      </section>}
-      {reviewReply ? <div className="shipment-dialog-overlay cs-reply-review-overlay" role="presentation" onClick={(event) => { if (event.target === event.currentTarget && !sendingByTicket[reviewReply.ticket.sourceId]) setReviewReply(null); }}><section ref={reviewDialogRef} tabIndex={-1} className="shipment-dialog cs-reply-review-dialog" role="dialog" aria-modal="true" aria-labelledby="cs-reply-review-title"><header><div><span className="metric-icon violet"><MessageCircleMore size={18} /></span><span><h3 id="cs-reply-review-title">판매채널 답변 최종 검토</h3><small>대상 고객과 문의번호를 다시 확인하세요.</small></span></div><button ref={reviewCloseButtonRef} className="icon-only-button" type="button" aria-label="답변 검토 창 닫기" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => setReviewReply(null)}><X size={17} /></button></header><dl className="cs-reply-review-facts"><div><dt>판매채널</dt><dd>{reviewReply.ticket.channel}</dd></div><div><dt>고객</dt><dd>{reviewReply.ticket.customer}</dd></div><div><dt>문의번호</dt><dd className="mono">{reviewReply.ticket.id}</dd></div><div><dt>전달 방식</dt><dd>안전한 worker 대기열</dd></div></dl><div className="cs-reply-review-copy"><small>실제 전송할 답변</small><p>{reviewReply.reply}</p></div><div className="shipment-warning"><AlertTriangle size={16} /><span><b>확인 버튼을 누르면 실제 판매채널 작업 대기열에 등록됩니다.</b><small>전송 결과가 불확실하면 자동 재시도하지 않고 확인 필요 상태로 격리합니다.</small></span></div><footer><button type="button" className="credential-secondary" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => setReviewReply(null)}>수정하기</button><button type="button" className="publish-execute" disabled={Boolean(sendingByTicket[reviewReply.ticket.sourceId])} onClick={() => void sendReply()}><Send size={15} />대상 확인 후 대기열 등록</button></footer></section></div> : null}
-    </div>
-  );
-}
-
 function ChannelPage({ channelKey, onNavigate, onOpenCs, metric, displayProducts }: {
   channelKey: ChannelKey;
   onNavigate: (view: View) => void;
   onOpenCs: (channel: CsChannelFilter, status: CsStatusFilter) => void;
-  metric: OperationsSnapshot["channelMetrics"][number] | null;
+  metric: (OperationsSnapshot["channelMetrics"][number] & { openTicketCount: number }) | null;
   displayProducts: DisplayProduct[];
 }) {
   const channel = channels[channelKey];
@@ -5589,22 +4821,23 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const activityStatusRef = useRef<RegistrationActivityEventState | null>(null);
   const operationEventRef = useRef<OperationEventState | null>(null);
   const aiRecoveryEventKeysRef = useRef(new Set<string>());
-  const supportReplyControllerRef = useRef<AbortController | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<DisplayProduct | null>(null);
   const [publishingProduct, setPublishingProduct] = useState<{ id: string; name: string } | null>(null);
   const [publishingSession, setPublishingSession] = useState(0);
   const displayProductsRef = useRef<DisplayProduct[]>([]);
-  const [syncingOrders, setSyncingOrders] = useState(false);
-  const [inquiryHistoryBackfill, setInquiryHistoryBackfill] = useState<InquiryHistoryBackfill | null>(null);
-  const activeInquiryHistoryRunsRef = useRef(new Set<string>());
-  const notifiedInquiryHistoryRunsRef = useRef(new Set<string>());
-  const operations = useOperationsSnapshot();
+  const productOperations = useOperationsSnapshot();
+  const shipping = useShippingWorkspace({notify,active:true,range:productOperations.range});
+  const operations = useMemo(() => ({...productOperations, data: composeWorkspaceSnapshot(productOperations.data, shipping.snapshot)}), [productOperations, shipping.snapshot]);
   const refreshOperations = operations.refresh;
   const authenticatedOperationsFetch = operations.authenticatedFetch;
-  const reloadOperations = operations.reload;
-  const syncingOrdersRef = useRef(false);
-  const operationSummary = operations.data?.summary ?? null;
-  const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
+  const cs = useCsWorkspace({ authenticatedFetch: authenticatedWorkspaceFetch, notify, active: view === "cs" });
+  const openCsCount = cs.snapshot?.tickets.filter((ticket) => ticket.status !== "resolved").length ?? 0;
+  const operationSummary = useMemo(() => operations.data?.summary
+    ? { ...operations.data.summary, openTicketCount: openCsCount } : null, [operations.data, openCsCount]);
+  const channelMetrics = useMemo(() => (operations.data?.channelMetrics ?? []).map((metric) => ({
+    ...metric,
+    openTicketCount: cs.snapshot?.tickets.filter((ticket) => ticket.channelKey === metric.channelKey && ticket.status !== "resolved").length ?? 0,
+  })), [operations.data?.channelMetrics, cs.snapshot?.tickets]);
   const pipeline = operations.data?.pipeline ?? null;
   const registrationActivities = useMemo(() => operations.data?.registrationActivities ?? [], [operations.data]);
   const aiRecovery = operations.data?.aiRecovery ?? null;
@@ -5618,16 +4851,8 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
 
   useEffect(() => {
     viewRef.current = view;
-    if (view !== "cs") {
-      supportReplyControllerRef.current?.abort(new DOMException("CS 화면을 떠나 답변 초안 확인을 종료합니다.", "AbortError"));
-      supportReplyControllerRef.current = null;
-    }
   }, [view]);
 
-  useEffect(() => () => {
-    supportReplyControllerRef.current?.abort(new DOMException("운영 화면이 닫혀 답변 초안 확인을 종료합니다.", "AbortError"));
-    supportReplyControllerRef.current = null;
-  }, []);
 
   const rememberWorkspaceView = useCallback((nextView: View, route = currentWorkspaceRelativeUrl()) => {
     try {
@@ -5856,50 +5081,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     ? displayProducts.find((product) => product.sourceId === selectedProduct.sourceId) ?? selectedProduct
     : null;
 
-  const displayOrders = useMemo<DisplayOrder[]>(() => operations.data?.orders.map((order) => ({
-    sourceId: order.id,
-    id: order.externalOrderId,
-    channelKey: order.channelKey,
-    channel: order.channelCode,
-    customer: order.customerName,
-    product: order.productName,
-    amount: new Intl.NumberFormat("ko-KR", { style: "currency", currency: order.currency, maximumFractionDigits: order.currency === "KRW" ? 0 : 2 }).format(order.amount),
-    status: orderStatusLabel[order.status],
-    time: relativeTime(order.orderedAt),
-    shippedAt: order.shippedAt,
-    deliveredAt: order.deliveredAt,
-    carrierCode: order.carrierCode,
-    trackingNumber: order.trackingNumber,
-    settlementStatus: { pending: "정산 대기", expected: "정산 예정", settled: "정산 완료", held: "정산 보류", disputed: "정산 이의" }[order.settlementStatus] ?? order.settlementStatus,
-    settlementAmount: order.settlementAmount,
-    settlementCurrency: order.settlementCurrency,
-    exchangeLossPercent: order.exchangeLossPercent,
-  })) ?? [], [operations.data]);
+  const displayOrders = useMemo(() => displayShippingOrders(shipping.snapshot), [shipping.snapshot]);
 
-  const displayTickets = useMemo<DisplayTicket[]>(() => operations.data?.tickets.map((ticket) => ({
-    sourceId: ticket.id,
-    id: ticket.externalTicketId,
-    channelKey: ticket.channelKey,
-    customer: ticket.customerName,
-    channel: channelNameByKey[ticket.channelKey] ?? ticket.channelKey,
-    subject: ticket.subject,
-    originalMessage: ticket.message,
-    preview: ticket.translatedMessage ?? ticket.message,
-    replyDraft: ticket.replyDraft,
-    replyDeliveryStatus: ticket.blockingDelivery?.status === "reconciliation_required"
-      ? "reconciliation_required"
-      : ticket.replyDeliveryStatus,
-    replyDeliveryError: ticket.replyDeliveryError,
-    orderId: ticket.orderId,
-    externalOrderReference: ticket.externalOrderReference ?? null,
-    providerStatus: ticket.providerStatus ?? "unknown",
-    latestInboundKey: ticket.latestInboundKey ?? null,
-    ticketKind: ticket.ticketKind ?? "conversation",
-    delivery: ticket.delivery ?? null,
-    blockingDelivery: ticket.blockingDelivery ?? null,
-    time: relativeTime(ticket.receivedAt),
-    status: ticketStatusLabel[ticket.status],
-  })) ?? [], [operations.data]);
+  const displayTickets = useMemo(() => displayCsTickets(cs.snapshot), [cs.snapshot]);
 
   const unifiedSearchResults = useMemo(() => {
     const products: UnifiedSearchResult[] = displayProducts.map((product) => ({
@@ -5953,244 +5137,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     return () => window.removeEventListener("keydown", onShortcut);
   }, [openSearch]);
 
-  const fulfillOrders = useCallback(async (shipments: ShipmentInput[]): Promise<ShipmentResult> => {
-    const aggregate: ShipmentResult = { succeeded: 0, failed: 0, reconciliationRequired: 0, results: [] };
-    for (let offset = 0; offset < shipments.length; offset += fulfillmentRequestBatchSize) {
-      const batch = shipments.slice(offset, offset + fulfillmentRequestBatchSize);
-      try {
-        const response = await operations.authenticatedFetch("/api/admin/orders/fulfill", {
-          method: "POST",
-          body: JSON.stringify({ confirmWrite: true, shipments: batch }),
-        });
-        const payload = await response.json().catch(() => ({ message: "판매채널 발송 처리 응답을 읽지 못했습니다." })) as ShipmentResult & { message?: string };
-        if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 발송 처리를 완료하지 못했습니다.");
-        aggregate.succeeded += Number(payload.succeeded ?? 0);
-        aggregate.failed += Number(payload.failed ?? batch.length);
-        aggregate.reconciliationRequired += Number(payload.reconciliationRequired ?? 0);
-        aggregate.results.push(...(Array.isArray(payload.results) ? payload.results : []));
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "판매채널 발송 처리 응답을 확인하지 못했습니다.";
-        aggregate.failed += batch.length;
-        aggregate.reconciliationRequired += batch.length;
-        aggregate.results.push(...batch.map((shipment) => ({
-          id: shipment.id,
-          channel: "unknown",
-          ok: false,
-          reconciliationRequired: true,
-          message: `${message} 서버 접수 여부를 확인하기 전에는 같은 출고를 다시 보내지 마세요.`,
-        })));
-      }
-    }
-    await operations.reload();
-    notify(`${shipments.length}건 중 ${aggregate.succeeded}건 발송 완료 · ${aggregate.failed}건 확인 필요 · ${aggregate.reconciliationRequired}건 원장 조정 필요`);
-    return aggregate;
-  }, [notify, operations]);
-
-  const saveTicketReply = useCallback(async (ticket: DisplayTicket, reply: string) => {
-    const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
-    if (!source) {
-      notify("운영 DB 마이그레이션 적용 후 CS 답변을 저장할 수 있습니다.");
-      return null;
-    }
-    try {
-      const response = await operations.authenticatedFetch("/api/admin/cs/reply", {
-        method: "POST",
-        body: JSON.stringify({ ticketId: source.id, reply, expectedInboundKey: ticket.latestInboundKey }),
-      });
-      const payload = await response.json().catch(() => ({ message: "CS 답변 응답을 읽지 못했습니다." })) as Partial<ReplyQueueResult> & { message?: string };
-      if (response.status !== 202 || !payload.jobId || !payload.delivery) {
-        throw new Error(payload.message ?? "판매채널 답변을 대기열에 등록하지 못했습니다.");
-      }
-      return {
-        jobId: payload.jobId,
-        message: payload.message ?? "답변을 안전한 판매채널 작업 대기열에 등록했습니다.",
-        delivery: payload.delivery,
-      };
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "판매채널 답변을 대기열에 등록하지 못했습니다.");
-      return null;
-    }
-  }, [operations, notify]);
-
-  const getTicketDeliveryStatus = useCallback(async (ticketId: string, jobId: string) => {
-    try {
-      const response = await authenticatedOperationsFetch(`/api/admin/cs/reply?ticketId=${encodeURIComponent(ticketId)}&jobId=${encodeURIComponent(jobId)}`);
-      const payload = await response.json().catch(() => null) as { delivery?: OperationTicketDelivery; message?: string } | null;
-      if (!response.ok || !payload?.delivery) return null;
-      if (["succeeded", "failed", "cancelled", "reconciliation_required"].includes(payload.delivery.status)) {
-        await reloadOperations();
-      }
-      return payload.delivery;
-    } catch {
-      return null;
-    }
-  }, [authenticatedOperationsFetch, reloadOperations]);
-
-  const updateTicketStatus = useCallback(async (ticket: DisplayTicket, status: "waiting" | "in_progress" | "resolved") => {
-    const source = operations.data?.tickets.find((item) => item.id === ticket.sourceId);
-    if (!source) return false;
-    try {
-      const response = await operations.authenticatedFetch("/api/operations/snapshot", {
-        method: "POST",
-        body: JSON.stringify({ action: "ticket_update", id: source.id, status, replyDraft: source.replyDraft ?? undefined, expectedInboundKey: ticket.latestInboundKey }),
-      });
-      if (!response.ok) throw new Error("문의 처리 상태를 저장하지 못했습니다.");
-      await operations.reload();
-      return true;
-    } catch (error) {
-      notify(error instanceof Error ? error.message : "문의 처리 상태를 저장하지 못했습니다.");
-      return false;
-    }
-  }, [notify, operations]);
-
-  const generateSupportReply = useCallback(async (ticket: DisplayTicket, targetLocale: SupportLocale) => {
-    const jobId = crypto.randomUUID();
-    supportReplyControllerRef.current?.abort(new DOMException("새 답변 초안 요청으로 교체됐습니다.", "AbortError"));
-    const controller = new AbortController();
-    supportReplyControllerRef.current = controller;
-    const fetchSupportReply = async (input: string, init?: RequestInit) => {
-      const bounded = createPageAbortScope(
-        [controller.signal],
-        30_000,
-        "문의 답변 작업 확인이 30초를 초과했습니다. 다시 시도해 주세요.",
-      );
-      try {
-        return await operations.authenticatedFetch(input, { ...init, signal: bounded.signal });
-      } finally {
-        bounded.dispose();
-      }
-    };
-    try {
-      const queued = await fetchSupportReply("/api/ai/support-reply", {
-        method: "POST",
-        body: JSON.stringify({ jobId, ticketId: ticket.sourceId, expectedInboundKey: ticket.latestInboundKey, targetLocale, tone: "polite" }),
-      });
-      const queuedPayload = await queued.json().catch(() => ({ message: "CLI 작업 응답을 읽지 못했습니다." })) as { message?: string };
-      if (!queued.ok) throw new Error(queuedPayload.message ?? "CLI 답변 작업을 시작하지 못했습니다.");
-      notify("ChatGPT CLI가 문의 원문과 연결된 원장 정보가 있는지 확인하고 있습니다.");
-
-      for (let attempt = 0; attempt < 120; attempt += 1) {
-        await abortableBrowserDelay(2_000, controller.signal);
-        const response = await fetchSupportReply(`/api/ai/jobs/${jobId}`);
-        const payload = await response.json().catch(() => null) as null | {
-          status?: string;
-          error?: string;
-          result?: { mode?: string; draft?: string; targetLocale?: string };
-        };
-        if (!response.ok || !payload) throw new Error("CLI 답변 작업 상태를 확인하지 못했습니다.");
-        if (payload.status === "failed") throw new Error(payload.error || "CLI 답변 초안 생성에 실패했습니다.");
-        if (payload.status === "succeeded") {
-          if (payload.result?.mode !== "support-reply" || typeof payload.result.draft !== "string") {
-            throw new Error("CLI 답변 결과 형식을 확인하지 못했습니다.");
-          }
-          return payload.result.draft;
-        }
-      }
-      throw new Error("CLI 작업이 대기 중입니다. 작업자 연결 상태를 확인한 뒤 다시 시도해 주세요.");
-    } catch (error) {
-      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) return null;
-      notify(error instanceof Error ? error.message : "CLI 답변 초안을 만들지 못했습니다.");
-      return null;
-    } finally {
-      if (supportReplyControllerRef.current === controller) supportReplyControllerRef.current = null;
-    }
-  }, [notify, operations]);
-
-  const syncOrders = useCallback(async (silent = false, historyDays?: number, historyChannel?: "coupang" | "smartstore", historyEndDate?: string) => {
-    if (syncingOrdersRef.current) return;
-    syncingOrdersRef.current = true;
-    setSyncingOrders(true);
-    try {
-      const response = await authenticatedOperationsFetch("/api/operations/sync", {
-        method: "POST",
-        body: JSON.stringify(historyDays
-          ? { channels: historyChannel ? [historyChannel] : ["coupang", "smartstore"], historyDays, ...(historyEndDate ? { historyEndDate } : {}) }
-          : { includeImBootstrap: !silent }),
-      });
-      const payload = await response.json().catch(() => ({ message: "주문 동기화 응답을 읽지 못했습니다." })) as { message?: string; historyBackfill?: unknown };
-      const parsedBackfill = historyDays
-        ? parseInquiryHistoryBackfill(payload.historyBackfill)
-        : null;
-      if (parsedBackfill) setInquiryHistoryBackfill(parsedBackfill);
-      if (!response.ok) throw new Error(payload.message ?? "판매채널 주문 동기화를 시작하지 못했습니다.");
-      if (historyDays) {
-        if (!parsedBackfill) throw new Error("과거 문의 작업 접수 상태를 확인하지 못했습니다.");
-      }
-      if (!silent) notify(payload.message ?? (historyDays
-        ? "한국 쇼핑몰의 과거 문의를 읽기 전용으로 다시 불러오기 시작했습니다."
-        : "연결된 판매채널의 실제 주문·고객 문의 조회를 시작했습니다. 결과는 자동 반영됩니다."));
-      window.setTimeout(() => void reloadOperations(), 3_000);
-      window.setTimeout(() => void reloadOperations(), 12_000);
-      window.setTimeout(() => void reloadOperations(), 30_000);
-    } catch (error) {
-      if (!silent) notify(error instanceof Error ? error.message : "판매채널 주문·문의 동기화를 시작하지 못했습니다.");
-    } finally {
-      syncingOrdersRef.current = false;
-      setSyncingOrders(false);
-    }
-  }, [authenticatedOperationsFetch, notify, reloadOperations]);
-
-  const refreshInquiryHistoryBackfill = useCallback(async (runId: string | null = null) => {
-    const params = runId ? `?runId=${encodeURIComponent(runId)}` : "";
-    try {
-      const response = await authenticatedOperationsFetch(`/api/operations/sync${params}`, {
-        method: "GET",
-        cache: "no-store",
-      });
-      const payload = await response.json().catch(() => null) as null | { historyBackfill?: unknown };
-      if (!response.ok || !payload) return false;
-      if (payload.historyBackfill === null) {
-        if (!runId) setInquiryHistoryBackfill(null);
-        return true;
-      }
-      const parsedBackfill = parseInquiryHistoryBackfill(payload.historyBackfill);
-      if (!parsedBackfill || runId && parsedBackfill.runId !== runId) return false;
-      setInquiryHistoryBackfill(parsedBackfill);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [authenticatedOperationsFetch]);
-
-  useEffect(() => {
-    if (view !== "cs") return;
-    const timer = window.setTimeout(() => {
-      void refreshInquiryHistoryBackfill();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [refreshInquiryHistoryBackfill, view]);
-
-  useEffect(() => {
-    if (view !== "cs" || !inquiryHistoryBackfill
-        || !["queued", "running"].includes(inquiryHistoryBackfill.status)) return;
-    activeInquiryHistoryRunsRef.current.add(inquiryHistoryBackfill.runId);
-    const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") {
-        void refreshInquiryHistoryBackfill(inquiryHistoryBackfill.runId);
-      }
-    };
-    const interval = window.setInterval(refreshWhenVisible, 15_000);
-    document.addEventListener("visibilitychange", refreshWhenVisible);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", refreshWhenVisible);
-    };
-  }, [inquiryHistoryBackfill, refreshInquiryHistoryBackfill, view]);
-
-  useEffect(() => {
-    if (!inquiryHistoryBackfill
-        || !["succeeded", "failed", "blocked"].includes(inquiryHistoryBackfill.status)
-        || !activeInquiryHistoryRunsRef.current.has(inquiryHistoryBackfill.runId)) return;
-    const notificationKey = `${inquiryHistoryBackfill.runId}:${inquiryHistoryBackfill.status}`;
-    if (notifiedInquiryHistoryRunsRef.current.has(notificationKey)) return;
-    notifiedInquiryHistoryRunsRef.current.add(notificationKey);
-    notify(inquiryHistoryBackfill.status === "succeeded"
-      ? `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 ${inquiryHistoryBackfill.succeededJobs}개 작업을 모두 반영했습니다.`
-      : inquiryHistoryBackfill.status === "blocked"
-        ? "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 작업을 자동 재시도하지 않습니다."
-        : `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 중 ${inquiryHistoryBackfill.failedJobs}개 작업은 실패해 완료 처리하지 않았습니다.`);
-    void reloadOperations();
-  }, [inquiryHistoryBackfill, notify, reloadOperations]);
+  const fulfillOrders = shipping.fulfillOrders;
 
   const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
     const nextRegistrationStatus = next === "registration-activity"
@@ -6618,11 +5565,11 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     { key: `low-stock:${operationSummary?.lowStockCount ?? 0}`, title: `재고주의 상품 ${operationSummary?.lowStockCount ?? 0}건`, detail: "운영 원장 실재고 기준", view: "products" as View, registrationStatus: undefined, csStatus: undefined, tone: "danger", icon: Box },
     { key: `listing-errors:${operationSummary?.registrationErrorCount ?? 0}`, title: `등록·분석 재시도 ${operationSummary?.registrationErrorCount ?? 0}건`, detail: "채널 등록·AI 분석 재시도와 별도 이미지 작업 오류를 확인하세요.", view: "registration-activity" as View, registrationStatus: "failed" as RegistrationActivityFilter, csStatus: undefined, tone: "warning", icon: AlertCircle },
     { key: `external-actions:${operationSummary?.registrationBlockedCount ?? 0}`, title: `외부 권한·상품수정 ${operationSummary?.registrationBlockedCount ?? 0}건`, detail: "판매자센터에서 한 건씩 보완", view: "remediation" as View, registrationStatus: undefined, csStatus: undefined, tone: "warning", icon: ShieldCheck },
-    { key: `open-cs:${operationSummary?.openTicketCount ?? 0}`, title: `미처리 CS ${operationSummary?.openTicketCount ?? 0}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, registrationStatus: undefined, csStatus: "open" as CsStatusFilter, tone: "blue", icon: MessageCircleMore },
-    { key: `cs-reconciliation:${operations.data?.tickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length ?? 0}`, title: `CS 원장 확인 필요 ${operations.data?.tickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length ?? 0}건`, detail: "중복 발송 전에 판매자센터 대조 필요", view: "cs" as View, registrationStatus: undefined, csStatus: "reconciliation" as CsStatusFilter, tone: "warning", icon: ShieldCheck },
+    { key: `open-cs:${openCsCount}`, title: `미처리 CS ${openCsCount}건`, detail: "답변 대기와 처리 중 문의", view: "cs" as View, registrationStatus: undefined, csStatus: "open" as CsStatusFilter, tone: "blue", icon: MessageCircleMore },
+    { key: `cs-reconciliation:${cs.snapshot?.tickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length ?? 0}`, title: `CS 원장 확인 필요 ${cs.snapshot?.tickets.filter((ticket) => ticket.replyDeliveryStatus === "reconciliation_required").length ?? 0}건`, detail: "중복 발송 전에 판매자센터 대조 필요", view: "cs" as View, registrationStatus: undefined, csStatus: "reconciliation" as CsStatusFilter, tone: "warning", icon: ShieldCheck },
     ...aiRecoveryEvents.map((event) => ({ key: event.key, title: event.title, detail: event.detail, view: "registration-activity" as View, registrationStatus: "failed" as RegistrationActivityFilter, csStatus: undefined, tone: "warning", icon: event.kind === "expired" ? Clock3 : AlertCircle })),
     ...(productReadinessState === "unavailable" ? [{ key: "product-readiness:unavailable", title: "상품 가격·마진·카테고리 상태 확인 필요", detail: productReadinessMessage ?? "마지막 정상 상태를 유지하고 있습니다.", view: "products" as View, registrationStatus: undefined, csStatus: undefined, tone: "warning", icon: AlertTriangle }] : []),
-  ].filter((item) => !dismissedNotifications.has(item.key) && !item.title.includes(" 0건")), [aiRecoveryEvents, dismissedNotifications, operationSummary, operations.data?.tickets, productReadinessMessage, productReadinessState]);
+  ].filter((item) => !dismissedNotifications.has(item.key) && !item.title.includes(" 0건")), [aiRecoveryEvents, dismissedNotifications, operationSummary, openCsCount, cs.snapshot?.tickets, productReadinessMessage, productReadinessState]);
 
   const selectUnifiedSearchResult = useCallback((result: UnifiedSearchResult) => {
     setSearchOpen(false);
@@ -6651,7 +5598,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   }, [displayProducts, displayTickets, openCs, openProductDetails]);
 
   const content = (() => {
-    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={operations.data?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
+    if (view === "overview") return <OverviewPage onNavigate={navigate} onOpenCs={(status) => openCs("all", status)} onOpenProduct={openProductDetails} displayProducts={displayProducts} operationSummary={operationSummary} channelMetrics={channelMetrics} pipeline={pipeline} analytics={operations.data?.analytics ?? null} salesRange={operations.range} onSalesRangeChange={operations.setRange} resolvedCsCount={cs.snapshot?.tickets.filter((ticket) => ticket.status === "resolved").length ?? 0} operationsAvailable={operations.state === "database"} />;
     if (view === "products") return <ProductsPage onNavigate={navigate} onOpenProduct={openProductDetails} onRefresh={operations.reload} displayProducts={displayProducts} salesRange={operations.range} onSalesRangeChange={operations.setRange} operationsState={operations.state} />;
     if (view === "registration-activity") return <RegistrationActivityPage activities={registrationActivities} activityState={operations.state === "unavailable" ? "unavailable" : operations.data?.registrationActivityState ?? "ready"} aiRuntime={operations.data?.aiRuntime ?? null} snapshotGeneratedAt={operations.data?.generatedAt ?? null} displayProducts={displayProducts} loading={operations.state === "loading"} filter={registrationActivityFilter} onFilterChange={changeRegistrationActivityFilter} onRefresh={operations.refresh} onOpenProduct={openProductDetails} onRetryProduct={retryProductPublishing} onRecoverAnalysis={resumeFailedAiActivity} onStopActivity={stopRegistrationActivity} onNewProduct={() => navigate("publishing")} onExternalActions={() => navigate("remediation")} authenticatedFetch={operations.authenticatedFetch} />;
     if (view === "product-detail") return activeSelectedProduct
@@ -6661,9 +5608,11 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view === "publishing") return <PublishingPage key={`${publishingProduct?.id ?? "new-product"}-${publishingSession}`} notify={notify} channelMetrics={channelMetrics} pipeline={pipeline} authenticatedFetch={operations.authenticatedFetch} initialProduct={publishingProduct} onStartAnother={() => navigate("publishing")} onShowHistory={() => navigate("registration-activity")} onManualProductCreated={() => void operations.reloadAfterMutation()} />;
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
-    if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsPage authenticatedFetch={authenticatedOperationsFetch} notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={(channel, endDate) => syncOrders(false, 30, channel, endDate)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
-    if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
+    if (view === "orders" && !shipping.snapshot) return <section role={shipping.error ? "alert" : "status"} className="live-empty-state"><h2>{shipping.error ? "배송 연결 확인이 필요합니다" : "주문을 불러오고 있습니다"}</h2><p>{shipping.error}</p><button type="button" onClick={() => void shipping.reload()}>다시 불러오기</button></section>;
+    if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={shipping.snapshot?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
+    if (view === "cs" && !cs.snapshot) return <section className="settings-load-error" role={cs.error ? "alert" : "status"}><p>{cs.error ?? "문의 데이터를 불러오고 있습니다."}</p>{cs.error && <button type="button" onClick={() => void cs.reload()}>문의 다시 불러오기</button>}</section>;
+    if (view === "cs") return <CsPage authenticatedFetch={authenticatedWorkspaceFetch} notify={notify} displayTickets={displayTickets} onSend={cs.saveTicketReply} onDeliveryStatus={cs.getTicketDeliveryStatus} onDraft={cs.generateSupportReply} onStatus={cs.updateTicketStatus} onSync={cs.syncCsInquiries} onBackfill={(channel, endDate) => cs.syncCsInquiries(false, 30, channel, endDate)} syncing={cs.syncingCsInquiries} syncStatus={cs.snapshot?.syncStatus ?? []} historyBackfill={cs.inquiryHistoryBackfill} snapshotGeneratedAt={cs.snapshot?.generatedAt ?? null} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={[...(operations.data?.syncStatus ?? []), ...(cs.snapshot?.syncStatus ?? [])]} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
     if (view === "notifications") return <NotificationsPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
@@ -6672,21 +5621,22 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const channelKey = view as ChannelKey;
     return <ChannelPage channelKey={channelKey} onNavigate={navigate} onOpenCs={openCs} metric={channelMetrics.find((metric) => metric.channelKey === channelKey) ?? null} displayProducts={displayProducts} />;
   })();
-  const operationsBadgeLabel = operations.state !== "database"
+  const operationsBadgeLabel = view === "cs" ? (cs.error ? "문의 연결 확인 필요" : cs.loading ? "문의 조회 중" : "문의 원장") : operations.state !== "database"
     ? operations.state === "loading" ? "연결 확인" : "연결 오류"
     : productReadinessState === "unavailable"
       ? "실데이터 · 상품 상태 점검"
       : aiRecovery?.status === "failed" ? "실데이터 · 복구 점검" : "실데이터";
-  const operationsBadgeDetail = operations.state !== "database"
+  const operationsBadgeDetail = view === "cs" ? (cs.error ?? (cs.loading ? "문의 데이터를 불러오고 있습니다." : `문의 ${cs.snapshot?.tickets.length ?? 0}건`)) : operations.state !== "database"
     ? operations.message
     : productReadinessState === "unavailable"
       ? productReadinessMessage ?? "상품 상태 확인 필요"
       : aiRecovery?.status === "failed"
         ? aiRecovery.message ?? "AI 복구 상태 확인 필요"
         : aiRecovery?.expiredCount ? `장기 AI 분석 ${aiRecovery.expiredCount}건 자동 종료` : "Supabase 운영 원장";
-  const operationsBadgeNeedsAttention = operations.state === "unavailable" || productReadinessState === "unavailable" || aiRecovery?.status === "failed";
-  const operationsBadgeTitle = [operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ") || operationsBadgeDetail;
+  const operationsBadgeNeedsAttention = view === "cs" ? Boolean(cs.error) : operations.state === "unavailable" || productReadinessState === "unavailable" || aiRecovery?.status === "failed";
+  const operationsBadgeTitle = view === "cs" ? operationsBadgeDetail : [operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ") || operationsBadgeDetail;
   const openOperationsAttention = () => {
+    if (view === "cs") { void cs.reload(); return; }
     if (productReadinessState === "unavailable") navigate("products");
     else if (aiRecovery?.status === "failed") navigate("registration-activity", "failed");
     else navigate("overview");
@@ -6709,7 +5659,13 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
 
       <section className={`app-main ${view === "publishing" ? "publishing-active" : ""}`.trim()}>
         <div className="app-header-stack">
-          <div className="commerce-service-rail" aria-label="채널 운영 상태">
+          {view === "cs" ? <div className="commerce-service-rail" aria-label="문의 운영 상태">
+            <strong>통합 문의관리</strong>
+            <span><i className={cs.snapshot && !cs.error ? "rail-ok" : "rail-pending"} />{cs.error ? "문의 원장 확인 필요" : cs.snapshot ? "문의 원장 연결" : "문의 데이터 확인 중"}</span>
+            <span>미처리 문의 {cs.snapshot ? openCsCount : "—"}건</span>
+            <span>과거 이력 · 답변 전달 원장</span>
+            <em>{cs.snapshot ? "문의 데이터 30초 자동 갱신" : "문의 연결 확인 중"}</em>
+          </div> : <div className="commerce-service-rail" aria-label="채널 운영 상태">
             <strong>통합 판매관리</strong>
             <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 데이터 원장 연결" : "판매 데이터 확인 중"}</span>
             <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `운영 키 ${operationSummary?.registeredCredentialCount ?? 0} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "운영 키 확인 중" : "운영 키 확인 실패"}</span>
@@ -6717,7 +5673,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
             <span><i className={workerConnected ? "rail-ok" : "rail-pending"} />자동 동기화 {workerConnected ? "실행 중" : "확인 필요"}</span>
             <span><i className="rail-ok" />인증정보 암호화 보관</span>
             <em>{operations.state === "database" ? "실제 연결 상태 1분 자동 갱신" : operations.state === "loading" ? "연결 상태 확인 중" : "운영 DB 연결 오류"}</em>
-          </div>
+          </div>}
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
           <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}>{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>

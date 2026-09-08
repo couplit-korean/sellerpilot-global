@@ -95,7 +95,7 @@ test("directly queued eBay drafts are rejected before credential or provider mut
 
 test("eBay executor contains no policy auto-selection or hard-coded location provisioning", async () => {
   const source = await readFile(
-    new URL("../lib/channels/operations.ts", import.meta.url),
+    new URL("../lib/product-registration/channels/ebay.ts", import.meta.url),
     "utf8",
   );
   assert.doesNotMatch(source, /sellerpilot-seoul|Teheran-ro/);

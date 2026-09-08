@@ -14,6 +14,8 @@ export const conversationPageSchema = z.object({
     source: z.enum(["channel", "sellerpilot", "legacy_ticket"]),
     deliveryStatus: z.enum(["remote_observed", "recorded", "provider_accepted", "queued", "running", "failed", "cancelled", "reconciliation_required"]),
     remoteMessageId: z.string().nullable(), jobId: z.string().uuid().nullable(),
+    nativeMedia: z.record(z.string(),z.unknown()).nullable().default(null),
+    messageState: z.enum(["normal", "recalled", "conflict_review_required"]).default("normal"),
     unsequencedAnswers: z.array(z.object({ body: z.string().max(20000), reason: z.literal("provider_timestamp_unavailable") })).max(100).default([]),
   })).max(100),
   nextCursor: conversationCursorSchema.nullable(),

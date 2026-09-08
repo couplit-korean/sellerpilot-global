@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T15:15:13Z",
+  "contractVersion": "sellerpilot-elevenst-worker-failed-completion/1",
+  "webRuntime": "next-dev",
+  "webHost": "127.0.0.1",
+  "webPort": 3214,
+  "endpoint": "/api/channel-gateway/worker/complete",
+  "businessFailure": {
+    "providerHttpStatus": 200,
+    "providerResultCode": "500",
+    "completionHttpStatus": 200,
+    "safeResultForwarded": true,
+    "storedResponseMarker": "normalized_inquiries_v1",
+    "storedNormalizedInquiryCount": 0,
+    "observationRecorded": true,
+    "rawProviderMessageForwarded": false,
+    "memberIdForwarded": false
+  },
+  "transportFailure": {
+    "completionHttpStatus": 200,
+    "resultForwarded": false,
+    "storedResponse": null,
+    "observationRecorded": false
+  },
+  "temuRetryContinuationPreserved": true,
+  "providerWrites": 0,
+  "productionDatabaseWrites": 0,
+  "customerReplies": 0,
+  "portCleanAfterExit": true
+}

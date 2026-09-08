@@ -1,0 +1,87 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-03-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T13:44:55Z",
+  "supersedesForIntegration": "elevenst-supplement-02-20260908",
+  "checks": [
+    {
+      "name": "dedicated-elevenst-full-regression",
+      "target": "all tests/cs-elevenst-* plus tests/elevenst-product-qna-*",
+      "exitCode": 0,
+      "passed": 40,
+      "failed": 0
+    },
+    {
+      "name": "004-pglite-sql-contract",
+      "command": "node --import tsx --test tests/cs-elevenst-read-state-rpc-db.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "counterexamples": [
+        "status 03 then status 04 reopens waiting while old undated reply stays unsequenced",
+        "urgent inquiry and urgent system notice remain distinct",
+        "duplicate observation, inbound message and state event are idempotent",
+        "wrong seller-account lineage and memId injection are rejected",
+        "5001 incomplete rows are recorded but never ingested"
+      ]
+    },
+    {
+      "name": "safe-read-observation-builder",
+      "command": "node --import tsx --test tests/cs-elevenst-read-observation.test.ts",
+      "exitCode": 0,
+      "passed": 4,
+      "failed": 0
+    },
+    {
+      "name": "actual-isolated-auth-web-port-3214-v2",
+      "command": "NODE_ENV=test /Users/kimchangheemac/.aside/runtime/bin/node --import tsx scripts/cs-elevenst-isolated-auth-web-smoke.mjs --port=3214",
+      "exitCode": 0,
+      "webRuntime": "next-dev",
+      "missingBearerStatus": 401,
+      "invalidBearerStatus": 401,
+      "authorizedStatus": 200,
+      "databaseReadCount": 1,
+      "providerWrites": 0,
+      "productionDatabaseWrites": 0,
+      "portCleanAfterExit": true
+    },
+    {
+      "name": "dedicated-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "owned-eslint",
+      "exitCode": 0
+    },
+    {
+      "name": "005-common-patch-dry-run",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "command": "git apply --check docs/cs-parallel/proposals/elevenst/elevenst-005-read-observation-common.patch",
+      "exitCode": 0,
+      "patchedPaths": 3
+    },
+    {
+      "name": "005-temporary-integrated-clone-typescript",
+      "exitCode": 0
+    },
+    {
+      "name": "005-temporary-integrated-clone-gateway-regression",
+      "target": "tests/serverless-cs-gateway.test.ts plus tests/channel-gateway-worker-route-contract.test.mjs",
+      "passed": 75,
+      "failed": 1,
+      "elevenstAddedPathPassed": true,
+      "baselineFailure": "SmartStore expected output omits orderReferenceState=unavailable; reproduced unchanged on the unpatched integrated source"
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

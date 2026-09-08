@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-08-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-07-delta.json",
+    "sha256": "06f4200f0be61fbb9ed5b9a89d4fc03eeed30b6e076266c9fa04d31129bbc436"
+  },
+  "files": [
+    {
+      "path": "lib/channels/cs/elevenst/contracts.ts",
+      "change": "modify",
+      "beforeSha256": "944cc15352002f2d1d30c64bd76d57b344ed2dbc3472581fcf604fff17c1cccb",
+      "afterSha256": "179aa4251e9886068106d690ee5638cc2285523f67126e8586c383a4dacc66d9",
+      "reason": "Classify HTTP 200 resultCode 500 as a business error before considering the accepted flag."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/read-model.ts",
+      "change": "modify",
+      "beforeSha256": "eab40aa18826c7c3dff40e81928a9901cebae23d11a8fec6deac274c9ebf7b2e",
+      "afterSha256": "48391bedc6c433e1e0aa24b6def5b9bbabd6c8eeb050f61658f0f51f7cc5b858",
+      "reason": "Use the common Q&A classifier directly so the UI projection cannot mask a precedence defect."
+    },
+    {
+      "path": "tests/cs-elevenst-contracts.test.ts",
+      "change": "modify",
+      "beforeSha256": "e2652f9c6d229d59d5372f48465d2246bc683002f2dc8aa41d5bf2e3ac80be73",
+      "afterSha256": "1d46d5058de94707274ceb1a4dbaff60f6cb90d674758ca0d4e582f02de92a93",
+      "reason": "Prove accepted=true cannot turn a Product Q&A resultCode 500 into zero-row success."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-qna-classifier-precedence-20260909.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "57f6cd8c47550f86cbe659d4de2e38b120dd0055e836b47c0970e2221491b591",
+      "reason": "Record the fail-closed classification invariant and unchanged provider state without customer content."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-08-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2646cdd60ed0258cd1e6f86a2eb3fb5faf9037af2c73cd52256056c6d9654093",
+      "reason": "Separate the local defensive correction from unresolved live Product Q&A and limited-access surfaces."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-08-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3c743259cfe3346cc4c6a31133f4c1ee28700020b050957de36ae7b462441bd0",
+      "reason": "Record narrow, serial integrated, type, lint and port-clean verification including the initial concurrency collision."
+    }
+  ],
+  "commonProposals": [],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

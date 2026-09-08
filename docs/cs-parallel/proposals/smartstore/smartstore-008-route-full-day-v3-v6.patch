@@ -1,0 +1,36 @@
+diff --git a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+--- a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
++++ b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+@@ -13,12 +13,12 @@ const inputSchema = z.object({ floorDate: day, throughDate: day }).strict()
+   .refine(value => value.floorDate <= value.throughDate, { message: "invalid range" });
+ const checkpointSchema = z.object({
+-  contract: z.literal("sellerpilot-smartstore-history-checkpoint/2"),
++  contract: z.literal("sellerpilot-smartstore-history-checkpoint/3"),
+   checkedAt: z.string().datetime({ offset: true }), environment: z.literal("production"),
+   totalWindowCount: z.number().int().nonnegative(), completedWindowCount: z.number().int().nonnegative(),
+   remainingWindowCount: z.number().int().nonnegative(), complete: z.boolean(),
+   nextWindow: z.object({ key: z.string(), fromDate: day, throughDate: day,
+     productItemKey: z.string(), customerItemKey: z.string() }).strict().nullable(),
+-  advanceRule: z.literal("same_succeeded_run_both_product_and_customer_completed_reconciled_zero_unprocessed"),
++  advanceRule: z.literal("same_succeeded_run_both_kinds_exact_full_kst_day_coverage"),
+ }).strict();
+ 
+ async function context(request: Request, input: unknown) {
+@@ -37,7 +37,7 @@ async function context(request: Request, input: unknown) {
+   if (credentialError || !credential || typeof credential.id !== "string") {
+     return { response: NextResponse.json({ message: "활성 스마트스토어 운영 credential을 확인해 주세요." }, { status: 409, headers }) } as const;
+   }
+-  const { data, error } = await admin.userClient.rpc("sellerpilot_next_smartstore_history_window_v2", {
++  const { data, error } = await admin.userClient.rpc("sellerpilot_next_smartstore_history_window_v3", {
+     p_floor_date: parsed.data.floorDate, p_through_date: parsed.data.throughDate,
+     p_credential_id: credential.id, p_environment: "production",
+   });
+@@ -58,7 +58,7 @@ export async function POST(request: Request) {
+   if (!resolved.checkpoint.nextWindow) {
+     return NextResponse.json({ ok: true, checkpoint: resolved.checkpoint, historyBackfill: null }, { headers });
+   }
+-  const { data, error } = await resolved.admin.userClient.rpc("sellerpilot_start_smartstore_inquiry_history_window_v5", {
++  const { data, error } = await resolved.admin.userClient.rpc("sellerpilot_start_smartstore_inquiry_history_window_v6", {
+     p_from_date: resolved.checkpoint.nextWindow.fromDate,
+     p_through_date: resolved.checkpoint.nextWindow.throughDate,
+     p_credential_id: resolved.credentialId,

@@ -1,0 +1,15 @@
+{
+  "url": "http://127.0.0.1:3198/cs",
+  "session": "cs-separation-local",
+  "isolatedTestBrowser": true,
+  "pageLoaded": true,
+  "hasContent": true,
+  "pageErrors": [],
+  "frameworkErrorOverlay": false,
+  "reloadButtonVerified": true,
+  "navigationToProductWorkspaceLoginVerified": true,
+  "view": "Local Supabase configuration missing; no production/customer data loaded",
+  "authenticatedLiveDataVerified": false,
+  "apiRequestsOnUnconfiguredCsEntry": 0,
+  "screenshot": "browser-local-cs.png"
+}

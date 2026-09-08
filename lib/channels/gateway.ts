@@ -1,11 +1,10 @@
+import { ChannelGatewayInProgressError, ChannelGatewayReconciliationRequiredError, throwGatewayEnqueueError, waitForGatewayJob } from "./gateway-job-runtime";
+export { ChannelGatewayInProgressError, ChannelGatewayReconciliationRequiredError, ChannelGatewayRemoteFailedError, ChannelGatewayCredentialUnattestedError, throwGatewayEnqueueError, waitForGatewayJob } from "./gateway-job-runtime";
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelDiagnostic } from "../channel-diagnostics";
-import type { ChannelOperationName, ChannelOperationResult } from "./operations";
-import {
-  databaseServerlessStaticEgressAllows,
-  SERVERLESS_STATIC_EGRESS_REQUIRED,
-} from "./serverless-static-egress";
+import type { ChannelOperationName, ChannelOperationResult } from "./commerce-operations";
+import { databaseServerlessStaticEgressAllows, SERVERLESS_STATIC_EGRESS_REQUIRED } from "./serverless-static-egress";
 
 export type ChannelGatewayChannel = "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay" | "temu";
 
@@ -19,12 +18,6 @@ type GatewayCompetitorCandidate = {
   marketplace: "elevenst";
   price: number;
   currency: "KRW";
-};
-
-type GatewayJobSnapshot = {
-  status?: unknown;
-  response?: unknown;
-  error?: unknown;
 };
 
 type ListingGatewayEnqueue = {
@@ -55,43 +48,6 @@ export type GatewayWriteResource = {
   trackingNumber?: string;
 };
 
-export type InquiryReplyGatewayEnqueueResult = {
-  jobId: string;
-};
-
-export class ChannelGatewayInProgressError extends Error {
-  readonly jobId: string;
-  readonly attemptId: string | null;
-  readonly listingId: string | null;
-
-  constructor(
-    jobId: string,
-    attemptId: string | null,
-    message = "CHANNEL_GATEWAY_IN_PROGRESS",
-    listingId: string | null = null,
-  ) {
-    super(message);
-    this.name = "ChannelGatewayInProgressError";
-    this.jobId = jobId;
-    this.attemptId = attemptId;
-    this.listingId = listingId;
-  }
-}
-
-export class ChannelGatewayReconciliationRequiredError extends Error {
-  readonly jobId: string;
-  readonly attemptId: string | null;
-  readonly listingId: string | null;
-
-  constructor(jobId: string, attemptId: string | null, listingId: string | null = null) {
-    super("CHANNEL_GATEWAY_RECONCILIATION_REQUIRED");
-    this.name = "ChannelGatewayReconciliationRequiredError";
-    this.jobId = jobId;
-    this.attemptId = attemptId;
-    this.listingId = listingId;
-  }
-}
-
 export class ChannelGatewayListingAlreadyPublishedError extends Error {
   readonly listingId: string;
   readonly attemptId: string;
@@ -116,85 +72,6 @@ export class ChannelGatewayListingBlockedError extends Error {
   }
 }
 
-export class ChannelGatewayRemoteFailedError extends Error {
-  readonly jobId: string;
-  readonly attemptId: string | null;
-  readonly listingId: string | null;
-
-  constructor(jobId: string, attemptId: string | null, listingId: string | null, safeError: string) {
-    super(`CHANNEL_GATEWAY_REMOTE_FAILED:${safeError}`);
-    this.name = "ChannelGatewayRemoteFailedError";
-    this.jobId = jobId;
-    this.attemptId = attemptId;
-    this.listingId = listingId;
-  }
-}
-
-export class ChannelGatewayCredentialUnattestedError extends Error {
-  constructor() {
-    super("CHANNEL_GATEWAY_CREDENTIAL_UNATTESTED");
-    this.name = "ChannelGatewayCredentialUnattestedError";
-  }
-}
-
-function throwGatewayEnqueueError(error: { message?: string } | null) {
-  if (error?.message?.includes("provider-certified seller identity required")) {
-    throw new ChannelGatewayCredentialUnattestedError();
-  }
-  throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
-}
-
-async function waitForGatewayJob(
-  serviceClient: SupabaseClient,
-  jobId: string,
-  timeoutMs: number,
-  attemptId: string | null = null,
-  listingId: string | null = null,
-  signal?: AbortSignal,
-) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (signal?.aborted) throw signal.reason;
-    const query = serviceClient.rpc("sellerpilot_get_channel_gateway_job", { p_job_id: jobId });
-    const { data, error } = await (signal ? query.abortSignal(signal) : query);
-    // Enqueue already committed. Losing the subsequent status read is never
-    // proof of provider failure; preserve the active job/upper ledger and let
-    // exact worker completion settle it.
-    if (error) throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_STATUS_UNAVAILABLE", listingId);
-    const job = data && typeof data === "object" && !Array.isArray(data) ? data as GatewayJobSnapshot : null;
-    if (job?.status === "succeeded" && job.response && typeof job.response === "object" && !Array.isArray(job.response)) return job.response;
-    if (job?.status === "reconciliation_required") {
-      throw new ChannelGatewayReconciliationRequiredError(jobId, attemptId, listingId);
-    }
-    if (job?.status === "failed" || job?.status === "cancelled") {
-      throw new ChannelGatewayRemoteFailedError(
-        jobId,
-        attemptId,
-        listingId,
-        typeof job.error === "string" ? job.error : "worker_failed",
-      );
-    }
-    await delay(500, signal);
-  }
-  throw new ChannelGatewayInProgressError(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT", listingId);
-}
-
-function delay(ms: number, signal?: AbortSignal) {
-  if (!signal) return new Promise<void>((resolve) => setTimeout(resolve, ms));
-  if (signal.aborted) return Promise.reject(signal.reason);
-  return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      signal.removeEventListener("abort", abort);
-      resolve();
-    }, ms);
-    const abort = () => {
-      clearTimeout(timeout);
-      reject(signal.reason);
-    };
-    signal.addEventListener("abort", abort, { once: true });
-  });
-}
-
 export async function executeViaChannelGateway(input: {
   serviceClient: SupabaseClient;
   credentialId: string;
@@ -207,6 +84,7 @@ export async function executeViaChannelGateway(input: {
   writeResource?: GatewayWriteResource;
   timeoutMs?: number;
 }) {
+  if (/^(orders|shipment|inquiries)\./.test(input.operation)) throw new Error("PRODUCT_GATEWAY_OPERATION_REQUIRED");
   let jobId = "";
   let effectiveAttemptId = input.attemptId;
   let effectiveListingId = input.listingId ?? null;
@@ -348,73 +226,6 @@ export async function executeViaChannelGateway(input: {
     effectiveListingId,
   ) as ChannelOperationResult;
   return { result, listingId: effectiveListingId ?? undefined };
-}
-
-export async function enqueueInquiryReplyViaChannelGateway(input: {
-  serviceClient: SupabaseClient;
-  ticketId: string;
-  channel: "qoo10" | "lazada" | "coupang" | "smartstore" | "ebay";
-  reply: string;
-  expectedInboundKey: string;
-  arguments: Record<string, unknown>;
-}): Promise<InquiryReplyGatewayEnqueueResult> {
-  const { data: jobId, error: enqueueError } = await input.serviceClient.rpc(
-    "sellerpilot_enqueue_inquiry_reply_gateway_job",
-    {
-      p_ticket_id: input.ticketId,
-      p_channel: input.channel,
-      p_reply_text: input.reply,
-      p_request_payload: { arguments: input.arguments, sellerpilotExpectedInboundKey: input.expectedInboundKey },
-    },
-  );
-  if (enqueueError) {
-    if (enqueueError.message.includes("STATIC_EGRESS_REQUIRED")) {
-      throw new Error("CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED");
-    }
-    if (/INQUIRY_REPLY_CONFLICT|INQUIRY_REPLY_ALREADY_RESOLVED/.test(enqueueError.message)) {
-      throw new Error("CHANNEL_GATEWAY_REPLY_CONFLICT");
-    }
-    if (enqueueError.message.includes("INQUIRY_REPLY_LINEAGE_UNBOUND")) {
-      throw new Error("CHANNEL_GATEWAY_REPLY_LINEAGE_UNBOUND");
-    }
-    if (/INQUIRY_REPLY_RECONCILIATION_REQUIRED|INQUIRY_REPLY_LEGACY_IN_PROGRESS/.test(enqueueError.message)) {
-      throw new Error("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED");
-    }
-    if (enqueueError.message.includes("PROVIDER_INQUIRY_NOT_WAITING")) {
-      throw new Error("CHANNEL_GATEWAY_REPLY_PROVIDER_NOT_WAITING");
-    }
-    if (/INQUIRY_LATEST_MESSAGE_UNBOUND|INQUIRY_CONTEXT_STALE/.test(enqueueError.message)) {
-      throw new Error("CHANNEL_GATEWAY_REPLY_CONTEXT_STALE");
-    }
-    if (/EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(enqueueError.message)) {
-      throw new Error(enqueueError.message.includes("PROVIDER_COOLDOWN")
-        ? "EBAY_ASQ_PROVIDER_COOLDOWN_100_SECONDS"
-        : "EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS");
-    }
-    if (enqueueError.message.includes("active channel credential required")) {
-      throw new Error("CREDENTIALS_MISSING");
-    }
-    throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
-  }
-  if (typeof jobId !== "string") throw new Error("CHANNEL_GATEWAY_ENQUEUE_FAILED");
-  return { jobId };
-}
-
-export async function executeInquiryReplyViaChannelGateway(input: {
-  serviceClient: SupabaseClient;
-  ticketId: string;
-  channel: "qoo10" | "lazada" | "coupang" | "smartstore" | "ebay";
-  reply: string;
-  expectedInboundKey: string;
-  arguments: Record<string, unknown>;
-  timeoutMs?: number;
-}) {
-  const { jobId } = await enqueueInquiryReplyViaChannelGateway(input);
-  return await waitForGatewayJob(
-    input.serviceClient,
-    jobId,
-    input.timeoutMs ?? 180_000,
-  ) as ChannelOperationResult;
 }
 
 export async function executeDiagnosticViaChannelGateway(input: {

@@ -69,8 +69,8 @@ test("Qoo10 가격 대상은 게시 원장의 ItemCode와 검증된 판매자 �
 test("Vercel claim·serverless drain·로컬 gateway worker가 차단된 가격 작업을 공급자 호출 전에 종료한다", async () => {
   const [claimRoute, serverlessDrain, worker] = await Promise.all([
     readFile(new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-cs-gateway.ts", import.meta.url), "utf8"),
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
   ]);
 
   assert.match(claimRoute, /if \(parsed\.data\.operation === "price\.update"\)/);

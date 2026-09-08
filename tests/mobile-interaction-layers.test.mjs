@@ -63,7 +63,7 @@ test("shipment, account, credential and search actions remain reachable above th
 test("notification content scrolls inside the space above persistent navigation", async () => {
   const [styles, page] = await Promise.all([
     readFile(layerStylesUrl, "utf8"),
-    readFile(pageUrl, "utf8"),
+    Promise.all([readFile(pageUrl, "utf8"), readFile(new URL("../app/cs/workspace.tsx", import.meta.url), "utf8")]).then(parts => parts.join("\n")),
   ]);
   assert.match(styles, /\.notification-popover\s*\{[\s\S]*?overflow-y:\s*auto;[\s\S]*?overscroll-behavior:\s*contain;[\s\S]*?touch-action:\s*pan-y/);
   assert.match(styles, /@media \(max-width:\s*720px\)[\s\S]*?\.notification-popover\s*\{[\s\S]*?top:\s*calc\(var\(--mobile-header-clearance\) \+ 8px\);[\s\S]*?bottom:\s*calc\(var\(--mobile-nav-clearance, 78px\) \+ 8px\);[\s\S]*?max-height:\s*none/);
@@ -78,7 +78,7 @@ test("notification content scrolls inside the space above persistent navigation"
 
 test("mobile drawer and standalone Android gate share the modal interaction contract", async () => {
   const [page, pushManager] = await Promise.all([
-    readFile(pageUrl, "utf8"),
+    Promise.all([readFile(pageUrl, "utf8"), readFile(new URL("../app/cs/workspace.tsx", import.meta.url), "utf8")]).then(parts => parts.join("\n")),
     readFile(pushManagerUrl, "utf8"),
   ]);
 
@@ -134,7 +134,7 @@ test("the embedded detail editor fits a Fold and exposes a semantic save action"
 
 test("true modals lock scroll, trap focus, close on Escape and restore the opener", async () => {
   const [page, hook, publishing, credentialCenter, puckEditor] = await Promise.all([
-    readFile(pageUrl, "utf8"),
+    Promise.all([readFile(pageUrl, "utf8"), readFile(new URL("../app/cs/workspace.tsx", import.meta.url), "utf8")]).then(parts => parts.join("\n")),
     readFile(modalHookUrl, "utf8"),
     readFile(publishingUrl, "utf8"),
     readFile(credentialCenterUrl, "utf8"),

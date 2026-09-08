@@ -1,0 +1,26 @@
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -108,6 +108,12 @@ const SAFE_NAVER_EXECUTION_ERRORS = new Set([
+   "NAVER_PROVIDER_UNAVAILABLE",
+   "NAVER_TOKEN_EXCHANGE_FAILED",
+ ]);
++const SAFE_TEMU_DETAIL_RETRY_ERRORS = new Set([
++  "TEMU_AFTER_SALES_DETAIL_RETRY_RESULT_INVALID",
++  "TEMU_AFTER_SALES_DETAIL_RETRY_SCHEMA_NOT_READY",
++  "TEMU_AFTER_SALES_DETAIL_RETRY_RECORDING_FAILED",
++  "TEMU_AFTER_SALES_DETAIL_RETRY_RECEIPT_INVALID",
++]);
+ const SERVERLESS_GATEWAY_RETRY_SAFE_READ_OPERATIONS = new Set<GatewayClaim["operation"]>([
+   "categories.list",
+   "categories.suggest",
+@@ -283,6 +289,9 @@ function safeExecutionError(error: unknown, signal: AbortSignal) {
+     if (SAFE_NAVER_EXECUTION_ERRORS.has(error.message)) {
+       return error.message;
+     }
++    if (SAFE_TEMU_DETAIL_RETRY_ERRORS.has(error.message)) {
++      return error.message;
++    }
+   }
+   return "serverless_cs_execution_failed";
+ }

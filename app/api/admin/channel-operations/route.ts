@@ -9,12 +9,10 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
-  channelOperationCapabilities,
-  channelOperationNames,
   executeChannelOperation,
   type ChannelOperationResult,
-  writeChannelOperations,
-} from "../../../../lib/channels/operations";
+} from "../../../../lib/channels/commerce-operations";
+import { channelOperationCapabilities, channelOperationNames, writeChannelOperations } from "../../../../lib/channels/operation-names";
 import { channelCatalog } from "../../../../lib/channels/catalog";
 import {
   ChannelGatewayInProgressError,
@@ -468,6 +466,10 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ message: "채널 작업 요청 형식이 올바르지 않습니다." }, { status: 400 });
 
   const { channel, operation } = parsed.data;
+  if (/^(orders|shipment)\./.test(operation)) return NextResponse.json({message:"주문 조회와 발송은 배송 전용 API에서 처리합니다.",code:"SHIPPING_ENDPOINT_REQUIRED"},{status:400});
+  if (operation === "inquiries.list" || operation === "inquiries.reply") {
+    return NextResponse.json({ message: "문의 조회와 답변은 CS 전용 API에서 처리합니다.", code: "CS_ENDPOINT_REQUIRED" }, { status: 400 });
+  }
   if (channel === "smartstore"
       && operation === "listing.update"
       && hasClientSmartstoreManualAdoptionUpdateMarker(parsed.data.arguments)) {

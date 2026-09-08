@@ -313,13 +313,15 @@ const request = {
   arguments: argumentsValue,
   ...(process.env.LIVE_RESOURCE_LISTING_ID ? { resourceListingId: process.env.LIVE_RESOURCE_LISTING_ID } : {}),
   ...(process.env.LIVE_ORDER_ID ? { orderId: process.env.LIVE_ORDER_ID } : {}),
+  ...(process.env.LIVE_SHIPMENT_CARRIER ? { shipmentCarrier: process.env.LIVE_SHIPMENT_CARRIER } : {}),
+  ...(process.env.LIVE_SHIPMENT_TRACKING ? { shipmentTracking: process.env.LIVE_SHIPMENT_TRACKING } : {}),
   ...(process.env.LIVE_PRODUCT_ID ? { productId: process.env.LIVE_PRODUCT_ID } : {}),
   ...(process.env.LIVE_MARKET ? { market: process.env.LIVE_MARKET } : {}),
   ...(process.env.LIVE_TARGET_ID ? { targetId: process.env.LIVE_TARGET_ID } : {}),
   ...(process.env.LIVE_CURRENCY ? { currency: process.env.LIVE_CURRENCY } : {}),
   ...(process.env.LIVE_PRICE ? { price: Number(process.env.LIVE_PRICE) } : {}),
 };
-const response = await fetch(`${siteUrl}/api/admin/channel-operations`, {
+const response = await fetch(`${siteUrl}${/^(orders|shipment)\./.test(operation) ? "/api/admin/shipping/operations" : "/api/admin/channel-operations"}`, {
   method: "POST",
   redirect: "error",
   headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },

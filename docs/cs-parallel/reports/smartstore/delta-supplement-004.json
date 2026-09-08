@@ -1,0 +1,56 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-003.json",
+  "baseManifestSha256": "9727f4da736aee56fa69da4d84aa34bb8dd7f660368678717afb5d5a41911ea4",
+  "reason": "003을 동결한 채 history-resume-v5 실제 exported route 실행 시험과 SmartStore UI 전용 연결 proposal을 추가",
+  "files": [
+    {
+      "path": "tests/cs-smartstore-history-resume-v5-route.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4bb332807888c7254b5f37765532465d1d17a1881df971eef29193e65d9ee0b7",
+      "reason": "005/006 patch를 임시 격리 clone에 실제 적용하고 exported GET/POST, auth fixture, exact RPC, 202 접수와 UI legacy 분리를 실행 검증"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-006-ui-history-resume-v5.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3e6904cea424c96cf94e9f3d6d5888ba530604626861e29a1062443bd7c4a2be",
+      "reason": "SmartStore 버튼만 v5 관리자 route로 연결하고 202 acceptedNotCompleted를 완료와 분리하는 공용 UI 제안"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-006-route-ui-verification.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d6cdef96c92564113f9c481f93db2dc32e9152e99798613f5b13317d67139d22",
+      "reason": "현재 legacy UI 호출 추적, 006 적용 순서, route 자동화와 운영 인증 증거 경계 기록"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence-004.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8c4719f094cb70ae9c8718fc54c778c0cfcbd0d918015b46143086cf455c0704",
+      "reason": "격리 route/UI 9/9, 결합 회귀 27/27, patch apply-check, lint와 TypeScript 증거"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status-supplement-004.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5e117db27dca84c30556774a6a132bbfd8d53743f0b03525e6932c37f89bcf0f",
+      "reason": "003 동결, route/UI proposal 검증 완료와 운영·실표본·TalkTalk·리뷰 미완료 경계 기록"
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence-004.md",
+    "tests/cs-smartstore-history-resume-v5-route.test.ts"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

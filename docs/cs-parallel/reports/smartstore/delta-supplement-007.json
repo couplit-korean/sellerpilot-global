@@ -1,0 +1,70 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-006.json",
+  "baseManifestSha256": "7738d8fee9bfec27a9e802c3b8e8852dd39fd3ebb351f4ce930edd7b5e61e60e",
+  "reason": "006을 동결한 채 정상 page2 이상 continuation 재사용/실패 재개와 reconciled current cutoff 이후 과거 full-day 창 진행을 보완",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-009-continuation-safe-window-v7.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8eb6a1e9900cf328b02915949fc4bca63e909fbf422cd2a9235e273e3e41bc85",
+      "reason": "initial root 2개와 recursive page continuation을 분리 검증하고 exact failed child만 재개하는 v7 및 private lineage helper"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-009-checkpoint-deferred-cutoff-v4.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7f7096901dab9a77ac5cb09d4ba47cabaaaea28cfe27ec83bfd4d387542a9b61",
+      "reason": "모든 root/child page ledger를 요구하고 reconciled current cutoff를 older full-day 창 뒤로 보류하는 checkpoint v4"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-009-route-v4-v7.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "fbe64b6b2ada34da7edc5d84998a96237c8963bbceca996a5d87bc772c087c2f",
+      "reason": "현재 통합 route의 contract/RPC/key/advance rule/enqueue를 v4/v7로 함께 전환"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-009-continuation-cutoff-recovery.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c99dbc41a049300eb7a1b5042ce884c17ee1c5949a95a17764e6963ee872e00d",
+      "reason": "006 반례, v7/v4 계약, 선택 종료일 경계, 현재 route 통합 순서를 기록"
+    },
+    {
+      "path": "tests/cs-smartstore-continuation-cutoff-v7.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "52c60b05c0859044096ea053ac706e794838a629d8242bcfcf239d12c73f2c10",
+      "reason": "page3 정상, page2 실패 재개, recorder 누락, duplicate/forged/isolation, cutoff→older→익일 full-day, actual root route POST를 검증"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence-007.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4b6317553a9c7e7087ba37d4b97d5ab8d1e19308c7833e91f76126c5eeed0599",
+      "reason": "v7/v4 7/7, 인접 11/11, clone 없는 순차 18/18, 정적 검사와 clone 환경 한계를 기록"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status-supplement-007.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ef3a55c821be67c15676deb54ecdd35e38b837a1869467ab5d807703aa670612",
+      "reason": "핵심 2종 재개 보완과 톡톡·리뷰 포함 전체 미완료, 운영 비변경 상태를 분리"
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence-007.md",
+    "tests/cs-smartstore-continuation-cutoff-v7.test.mjs"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

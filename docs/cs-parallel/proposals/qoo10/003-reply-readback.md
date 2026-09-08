@@ -1,0 +1,21 @@
+# 공통 변경 요청 qoo10-003
+
+- 목적: 승인된 일반 문의만 최신 inbound의 정확한 type/question/sequence로 답하고 공급자 재조회에서 S3를 확인한다.
+- 요청 채널: qoo10
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / reply acceptance marker 현행
+- 수정할 공통 파일과 함수: `lib/channels/inquiry-reply.ts`의 `buildInquiryReplyArguments`, reply enqueue/verifier, SQL `20260908048000` 후속 migration
+- 현재 파일 SHA-256: `inquiry-reply.ts=5149a66737b7b174279c336e1b77e72861bdefd22fa84a7c2becd4782f3e87c0`; `08048000=c7bbc20995c8bcbf6c429d1f68a972b2f68e85eec2098dc364ad632165161530`
+- DB 객체: reply delivery enqueue/complete/readback 함수와 inquiry latest-message ledger
+- 기존 동작: ticket 문자열에서 type/question/sequence를 파싱하지만 4,000자 제한, replyContext/providerContext 동일성, 최신 inbound 확인이 없다. provider `SetInquiryMessage` 성공은 acceptance marker만 남기며 S3 readback이 아니다.
+- 문제를 재현하는 최소 입력: 선택 inbound `A`, 같은 ticket에 더 최신 inbound `B`; 또는 providerContext sequence 102인데 ticket sequence 101; 또는 claim ticket을 reply endpoint로 전달.
+- 원하는 동작: approval, 일반 inquiry kind, 최신 inbound key, 세 context identity, 미완료 상태, 1~4,000자/제어문자 검사를 모두 통과해야 enqueue. 접수 뒤 같은 type/question/sequence를 S3로 재조회해 관측될 때만 delivered/verified.
+- 전용 모듈 경로와 export: `lib/channels/cs/qoo10/reply-guard.ts`의 `prepareQoo10Reply`; `contracts.ts`의 `qoo10InquiryReplyParams`
+- 기존/새 입력·출력 계약: 기존 ticket+text → 새 ticket+text+replyContext+providerContext+selectedInboundKey+latestInboundKey+approved. 결과는 params와 `acceptanceIsDeliveryProof:false`, requiredReadback.
+- 최소 변경안: 공통 builder의 qoo10 분기에서 전용 guard 호출; DB transaction에서 latest inbound 재확인; provider acceptance와 readback을 별도 상태로 기록; claim `ticketKind=after_sales` 또는 `replySupported=false`는 영구 차단.
+- 다른 채널 영향: qoo10 분기만 강화. 공통 상태명 추가 시 다른 채널은 기존 값을 유지.
+- 상품/주문/배송 mutation 영향: 없음. Qoo10 claim/order/shipping endpoint 호출 금지.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-qoo10-contracts.test.ts tests/inquiry-reply.test.ts tests/qoo10-claims.test.ts`
+- migration 선행/preimage/ACL 요구: reply idempotency key와 latest inbound row를 같은 transaction에서 잠금. anon 금지, authenticated admin/authorized agent만 draft approve, service worker는 고정 credential과 ticket scope만.
+- 우선순위: 중복답변
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

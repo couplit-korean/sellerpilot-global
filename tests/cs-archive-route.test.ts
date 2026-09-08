@@ -22,16 +22,17 @@ async function call(url='https://example.test/api/admin/cs/archive',options:{den
 test('archive route requires authentication before parsing or calling the DB',async()=>{
  const {response,calls}=await call(undefined,{denied:true});assert.equal(response.status,401);assert.equal(calls.length,0);
 });
-test('archive route validates impossible dates, channels and cursor fields',async()=>{
- for(const query of ['from=2026-02-30','from=2026-09-02&to=2026-09-01','channel=invalid','status=sent','cursor=%7B%7D']){
+test('archive route validates impossible dates, channels, scope and cursor fields',async()=>{
+ for(const query of ['from=2026-02-30','from=2026-09-02&to=2026-09-01','channel=invalid','status=sent','accountId=bad','shopId=bad%20shop','ticketKind=bad','source=bad','cursor=%7B%7D']){
   const {response,calls}=await call(`https://example.test/api/admin/cs/archive?${query}`);
   assert.equal(response.status,400);assert.equal(calls.length,0);assert.match(response.headers.get('cache-control')??'',/no-store/);
  }
 });
 test('archive route uses owner-authenticated RPC with exact filters and no cached response',async()=>{
- const {response,calls}=await call('https://example.test/api/admin/cs/archive?query=old%25&channel=smartstore&status=resolved&from=2026-09-01&to=2026-09-02');
- assert.equal(response.status,200);assert.equal(calls[0].name,'sellerpilot_search_cs_archive');
+ const {response,calls}=await call('https://example.test/api/admin/cs/archive?query=old%25&channel=smartstore&status=resolved&from=2026-09-01&to=2026-09-02&accountId=00000000-0000-4000-8000-000000000090&shopId=shop_1&ticketKind=conversation&source=channel');
+ assert.equal(response.status,200);assert.equal(calls[0].name,'sellerpilot_search_cs_archive_v2');
  assert.equal(calls[0].args.p_query,'old%');assert.equal(calls[0].args.p_from_date,'2026-09-01');assert.equal(calls[0].args.p_limit,25);
+ assert.equal(calls[0].args.p_account_id,'00000000-0000-4000-8000-000000000090');assert.equal(calls[0].args.p_shop_id,'shop_1');
  assert.match(response.headers.get('cache-control')??'',/private, no-store/);
 });
 test('archive route hides database errors and rejects malformed pages',async()=>{

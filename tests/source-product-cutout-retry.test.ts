@@ -100,7 +100,7 @@ test("deterministic validation and lease cancellation never retry", async () => 
 
 test("worker and Swift cutout keep the bounded safe retry contract", async () => {
   const [worker, swift] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8"),
     readFile(new URL("../scripts/source-product-cutout.swift", import.meta.url), "utf8"),
   ]);
 

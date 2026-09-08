@@ -1,0 +1,178 @@
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -36,5 +36,6 @@ import {
+   type ServerlessStaticEgressChannel,
+ } from "./serverless-static-egress";
++import { buildElevenstCsReadObservation } from "../cs/channels/elevenst/read-observation";
+ import {
+   resolveRuntimeReleaseIdentity,
+   runtimeStatusMatchesCurrentRelease,
+@@ -987,6 +988,7 @@ export async function completeServerlessGatewayJob(
+   let projectedInquiryCount = 0;
+   let inquiryCoverage: ReturnType<typeof inquiryCoverageEvidence> | null = null;
+   let replyObservations: InquiryReplyObservation[] = [];
++  let elevenstReadReceipt: ReturnType<typeof buildElevenstCsReadObservation> | null = null;
+   const lazadaRawPages: Array<LazadaRawReceipt & { targetStatus: "normalized" | "unsupported" }> = [];
+   let storedResponse: unknown = null;
+   if (parsed.data.status === "succeeded") {
+@@ -994,12 +996,26 @@ export async function completeServerlessGatewayJob(
+     storedResponse = parsed.data.result;
+     if (job.operation === "orders.list" || job.operation === "inquiries.list") {
+       const syncResponse = parsed.data.result as ChannelOperationResult;
+-      if (!syncResponse.ok) return "unavailable";
+       const normalizationTimestamp = typeof context.normalization_timestamp === "string"
+         ? new Date(context.normalization_timestamp)
+         : null;
+       if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
+       const stableNormalizationTimestamp = normalizationTimestamp.toISOString();
++      if (!syncResponse.ok) {
++        if (job.channel === "elevenst" && job.operation === "inquiries.list") {
++          const failedRead = buildElevenstCsReadObservation({
++            result: syncResponse,
++            arguments: recordValue(job.request.arguments) ?? {},
++            checkedAt: stableNormalizationTimestamp,
++            normalizedInquiries: [],
++          });
++          const recorded = await callRpc(dependencies, "sellerpilot_service_record_elevenst_cs_read_v1", {
++            p_credential_id: job.credential_id, p_observation: failedRead.observation, p_inquiries: [],
++          });
++          if (recorded.error) return "unavailable";
++        }
++        return "unavailable";
++      }
+       if (job.operation === "orders.list") {
+         normalizedOrders = normalizeChannelOrders(
+           job.channel,
+@@ -1030,7 +1044,14 @@ export async function completeServerlessGatewayJob(
+         replyObservations = inquiryReplyObservations(job.channel, normalizedInquiries);
+         if (job.channel !== "lazada") {
+           normalizedInquiries = normalizedInquiries.filter((inquiry) => inquiry.senderRole !== "seller");
+         }
++        if (job.channel === "elevenst") {
++          elevenstReadReceipt = buildElevenstCsReadObservation({
++            result: syncResponse, arguments: recordValue(job.request.arguments) ?? {},
++            checkedAt: stableNormalizationTimestamp,
++            normalizedInquiries,
++          });
++        }
+       }
+     }
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+@@ -1097,5 +1118,16 @@ export async function completeServerlessGatewayJob(
+   if (completed.error) return "unavailable";
+   if (recordValue(completed.data)?.status !== "completed") return "ownership_lost";
++  if (elevenstReadReceipt) {
++    const readObservation = await callRpc(dependencies, "sellerpilot_service_record_elevenst_cs_read_v1", {
++      p_credential_id: job.credential_id,
++      p_observation: elevenstReadReceipt.observation,
++      p_inquiries: elevenstReadReceipt.inquiries,
++    });
++    const receipt = recordValue(readObservation.data);
++    if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
++      return "unavailable";
++    }
++  }
+   if (effectiveCompletionStatus === "succeeded"
+       && (job.operation === "inquiries.list" || job.operation === "inquiries.reply")) {
+     const bindingEvidence = csCredentialBindingEvidence({
+diff --git a/app/api/channel-gateway/worker/complete/route.ts b/app/api/channel-gateway/worker/complete/route.ts
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -26,6 +26,7 @@ import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
+ import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
+ import type { ChannelOperationResult } from "../../../../../lib/channels/operations";
+ import { supabaseUrl } from "../../../../../lib/supabase/config";
++import { buildElevenstCsReadObservation } from "../../../../../lib/cs/channels/elevenst/read-observation";
+ import { dispatchPendingPushNotifications } from "../../../../../lib/push-notifications";
+ import {
+   createBoundedSupabaseFetch,
+@@ -273,6 +274,7 @@ export async function POST(request: Request) {
+   let normalizedInquiries: ReturnType<typeof normalizeChannelInquiries> | null = null;
+   let inquiryCoverage: ReturnType<typeof inquiryCoverageEvidence> | null = null;
+   let replyObservations: InquiryReplyObservation[] = [];
++  let elevenstReadReceipt: ReturnType<typeof buildElevenstCsReadObservation> | null = null;
+   const lazadaRawPages: Array<LazadaRawReceipt & { targetStatus: "normalized" | "unsupported" }> = [];
+   const completionResult = parsed.data.status === "succeeded"
+     ? parsed.data.result
+@@ -448,6 +450,17 @@ export async function POST(request: Request) {
+           normalizedInquiries = normalizedInquiries.filter((inquiry) => inquiry.senderRole !== "seller");
+         }
+       }
++      if (job.channel === "elevenst") {
++        if (!normalizationTimestamp) {
++          return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
++        }
++        elevenstReadReceipt = buildElevenstCsReadObservation({
++          result: inquiryResult,
++          arguments: (job.request as { arguments: Record<string, unknown> }).arguments,
++          checkedAt: normalizationTimestamp,
++          normalizedInquiries: normalizedInquiries ?? [],
++        });
++      }
+     }
+     storedResponse = oauthResult
+       ? { ok: true, channel: oauthResult.channel, operation: oauthResult.operation, safeMessage: oauthResult.safeMessage }
+@@ -579,6 +591,27 @@ export async function POST(request: Request) {
+   if (completion?.status !== "completed") {
+     return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
+   }
++  if (elevenstReadReceipt) {
++    const readObservation = await serviceClient.rpc(
++      "sellerpilot_service_record_elevenst_cs_read_v1",
++      {
++        p_credential_id: job.credential_id,
++        p_observation: elevenstReadReceipt.observation,
++        p_inquiries: elevenstReadReceipt.inquiries,
++      },
++    );
++    const receipt = readObservation.data
++      && typeof readObservation.data === "object"
++      && !Array.isArray(readObservation.data)
++      ? readObservation.data as Record<string, unknown>
++      : null;
++    if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
++      console.error("11st CS read observation RPC failed", {
++        code: readObservation.error?.code ?? "invalid_contract",
++      });
++      return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
++    }
++  }
+   if ("credentialBinding" in parsed.data && parsed.data.credentialBinding) {
+     const binding = await serviceClient.rpc("sellerpilot_service_record_cs_credential_binding_v1", {
+       p_token_hash: tokenHash,
+diff --git a/tests/serverless-cs-gateway.test.ts b/tests/serverless-cs-gateway.test.ts
+--- a/tests/serverless-cs-gateway.test.ts
++++ b/tests/serverless-cs-gateway.test.ts
+@@ -325,9 +325,15 @@ function baseRpc(
+         error: null,
+       };
+     }
+     if (name === "sellerpilot_service_complete_serverless_cs_transaction") {
+       return { data: { status: "completed" }, error: null };
+     }
++    if (name === "sellerpilot_service_record_elevenst_cs_read_v1") {
++      return {
++        data: { contract: "sellerpilot-elevenst-cs-read-record/1" },
++        error: null,
++      };
++    }
+     if (name === "sellerpilot_service_observe_inquiry_replies_v1") {
+       const received = Array.isArray(arguments_.p_observations)
+         ? arguments_.p_observations.length
+@@ -1298,9 +1305,15 @@ test("11st Product Q&A crosses the fixed-egress executor and reaches sanitized a
+     providerStatus: "waiting",
+     ticketKind: "conversation",
+   }]);
+   const durableResponse = JSON.stringify(complete?.arguments_.p_response_payload);
+   assert.match(durableResponse, /normalized_inquiries_v1/u);
+   assert.doesNotMatch(durableResponse, /배송은 언제 시작하나요|11번가 고객|81234567|13749310594/u);
++  const readObservation = calls.find(
++    ({ name }) => name === "sellerpilot_service_record_elevenst_cs_read_v1",
++  );
++  assert.deepEqual(readObservation?.arguments_.p_inquiries, []);
++  assert.equal((readObservation?.arguments_.p_observation as { accepted?: boolean }).accepted, true);
++  assert.doesNotMatch(JSON.stringify(readObservation), /배송은 언제 시작하나요|11번가 고객|81234567|13749310594/u);
+ });
+ 
+ test("Qoo10 inquiry list keeps the verified one-call contract and stores only normalized PII", async () => {

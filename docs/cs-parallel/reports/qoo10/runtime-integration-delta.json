@@ -1,0 +1,98 @@
+{
+  "reviewRequest": "qoo10-history-runtime-reply-compat-s3-readback",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "files": [
+    {
+      "path": "lib/channels/cs/qoo10/contracts.ts",
+      "beforeSha256": "5efc2aa4777eb05200c0bd6c6894cff4bafa2a351894cf714927eb0d59b4146c",
+      "afterSha256": "0ef47672629a125f7a98dc43e2c9ee81d52c674b7fa15efc6239a886e4c1d2a3",
+      "change": "Expose a strict typed inquiry-list parameter contract for safe common-runtime import."
+    },
+    {
+      "path": "lib/channels/cs/qoo10/history.ts",
+      "beforeSha256": "d4ad720dc7b82036736adf5be896ebd179607fb5d85dedc7aea51cca95f204fd",
+      "afterSha256": "174bd0ed9179da70aa76b3af1d2dcac200825cad9e147c3152e56617c7a45404",
+      "change": "Add stable database-compatible window keys and exact day-hour-minute-second refinement for inquiries and claims."
+    },
+    {
+      "path": "lib/channels/cs/qoo10/history-runtime.ts",
+      "beforeSha256": null,
+      "afterSha256": "d3b2f49688235d1e6941de597b00a728b49398e03ca0b264a651e078b2414b76",
+      "change": "Provide callable planning, serialization, argument validation, completeness assessment, refinement, and duplicate reconciliation."
+    },
+    {
+      "path": "lib/channels/cs/qoo10/reply-guard.ts",
+      "beforeSha256": "13c1c6c41670bbad943b80274d1ea8175be21df716a4402456d53c0e8615a69b",
+      "afterSha256": "bc5a029bb8c3281223e6d2f9f3213a7dd9f1be248607d82f044effee359a0804",
+      "change": "Preserve legacy ticket IDs and permit thread-v2 only with exact legacy-alias attestation."
+    },
+    {
+      "path": "lib/channels/cs/qoo10/reply-readback.ts",
+      "beforeSha256": null,
+      "afterSha256": "88c048920c51437e0e18803407289264b637d06d1240a71d05555adad8127b61",
+      "change": "Verify exact S3 status through the native read path while permanently blocking uncertain automatic resend."
+    },
+    {
+      "path": "tests/cs-qoo10-history-runtime.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "d5315f6af8a0ecc22a5caab400ea6e840fb1f76e5be8a7b4bd6764aff8323303",
+      "change": "Cover native read execution, saturation refinement, one-second gaps, duplicate sequence semantics, legacy aliases, and S3 readback."
+    },
+    {
+      "path": "tests/cs-qoo10-history-runtime-db.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "e49d5eaafcd0295eb7de950aa161ce8861f8c9e3e04088a8e2629e041216e80f",
+      "change": "Verify idempotent windows, child refinement, resume leaves, and duplicate sequence handling in isolated PGlite."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/005-history-runtime-integration.md",
+      "beforeSha256": null,
+      "afterSha256": "34b836721ff05cbd4a251c0cae01f8cd1bc6159fb16d5ed074078505d463d4de",
+      "change": "Request exact common scheduler, UI, completion, coverage-ledger, gap, and ACL integration."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/006-reply-compat-s3-readback.md",
+      "beforeSha256": null,
+      "afterSha256": "e31f99d47f2720ba84b6d9a15c73398630bb78b2b745317208f7c6a07bce32c5",
+      "change": "Request exact common reply guard and status-only S3 readback integration without automatic resend."
+    }
+  ],
+  "behavior": {
+    "historyJobsPerDay": 4,
+    "historyStatuses": ["S1", "S2", "S3"],
+    "claimCondition": "request-date/all-status via search_condition=2",
+    "saturationRefinement": ["day", "hour", "minute", "second"],
+    "irreducibleSecondSaturation": "gap",
+    "legacyTicketCompatibility": true,
+    "threadV2DefaultEnabled": false,
+    "uncertainReplyAutomaticResend": false,
+    "s3ReplyContentObserved": false
+  },
+  "verification": [
+    {
+      "command": "node --import tsx --test tests/cs-qoo10-history-runtime.test.ts tests/cs-qoo10-history-runtime-db.test.mjs",
+      "exitCode": 0,
+      "result": "11/11 passed"
+    },
+    {
+      "command": "node --import tsx --test tests/cs-qoo10-contracts.test.ts tests/cs-qoo10-history-runtime.test.ts tests/cs-qoo10-history-runtime-db.test.mjs tests/cs-qoo10-ledger-db.test.mjs tests/qoo10-claims.test.ts",
+      "exitCode": 0,
+      "result": "24/24 passed"
+    },
+    {
+      "command": "pnpm exec eslint qoo10 dedicated sources and tests",
+      "exitCode": 0,
+      "result": "passed with no output"
+    },
+    {
+      "command": "pnpm exec tsc --noEmit --allowImportingTsExtensions qoo10 dedicated modules",
+      "exitCode": 0,
+      "result": "strict TypeScript passed"
+    }
+  ],
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "customerRepliesSent": false,
+  "remoteReadsRepeated": false
+}

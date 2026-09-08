@@ -743,7 +743,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         setSavedDetailData(null);
         setDetailPageVersion(null);
       }
-      const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/operations/snapshot", {
+      const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/admin/products/snapshot", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
         body: JSON.stringify({ action: "product_create", jobId: job.jobId }),

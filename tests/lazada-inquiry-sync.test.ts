@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { normalizeLazadaImHistory } from "../lib/channels/lazada-im";
@@ -55,11 +56,14 @@ test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer message
     return Response.json({
       code: "0",
       data: {
+        has_more: false,
         message_list: [{
           session_id: "session-1",
           message_id: "message-1",
           content: JSON.stringify({ txt: "배송일을 알려주세요" }),
           from_account_type: 1,
+          type: 1,
+          template_id: 1,
           send_time: 1_787_340_000_000,
           status: 0,
         }],
@@ -87,7 +91,41 @@ test("Lazada one-time IM bootstrap fetches sessions and normalizes buyer message
       receivedAt: new Date(1_787_340_000_000).toISOString(),
       remoteMessageId: "message-1",
       senderRole: "customer",
+      providerContext: {
+        nativeContentFingerprint: createHash("sha256").update(JSON.stringify({
+          nativeText: "배송일을 알려주세요",
+          nativeMedia: null,
+        })).digest("hex"),
+      },
     }]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Lazada bootstrap preserves the official session tag through message projection", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith("/im/session/list")) return Response.json({ code: "0", data: {
+      has_more: false,
+      session_list: [{ session_id: "official", title: "Lazada", site_id: "MY", tags: ["official"] }],
+    } });
+    return Response.json({ code: "0", data: { has_more: false, message_list: [{
+      message_id: "official-message", content: { txt: "official notice" },
+      from_account_type: 1, type: 1, template_id: 200016, status: 0, send_time: 1_788_200_000_000,
+    }] } });
+  };
+  try {
+    const result = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload: lazadaDualAppPayload,
+      arguments: { bootstrap: true, startTime: 1_788_200_100_000 }, environment: "production",
+    });
+    assert.equal(result.ok, true);
+    const [notice] = normalizeLazadaImHistory(result.steps, undefined, { rawStorageReady: true });
+    assert.equal(notice.senderRole, "system");
+    assert.equal(notice.status, "resolved");
+    assert.equal(notice.providerContext?.roleBasis, "official_session_tag");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -108,7 +146,7 @@ test("Lazada IM history cannot be turned into a periodic poll", async () => {
 
 test("Lazada unread state does not masquerade as an answer", () => {
   const session = { session_id: "session-read", title: "buyer", site_id: "MY", unread_count: 0 };
-  const buyer = { message_id: "buyer-1", content: JSON.stringify({ txt: "읽은 고객 문의" }), from_account_type: 1, send_time: 1000, status: 0 };
+  const buyer = { message_id: "buyer-1", content: JSON.stringify({ txt: "읽은 고객 문의" }), from_account_type: 1, type: 1, template_id: 1, send_time: 1000, status: 0 };
   const waiting = normalizeLazadaImHistory([{
     name: "inquiries-message:session-read:1", data: { sellerpilotSession: session, data: { message_list: [buyer] } },
   }]);
@@ -116,7 +154,7 @@ test("Lazada unread state does not masquerade as an answer", () => {
   const answered = normalizeLazadaImHistory([{
     name: "inquiries-message:session-read:1", data: { sellerpilotSession: session, data: { message_list: [
       buyer,
-      { message_id: "seller-1", content: JSON.stringify({ txt: "판매자 답변" }), from_account_type: 2, send_time: 1001, status: 0 },
+      { message_id: "seller-1", content: JSON.stringify({ txt: "판매자 답변" }), from_account_type: 2, type: 1, template_id: 1, send_time: 1001, status: 0 },
     ] } },
   }]);
   assert.equal(answered.length, 2);
@@ -155,31 +193,40 @@ test("Lazada IM follows string cursors and keeps every buyer message per session
         has_more: "true",
         next_start_time: "1900",
         last_message_id: "message-new",
-        message_list: [{ message_id: "message-new", content: JSON.stringify({ txt: "최신 문의" }), from_account_type: "1", send_time: "3000", status: "0" }],
+        message_list: [{ message_id: "message-new", content: JSON.stringify({ txt: "최신 문의" }), from_account_type: "1", type: "1", template_id: "1", send_time: "3000", status: "0" }],
       } });
     }
     if (sessionId === "session-1") {
       return Response.json({ code: "0", data: {
         has_more: "false",
-        message_list: [{ message_id: "message-old", content: JSON.stringify({ txt: "이전 문의" }), from_account_type: "1", send_time: "1000", status: "0" }],
+        message_list: [{ message_id: "message-old", content: JSON.stringify({ txt: "이전 문의" }), from_account_type: "1", type: "1", template_id: "1", send_time: "1000", status: "0" }],
       } });
     }
     return Response.json({ code: "0", data: {
       has_more: "false",
-      message_list: [{ message_id: "message-two", content: JSON.stringify({ txt: "두 번째 세션" }), from_account_type: "1", send_time: "2500", status: "0" }],
+      message_list: [{ message_id: "message-two", content: JSON.stringify({ txt: "두 번째 세션" }), from_account_type: "1", type: "1", template_id: "1", send_time: "2500", status: "0" }],
     } });
   };
 
   try {
-    const result = await executeChannelOperation({
-      channel: "lazada",
-      operation: "inquiries.list",
-      payload: lazadaDualAppPayload,
-      arguments: { bootstrap: true, startTime: 3_000, pageSize: 20, sessionLimit: 20, messageLimit: 100 },
-      environment: "production",
-    });
-    const normalized = normalizeLazadaImHistory(result.steps);
-    assert.equal(result.ok, true);
+    let argumentsValue: Record<string, unknown> = {
+      bootstrap: true, startTime: 3_000, pageSize: 20, sessionLimit: 20, messageLimit: 100,
+    };
+    const steps = [];
+    for (let index = 0; index < 4; index += 1) {
+      const result = await executeChannelOperation({
+        channel: "lazada",
+        operation: "inquiries.list",
+        payload: lazadaDualAppPayload,
+        arguments: argumentsValue,
+        environment: "production",
+      });
+      assert.equal(result.ok, true);
+      steps.push(...result.steps);
+      if (!result.continuation) break;
+      argumentsValue = result.continuation.arguments;
+    }
+    const normalized = normalizeLazadaImHistory(steps);
     assert.equal(calls.filter((url) => url.pathname.endsWith("/im/session/list")).length, 2);
     assert.equal(calls.filter((url) => url.pathname.endsWith("/im/message/list")).length, 3);
     assert.equal(calls.some((url) => url.searchParams.get("last_session_id") === "session-1"), true);
@@ -206,8 +253,8 @@ test("Lazada history marks unsequenced seller events for quarantine without losi
     const steps = [{ name: "inquiries-message:s:1", data: {
       sellerpilotSession: { session_id: "s", last_message_time: 1788600000000 },
       data: { message_list: [
-        { message_id: "buyer-new", from_account_type: 1, send_time: "2026-09-05T09:02:00Z", content: { txt: "new buyer" } },
-        { message_id: "seller-old", from_account_type: 2, send_time: sendTime, content: { txt: "original seller body" } },
+        { message_id: "buyer-new", from_account_type: 1, type: 1, template_id: 1, status: 0, send_time: "2026-09-05T09:02:00Z", content: { txt: "new buyer" } },
+        { message_id: "seller-old", from_account_type: 2, type: 1, template_id: 1, status: 0, send_time: sendTime, content: { txt: "original seller body" } },
       ] },
     } }];
     const original = structuredClone(steps);
@@ -225,7 +272,7 @@ test("Lazada history marks unsequenced seller events for quarantine without losi
 test("Lazada seller-only history is quarantinable without inventing a buyer", () => {
   const steps = [{ name: "inquiries-message:s:1", data: {
     sellerpilotSession: { session_id: "s" },
-    data: { message_list: [{ message_id: "seller-only", from_account_type: 2, content: { txt: "original" } }] },
+    data: { message_list: [{ message_id: "seller-only", from_account_type: 2, type: 1, template_id: 1, status: 0, content: { txt: "original" } }] },
   } }];
   const [seller] = normalizeLazadaImHistory(steps);
   assert.equal(seller.orderingStatus, "unverified");

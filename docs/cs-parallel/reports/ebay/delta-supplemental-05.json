@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "supplement": 5,
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-04.json",
+  "baseDeltaStatus": "frozen_not_activated_in_shared_scheduler_or_canonical_sql",
+  "fixedPriorManifestHashes": {
+    "docs/cs-parallel/reports/ebay/delta.json": "1bed81dff1522af64b302417b106468e2f5f0e35cd1e89385142f2bcef8c945c",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-01.json": "1071d5b02f4a2f66b24cc172ae789b446fc66dbe503149bc1dc167881106d31b",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-02.json": "2ce9f39b1dfe5be454e2778b9ea81cb9f526468d51c5d0f216cfe3e951cd0404",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-03.json": "363c7ba5aee6f8ef20858c0bca740b30e2fc3f0838f62bd9d9a15c14dcb64e58",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-04.json": "0d5a6cf154b05e9194eb03009d8d21c713bcf783f77f3c51f9d738dfb2b5feed"
+  },
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "files": [
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-gateway.ts",
+      "change": "modify_after_supplemental_04",
+      "beforeSha256": "780e4a54a5f208d33c8ab92992057226b767b1f65bed43b56a7d47832f69dde7",
+      "afterSha256": "af4eeb7abe91c31f2e4c0864d25cce5ee8cf5fff29ad2f361a12de2ac3ffb76f",
+      "reason": "Accept all-or-none common pagination metadata, validate the exact dedicated envelope and continuation, and call v2 enqueue/record RPCs."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-gateway.test.ts",
+      "change": "modify_after_supplemental_04",
+      "beforeSha256": "d2c037cdade3d31ccd6e50ea05abbb53b4ef9f9f05683d30eaecc3e247abde3f",
+      "afterSha256": "5d75119c630d1d2aab8ca67d5438062f720391fa8e1d15a78e82849cccfc7818",
+      "reason": "Reproduce page two through the common executor and reject repeated pagination digests."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-durable-collection-v2.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2b5d66a49b4b02f78fe47ca06b74421ccd334c592f3e4c69c71e926030aab2ec",
+      "reason": "Bind roots and every page to an exact run and require the complete verified lineage before initial completion."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-durable-collection-v2-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "bf129c0e550f794df9db29a0aba8ac18c6048ed294431bfc3ef30bc4bcf66dd0",
+      "reason": "Execute full, failed, synthetic, orphan, wrong-binding, repeated-cursor, and over-128-page lineages in isolated PostgreSQL."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-completion-entrypoints.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3a4049f7c8804c69bc5b47442f085b8cf02a9e7f103e9fbf8dbcdac589f617a2",
+      "reason": "Execute both real completion entrypoints and prove dedicated ledger ordering plus generic continuation child creation without generic inquiry normalization."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-completion-entrypoints-v2.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "abc50e1b12352d12181b6deee1258ef0d0f8234f2d8c1c227fafb1c2152793a5",
+      "reason": "Submit the shared in-process, external POST, failed-result contract, and CLI worker changes without writing shared source."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-durable-scheduler-supplement-05.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a8eccfa4490388bda51bfac83415ed8257880fa9747c4b9a56ac144f47cab883",
+      "reason": "Document the reproduced defects, v2 contracts, exact shared before hashes, apply order, evidence, and operational exclusions."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "change": "modify_after_supplemental_04",
+      "beforeSha256": "6d5cc97d95fe90b0e6e75b2002edd6bee0ebce3104ea64ff60e98cabffce2def",
+      "afterSha256": "241c7c869c17c5e1a0afc7cf936450c207b1dc635f802b7e060a8f6707af53e0",
+      "reason": "Separate local defect correction and entrypoint evidence from shared activation, production database, provider, and reply completion."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-05.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "fd06e3f09758e9a30f65996b2f8e1d13984df2d55cee60a2c4bde6cca5ab2bb9",
+      "reason": "Record actual entrypoint, isolated SQL, common gateway regression, typecheck, lint, patch check, and mutation exclusions."
+    }
+  ],
+  "sharedFilesModified": [],
+  "sharedProposalIds": ["EBAY-SHARED-007"],
+  "integrationTarget": {
+    "capturedAt": "2026-09-08T15:45:36Z",
+    "serverlessGatewayBeforeSha256": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf",
+    "externalCompletionRouteBeforeSha256": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383",
+    "gatewayContractBeforeSha256": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4",
+    "externalWorkerBeforeSha256": "9174bd48ea554318dc9500021004fa2fd27b1669edef2ec8abc5f4cebaaac102",
+    "dedicatedGatewayBeforeSha256": "780e4a54a5f208d33c8ab92992057226b767b1f65bed43b56a7d47832f69dde7"
+  },
+  "verification": {
+    "dedicatedSqlAndActualEntrypoints": { "tests": 17, "passed": 17, "failed": 0, "exitCode": 0 },
+    "sharedGatewayRegression": { "tests": 100, "passed": 100, "failed": 0, "exitCode": 0 },
+    "patchApplyCheck": { "exitCode": 0 },
+    "typescript": { "exitCode": 0 },
+    "eslint": { "exitCode": 0 },
+    "jsonAndWhitespaceAndHashes": { "exitCode": 0 }
+  },
+  "actualProviderState": {
+    "checkedDuringSupplemental05": false,
+    "lastObservedEvidence": "docs/cs-parallel/reports/ebay/first-read-evidence.json",
+    "asqUniqueCount": 0,
+    "tradingInboxUniqueCount": 9,
+    "commerceFromMembers": { "httpStatus": 403, "total": "unknown" },
+    "commerceFromEbay": { "httpStatus": 403, "total": "unknown" },
+    "resolutionCaseUniqueCount": 0,
+    "paymentDisputeSummary": { "httpStatus": 404, "total": "unknown" }
+  },
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "credentialRefresh": true,
+    "actualProviderReadDuringSupplemental05": true,
+    "realBrowserSession": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true,
+    "sharedSourceWrite": true
+  }
+}

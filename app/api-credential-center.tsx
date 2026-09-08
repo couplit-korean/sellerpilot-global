@@ -612,7 +612,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
     setResultJson("");
     try {
       const { data: sessionData } = await createClient().auth.getSession();
-      const response = await fetch("/api/admin/channel-operations", {
+      const response = await fetch(/^(orders|shipment)\./.test(operation) ? "/api/admin/shipping/operations" : "/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
         body: JSON.stringify({ credentialId: target.credential.id, channel: target.channel.key, operation, idempotencyKey, confirmWrite, arguments: args }),

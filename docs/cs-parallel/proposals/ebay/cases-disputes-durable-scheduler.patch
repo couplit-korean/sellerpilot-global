@@ -1,0 +1,133 @@
+diff --git a/lib/channels/ebay-inquiries.ts b/lib/channels/ebay-inquiries.ts
+--- a/lib/channels/ebay-inquiries.ts
++++ b/lib/channels/ebay-inquiries.ts
+@@ -11,6 +11,7 @@ import {
+   sendEbayConversationMessage,
+   type EbayConversationType,
+ } from "./ebay-message-pages";
++import { executeEbayCaseDisputeGatewayPage } from "./cs/ebay/case-dispute-gateway";
+ 
+ // CS owns native ASQ reading, exact listing-site verification and replies.
+ // Product registration and shipment operations do not enter this adapter.
+@@ -291,6 +292,9 @@ function ebayConversationBaseArguments(
+ 
+ export async function executeEbayInquiry(input: EbayInquiryInput): Promise<EbayInquiryExecution> {
+   if (input.operation === "inquiries.list") {
++    if (input.arguments.kind === "case_dispute_history") {
++      return executeEbayCaseDisputeGatewayPage(input);
++    }
+     if (input.arguments.kind === "conversation") {
+       const conversationType = ebayConversationTypeArgument(input.arguments.conversationType);
+       const baseArguments = ebayConversationBaseArguments(input, conversationType);
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -43,6 +43,11 @@ import { csCredentialBindingContract, csCredentialBindingEvidence } from "./cs
+ import { csCredentialBindingContract, csCredentialBindingEvidence } from "./cs-credential-binding";
+ import { recordTemuDetailRetryWithReplay } from "./cs/temu/retry-rpc";
+ import {
++  enqueueEbayCaseDisputeGatewayPlan,
++  recordEbayCaseDisputeGatewayObservation,
++  type EbayCaseDisputeCollectionEnqueueReceipt,
++} from "./cs/ebay/case-dispute-gateway";
++import {
+   SERVERLESS_STATIC_EGRESS_CHANNELS,
+   type ServerlessStaticEgressChannel,
+ } from "./serverless-static-egress";
+@@ -174,6 +179,29 @@ export type ServerlessCsEnqueueSummary = {
+   failed: number;
+ };
+ 
++type EbayCaseDisputeScheduleSummary = EbayCaseDisputeCollectionEnqueueReceipt | {
++  status: "failed";
++  attempted: 0;
++  queued: 0;
++  pending: 0;
++  scopeBlocked: 0;
++  deferred: 0;
++};
++
++async function enqueueEbayCaseDisputeSchedule(
++  dependencies: ServerlessCsGatewayDependencies,
++): Promise<EbayCaseDisputeScheduleSummary | null> {
++  if (!dependencies.enableHistoryRepair || !dependencies.rpc) return null;
++  try {
++    return await enqueueEbayCaseDisputeGatewayPlan({
++      now: dependencies.now?.() ?? new Date(),
++      rpc: (name, arguments_) => dependencies.rpc!(name, arguments_),
++    });
++  } catch {
++    return { status: "failed", attempted: 0, queued: 0, pending: 0, scopeBlocked: 0, deferred: 0 };
++  }
++}
++
+ class GatewayOwnershipLostError extends Error {
+   constructor() {
+     super("gateway_ownership_lost");
+@@ -1486,6 +1514,13 @@ export async function runOneServerlessCsGatewayJob(
+       signal: runtimeSignal,
+       hooks,
+     });
++    await recordEbayCaseDisputeGatewayObservation({
++      jobId: job.id,
++      claimToken: job.claim_token,
++      tokenHash: gatewayTokenHash,
++      result: result as { steps?: unknown },
++      rpc: (name, arguments_) => callRpc(dependencies, name, arguments_),
++    });
+     const rateLimit = "steps" in result && Array.isArray(result.steps)
+       ? providerRateLimitEvidence(result as ChannelOperationResult, dependencies.now?.() ?? new Date())
+       : null;
+@@ -1705,6 +1740,7 @@ function aggregateDrainResponse(
+ function aggregateDrainResponse(
+   enqueue: ServerlessCsEnqueueSummary,
+   workers: SafeDrainWorkerSummary[],
++  ebayCaseDisputeCollection: EbayCaseDisputeScheduleSummary | null,
+ ) {
+   const claimed = workers.reduce((total, worker) => total + worker.claimed, 0);
+   const processed = workers.reduce((total, worker) => total + worker.processed, 0);
+@@ -1729,7 +1765,11 @@ function aggregateDrainResponse(
+         : 200;
+   const allEnqueuesFailed = enqueue.attempted > 0
+     && enqueue.failed === enqueue.attempted;
+-  const responseStatus = allEnqueuesFailed ? 503 : workerResponseStatus;
++  const caseDisputeFailed = ebayCaseDisputeCollection?.status === "failed";
++  const caseDisputeNeedsAttention = caseDisputeFailed
++    || ebayCaseDisputeCollection?.status === "not_connected"
++    || (ebayCaseDisputeCollection?.scopeBlocked ?? 0) > 0;
++  const responseStatus = allEnqueuesFailed || caseDisputeFailed ? 503 : workerResponseStatus;
+   const enqueueHealthy = enqueue.failed === 0
+     && enqueue.reconnectRequired === 0
+     && enqueue.reconciliationRequired === 0
+@@ -1745,13 +1785,15 @@ function aggregateDrainResponse(
+   return jsonResponse({
+     ok: responseStatus < 400
+       && enqueueHealthy
++      && !caseDisputeNeedsAttention
+       && processedStatuses.every((workerStatus) => workerStatus === "succeeded"),
+     status,
+     claimed,
+     processed,
+     capacity: SERVERLESS_CS_DRAIN_CONCURRENCY,
+     enqueue,
+-    ...(!enqueueHealthy ? { needsAttention: true } : {}),
++    ebayCaseDisputeCollection,
++    ...(!enqueueHealthy || caseDisputeNeedsAttention ? { needsAttention: true } : {}),
+     jobs,
+   }, responseStatus);
+ }
+@@ -1813,6 +1854,7 @@ export async function runServerlessCsGatewayDrain(
+     });
+   }
+   const enqueue = await enqueueCurrentInquirySyncs(dependencies);
++  const ebayCaseDisputeCollection = await enqueueEbayCaseDisputeSchedule(dependencies);
+   if (enqueue.failed > 0) {
+     logError("enqueue", {
+       status: 503,
+@@ -1827,5 +1869,5 @@ export async function runServerlessCsGatewayDrain(
+     ),
+   );
+   const workers = await Promise.all(workerResponses.map(safeDrainWorkerSummary));
+-  return aggregateDrainResponse(enqueue, workers);
++  return aggregateDrainResponse(enqueue, workers, ebayCaseDisputeCollection);
+ }

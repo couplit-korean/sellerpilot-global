@@ -8,18 +8,22 @@ async function fixture(){
  create role anon;create role authenticated;create role service_role;create schema auth;create schema sellerpilot_private;
  create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
  create function public.sellerpilot_is_admin() returns boolean language sql stable as $$select auth.uid() is not null$$;
- create table sellerpilot_private.support_tickets(id uuid primary key default gen_random_uuid(),owner_id uuid default '${owner}',channel_key text default 'smartstore',external_ticket_id text,customer_name text default 'Synthetic',subject text default 'subject',message text default 'question',status text default 'waiting',received_at timestamptz default '2026-09-01T00:00:00Z',updated_at timestamptz default now(),demo boolean default false);
- create table sellerpilot_private.support_inbound_messages(ticket_id uuid,owner_id uuid default '${owner}',channel_key text default 'smartstore',body text,provider_context jsonb default '{}',created_at timestamptz default now());
- create table sellerpilot_private.support_reply_deliveries(ticket_id uuid,owner_id uuid default '${owner}',channel_key text default 'smartstore',gateway_job_id uuid,created_at timestamptz default now());
+ create table sellerpilot_private.support_tickets(id uuid primary key default gen_random_uuid(),owner_id uuid default '${owner}',channel_key text default 'smartstore',external_ticket_id text,customer_name text default 'Synthetic',subject text default 'subject',message text default 'question',status text default 'waiting',received_at timestamptz default '2026-09-01T00:00:00Z',updated_at timestamptz default now(),demo boolean default false,source_credential_id uuid,reply_context jsonb default '{}',provider_context jsonb default '{}',ticket_kind text default 'conversation');
+ create table sellerpilot_private.support_inbound_messages(id uuid primary key default gen_random_uuid(),ticket_id uuid,owner_id uuid default '${owner}',channel_key text default 'smartstore',body text,provider_context jsonb default '{}',sender_role text default 'customer',received_at timestamptz default '2026-09-01T00:00:00Z',remote_message_id text,created_at timestamptz default now(),updated_at timestamptz default now());
+ create table sellerpilot_private.support_reply_deliveries(id uuid primary key default gen_random_uuid(),ticket_id uuid,owner_id uuid default '${owner}',channel_key text default 'smartstore',gateway_job_id uuid,status text default 'succeeded',provider_message_id text,queued_at timestamptz default now(),created_at timestamptz default now());
  create table sellerpilot_private.channel_gateway_jobs(id uuid primary key,channel text,operation text,request_payload jsonb);
  select set_config('request.jwt.claim.sub','${owner}',false);
- `);await db.exec(await readFile(new URL('../supabase/migrations/20260907103000_search_cs_archive.sql',import.meta.url),'utf8'));return db;
+ `);await db.exec(await readFile(new URL('../supabase/migrations/20260907103000_search_cs_archive.sql',import.meta.url),'utf8'));
+ await db.exec(await readFile(new URL('../supabase/migrations/20260907220000_complete_cs_archive_scope_and_media.sql',import.meta.url),'utf8'));return db;
 }
-async function seed(db,values={}){const {externalId='ticket',channel='smartstore',status='waiting',at='2026-09-01T00:00:00Z',ownedBy=owner,demo=false,message='question'}=values;
- return (await db.query('insert into sellerpilot_private.support_tickets(external_ticket_id,channel_key,status,received_at,owner_id,demo,message)values($1,$2,$3,$4,$5,$6,$7)returning id',[externalId,channel,status,at,ownedBy,demo,message])).rows[0].id;
+async function seed(db,values={}){const {externalId='ticket',channel='smartstore',status='waiting',at='2026-09-01T00:00:00Z',ownedBy=owner,demo=false,message='question',accountId=null,shopId=null,ticketKind='conversation'}=values;
+ return (await db.query('insert into sellerpilot_private.support_tickets(external_ticket_id,channel_key,status,received_at,owner_id,demo,message,source_credential_id,reply_context,ticket_kind)values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)returning id',[externalId,channel,status,at,ownedBy,demo,message,accountId,shopId?{shopId}: {},ticketKind])).rows[0].id;
 }
 async function search(db,{query='',channel=null,status=null,from=null,to=null,limit=25,cursor=null}={}){
  return (await db.query('select public.sellerpilot_search_cs_archive($1,$2,$3,$4,$5,$6,$7,$8,$9) result',[query,channel,status,from,to,limit,cursor?.beforeTime??null,cursor?.beforeId??null,cursor?.asOf??null])).rows[0].result;
+}
+async function searchV2(db,{query='',channel=null,status=null,from=null,to=null,accountId=null,shopId=null,ticketKind=null,source=null,limit=25,cursor=null}={}){
+ return (await db.query('select public.sellerpilot_search_cs_archive_v2($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) result',[query,channel,status,from,to,accountId,shopId,ticketKind,source,limit,cursor?.beforeTime??null,cursor?.beforeId??null,cursor?.asOf??null])).rows[0].result;
 }
 test('archive pages beyond the recent list cap without duplicates at equal times',async()=>{
  const db=await fixture();try{
@@ -65,5 +69,20 @@ test('archive escapes wildcard input and validates filters/cursors before return
  await seed(db,{message:'literal 100%_done\\ok'});await seed(db,{message:'100XXdone ok'});
  assert.equal((await search(db,{query:'100%_done\\ok'})).tickets.length,1);
  for(const args of [{query:'x'.repeat(121)},{channel:'unknown'},{status:'unknown'},{limit:0},{limit:51},{from:'2026-09-02',to:'2026-09-01'},{cursor:{beforeTime:'2026-09-01T00:00:00Z'}}])await assert.rejects(search(db,args),/invalid archive/);
+ }finally{await db.close();}
+});
+test('archive v2 filters exact account, shop, kind and source and returns their scope',async()=>{
+ const db=await fixture();try{
+ const account='00000000-0000-4000-8000-000000000090';
+ const synced=await seed(db,{externalId:'scoped',channel:'shopee',accountId:account,shopId:'1719148844'});
+ await seed(db,{externalId:'other-shop',channel:'shopee',accountId:account,shopId:'1719148845'});
+ await seed(db,{externalId:'after-sales',channel:'temu',ticketKind:'after_sales'});
+ await db.query("insert into sellerpilot_private.support_inbound_messages(ticket_id,channel_key,body,provider_context)values($1,'shopee','photo review',$2)",[synced,{nativeMedia:{image_info:[{image_url:'https://example.test/review.jpg'}]}}]);
+ const result=await searchV2(db,{channel:'shopee',accountId:account,shopId:'1719148844',ticketKind:'conversation',source:'channel'});
+ assert.equal(result.tickets.length,1);assert.equal(result.tickets[0].externalId,'scoped');
+ assert.deepEqual({...result.tickets[0],id:undefined,receivedAt:undefined},{id:undefined,receivedAt:undefined,channel:'shopee',externalId:'scoped',customer:'Synthetic',subject:'subject',preview:'question',status:'waiting',accountId:account,shopId:'1719148844',ticketKind:'conversation',source:'channel'});
+ assert.equal((await searchV2(db,{source:'legacy_ticket'})).tickets.length,2);
+ const conversation=(await db.query('select public.sellerpilot_get_cs_conversation($1) result',[synced])).rows[0].result;
+ assert.deepEqual(conversation.messages[0].nativeMedia,{image_info:[{image_url:'https://example.test/review.jpg'}]});
  }finally{await db.close();}
 });

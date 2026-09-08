@@ -1,0 +1,21 @@
+# 공통 변경 요청 shopee-002
+
+- 목적: Shopee Returns 최신 공식 필드와 후기 첨부 수명주기를 보존하고 shop별 과거수집 UI를 제공
+- 요청 채널: Shopee
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `normalized_inquiries_v1`
+- 수정할 공통 파일과 함수: `lib/channels/inquiry-sync.ts`의 `normalizeShopeeReturn`/`normalizeShopee`, 공통 attachment/history/import/UI 및 SQL
+- 현재 파일 SHA-256: `a5c85be43d7ed4f0f9c20c176f0769c495ba7665c71ceb16f1de051190634598`
+- DB 객체: 통합 담당이 migration 번호와 preimage/ACL을 배정. 운영 적용 금지.
+- 기존 동작: Returns는 원래 reason/text, status, negotiation status/latest solution/offer due, proof/compensation status, 3개 기한, 이미지/비디오를 보존하고 reply를 차단한다. 공식 detail의 재평가 사유, dispute, 금액/통화, reverse logistics, validation/partial quantity 일부는 누락된다. 후기/Returns URL은 native context에 남지만 fetch 상태·digest·만료/보존 상태가 없다. 공통 과거 UI는 Shopee shop/kind planner를 노출하지 않는다.
+- 문제를 재현하는 최소 입력: `reassessed_request_reason='ITEM_MISSING'`, 원래 `reason='NOT_RECEIPT'`, dispute/negotiation/proof, media URL, `return_refund_request_type`, `validation_type`가 있는 공식 detail response.
+- 원하는 동작: 원래 사유와 재평가 사유를 구분하고, 상태/협상/분쟁/기한/금액·통화/역물류·검증/첨부를 제한된 allowlist로 보존한다. user email/portrait, pickup/return address, phone, virtual contact와 package contact 정보는 저장하지 않는다. 후기와 Returns는 shop별 독립 progress/remainder/error를 갖고 Buyer Chat과 분리된다.
+- 전용 모듈 경로와 export: `lib/channels/cs/shopee/return-detail.ts`의 `projectShopeeReturnDetail`/`shopeeReturnDetailRevision`, `lib/channels/cs/shopee/history-plan.ts`의 `planShopeeReviewHistory`/`planShopeeReturnHistory` 구현 완료.
+- 기존/새 입력·출력 계약: `providerContext`에 `originalReason`, `reassessedReason`, dispute/amount/currency/logistics/validation의 명명 필드와 attachment retention reference를 추가한다. 기존 `reason`, `replySupported=false`, 빈 replyContext는 호환 유지한다.
+- 최소 변경안: 공식 response allowlist projector, revision digest에 모든 보존 필드 포함, attachment fetch ledger와 private object digest/expiry 상태, shop+kind별 history planner/API/UI. 후기 API에는 날짜 filter가 없으므로 UI에 임의 30일 분모를 표시하지 않고 cursor corpus/상한/마지막 성공 cursor를 표시한다. Returns는 15일 이하 window들을 독립 작업으로 생성한다.
+- 다른 채널 영향: 공통 UI/attachment ledger는 nullable additive contract로 하고 기존 채널 기본값을 유지한다.
+- 상품/주문/배송 mutation 영향: 없음. Returns confirm/dispute/offer/accept/upload action은 reply route에 추가하지 않는다.
+- 재현·회귀 시험 명령: Shopee fixture의 reassessed reason/PII 제거/media expiry/revision 변화, shop별 독립 progress, 재수집 duplicate 0, 중단 재개 누락 0을 추가해 필수 6개 시험을 실행한다.
+- migration 선행/preimage/ACL 요구: private attachment/history ledger, service-role write와 authenticated masked read를 분리하고 기존 signature/ACL preimage를 고정한다.
+- 우선순위: 오연결·손실 / 과거누락
+- 통합 담당 처리 상태: 전용 projector/planner 구현 완료; 공통 normalizer/UI/SQL 연결 미반영
+- 반영된 통합 소스 hash와 검증: 전용 `return-detail.ts` `f1432daeaaa2f775e55e869df6c75f4f8a4e24ff8db2c9c56e7dab793ea01e76`, `history-plan.ts` `8d65faee07526be71df72fecb35fa5f44cbbe59134ffaaf33d8b44d2332c81af`, test `cae855316b5bba984ef30ca6eafc4896e1c23c24e65c98184e8cb6b01bd35cde`; Shopee 중심 42/42 및 수정 파일 ESLint 통과.

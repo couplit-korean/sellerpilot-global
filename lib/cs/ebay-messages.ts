@@ -1,5 +1,11 @@
 import { z } from "zod";
 
+// These are the provider contract limits used by the server adapter. Keep the
+// client schemas strict so a mismatched deployment cannot advance by the wrong
+// offset and silently skip conversations or messages.
+export const ebayConversationPageSize = 10;
+export const ebayConversationMessagePageSize = 25;
+
 export const ebayConversationTypeSchema = z.enum(["FROM_MEMBERS", "FROM_EBAY"]);
 export const ebayMessageRoleSchema = z.enum(["customer", "seller", "system", "unverified"]);
 const mediaSchema = z.object({
@@ -16,8 +22,8 @@ const messageSchema = z.object({
   role: ebayMessageRoleSchema,
 });
 const pagination = {
-  total: z.number().int().nonnegative(), offset: z.number().int().nonnegative().multipleOf(25),
-  nextOffset: z.number().int().nonnegative().multipleOf(25).nullable(),
+  total: z.number().int().nonnegative().nullable(), offset: z.number().int().nonnegative(),
+  nextOffset: z.number().int().nonnegative().nullable(),
 };
 export const ebayMessageAccountsSchema = z.object({ accounts: z.array(z.object({
   id: z.string().uuid(), label: z.string(), environment: z.enum(["sandbox", "production"]),
@@ -28,12 +34,22 @@ export const ebayConversationPageSchema = z.object({
     conversationId: z.string().min(1).max(240), type: ebayConversationTypeSchema,
     status: z.string(), title: z.string().max(2000), createdAt: z.string().datetime({ offset: true }),
     referenceId: z.string().nullable(), referenceType: z.literal("LISTING").nullable(), latestMessage: messageSchema,
-  })).max(25),
+  })).max(ebayConversationPageSize),
+}).superRefine((value, context) => {
+  if (value.offset % ebayConversationPageSize !== 0
+      || value.nextOffset !== null && value.nextOffset % ebayConversationPageSize !== 0) {
+    context.addIssue({ code: "custom", message: "invalid conversation offset" });
+  }
 });
 export const ebayConversationMessagesSchema = z.object({
   kind: z.literal("messages"), credentialId: z.string().uuid(), conversationId: z.string().min(1).max(240),
   type: ebayConversationTypeSchema, status: z.string(), title: z.string().max(2000),
-  ...pagination, entries: z.array(messageSchema).max(25),
+  ...pagination, entries: z.array(messageSchema).max(ebayConversationMessagePageSize),
+}).superRefine((value, context) => {
+  if (value.offset % ebayConversationMessagePageSize !== 0
+      || value.nextOffset !== null && value.nextOffset % ebayConversationMessagePageSize !== 0) {
+    context.addIssue({ code: "custom", message: "invalid message offset" });
+  }
 });
 export type EbayMessageAccounts = z.infer<typeof ebayMessageAccountsSchema>["accounts"];
 export type EbayConversationPage = z.infer<typeof ebayConversationPageSchema>;

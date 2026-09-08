@@ -1,0 +1,154 @@
+diff --git a/lib/channels/operations.ts b/lib/channels/operations.ts
+--- a/lib/channels/operations.ts
++++ b/lib/channels/operations.ts
+@@ -7,6 +7,7 @@ import { executeLazadaInquiry } from "./lazada-inquiries";
+ import { executeEbayInquiry } from "./ebay-inquiries";
+ import { executeShopeeInquiry } from "./shopee-inquiries";
+ import { executeElevenstInquiry } from "./elevenst-inquiries";
++import { withShopeeHistoryContinuation } from "./cs/shopee/history-event-evidence";
+ import { step, requestIdentifier, type ChannelOperationStep } from "./operation-step";
+ export type { ChannelOperationStep } from "./operation-step";
+ import { finiteCount, objectValue, stringArgument, integerArgument, objectArray, boundedPageSize, nestedObject, stringMap, queryParams, pathSegment } from "./operation-values";
+@@ -603,14 +604,20 @@ function paginationResult(
+     }]);
+   }
++  const continuationArguments = {
++    ...nextArguments,
++    sellerpilotPaginationDepth: depth + 1,
++    ...(durableInquiryPagination ? {
++      sellerpilotPaginationEpoch: paginationEpoch,
++      sellerpilotPaginationTrail: paginationTrail,
++    } : {}),
++  };
++  const finalArguments = input.channel === "shopee"
++      && input.operation === "inquiries.list"
++      && typeof input.arguments.sellerpilotShopeeHistoryRunId === "string"
++    ? withShopeeHistoryContinuation(input.arguments, continuationArguments)
++    : continuationArguments;
+   return result(input, steps, undefined, {
+     reason: "page_cap_reached",
+-    arguments: {
+-      ...nextArguments,
+-      sellerpilotPaginationDepth: depth + 1,
+-      ...(durableInquiryPagination ? {
+-        sellerpilotPaginationEpoch: paginationEpoch,
+-        sellerpilotPaginationTrail: paginationTrail,
+-      } : {}),
+-    },
++    arguments: finalArguments,
+   });
+ }
+diff --git a/lib/channels/serverless-gateway-provider.ts b/lib/channels/serverless-gateway-provider.ts
+--- a/lib/channels/serverless-gateway-provider.ts
++++ b/lib/channels/serverless-gateway-provider.ts
+@@ -16,6 +16,7 @@ import {
+   assertListingPublicationSourceLocalized,
+   listingPublicationProviderAssetEvidence,
+   parseListingPublicationAssetBinding,
+ } from "./listing-publication-content";
++import { shopeeHistoryAuthorizationError } from "./cs/shopee/history-authorization";
+ import { verifiedListingRemoteStateSchema } from "./listing-publication-state";
+ import {
+@@ -1010,4 +1011,7 @@ export async function executeServerlessGatewayJob(
+     let result = input.job.operation === "listing.publication.verify"
+       ? await runWithProviderReadOnlyTransport(executeOperation)
+       : await executeOperation();
++    const historyAuthorizationError = input.job.channel === "shopee" && input.job.operation === "inquiries.list"
++      ? shopeeHistoryAuthorizationError(operationArguments, result) : null;
++    if (historyAuthorizationError) throw new Error(historyAuthorizationError);
+     if (contentBoundPublicationWrite && result.remoteState) {
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -9,6 +9,10 @@ import {
+ } from "./gateway-contract";
+ import { inquiryHistorySyncRequests, inquirySyncRequests, normalizeChannelInquiries } from "./inquiry-sync";
+ import { inquiryCoverageEvidence } from "./inquiry-coverage";
++import {
++  shopeeHistoryInterruptionEvidence,
++  shopeeHistoryPageEvidence,
++} from "./cs/shopee/history-event-evidence";
+ import { hasProviderReplyAcceptance, inquiryReplyObservations, type InquiryReplyObservation } from "./reply-verification";
+ import { lazadaQuarantineReady, markLazadaImRawEvent, persistLazadaImRawEvent, type LazadaRawReceipt } from "./lazada-im-webhook";
+ import { lazadaImHistoryRawPages } from "./lazada-im";
+@@ -997,6 +1001,8 @@ async function completeClaim(
+ 
+   let normalizedOrders: ReturnType<typeof normalizeChannelOrders> | null = null;
+   let normalizedInquiries: ReturnType<typeof normalizeChannelInquiries> | null = null;
++  const shopeeHistoryArguments = recordValue(job.request.arguments) ?? {};
++  let shopeeHistoryEvent: ReturnType<typeof shopeeHistoryPageEvidence> | ReturnType<typeof shopeeHistoryInterruptionEvidence> | null = null;
+   let projectedInquiryCount = 0;
+   let inquiryCoverage: ReturnType<typeof inquiryCoverageEvidence> | null = null;
+   let replyObservations: InquiryReplyObservation[] = [];
+@@ -1045,6 +1051,15 @@ async function completeClaim(
+           stableNormalizationTimestamp,
+           { lazadaRawStorageReady: job.channel === "lazada" },
+         );
++        if (job.channel === "shopee"
++            && typeof shopeeHistoryArguments.sellerpilotShopeeHistoryRunId === "string") {
++          shopeeHistoryEvent = shopeeHistoryPageEvidence({
++            jobId: job.id,
++            arguments: shopeeHistoryArguments,
++            result: syncResponse,
++            normalizedInquiries,
++          });
++        }
+         projectedInquiryCount = normalizedInquiries.length;
+         const historyRunId = recordValue(job.request.arguments)?.sellerpilotHistoryRunId;
+         if ((typeof job.request.periodicKey === "string"
+@@ -1071,6 +1086,16 @@ async function completeClaim(
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+   }
++  if (!shopeeHistoryEvent && job.channel === "shopee"
++      && job.operation === "inquiries.list"
++      && parsed.data.status !== "succeeded"
++      && typeof shopeeHistoryArguments.sellerpilotShopeeHistoryRunId === "string") {
++    shopeeHistoryEvent = shopeeHistoryInterruptionEvidence({
++      jobId: job.id,
++      arguments: shopeeHistoryArguments,
++      error: effectiveCompletionError ?? "SHOPEE_HISTORY_FAILED",
++    });
++  }
+   if (job.channel === "lazada" && normalizedInquiries) {
+     const v3Ready = await callRpc(dependencies, "sellerpilot_service_lazada_im_ingest_ready_v3", {
+       p_credential_id: job.credential_id,
+@@ -1117,20 +1142,33 @@ async function completeClaim(
+     p_diagnostic: parsed.data.status === "succeeded"
+       && parsed.data.result.operation === "diagnostic.test"
+       ? parsed.data.result.diagnostic
+       : null,
+   };
++  const completionRpc = shopeeHistoryEvent
++    ? "sellerpilot_service_complete_serverless_cs_shopee_history_v1"
++    : COMPLETE_TRANSACTION_RPC;
++  const atomicCompletionArguments = shopeeHistoryEvent ? {
++    ...completionArguments,
++    p_history_run_id: shopeeHistoryArguments.sellerpilotShopeeHistoryRunId,
++    p_history_event: shopeeHistoryEvent,
++  } : completionArguments;
+   let completed = await callRpc(
+     dependencies,
+-    COMPLETE_TRANSACTION_RPC,
+-    completionArguments,
++    completionRpc,
++    atomicCompletionArguments,
+   );
+   if (completed.error) {
+     completed = await callRpc(
+       dependencies,
+-      COMPLETE_TRANSACTION_RPC,
+-      completionArguments,
++      completionRpc,
++      atomicCompletionArguments,
+     );
+   }
+   if (completed.error) return "unavailable";
+-  if (recordValue(completed.data)?.status !== "completed") return "ownership_lost";
++  const completion = recordValue(completed.data);
++  if (completion?.status !== "completed") return "ownership_lost";
++  if (shopeeHistoryEvent
++      && !["recorded", "duplicate"].includes(String(completion.shopeeHistoryEventStatus))) {
++    return "unavailable";
++  }
+   if (elevenstReadReceipt) {

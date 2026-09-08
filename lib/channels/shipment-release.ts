@@ -1,5 +1,5 @@
 import { channelCatalog, type ActiveChannelKey } from "./catalog";
-import { channelOperationAvailable } from "./operation-availability";
+import { shippingOperationRelease } from "../shipping/availability";
 
 export type ShipmentWriteAvailability = {
   available: boolean;
@@ -9,7 +9,7 @@ export type ShipmentWriteAvailability = {
 
 export function shipmentWriteAvailability(channel: ActiveChannelKey): ShipmentWriteAvailability {
   const capability = channelCatalog[channel].capabilities.shipment;
-  const available = channelOperationAvailable(channel, "shipment.confirm");
+  const available = shippingOperationRelease(channel, "shipment.confirm").available;
   return available
     ? { available: true, label: "자동 발송 지원", reason: capability.note }
     : { available: false, label: "자동 발송 미검증", reason: capability.note };

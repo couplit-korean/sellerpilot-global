@@ -1,0 +1,52 @@
+{
+  "contract": "sellerpilot_ebay_mailbox_reconciliation_v1",
+  "observedAt": "2026-09-08T01:30:03+09:00",
+  "scope": {
+    "account": "same_authenticated_seller_account",
+    "sellerCenterFolder": "inbox",
+    "tradingApi": "GetMyMessages summary"
+  },
+  "sellerCenter": {
+    "inboxTotal": 21,
+    "unreadFromEbay": 18,
+    "fromMembers": 0
+  },
+  "tradingApi": {
+    "total": 9,
+    "unread": 9
+  },
+  "recentSixDayDetailedRead": {
+    "pages": 1,
+    "messages": 1,
+    "asqEchoes": 0,
+    "memberMessages": 0,
+    "platformMessages": 1,
+    "mediaMessages": 0,
+    "fullyPaginated": true
+  },
+  "retainedOneYearDetailedRead": {
+    "checkedWindows": 13,
+    "pages": 13,
+    "messages": 9,
+    "duplicateObservations": 0,
+    "asqEchoes": 0,
+    "memberMessages": 1,
+    "platformMessages": 8,
+    "mediaMessages": 0,
+    "fullyPaginated": true
+  },
+  "matched": false,
+  "interpretation": "The seller-center unread counter is not the Inbox total. Trading ReturnSummary and a disjoint 13-window detailed read of the full one-year retention both returned 9 unique messages, so the 21 seller-center rows include 12 platform-notification surfaces that this Trading API contract does not expose. The retained API set contains one older member message even though the current seller-center From members bucket displayed zero.",
+  "remaining": [
+    "Commerce Message API permission remains a separate scope and was previously denied with HTTP 403.",
+    "The local scheduled Trading mailbox importer is implemented and passed both recent and full-retention live reads, but it is not deployed or writing the production ledger.",
+    "The local daily repair now divides the complete one-year eBay retention into 12 disjoint provider-safe ASQ windows and 12 Inbox windows.",
+    "The 12 seller-center-only platform rows require a different authorized eBay surface or seller-center viewing; they cannot be represented as Trading API imports.",
+    "A zero member-message snapshot does not prove future inbound collection or reply delivery."
+  ],
+  "safety": {
+    "customerContentRecorded": false,
+    "messageOpenedOrMarkedRead": false,
+    "providerMutationPerformed": false
+  }
+}

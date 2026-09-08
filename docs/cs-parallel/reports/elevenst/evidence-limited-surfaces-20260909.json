@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T15:43:01Z",
+  "seller": {
+    "browserProfile": "CHANGHEE",
+    "sellerId": "couplit",
+    "sellerName": "커플릿",
+    "identityMatched": true,
+    "passwordOrTokenRecorded": false,
+    "rawCustomerContentRecorded": false
+  },
+  "sellerTalk": {
+    "access": "signed_seller_office_session_bridge",
+    "conversationRoomsVisible": 0,
+    "friendsVisible": 0,
+    "responseDataAvailable": false,
+    "retentionNotice": "maximum_three_months",
+    "officialAutomaticApiContract": "not_identified",
+    "remoteCountForAutomation": null,
+    "historicalZeroConfirmed": false,
+    "providerWritePerformed": false
+  },
+  "reviews": {
+    "access": "seller_office_review_management",
+    "scopeStart": "2026-09-02",
+    "scopeEnd": "2026-09-09",
+    "scopeTimezone": "Asia/Seoul",
+    "visibleCount": 0,
+    "excelDownloadVisible": true,
+    "commentStatusColumnVisible": true,
+    "commentWriteVerified": false,
+    "officialAutomaticApiContract": "not_identified",
+    "remoteCountForAutomation": null,
+    "historicalZeroConfirmed": false,
+    "providerWritePerformed": false
+  },
+  "authenticatedLocalWeb": {
+    "contractVersion": "sellerpilot-elevenst-authenticated-read-state/2",
+    "runtime": "next-dev",
+    "host": "127.0.0.1",
+    "port": 3214,
+    "database": "PGlite-memory",
+    "unauthorizedStatus": 401,
+    "invalidTokenStatus": 401,
+    "authorizedStatus": 200,
+    "sellerTalk": {
+      "accessMode": "seller_office_session_only",
+      "remoteCount": null,
+      "retentionDays": 90,
+      "automaticReadAvailable": false
+    },
+    "review": {
+      "accessMode": "seller_office_export_only",
+      "remoteCount": null,
+      "retentionDays": null,
+      "automaticReadAvailable": false
+    },
+    "uiRendered": true,
+    "databaseReadCount": 1,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "portCleanAfterExit": true
+  }
+}

@@ -305,7 +305,7 @@ test("generic update endpoints reject browser repair markers and transmission ev
 
 test("worker completion routes exact repair evidence to the dedicated atomic RPC before generic completion", async () => {
   const route = await readFile(
-    new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url),
+    new URL("../lib/channels/commerce-worker-completion.ts", import.meta.url),
     "utf8",
   );
   const discriminator = route.indexOf(

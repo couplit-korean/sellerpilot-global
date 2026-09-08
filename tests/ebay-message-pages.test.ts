@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ebayMessageScope } from "../lib/channels/ebay-oauth-scopes";
-import { readEbayConversationsPage, readEbayConversationMessagesPage, ebayConversationMessageRole } from "../lib/channels/ebay-message-pages";
+import {
+  readEbayConversationsPage,
+  readEbayConversationMessagesPage,
+  sendEbayConversationMessage,
+  ebayConversationMessageRole,
+} from "../lib/channels/ebay-message-pages";
 
 const payload = { access_token: "fixture-token", scopes: ebayMessageScope };
 const base = { payload, environment: "production" as const, type: "FROM_MEMBERS" as const };
@@ -11,8 +16,12 @@ const rawMessage = {
 };
 const metadata = { conversationType: "FROM_MEMBERS", conversationStatus: "ACTIVE", conversationTitle: "title" };
 const conversation = { ...metadata, conversationId: "native-conversation-1", createdDate: "2026-08-01T00:00:00Z", latestMessage: rawMessage };
-function response(entries: unknown[], key: "messages" | "conversations", total = entries.length, offset = 0) {
-  return { ...metadata, [key]: entries, total, limit: 25, offset };
+function response(entries: unknown[], key: "messages" | "conversations", total: number | null | undefined = entries.length, offset = 0) {
+  return { ...metadata, [key]: entries, total, limit: key === "conversations" ? 10 : 25, offset };
+}
+function next(path: string, offset: number, limit: number, extra: Record<string, string> = {}) {
+  const query = new URLSearchParams({ conversation_type: "FROM_MEMBERS", limit: String(limit), offset: String(offset), ...extra });
+  return `https://api.ebay.com${path}?${query}`;
 }
 async function mocked<T>(body: unknown, run: (calls: URL[]) => Promise<T>, status = 200) {
   const previous = globalThis.fetch;
@@ -22,7 +31,7 @@ async function mocked<T>(body: unknown, run: (calls: URL[]) => Promise<T>, statu
     assert.equal(new Headers(init?.headers).get("authorization"), "Bearer fixture-token");
     const target = new URL(String(url)); calls.push(target);
     assert.equal(target.origin, "https://api.ebay.com");
-    assert.equal(target.searchParams.get("limit"), "25");
+    assert.equal(target.searchParams.get("limit"), target.pathname === "/commerce/message/v1/conversation" ? "10" : "25");
     return Response.json(body, { status });
   };
   try { return await run(calls); } finally { globalThis.fetch = previous; }
@@ -54,15 +63,46 @@ test("message pages preserve original text, timestamps and attachment-only messa
   });
 });
 
-test("pagination continues by numeric offset and never follows provider next URLs", async () => {
+test("pagination derives a verified numeric offset from the provider next URL", async () => {
   const entries = Array.from({ length: 25 }, (_, n) => ({ ...rawMessage, messageId: String(n) }));
-  await mocked({ ...response(entries, "messages", 26), next: "https://attacker.invalid/steal-token" }, async calls => {
+  await mocked({ ...response(entries, "messages", 26), next: next("/commerce/message/v1/conversation/thread", 25, 25) }, async calls => {
     const result = await readEbayConversationMessagesPage({ ...base, conversationId: "thread" });
     assert.equal(calls.length, 1); assert.equal(result.nextOffset, 25);
   });
   await mocked(response([rawMessage], "messages", 26, 25), async calls => {
     const result = await readEbayConversationMessagesPage({ ...base, conversationId: "thread", offset: 25 });
     assert.equal(calls[0].searchParams.get("offset"), "25"); assert.equal(result.nextOffset, null);
+  });
+});
+
+test("empty pages with next continue and missing totals remain unknown", async () => {
+  await mocked({
+    ...metadata, messages: [], limit: 25, offset: 0,
+    next: next("/commerce/message/v1/conversation/thread", 25, 25),
+  }, async () => {
+    const result = await readEbayConversationMessagesPage({ ...base, conversationId: "thread" });
+    assert.equal(result.total, null);
+    assert.equal(result.entries.length, 0);
+    assert.equal(result.nextOffset, 25);
+  });
+  await mocked(response([rawMessage], "messages", null), async () => {
+    const result = await readEbayConversationMessagesPage({ ...base, conversationId: "thread" });
+    assert.equal(result.total, null);
+    assert.equal(result.nextOffset, null);
+  });
+});
+
+test("cross-origin, altered, repeated and skipping next cursors fail closed", async () => {
+  const invalidNext = [
+    "https://attacker.invalid/commerce/message/v1/conversation/thread?conversation_type=FROM_MEMBERS&limit=25&offset=25",
+    next("/commerce/message/v1/conversation/other", 25, 25),
+    next("/commerce/message/v1/conversation/thread", 0, 25),
+    next("/commerce/message/v1/conversation/thread", 50, 25),
+    next("/commerce/message/v1/conversation/thread", 25, 50),
+    `${next("/commerce/message/v1/conversation/thread", 25, 25)}&offset=25`,
+  ];
+  for (const cursor of invalidNext) await mocked({ ...metadata, messages: [], limit: 25, offset: 0, next: cursor }, async () => {
+    await assert.rejects(readEbayConversationMessagesPage({ ...base, conversationId: "thread" }), /pagination/);
   });
 });
 
@@ -124,4 +164,46 @@ test("roles require an exact verified seller identity and eBay notifications rem
     for (const ids of [[], ["unknown-immutable-id"], ["seller", "buyer"]]) assert.equal(ebayConversationMessageRole(row, "FROM_MEMBERS", ids), "unverified");
     assert.equal(ebayConversationMessageRole(row, "FROM_EBAY", ["buyer"]), "unverified");
   });
+});
+
+test("conversation replies use the isolated Commerce Message endpoint and retain provider identity", async () => {
+  const previous = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const target = new URL(String(url));
+    assert.equal(target.pathname, "/commerce/message/v1/send_message");
+    assert.equal(init?.method, "POST");
+    assert.deepEqual(JSON.parse(String(init?.body)), {
+      conversationId: "conversation-native",
+      messageText: "답변 원문\n두 번째 줄",
+    });
+    return Response.json({ messageId: "sent-message-native", createdDate: "2026-09-08T01:02:03.123456Z" }, { status: 201 });
+  };
+  try {
+    const sent = await sendEbayConversationMessage({
+      payload,
+      environment: "production",
+      conversationId: "conversation-native",
+      messageText: "답변 원문\n두 번째 줄",
+    });
+    assert.equal(sent.messageId, "sent-message-native");
+    assert.equal(sent.createdAt, "2026-09-08T01:02:03.123456Z");
+  } finally {
+    globalThis.fetch = previous;
+  }
+});
+
+test("conversation replies reject missing scope, controls and unverified provider acknowledgements", async () => {
+  const previous = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls += 1; return Response.json({}, { status: 201 }); };
+  try {
+    await assert.rejects(sendEbayConversationMessage({ ...base, conversationId: "conversation-native", messageText: "reply", payload: { access_token: "fixture-token" } }), /CONSENT_REQUIRED/);
+    await assert.rejects(sendEbayConversationMessage({ ...base, conversationId: "bad\nconversation", messageText: "reply" }), /conversationId/);
+    await assert.rejects(sendEbayConversationMessage({ ...base, conversationId: "conversation-native", messageText: "bad\u0000reply" }), /messageText/);
+    assert.equal(calls, 0);
+    await assert.rejects(sendEbayConversationMessage({ ...base, conversationId: "conversation-native", messageText: "reply" }), /messageId/);
+    assert.equal(calls, 1);
+  } finally {
+    globalThis.fetch = previous;
+  }
 });

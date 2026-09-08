@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   csChannelAttentionCount,
+  csChannelHistoryCoverageLabel,
   csChannelVerification,
   csReplyDraftValue,
   csReplySavePlan,
@@ -38,7 +39,7 @@ test("ticket selection uses the internal source id even when external ticket ids
 });
 
 test("server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts", () => {
-  for (const channel of ["qoo10", "lazada", "coupang", "smartstore", "ebay"]) {
+  for (const channel of ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"]) {
     assert.equal(isRemoteCsReplyChannel(channel), true);
     assert.deepEqual(csReplySavePlan(`ticket-${channel}`, channel, "reply", `inbound-${channel}`), {
       endpoint: "/api/admin/cs/reply",
@@ -47,15 +48,10 @@ test("server-gated marketplace reply channels use one gateway while unsupported 
       remote: true,
     });
   }
-  for (const channel of ["shopee", "elevenst", "temu"]) {
+  for (const channel of ["temu"]) {
     assert.equal(isRemoteCsReplyChannel(channel), false);
   }
-  assert.deepEqual(csReplySavePlan("ticket-s", "shopee", "draft", null), {
-    endpoint: "/api/operations/snapshot",
-    body: { action: "ticket_update", id: "ticket-s", status: "in_progress", expectedInboundKey: null, replyDraft: "draft" },
-    completionMessage: "외부 채널에는 전송하지 않았습니다. 내부 답변 초안을 처리 중 상태로 저장했습니다.",
-    remote: false,
-  });
+  assert.throws(() => csReplySavePlan("ticket-s", "shopee", "draft", null), /문의 세대/);
   assert.throws(
     () => csReplySavePlan("ticket-l", "lazada", "reply", null),
     /문의 세대를 확인/,
@@ -63,36 +59,53 @@ test("server-gated marketplace reply channels use one gateway while unsupported 
 });
 
 test("channel verification separates inquiry receiving from remote reply capability", () => {
-  assert.deepEqual(csChannelVerification("qoo10", "passed", 0), {
-    readLabel: "상품 문의 최근 조회 작업 통과 · 누적 원장 0건",
-    replyLabel: "답변: 보안 게이트웨이 원격 전송",
+  const now = new Date("2026-09-07T07:00:00.000Z");
+  assert.deepEqual(csChannelVerification("qoo10", "passed", 0, null, "2026-09-07T06:50:00.000Z", now), {
+    readLabel: "MSG·HELP·ITEM 문의·취소·반품·교환 클레임 최근 조회 작업 통과 · 누적 원장 0건",
+    replyLabel: "답변: 일반 문의만 보안 게이트웨이 원격 전송 · 클레임은 읽기 전용 · 별도 리뷰 댓글은 공식 QAPI 미제공",
     badge: "최근 조회 통과",
     tone: "passed",
   });
+  assert.equal(csChannelVerification("qoo10", "passed", 0, null, null, now).badge, "시각 확인 필요");
+  assert.equal(csChannelVerification("qoo10", "passed", 0, null, "2026-09-07T06:44:59.999Z", now).badge, "수집 지연");
+  assert.equal(csChannelVerification("qoo10", "passed", 0, null, "2026-09-07T07:06:00.000Z", now).badge, "수집 지연");
+  assert.equal(csChannelVerification("lazada", "passed", 0, null, "2026-09-07T06:59:00.000Z", now).badge, "Push 확인 필요");
   assert.equal(csChannelVerification("qoo10", "queued").badge, "조회 대기");
   assert.equal(csChannelVerification("qoo10", "queued").tone, "unsupported");
-  assert.match(csChannelVerification("shopee", null).readLabel, /API 미연동/);
+  assert.match(csChannelVerification("shopee", null).readLabel, /검증 전/);
   assert.match(csChannelVerification("lazada", "passed").replyLabel, /보안 게이트웨이/);
   assert.equal(csChannelVerification("lazada", "unsupported").badge, "연결 확인 필요");
   assert.match(csChannelVerification("lazada", "unsupported").readLabel, /연결 조건 미충족/);
   assert.match(csChannelVerification("temu", "passed").readLabel, /반품·환불 작업/);
-  assert.match(csChannelVerification("elevenst", "unsupported").readLabel, /상품 Q&A·긴급알리미 수신 연동 전/);
-  assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /상세 계약·서비스 권한 검증 전/);
-  assert.equal(csChannelVerification("elevenst", "passed", 3).badge, "수신 미연결");
+  assert.match(csChannelVerification("elevenst", "unsupported").readLabel, /상품 Q&A 수신 연결 조건 미충족/);
+  assert.match(csChannelVerification("elevenst", "unsupported").replyLabel, /게시글 번호·상품 번호/);
+  assert.equal(csChannelVerification("elevenst", "passed", 3, null, "2026-09-07T06:59:00.000Z", now).badge, "최근 조회 통과");
   assert.deepEqual(csChannelVerification("lazada", "failed", 0, "App does not have permission to access this api"), {
     readLabel: "Lazada IM 조회 거절 · 운영 앱 Buyer IM 권한 필요",
     replyLabel: "답변: 보안 게이트웨이 원격 전송",
     badge: "권한 필요",
     tone: "failed",
   });
+  assert.match(csChannelHistoryCoverageLabel("coupang"), /6일 이하 5개 창/);
+  assert.match(csChannelHistoryCoverageLabel("coupang"), /취소·반품·교환/);
+  assert.match(csChannelHistoryCoverageLabel("shopee"), /8개 OAuth 숍/);
+  assert.match(csChannelHistoryCoverageLabel("shopee"), /반품\/환불 15일 이하 분할 조회/);
+  assert.match(csChannelHistoryCoverageLabel("shopee"), /Buyer Chat 공개 API 계약 미확보/);
+  assert.doesNotMatch(csChannelHistoryCoverageLabel("shopee"), /Open API 없음/);
+  assert.match(csChannelHistoryCoverageLabel("ebay"), /Trading Inbox 최근 6일 자동 조회/);
+  assert.match(csChannelHistoryCoverageLabel("ebay"), /Commerce 회원 대화 최근 6일 자동 조회/);
+  assert.match(csChannelHistoryCoverageLabel("ebay"), /commerce\.message 동의 필요/);
+  assert.match(csChannelHistoryCoverageLabel("elevenst"), /최대 7일/);
+  assert.match(csChannelHistoryCoverageLabel("elevenst"), /셀러톡·긴급알리미·리뷰는 별도/);
 });
 
 test("CS attention count deduplicates channels and includes blocked or unverified outcomes", () => {
+  const now = new Date("2026-09-07T07:00:00.000Z");
   assert.equal(csChannelAttentionCount([
-    { channelKey: "qoo10", status: "passed" },
+    { channelKey: "qoo10", status: "passed", lastSucceededAt: "2026-09-07T06:55:00.000Z" },
     { channelKey: "qoo10", status: "failed" },
     { channelKey: "lazada", status: "unsupported" },
-    { channelKey: "coupang", status: "passed", needsAttention: true },
+    { channelKey: "coupang", status: "passed", lastSucceededAt: "2026-09-07T06:55:00.000Z", needsAttention: true },
     { channelKey: "temu", status: null },
-  ]), 4);
+  ], now), 4);
 });

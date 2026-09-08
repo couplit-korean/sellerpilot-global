@@ -16,13 +16,15 @@ test("11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증
   assert.equal(channelOperationAvailable("elevenst", "inventory.update"), false);
   assert.equal(channelOperationAvailable("elevenst", "orders.get"), false);
   assert.equal(channelOperationAvailable("elevenst", "shipment.confirm"), false);
-  assert.equal(channelOperationAvailable("elevenst", "inquiries.list"), false);
-  assert.equal(channelCatalog.elevenst.capabilities.inquiries.mode, "vendor_docs_required");
-  assert.match(channelCatalog.elevenst.capabilities.inquiries.note, /공식.*상품 Q&A.*상세 계약/);
+  assert.equal(channelOperationAvailable("elevenst", "inquiries.list"), true);
+  assert.equal(channelOperationAvailable("elevenst", "inquiries.reply"), true);
+  assert.equal(channelCatalog.elevenst.capabilities.inquiries.mode, "polling");
+  assert.match(channelCatalog.elevenst.capabilities.inquiries.note, /공식.*상품 Q&A.*7일/);
 });
 
 test("문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다", () => {
-  assert.equal(channelOperationAvailable("shopee", "inquiries.list"), false);
+  assert.equal(channelOperationAvailable("shopee", "inquiries.list"), true);
+  assert.equal(channelOperationAvailable("shopee", "inquiries.reply"), true);
   assert.equal(channelOperationAvailable("ebay", "shipment.acknowledge"), false);
   assert.equal(channelOperationAvailable("temu", "shipment.acknowledge"), false);
   assert.equal(channelOperationAvailable("temu", "shipment.confirm"), true);
@@ -60,10 +62,9 @@ test("실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로
 });
 
 test("채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼동하지 않는다", () => {
-  const shopeeChat = channelCapabilityReleasePresentation("shopee", "inquiries");
-  assert.equal(shopeeChat.releaseState, "blocked");
-  assert.equal(shopeeChat.label, "출시 차단");
-  assert.match(shopeeChat.note, /Chat API 권한.*차단/);
+  const shopeeComments = channelCapabilityReleasePresentation("shopee", "inquiries");
+  assert.equal(shopeeComments.releaseState, "available");
+  assert.match(shopeeComments.note, /get_comment.*reply_comment/);
 
   for (const [channel, capability] of [
     ["temu", "listingUpdate"],

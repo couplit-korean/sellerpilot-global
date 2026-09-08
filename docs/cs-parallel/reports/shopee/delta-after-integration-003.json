@@ -1,0 +1,216 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "branch": "codex/cs-shopee-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "createdAt": "2026-09-08T23:07:50+09:00",
+  "parentDelta": {
+    "path": "docs/cs-parallel/reports/shopee/delta-after-integration-002.json",
+    "sha256": "e50484e882d4ae16e76eeeeeba6d715646601f6cdaaa540bb81eabef74edf971",
+    "frozen": true
+  },
+  "authoritativeInputs": {
+    "promptSha256": "8e3e2ddd6b8a566946bdb57cbba3b2a396508d5b2e9ee77b5096387aaebc73a0",
+    "ownershipSha256": "09d64aa4a62513f9eb4ccfa6af4bdf809389f69cb0fefa7ed7d8041addddd24f",
+    "channelReferenceSha256": "a5c3cf7416fee17b142404d6984aaa0072c000e85ec41a14b7646bd60ce1464c",
+    "preparedFilesVerified": 1628
+  },
+  "actualTargets": [
+    { "country": "SG", "shopId": "1719148844" },
+    { "country": "TW", "shopId": "1758392145" },
+    { "country": "TH", "shopId": "1758392144" },
+    { "country": "MY", "shopId": "1758392135" },
+    { "country": "VN", "shopId": "1758392139" },
+    { "country": "PH", "shopId": "1758392137" },
+    { "country": "BR", "shopId": "1758392161" },
+    { "country": "MX", "shopId": "1758392178" }
+  ],
+  "integratedPreimages": {
+    "app/cs/archive.tsx": "1336a1aa993ce4960b04eb830adcfe56b50b00e13607c45cdd2e536dd2232f61",
+    "lib/channels/gateway-contract.ts": "9b16f3e8cd1b8c4163f45ebe8f248257cc180e35a975447ce6058b5661daa516",
+    "lib/channels/protocols.ts": "983b3157d794fab27dba2ba03026778ad86abd77916480f59ea6e8320ac59c2d",
+    "lib/channels/serverless-gateway-provider.ts": "ad651326e01f0c993adbb390def46e3ca8153a8aba5645caa1ee747b41de1b90",
+    "lib/channels/serverless-gateway.ts": "8abf100f1f134e51783b898df0e8a1104fa9eaec209c2a3d9bbee1079cd8c188",
+    "lib/channels/operations.ts": "e345c043931d7e1fcbb06838c8f1967693a6579a1097d60a3f801961274d228b"
+  },
+  "files": [
+    {
+      "path": "lib/channels/cs/shopee/target-refresh-cas.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f1471ca1707e79b2cd7093a23e2d2cac91fd753b680f2808ac3c01be28585a3a",
+      "reason": "Merge one refreshed shop target into the latest credential payload without changing the other targets."
+    },
+    {
+      "path": "tests/cs-shopee-target-refresh-cas.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "71d8d8d09196541e9a10bba1bc029a10c586d4ac5166ecfb452084b956b19931",
+      "reason": "Verify target-only merge, stale rejection, idempotence and widening rejection."
+    },
+    {
+      "path": "tests/cs-shopee-target-refresh-cas-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "3fe12eb6a970497437acd2f6a79b722d9d8c5f1bb83e0a163ded422568a1713f",
+      "reason": "Verify service-only SQL refresh claim serialization and preservation of seven non-target shops."
+    },
+    {
+      "path": "lib/cs/channels/shopee/history-events.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d3ba7fba3df6a1d1699efe489ae5a51369c2ac7790a736ea1be1172930d5019d",
+      "reason": "Strictly validate body-free history read, event and start result contracts."
+    },
+    {
+      "path": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "05c60a45dad12400bb21c3fd2c862e5c2012b8ccc3a04b97aba03ea233ca6075",
+      "reason": "Expose authenticated owner read and service-only shop history start without accepting credentials."
+    },
+    {
+      "path": "app/cs/channels/shopee/history-progress.tsx",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8bb8a1ae212b67edfa4114f8f462179b3ea3e3ddcc375c089be24471a4cc1197",
+      "reason": "Show per-shop and per-kind progress and preserve request UUID across uncertain retries."
+    },
+    {
+      "path": "app/cs/channels/shopee/history-progress.module.css",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f4fea62e563cf665092c6774a629d87a319bbc6b74a6b15aee4f08a702b8b487",
+      "reason": "Style the Shopee history range controls inside the owned UI path."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-004-history-ledger-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "cd06a37df2b598e128f3def2088dd6104b7859bab43539bc118f2649a5147dd8",
+      "reason": "Propose service-write owner-read history scopes, events, checkpoints and return revision reconciliation."
+    },
+    {
+      "path": "tests/cs-shopee-history-ledger-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ba5b969123d88d7c80c845f05ed2db945c00064a4bc1860e11f26e2e2fedfb94",
+      "reason": "Exercise PGlite ACL, replay, shop isolation, revision and eight-shop job fan-out."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-005-target-refresh-cas-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7add4a60afbc68999b4a8a122f4b7e0903ac23eeba463f55338fc0c36d852eff",
+      "reason": "Propose globally serialized provider refresh claims and target-only latest-payload staging."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-006-common-ui-target-refresh.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "b96079944f3ccb656b51c7d75fa2b80298ba45c567d2160488568d4d505b45c5",
+      "reason": "Propose current integrated UI mounting and target-aware credential refresh hooks."
+    },
+    {
+      "path": "tests/cs-shopee-history-route-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4a5e64833728acb4ef88ea304b67687d39b4d9a1874a8c5c42a6f004a8d54772",
+      "reason": "Run the real Next route through an isolated HTTP Supabase facade backed by PGlite."
+    },
+    {
+      "path": "lib/channels/cs/shopee/history-event-evidence.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a621faa42e4ca4c17b189a93235348d2e2a05d366dc311f64cd6a2a74f343ef4",
+      "reason": "Build exact shop-bound body-free page, continuation and interruption evidence."
+    },
+    {
+      "path": "tests/cs-shopee-history-event-evidence.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "993f8ce5f132547137cd023c5be0ce3902d25ee0e042db7ddab6ad55e69dbd7f",
+      "reason": "Verify review revision binding, Returns 10 plus 1 checkpoint and authorization interruption evidence."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-007-history-start-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "adb3bf4f30bee3e78b1d4e512ddf6ce155adf49cc4e1e8e5bdca0089f405e3ce",
+      "reason": "Propose idempotent one-job-per-shop-scope history start with 15-day return windows."
+    },
+    {
+      "path": "lib/channels/cs/shopee/history-authorization.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c9e81703de6643fc1d9369681f6fd3aea36fec258ad467d445e6cb7136cb9a67",
+      "reason": "Convert only history job 401 and 403 failures to exact authorization codes."
+    },
+    {
+      "path": "tests/cs-shopee-history-authorization.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "12fca344e97e2965946bb00e9e78d10e22093e2e85f9533965a09cafd1767dca",
+      "reason": "Verify authorization conversion does not change ordinary pulls or non-auth failures."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-008-history-event-wiring.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8b8809fb790de32c8d071759c62300888f6b2c180241f70539b5c43ee6bb185f",
+      "reason": "Propose current-integrated continuation, authorization and atomic history event wiring."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-009-atomic-history-completion-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "01491db0840bd5b91de55ee4ff78af61de38720f67b7112a11f547d062ac4c89",
+      "reason": "Propose one-transaction gateway completion and history event insertion."
+    },
+    {
+      "path": "tests/cs-shopee-atomic-history-completion-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1a7b77a9088efa4546babde131e63778244ec4ce8f3538c5068d0bcd2516dbc7",
+      "reason": "Verify atomic commit, invalid-event rollback and service-only wrapper ACL."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/resume-after-delta-002.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "86df6bf632c3b37551275e1b7d41c98015acfe6a85996a3a89a6e5f275624a2f",
+      "reason": "Separate local implementation evidence from provider, isolated database, authenticated web and operating completion."
+    }
+  ],
+  "verification": {
+    "focusedTests": "32/32 passed",
+    "pgliteAtomicCompletion": "3/3 passed",
+    "typescriptNoEmit": "passed",
+    "eslint": "passed",
+    "diffCheck": "passed",
+    "integratedPatch006ApplyCheck": "passed",
+    "integratedPatch008ApplyCheck": "passed",
+    "integratedPatchedTypescriptNoEmit": "passed",
+    "integratedPatchedEslint": "passed",
+    "integratedPatchedCommonRegression": "103/104 passed; the single generic operation-matrix failure reproduces unchanged on the integrated preimage",
+    "secretAndCustomerBodyScan": "synthetic fixtures and metadata only; no real credential or customer original added"
+  },
+  "evidenceBoundary": {
+    "providerReadSuccessfulShops": 0,
+    "providerGetPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "authenticatedOperatingWebReadback": false,
+    "customerReplyPerformed": false,
+    "buyerChatImplemented": false,
+    "commitPushDeployPerformed": false
+  },
+  "integrationOrder": [
+    "copy and hash-check owned files in this delta",
+    "apply SQL review drafts 004, 005, 007 and 009 to an isolated database only",
+    "apply common patches 006 then 008 against the recorded integrated preimages",
+    "rerun focused PGlite, route, TypeScript and common regression checks",
+    "obtain explicit authorization before any target refresh or operating database action"
+  ]
+}

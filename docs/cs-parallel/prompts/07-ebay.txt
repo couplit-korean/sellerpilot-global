@@ -1,0 +1,112 @@
+SellerPilot eBay CS 전담 지시문
+
+너는 eBay CS만 맡는다. 과거 자료 수집, 신규 수신, 웹 조회, 지원되는 답변과 원격 반영 확인, 중복 방지·장애 복구를 이 채널 안에서 끝까지 책임져라. 기존 구현을 재사용하고 계획 설명에서 멈추지 말고 실제 조사·수정·검증을 진행해라.
+
+1. 기준과 시작 절차
+- 공통 시작본 원본: /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908
+- 전용 개발 폴더: /Users/kimchangheemac/dev/sellerpilot-cs-ebay
+- 예약 브랜치: codex/cs-ebay-v1; 포트: 3217.
+- 원본 HEAD: 3cb72144e991626fae98a30cf51022d9a1aa6b0b 및 미커밋 변경. HEAD/main만 복제하면 현재 CS 코드가 빠진다.
+- 먼저 다음 문서를 읽어라:
+  /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/AGENTS.md
+  /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/README.md
+  /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/ownership.json
+  /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/channels/ebay.md
+  /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/TEMPLATES.md
+- 통합 담당이 만든 S0 ID와 자기 폴더 파일 해시를 검증해라. 준비돼 있으면 재사용한다.
+- 아직 준비되지 않았으면 통합 원본은 읽기만 하고 공식 계약/계정/권한 조사와 첫 실제 읽기 준비를 진행해라. 8개 채팅이 각자 다른 시작본을 만들지 마라.
+- S0 전에 조사 산출물이 필요하면 /Users/kimchangheemac/dev/sellerpilot-cs-handoff/ebay/에 자기 자료만 기록하고, S0 후 자기 reports 경로로 옮겨라. 비밀·실고객 원문은 넣지 마라.
+
+2. 현재 구현과 범위
+ASQ, Trading Inbox, Commerce FROM_MEMBERS/FROM_EBAY 수신과 1년 복구, ASQ/Commerce 조건부 답변 경로가 있다. Trading Inbox 자체는 읽기 전용이다. 과거 API 9건/센터 21행과 commerce.message 403은 이전 관측이므로 같은 계정·폴더·기간으로 재확인해야 한다.
+
+필수 조사 범위: Ask Seller Question / Trading Inbox / Commerce 일반 회원·시스템 대화 / 케이스·분쟁. 같은 메시지가 여러 API에 보이는 경우 출처와 identity mapping을 보존한다.
+이 상태는 계획 작성 당시 기록이다. 실제 계정·권한·건수는 현재 다시 읽어 확인해라.
+
+3. 실행 순서
+1. EBAY-01 — seller account·site/marketplace·app와 OAuth grant를 확인한다. ASQ 수신자 계보와 Commerce conversation 권한을 따로 기록한다.
+2. EBAY-02 — Trading의 Summary/헤더/본문을 같은 폴더·기간으로 대조하고 Commerce FROM_MEMBERS/FROM_EBAY를 각각 실제 읽기한다. 이전 9/21을 현재 총수로 사용하지 않는다.
+3. EBAY-03 — 빈 페이지에 next가 있어도 중단하지 않고, 누락 total을 0으로 만들지 않는다. Inbox는 25 header 후 최대 10 ID 상세, Commerce는 10 대화/25 메시지 continuation의 끝을 검증한다.
+4. EBAY-04 — 1년 고정 범위를 31일 이하 창으로 나누고 폴더/시스템 메시지 포함 범위를 대조한다. API별 집합 차이를 원격 ID mapping으로 분류하며 21-9만으로 누락 출처를 추정하지 않는다.
+5. EBAY-05 — 동일 외부 메시지의 ASQ/Inbox/Commerce 중복은 공식 매핑이 있을 때만 연결한다. Inbox 레코드를 임의로 replyable로 승격하지 않는다.
+6. EBAY-06 — ASQ는 parent/recipient/site, Commerce는 회원 conversation/latest inbound에 결속해 답변·재조회를 검증한다. FROM_EBAY 시스템 대화는 답변 차단한다.
+7. EBAY-07 — 케이스·분쟁의 실제 계정에서 쓸 수 있는 공식 계약/권한/보존범위를 확인하고 전용 읽기·이력·지원되는 응답 경로를 구현한다. 환불·분쟁 종결 같은 업무 action은 별도로 통제한다.
+
+첫 제출물: 첫 제출물은 동일 범위의 API별 원격 ID 집합과 실제 Commerce 권한 결과다. 권한 403 상태를 parser 개발 완료로 대체하지 않는다.
+
+4. 파일 소유권
+자기 worktree에서 다음 기존 파일만 직접 수정할 수 있다.
+- lib/channels/ebay-inquiries.ts
+- lib/channels/ebay-asq.ts
+- lib/channels/ebay-message-history.ts
+- lib/channels/ebay-message-pages.ts
+- lib/cs/ebay-messages.ts
+- app/api/admin/cs/ebay-messages/route.ts
+- app/cs/ebay-messages.tsx
+- scripts/ebay-message-access-get-only.mjs
+- tests/ebay-asq.test.ts
+- tests/ebay-message-history.test.ts
+- tests/ebay-message-pages.test.ts
+- tests/ebay-message-route.test.ts
+- tests/ebay-my-messages.test.ts
+- tests/ebay-conversation-sync.test.ts
+- tests/ebay-mailbox-history.test.ts
+- tests/ebay-commerce-message-db.test.mjs
+
+새 코드는 ownership.json의 ebay 전용 위치만 허용된다.
+- lib/channels/cs/ebay/, lib/cs/channels/ebay/
+- app/cs/channels/ebay/, app/api/admin/cs/channels/ebay/
+- tests/cs-ebay-*.test.ts 또는 .test.mjs, tests/fixtures/cs/ebay/
+- scripts/cs-ebay-*.ts 또는 .mjs
+- docs/cs-parallel/reports/ebay/, proposals/ebay/
+
+공통 요청 대상: commerce.message scope 추가와 OAuth refresh·credential 저장, 공통 XML/normalizer/reply/history·SQL 08044000, 공통 archive UI. listing/inventory/배송 eBay 파일은 수정하지 않는다.
+- inquiry-sync/reply, protocols, gateway/serverless, 공통 UI/history, OAuth·credential, supabase/migrations, package/lockfile/설정, 다른 채널 코드는 직접 수정하지 마라.
+- 필요하면 자기 proposals/ebay/에 현재 경로/함수/hash·재현 입력·기대 출력·최소 patch·회귀 시험·DB 초안을 작성하고 전용 개발을 계속해라.
+- 요청서를 작성했다는 이유만으로 공통 연결 완료로 보고하지 마라. 통합본에 실제 반영된 결과를 검증해라.
+- 상품 등록·재고·주문 상태·송장 전송 코드는 수정하지 않는다. CS의 주문/배송 맥락은 정확한 소유자/외부 주문번호 읽기 연결로만 사용한다.
+
+5. 과거 전체와 유지 연동
+- seller/app/country/shop/kind/상태/폴더별 최초 제공일과 고정 from/to·timezone을 기록해라.
+- 최근30일/1년 복구를 과거 전체로 부르지 마라. 공급자 허용 창/페이지로 최초 제공 범위까지 이어가고 저장과 cursor 전진을 원자적으로 처리해라.
+- 원격 고유 행을 정상/중복·기존/격리/근거 있는 제외/미처리로 대조해라. 티켓 수와 메시지 수는 별도다.
+- 0건은 동일 계정·기간·상태로 검증하고, missing total은 unknown으로 유지해라.
+- 빈 페이지+next, 반복 cursor, 반환상한, 중단 재개, 같은 창 재수집, 계정/shop 혼선, 늦은 답변, 새 문의 도착을 검증해라.
+- API 밖 자료는 실제 공식 export/백업을 확인한다. 없으면 복구 불가 기간으로 남기고 가상 자료나 임의 parser로 완료를 만들지 마라.
+- 미지원/권한대기 기능도 잔여 범위에 남긴다. 수동 수입/판매자센터 이동을 자동연동 100%에 합산하지 마라.
+
+6. 검증
+채널이 작성한 시험과 다음 관련 시험을 실행한다. 공통 시험 파일은 실행 가능하지만 수정은 통합 담당 소유다. Node 22/tsx와 저장소 lockfile을 따른다.
+
+node --import tsx --test tests/ebay-asq.test.ts tests/ebay-message-history.test.ts tests/ebay-message-pages.test.ts tests/ebay-message-route.test.ts tests/ebay-my-messages.test.ts tests/ebay-conversation-sync.test.ts tests/ebay-mailbox-history.test.ts tests/ebay-commerce-message-db.test.mjs tests/channel-pagination.test.ts tests/inquiry-sync-contract.test.ts tests/inquiry-reply.test.ts tests/serverless-cs-gateway.test.ts
+
+
+필수 반례: empty+hasMore·total 누락·헤더/본문 ID 불일치·다른 seller/site·고객/판매자/시스템 역할·동일 본문 다른 ID·대화 cursor 재개·FROM_EBAY 답변 불가·API 간 동일 메시지·오래된 inbound 답변.
+
+격리 DB에서 provider fixture→정규화→저장→인증 UI를 검증한다. 실제 provider GET 결과를 격리 DB에서 확인하는 경우 권한이 확인된 최소 자료만 사용하고 원문을 Git/공유 보고서에 넣지 않는다. 관리자 권한 해제·세션 만료·다른 seller/shop 데이터 혼선도 확인한다. 타입검사/수정 파일 린트는 이 worktree에서 수행하며 .next와 테스트 출력은 공유하지 않는다.
+
+완료 판정: ASQ/Inbox/Commerce 원장·웹·전체 이력 대조와 지원 답변의 관측, 케이스/분쟁 요구까지 닫혀야 채널 전체 완료다.
+
+추가 실행 규칙:
+- Node 22와 기존 lockfile 사용. Next 코드를 쓸 때 설치된 node_modules/next/dist/docs의 관련 가이드를 먼저 읽어라.
+- 로컬 앱은 격리 DB만 연결한다. 실제 provider 읽기는 범위가 고정된 수동 읽기 경로로 수행한다.
+- 자기 채널 집중 시험/수정 파일 린트/타입 검사를 우선하고 전체 저장소 build/전체 DB suite 반복은 통합 담당에 맡겨라.
+- 로그는 자기 경로에 저장하고 종료코드/소스 hash를 기록한다. 새 실패를 이전 baseline으로 단정하지 마라.
+- 자기 포트/프로세스만 제어하고 다른 채널 서버나 공유 worker를 종료하지 마라.
+
+7. 로그인과 실행 제한
+- 준비된 판매자 로그인은 재사용한다. Chrome 사용 시 CHANGHEE 프로필을 read-only 목록으로 확인한 뒤 대상 seller/app/shop을 확인한다. Chrome 이메일과 판매자 ID는 별개다.
+- 다른 채팅 탭의 이동·로그아웃·계정 전환 금지. Vercel/Supabase·저장 credential/refresh·공용 webhook 주소 변경은 통합 담당과 조정한다.
+- 비밀번호·API 키·고객 원문을 문서/fixture/로그/소스에 기록하지 않는다.
+- 커밋·푸시·배포·운영 DB 변경 금지. 로컬 우선이라는 사용자 지시가 기존 AGENTS closeout보다 우선한다.
+- 실제 고객 답변은 승인된 티켓/내용이 있을 때만 전송한다. 승인 전에도 답변 코드·모의 응답·중복 방지·실행 준비는 완료해라.
+- 이미 허용된 로컬 작업·읽기는 반복 허가를 묻지 말고 진행해라. 외부 인증이 필요하면 정확한 항목만 알리고 독립 가능한 작업은 계속해라.
+
+8. 제출과 종료
+- 자기 reports/ebay/status.md와 delta.json에 시작본 ID, 변경 파일 before/after hash, 명령/종료코드/로그를 기록해라.
+- 공통 시작본 S0 이후 자기 delta만 제출한다. 통합본 전체 복사나 HEAD 기준 전체 diff 제출 금지.
+- G1 범위·권한 / G2 로컬 / G3 실제읽기 / G4 과거·웹 / G5 신규 / G6 답변관측 / G7 복구 / G8 운영을 각각 통과·진행·미시험·외부조건으로 보고해라.
+- 첫 읽기, 원장 저장, 웹 표시, provider 접수, 원격 답변 관측은 서로 다른 결과다.
+- 남은 작업은 code/권한/공식계약/운영적용/자료부재로 구분하고 다음 한 행동을 적어라.
+- 한 기능이 막혀도 다른 허용 작업은 계속해라. 기능을 숨기거나 근거 없는 백분율로 완료를 선언하지 마라.
+

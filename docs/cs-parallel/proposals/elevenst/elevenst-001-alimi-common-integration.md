@@ -1,0 +1,21 @@
+# 공통 변경 요청 elevenst-001
+
+- 목적: 정상 실조회가 확인된 11번가 긴급알리미를 긴급문의와 긴급알림으로 분리해 공통 수신·이력·답변 관측 경로에 연결한다.
+- 요청 채널: elevenst
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-elevenst-alimi-get-only/1`
+- 수정할 공통 파일과 함수: `lib/channels/protocols.ts::elevenstSellerXmlRequest`, `lib/channels/operations.ts`, `lib/channels/catalog.ts`, `lib/channels/operation-availability.ts`, 공통 history/reply dispatch 및 capability UI
+- 현재 파일 SHA-256: protocols `8f2bbead6f2c6935c64ecd79cb5e27c1e22132a115f6a05b2d9277f68bf0ec1a`; operations `da653ed5fc9b66e03817603b850b8e6d091274453b86956f5ee59bd718ca1eab`; catalog `80c1b59ffcaf655f975b334500ff318e8b56a446751dc70dc45ae7014767c31b`; availability `b67829201afc79c7b59a6939c219322c0053ea55e30a3399e8db1b1770129511`
+- DB 객체(해당 시 이름과 signature): 통합 담당이 기존 CS conversation/history 스키마에 `elevenst/urgent_inquiry`, `elevenst/urgent_notice` kind를 배정. 새 migration 번호는 통합 담당이 결정한다.
+- 기존 동작: 공통 11번가 XML parser는 상품 Q&A만 구조화하며 `<alimListInfo>`를 반환하지 않는다. 긴급알리미는 gateway/catalog/history에 없다.
+- 문제를 재현하는 최소 입력: 30일 이내 `GET /rest/alimi/getalimilist/20260810/20260908`; 정상 빈 응답은 HTTP 200, `ns2:alimi`, `result_code=0`이다.
+- 원하는 동작: 최대 30일 검증, `result_code=0` 정상 빈 결과, 음수 오류 fail-closed, `emerNtceClfNo1` 10/11 분리, `emerTypeCd` 01/02 분리, `memId`·`memNm` 제거, `emerNtceSeq`·`emerCtntSeq` 원격 ID 보존.
+- 전용 모듈 경로와 export: `lib/channels/cs/elevenst/contracts.ts::{ELEVENST_ALIMI_STATUSES,normalizeElevenstAlimiRow,verifyElevenstAlimiWriteAcceptance,planElevenstWindows}`
+- 기존/새 입력·출력 계약: 입력에 seller/account lineage와 `startDate/endDate/status?/orderNo?`; 출력은 분리 kind, 상태, 원격 ID, 본문/일시/기한, 주문 ID, 주문상품순번, reply 목록과 source digest. 고객 ID/이름은 제외한다.
+- 최소 변경안: parser에 bounded `<alimListInfo>` 추출을 추가하고 전용 normalizer로 넘긴다. GET은 신규 operation/kind로만 라우팅한다. PUT은 승인된 행·정확한 `emerNtceSeq`·action별 ACK 100/200 뒤 동일 ID 재조회까지 별도 상태로 기록한다.
+- 다른 채널 영향: 없음. 공통 `inquiries.list/reply`에 11번가 kind 분기를 추가하되 기존 Product Q&A 기본 계약은 유지한다.
+- 상품/주문/배송 mutation 영향: 없음. 주문번호와 주문상품순번은 읽기 맥락으로만 사용한다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-elevenst-contracts.test.ts tests/cs-elevenst-alimi-get-only.test.mjs` 및 기존 11번가 집중 7파일 suite.
+- migration 선행/preimage/ACL 요구: 현재 prod에는 Q&A migration `20260908049000`도 미적용이다. 통합 전 preimage/ACL 검증과 kind별 실행 플래그가 필요하다.
+- 우선순위: 첫 실제 읽기/웹 차단
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

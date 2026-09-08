@@ -188,10 +188,40 @@ test("11st periodic windows keep stable dedupe keys while advancing provider dat
 
 test("Qoo10 inquiry sync covers every documented state with disjoint periodic identities", () => {
   const now=new Date("2026-08-20T07:00:00.000Z");
-  assert.deepEqual(inquirySyncArguments("qoo10", now), ["S1","S2","S3"].map(status=>({
-    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: status },
-  })));
-  assert.deepEqual(inquirySyncRequests("qoo10",now).map(request=>request.periodicKey),["inquiries:0","inquiries:1","inquiries:2"]);
+  assert.deepEqual(inquirySyncArguments("qoo10", now), [
+    ...["S1","S2","S3"].map(status=>({
+      params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: status },
+    })),
+    { kind: "claim", params: { search_Sdate: "20260814160000", search_Edate: "20260820160000", search_condition: "2" } },
+  ]);
+  assert.deepEqual(inquirySyncRequests("qoo10",now).map(request=>request.periodicKey),["inquiries:0","inquiries:1","inquiries:2","inquiries:claim:all"]);
+});
+
+test("eBay inquiry sync schedules ASQ, mailbox and Commerce Message with separate durable identities", () => {
+  const now = new Date("2026-08-20T07:00:00.000Z");
+  const requests = inquirySyncRequests("ebay", now);
+  assert.deepEqual(requests.map((request) => request.periodicKey), [
+    "inquiries:asq",
+    "inquiries:mailbox",
+    "inquiries:conversation:from_members",
+    "inquiries:conversation:from_ebay",
+  ]);
+  assert.equal(requests[1]?.arguments.kind, "mailbox");
+  assert.equal(requests[1]?.arguments.folderId, 0);
+  assert.equal(requests[1]?.arguments.pageNumber, 1);
+  assert.equal(requests[1]?.arguments.entriesPerPage, 25);
+  assert.deepEqual(requests[2]?.arguments, {
+    kind: "conversation",
+    conversationType: "FROM_MEMBERS",
+    startTime: "2026-08-14T07:00:00.000Z",
+    endTime: "2026-08-20T07:00:00.000Z",
+    conversationOffset: 0,
+  });
+  assert.deepEqual(requests[3]?.arguments, {
+    kind: "conversation",
+    conversationType: "FROM_EBAY",
+    conversationOffset: 0,
+  });
 });
 
 test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {
@@ -200,7 +230,6 @@ test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries
     query: {
       fromDate: "2026-08-14T07:00:00.000Z",
       toDate: "2026-08-20T07:00:00.000Z",
-      answered: false,
       page: 1,
       size: 100,
     },
@@ -209,7 +238,6 @@ test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries
     query: {
       startSearchDate: "2026-08-14",
       endSearchDate: "2026-08-20",
-      answered: false,
       page: 1,
       size: 200,
     },
@@ -220,25 +248,40 @@ test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries
   );
 });
 
-test("Coupang inquiry sync separates product, unanswered call-center, and transferred call-center queues", () => {
+test("Coupang inquiry sync separates product, call-center and all three after-sales queues", () => {
   const requests = inquirySyncRequests("coupang", new Date("2026-08-20T07:00:00.000Z"));
   assert.deepEqual(requests.map((request) => request.periodicKey), [
-    "inquiries:product:noanswer",
-    "inquiries:call-center:no_answer",
+    "inquiries:product:all",
+    "inquiries:call-center:none",
     "inquiries:call-center:transfer",
+    "inquiries:return_request:all",
+    "inquiries:cancel_request:all",
+    "inquiries:exchange_request:all",
   ]);
   assert.deepEqual(requests.map((request) => request.arguments), [
     {
       kind: "product",
-      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 },
+      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", answeredType: "ALL", pageNum: 1, pageSize: 50 },
     },
     {
       kind: "call-center",
-      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 },
+      query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "NONE", pageNum: 1, pageSize: 30 },
     },
     {
       kind: "call-center",
       query: { inquiryStartAt: "2026-08-14", inquiryEndAt: "2026-08-20", partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 },
+    },
+    {
+      kind: "return_request",
+      query: { searchType: "timeFrame", createdAtFrom: "2026-08-14T16:00", createdAtTo: "2026-08-20T16:00", cancelType: "RETURN" },
+    },
+    {
+      kind: "cancel_request",
+      query: { searchType: "timeFrame", createdAtFrom: "2026-08-14T16:00", createdAtTo: "2026-08-20T16:00", cancelType: "CANCEL" },
+    },
+    {
+      kind: "exchange_request",
+      query: { createdAtFrom: "2026-08-14T16:00:00", createdAtTo: "2026-08-20T16:00:00", maxPerPage: 10 },
     },
   ]);
 });
@@ -255,16 +298,16 @@ test("periodic Korean customer inquiry boundaries use Seoul calendar dates befor
   assert.equal((customer?.query as Record<string, unknown>).endSearchDate, "2026-08-20");
 });
 
-test("Korean inquiry history refresh is bounded to official windows and never invents an 11st API", () => {
+test("inquiry history refresh is bounded to verified provider windows", () => {
   const now = new Date("2026-08-20T07:00:00.000Z");
   const coupang = inquiryHistorySyncRequests("coupang", now, 30);
-  assert.equal(coupang.length, 25);
+  assert.equal(coupang.length, 40);
   assert.equal(coupang[0]?.periodicKey, "inquiries:history:2026-07-22:2026-07-28:product:all");
-  assert.equal(coupang.at(-1)?.periodicKey, "inquiries:history:2026-08-19:2026-08-20:call-center:transfer");
+  assert.equal(coupang.at(-1)?.periodicKey, "inquiries:history:2026-08-19:2026-08-20:exchange_request");
   for (const request of coupang) {
-    const query = request.arguments.query as Record<string, unknown>;
+    const [, , start, end] = request.periodicKey.split(":");
     const inclusiveDays = Math.round(
-      (Date.parse(`${String(query.inquiryEndAt)}T00:00:00.000Z`) - Date.parse(`${String(query.inquiryStartAt)}T00:00:00.000Z`))
+      (Date.parse(`${end}T00:00:00.000Z`) - Date.parse(`${start}T00:00:00.000Z`))
         / 86_400_000,
     ) + 1;
     assert.ok(inclusiveDays >= 1 && inclusiveDays <= 7);
@@ -293,8 +336,68 @@ test("Korean inquiry history refresh is bounded to official windows and never in
       },
     },
   }]);
-  assert.deepEqual(inquiryHistorySyncRequests("elevenst", now, 30), []);
+  assert.deepEqual(inquiryHistorySyncRequests("qoo10", now, 30).map((request) => request.periodicKey), [
+    "inquiries:history:2026-07-22:2026-08-20:s1",
+    "inquiries:history:2026-07-22:2026-08-20:s2",
+    "inquiries:history:2026-07-22:2026-08-20:s3",
+    "inquiries:history:2026-07-22:2026-08-20:claim:all",
+  ]);
+  assert.deepEqual(inquiryHistorySyncRequests("ebay", now, 30), [{
+    periodicKey: "inquiries:history:conversation:from_ebay",
+    arguments: {
+      kind: "conversation",
+      conversationType: "FROM_EBAY",
+      conversationOffset: 0,
+    },
+  }, {
+    periodicKey: "inquiries:history:2026-07-22T07:00:00.000Z:2026-08-20T07:00:00.000Z:asq",
+    arguments: {
+      startCreationTime: "2026-07-22T07:00:00.000Z",
+      endCreationTime: "2026-08-20T07:00:00.000Z",
+      pageNumber: 1,
+      entriesPerPage: 25,
+    },
+  }, {
+    periodicKey: "inquiries:history:2026-07-22T07:00:00.000Z:2026-08-20T07:00:00.000Z:mailbox",
+    arguments: {
+      kind: "mailbox",
+      startTime: "2026-07-22T07:00:00.000Z",
+      endTime: "2026-08-20T07:00:00.000Z",
+      folderId: 0,
+      pageNumber: 1,
+      entriesPerPage: 25,
+    },
+  }, {
+    periodicKey: "inquiries:history:2026-07-22T07:00:00.000Z:2026-08-20T07:00:00.000Z:conversation:from_members",
+    arguments: {
+      kind: "conversation",
+      conversationType: "FROM_MEMBERS",
+      startTime: "2026-07-22T07:00:00.000Z",
+      endTime: "2026-08-20T07:00:00.000Z",
+      conversationOffset: 0,
+    },
+  }]);
+  const retainedEbay = inquiryHistorySyncRequests("ebay", now, 365);
+  assert.equal(retainedEbay.length, 37);
+  const retainedRanges = retainedEbay.filter((request) => request.arguments.kind === "mailbox")
+    .map((request) => ({
+      start: Date.parse(String(request.arguments.startTime)),
+      end: Date.parse(String(request.arguments.endTime)),
+    }));
+  assert.equal(retainedRanges[0]?.start, now.getTime() - 364 * 86_400_000);
+  assert.equal(retainedRanges.at(-1)?.end, now.getTime());
+  assert.ok(retainedRanges.every(({ start, end }) => end > start && end - start < 31 * 86_400_000));
+  for (let index = 1; index < retainedRanges.length; index += 1) {
+    assert.equal(retainedRanges[index]?.start, (retainedRanges[index - 1]?.end ?? 0) + 1);
+  }
+  const elevenst = inquiryHistorySyncRequests("elevenst", now, 30);
+  assert.equal(elevenst.length, 5);
+  assert.ok(elevenst.every((request) => request.arguments.answerStatus === "00"));
+  assert.deepEqual(elevenst.at(-1)?.arguments, {
+    startDate: "20260819", endDate: "20260820", answerStatus: "00",
+  });
   assert.throws(() => inquiryHistorySyncRequests("coupang", now, 31), /INQUIRY_HISTORY_RANGE_INVALID/);
+  assert.throws(() => inquiryHistorySyncRequests("ebay", now, 366), /INQUIRY_HISTORY_RANGE_INVALID/);
 
   const beforeUtcMidnight = inquiryHistorySyncRequests("coupang", new Date("2026-08-19T16:30:00.000Z"), 7);
   assert.equal(beforeUtcMidnight[0]?.periodicKey, "inquiries:history:2026-08-14:2026-08-20:product:all");
@@ -313,10 +416,12 @@ test("Temu order and after-sales sync use the documented update checkpoints", ()
     },
   }]);
   assert.deepEqual(inquirySyncArguments("temu", now), [{
+    kind: "after_sales",
+    includeDetails: true,
     pageNo: 1,
     pageSize: 200,
-    updateAtStart: new Date("2026-08-06T07:00:00.000Z").getTime(),
-    updateAtEnd: now.getTime(),
+    updateAtStart: Math.floor(new Date("2026-08-06T07:00:00.000Z").getTime() / 1000),
+    updateAtEnd: Math.floor(now.getTime() / 1000),
   }]);
 });
 

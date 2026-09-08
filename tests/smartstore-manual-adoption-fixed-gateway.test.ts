@@ -17,13 +17,13 @@ import {
   SmartstoreManualAdoptionError,
 } from "../lib/server-smartstore-manual-adoption";
 
-const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
+const workerUrl = new URL("../scripts/commerce-gateway-job.mjs", import.meta.url);
 const completionRouteUrl = new URL(
-  "../app/api/channel-gateway/worker/complete/route.ts",
+  "../lib/channels/commerce-worker-completion.ts",
   import.meta.url,
 );
 const serverlessGatewayUrl = new URL(
-  "../lib/channels/serverless-cs-gateway.ts",
+  "../lib/channels/commerce-completion.ts",
   import.meta.url,
 );
 const digest = "a".repeat(64);

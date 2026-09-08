@@ -1311,6 +1311,31 @@ test("an AI support draft is generation-bound and a stale completion is discarde
 test("a Temu after-sales revision reopens a manually resolved ticket and fences the stale tab", async () => {
   const db = await createDatabase();
   try {
+    await applyReviewedCs140(db);
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907200000_enable_shopee_comment_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908045000_enable_shopee_return_refund_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908046000_enable_temu_after_sales_detail_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908047000_enable_coupang_after_sales_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908048000_enable_qoo10_claim_cs.sql', import.meta.url),
+      'utf8',
+    ));
     await seedAdminAndCredential(db);
     await setClaims(db, "authenticated");
     const credentialId = await scalar(
@@ -1321,8 +1346,24 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
         now() + interval '365 days', 180, 30, 0
       )`,
     );
+    await setClaims(db, "service_role");
+    // This fixture verifies the CS wrapper and ledger. Temu's separate provider
+    // certification workflow is covered by its own migration suite, so install
+    // the already-certified fixture identity without exercising that workflow.
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key = $2,
+              seller_account_key_source = 'provider_certified_v1',
+              seller_account_verified_at = clock_timestamp()
+        where id = $1`,
+      [credentialId, "c".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
     const externalTicketId = "aftersales:AFTER-SALES-REVISION";
-    const payload = ({ inboundKey, remoteMessageId, group, receivedAt }) => JSON.stringify([{
+    const { createHash } = await import("node:crypto");
+    const digest = (value) => createHash("sha256").update(value).digest("hex");
+    const payload = ({ inboundKey, revision, group, receivedAt }) => JSON.stringify([{
       externalTicketId,
       customerName: "Temu 구매자",
       subject: "반품·환불 요청",
@@ -1331,14 +1372,31 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       providerStatus: "waiting",
       priority: 2,
       receivedAt,
-      remoteMessageId,
+      remoteMessageId: `AFTER-SALES-REVISION:${digest(revision)}`,
       inboundKey,
       ticketKind: "after_sales",
       providerContext: {
         afterSalesSn: "AFTER-SALES-REVISION",
+        orderSn: "ORDER-REVISION",
         statusGroup: group,
         availableOperations: group === "1" ? ["return"] : ["approve"],
+        providerRevision: digest(revision),
+        providerRevisionSource: "updateAt",
+        replySupported: false,
+        afterSalesCases: [{
+          afterSalesSn: "AFTER-SALES-REVISION-CHILD",
+          orderSn: "ORDER-REVISION",
+          reasonCode: "7",
+          reason: "damaged",
+          buyerComment: `Temu 상태 ${group}`,
+          status: group,
+          requestedQuantity: 1,
+          requestedRefund: { currency: "KRW", amount: "3190" },
+        }],
+        refundSummary: { buyerTotalRefund: { currency: "KRW", amount: "3190" } },
+        detailContract: "temu.aftersales.parentaftersales.detail.get",
       },
+      replyContext: {},
     }]);
     const inboundOne = "temu:test:revision-one";
     const inboundTwo = "temu:test:revision-two";
@@ -1348,7 +1406,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundOne,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-one",
+        revision: "revision-one",
         group: "1",
         receivedAt: "2026-08-25T09:00:00.000Z",
       })],
@@ -1372,7 +1430,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundTwo,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-two",
+        revision: "revision-two",
         group: "2",
         receivedAt: "2026-08-25T10:00:00.000Z",
       })],
@@ -1403,7 +1461,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundTwo,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-two",
+        revision: "revision-two",
         group: "2",
         receivedAt: "2026-08-25T11:00:00.000Z",
       })],
@@ -1419,6 +1477,168 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       latest_inbound_key: inboundTwo,
       inbound_count: 2,
     }]);
+
+    await setClaims(db, "authenticated");
+    const coupangCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'coupang', 'production',
+        '{"access_key":"coupang-cs-access","secret_key":"coupang-cs-secret","vendor_id":"A00012345"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
+    await setClaims(db, "service_role");
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp()
+        where id=$1`,
+      [coupangCredentialId, "d".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
+    const coupangRevision = digest("coupang-return-revision");
+    const coupangInbound = "coupang:test:return-revision";
+    const coupangPayload = [{
+      externalTicketId: "coupang:return:50229613",
+      customerName: "구*숙",
+      subject: "쿠팡 반품 요청 · 주문 28000008707838",
+      message: "사이즈가 맞지 않습니다.",
+      status: "waiting",
+      providerStatus: "waiting",
+      priority: 2,
+      receivedAt: "2026-09-08T01:01:00.000Z",
+      remoteMessageId: `return:50229613:${coupangRevision}`,
+      inboundKey: coupangInbound,
+      externalOrderReference: "28000008707838",
+      ticketKind: "after_sales",
+      providerContext: {
+        kind: "return_request",
+        receiptId: "50229613",
+        receiptType: "RETURN",
+        receiptStatus: "RETURNS_UNCHECKED",
+        faultType: "CUSTOMER",
+        reasonCode: "CHANGEMIND",
+        reasonCodeText: "필요 없어짐",
+        cancelReasonCategory1: "고객변심",
+        cancelReasonCategory2: "단순변심",
+        releaseStopStatus: "처리(이미출고)",
+        preRefund: false,
+        completeConfirmType: "UNDEFINED",
+        returnItems: [{ vendorItemId: "3187044096", vendorItemName: "옵션", sellerProductId: "57623797", cancelCount: 1, purchaseCount: 1, shipmentBoxId: "123456789", releaseStatus: "S" }],
+        returnDeliveries: [{ deliveryCompanyCode: "CJGLS", deliveryInvoiceNo: "1234" }],
+        replySupported: false,
+        providerRevision: coupangRevision,
+      },
+      replyContext: {},
+    }];
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'coupang',$2::jsonb)",
+      [coupangCredentialId, JSON.stringify(coupangPayload)],
+    ), 1);
+    assert.deepEqual((await db.query(
+      `select ticket_kind,external_order_reference,reply_context,
+              provider_context->>'kind' kind,provider_context ? 'requesterPhoneNumber' has_phone
+         from sellerpilot_private.support_tickets
+        where channel_key='coupang' and external_ticket_id='coupang:return:50229613'`,
+    )).rows, [{
+      ticket_kind: "after_sales",
+      external_order_reference: "28000008707838",
+      reply_context: {},
+      kind: "return_request",
+      has_phone: false,
+    }]);
+    const forbidden = structuredClone(coupangPayload);
+    forbidden[0].providerContext.requesterPhoneNumber = "010-0000-0000";
+    await assert.rejects(db.query(
+      "select public.sellerpilot_service_ingest_inquiries($1,'coupang',$2::jsonb)",
+      [coupangCredentialId, JSON.stringify(forbidden)],
+    ), /COUPANG_AFTER_SALES_CONTEXT_INVALID/);
+
+    const qoo10CredentialId = await scalar(
+      db,
+      "select id from sellerpilot_private.channel_credentials where channel='qoo10' and status='active' limit 1",
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp()
+        where id=$1`,
+      [qoo10CredentialId, "e".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
+    const qoo10Revision = digest("qoo10-claim-revision");
+    const qoo10Payload = [{
+      externalTicketId: "qoo10:claim:901234567890:20260908010000",
+      customerName: "Qoo10 주문 고객",
+      subject: "Qoo10 반품 요청 · 테스트 상품",
+      message: "상품이 손상되어 도착했습니다.",
+      status: "waiting",
+      providerStatus: "waiting",
+      priority: 2,
+      receivedAt: "2026-09-08T01:00:00.000Z",
+      remoteMessageId: `claim:901234567890:20260908010000:${qoo10Revision}`,
+      inboundKey: "qoo10:test:claim-revision",
+      senderRole: "customer",
+      externalOrderReference: "901234567890",
+      ticketKind: "after_sales",
+      providerContext: {
+        kind: "claim",
+        orderNo: "901234567890",
+        claimStatus: "4",
+        requestDate: "2026-09-08T01:00:00.000Z",
+        cancelRefundDate: "",
+        orderDate: "2026-09-07T01:00:00.000Z",
+        paymentDate: "",
+        shippingDate: "",
+        deliveredDate: "",
+        reason: "상품이 손상되어 도착했습니다.",
+        itemCode: "1234567890",
+        sellerItemCode: "SELLER-SKU-1",
+        itemTitle: "테스트 상품",
+        orderQty: "1",
+        paymentNation: "JP",
+        currency: "JPY",
+        paymentAmount: "1871",
+        deliveryCompany: "Sagawa",
+        trackingNo: "TRACK-OUT",
+        deliveryCompanyReturn: "Yamato",
+        trackingNoReturn: "TRACK-RETURN",
+        itemCondition: "",
+        nrDutyTarget: "",
+        nrSolType: "",
+        nrPartRefundCnt: "",
+        nrPartRefundBalance: "",
+        replySupported: false,
+        providerRevision: qoo10Revision,
+      },
+      replyContext: {},
+    }];
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",
+      [qoo10CredentialId, JSON.stringify(qoo10Payload)],
+    ), 1);
+    assert.deepEqual((await db.query(
+      `select ticket_kind,external_order_reference,reply_context,
+              provider_context->>'kind' kind,provider_context ? 'buyerMobile' has_buyer_mobile
+         from sellerpilot_private.support_tickets
+        where channel_key='qoo10' and external_ticket_id='qoo10:claim:901234567890:20260908010000'`,
+    )).rows, [{
+      ticket_kind: "after_sales",
+      external_order_reference: "901234567890",
+      reply_context: {},
+      kind: "claim",
+      has_buyer_mobile: false,
+    }]);
+    const qoo10Forbidden = structuredClone(qoo10Payload);
+    qoo10Forbidden[0].providerContext.buyerMobile = "090-0000-0000";
+    await assert.rejects(db.query(
+      "select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",
+      [qoo10CredentialId, JSON.stringify(qoo10Forbidden)],
+    ), /QOO10_CLAIM_CONTEXT_INVALID/);
   } finally {
     await db.close();
   }
@@ -2226,7 +2446,7 @@ test("Lazada normalized full history persists both roles without replacing the l
     const session = { session_id: "full-history", title: "test buyer", unread_count: 0 };
     const event = (id, sender, minute) => ({
       message_id: id, from_account_type: sender, send_time: `2026-08-25T09:0${minute}:00.000Z`,
-      content: { txt: id }, status: 0,
+      content: { txt: id }, status: 0, type: 1, template_id: 1,
     });
     const buyer1 = event("buyer-1", 1, 0);
     const seller1 = event("seller-1", 2, 1);
@@ -2346,7 +2566,7 @@ test("Lazada V2 commits buyers on quarantine overflow and isolates conflicting b
     const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:"test",app_secret:"test",country:"my",access_token:"test",provider_account_subject:`lazada:v1:${"A".repeat(60)}`,provider_account_identity_version:"v1"})]);
     const account = await scalar(db, "select seller_account_key from sellerpilot_private.channel_credentials where id=$1", [credentialId]);
     const normalize = (session, messages) => normalizeLazadaImHistory([{name:`inquiries-message:${session}:1`,data:{sellerpilotSession:{session_id:session},data:{message_list:messages}}}], "2026-09-05T10:00:00Z");
-    const message = (id, body, sender=1, time="2026-09-05T09:01:00Z") => ({message_id:id,content:{txt:body},from_account_type:sender,send_time:time});
+    const message = (id, body, sender=1, time="2026-09-05T09:01:00Z") => ({message_id:id,content:{txt:body},from_account_type:sender,status:0,type:1,template_id:1,send_time:time});
     const ingest = rows => scalar(db,"select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)",[credentialId,JSON.stringify(rows)]);
     await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
       select $1,$2,'lazada-im:cap','cap-'||n,repeat('a',64),'seller','minimal' from generate_series(1,1000)n`,[ADMIN_ID,account]);
@@ -2559,4 +2779,303 @@ test('historical seller snapshots never resolve a newer unanswered request and o
   assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'waiting');
   assert.equal(await scalar(db,"select latest_inbound_key from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'synthetic:new-question');
  }finally{await db.close();}
+});
+
+test('Shopee product-comment replies keep exact shop, item, comment, credential and inbound lineage', async () => {
+  const { normalizeChannelInquiries } = await import('../lib/channels/inquiry-sync.ts');
+  const db = await createDatabase();
+  try {
+    await applyReviewedCs140(db);
+    await seedAdminAndCredential(db);
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907200000_enable_shopee_comment_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908045000_enable_shopee_return_refund_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await setClaims(db, 'service_role');
+    const credentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production', $1::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+      [JSON.stringify({
+        partner_id: '2031489',
+        partner_key: 'test-partner-secret',
+        main_account_id: '9001',
+        shop_id: '1719148844',
+        shop_ids: ['1719148844'],
+        access_token: 'test-access-token',
+        refresh_token: 'test-refresh-token',
+        provider_account_identity_version: 'v1',
+        provider_account_subject: 'shopee:main:9001',
+      })],
+    );
+    const operation = {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.list',
+      safeMessage: 'ok',
+      steps: [{
+        name: 'inquiries',
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotProviderContext: { shopId: '1719148844' },
+          response: {
+            item_comment_list: [{
+              comment_id: 901,
+              item_id: 8001,
+              buyer_username: 'buyer-1',
+              comment: '배송이 빨랐어요',
+              rating_star: 5,
+              create_time: 1_788_000_000,
+            }],
+            more: false,
+            next_cursor: '',
+          },
+        },
+      }],
+    };
+    const rows = normalizeChannelInquiries('shopee', operation, '2026-09-07T00:00:00.000Z');
+    assert.equal(rows.length, 1);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(rows)],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select sender_role, body
+           from sellerpilot_private.support_inbound_messages
+          where channel_key = 'shopee'
+          order by received_at, sender_role`,
+      )).rows,
+      [
+        { sender_role: 'customer', body: '배송이 빨랐어요' },
+      ],
+    );
+    const ticket = (await db.query(
+      `select id::text as id, latest_inbound_key, seller_account_key, reply_context
+         from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'shopee'`,
+      [ADMIN_ID],
+    )).rows[0];
+    assert.deepEqual(ticket.reply_context, {
+      shopId: '1719148844',
+      commentId: '901',
+      itemId: '8001',
+    });
+    const request = JSON.stringify({
+      sellerpilotExpectedInboundKey: ticket.latest_inbound_key,
+      arguments: {
+        shopId: '1719148844',
+        commentId: '901',
+        itemId: '8001',
+        reply: '감사합니다.',
+        unrelatedProductWrite: 'must-not-enter-job',
+      },
+      unrelatedRootField: 'must-not-enter-job',
+    });
+    const jobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'shopee', '감사합니다.', $2::jsonb
+      )`,
+      [ticket.id, request],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '감사합니다.', $2::jsonb
+        )`,
+        [ticket.id, request],
+      ),
+      jobId,
+    );
+    const job = (await db.query(
+      `select channel, operation, seller_account_key, request_payload
+         from sellerpilot_private.channel_gateway_jobs where id = $1`,
+      [jobId],
+    )).rows[0];
+    assert.equal(job.channel, 'shopee');
+    assert.equal(job.operation, 'inquiries.reply');
+    assert.equal(job.seller_account_key, ticket.seller_account_key);
+    assert.deepEqual(job.request_payload.arguments, {
+      shopId: '1719148844',
+      commentId: '901',
+      itemId: '8001',
+      reply: '감사합니다.',
+    });
+    assert.equal('unrelatedRootField' in job.request_payload, false);
+
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '감사합니다.', $2::jsonb
+        )`,
+        [ticket.id, JSON.stringify({
+          sellerpilotExpectedInboundKey: ticket.latest_inbound_key,
+          arguments: { shopId: '1719148844', commentId: '901', itemId: '8002', reply: '감사합니다.' },
+        })],
+      ),
+      /Shopee comment context mismatch/,
+    );
+    assert.equal(
+      await scalar(db, "select sellerpilot_private.serverless_gateway_job_allowed('shopee', 'inquiries.list')"),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select sellerpilot_private.serverless_gateway_job_allowed('shopee', 'inquiries.reply')"),
+      true,
+    );
+    await issueWorkerToken(db);
+    const claim = {
+      id: jobId,
+      channel: 'shopee',
+      claim_token: '55555555-5555-4555-8555-555555555555',
+    };
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'running',
+              worker_token_id = (
+                select id from sellerpilot_private.ai_cli_worker_tokens where token_hash = $1
+              ),
+              claim_token = $2,
+              lease_expires_at = now() + interval '15 minutes',
+              started_at = now(),
+              updated_at = now()
+        where id = $3`,
+      [TOKEN_HASH, claim.claim_token, jobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        'select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)',
+        [TOKEN_HASH, claim.id, claim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(await completeReply(db, claim, {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.reply',
+      safeMessage: 'Shopee comment reply accepted',
+    }), true);
+    assert.deepEqual(
+      (await db.query(
+        `select status, provider_status, reply_delivery_status, reply_draft,
+                resolved_at is not null as has_resolved_at
+           from sellerpilot_private.support_tickets where id = $1`,
+        [ticket.id],
+      )).rows,
+      [{
+        status: 'resolved',
+        provider_status: 'answered',
+        reply_delivery_status: 'succeeded',
+        reply_draft: '감사합니다.',
+        has_resolved_at: true,
+      }],
+    );
+    operation.steps[0].data.response.item_comment_list[0].comment_reply = {
+      reply: '감사합니다.', create_time: 1_788_000_100,
+    };
+    const observedRows = normalizeChannelInquiries('shopee', operation, '2026-09-07T00:00:00.000Z');
+    assert.equal(observedRows.length, 2);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(observedRows)],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select sender_role, body
+           from sellerpilot_private.support_inbound_messages
+          where channel_key = 'shopee'
+          order by received_at, sender_role`,
+      )).rows,
+      [
+        { sender_role: 'customer', body: '배송이 빨랐어요' },
+        { sender_role: 'seller', body: '감사합니다.' },
+      ],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        'select reply_delivery_status from sellerpilot_private.support_tickets where id = $1',
+        [ticket.id],
+      ),
+      'succeeded',
+    );
+
+    const returnOperation = {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.list',
+      safeMessage: 'ok',
+      steps: [{
+        name: 'inquiries',
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotProviderContext: {
+            shopId: '1719148844', kind: 'return_refund', returnSn: 'RETURN1',
+          },
+          response: {
+            return_sn: 'RETURN1', reason: 'PHYSICAL_DMG', text_reason: '포장이 파손됐어요',
+            image: [], buyer_videos: [], create_time: 1_788_000_200, update_time: 1_788_000_300,
+            status: 'REQUESTED', due_date: 1_788_050_000, order_sn: 'ORDER-RETURN-1',
+            user: { username: 'buyer-2' }, negotiation: { negotiation_status: 'PENDING_RESPOND' },
+          },
+        },
+      }],
+    };
+    const returnRows = normalizeChannelInquiries('shopee', returnOperation, '2026-09-07T00:00:00.000Z');
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(returnRows)],
+      ),
+      1,
+    );
+    const returnTicket = (await db.query(
+      `select id::text as id, ticket_kind, reply_context, external_order_reference
+         from sellerpilot_private.support_tickets
+        where channel_key='shopee' and external_ticket_id='shopee:return:1719148844:RETURN1'`,
+    )).rows[0];
+    assert.equal(returnTicket.ticket_kind, 'after_sales');
+    assert.deepEqual(returnTicket.reply_context, {});
+    assert.equal(returnTicket.external_order_reference, 'ORDER-RETURN-1');
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '반품 답변', $2::jsonb
+        )`,
+        [returnTicket.id, JSON.stringify({
+          sellerpilotExpectedInboundKey: returnRows[0].inboundKey,
+          arguments: { kind: 'return_refund', returnSn: 'RETURN1', reply: '반품 답변' },
+        })],
+      ),
+      /Shopee comment context mismatch/,
+    );
+  } finally {
+    await db.close();
+  }
 });

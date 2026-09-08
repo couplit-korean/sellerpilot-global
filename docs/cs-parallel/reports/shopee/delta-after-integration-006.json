@@ -1,0 +1,85 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "branch": "codex/cs-shopee-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "createdAt": "2026-09-09T00:52:50+09:00",
+  "parentDelta": {
+    "path": "docs/cs-parallel/reports/shopee/delta-after-integration-005.json",
+    "sha256": "bbd3d3062c6a0e492098824059246b24d41e351cb3b932fc311ddf39e179463a",
+    "frozen": true
+  },
+  "files": [
+    {
+      "path": "tests/cs-shopee-history-canonical-completion-route-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9853790ab04c09e0a629a35a5e2fe61d7369c6fd135df45ab8e85aab91fd91e4",
+      "reason": "Execute the canonical common completion wrappers, Shopee atomic history completion and authenticated owner GET in one isolated database."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/follow-up-after-delta-005.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2a4ee193ca0668e32161850285edd35942dec691703750a946f2eba0316219e0",
+      "reason": "Record the canonical wrapper-chain result, country-specific status boundaries, limitations and unchanged external evidence."
+    }
+  ],
+  "canonicalSourcePins": [
+    { "path": "supabase/migrations/20260826090400_atomic_gateway_completion_side_effects.sql", "sha256": "9f1ec6f764ec39f8f4f8fce92e8449bdd5fd4feb02000beadfb2856152d3528f" },
+    { "path": "supabase/migrations/20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql", "sha256": "ef176e0813c57b9fbb36c8bdb2e92ac7ea6111b75525ac837449e7e61c7bf232" },
+    { "path": "supabase/migrations/20260831056700_recover_exact_qoo10_s1_activation.sql", "sha256": "621bb2114db0a97c41b438fd3ebbcb1b6b4db0511f69eb383be9f0a2de25cf16" },
+    { "path": "supabase/migrations/20260831133000_expand_verified_publication_to_temu.sql", "sha256": "5bb7efd9f68425d1ae15384fc627177a311232d4ea0a6ce71928052c6699186a" },
+    { "path": "supabase/migrations/20260901173960_allow_exact_temu_existing_content_update.sql", "sha256": "6c84828f292f304fa2795934065effe01a39397aaa7609813cd3789faf080051" },
+    { "path": "supabase/migrations/20260901173980_allow_exact_lazada_my_live_update.sql", "sha256": "963a73d1ddc5e945100848ffeb076f06723bf15afbce20832c745364007542da" },
+    { "path": "supabase/migrations/20260901173990_bind_coupang_exact_representative.sql", "sha256": "361b64db0eb87093eee22cd8793aa73b8a6e2200c4b0a39145c73a46d9c91fd6" },
+    { "path": "supabase/migrations/20260905003000_recover_exact_qoo10_shipping_normalization_s1.sql", "sha256": "a9b1f21829dd5dbea52bad06f3fdcd034bb330cbf1eb256e90c6842f7abe03b2" },
+    { "path": "supabase/migrations/20260905014100_allow_qoo10_shipping_s1_failed_verifier_complete.sql", "sha256": "1ea6502c214a418a2b38f00d4a0d2cd8a9f2bd571d292bdcfd2b21c6e9a7e832" },
+    { "path": "supabase/migrations/20260907191500_reconcile_exact_coupang_live_create_get_only.sql", "sha256": "4e2614e34a589ee77b0716e7c26c757e359655d206979e39512f7f250c768287" },
+    { "path": "supabase/migrations/20260907200000_enable_shopee_comment_cs.sql", "sha256": "b83a67ace9f1c413e9a2eb6bad32ff549d7e21a90cc099580502fc059ed7d0ce" },
+    { "path": "supabase/migrations/20260908013000_hydrate_exact_coupang_local_verifier_claim.sql", "sha256": "f172f9b8d71df28469caeae7ad14c1a9eee38a9f4b3bc33332373bba70988ac9" },
+    { "path": "supabase/migrations/20260908142023_cs_shopee_history_ledger.sql", "sha256": "cd06a37df2b598e128f3def2088dd6104b7859bab43539bc118f2649a5147dd8" },
+    { "path": "supabase/migrations/20260908142028_cs_shopee_history_start.sql", "sha256": "adb3bf4f30bee3e78b1d4e512ddf6ce155adf49cc4e1e8e5bdca0089f405e3ce" },
+    { "path": "supabase/migrations/20260908142029_cs_shopee_atomic_history_completion.sql", "sha256": "01491db0840bd5b91de55ee4ff78af61de38720f67b7112a11f547d062ac4c89" },
+    { "path": "supabase/migrations/20260908145331_cs_shopee_history_request_invariants.sql", "sha256": "126e546ae02965953e2f4e5fc80d0face84d47a4826d6c9e57bdaec86dea8ceb" },
+    { "path": "supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql", "sha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c" }
+  ],
+  "reviewFindingsClosed": [
+    "the actual atomic completion body and all current common completion wrappers accept a Shopee inquiries.list history job",
+    "current serverless ownership and operation matrix authorize only the exact live claim and preserve lease/context",
+    "SG page one projects partial with an active checkpoint and its continuation projects complete",
+    "TW provider 403 projects authorization_required without hiding SG progress",
+    "unexecuted return_refund scopes remain pending independently",
+    "buyer_chat never appears as product_review progress and remains a separate unimplemented contract"
+  ],
+  "sharedImplementationChange": null,
+  "verification": {
+    "canonicalCompletionOwnerGetTest": "1/1 passed",
+    "combinedCanonicalFinalChainAndRouteTests": "5/5 passed",
+    "typescriptNoEmit": "passed",
+    "newTestEslint": "passed",
+    "frozenDelta004Sha256": "6c98e6bf5f26a3618155c3fef0cd78489dc69f7d1233ee263d6f32955f42261a",
+    "frozenDelta005Sha256": "bbd3d3062c6a0e492098824059246b24d41e351cb3b932fc311ddf39e179463a",
+    "secretAndCustomerBodyScan": "synthetic shops, credentials and review body only; no real credential or customer original added"
+  },
+  "evidenceBoundary": {
+    "providerReadSuccessfulShops": 0,
+    "providerGetPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "authenticatedOperatingWebReadback": false,
+    "customerReplyPerformed": false,
+    "buyerChatImplemented": false,
+    "buyerChatOfficialContractConfirmed": false,
+    "api403Resolved": false,
+    "commitPushDeployPerformed": false
+  },
+  "integrationOrder": [
+    "verify frozen delta 005 and the listed canonical source hashes",
+    "copy the new test and report without modifying shared source or frozen prior deltas",
+    "run the new canonical-chain test and the existing final-chain and owner-route tests against the integrated source root",
+    "run TypeScript and focused ESLint",
+    "do not interpret local fixture success or API 403 as provider, operating database, permission-recovery or Buyer Chat completion"
+  ]
+}

@@ -428,9 +428,9 @@ test("inventory phase is a separate minimal stock-one contract with authoritativ
 test("route and provider wiring keep the exact capability server-owned and prewrite-first", async () => {
   const [route, worker, listingRuntime, operations] = await Promise.all([
     readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/commerce-provider.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/product-registration/channels/shopee.ts", import.meta.url), "utf8"),
   ]);
 
   const identity = route.indexOf("sellerpilot_service_get_shopee_sg_exact_update_identity");

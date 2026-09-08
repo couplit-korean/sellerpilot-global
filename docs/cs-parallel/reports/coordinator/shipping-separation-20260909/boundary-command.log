@@ -1,0 +1,22 @@
+
+> site-creator-vinext-starter@0.1.0 check:domain-boundaries
+> node scripts/audit-business-domain-boundaries.mjs
+
+{
+  "counts": {
+    "productTocs": 0,
+    "productToshipping": 0,
+    "csToproduct": 0,
+    "csToshipping": 0,
+    "shippingToproduct": 0,
+    "shippingTocs": 0
+  },
+  "paths": {
+    "productTocs": [],
+    "productToshipping": [],
+    "csToproduct": [],
+    "csToshipping": [],
+    "shippingToproduct": [],
+    "shippingTocs": []
+  }
+}

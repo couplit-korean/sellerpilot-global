@@ -1,3 +1,4 @@
+import { supportReplyJobRequestSchema, supportReplyResultSchema, supportReplyWorkerRequestSchema } from "../lib/cs/draft-contract";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -16,9 +17,6 @@ import {
   productResearchResultSchema,
   serverProductResearchResultSchema,
   studioJobRequestSchema,
-  supportReplyJobRequestSchema,
-  supportReplyResultSchema,
-  supportReplyWorkerRequestSchema,
   workerCompletionSchema,
 } from "../lib/ai-cli-contract";
 import {
@@ -2187,7 +2185,7 @@ test("support reply CLI contract requires a supported locale and reviewable draf
     claimToken: CLAIM_TOKEN,
     status: "succeeded",
     result,
-  }).success, true);
+  }).success, false);
 });
 
 

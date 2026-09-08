@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
-import type { ChannelOperationName } from "./operations";
+import type { ChannelOperationName } from "./operation-names";
 
 type ResourceContext = {
   listingId?: string;

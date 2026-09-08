@@ -1,0 +1,20 @@
+[
+  {
+    "source": "docs/cs-parallel/proposals/smartstore/smartstore-008-explicit-coverage-bounds-v1.sql",
+    "name": "20260908151019_cs_smartstore_explicit_coverage_bounds.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-smartstore006-migrations-xifg_wth/supabase/migrations/20260908151019_cs_smartstore_explicit_coverage_bounds.sql",
+    "owner": "CS root integration"
+  },
+  {
+    "source": "docs/cs-parallel/proposals/smartstore/smartstore-008-exact-history-window-v6.sql",
+    "name": "20260908151022_cs_smartstore_exact_history_window_v6.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-smartstore006-migrations-xifg_wth/supabase/migrations/20260908151022_cs_smartstore_exact_history_window_v6.sql",
+    "owner": "CS root integration"
+  },
+  {
+    "source": "docs/cs-parallel/proposals/smartstore/smartstore-008-checkpoint-full-day-v3.sql",
+    "name": "20260908151024_cs_smartstore_checkpoint_full_day_v3.sql",
+    "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-smartstore006-migrations-xifg_wth/supabase/migrations/20260908151024_cs_smartstore_checkpoint_full_day_v3.sql",
+    "owner": "CS root integration"
+  }
+]

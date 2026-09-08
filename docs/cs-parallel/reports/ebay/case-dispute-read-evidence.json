@@ -1,0 +1,76 @@
+{
+  "contract": "sellerpilot_ebay_case_dispute_read_evidence_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "checkedAt": "2026-09-08T12:34:20.772Z",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "account": {
+    "environment": "production",
+    "marketplaceId": "EBAY_US",
+    "sellerAccount": "redacted",
+    "credential": "redacted",
+    "binding": "same provider-certified credential lineage as the first read"
+  },
+  "transportCorrection": {
+    "initialProbe": {
+      "checkedAt": "2026-09-08T12:29:01.324Z",
+      "resource": "post_order_case_search",
+      "authorizationScheme": "Bearer",
+      "httpStatus": 401,
+      "conclusion": "wrong transport for Post-Order; not an empty result"
+    },
+    "correctedProbe": {
+      "checkedAt": "2026-09-08T12:34:20.772Z",
+      "resource": "post_order_case_search",
+      "authorizationScheme": "IAF",
+      "httpStatus": 200,
+      "conclusion": "official Post-Order transport confirmed"
+    }
+  },
+  "paymentDisputes": {
+    "endpoint": "GET /sell/fulfillment/v1/payment_dispute_summary",
+    "authorizationScheme": "Bearer",
+    "httpStatus": 404,
+    "availability": "not_available_or_not_found",
+    "total": null,
+    "uniqueIdCount": null,
+    "idSetState": "unavailable",
+    "pagesRead": 1,
+    "zeroCountClaimed": false
+  },
+  "resolutionCases": {
+    "endpoint": "GET /post-order/v2/casemanagement/search",
+    "authorizationScheme": "IAF",
+    "rangeStart": "2025-03-08T12:34:15.558Z",
+    "rangeEnd": "2026-09-08T12:34:15.558Z",
+    "maximumWindowDays": 30,
+    "windowsRead": 19,
+    "pagesRead": 19,
+    "httpStatuses": [200],
+    "availability": "readable",
+    "providerTotalsByWindow": {
+      "value": 0,
+      "windows": 19
+    },
+    "uniqueIdCount": 0,
+    "idSet": [],
+    "scopeLimit": "This proves only this seller, production credential, 18-month range, and observation time."
+  },
+  "officialContracts": {
+    "caseSearch": "https://developer.ebay.com/devzone/post-order/post-order_v2_casemanagement_search__get.html",
+    "postOrderAuthorization": "https://www.developer.ebay.com/Devzone/post-order/concepts/MakingACall.html",
+    "paymentDisputes": "https://developer.ebay.com/develop/api/sell/fulfillment_api"
+  },
+  "redaction": {
+    "rawProviderIdsRecorded": false,
+    "customerContentRecorded": false,
+    "customerIdentityRecorded": false,
+    "accessTokenRecorded": false
+  },
+  "mutations": {
+    "providerMutations": 0,
+    "credentialRefreshes": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "refundAcceptContestCloseAppeal": 0
+  }
+}

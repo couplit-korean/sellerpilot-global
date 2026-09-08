@@ -1,0 +1,71 @@
+{
+  "contract": "sellerpilot-lazada-raw-recovery-observation/1",
+  "checkedAt": "2026-09-08T10:23:21.000Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "environment": "isolated-database-fixtures-and-local-parser",
+  "parserVersion": "lazada-im-parser/2",
+  "verified": {
+    "signatureAndBinding": [
+      "exact raw bytes are signed with the explicit IM app pair",
+      "wrong app, unknown selector and foreign seller binding fail closed",
+      "a Verify-shaped message cannot bypass raw persistence"
+    ],
+    "ackAndRecovery": [
+      "database rejection or thrown persistence error is not acknowledged as success",
+      "the same receipt is idempotent and replay does not extend retention",
+      "a live lease token prevents duplicate claims",
+      "completion occurs only after quarantine and inquiry projection",
+      "completion transport loss and malformed claims fail closed",
+      "transient failures back off and the fifth failure becomes terminal evidence"
+    ],
+    "limits": [
+      "exact 256KB raw body boundary",
+      "per-owner 5000-row boundary",
+      "expiry pruning leaves body-free evidence for unprocessed receipts",
+      "empty-page-with-next, repeated/forward/missing cursors and overfull pages do not become success"
+    ],
+    "cardsAndRevisions": [
+      "known refund order card template 10011",
+      "known automatic reply template 10015",
+      "unknown templates and unknown types remain explicit non-customer events",
+      "same message ID normal-to-recalled converges on the recalled revision in either arrival order",
+      "same message ID with changed body or attachment remains conflict evidence"
+    ],
+    "timeAndRole": [
+      "missing native send time is not replaced with envelope or collection time",
+      "official session tags are retained through bootstrap projection",
+      "official and undocumented-template messages do not become replyable customers",
+      "seller-only history does not invent a buyer"
+    ],
+    "attachments": [
+      "native URL observations use a bounded private evidence ledger",
+      "refresh observations are distinguished from retained URL-only evidence",
+      "expired or deleted evidence is enforced at read time",
+      "the health contract reports URL-only retention instead of claiming binary recovery"
+    ]
+  },
+  "testRun": {
+    "node": "v22.23.2",
+    "files": 18,
+    "tests": 108,
+    "passed": 108,
+    "failed": 0,
+    "skipped": 0,
+    "exitCode": 0,
+    "durationMs": 7993.500834
+  },
+  "production": {
+    "rawInboxTablePresent": false,
+    "rawOutcomeTablePresent": false,
+    "attachmentRetentionTablePresent": false,
+    "historyCoverageTablePresent": false,
+    "quarantineAndReprocessUiObserved": false,
+    "actualReceiptReplayObserved": false,
+    "actualAttachmentRecoveryObserved": false,
+    "status": "not_deployed_not_proven"
+  },
+  "privacy": {
+    "customerBodiesStored": false,
+    "secretsStored": false
+  }
+}

@@ -18,7 +18,8 @@
       "depends_on": [],
       "target_modules": [],
       "evidence": [
-        "docs/CS-구현진행-20260907.md"
+        "docs/CS-구현진행-20260907.md",
+        "docs/CS-채널별-인증값-대조-20260907.md"
       ]
     },
     {
@@ -45,16 +46,23 @@
       "title": "CS 어댑터 경계 분리",
       "status": "in_progress",
       "kind": "implementation",
-      "change": "기존 문의 분기를 lib/cs/adapters/<channel>.ts로 점진 추출. 기존 operations dispatcher는 호환 호출을 유지하고 인증·서명·HTTP만 공통 재사용한다.",
+      "change": "기존6채널 문의 실행 모듈 분리 및 독립 번들 의존성 검사 완료. Shopee/11번가 구현 후 동일 경계 적용과 운영 검증은 남아 있다.",
       "acceptance": "등록/배송 호출 계약은 유지되고 CS만으로 실행·검증 가능하다. imports 검사 및 기존 게시/배송 핵심 회귀 통과.",
       "depends_on": [
         "BASE-02"
       ],
       "target_modules": [
         "lib/channels/operations.ts",
+        "lib/channels/ebay-inquiries.ts",
+        "lib/channels/operation-step.ts",
+        "lib/channels/operation-values.ts",
         "lib/channels/serverless-gateway-provider.ts",
         "lib/channels/protocols.ts",
-        "lib/cs/adapters/ (신설 제안)"
+        "lib/channels/lazada-inquiries.ts",
+        "lib/channels/coupang-inquiries.ts",
+        "lib/channels/smartstore-inquiries.ts",
+        "lib/channels/qoo10-inquiries.ts",
+        "lib/channels/temu-inquiries.ts"
       ],
       "evidence": [
         "docs/CS-구현진행-20260907.md"
@@ -516,13 +524,15 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "docs/CS-채널별-인증값-대조-20260907.md"
+      ]
     },
     {
       "id": "LAZ-02",
       "area": "lazada",
       "title": "Push·초기 이력·첨부·토큰 수명주기",
-      "status": "planned",
+      "status": "in_progress",
       "kind": "implementation",
       "change": "현재 24시간/한 번 bootstrap 정책을 공식 최신 계약과 대조하고 실패/중단 재개를 설계한다. webhook durable 저장·순서 역전·이미지/카드/판매자 echo·IM 토큰 갱신을 완성한다.",
       "acceptance": "텍스트 없는 실제 지원 메시지도 원장/처리 필요 상태에 남는다. 토큰 교체·웹훅 재전송·역순 도착·초기화와 신규 Push 동시 수신에 누락/중복 없음.",
@@ -540,7 +550,18 @@
         "lib/channels/inquiry-reply.ts",
         "lib/cs/adapters/ (채널별 신설 제안)"
       ],
-      "evidence": []
+      "evidence": [
+        "lib/channels/lazada-im.ts",
+        "tests/lazada-history-completeness.test.ts",
+        "tests/lazada-im-app-binding.test.ts",
+        "supabase/migrations/20260907190000_preserve_undated_lazada_buyers.sql",
+        "tests/lazada-undated-buyer-db.test.mjs",
+        "app/cs/lazada-quarantine.tsx",
+        "app/api/admin/cs/lazada-quarantine/route.ts",
+        "supabase/migrations/20260907060844_read_lazada_quarantine.sql",
+        "tests/lazada-quarantine-read-db.test.mjs",
+        "tests/lazada-quarantine-route.test.ts"
+      ]
     },
     {
       "id": "LAZ-03",
@@ -887,7 +908,7 @@
     "20260907120000"
   ],
   "production_cs_completion_verified": false,
-  "implementation_checkpoint": "eighth_owned_ebay_native_message_viewer",
+  "implementation_checkpoint": "fourteenth_local_shared_admin_cs_read_regression_fix",
   "applied_cs_migrations": [
     "20260907100000",
     "20260907101000",
@@ -897,7 +918,7 @@
     "20260907105000",
     "20260907120000"
   ],
-  "last_verified_runtime_release": "b23dc33f55352ccf886de0d49a77f2a725ace09b",
+  "last_verified_runtime_release": "b2428b3ae1acc4bd8e97ffefaaf78c300d1c64f6",
   "operational_evidence": {
     "smartstore_30_day_run": "2c72a09e-ba40-4218-a2ce-f686d1bd5679",
     "successful_read_jobs": 2,
@@ -917,7 +938,8 @@
       "range_end": "2026-08-08",
       "successful_read_jobs": 2,
       "failed_read_jobs": 0,
-      "remote_count": 0
+      "remote_count": 0,
+      "executor_evidence": "local Mac channel-gateway.log lines8-9"
     },
     "seventh_candidate": {
       "release": "20c86231547c011bbd44d297f6045465bb1f76e4",
@@ -925,13 +947,71 @@
       "state": "BLOCKED",
       "reason": "commit_author_deployment_permission",
       "production_promoted": false
+    },
+    "cs6_8_deployment": {
+      "release": "ad957bcbea3f433c9040a9c0bb33349734bec6bd",
+      "deployment_id": "dpl_3RdFvmQe88P7QTpK42CQFfAP6hZZ",
+      "runtime_reported_by_coordinator": true,
+      "message_viewer_verified_in_production_ui": true,
+      "sample_owned_ebay_accounts": 0,
+      "approved_admin_creator_mismatch_verified": true
+    },
+    "cs_reply_routes": {
+      "coupang_static_policy": false,
+      "smartstore_static_policy": true,
+      "local_reply_access": {
+        "coupang": null,
+        "smartstore": null
+      },
+      "reply_jobs": 0,
+      "reply_deliveries": 0,
+      "actual_reply_verified": false
+    },
+    "credential_field_presence": {
+      "source": "docs/CS-채널별-인증값-대조-20260907.md",
+      "active_channels": 7,
+      "inactive_channels": [
+        "temu"
+      ],
+      "all_channels_connected": false,
+      "secret_values_recorded": false
+    },
+    "lazada_quarantine_view": {
+      "production_rows": 0,
+      "production_applied": false,
+      "db_tests": 6,
+      "api_tests": 8,
+      "synthetic_browser_verified": true,
+      "advisors": "MCP project permission denied; global advisor result unavailable"
     }
   },
   "pending_ebay_general_history": [
-    "Production deploy 6-8",
+    "Apply shared-admin CS read repair 180000 and verify visible active account",
     "seller consent for commerce.message",
     "successful GET recheck with real message",
     "automatic complete history collection and independent durable ledger",
     "exact reply and remote readback"
+  ],
+  "frozen_release_checkpoint": "407855b204082465ff5aee6c2c723b702e868f4c",
+  "local_only_followup": "CS9-17 remain local. CS14/180000 shared reads, CS16/190000 undated-buyer quarantine and CS17/060844 quarantine viewer are not applied. CS17 supplies bounded administrator read-only UI; provider identity, rich message persistence and historical resume remain incomplete.",
+  "pending_local_cs_migrations": [
+    {
+      "version": "20260907180000",
+      "name": "restore_shared_admin_cs_reads",
+      "md5": "ebb5520311043b307bff29d7da159093",
+      "applied": false
+    },
+    {
+      "version": "20260907190000",
+      "name": "preserve_undated_lazada_buyers",
+      "md5": "57a3954d42507c5b4c57bca6080c61bc",
+      "applied": false
+    },
+    {
+      "version": "20260907060844",
+      "name": "read_lazada_quarantine",
+      "md5": "e7dc140a41fee9f96e481bbbe47eb76f",
+      "applied": false
+    }
   ]
 }

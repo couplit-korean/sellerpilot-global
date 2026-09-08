@@ -1,0 +1,72 @@
+{
+  "contract": "sellerpilot_channel_test_evidence_supplement_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-02.json",
+  "capturedThrough": "2026-09-08T13:44:57Z",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "version": "22.23.2",
+    "database": "PGlite 0.3.16 with pgcrypto"
+  },
+  "runs": [
+    {
+      "name": "provider_ledger_api_ui_history_flow",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes-history-flow.test.ts",
+      "exitCode": 0,
+      "tests": 5,
+      "passed": 5,
+      "failed": 0,
+      "coverage": [
+        "production provider response normalizers with fixture transport",
+        "actual exported history sync POST route",
+        "service record v1 RPC into executable PGlite ledger",
+        "owner history read v2 RPC with observed-at plus event-id cursor",
+        "actual exported history GET route",
+        "UI authenticated-fetch client and response schema",
+        "buyer address and access token exclusion",
+        "unavailable 404 and 403 remain total null with zero records",
+        "unchecked seller and interrupted sync fail closed",
+        "no dispute business actions"
+      ],
+      "limits": "Provider transport, Supabase Auth/RPC clients, and owner context are local fixtures around production modules; this is not a production provider, database, Auth, or browser run."
+    },
+    {
+      "name": "combined_case_dispute_supplemental_suite",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes.test.ts tests/cs-ebay-cases-disputes-web.test.ts tests/cs-ebay-cases-disputes-route.test.ts tests/cs-ebay-cases-disputes-db.test.mjs tests/cs-ebay-cases-disputes-history-flow.test.ts",
+      "exitCode": 0,
+      "tests": 25,
+      "passed": 25,
+      "failed": 0
+    },
+    {
+      "name": "typescript",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_03_eslint",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/eslint/bin/eslint.js <7 eBay supplemental 03 source and test files>",
+      "exitCode": 0
+    },
+    {
+      "name": "current_integrated_shared_patch_hash_check",
+      "exitCode": 0,
+      "appPageBeforeSha256": "153db8ff7e77c428acefbe560f03f0d4d2be3f4e6e4a5c1dcbb4f9d65943ba96",
+      "appPageExpectedAfterSha256": "30612b5384a489897c4678371f5e215931f5e2105efd248cab3f3c52ce695c6e",
+      "capabilityInventoryBeforeSha256": "4627ecd29c07121ac050ed5e45ec02f7e23031eef3a2f99ad8dc8df244f68df5",
+      "capabilityInventoryExpectedAfterSha256": "12eb4660e8ff1be4b318fe61acb33ddbfe5cf003ca51e42cb5f901b2032503bd",
+      "sharedFilesWritten": 0
+    }
+  ],
+  "mutations": {
+    "productionDatabaseWrites": 0,
+    "actualProviderReadsDuringSupplemental03": 0,
+    "providerReplies": 0,
+    "caseOrDisputeActions": 0,
+    "credentialRefreshes": 0,
+    "sharedSourceWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

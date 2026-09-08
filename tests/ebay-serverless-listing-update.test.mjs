@@ -12,10 +12,10 @@ const exactPermitMigrationUrl = new URL(
   import.meta.url,
 );
 const providerUrl = new URL(
-  "../lib/channels/serverless-gateway-provider.ts",
+  "../lib/channels/commerce-provider.ts",
   import.meta.url,
 );
-const operationsUrl = new URL("../lib/channels/operations.ts", import.meta.url);
+const operationsUrl = new URL("../lib/product-registration/channels/ebay.ts", import.meta.url);
 
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);

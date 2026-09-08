@@ -1,0 +1,133 @@
+{
+  "contract": "sellerpilot-cs-smartstore-live-evidence/1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "checkedAt": "2026-09-08T10:12:22.459Z",
+  "timezone": "Asia/Seoul",
+  "scope": "read_only",
+  "seller": {
+    "sellerLogin": "zrl***@naver.com",
+    "shop": "Couplet Seoul",
+    "role": "통합 매니저",
+    "country": "KR"
+  },
+  "application": {
+    "developer": "커플릿",
+    "name": "SellerPilot Couplet",
+    "clientId": "a8UTRFG2t6lIow0Smj6ha",
+    "clientSecretObserved": false,
+    "status": "active",
+    "applicationType": "SELF",
+    "authorizedApiGroups": [
+      "문의:모든 리소스",
+      "주문 판매자:모든 리소스",
+      "상품/N배송:모든 리소스",
+      "판매자정보:모든 리소스"
+    ],
+    "talktalkOrReviewApiGroupObserved": false,
+    "allowedIps": [
+      "3.36.92.188",
+      "3.39.243.106",
+      "112.172.127.206"
+    ],
+    "observedEgressIp": "112.172.127.206",
+    "observedEgressAllowed": true
+  },
+  "credential": {
+    "activeRows": 1,
+    "credentialVersion": 1,
+    "credentialIdSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+    "sellerAccountKeyBound": true,
+    "sellerAccountIdSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+    "credentialSource": "credential_incarnation_v1"
+  },
+  "providerReads": {
+    "sellerAccount": {
+      "httpStatus": 200
+    },
+    "requestedFloor": "2022-11-30",
+    "requestedThrough": "2026-09-08",
+    "floorMeaning": "공식 고객문의 API 도입일을 공통 문의군 검증 하한으로 사용; 상품문의 자체의 더 이른 보존 하한은 공식 문서에서 확인되지 않음",
+    "productQna": {
+      "nativeId": "questionId",
+      "windows": 46,
+      "successfulWindows": 46,
+      "failedWindows": 0,
+      "page1HttpStatuses": {
+        "200": 46
+      },
+      "providerRows": 0,
+      "uniqueRemoteIds": 0,
+      "duplicateRemoteIds": 0,
+      "earliestSuccessfullyQueriedDate": "2022-11-30",
+      "firstNonEmptyDate": null
+    },
+    "customerInquiry": {
+      "nativeId": "inquiryNo",
+      "windows": 46,
+      "successfulWindows": 46,
+      "failedWindows": 0,
+      "page1HttpStatuses": {
+        "200": 46
+      },
+      "providerRows": 0,
+      "uniqueRemoteIds": 0,
+      "duplicateRemoteIds": 0,
+      "categoriesObserved": [],
+      "earliestSuccessfullyQueriedDate": "2022-11-30",
+      "firstNonEmptyDate": null
+    }
+  },
+  "productionLedgerRead": {
+    "ticketRows": 0,
+    "productQnaTicketRows": 0,
+    "customerInquiryTicketRows": 0,
+    "unknownNamespaceRows": 0,
+    "activeCredentialTicketRows": 0,
+    "unboundCredentialRows": 0,
+    "linkedOrderRows": 0,
+    "invalidProductOrderLinks": 0,
+    "inboundMessageRows": 0,
+    "preservedSellerMessageRows": 0,
+    "oldestReceivedAt": null,
+    "newestReceivedAt": null
+  },
+  "sellerCenterReads": {
+    "productQna": {
+      "from": "2026-06-09",
+      "to": "2026-09-08",
+      "allKindsAndStatuses": true,
+      "rows": 0
+    },
+    "customerInquiry": {
+      "from": "2026-06-08",
+      "to": "2026-09-08",
+      "allKindsAndStatuses": true,
+      "rows": 0,
+      "visibleCategories": ["상품", "배송", "반품", "교환", "환불", "기타"]
+    },
+    "talktalk": {
+      "from": "2025-09-09",
+      "to": "2026-09-08",
+      "allVisibleFolders": true,
+      "rows": 0,
+      "commerceApiConnected": false
+    },
+    "review": {
+      "from": "2025-09-09",
+      "to": "2026-09-08",
+      "rows": 0,
+      "excelDownloadControlObserved": true,
+      "commerceApiConnected": false
+    }
+  },
+  "mutations": {
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerRepliesSent": 0
+  },
+  "privacy": {
+    "customerBodiesPersisted": false,
+    "accessTokensPersisted": false,
+    "clientSecretRevealed": false
+  }
+}

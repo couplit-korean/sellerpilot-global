@@ -1,0 +1,24 @@
+{
+  "contract": "sellerpilot-lazada-reply-observation/1",
+  "checkedAt": "2026-09-08T10:23:21.000Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "production": {
+    "approvedTicketPresent": false,
+    "approvedReplyTextPresent": false,
+    "eligibleDatabaseTicketCount": 0,
+    "replyObservationTablePresent": false,
+    "sendAttempted": false,
+    "providerAccepted": false,
+    "remoteSellerEchoObserved": false,
+    "reason": "No approved real ticket/text exists and the production observation ledger is absent."
+  },
+  "isolatedVerification": {
+    "acceptedReplyRequiresExactSellerEcho": true,
+    "lateEchoDoesNotResolveNewerCustomerGeneration": true,
+    "wrongRecipientOrExternalAnswerRemainsUnmatched": true,
+    "tamperedBodyAndDirectClientExecutionRejected": true,
+    "testsPassed": 4,
+    "testsFailed": 0
+  },
+  "conclusion": "Reply execution is prepared at the contract level but is not production-observed and must not be reported as delivered."
+}

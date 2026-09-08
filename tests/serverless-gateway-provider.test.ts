@@ -16,7 +16,7 @@ registerHooks({
 const {
   deriveServerlessCsGatewayCredentials,
   runServerlessCsGatewayDrain,
-} = await import("../lib/channels/serverless-cs-gateway");
+} = await import("../lib/channels/serverless-gateway");
 const {
   executeServerlessGatewayProviderJob,
   serverlessGatewayOperationAllowed,
@@ -69,6 +69,12 @@ function authorizedRequest() {
     method: "POST",
     headers: { authorization: `Bearer ${wakeBearer}` },
   });
+}
+
+function rateBudgetRpc(name: string) {
+  return name === "sellerpilot_service_reserve_provider_rate_budget_v1"
+    ? { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null }
+    : null;
 }
 
 test("generic serverless operation matrix is exact and price updates stay closed", () => {
@@ -124,13 +130,153 @@ test("generic serverless operation matrix is exact and price updates stay closed
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "inquiries.list"),
-      ["qoo10", "lazada", "coupang", "smartstore", "ebay", "temu"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"].includes(channel),
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "inquiries.reply"),
-      ["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"].includes(channel),
     );
   }
+});
+
+test("periodic Shopee comment reads persist each OAuth-authorized shop in a separate continuation", async () => {
+  const job = genericClaim("shopee", "inquiries.list");
+  job.environment = "production";
+  job.request = { periodicKey: "inquiries:0", arguments: { cursor: "", pageSize: 100 } };
+  job.credential = {
+    partner_id: "2031489",
+    partner_key: "partner-secret-long-enough",
+    main_account_id: "9001",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "shopee:main:9001",
+    shop_id: "1001",
+    shop_ids: ["1001", "1002"],
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1002", access_token: "shop-two-access", refresh_token: "shop-two-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const calls: Array<{ shopId: string; accessToken: string }> = [];
+  const execute = (claim: GatewayClaim) => executeServerlessGatewayProviderJob({
+    job: claim,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => {},
+      beginProviderMutation: async () => { throw new Error("unexpected provider mutation"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
+    },
+  }, async (input) => {
+    calls.push({ shopId: String(input.arguments.shopId), accessToken: String(input.payload.access_token) });
+    return {
+      ok: true,
+      channel: "shopee",
+      operation: "inquiries.list",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: { sellerpilotProviderContext: { shopId: input.arguments.shopId }, response: { item_comment_list: [], more: false, next_cursor: "" } } }],
+      safeMessage: "ok",
+    };
+  });
+  const first = await execute(job);
+  assert.equal(first.ok, true);
+  assert.deepEqual(calls, [{ shopId: "1001", accessToken: "shop-one-access" }]);
+  assert.equal(first.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.equal(first.continuation?.arguments.cursor, "");
+  assert.equal(first.continuation?.arguments.sellerpilotPaginationDepth, 1);
+  assert.equal(first.continuation?.arguments.sellerpilotPaginationEpoch, 0);
+  assert.deepEqual(first.continuation?.arguments.sellerpilotPaginationTrail, []);
+  assert.equal(Object.hasOwn(first.continuation?.arguments ?? {}, "shopId"), false);
+
+  const secondJob = {
+    ...job,
+    request: { ...job.request, arguments: first.continuation!.arguments },
+  };
+  const second = await execute(secondJob);
+  assert.equal(second.ok, true);
+  assert.deepEqual(calls, [
+    { shopId: "1001", accessToken: "shop-one-access" },
+    { shopId: "1002", accessToken: "shop-two-access" },
+  ]);
+  assert.equal("continuation" in second, false);
+});
+
+test("periodic Shopee return reads finish a shop detail queue before advancing to the next authorized shop", async () => {
+  const job = genericClaim("shopee", "inquiries.list");
+  job.environment = "production";
+  job.request = {
+    periodicKey: "inquiries:return_refund",
+    arguments: {
+      kind: "return_refund",
+      createTimeFrom: 1_800_000_000,
+      createTimeTo: 1_800_086_400,
+      pageNo: 1,
+      pageSize: 100,
+    },
+  };
+  job.credential = {
+    partner_id: "2031489",
+    partner_key: "partner-secret-long-enough",
+    main_account_id: "9001",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "shopee:main:9001",
+    shop_id: "1001",
+    shop_ids: ["1001", "1002"],
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1002", access_token: "shop-two-access", refresh_token: "shop-two-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const calls: Array<{ shopId: string; returnQueue: unknown }> = [];
+  const execute = (claim: GatewayClaim) => executeServerlessGatewayProviderJob({
+    job: claim,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => {},
+      beginProviderMutation: async () => { throw new Error("unexpected provider mutation"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
+    },
+  }, async (input) => {
+    calls.push({ shopId: String(input.arguments.shopId), returnQueue: input.arguments.returnQueue });
+    const continuing = input.arguments.returnQueue === undefined;
+    return {
+      ok: true,
+      channel: "shopee",
+      operation: "inquiries.list",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: { sellerpilotProviderContext: { shopId: input.arguments.shopId, kind: "return_refund" }, response: { return_sn: "RETURN-1" } } }],
+      ...(continuing ? {
+        continuation: {
+          reason: "page_cap_reached" as const,
+          arguments: { ...input.arguments, returnQueue: ["RETURN-2"], nextPageNo: null },
+        },
+      } : {}),
+      safeMessage: "ok",
+    };
+  });
+
+  const first = await execute(job);
+  assert.equal(first.continuation?.arguments.sellerpilotShopeeTargetIndex, 0);
+  assert.deepEqual(first.continuation?.arguments.returnQueue, ["RETURN-2"]);
+  assert.equal(Object.hasOwn(first.continuation?.arguments ?? {}, "shopId"), false);
+
+  const second = await execute({ ...job, request: { ...job.request, arguments: first.continuation!.arguments } });
+  assert.equal(second.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.equal(second.continuation?.arguments.kind, "return_refund");
+  assert.equal(Object.hasOwn(second.continuation?.arguments ?? {}, "returnQueue"), false);
+
+  const third = await execute({ ...job, request: { ...job.request, arguments: second.continuation!.arguments } });
+  assert.equal(third.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.deepEqual(third.continuation?.arguments.returnQueue, ["RETURN-2"]);
+
+  const fourth = await execute({ ...job, request: { ...job.request, arguments: third.continuation!.arguments } });
+  assert.equal("continuation" in fourth, false);
+  assert.deepEqual(calls, [
+    { shopId: "1001", returnQueue: undefined },
+    { shopId: "1001", returnQueue: ["RETURN-2"] },
+    { shopId: "1002", returnQueue: undefined },
+    { shopId: "1002", returnQueue: ["RETURN-2"] },
+  ]);
 });
 
 test("a bounded provider write crosses the mutation fence and rechecks its lease", async () => {
@@ -434,6 +580,8 @@ test("an exception after the provider fence is stored as reconciliation without 
         claims += 1;
         return { data: claims === 1 ? genericClaim("qoo10", "listing.stop") : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_begin_serverless_gateway_provider_mutation") {
         return { data: true, error: null };
@@ -515,6 +663,8 @@ test("order sync normalizes with the fenced completion timestamp and stores only
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {
@@ -597,6 +747,8 @@ test("successful OAuth completion keeps secrets only in credential staging", asy
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") {
         return { data: true, error: null };
@@ -675,6 +827,8 @@ test("failed provider diagnostics complete transport successfully and persist th
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {
@@ -731,6 +885,8 @@ test("listing lineage uses its dedicated exact-claim completion instead of the g
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {

@@ -1,0 +1,80 @@
+diff --git a/lib/channels/inquiry-sync.ts b/lib/channels/inquiry-sync.ts
+--- a/lib/channels/inquiry-sync.ts
++++ b/lib/channels/inquiry-sync.ts
+@@ -9,7 +9,8 @@ import { canonicalNormalizationTimestamp, createTimestampNormalizer } from "./normalization-time.ts";
+ import { originalMessageBody } from "./cs-history-values.ts";
+ import { normalizeSmartstoreInquiries } from "./smartstore-inquiry-history.ts";
+ import { projectShopeeReturnDetail, shopeeReturnDetailRevision } from "./cs/shopee/return-detail.ts";
+ import { normalizeElevenstAlimiRow } from "./cs/elevenst/contracts.ts";
++import { temuAfterSalesRevision } from "./cs/temu/revision.ts";
+ 
+ export type BaseNormalizedChannelInquiry = {
+   externalTicketId: string;
+@@ -344,13 +345,6 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
+     if (detailed && (!afterSalesCases.length || afterSalesCases.some((item) => !item.afterSalesSn || !item.orderSn))) {
+       throw new Error("INQUIRY_RECORD_INVALID:temu");
+     }
+-    const rawUpdateAt = text(row.updateAt);
+-    const numericUpdateAt = rawUpdateAt && Number.isFinite(Number(rawUpdateAt))
+-      ? String(Number(rawUpdateAt))
+-      : "";
+-    const parsedUpdateAt = !numericUpdateAt && rawUpdateAt ? Date.parse(rawUpdateAt) : Number.NaN;
+-    const trustedUpdateRevision = numericUpdateAt
+-      || (Number.isFinite(parsedUpdateAt) ? new Date(parsedUpdateAt).toISOString() : "");
+     const rawRefundSummary = object(row.refundSummary);
+     const refundSummary = Object.fromEntries([
+       "discountFromSellerRefund",
+@@ -368,20 +361,17 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
+       const amount = value as { currency: string; amount: string };
+       return Boolean(amount.currency || amount.amount);
+     }));
+-    const stateRevision = [
+-      "state-v1",
+-      group,
+-      text(row.parentAfterSalesStatus),
+-      text(row.afterSalesType),
+-      Number.isFinite(deadlineValue) && deadlineValue > 0 ? String(deadlineValue) : "",
+-      operations.join(","),
+-      JSON.stringify(afterSalesCases),
+-      JSON.stringify(refundSummary),
+-    ].join("\u001f");
+-    const revisionMaterial = trustedUpdateRevision
+-      ? `updated-at-v1\u001f${trustedUpdateRevision}`
+-      : stateRevision;
+-    const providerRevision = createHash("sha256").update(revisionMaterial).digest("hex");
++    const revision = temuAfterSalesRevision({
++      listUpdateAt: row.updateAt,
++      lastUpdateAtMillis: detailed ? row.lastUpdateAtMillis : undefined,
++      statusGroup: group,
++      parentAfterSalesStatus: text(row.parentAfterSalesStatus),
++      afterSalesType: text(row.afterSalesType),
++      operateExpireTimeMs: Number.isFinite(deadlineValue) && deadlineValue > 0 ? deadlineValue : null,
++      availableOperations: operations,
++      afterSalesCases,
++      refundSummary,
++    });
+     const deadlineText = deadline && !Number.isNaN(deadline.getTime()) ? deadline.toISOString() : "없음";
+     const remaining = deadline && !Number.isNaN(deadline.getTime()) ? deadline.getTime() - referenceTimeMs : Number.POSITIVE_INFINITY;
+     const buyerMessages = [...new Set(afterSalesCases.map((item) => item.buyerComment).filter(Boolean))];
+@@ -395,8 +385,8 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
+       orderSn,
+       statusGroup: group,
+       availableOperations: operations,
+-      providerRevision,
+-      providerRevisionSource: trustedUpdateRevision ? "updateAt" : "actionableState",
++      providerRevision: revision.providerRevision,
++      providerRevisionSource: revision.providerRevisionSource,
+       replySupported: false,
+       ...(detailed ? {
+         afterSalesCases,
+@@ -416,8 +406,8 @@ function normalizeTemu(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
+       message: detailText,
+       status: ["5", "6", "7"].includes(group) ? "resolved" : "waiting",
+       priority: remaining <= 24 * 60 * 60 * 1000 ? 1 : remaining <= 72 * 60 * 60 * 1000 ? 2 : 3,
+-      receivedAt: iso(row.updateAt, row.createAt),
+-      remoteMessageId: `${afterSalesSn}:${providerRevision}`,
++      receivedAt: revision.detailUpdatedAt ?? iso(row.updateAt, row.createAt),
++      remoteMessageId: `${afterSalesSn}:${revision.providerRevision}`,
+       ...(orderSn ? { externalOrderReference: orderSn } : {}),
+       ticketKind: "after_sales",
+       providerContext,

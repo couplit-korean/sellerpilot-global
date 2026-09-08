@@ -1,0 +1,1667 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "checkedAt": "2026-09-08T16:18:20.796696+00:00",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "scope": "All received CS submissions and cross-team notices; local integration only",
+  "receipts": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-2.json",
+      "sha256": "875fb05c14517cf85d1d28ea775b31b5d6727626af577b4de4c80b3526727cff",
+      "channel": "coupang",
+      "declaredFiles": 21,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-3.json",
+      "sha256": "cd0207d951231b33cb99974d3480a3fa6d4cffbdc1455d59434b17880d849a99",
+      "channel": "coupang",
+      "declaredFiles": 13,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-4.json",
+      "sha256": "e92f3859f765c1ecc5818d7e252fce4642f829b0438e2f70d08406e56dbbf188",
+      "channel": "coupang",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-5.json",
+      "sha256": "db58f5a4e6a5384946babc202a4e2fcdbceba71768fc94844996b29c9c98e6ea",
+      "channel": "coupang",
+      "declaredFiles": 17,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-6.json",
+      "sha256": "a1b5710d8663c11899c643fe4cc3f987487485d0bb1b9d251eb9350817ed22b6",
+      "channel": "coupang",
+      "declaredFiles": 8,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-7.json",
+      "sha256": "2826a0e52b0409a8524e229938bb8c85855f91b987ff59aed8f56de02cf0bb81",
+      "channel": "coupang",
+      "declaredFiles": 8,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta-supplemental-01.json",
+      "sha256": "1071d5b02f4a2f66b24cc172ae789b446fc66dbe503149bc1dc167881106d31b",
+      "channel": "ebay",
+      "declaredFiles": 19,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta-supplemental-02.json",
+      "sha256": "2ce9f39b1dfe5be454e2778b9ea81cb9f526468d51c5d0f216cfe3e951cd0404",
+      "channel": "ebay",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta-supplemental-03.json",
+      "sha256": "363c7ba5aee6f8ef20858c0bca740b30e2fc3f0838f62bd9d9a15c14dcb64e58",
+      "channel": "ebay",
+      "declaredFiles": 11,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta-supplemental-04.json",
+      "sha256": "0d5a6cf154b05e9194eb03009d8d21c713bcf783f77f3c51f9d738dfb2b5feed",
+      "channel": "ebay",
+      "declaredFiles": 10,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta.json",
+      "sha256": "1bed81dff1522af64b302417b106468e2f5f0e35cd1e89385142f2bcef8c945c",
+      "channel": "ebay",
+      "declaredFiles": 12,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-03-delta.json",
+      "sha256": "c743f4fdb8f14401948c2ff830621ad15a7a194a15044502215c26c81890833f",
+      "channel": "elevenst",
+      "declaredFiles": 11,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-04-delta.json",
+      "sha256": "be04d11c6b9ac4210e8c2e25f259f131f565ff17b6cc6e9ab4c332213c5c478b",
+      "channel": "elevenst",
+      "declaredFiles": 14,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-05-delta.json",
+      "sha256": "613bc09413e8441844a04c6eeb8787d044b98c1bfdbad694778d4ce4327faac7",
+      "channel": "elevenst",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/authenticated-web-projection-delta.json",
+      "sha256": "44dd39ac3b25f11d684fcf880dc9128fa0fe3d75dca838ba62746d05d6424e48",
+      "channel": "lazada",
+      "declaredFiles": 4,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/delta.json",
+      "sha256": "0d145209f31b779e6ffc6e8cc08405f10f55679906e0fe6c1afe7cdadd660480",
+      "channel": "lazada",
+      "declaredFiles": 19,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/supplemental-delta.json",
+      "sha256": "37a7f5843c783d2eca318f3a64cde09a0501401f8f77041e5213a826c938889d",
+      "channel": "lazada",
+      "declaredFiles": 5,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-conversation-projection-delta.json",
+      "sha256": "38cd76886aaaac7f8cb27437624d92fb07bdb1a7ef4ee9bb154ea58fd599e264",
+      "channel": "lazada",
+      "declaredFiles": 6,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-delta.json",
+      "sha256": "0a02b66ae1b7feef010044e956b589d757b434ab48ef9370a657066a34c6dabf",
+      "channel": "lazada",
+      "declaredFiles": 11,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-followup-delta.json",
+      "sha256": "0e0ec4f3a9d20e4bf86c94baeb29bc59376e6c51b308761d5b0b9c47d4db5ba1",
+      "channel": "lazada",
+      "declaredFiles": 5,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-envelope-status-fix-delta.json",
+      "sha256": "ef7d9362b020d203d6bd90613b47ed214c86855f83b257e98b0d35121f89dc5a",
+      "channel": "qoo10",
+      "declaredFiles": 7,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-common-path-delta.json",
+      "sha256": "ae7ba8773f3021a0b3036856c58a18ae78f15df20ed356cf97976b0b80077fd8",
+      "channel": "qoo10",
+      "declaredFiles": 7,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-null-evidence-acl-delta.json",
+      "sha256": "7eeb35259e3b130a87474ba2e881dcfb7318ff61c19c9b6e9d3e561bbd32b207",
+      "channel": "qoo10",
+      "declaredFiles": 4,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-response-seal-delta.json",
+      "sha256": "6886944875d723f1e87dedca2a4b1169eb37c0023fabcb52cb34b3275145c9de",
+      "channel": "qoo10",
+      "declaredFiles": 4,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/runtime-integration-delta.json",
+      "sha256": "efc31f3011088524d540bc4f0214fd805040277f77b609271e73ec4aa9c23df8",
+      "channel": "qoo10",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-002.json",
+      "sha256": "e50484e882d4ae16e76eeeeeba6d715646601f6cdaaa540bb81eabef74edf971",
+      "channel": "shopee",
+      "declaredFiles": 7,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-003.json",
+      "sha256": "7a8fb97bd3ab4c4b04cf97358a429f32d9a33cf7981db70d08b12f8bca4589d1",
+      "channel": "shopee",
+      "declaredFiles": 21,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-004.json",
+      "sha256": "6c98e6bf5f26a3618155c3fef0cd78489dc69f7d1233ee263d6f32955f42261a",
+      "channel": "shopee",
+      "declaredFiles": 6,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-005.json",
+      "sha256": "bbd3d3062c6a0e492098824059246b24d41e351cb3b932fc311ddf39e179463a",
+      "channel": "shopee",
+      "declaredFiles": 4,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-002.json",
+      "sha256": "478ebba8d24e960b2ee5e63efcbfac419c6126ea71e69c70cc12018706b15b42",
+      "channel": "smartstore",
+      "declaredFiles": 15,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-003.json",
+      "sha256": "9727f4da736aee56fa69da4d84aa34bb8dd7f660368678717afb5d5a41911ea4",
+      "channel": "smartstore",
+      "declaredFiles": 6,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-004.json",
+      "sha256": "fb72c1b60abcdee0a680c1fb735b14db35ff3d1e59bf025dcdfe9681fe2f84c6",
+      "channel": "smartstore",
+      "declaredFiles": 5,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-005.json",
+      "sha256": "08b9b668545978c09d447f3bc1b01de37f87ceb1ac6d89efa5849bf526b02b76",
+      "channel": "smartstore",
+      "declaredFiles": 7,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-006.json",
+      "sha256": "7738d8fee9bfec27a9e802c3b8e8852dd39fd3ebb351f4ce930edd7b5e61e60e",
+      "channel": "smartstore",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260908-v3-replay/delta.json",
+      "sha256": "cdd1cc164142a45399e974d5aab4cdd8d36f20f1eb5a4699d4823e7c60647e54",
+      "channel": "temu",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260908-v4-rpc-shape/delta.json",
+      "sha256": "cc1e21204377a866d18c27a4c330b0dc1bc361b454c58540873b46f29404f4e2",
+      "channel": "temu",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260908-v5-external-worker-retry/delta.json",
+      "sha256": "0a4c2e0e197241d79193a0d132f9ac21d9442c982329d11db0bd9041824fd817",
+      "channel": "temu",
+      "declaredFiles": 3,
+      "manifestShape": "proposalFiles"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260909-v6-worker-202-acceptance/delta.json",
+      "sha256": "26ae317314f3f1e70c27057323b735124a5965bec59cbd5f52664c8c5e56e5df",
+      "channel": "temu",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-actual-receipt-delta.json",
+      "sha256": "2781e6dd842c6db1fe1c3ce5cac1d2fb320c92e52316dafb904f3e2d47d1bfae",
+      "channel": "qoo10",
+      "declaredFiles": 3,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/ordinary-workspace-reply-guard-delta.json",
+      "sha256": "40b1907e0cdd75efe24faa565349742173a81b30d8228dcfac3e1ee7305c5143",
+      "channel": "lazada",
+      "declaredFiles": 6,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-06-delta.json",
+      "sha256": "2d2e66eeadf746aea6e07807ee4e44fb56c465abe9127313a0f78d4ddf9c4e0a",
+      "channel": "elevenst",
+      "declaredFiles": 11,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/delta-supplement-007.json",
+      "sha256": "47cbeef7b82f4d9c5a70033705da7d61ff3df7904eeacc6fac1117773592593c",
+      "channel": "smartstore",
+      "declaredFiles": 7,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/delta-supplement-8.json",
+      "sha256": "2980b4de201d3731ff6896226266570fd86a231153baf92c94684c3d49aa1e1d",
+      "channel": "coupang",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-006.json",
+      "sha256": "b8df55818d8e6173d72b3a47a23ec2441c0c66c1785ce3704d7df99e0c73bde1",
+      "channel": "shopee",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-07-delta.json",
+      "sha256": "06f4200f0be61fbb9ed5b9a89d4fc03eeed30b6e076266c9fa04d31129bbc436",
+      "channel": "elevenst",
+      "declaredFiles": 13,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260909-v7-owner-bound-completion-history/delta.json",
+      "sha256": "b855bc92e7a3492846210dd7a93ad673cf4b69aae03013d6cd34fbcb50c92e15",
+      "channel": "temu",
+      "declaredFiles": 4,
+      "manifestShape": "proposalFiles"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-canonical-stack-delta.json",
+      "sha256": "f9ac37a6ac9b4ee7847bab9491bb1e6504c238027fa46a9651f4412ce09f122e",
+      "channel": "qoo10",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/delta-after-integration-007.json",
+      "sha256": "e05bfc4673b18c8e89be18c4b0fce28c4a60a509a61b9d166eb8490973a76321",
+      "channel": "shopee",
+      "declaredFiles": 2,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/delta-supplemental-05.json",
+      "sha256": "8c9138399b7e9c4e79f99b3716b905f6b44149f94ff82934726c87d9b1c40878",
+      "channel": "ebay",
+      "declaredFiles": 9,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/concurrent-revision-reply-fence-delta.json",
+      "sha256": "344d40b746b8b2fbe485c2303b689d4915a15d5f3a5f7731a560f7899c7b1a34",
+      "channel": "lazada",
+      "declaredFiles": 5,
+      "manifestShape": "files"
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-08-delta.json",
+      "sha256": "dbce86cfb6fa9b6c93d5bf1f6e063e5ddbda8bf9db282baaf1524c07cd770694",
+      "channel": "elevenst",
+      "declaredFiles": 6,
+      "manifestShape": "files"
+    }
+  ],
+  "canonicalMigrations": [
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-003-order-binding-health-v2.sql",
+      "path": "supabase/migrations/20260908140403_cs_smartstore_order_binding_v2.sql",
+      "sha256": "8771e2c8b8ef769d0ca43011c23aa66317c15676fe348aea9cd2e7516e6f0c0a"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-004-next-history-window-v1.sql",
+      "path": "supabase/migrations/20260908140405_cs_smartstore_history_checkpoint.sql",
+      "sha256": "2030f6c603330098675fc5c66dc0a2dcacfc8d95e607a4c51f0eec42e2261b20"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-005-exact-history-window-v5.sql",
+      "path": "supabase/migrations/20260908140407_cs_smartstore_exact_history_window_v5.sql",
+      "sha256": "7a11223587a2621ef3548e7ae4efe0cca8f4acfc148144dc5a68228ca3962b8f"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "path": "supabase/migrations/20260908140409_cs_lazada_im_ingest_v3.sql",
+      "sha256": "b67d6901906ea6022471ba124520ae3a83a17e0708866ede8ab706dd9ddbeed7"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "path": "supabase/migrations/20260908140411_cs_elevenst_read_state_alimi_ledger.sql",
+      "sha256": "72b7296be794cbe1e3c7c40b3b18f8158a396252395675e6bd30a862e1853d23"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "path": "supabase/migrations/20260908140414_cs_temu_durable_detail_retry.sql",
+      "sha256": "13fcd1f2856a7599db6963597e54e71e76b6939fba5cd710bffa2f96be771a2b"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "path": "supabase/migrations/20260908140416_cs_temu_detail_retry_replay.sql",
+      "sha256": "d5a06aa35d4ad7a0f9e6ecc300a9ca5aef5acf453eadd09395e22408c8b1255a"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "path": "supabase/migrations/20260908140419_cs_qoo10_reply_s3_status.sql",
+      "sha256": "89a51d43800ea1621c646f7ed213f5ffdc32dcde4bcef2d5d08755925ed7e182"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "path": "supabase/migrations/20260908140421_cs_qoo10_reply_s3_response_seal.sql",
+      "sha256": "f31954baa26c91d8e20c07432fabdb77c021557b4d374d781d074fb7dec4672c"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/004-coupang-history-checkpoint.sql",
+      "path": "supabase/migrations/20260908141312_cs_coupang_history_checkpoint.sql",
+      "sha256": "8a555326193adb72da917c405b8b58942e8e2a504d7b83d1f33d8466863694d0"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/005-coupang-authenticated-web-verification.sql",
+      "path": "supabase/migrations/20260908141314_cs_coupang_authenticated_web_verification.sql",
+      "sha256": "8872d8e252844fc824d8d86bb7394f462ceee06a384faf522fca73a76d163ac6"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-004-history-ledger-draft.sql",
+      "path": "supabase/migrations/20260908142023_cs_shopee_history_ledger.sql",
+      "sha256": "cd06a37df2b598e128f3def2088dd6104b7859bab43539bc118f2649a5147dd8"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-005-target-refresh-cas-draft.sql",
+      "path": "supabase/migrations/20260908142025_cs_shopee_target_refresh_cas.sql",
+      "sha256": "7add4a60afbc68999b4a8a122f4b7e0903ac23eeba463f55338fc0c36d852eff"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-007-history-start-draft.sql",
+      "path": "supabase/migrations/20260908142028_cs_shopee_history_start.sql",
+      "sha256": "adb3bf4f30bee3e78b1d4e512ddf6ce155adf49cc4e1e8e5bdca0089f405e3ce"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-009-atomic-history-completion-draft.sql",
+      "path": "supabase/migrations/20260908142029_cs_shopee_atomic_history_completion.sql",
+      "sha256": "01491db0840bd5b91de55ee4ff78af61de38720f67b7112a11f547d062ac4c89"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-007-checkpoint-run-scope-v2.sql",
+      "path": "supabase/migrations/20260908142530_cs_smartstore_checkpoint_run_scope_v2.sql",
+      "sha256": "27f597dbba849deabf73d25b166319afd4aba65c566a4720cad2c069b4ea4a13"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "path": "supabase/migrations/20260908143355_cs_coupang_reply_readback.sql",
+      "sha256": "97a227621ccc055af2b1a4b88ad771ffd0a7019dcb15b12be088b4a3facc1518"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-010-history-request-invariants-draft.sql",
+      "path": "supabase/migrations/20260908145331_cs_shopee_history_request_invariants.sql",
+      "sha256": "126e546ae02965953e2f4e5fc80d0face84d47a4826d6c9e57bdaec86dea8ceb"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.sql",
+      "path": "supabase/migrations/20260908145334_cs_coupang_local_read_executor.sql",
+      "sha256": "07a22a0c9bfbc7629bf5d6ba09488775a1d09ceb1edd95b4cfe786e3ebbb4852"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/009-reply-s3-common-paths.sql",
+      "path": "supabase/migrations/20260908145336_cs_qoo10_reply_s3_common_paths.sql",
+      "sha256": "a595454731d119f2608e19354a7972a44ea9a50e30fd7f87012821b9fb126889"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-008-v3-conversation-projection.sql",
+      "path": "supabase/migrations/20260908145831_cs_lazada_v3_conversation_projection.sql",
+      "sha256": "834e098b9509360d9b3286b34237cb8c086ab5627896488cfa61c523425942cb"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-008-explicit-coverage-bounds-v1.sql",
+      "path": "supabase/migrations/20260908151019_cs_smartstore_explicit_coverage_bounds.sql",
+      "sha256": "a998f448cb2821cd4b042f5d72aeb3636b7c852d73647f23993ad56845821c0d"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-008-exact-history-window-v6.sql",
+      "path": "supabase/migrations/20260908151022_cs_smartstore_exact_history_window_v6.sql",
+      "sha256": "a98b0f9d333e9fe851c87b302b13eb0c7a7e62c76fa85249151c7c59779fe6b0"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-008-checkpoint-full-day-v3.sql",
+      "path": "supabase/migrations/20260908151024_cs_smartstore_checkpoint_full_day_v3.sql",
+      "sha256": "2836efef554655d066d5c764e20d43f42c000859750a10017966ca1a993fdae3"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/shopee/shopee-012-history-date-intent-cutoff-draft.sql",
+      "path": "supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql",
+      "sha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/010-reply-s3-actual-completion-compat.sql",
+      "path": "supabase/migrations/20260908153341_cs_qoo10_reply_s3_actual_completion.sql",
+      "sha256": "1b6a391f392a12622b6d6f76bd5b95502f4e250b25e8d7890f552e70b6e3e827"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.sql",
+      "path": "supabase/migrations/20260908153837_cs_lazada_ordinary_workspace_reply_guard.sql",
+      "sha256": "f6a20872cac2295a37e9c9e6c94989e611765a5d35dca63322d76a0d9025cb20"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-009-continuation-safe-window-v7.sql",
+      "path": "supabase/migrations/20260908155617_cs_smartstore_continuation_safe_window_v7.sql",
+      "sha256": "8eb6a1e9900cf328b02915949fc4bca63e909fbf422cd2a9235e273e3e41bc85"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-009-checkpoint-deferred-cutoff-v4.sql",
+      "path": "supabase/migrations/20260908155620_cs_smartstore_checkpoint_deferred_cutoff_v4.sql",
+      "sha256": "7f7096901dab9a77ac5cb09d4ba47cabaaaea28cfe27ec83bfd4d387542a9b61"
+    }
+  ],
+  "sharedFiles": [
+    {
+      "path": "app/page.tsx",
+      "sha256": "ccab9d1c2858389df6c61fd77dcee1521b0c5e2f764bc986b0e4af2a7165374a"
+    },
+    {
+      "path": "app/cs/archive.tsx",
+      "sha256": "35aa7aa1b74e8e4addff3c218e72017c7e2b2de2bb0fe02348b735e2e8311d62"
+    },
+    {
+      "path": "app/cs/history-window.tsx",
+      "sha256": "af83a163cbae072e45e76b802b638034304cea715e0f5e402372d7270c110c95"
+    },
+    {
+      "path": "app/cs/order-binding-health.tsx",
+      "sha256": "17cbf7f53af27be9e54798c95c8c6bab1f767085f8cce94c08492dea565dd46e"
+    },
+    {
+      "path": "app/api/operations/sync/route.ts",
+      "sha256": "6ab9d352e415aff23a6a186266bdb6eb5f4a69116a48f31c247e475093a3fa20"
+    },
+    {
+      "path": "app/api/admin/cs/reply/route.ts",
+      "sha256": "505c25ad45974728de50a487076fe4a19cd792ec3464c1d097cc677ef71aba5d"
+    },
+    {
+      "path": "app/api/admin/cs/order-bindings/route.ts",
+      "sha256": "2aa5c9ff191cc49b3be4af47a8f85d23fec2532acfb446bd69c3f30d87e8c3a4"
+    },
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "sha256": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383"
+    },
+    {
+      "path": "lib/channels/protocols.ts",
+      "sha256": "61994bf808a5e5aad0298d6c5b70a730005f0cedc4c723110b8ad69f70b755af"
+    },
+    {
+      "path": "lib/channels/operations.ts",
+      "sha256": "60c28c74078efddfeebee9742d42251824416a261e4ff42c3560292ba5ecfad7"
+    },
+    {
+      "path": "lib/channels/inquiry-sync.ts",
+      "sha256": "d639c2c857f04b09383b08f846a05f53cf1c987737ceb776edc83c6bbddfbf02"
+    },
+    {
+      "path": "lib/channels/sync-arguments.ts",
+      "sha256": "91d9c3e7ee9130f00dfeaed5b302712c5db88fbff7b40447a32aa45fbffbc2e9"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "sha256": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf"
+    },
+    {
+      "path": "lib/channels/serverless-gateway-provider.ts",
+      "sha256": "da25a6e330dd5d72428e63b7b39996d486051498d9ab7732643a816956a37bf9"
+    },
+    {
+      "path": "lib/cs/order-binding-health.ts",
+      "sha256": "b9c50ed6d54d4ecdce8c12192695b05f040887f9ff8b3de33d7de4a6ae02c3da"
+    },
+    {
+      "path": "lib/cs/capability-inventory.ts",
+      "sha256": "bd4f5a778567e0712ec0e18e8b2aab2b409f7a4c1ad893fe5c2bed91bdb84445"
+    },
+    {
+      "path": "lib/channels/gateway-contract.ts",
+      "sha256": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4"
+    },
+    {
+      "path": "lib/channels/local-channel-executor.ts",
+      "sha256": "15ed2ff42d3135a085225859a34842547f2947fd9904e4d63780f8afffbfb0f7"
+    },
+    {
+      "path": "app/use-operations-snapshot.ts",
+      "sha256": "86102cca0ea64d971ffa517a05bd3f6b77af924808e642ce3519e535f28961aa"
+    },
+    {
+      "path": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+      "sha256": "461f5842f3fe764fe7717303fd07b5f345b4b9c06e7054b24895dac46bd19b21"
+    },
+    {
+      "path": "app/cs/channels/shopee/history-progress.tsx",
+      "sha256": "850a863f3725a3a75bcacd6845fa16b6112e0b2352320b3dcb7b49b0753ba107"
+    },
+    {
+      "path": "lib/cs/conversation.ts",
+      "sha256": "5a96af7ef099ea33d7e33840e5beac16f2f541d5deae4091ef5e9613a4e3c761"
+    },
+    {
+      "path": "lib/cs/archive.ts",
+      "sha256": "ba9b7ab8aed7e91d29eed09228f5398fe39b2e775339b5a1456f44fe737e8684"
+    },
+    {
+      "path": "app/cs/conversation-timeline.tsx",
+      "sha256": "796aa9deca09813f3290c18010d0ce4f8c682f7703d1c02989dab4ec91f9796f"
+    },
+    {
+      "path": "docs/cs-parallel/ownership.json",
+      "sha256": "6924050ff8c87a6d314aa47cb4f5beccbaed48417f6baab24a4edf6b629697ba"
+    },
+    {
+      "path": "scripts/ai-cli-worker.mjs",
+      "sha256": "9174bd48ea554318dc9500021004fa2fd27b1669edef2ec8abc5f4cebaaac102"
+    },
+    {
+      "path": "app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts",
+      "sha256": "9f120bf5e5b9a3e1ce109212446411ded0fb7fe895be948267267fbb4e91126e"
+    },
+    {
+      "path": "app/api/ai/support-reply/route.ts",
+      "sha256": "46254b6a6845876d8283a180f5eb8feff2e7dfd925cef9f841efff98a5594188"
+    },
+    {
+      "path": "app/api/operations/snapshot/route.ts",
+      "sha256": "f947667347beb6ff78cca91d7b0d0d8d4ce251304f68c6d898ca5a17f1dd4efb"
+    },
+    {
+      "path": "tests/supabase-migrations.test.mjs",
+      "sha256": "8aeaebc5e08768ce55a4c585d907fc89a45a22602f7936640c26ba6e7e5e5a93"
+    }
+  ],
+  "verification": [
+    {
+      "path": "/tmp/cs-incoming-full.tap",
+      "sha256": "657d0969d0391bf0141a0843816ffb0c968460feaa283ebe19fc97362a4976fb",
+      "tests": 393,
+      "pass": 393,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-coupang-incoming-common.tap",
+      "sha256": "044129b1299fff6cc77e0ce01f2cf5ee0f0ac4424c39a43f6a93fb63ecdc9aa1",
+      "tests": 11,
+      "pass": 11,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-fixes-2.tap",
+      "sha256": "ecc52992948b32352a9b5afa44eb2af3a9f05ddfe84c49b494087d5db3848951",
+      "tests": 35,
+      "pass": 35,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-shopee-all-integrated.tap",
+      "sha256": "9cf7e8d4b0d1214caae5f40ce2c6048c021ac57fed6b06bc78b40361d98bb3b5",
+      "tests": 215,
+      "pass": 214,
+      "fail": 1,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-tsc-3.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-shopee-all-integrated-final.tap",
+      "sha256": "0f699e5ebc7e2c64c2d1fee7d7d8d783ffc19f0dd335918998910ee1018b61ae",
+      "tests": 215,
+      "pass": 215,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-smartstore-v2-integrated.tap",
+      "sha256": "819a3225a56547144e47cb6a0ebd313c0291dbdb6268e88c4e66d1021eba54be",
+      "tests": 24,
+      "pass": 24,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-smartstore-v1-retirement.tap",
+      "sha256": "8a9370096e546137e21e1a30792eeae3bcea959cc8b4516fea31dc7c137d0aad",
+      "tests": 7,
+      "pass": 7,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-lazada-shared-patch-final.tap",
+      "sha256": "0f0a86548b2bfc87ded8d9b691c01333dfe90dd119fb26343f3c91d7eb4a8d6e",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-tsc-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-eslint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-tsc-shopee.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-eslint-shopee.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "completed": null,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-coupang-supp5-integrated.tap",
+      "sha256": "82c948fb8a415023cc49803f6602c5cd1820b7044cda4fa68e71ef15cdea236a",
+      "tests": 90,
+      "pass": 90,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-ebay-supplement04-review.tap",
+      "sha256": "a930a3af8616fb92a192cec2ad5b05541a6d6256c77b04417bf1efefa68d134d",
+      "exitCode": 0,
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "Reproduce two unresolved eBay supplemental04 defects; passing this probe does not mean the defects are fixed."
+    },
+    {
+      "path": "/tmp/cs-incoming-wave2-final.tap",
+      "sha256": "1c4d0b6e0c4f0d0b6242399090893971938451e5c5721f177884d9be08e5643d",
+      "exitCode": 0,
+      "tests": 294,
+      "pass": 294,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "293 ordinary regression checks plus one known-defect eBay probe; all assertions passed."
+    },
+    {
+      "path": "/tmp/cs-qoo10-real-entrypoint.tap",
+      "sha256": "e7e8dad132a8947593e24ae6c0a1aa9f6c3f19e7f006376fc09eb9036b86fb32",
+      "exitCode": 0,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-lazada008-integrated.tap",
+      "sha256": "853e573dd57a9c53c72df25c18340326ded14f6976d008f5fbc98f549d531677",
+      "exitCode": 0,
+      "tests": 34,
+      "pass": 34,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-wave2-final-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-wave2-closeout-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-wave2-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-lazada008-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-wave2-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-smartstore006-review.tap",
+      "sha256": "833605c9878a8397c71010d409281ce11464fb274260565a7f8cff52f95c4656",
+      "exitCode": 0,
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "Original three defect reproductions; NULL mode is fixed in the later canonical migration and current test. Two resume defects remain open."
+    },
+    {
+      "path": "/tmp/cs-smartstore006-integrated.tap",
+      "sha256": "13aee6b7c354c962db995e5dea7fe9ea134853d8c90bfcaf61355144406e7340",
+      "exitCode": 0,
+      "tests": 53,
+      "pass": 53,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "51 ordinary assertions including NULL rejection and 2 known-defect probes; all assertions passed. Not a complete historical resume claim."
+    },
+    {
+      "path": "/tmp/cs-temu-v5-integrated.tap",
+      "sha256": "e1cf0975f45002380e59bf5e432db6ab2698046b3d2872e8fe210f40df5e923c",
+      "exitCode": 0,
+      "tests": 73,
+      "pass": 73,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-smartstore-temu-closeout-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-smartstore-temu-closeout-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-smartstore-temu-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-elevenst005-integrated.tap",
+      "sha256": "e74c949d7f1d0a93813587925c865f6fbea6255ad667c61b367523c863c1598e",
+      "exitCode": 0,
+      "tests": 6,
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "Actual local Next completion POST plus sender helpers; local simulated Supabase RPC, no operating DB proof."
+    },
+    {
+      "path": "/tmp/cs-shopee005-integrated.tap",
+      "sha256": "ffb424328b132839ad7341a4bfa0dd277d11eb9c4bb757c3865b7ff73edb5651",
+      "exitCode": 0,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "Subset of Shopee44: final history atomic wrapper and actual route; fixture common-completion base remains simplified."
+    },
+    {
+      "path": "/tmp/cs-latest-worker-shared.tap",
+      "sha256": "b8271c7143cf9b829dd49d8ca102dbdaacf551d4b15a0bfc5c6ece425d85e7a8",
+      "exitCode": 0,
+      "tests": 127,
+      "pass": 127,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-shopee005-all.tap",
+      "sha256": "b2698dfc08089bd248dbd157ff56070c35e965b2bd0867e34afd7776c6c62158",
+      "exitCode": 0,
+      "tests": 44,
+      "pass": 44,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-coupang007-owner-review.tap",
+      "sha256": "2b5a2c5d03996577514c76f323273ae06508e93e570d44f3e3fef0e50835eb2b",
+      "exitCode": 0,
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "Proposal-only order wrapper equivalence and CS boundaries; no shared hook activation."
+    },
+    {
+      "path": "/tmp/cs-latest-incoming-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-latest-incoming-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-coupang007-owner-review-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-latest-incoming-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-qoo10-010-canonical.tap",
+      "sha256": "b440c7b96e5ddfe567d48fa00157f4c529cc02edd84ad5244262fd595d474bc5",
+      "exitCode": 0,
+      "tests": 57,
+      "pass": 57,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "57 Qoo10 assertions, including 9 actual JS entrypoint/canonical010 receipt checks. Terminal/token/ledger/workspace fixture functions remain synthetic; full canonical stack not claimed."
+    },
+    {
+      "path": "/tmp/cs-qoo10-010-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-qoo10-010-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 143,
+      "empty": true,
+      "completed": false,
+      "purpose": "Whole-tree git diff stalled and was terminated; content checked against S0 directly later."
+    },
+    {
+      "path": "/tmp/cs-lazada009-integration-review.tap",
+      "sha256": "6bcf9544a7fbf017d44c1379b6511cd732808b11bdc80e9e782641ca32185577",
+      "exitCode": 0,
+      "tests": 4,
+      "pass": 4,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "3 ordinary checks plus1 unresolved cutoff defect probe; not a release pass."
+    },
+    {
+      "path": "/tmp/cs-lazada009-shared-integration.tap",
+      "sha256": "122312b7839e91be171a99bcb8bf7eb9d302636d36f8bcc55dc7c1c7a5aa8258",
+      "exitCode": 0,
+      "tests": 28,
+      "pass": 28,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "27 ordinary checks plus1 unresolved cutoff defect probe. Canonical005/008/009, actual normalizer/GET and Qoo receipt regression."
+    },
+    {
+      "path": "/tmp/cs-lazada009-common-ui-api-final.tap",
+      "sha256": "43d1ed107307b9d3b6394c7ee543e56317962fbc0ff3482033486edfecb50a7c",
+      "exitCode": 0,
+      "tests": 25,
+      "pass": 25,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-lazada009-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-lazada009-shared-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-lazada009-reply-route-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-lazada009-content-diff-check.json",
+      "sha256": "5991c5fb85913729b477dbe8d0040724e9723e34975798eb582b8730a8cda9d2",
+      "exitCode": 0,
+      "purpose": "11 touched files compared directly to frozen S0 for added whitespace/conflict markers after Git index-based diff stalled."
+    },
+    {
+      "path": "/tmp/cs-elevenst006-integrated.tap",
+      "sha256": "7fc14a2ebc487148042b15f7972f5b5731ec02196b46884a61b27bfbe6a84b46",
+      "exitCode": 0,
+      "tests": 45,
+      "pass": 45,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true,
+      "purpose": "45 channel assertions including actual Next authenticated read and failed-completion smoke, isolated local data only."
+    },
+    {
+      "path": "/tmp/cs-elevenst006-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-elevenst006-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-smartstore007-final.tap",
+      "sha256": "5b554437d69b726e1f59f966452087be824bb47bb0cd9c9b05da2a20af3cc74b",
+      "exitCode": 0,
+      "ordinaryPass": 7,
+      "knownUnresolvedDefectProbes": 1,
+      "purpose": "Actual integrated route and canonical SmartStore SQL. Failed-receipt conflict is a labeled storage contract probe using a synthetic prior receipt, not an actual failed POST.",
+      "tests": 8,
+      "pass": 8,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-shopee006-coupang8-review.tap",
+      "sha256": "5e19240307cbfd998bf3a1923597236f16f4bc851a7ceb74f3ba1a8baacff4d5",
+      "exitCode": 0,
+      "purpose": "Shopee five and Coupang/common twenty assertions. Does not cover subsequent same-transaction Coupang counterexample or latest Qoo010 common wrapper.",
+      "tests": 25,
+      "pass": 25,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-elevenst007-integrated.tap",
+      "sha256": "4025605e5ae3ef8a23d66b3befdb339d09e2076de0b401117f555617529ed7d4",
+      "exitCode": 0,
+      "purpose": "45 isolated channel checks including actual authenticated Next and failed-completion HTTP routes; month=3 exactDays=null.",
+      "tests": 45,
+      "pass": 45,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-elevenst008-integrated.tap",
+      "sha256": "5acf03988f75230b8b9862e689d7bfacca51adc93dfe07be31ea39d8fa29fe5c",
+      "exitCode": 0,
+      "purpose": "Final elevenst suite after business500-before-accepted correction. Supersedes overlapping007 suite in latest assertion count.",
+      "tests": 45,
+      "pass": 45,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-temu-v7-review-final.tap",
+      "sha256": "cbed68a0388f8ff72c7aff38063619ede96a2bea1ff8a6d652da243e91629364",
+      "exitCode": 0,
+      "purpose": "Three proposal-overlay tests on canonical base completion/retry/claim functions. Shared routes/SQL not activated; latest completion wrappers and shared-admin scope remain open.",
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-qoo10-canonical-stack-final.tap",
+      "sha256": "7125a8ff9fad134c32ceceb5213422cc1aa6c05d307ac9862a08e65ad0b9ea8f",
+      "exitCode": 0,
+      "purpose": "Canonical replay up to historical Shopee blocker then selected actual Qoo CS migrations; two passing subset checks, not the full ordered stack.",
+      "tests": 2,
+      "pass": 2,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-shopee007-final.tap",
+      "sha256": "e40015d4c60f8acac201fd2857002c6e61502c653a7c70bbcc941ecd3f6191aa",
+      "exitCode": 0,
+      "purpose": "Latest153341 generic/serverless function subset and dedicated Shopee completion to owner GET; frozen006 unchanged, base row finalizer and ingest remain isolated substitutes.",
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-ebay05-proposal-review.tap",
+      "sha256": "f4e272acb48ec971538d5b0552adf569cd665c59ab7ff519374ff9308bd2196c",
+      "exitCode": 0,
+      "purpose": "17 checks in isolated proposed tree with shared completion patch. Dedicated SQL and entrypoint mocks are separate; actual canonical generic completion/owner GET chain not proven, root shared source unmodified.",
+      "tests": 17,
+      "pass": 17,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-lazada010-proposal-review.tap",
+      "sha256": "3d425030eb430eb70d2b3bd45e00d440223fe8faa88db0f96aea38a112767381",
+      "exitCode": 0,
+      "purpose": "Six proposal tests with isolated predecessor/projection substitutes. Actual canonical005/008/009/010 and real two-session lock wait remain unproven; root activation held.",
+      "tests": 6,
+      "pass": 6,
+      "fail": 0,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-ebay05-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-final-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-elevenst008-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-shopee007-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-ebay05-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-lazada010-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-canonical-stack-root-review.tap",
+      "sha256": "467af56dbd9a5e3e066eaa8d86648dacbde011ae582b073b08c866cc78fcf929",
+      "exitCode": 1,
+      "purpose": "Initial strict migration catalog failure before SQL execution; catalog subsequently extended by108 entries.",
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-canonical-stack-after-catalog.tap",
+      "sha256": "e8bef0fa60de5ccdb23e71dfb9b2764ff534c776d3c980e6db2db06e05eee1c0",
+      "exitCode": 1,
+      "purpose": "Catalog now passes; unchanged historical04211500 fails with 11820 Shopee in-list marker count=0. No skip or preimage weakening added.",
+      "tests": 1,
+      "pass": 0,
+      "fail": 1,
+      "skipped": 0,
+      "todo": 0,
+      "completed": true
+    },
+    {
+      "path": "/tmp/cs-incoming-latest-tsc.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-latest-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-canonical-review-eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "exitCode": 0,
+      "empty": true
+    },
+    {
+      "path": "/tmp/cs-incoming-latest-content-check.json",
+      "sha256": "3b2f9cbbc153288f9a29241a3145cb89f28e021bb3fdcfee3113d5cdae3a2bb4",
+      "exitCode": 0,
+      "purpose": "Direct frozen-S0 changed-content whitespace/conflict check; no index-based Git completion claim."
+    },
+    {
+      "path": "/tmp/cs-incoming-final-content-check.json",
+      "sha256": "a135a9520b64007fade71cbaebda8f654e8201a37615f0a1cd0230810a7ccb49",
+      "exitCode": 0,
+      "purpose": "Final changed content audit across all ten received bundles and exact catalog update."
+    }
+  ],
+  "productionApplied": false,
+  "committed": false,
+  "pushed": false,
+  "deployed": false,
+  "credentialMutation": false,
+  "customerReply": false,
+  "providerMutation": false,
+  "operationallyCompleteChannels": 0,
+  "openReviewFindings": [
+    {
+      "channel": "smartstore",
+      "issue": "004 v1 admits orphan, mixed-run, or non-successful-run scans as completed history",
+      "action": "Supplement005 integrated with canonical v2 migration; 24/24 route/DB tests plus 7/7 legacy grant retirement; current route validates counts/window coherence; legacy URL uses v5 and V1 API execute revoked",
+      "resolved": true
+    },
+    {
+      "channel": "smartstore",
+      "issue": "Continuation child makes v6 reuse reject the run; today cutoff remains ahead of older unsynced windows",
+      "action": "Frozen007 canonical v7/v4 and actual route accepted: continuation descendants no longer reject reuse and current cutoff defers behind older windows. Separate failed receipt retry defect remains open.",
+      "resolved": true
+    },
+    {
+      "channel": "lazada",
+      "issue": "009 mutation uses statement-start cutoff after locking; recall observed during request can still enqueue; post-enqueue provider guard needs review",
+      "action": "Frozen010 five proposal/test/report files received; single-connection substitute predecessor/projection6/6 passes. Root actual009 cutoff counterexample remains open until real canonical005/008/009/010 combined path and two-session locking proof pass. Follow-up assigned; shared activation held.",
+      "resolved": false
+    },
+    {
+      "channel": "temu",
+      "issue": "Durable partial-detail retry must also be wired into external worker completion POST",
+      "action": "V5 external worker sender, failed retry DTO and actual completion POST integrated; 73/73 actual POST/Temu/common/11st/Qoo checks passed. Old-claim response-loss replay uses canonical retry v2. Provider, real credentials and Buyer Chat remain outside this local proof.",
+      "resolved": true
+    },
+    {
+      "channel": "coupang",
+      "issue": "007 candidate SQL emits an extra exact row after legacy_unknown/collision/mismatch; 003 must match actual stored completion response",
+      "action": "Supplement5 17 files integrated and 90/90 passed; 003 canonical migration 20260908143355 applied locally; 007 bug fixed in proposal, actual order hook awaiting CS-CROSS-20260908-02 joint review",
+      "resolved": true
+    },
+    {
+      "channel": "coupang",
+      "issue": "007 stale exact survives another seller ingest with ledger failure; added order AFTER trigger can roll back ingestion; read-side exact gate missing",
+      "action": "Frozen8 trigger-local catch fixes reviewed ingestion rollback. Twenty ordinary assertions pass, but product central reproduced same-TX stale exact because observed_at=clock_timestamp versus order.updated_at=now. Actual ingest revision binding and latest Qoo/Lazada009 rebase assigned to frozen9; hook remains unactivated.",
+      "resolved": false
+    },
+    {
+      "channel": "elevenst",
+      "issue": "External ai-cli-worker failed completion sender still omits result; storage parity needs verification",
+      "action": "Supplement05 9 files and patch008 integrated with exact pre/post hashes. Actual local Next POST plus sender6/6; business500 minimum data normalized, transport result null, Temu retry preserved. Shared worker127/127 passes.",
+      "resolved": true
+    },
+    {
+      "channel": "qoo10",
+      "issue": "Actual external-worker plus current common DB completion/receipt chain needs combined proof",
+      "action": "Frozen canonical-stack subset uses real terminal/token/ledger/workspace functions and two tests pass. Full source stack remains blocked before Qoo010 at historical Shopee04211500. Root fixed stale catalog and independently reproduced marker count=0; product central reviewing missing live-overlay preimage. No mock or migration skip presented as full-stack proof.",
+      "resolved": false
+    },
+    {
+      "channel": "shopee",
+      "issue": "Same UUID retry of a today range recomputes cutoff; full 009 atomic-completion plus 010 invariant chain requires proof",
+      "action": "Frozen005 4 files, date-intent v2 route, canonical151735 and exact authorization-error preservation integrated. Final chain/route4/4 and Shopee44/44 passed. DB retains first cutoff for the UUID and dates across response loss and midnight.",
+      "resolved": true
+    },
+    {
+      "channel": "ebay",
+      "issue": "Supplement04 common executor rejects continuation metadata and inquiry normalizer rejects case/dispute page",
+      "action": "Frozen05 nine owned files received. Isolated shared-patch overlay17/17 passes. Root shared completion and SQL activation held because generic DB completion is mocked: successful dedicated page passes null normalized inquiries to canonical generic ingest branch. Exact actual DB completion and owner GET, split ledger-write failure/replay behavior assigned to frozen06. Compatibility concern not yet a confirmed runtime failure.",
+      "resolved": false
+    },
+    {
+      "channel": "shopee",
+      "issue": "Full owner progress and current common completion DB chain should replace the simplified base used by final-chain fixture",
+      "action": "Frozen006 five checks and all17 source pins passed. Frozen007 adds actual153341 generic/serverless function subset and owner GET, one new test passes. Latest function compatibility gap closed; full ordered migration/lowest row finalizer/inquiry ingest replacements remain outside this proof.",
+      "resolved": false
+    },
+    {
+      "channel": "temu",
+      "issue": "One current-canonical DB proof from durable retry POST through new claim, final completion and owner history readback remains to be completed",
+      "action": "V7 proposal-only three checks pass through canonical base claim/retry/completion and owner GET, including response loss and exhaustion. Proposed all-Temu-operation owner trigger conflicts with shared actor/owner contract, coverage auth.uid filter may remove shared admin reads, and later wrappers missing. V8 bounded scope and shared-admin regression assigned; common activation held.",
+      "resolved": false
+    },
+    {
+      "channel": "elevenst",
+      "issue": "SellerTalk source notice is maximum3months while projection/capability/UI encode exact90days",
+      "action": "Frozen07 thirteen files integrated. Model/APIv3/UI preserve maximum3 month and exactDays=null; review remains null. Actual auth web and channel45/45 pass; no live history cutoff consumer found.",
+      "resolved": true
+    },
+    {
+      "channel": "smartstore",
+      "issue": "v7 requeues failed child while its prior atomic completion receipt still occupies job_id primary key",
+      "resolved": false,
+      "action": "Root storage-contract probe reproduces23505 on new-claim success receipt; general7 plus defect1. Frozen008 actual failed POST→resume→new claim→completion→coverage and old-claim replay design requested. No blanket receipt deletion."
+    },
+    {
+      "channel": "common",
+      "issue": "Full clean migration replay expects historical Shopee live-overlay preimage absent from preceding source migrations",
+      "resolved": false,
+      "action": "First strict catalog updated with108 current entries. Actual ordered test then fails at20260904211500 with11820 Shopee in-list marker count=0. Historical source unchanged, no skip/weakening; CS-CROSS product central requested read-only restoration review."
+    }
+  ],
+  "latestWave": {
+    "checkedAt": "2026-09-08T16:18:20.796696+00:00",
+    "receivedSubmissionBundles": 10,
+    "newCanonicalMigrations": 2,
+    "localOnly": true,
+    "verificationAssertions": 107,
+    "ordinaryAssertions": 106,
+    "knownUnresolvedDefectProbeCount": 1,
+    "separateFullStackFailureCount": 1,
+    "submissions": [
+      {
+        "channel": "smartstore",
+        "manifest": "docs/cs-parallel/reports/smartstore/delta-supplement-007.json",
+        "status": "local_canonical_candidate_tested_failed_receipt_retry_defect_open"
+      },
+      {
+        "channel": "coupang",
+        "manifest": "docs/cs-parallel/reports/coupang/delta-supplement-8.json",
+        "status": "proposal_tested_same_transaction_lineage_defect_and_latest_wrapper_rebase_open"
+      },
+      {
+        "channel": "shopee",
+        "manifest": "docs/cs-parallel/reports/shopee/delta-after-integration-006.json",
+        "status": "canonical_subset_tested_latest_common_wrapper_followup_pending"
+      },
+      {
+        "channel": "elevenst",
+        "manifest": "docs/cs-parallel/reports/elevenst/supplement-07-delta.json",
+        "status": "local_integrated_retention_unit_corrected_and_tested"
+      },
+      {
+        "channel": "temu",
+        "manifest": "docs/cs-parallel/reports/temu/20260909-v7-owner-bound-completion-history/delta.json",
+        "status": "proposal_tested_shared_admin_and_operation_scope_review_held"
+      },
+      {
+        "channel": "qoo10",
+        "manifest": "docs/cs-parallel/reports/qoo10/reply-s3-canonical-stack-delta.json",
+        "status": "canonical_subset_tested_historical_full_stack_blocker_open"
+      },
+      {
+        "channel": "shopee",
+        "manifest": "docs/cs-parallel/reports/shopee/delta-after-integration-007.json",
+        "status": "latest_completion_function_subset_compatibility_tested"
+      },
+      {
+        "channel": "ebay",
+        "manifest": "docs/cs-parallel/reports/ebay/delta-supplemental-05.json",
+        "status": "owned_files_received_proposal_overlay_tested_actual_generic_db_completion_review_held"
+      },
+      {
+        "channel": "lazada",
+        "manifest": "docs/cs-parallel/reports/lazada/concurrent-revision-reply-fence-delta.json",
+        "status": "proposal_tested_actual_canonical_chain_and_two_session_acceptance_held"
+      },
+      {
+        "channel": "elevenst",
+        "manifest": "docs/cs-parallel/reports/elevenst/supplement-08-delta.json",
+        "status": "local_integrated_business_error_precedence_tested"
+      }
+    ]
+  },
+  "previousWaves": [
+    {
+      "receivedSubmissionBundles": 6,
+      "ownedFilesCopied": 51,
+      "newCanonicalMigrations": 4,
+      "localOnly": true,
+      "knownDefectProbeCount": 1,
+      "submissions": [
+        {
+          "channel": "ebay",
+          "manifest": "delta-supplemental-04.json",
+          "status": "owned_files_received_activation_held"
+        },
+        {
+          "channel": "coupang",
+          "manifest": "delta-supplement-6.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "elevenst",
+          "manifest": "supplement-04-delta.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "shopee",
+          "manifest": "delta-after-integration-004.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "qoo10",
+          "manifest": "reply-s3-common-path-delta.json",
+          "status": "locally_integrated_tested",
+          "evidenceCorrectionPreservedIn": "received-revisions/qoo10-009-initial-delta.json"
+        },
+        {
+          "channel": "lazada",
+          "manifest": "v3-conversation-projection-delta.json",
+          "status": "locally_integrated_tested"
+        }
+      ]
+    },
+    {
+      "checkedAt": "2026-09-08T15:16:30.430662+00:00",
+      "receivedSubmissionBundles": 2,
+      "copiedFiles": 16,
+      "newCanonicalMigrations": 3,
+      "localOnly": true,
+      "knownUnresolvedDefectProbeCount": 2,
+      "submissions": [
+        {
+          "channel": "smartstore",
+          "manifest": "docs/cs-parallel/reports/smartstore/delta-supplement-006.json",
+          "status": "locally_integrated_with_two_confirmed_resume_defects",
+          "centralFixes": [
+            "v3 nextWindow key validation",
+            "NULL coverage mode/kind rejected"
+          ]
+        },
+        {
+          "channel": "temu",
+          "manifest": "docs/cs-parallel/reports/temu/20260908-v5-external-worker-retry/delta.json",
+          "status": "locally_integrated_tested"
+        }
+      ]
+    },
+    {
+      "checkedAt": "2026-09-08T15:32:44.193543+00:00",
+      "receivedSubmissionBundles": 4,
+      "touchedOwnedPaths": 23,
+      "copiedOwnedFiles": 21,
+      "deletedObsoleteFiles": 2,
+      "newCanonicalMigrations": 1,
+      "localOnly": true,
+      "newVerificationDistinctAssertions": 194,
+      "submissions": [
+        {
+          "channel": "elevenst",
+          "manifest": "docs/cs-parallel/reports/elevenst/supplement-05-delta.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "shopee",
+          "manifest": "docs/cs-parallel/reports/shopee/delta-after-integration-005.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "temu",
+          "manifest": "docs/cs-parallel/reports/temu/20260909-v6-worker-202-acceptance/delta.json",
+          "status": "locally_integrated_tested"
+        },
+        {
+          "channel": "coupang",
+          "manifest": "docs/cs-parallel/reports/coupang/delta-supplement-7.json",
+          "status": "proposal_tested_shared_hook_activation_held"
+        }
+      ]
+    },
+    {
+      "checkedAt": "2026-09-08T15:36:57.199822+00:00",
+      "receivedSubmissionBundles": 1,
+      "copiedOwnedFiles": 3,
+      "newCanonicalMigrations": 1,
+      "localOnly": true,
+      "verificationAssertions": 57,
+      "submissions": [
+        {
+          "channel": "qoo10",
+          "manifest": "docs/cs-parallel/reports/qoo10/reply-s3-actual-receipt-delta.json",
+          "status": "local_canonical_candidate_tested_full_stack_followup_pending"
+        }
+      ]
+    },
+    {
+      "checkedAt": "2026-09-08T15:47:18.163097+00:00",
+      "receivedSubmissionBundles": 1,
+      "copiedOwnedFiles": 6,
+      "sharedFilesChanged": 6,
+      "newCanonicalMigrations": 1,
+      "localOnly": true,
+      "verificationAssertions": 53,
+      "ordinaryAssertions": 52,
+      "knownUnresolvedDefectProbeCount": 1,
+      "submissions": [
+        {
+          "channel": "lazada",
+          "manifest": "docs/cs-parallel/reports/lazada/ordinary-workspace-reply-guard-delta.json",
+          "status": "locally_integrated_with_confirmed_cutoff_defect"
+        }
+      ]
+    },
+    {
+      "checkedAt": "2026-09-08T15:50:42.270767+00:00",
+      "receivedSubmissionBundles": 1,
+      "copiedOwnedFiles": 11,
+      "sharedFilesChanged": 0,
+      "newCanonicalMigrations": 0,
+      "localOnly": true,
+      "verificationAssertions": 45,
+      "submissions": [
+        {
+          "channel": "elevenst",
+          "manifest": "docs/cs-parallel/reports/elevenst/supplement-06-delta.json",
+          "status": "locally_integrated_tested_retention_unit_followup_pending"
+        }
+      ]
+    }
+  ],
+  "centralAdaptations": [
+    {
+      "checkedAt": "2026-09-08T15:32:44.193543+00:00",
+      "path": "docs/cs-parallel/proposals/temu/tests/temu-007-external-worker-detail-retry.test.ts",
+      "sourceSha256": "b97eca451669d92bf1a988f2339ed71b077226d8c0860d917ff53a47032e1b7f",
+      "integratedSha256": "f06a52e4415d6574f174eb65e866ed8463926183e996ca22e581c29d2f374ed2",
+      "reason": "Import actual 11st failed-completion helper into real-route harness; replace stale direct-spread text check with actual builder payload/DTO behavior. Frozen source unchanged.",
+      "initialRegression": {
+        "path": "/tmp/cs-temu-v6-after-elevenst005.tap",
+        "pass": 17,
+        "fail": 1,
+        "resolved": true
+      },
+      "finalEvidence": "/tmp/cs-latest-worker-shared.tap"
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-actual-receipt-flow.test.mjs",
+      "sourceSha256": "c5a7054b91b9c46df33a23a6fb93c5704386e39d55ba5519cd1b738def5751f0",
+      "integratedSha256": "69f13f4d1f345f9b1819af905bc14e71c08194bad84ea23db201c87759c1a778",
+      "reason": "Load reserved canonical153341 SQL from integrated root, not proposal source. Frozen source unchanged."
+    },
+    {
+      "path": "tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+      "integratedSha256": "e359eec0147f3be8243d52dc309f78796d5015927dac33979d40cebb17e0cd44",
+      "reason": "Use canonical005/009, actual schema/shared source, and add an explicitly labeled cutoff defect probe."
+    },
+    {
+      "path": "tests/cs-reply-route-context.test.mjs",
+      "integratedSha256": "517ecaafbc1e22598916fa95c32a78a32a5d4304782ba93b0ae04401793c5620",
+      "reason": "Import actual Qoo guard with valid synthetic identity; add5 Lazada latest-state cases. Initial12 harness import failures resolved, final25 UI/API checks pass."
+    },
+    {
+      "checkedAt": "2026-09-08T16:18:20.796696+00:00",
+      "path": "tests/cs-smartstore-continuation-cutoff-v7.test.mjs",
+      "integratedSha256": "03c7aad301b800e9b515e1964f71ae7a81cac16b37ef92d865c69a8b2fc5862a",
+      "reason": "Canonical map and actual integrated route replace proposal patch harness; preserve root NULL coalesce. Add explicit failed-receipt storage defect probe; frozen007 unchanged."
+    },
+    {
+      "checkedAt": "2026-09-08T16:18:20.796696+00:00",
+      "path": "tests/supabase-migrations.test.mjs",
+      "integratedSha256": "8aeaebc5e08768ce55a4c585d907fc89a45a22602f7936640c26ba6e7e5e5a93",
+      "reason": "Append108 observed current canonical filenames to exact catalog, preserving prior constants/order. This removes stale-list failure only; actual historical SQL preimage failure remains visible."
+    }
+  ],
+  "externalObservations": [
+    {
+      "channel": "lazada",
+      "reportedAt": "2026-09-08T15:47:18.163097+00:00",
+      "source": "Lazada task read-only Chrome CHANGHEE observation",
+      "sellerCenterMY": "password login screen",
+      "openPlatform": "Sign in",
+      "interpretation": "Browser unauthenticated; separate from prior IM200/token grant. No repeated login or token changes requested."
+    },
+    {
+      "channel": "elevenst",
+      "source": "Dedicated task read-only Seller Office CHANGHEE evidence-limited-surfaces-20260909.json",
+      "seller": "couplit / couplit Korean seller name matched",
+      "sellerTalkVisibleRooms": 0,
+      "sellerTalkVisibleFriends": 0,
+      "retentionNotice": "maximum_three_months",
+      "reviewVisibleCount": 0,
+      "reviewWindow": [
+        "2026-09-02",
+        "2026-09-09"
+      ],
+      "automaticRemoteCount": null,
+      "historicalZeroConfirmed": false,
+      "providerWrites": 0
+    }
+  ]
+}

@@ -2,7 +2,10 @@ import { execFileSync } from "node:child_process";
 import { createClient } from "@supabase/supabase-js";
 import {
   probeEbayMessageAccess,
+  probeEbayTradingMyMessages,
 } from "../lib/channels/ebay-message-history.ts";
+import { ebayTradingRequest, ebayTradingXmlEscape } from "../lib/channels/protocols.ts";
+import { executeChannelOperation } from "../lib/channels/operations.ts";
 
 const PROJECT_REF = "sqaoqucxakebqkiygdxb";
 const SUPABASE_URL = `https://${PROJECT_REF}.supabase.co`;
@@ -90,6 +93,188 @@ async function vaultedEbayPayload(serviceRoleKey, accessToken) {
   };
 }
 
+async function probeEbayAsqRetainedHistory(payload, now = new Date()) {
+  const retainedStart = new Date(now.getTime() - 365 * 86_400_000);
+  const windows = [];
+  let start = retainedStart;
+  while (start.getTime() <= now.getTime()) {
+    const end = new Date(Math.min(start.getTime() + 30 * 86_400_000 - 1, now.getTime()));
+    const body = `<?xml version="1.0" encoding="utf-8"?><GetMemberMessagesRequest xmlns="urn:ebay:apis:eBLBaseComponents"><MailMessageType>AskSellerQuestion</MailMessageType><StartCreationTime>${ebayTradingXmlEscape(start.toISOString())}</StartCreationTime><EndCreationTime>${ebayTradingXmlEscape(end.toISOString())}</EndCreationTime><Pagination><EntriesPerPage>25</EntriesPerPage><PageNumber>1</PageNumber></Pagination></GetMemberMessagesRequest>`;
+    const remote = await ebayTradingRequest({
+      payload,
+      environment: "production",
+      callName: "GetMemberMessages",
+      marketplaceId: textField(payload, "marketplace_id") || "EBAY_US",
+      body,
+    });
+    const pagination = remote.data.paginationResult;
+    const total = pagination && typeof pagination === "object" && !Array.isArray(pagination)
+      ? pagination.totalNumberOfEntries
+      : null;
+    const pages = pagination && typeof pagination === "object" && !Array.isArray(pagination)
+      ? pagination.totalNumberOfPages
+      : null;
+    if (remote.response.status !== 200 || remote.data.code !== "SUCCESS"
+        || !Number.isSafeInteger(total) || total < 0
+        || !Number.isSafeInteger(pages) || pages < 0) {
+      return {
+        status: remote.response.status === 401 || remote.response.status === 403
+          ? "authorization_required"
+          : "unverified",
+        checkedWindows: windows.length,
+        total: null,
+      };
+    }
+    windows.push({ from: start.toISOString(), to: end.toISOString(), total });
+    start = new Date(end.getTime() + 1);
+  }
+  return {
+    status: "readable",
+    checkedWindows: windows.length,
+    from: retainedStart.toISOString(),
+    to: now.toISOString(),
+    total: windows.reduce((sum, window) => sum + window.total, 0),
+    nonEmptyWindows: windows.filter((window) => window.total > 0).length,
+  };
+}
+
+async function probeEbayMailboxRange(payload, start, end) {
+  let argumentsValue = {
+    kind: "mailbox",
+    startTime: start.toISOString(),
+    endTime: end.toISOString(),
+    folderId: 0,
+    pageNumber: 1,
+    entriesPerPage: 25,
+    marketplaceId: textField(payload, "marketplace_id") || "EBAY_US",
+  };
+  let pages = 0;
+  let messages = 0;
+  let asqEchoes = 0;
+  let memberMessages = 0;
+  let platformMessages = 0;
+  let mediaMessages = 0;
+  const messageKeys = [];
+  while (pages < 50) {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "inquiries.list",
+      payload,
+      arguments: argumentsValue,
+      environment: "production",
+    });
+    if (!result.ok) {
+      const code = String(result.steps.find((entry) => !entry.ok)?.data?.code ?? "provider_rejected");
+      const header = result.steps.find((entry) => entry.name === "inquiries")?.data;
+      const pagination = header?.paginationResult && typeof header.paginationResult === "object"
+        && !Array.isArray(header.paginationResult) ? header.paginationResult : {};
+      return {
+        status: "unverified",
+        pages,
+        messages: null,
+        reason: /^[A-Z0-9_.-]{1,80}$/i.test(code) ? code : "provider_rejected",
+        observedHeaderCount: Array.isArray(header?.myMessages) ? header.myMessages.length : null,
+        observedTotalPages: Number.isSafeInteger(pagination.totalNumberOfPages) ? pagination.totalNumberOfPages : null,
+        observedTotalEntries: Number.isSafeInteger(pagination.totalNumberOfEntries) ? pagination.totalNumberOfEntries : null,
+        messageKeys,
+      };
+    }
+    const page = result.steps.find((entry) => entry.name === "inquiries");
+    const rows = Array.isArray(page?.data?.myMessages) ? page.data.myMessages : [];
+    pages += 1;
+    messages += rows.length;
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) continue;
+      const row = raw;
+      const asqEcho = textField(row, "messageType") === "AskSellerQuestion"
+        && Boolean(textField(row, "externalMessageId"));
+      const classification = asqEcho
+        ? "asq_echo"
+        : row.responseEnabled === true && textField(row, "sender")
+          ? "member"
+          : "platform";
+      const hasMedia = Array.isArray(row.media) && row.media.length > 0;
+      if (classification === "asq_echo") asqEchoes += 1;
+      else if (classification === "member") memberMessages += 1;
+      else platformMessages += 1;
+      if (hasMedia) mediaMessages += 1;
+      messageKeys.push({ id: textField(row, "messageId"), classification, hasMedia });
+    }
+    if (!result.continuation) return {
+      status: "readable",
+      pages,
+      messages,
+      asqEchoes,
+      memberMessages,
+      platformMessages,
+      mediaMessages,
+      fullyPaginated: true,
+      messageKeys,
+    };
+    argumentsValue = result.continuation.arguments;
+  }
+  return { status: "unverified", pages, messages: null, reason: "page_limit_reached", messageKeys };
+}
+
+async function probeEbayMailboxImport(payload, now = new Date()) {
+  const start = new Date(now.getTime() - 6 * 86_400_000);
+  const result = await probeEbayMailboxRange(payload, start, now);
+  const publicResult = { ...result };
+  delete publicResult.messageKeys;
+  return publicResult;
+}
+
+async function probeEbayMailboxRetainedHistory(payload, now = new Date()) {
+  const retainedStart = new Date(now.getTime() - 365 * 86_400_000);
+  const unique = new Map();
+  let checkedWindows = 0;
+  let pages = 0;
+  let observations = 0;
+  let start = retainedStart;
+  while (start.getTime() <= now.getTime()) {
+    const end = new Date(Math.min(start.getTime() + 30 * 86_400_000 - 1, now.getTime()));
+    const result = await probeEbayMailboxRange(payload, start, end);
+    checkedWindows += 1;
+    pages += result.pages;
+    if (result.status !== "readable" || !result.fullyPaginated) {
+      return {
+        status: "unverified",
+        checkedWindows,
+        pages,
+        messages: null,
+        reason: result.reason || "mailbox_window_incomplete",
+      };
+    }
+    for (const message of result.messageKeys) {
+      observations += 1;
+      if (!message.id) {
+        return { status: "unverified", checkedWindows, pages, messages: null, reason: "message_identity_missing" };
+      }
+      const previous = unique.get(message.id);
+      if (previous && (previous.classification !== message.classification || previous.hasMedia !== message.hasMedia)) {
+        return { status: "unverified", checkedWindows, pages, messages: null, reason: "message_identity_conflict" };
+      }
+      unique.set(message.id, message);
+    }
+    start = new Date(end.getTime() + 1);
+  }
+  const messages = [...unique.values()];
+  return {
+    status: "readable",
+    checkedWindows,
+    from: retainedStart.toISOString(),
+    to: now.toISOString(),
+    pages,
+    messages: messages.length,
+    duplicateObservations: observations - messages.length,
+    asqEchoes: messages.filter((message) => message.classification === "asq_echo").length,
+    memberMessages: messages.filter((message) => message.classification === "member").length,
+    platformMessages: messages.filter((message) => message.classification === "platform").length,
+    mediaMessages: messages.filter((message) => message.hasMedia).length,
+    fullyPaginated: true,
+  };
+}
+
 let payload = null;
 let credentialSource = null;
 let credentialId = null;
@@ -124,16 +309,37 @@ if (!payload) {
 }
 
 try {
-  const result = await probeEbayMessageAccess({ payload, environment: "production" });
-  console.log(JSON.stringify({
-    contract: "ebay_message_access_probe_v1",
-    checkedAt: new Date().toISOString(),
-    credentialSource,
-    credentialId,
-    ...result,
-  }));
+  let stage = "summary_probes";
+  try {
+    const [commerce, trading, asqRetainedHistory] = await Promise.all([
+      probeEbayMessageAccess({ payload, environment: "production" }),
+      probeEbayTradingMyMessages({ payload, environment: "production" }),
+      probeEbayAsqRetainedHistory(payload),
+    ]);
+    stage = "mailbox_import";
+    const mailboxImport = await probeEbayMailboxImport(payload);
+    stage = "mailbox_retained_history";
+    const mailboxRetainedHistory = await probeEbayMailboxRetainedHistory(payload);
+    console.log(JSON.stringify({
+      contract: "ebay_message_access_probe_v3",
+      checkedAt: new Date().toISOString(),
+      credentialSource,
+      credentialBound: Boolean(credentialId),
+      commerce,
+      trading,
+      asqRetainedHistory,
+      mailboxImport,
+      mailboxRetainedHistory,
+    }));
+  } catch (error) {
+    const code = error instanceof Error && /^[A-Z0-9_.:-]{1,100}$/i.test(error.message)
+      ? error.message
+      : "probe_transport_or_contract_failed";
+    console.log(JSON.stringify({ contract: "ebay_message_access_probe_v3", status: "unverified", stage, reason: code }));
+    process.exitCode = 2;
+  }
 } catch {
-  console.log(JSON.stringify({ contract: "ebay_message_access_probe_v1", status: "unverified", reason: "probe_transport_or_contract_failed" }));
+  console.log(JSON.stringify({ contract: "ebay_message_access_probe_v3", status: "unverified", reason: "probe_transport_or_contract_failed" }));
   process.exitCode = 2;
 } finally {
   if (payload) payload.access_token = "";

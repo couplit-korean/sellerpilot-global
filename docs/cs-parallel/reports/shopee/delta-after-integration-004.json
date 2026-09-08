@@ -1,0 +1,125 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "branch": "codex/cs-shopee-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "createdAt": "2026-09-08T23:45:20+09:00",
+  "parentDelta": {
+    "path": "docs/cs-parallel/reports/shopee/delta-after-integration-003.json",
+    "sha256": "7a8fb97bd3ab4c4b04cf97358a429f32d9a33cf7981db70d08b12f8bca4589d1",
+    "frozen": true
+  },
+  "authoritativeInputs": {
+    "promptSha256": "8e3e2ddd6b8a566946bdb57cbba3b2a396508d5b2e9ee77b5096387aaebc73a0",
+    "ownershipSha256": "09d64aa4a62513f9eb4ccfa6af4bdf809389f69cb0fefa7ed7d8041addddd24f",
+    "channelReferenceSha256": "a5c3cf7416fee17b142404d6984aaa0072c000e85ec41a14b7646bd60ce1464c",
+    "preparedFilesVerified": 1628
+  },
+  "actualTargets": [
+    { "country": "SG", "shopId": "1719148844" },
+    { "country": "TW", "shopId": "1758392145" },
+    { "country": "TH", "shopId": "1758392144" },
+    { "country": "MY", "shopId": "1758392135" },
+    { "country": "VN", "shopId": "1758392139" },
+    { "country": "PH", "shopId": "1758392137" },
+    { "country": "BR", "shopId": "1758392161" },
+    { "country": "MX", "shopId": "1758392178" }
+  ],
+  "files": [
+    {
+      "path": "lib/cs/channels/shopee/history-start-request.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c8682d335d023b34645f93f4b4c6652435370ea31ec480ebfbd0bc2a062630b3",
+      "reason": "Strictly parse Gregorian KST dates, end today at current time, and derive the exact run ID from the request UUID."
+    },
+    {
+      "path": "tests/cs-shopee-history-start-request.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a7ed81861b0400b08dda20b8b4bdf1035b5ea928cc38844ea2020eca65d9e309",
+      "reason": "Verify normalized invalid dates, future KST dates, today boundaries and response run binding."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-010-history-request-invariants-draft.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "126e546ae02965953e2f4e5fc80d0face84d47a4826d6c9e57bdaec86dea8ceb",
+      "reason": "Add immutable start requests plus exact credential, Vault, country, run, sequence and checkpoint guards."
+    },
+    {
+      "path": "tests/cs-shopee-history-invariants-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "65ce4da4cd8c9693118afec31a47eb12f1b3ff6b2402a9c029eb1682e3e7c047",
+      "reason": "Exercise NULL boundaries, request replay mismatches, old target data, multi-country ambiguity and cross-run event attacks in PGlite."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-011-history-request-route-ui.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a701280d56167ff6874488702ccd4fb46ca23c446d35d6408a973653f6631c19",
+      "reason": "Wire strict request and response binding into the current route, lock inputs while loading, use user-facing Korean terms and extend the real-route PGlite test."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/follow-up-after-delta-003.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "67553565a19c7e71d0cdced50314f43c4841186441754573c982b8f1d0d6080c",
+      "reason": "Record each review finding, isolated verification, actual shop scope and unchanged external evidence boundary."
+    }
+  ],
+  "patchTargets": [
+    {
+      "path": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+      "beforeSha256": "05c60a45dad12400bb21c3fd2c862e5c2012b8ccc3a04b97aba03ea233ca6075",
+      "afterSha256": "ba5f0981437ae86c0197db399a6670e6d073e89d1fb4b62cad4e12a04974938d"
+    },
+    {
+      "path": "app/cs/channels/shopee/history-progress.tsx",
+      "beforeSha256": "8bb8a1ae212b67edfa4114f8f462179b3ea3e3ddcc375c089be24471a4cc1197",
+      "afterSha256": "850a863f3725a3a75bcacd6845fa16b6112e0b2352320b3dcb7b49b0753ba107"
+    },
+    {
+      "path": "tests/cs-shopee-history-route-db.test.mjs",
+      "beforeSha256": "1b034b1681039cb8fddedaa218575945db7edbec68ebfc23a6ace1f9fc9d9c0f",
+      "afterSha256": "4da9d68a32cb17b74d83a7fa3c722070a0a7e484b162f96b8561ccb9116081ec"
+    }
+  ],
+  "reviewFindingsClosed": [
+    "explicit NULL start range rejection before job insertion",
+    "immutable request UUID across credential, period and ordered target plan",
+    "strict Gregorian KST date parsing and current-time end for today",
+    "exact current credential plus Vault shop and one-country target binding",
+    "job run, sequence and input checkpoint binding for every history event",
+    "plan RPC scope binding to the exact credential target"
+  ],
+  "verification": {
+    "focusedInvariantAndDateTests": "9/9 passed",
+    "patchedRealRouteAndFocusedTests": "10/10 passed",
+    "integratedPatchApplyCheck": "passed",
+    "patchedIntegratedTypescriptNoEmit": "passed",
+    "patchedIntegratedEslint": "passed",
+    "diffCheck": "passed",
+    "secretAndCustomerBodyScan": "synthetic identifiers and body-free evidence only; no real credential or customer original added"
+  },
+  "evidenceBoundary": {
+    "providerReadSuccessfulShops": 0,
+    "providerGetPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "authenticatedOperatingWebReadback": false,
+    "customerReplyPerformed": false,
+    "buyerChatImplemented": false,
+    "commitPushDeployPerformed": false
+  },
+  "integrationOrder": [
+    "verify this delta and all listed file hashes without changing frozen delta 003",
+    "copy the three owned helper and test files plus the SQL and patch proposal",
+    "apply SQL 010 after the existing Shopee history ledger and history start SQL in an isolated database",
+    "apply patch 011 against its three recorded current integrated preimages",
+    "rerun the invariant, start-request and patched real-route tests plus TypeScript and ESLint",
+    "do not perform an operating migration, credential refresh or provider mutation without separate authorization"
+  ]
+}

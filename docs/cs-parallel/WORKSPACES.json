@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "manifestPath": "/Users/kimchangheemac/dev/sellerpilot-cs-snapshots/S0-20260908-decaba426812a3ba/manifest.json",
+  "snapshotTree": "/Users/kimchangheemac/dev/sellerpilot-cs-snapshots/S0-20260908-decaba426812a3ba/tree",
+  "coordinatorRoot": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "prepared": true,
+  "channels": {
+    "coupang": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+      "branch": "codex/cs-coupang-v1",
+      "port": 3211,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-coupang/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-coupang/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-coupang/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-coupang/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:41:54.801574+00:00"
+    },
+    "smartstore": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+      "branch": "codex/cs-smartstore-v1",
+      "port": 3212,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-smartstore/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-smartstore/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-smartstore/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-smartstore/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:42:10.983779+00:00"
+    },
+    "qoo10": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+      "branch": "codex/cs-qoo10-v1",
+      "port": 3213,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-qoo10/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-qoo10/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-qoo10/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-qoo10/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:42:28.861747+00:00"
+    },
+    "elevenst": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+      "branch": "codex/cs-elevenst-v1",
+      "port": 3214,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-elevenst/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-elevenst/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-elevenst/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-elevenst/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:42:45.765975+00:00"
+    },
+    "shopee": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+      "branch": "codex/cs-shopee-v1",
+      "port": 3215,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-shopee/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-shopee/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-shopee/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-shopee/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:43:03.226964+00:00"
+    },
+    "lazada": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+      "branch": "codex/cs-lazada-v1",
+      "port": 3216,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-lazada/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-lazada/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-lazada/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-lazada/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:43:27.662780+00:00"
+    },
+    "ebay": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+      "branch": "codex/cs-ebay-v1",
+      "port": 3217,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-ebay/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-ebay/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-ebay/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-ebay/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:43:45.470057+00:00"
+    },
+    "temu": {
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+      "branch": "codex/cs-temu-v1",
+      "port": 3218,
+      "snapshotId": "S0-20260908-decaba426812a3ba",
+      "filesVerified": 1628,
+      "dependencies": "independent_apfs_clone",
+      "dependencyResolution": [
+        "next=/Users/kimchangheemac/dev/sellerpilot-cs-temu/node_modules/.pnpm/next@16.3.1_@babel+core@7.29.7_@opentelemetry+api@1.9.1_@types+node@22.19.19_react-dom@19.2.8_react@19.2.8__react@19.2.8/node_modules/next/dist/server/next.js",
+        "tsx=/Users/kimchangheemac/dev/sellerpilot-cs-temu/node_modules/.pnpm/tsx@4.23.12/node_modules/tsx/dist/loader.mjs",
+        "typescript=/Users/kimchangheemac/dev/sellerpilot-cs-temu/node_modules/.pnpm/typescript@5.9.3/node_modules/typescript/lib/typescript.js",
+        "@electric-sql/pglite=/Users/kimchangheemac/dev/sellerpilot-cs-temu/node_modules/.pnpm/@electric-sql+pglite@0.3.16/node_modules/@electric-sql/pglite/dist/index.cjs"
+      ],
+      "environmentFilesCopied": false,
+      "schedulerStarted": false,
+      "verifiedAt": "2026-09-08T09:44:02.732221+00:00"
+    }
+  }
+}

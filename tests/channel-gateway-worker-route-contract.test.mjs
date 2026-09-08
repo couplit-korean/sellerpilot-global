@@ -5,6 +5,7 @@ import test from "node:test";
 const claimRouteUrl = new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url);
 const completeRouteUrl = new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url);
 const heartbeatRouteUrl = new URL("../app/api/channel-gateway/worker/heartbeat/route.ts", import.meta.url);
+const rateBudgetRouteUrl = new URL("../app/api/channel-gateway/worker/rate-budget/route.ts", import.meta.url);
 const beginMutationRouteUrl = new URL("../app/api/channel-gateway/worker/begin-mutation/route.ts", import.meta.url);
 const credentialStageRouteUrl = new URL("../app/api/channel-gateway/worker/credential-refresh/route.ts", import.meta.url);
 const ebayAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/ebay/authorize/route.ts", import.meta.url);
@@ -87,6 +88,16 @@ test("gateway heartbeat separates auth and configuration failures and rejects lo
   assert.match(source, /claimToken: z\.string\(\)\.uuid\(\)/);
   assert.match(source, /p_claim_token: parsed\.data\.claimToken/);
   assert.match(source, /p_worker_version: parsed\.data\.version \?\? "sellerpilot-cli-worker\/unknown"/);
+});
+
+test("local gateway requests reserve the same durable provider budget", async()=>{
+ const [claimSource,rateSource,workerSource]=await Promise.all([readFile(claimRouteUrl,"utf8"),readFile(rateBudgetRouteUrl,"utf8"),readFile(workerUrl,"utf8")]);
+ assert.match(claimSource,/sellerpilot_service_reserve_provider_rate_budget_v1/);
+ assert.match(rateSource,/sellerpilot_service_reserve_provider_request_rate_budget_v1/);
+ assert.match(rateSource,/workerToken\.length < 24[\s\S]*status: 401/);
+ assert.match(rateSource,/cache-control[\s\S]*no-store/);
+ assert.match(workerSource,/runWithProviderRequestBudget/);
+ assert.match(workerSource,/\/api\/channel-gateway\/worker\/rate-budget/);
 });
 
 test("gateway mutation fence separates a live gate denial from lost ownership", async () => {
@@ -178,13 +189,13 @@ test("listing media mutations are fenced before upload and preserved in structur
 
   const shopeeUpload = listingRuntimeSource.indexOf("async function uploadShopeeImage");
   const shopeeFence = listingRuntimeSource.indexOf("await hooks.beginProviderMutation()", shopeeUpload);
-  const shopeeFetch = listingRuntimeSource.indexOf("const response = await fetch", shopeeFence);
+  const shopeeFetch = listingRuntimeSource.indexOf("const response = await providerFetch", shopeeFence);
   const lazadaPrepare = listingRuntimeSource.indexOf("async function prepareLazadaListing");
   const lazadaFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", lazadaPrepare);
   const lazadaRequest = listingRuntimeSource.indexOf("const remote = await dependencies.lazadaRequest", lazadaFence);
   const smartstorePrepare = listingRuntimeSource.indexOf("async function prepareSmartstoreListing");
   const smartstoreFence = listingRuntimeSource.indexOf("await input.hooks.beginProviderMutation()", smartstorePrepare);
-  const smartstoreUpload = listingRuntimeSource.indexOf("const uploadResponse = await fetch", smartstoreFence);
+  const smartstoreUpload = listingRuntimeSource.indexOf("const uploadResponse = await providerFetch", smartstoreFence);
   assert.equal(shopeeUpload >= 0 && shopeeUpload < shopeeFence && shopeeFence < shopeeFetch, true);
   assert.equal(lazadaPrepare >= 0 && lazadaPrepare < lazadaFence && lazadaFence < lazadaRequest, true);
   assert.equal(smartstorePrepare >= 0 && smartstorePrepare < smartstoreFence && smartstoreFence < smartstoreUpload, true);

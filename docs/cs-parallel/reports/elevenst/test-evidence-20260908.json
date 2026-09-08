@@ -1,0 +1,64 @@
+{
+  "capturedAt": "2026-09-08T10:38:30Z",
+  "node": "v22.23.2",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "runs": [
+    {
+      "name": "required-elevenst-focused-suite",
+      "command": "node --import tsx --test tests/elevenst-product-qna.test.ts tests/elevenst-product-qna-db.test.mjs tests/elevenst-product-qna-db-dynamic.test.mjs tests/channel-protocols.test.ts tests/serverless-cs-gateway.test.ts tests/cs-history-channel-db.test.mjs tests/inquiry-reply.test.ts",
+      "sourceSetSha256": "6d1ef655382833d728f73ea51009f6e4e2109c67ad65ab3c8fe8389fbfd0ce04",
+      "exitCode": 0,
+      "passed": 174,
+      "failed": 0
+    },
+    {
+      "name": "elevenst-owned-tests",
+      "command": "node --import tsx --test tests/cs-elevenst-contracts.test.ts tests/cs-elevenst-product-qna-get-only.test.mjs tests/cs-elevenst-alimi-get-only.test.mjs",
+      "sourceSetSha256": "49da9ae2a752b96e6b4228d872b008c6996b16701195180d6c7991eff489f898",
+      "exitCode": 0,
+      "passed": 12,
+      "failed": 0
+    },
+    {
+      "name": "elevenst-owned-eslint",
+      "command": "eslint <six elevenst-owned source/test files>",
+      "sourceSetSha256": "43e8dfc19b2e3a358c687333831493860ae998ddabc0a70464a2e22403bbff12",
+      "exitCode": 0,
+      "errors": 0,
+      "warnings": 0
+    },
+    {
+      "name": "repository-typecheck",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "product-qna-current-live-get",
+      "command": "node --import tsx scripts/cs-elevenst-product-qna-get-only.mjs --start=20260902 --end=20260908 --seller-id=couplit --seller-name=커플릿 --execute",
+      "sourceSha256": "23ac0a7458578c6a47916dd7cffb89f20ddd6b3ded7a9846a00f5cb8ec021502",
+      "exitCode": 0,
+      "providerRequests": 3,
+      "providerOperationAccepted": false,
+      "providerMutation": false
+    },
+    {
+      "name": "product-qna-first-thirty-days-live-get",
+      "command": "five exact windows; each executes statuses 00/01/02",
+      "sourceSha256": "23ac0a7458578c6a47916dd7cffb89f20ddd6b3ded7a9846a00f5cb8ec021502",
+      "exitCode": 0,
+      "providerRequests": 15,
+      "providerOperationsAccepted": 0,
+      "providerMutation": false
+    },
+    {
+      "name": "urgent-alimi-thirty-day-live-get",
+      "command": "node scripts/cs-elevenst-alimi-get-only.mjs --start=20260810 --end=20260908 --seller-id=couplit --seller-name=커플릿 --execute",
+      "sourceSha256": "316b3299159d22377860584dfbabc32496c10c54767b3176e6539e0bb8d5020a",
+      "exitCode": 0,
+      "providerRequests": 1,
+      "providerOperationAccepted": true,
+      "acceptedEmpty": true,
+      "providerMutation": false
+    }
+  ]
+}

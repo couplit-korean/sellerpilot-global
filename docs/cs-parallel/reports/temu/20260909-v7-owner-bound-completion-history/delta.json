@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "submission": "20260909-v7-owner-bound-completion-history",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+  "branch": "codex/cs-temu-v1",
+  "port": 3218,
+  "previousSubmissionFrozen": "docs/cs-parallel/reports/temu/20260909-v6-worker-202-acceptance/delta.json",
+  "proposalFiles": {
+    "docs/cs-parallel/proposals/temu/006-owner-bound-completion-history-chain.md": "939527a7b6d7e166b46775987d056b0bc8d4a2bc18f90407942527a32e5f88a2",
+    "docs/cs-parallel/proposals/temu/sql/temu-009-owner-bound-retry-history.sql": "02cefb7ddc828fb5137502618f16e41c42e3bd2fbb357539322e655af701eeed",
+    "docs/cs-parallel/proposals/temu/patches/temu-009-owner-bound-completion-history.patch": "9e2ff3532f1b33736e95a070edf6e98b6687a68cf782393cac5c4ad166fa98d8",
+    "docs/cs-parallel/proposals/temu/tests/temu-009-owner-bound-completion-history-chain.test.ts": "bf960cf92e233983dc52867e4997b168b098655b9feca56b53b903641b81c901"
+  },
+  "verification": {
+    "actualCompletionClaimHistoryChain": "3/3 passed",
+    "latestIntegratedV5RetryCoverageRegression": "17/17 passed",
+    "frozenV6Http202Acceptance": "1/1 passed",
+    "proposalPatchApply": "passed",
+    "targetedLint": "passed",
+    "manualCompletionReceiptOrTerminalFlag": false,
+    "originalCommonFilesModified": false,
+    "frozenV5V6Modified": false
+  },
+  "external": {
+    "providerApiReads": 0,
+    "providerMutations": 0,
+    "customerReplies": 0,
+    "productionDatabaseChanges": 0,
+    "credentialChanges": 0,
+    "deployments": 0,
+    "buyerChatImplemented": false
+  }
+}

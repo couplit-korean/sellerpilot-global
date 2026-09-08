@@ -632,7 +632,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     setWorkingJobId(job.id);
     setJobsError("");
     try {
-      const response = await authenticatedFetch("/api/operations/snapshot", {
+      const response = await authenticatedFetch("/api/admin/products/snapshot", {
         method: "POST",
         body: JSON.stringify({ action: "product_create", jobId: job.id }),
       });

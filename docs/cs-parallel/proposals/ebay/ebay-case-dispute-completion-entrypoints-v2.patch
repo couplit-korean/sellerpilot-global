@@ -1,0 +1,301 @@
+diff --git a/app/api/channel-gateway/worker/complete/route.ts b/app/api/channel-gateway/worker/complete/route.ts
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -44,6 +44,11 @@ import {
+   workerRpcErrorStatus,
+ } from "../../../../../lib/worker-rpc";
+ import { recordTemuDetailRetryWithReplay } from "../../../../../lib/channels/cs/temu/retry-rpc";
++import {
++  isEbayCaseDisputeHistoryArguments,
++  recordEbayCaseDisputeGatewayObservation,
++  validateEbayCaseDisputeGatewayResult,
++} from "../../../../../lib/channels/cs/ebay/case-dispute-gateway";
+ 
+ export const runtime = "nodejs";
+ 
+@@ -352,6 +357,49 @@ export async function POST(request: Request) {
+       && (job.channel !== completionResult.channel || job.operation !== completionResult.operation)) {
+     return NextResponse.json({ message: "채널 작업 결과가 요청과 일치하지 않습니다." }, { status: 409 });
+   }
++  const jobRequest = job.request && typeof job.request === "object" && !Array.isArray(job.request)
++    ? job.request as Record<string, unknown>
++    : null;
++  const jobArguments = jobRequest?.arguments && typeof jobRequest.arguments === "object"
++      && !Array.isArray(jobRequest.arguments)
++    ? jobRequest.arguments as Record<string, unknown>
++    : {};
++  const ebayCaseDisputeHistory = job.channel === "ebay"
++    && job.operation === "inquiries.list"
++    && isEbayCaseDisputeHistoryArguments(jobArguments);
++  if (ebayCaseDisputeHistory) {
++    if (!completionResult) {
++      return NextResponse.json({ message: "eBay case/dispute page evidence is required." }, { status: 409 });
++    }
++    try {
++      validateEbayCaseDisputeGatewayResult({
++        arguments: jobArguments,
++        result: completionResult as ChannelOperationResult,
++      });
++      if (job.status !== "completed_replay") {
++        await recordEbayCaseDisputeGatewayObservation({
++          jobId: parsed.data.jobId,
++          claimToken: parsed.data.claimToken,
++          tokenHash,
++          arguments: jobArguments,
++          result: completionResult as ChannelOperationResult,
++          rpc: async (name, arguments_) => {
++            const response = await serviceClient.rpc(name, arguments_);
++            return { data: response.data, error: response.error };
++          },
++        });
++      }
++    } catch (error) {
++      const invalid = error instanceof Error
++        && /(?:INVALID|MISMATCH|REQUIRED|UNEXPECTED)$/u.test(error.message);
++      console.error("eBay case/dispute page completion rejected", {
++        code: error instanceof Error ? error.message : "unknown",
++      });
++      return NextResponse.json({ message: invalid
++        ? "eBay case/dispute page evidence does not match the claimed job."
++        : workerRpcErrorMessage(503) }, { status: invalid ? 409 : 503 });
++    }
++  }
+   let qoo10ReadbackContext;
+   try {
+     qoo10ReadbackContext = qoo10ReplyS3ReadbackContext(job);
+@@ -498,7 +546,8 @@ export async function POST(request: Request) {
+         );
+       }
+     }
+-    if (parsed.data.result.operation === "inquiries.list" && !qoo10ReadbackContext) {
++    if (parsed.data.result.operation === "inquiries.list"
++        && !qoo10ReadbackContext && !ebayCaseDisputeHistory) {
+       const inquiryResult = parsed.data.result as ChannelOperationResult;
+       if (inquiryResult.ok) {
+         if (!normalizationTimestamp) {
+@@ -554,23 +603,27 @@ export async function POST(request: Request) {
+         ? qoo10ReadbackCompletion.storedResponse as unknown as Record<string, unknown>
+         : parsed.data.result;
+   } else if (parsed.data.status === "failed" && parsed.data.result) {
+-    if (!normalizationTimestamp) {
+-      return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
++    if (ebayCaseDisputeHistory) {
++      storedResponse = parsed.data.result as unknown as Record<string, unknown>;
++    } else {
++      if (!normalizationTimestamp) {
++        return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
++      }
++      const safeFailedRead = safeElevenstProductQnaBusinessFailureResult(
++        { channel: String(job.channel), operation: String(job.operation) },
++        parsed.data.result,
++      );
++      if (!safeFailedRead) {
++        return NextResponse.json({ message: "11번가 상품 Q&A 실패 증거 형식이 올바르지 않습니다." }, { status: 409 });
++      }
++      elevenstReadReceipt = buildElevenstCsReadObservation({
++        result: safeFailedRead,
++        arguments: jobArguments,
++        checkedAt: normalizationTimestamp,
++        normalizedInquiries: [],
++      });
++      storedResponse = sanitizedElevenstFailedInquiryStoredResult(safeFailedRead) as unknown as Record<string, unknown>;
+     }
+-    const safeFailedRead = safeElevenstProductQnaBusinessFailureResult(
+-      { channel: String(job.channel), operation: String(job.operation) },
+-      parsed.data.result,
+-    );
+-    if (!safeFailedRead) {
+-      return NextResponse.json({ message: "11번가 상품 Q&A 실패 증거 형식이 올바르지 않습니다." }, { status: 409 });
+-    }
+-    elevenstReadReceipt = buildElevenstCsReadObservation({
+-      result: safeFailedRead,
+-      arguments: (job.request as { arguments: Record<string, unknown> }).arguments,
+-      checkedAt: normalizationTimestamp,
+-      normalizedInquiries: [],
+-    });
+-    storedResponse = sanitizedElevenstFailedInquiryStoredResult(safeFailedRead) as unknown as Record<string, unknown>;
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+     if (qoo10ReadbackCompletion) {
+diff --git a/lib/channels/gateway-contract.ts b/lib/channels/gateway-contract.ts
+--- a/lib/channels/gateway-contract.ts
++++ b/lib/channels/gateway-contract.ts
+@@ -762,14 +762,21 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
+     credentialBinding: credentialBindingSchema.optional(),
+   }),
+ ]).superRefine((value, context) => {
++  const ebayCaseDisputeFailure = value.status === "failed"
++    && value.result?.ok === false
++    && value.result.channel === "ebay"
++    && value.result.operation === "inquiries.list"
++    && value.result.steps.length === 1
++    && value.result.steps[0]?.name === "ebay-case-dispute-history-page";
+   if (value.status === "failed" && value.result
++      && !ebayCaseDisputeFailure
+       && (value.result.ok !== false
+         || value.result.channel !== "elevenst"
+         || value.result.operation !== "inquiries.list")) {
+     context.addIssue({
+       code: "custom",
+       path: ["result"],
+-      message: "failed result evidence is limited to 11st inquiry reads",
++      message: "failed result evidence is limited to exact 11st or eBay case/dispute reads",
+     });
+   }
+   if ("credentialBinding" in value && value.credentialBinding) {
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -53,6 +53,11 @@ import {
+ } from "./serverless-static-egress";
+ import { buildElevenstCsReadObservation } from "../cs/channels/elevenst/read-observation";
+ import {
++  isEbayCaseDisputeHistoryArguments,
++  recordEbayCaseDisputeGatewayObservation,
++  validateEbayCaseDisputeGatewayResult,
++} from "./cs/ebay/case-dispute-gateway";
++import {
+   resolveRuntimeReleaseIdentity,
+   runtimeStatusMatchesCurrentRelease,
+ } from "../internal-scheduler-auth";
+@@ -1002,6 +1007,31 @@ async function completeClaim(
+         || completionProviderResult.operation !== job.operation)) {
+     return "ownership_lost";
+   }
++  const jobArguments = recordValue(job.request.arguments) ?? {};
++  const ebayCaseDisputeHistory = job.channel === "ebay"
++    && job.operation === "inquiries.list"
++    && isEbayCaseDisputeHistoryArguments(jobArguments);
++  if (ebayCaseDisputeHistory) {
++    if (!completionProviderResult) return "unavailable";
++    try {
++      validateEbayCaseDisputeGatewayResult({
++        arguments: jobArguments,
++        result: completionProviderResult as ChannelOperationResult,
++      });
++      if (context.status !== "completed_replay") {
++        await recordEbayCaseDisputeGatewayObservation({
++          jobId: job.id,
++          claimToken: job.claim_token,
++          tokenHash: gatewayTokenHash,
++          arguments: jobArguments,
++          result: completionProviderResult as ChannelOperationResult,
++          rpc: (name, arguments_) => callRpc(dependencies, name, arguments_),
++        });
++      }
++    } catch {
++      return "unavailable";
++    }
++  }
+   const qoo10ReadbackContext = qoo10ReplyS3ReadbackContext(job.request);
+   if (qoo10ReadbackContext
+       && (job.channel !== "qoo10" || job.operation !== "inquiries.list")) {
+@@ -1068,7 +1098,7 @@ async function completeClaim(
+           syncResponse,
+           stableNormalizationTimestamp,
+         );
+-      } else if (!qoo10ReadbackContext) {
++      } else if (!qoo10ReadbackContext && !ebayCaseDisputeHistory) {
+         if (job.channel === "lazada") {
+           for (const rawPage of lazadaImHistoryRawPages(syncResponse.steps)) {
+             const stored = await persistLazadaImRawEvent(job.credential_id, rawPage.rawBody, (arguments_) => (
+@@ -1117,17 +1147,21 @@ async function completeClaim(
+       }
+     }
+   } else if (parsed.data.status === "failed" && parsed.data.result) {
+-    const normalizationTimestamp = typeof context.normalization_timestamp === "string"
+-      ? new Date(context.normalization_timestamp)
+-      : null;
+-    if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
+-    elevenstReadReceipt = buildElevenstCsReadObservation({
+-      result: parsed.data.result,
+-      arguments: recordValue(job.request.arguments) ?? {},
+-      checkedAt: normalizationTimestamp.toISOString(),
+-      normalizedInquiries: [],
+-    });
+-    storedResponse = parsed.data.result;
++    if (ebayCaseDisputeHistory) {
++      storedResponse = parsed.data.result;
++    } else {
++      const normalizationTimestamp = typeof context.normalization_timestamp === "string"
++        ? new Date(context.normalization_timestamp)
++        : null;
++      if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
++      elevenstReadReceipt = buildElevenstCsReadObservation({
++        result: parsed.data.result,
++        arguments: jobArguments,
++        checkedAt: normalizationTimestamp.toISOString(),
++        normalizedInquiries: [],
++      });
++      storedResponse = parsed.data.result;
++    }
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+     if (qoo10ReadbackCompletion) {
+@@ -1170,7 +1204,8 @@ async function completeClaim(
+       normalizedOrders?.length ?? 0,
+     );
+   }
+-  if (job.operation === "inquiries.list" && storedResponse && !qoo10ReadbackContext) {
++  if (job.operation === "inquiries.list" && storedResponse
++      && !qoo10ReadbackContext && !ebayCaseDisputeHistory) {
+     storedResponse = sanitizedInquiryListResult(
+       storedResponse as ChannelOperationResult,
+       projectedInquiryCount,
+@@ -1642,9 +1677,13 @@ export async function runOneServerlessCsGatewayJob(
+         claimToken: job.claim_token,
+         status: "failed",
+         error: result.safeMessage,
+-        ...(job.channel === "elevenst"
++        ...((job.channel === "elevenst"
+           && result.channel === "elevenst"
+-          && result.operation === "inquiries.list"
++          && result.operation === "inquiries.list")
++          || (job.channel === "ebay"
++            && result.channel === "ebay"
++            && result.operation === "inquiries.list"
++            && isEbayCaseDisputeHistoryArguments(recordValue(job.request.arguments)))
+           ? { result: result as ChannelOperationResult }
+           : {}),
+         ...(credentialRefresh ? { credentialRefresh } : {}),
+diff --git a/scripts/ai-cli-worker.mjs b/scripts/ai-cli-worker.mjs
+--- a/scripts/ai-cli-worker.mjs
++++ b/scripts/ai-cli-worker.mjs
+@@ -93,6 +93,7 @@ import {
+ } from "../lib/channels/qoo10-listing-activation.ts";
+ import { channelPriceUpdateRelease } from "../lib/channels/price-update-release.ts";
+ import { ebayAsqOperationMarketplaceId } from "../lib/channels/ebay-asq.ts";
++import { isEbayCaseDisputeHistoryArguments } from "../lib/channels/cs/ebay/case-dispute-gateway.ts";
+ import { executeProviderOAuthExchange } from "../lib/channels/provider-oauth-runtime.ts";
+ import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime.ts";
+ import { verifyShopeeGlobalListingPostPublish } from "../lib/channels/provider-shopee-post-publish-runtime.ts";
+@@ -4534,14 +4535,21 @@ async function workGateway() {
+       ? result.retryContinuation
+       : null;
+     const completionPayload = completionStatus === "failed"
+-      ? buildGatewayWorkerFailedCompletionPayload({
+-        job,
+-        claimToken,
+-        error: result.safeMessage,
+-        result,
+-        credentialRefresh,
+-        retryContinuation,
+-      })
++      ? {
++        ...buildGatewayWorkerFailedCompletionPayload({
++          job,
++          claimToken,
++          error: result.safeMessage,
++          result,
++          credentialRefresh,
++          retryContinuation,
++        }),
++        ...(job.channel === "ebay"
++          && job.operation === "inquiries.list"
++          && isEbayCaseDisputeHistoryArguments(operationArguments)
++          ? { result }
++          : {}),
++      }
+       : completionStatus === "reconciliation_required"
+         ? { jobId: job.id, claimToken, status: "reconciliation_required", error: result.safeMessage, result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) }
+         : { jobId: job.id, claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) };

@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Planning ownership contract. Isolated worktrees and S0 are not created by this document.",
+  "createdAt": "2026-09-08",
+  "sourceRoot": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "sourceIncludesUncommittedChanges": true,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspacesPrepared": true,
+  "rules": {
+    "unlistedFiles": "coordinator review; no channel writes",
+    "commitsAllowed": false,
+    "pushAllowed": false,
+    "productionChangesAllowed": false,
+    "sharedFilesOwner": "coordinator",
+    "mergeMethod": "S0 delta with before/after hashes; never HEAD diff or whole tree replacement",
+    "runtimeSchedulersOwner": "coordinator; disabled in channel workspaces",
+    "migrationsOwner": "coordinator including shared DB objects",
+    "sourcePolicy": "Exact files first, then channel-owned prefixes/test patterns; sharedOnly takes precedence",
+    "credentialsPolicy": "no secrets in source, reports, fixtures or snapshot; refresh and stored-credential changes coordinated"
+  },
+  "sharedOnly": {
+    "exactFiles": [
+      "lib/channels/inquiry-sync.ts",
+      "lib/channels/inquiry-reply.ts",
+      "lib/channels/inquiry-coverage.ts",
+      "lib/channels/reply-verification.ts",
+      "lib/channels/protocols.ts",
+      "lib/channels/sync-arguments.ts",
+      "lib/channels/catalog.ts",
+      "lib/channels/operations.ts",
+      "lib/channels/operation-availability.ts",
+      "lib/channels/gateway.ts",
+      "lib/channels/gateway-contract.ts",
+      "lib/channels/serverless-gateway.ts",
+      "lib/channels/serverless-gateway-provider.ts",
+      "lib/channels/serverless-gateway-runtime.ts",
+      "lib/channels/serverless-cs-gateway.ts",
+      "lib/channels/serverless-cs-gateway-runtime.ts",
+      "lib/channels/provider-rate-budget.ts",
+      "lib/channels/cs-credential-binding.ts",
+      "lib/channels/lazada-oauth-exact.ts",
+      "lib/channels/shopee-oauth-exact.ts",
+      "lib/channels/temu-response.ts",
+      "lib/channels/temu-egress-policy.ts",
+      "lib/channels/ebay-oauth-scopes.ts",
+      "app/page.tsx",
+      "app/use-operations-snapshot.ts",
+      "app/channel-readiness-data.ts",
+      "app/cs-release-state.ts",
+      "app/api/operations/sync/route.ts",
+      "app/api/admin/cs/reply/route.ts",
+      "app/api/admin/cs/archive/route.ts",
+      "app/cs/history-window.tsx",
+      "lib/cs/capability-inventory.ts",
+      "scripts/ai-cli-worker.mjs",
+      "package.json",
+      "pnpm-lock.yaml",
+      "tsconfig.json",
+      "docs/현재상태.md"
+    ],
+    "prefixes": [
+      "supabase/migrations/",
+      "app/api/channel-gateway/",
+      "app/api/internal/"
+    ],
+    "notes": [
+      "All existing migrations are read-only for channel owners.",
+      "All unlisted common UI/routes/tests/credential/product/shipping/config files need coordinator review."
+    ]
+  },
+  "channels": {
+    "coupang": {
+      "label": "쿠팡",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+      "branch": "codex/cs-coupang-v1",
+      "port": 3211,
+      "brief": "docs/cs-parallel/channels/coupang.md",
+      "allowedExistingFiles": [
+        "lib/channels/coupang-inquiries.ts",
+        "lib/channels/coupang-inquiry-history.ts",
+        "tests/coupang-after-sales.test.ts"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/coupang/",
+        "lib/cs/channels/coupang/",
+        "app/cs/channels/coupang/",
+        "app/api/admin/cs/channels/coupang/",
+        "tests/fixtures/cs/coupang/",
+        "docs/cs-parallel/reports/coupang/",
+        "docs/cs-parallel/proposals/coupang/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-coupang-*.test.ts",
+        "tests/cs-coupang-*.test.mjs",
+        "scripts/cs-coupang-*.mjs",
+        "scripts/cs-coupang-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/inquiry-reply.test.ts",
+        "tests/cs-history-channel-db.test.mjs"
+      ]
+    },
+    "smartstore": {
+      "label": "스마트스토어",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+      "branch": "codex/cs-smartstore-v1",
+      "port": 3212,
+      "brief": "docs/cs-parallel/channels/smartstore.md",
+      "allowedExistingFiles": [
+        "lib/channels/smartstore-inquiries.ts",
+        "lib/channels/smartstore-inquiry-history.ts"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/smartstore/",
+        "lib/cs/channels/smartstore/",
+        "app/cs/channels/smartstore/",
+        "app/api/admin/cs/channels/smartstore/",
+        "tests/fixtures/cs/smartstore/",
+        "docs/cs-parallel/reports/smartstore/",
+        "docs/cs-parallel/proposals/smartstore/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-smartstore-*.test.ts",
+        "tests/cs-smartstore-*.test.mjs",
+        "scripts/cs-smartstore-*.mjs",
+        "scripts/cs-smartstore-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/inquiry-reply.test.ts",
+        "tests/cs-history-channel-db.test.mjs"
+      ]
+    },
+    "qoo10": {
+      "label": "Qoo10",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+      "branch": "codex/cs-qoo10-v1",
+      "port": 3213,
+      "brief": "docs/cs-parallel/channels/qoo10.md",
+      "allowedExistingFiles": [
+        "lib/channels/qoo10-inquiries.ts",
+        "tests/qoo10-claims.test.ts"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/qoo10/",
+        "lib/cs/channels/qoo10/",
+        "app/cs/channels/qoo10/",
+        "app/api/admin/cs/channels/qoo10/",
+        "tests/fixtures/cs/qoo10/",
+        "docs/cs-parallel/reports/qoo10/",
+        "docs/cs-parallel/proposals/qoo10/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-qoo10-*.test.ts",
+        "tests/cs-qoo10-*.test.mjs",
+        "scripts/cs-qoo10-*.mjs",
+        "scripts/cs-qoo10-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/channel-pagination.test.ts",
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/inquiry-reply.test.ts",
+        "tests/cs-history-channel-db.test.mjs"
+      ]
+    },
+    "elevenst": {
+      "label": "11번가",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+      "branch": "codex/cs-elevenst-v1",
+      "port": 3214,
+      "brief": "docs/cs-parallel/channels/elevenst.md",
+      "allowedExistingFiles": [
+        "lib/channels/elevenst-inquiries.ts",
+        "tests/elevenst-product-qna.test.ts",
+        "tests/elevenst-product-qna-db.test.mjs",
+        "tests/elevenst-product-qna-db-dynamic.test.mjs"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/elevenst/",
+        "lib/cs/channels/elevenst/",
+        "app/cs/channels/elevenst/",
+        "app/api/admin/cs/channels/elevenst/",
+        "tests/fixtures/cs/elevenst/",
+        "docs/cs-parallel/reports/elevenst/",
+        "docs/cs-parallel/proposals/elevenst/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-elevenst-*.test.ts",
+        "tests/cs-elevenst-*.test.mjs",
+        "scripts/cs-elevenst-*.mjs",
+        "scripts/cs-elevenst-*.ts",
+        "tests/cs-elevenst-*.test.tsx"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/channel-protocols.test.ts",
+        "tests/serverless-cs-gateway.test.ts",
+        "tests/cs-history-channel-db.test.mjs",
+        "tests/inquiry-reply.test.ts"
+      ]
+    },
+    "shopee": {
+      "label": "Shopee",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+      "branch": "codex/cs-shopee-v1",
+      "port": 3215,
+      "brief": "docs/cs-parallel/channels/shopee.md",
+      "allowedExistingFiles": [
+        "lib/channels/shopee-inquiries.ts",
+        "tests/shopee-return-refund.test.ts",
+        "tests/shopee-return-refund-db.test.mjs",
+        "scripts/shopee-comment-counts-get-only.mjs"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/shopee/",
+        "lib/cs/channels/shopee/",
+        "app/cs/channels/shopee/",
+        "app/api/admin/cs/channels/shopee/",
+        "tests/fixtures/cs/shopee/",
+        "docs/cs-parallel/reports/shopee/",
+        "docs/cs-parallel/proposals/shopee/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-shopee-*.test.ts",
+        "tests/cs-shopee-*.test.mjs",
+        "scripts/cs-shopee-*.mjs",
+        "scripts/cs-shopee-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/inquiry-reply.test.ts",
+        "tests/channel-pagination.test.ts",
+        "tests/serverless-cs-gateway.test.ts"
+      ]
+    },
+    "lazada": {
+      "label": "Lazada",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+      "branch": "codex/cs-lazada-v1",
+      "port": 3216,
+      "brief": "docs/cs-parallel/channels/lazada.md",
+      "allowedExistingFiles": [
+        "lib/channels/lazada-inquiries.ts",
+        "lib/channels/lazada-im.ts",
+        "lib/channels/lazada-im-webhook.ts",
+        "lib/channels/lazada-im-bootstrap.ts",
+        "lib/channels/lazada-raw-reprocess.ts",
+        "lib/cs/lazada-quarantine.ts",
+        "lib/cs/lazada-raw-inbox.ts",
+        "app/api/webhooks/lazada-im/route.ts",
+        "app/api/admin/cs/lazada-quarantine/route.ts",
+        "app/api/admin/cs/lazada-raw-inbox/route.ts",
+        "app/api/admin/cs/lazada-raw-inbox/health/route.ts",
+        "app/api/admin/cs/lazada-raw-inbox/reprocess/route.ts",
+        "app/api/admin/cs/lazada-reply/route.ts",
+        "app/cs/lazada-quarantine.tsx",
+        "app/cs/lazada-quarantine.module.css",
+        "app/cs/lazada-raw-inbox.tsx",
+        "tests/lazada-im.test.ts",
+        "tests/lazada-im-webhook.test.ts",
+        "tests/lazada-im-bootstrap.test.ts",
+        "tests/lazada-im-app-binding.test.ts",
+        "tests/lazada-inquiry-sync.test.ts",
+        "tests/lazada-history-completeness.test.ts",
+        "tests/lazada-history-pagination.test.ts",
+        "tests/lazada-unordered-quarantine.test.ts",
+        "tests/lazada-raw-reprocess.test.ts",
+        "tests/lazada-quarantine-route.test.ts",
+        "tests/lazada-quarantine-read-db.test.mjs",
+        "tests/lazada-im-raw-inbox-db.test.mjs",
+        "tests/lazada-im-raw-reprocess-db.test.mjs",
+        "tests/lazada-undated-buyer-db.test.mjs"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/lazada/",
+        "lib/cs/channels/lazada/",
+        "app/cs/channels/lazada/",
+        "app/api/admin/cs/channels/lazada/",
+        "tests/fixtures/cs/lazada/",
+        "docs/cs-parallel/reports/lazada/",
+        "docs/cs-parallel/proposals/lazada/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-lazada-*.test.ts",
+        "tests/cs-lazada-*.test.mjs",
+        "scripts/cs-lazada-*.mjs",
+        "scripts/cs-lazada-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/cs-history-coverage-db.test.mjs",
+        "tests/cs-attachment-retention-db.test.mjs",
+        "tests/cs-reply-observation-db.test.mjs"
+      ]
+    },
+    "ebay": {
+      "label": "eBay",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+      "branch": "codex/cs-ebay-v1",
+      "port": 3217,
+      "brief": "docs/cs-parallel/channels/ebay.md",
+      "allowedExistingFiles": [
+        "lib/channels/ebay-inquiries.ts",
+        "lib/channels/ebay-asq.ts",
+        "lib/channels/ebay-message-history.ts",
+        "lib/channels/ebay-message-pages.ts",
+        "lib/cs/ebay-messages.ts",
+        "app/api/admin/cs/ebay-messages/route.ts",
+        "app/cs/ebay-messages.tsx",
+        "scripts/ebay-message-access-get-only.mjs",
+        "tests/ebay-asq.test.ts",
+        "tests/ebay-message-history.test.ts",
+        "tests/ebay-message-pages.test.ts",
+        "tests/ebay-message-route.test.ts",
+        "tests/ebay-my-messages.test.ts",
+        "tests/ebay-conversation-sync.test.ts",
+        "tests/ebay-mailbox-history.test.ts",
+        "tests/ebay-commerce-message-db.test.mjs"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/ebay/",
+        "lib/cs/channels/ebay/",
+        "app/cs/channels/ebay/",
+        "app/api/admin/cs/channels/ebay/",
+        "tests/fixtures/cs/ebay/",
+        "docs/cs-parallel/reports/ebay/",
+        "docs/cs-parallel/proposals/ebay/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-ebay-*.test.ts",
+        "tests/cs-ebay-*.test.mjs",
+        "scripts/cs-ebay-*.mjs",
+        "scripts/cs-ebay-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/channel-pagination.test.ts",
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/inquiry-reply.test.ts",
+        "tests/serverless-cs-gateway.test.ts"
+      ]
+    },
+    "temu": {
+      "label": "Temu",
+      "workdir": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+      "branch": "codex/cs-temu-v1",
+      "port": 3218,
+      "brief": "docs/cs-parallel/channels/temu.md",
+      "allowedExistingFiles": [
+        "lib/channels/temu-inquiries.ts",
+        "tests/temu-after-sales-detail.test.ts",
+        "tests/temu-after-sales-detail-db.test.mjs"
+      ],
+      "allowedNewPrefixes": [
+        "lib/channels/cs/temu/",
+        "lib/cs/channels/temu/",
+        "app/cs/channels/temu/",
+        "app/api/admin/cs/channels/temu/",
+        "tests/fixtures/cs/temu/",
+        "docs/cs-parallel/reports/temu/",
+        "docs/cs-parallel/proposals/temu/"
+      ],
+      "allowedNewPatterns": [
+        "tests/cs-temu-*.test.ts",
+        "tests/cs-temu-*.test.mjs",
+        "scripts/cs-temu-*.mjs",
+        "scripts/cs-temu-*.ts"
+      ],
+      "relatedReadOnlyTests": [
+        "tests/inquiry-sync-contract.test.ts",
+        "tests/serverless-cs-gateway.test.ts",
+        "tests/cs-history-channel-db.test.mjs"
+      ]
+    }
+  },
+  "snapshotManifestPath": "/Users/kimchangheemac/dev/sellerpilot-cs-snapshots/S0-20260908-decaba426812a3ba/manifest.json"
+}

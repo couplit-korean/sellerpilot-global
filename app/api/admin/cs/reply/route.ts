@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdminRequest, isAdminApiError } from "../../../../../lib/admin-api";
-import { enqueueInquiryReplyViaChannelGateway } from "../../../../../lib/channels/gateway";
+import { enqueueInquiryReplyViaChannelGateway } from "../../../../../lib/cs/operations/enqueue-reply";
 import { buildInquiryReplyArguments, supportsInquiryReply } from "../../../../../lib/channels/inquiry-reply";
+import { prepareQoo10GatewayReply } from "../../../../../lib/channels/cs/qoo10/reply-guard";
 import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
 import { ebayAsqMarketplaceId } from "../../../../../lib/channels/ebay-asq";
 import {
@@ -74,6 +75,9 @@ async function loadTicketReplyContext(
 
 function failureMessage(error: unknown) {
   const message = error instanceof Error ? error.message : "";
+  if (/QOO10_REPLY_(?:APPROVAL_REQUIRED|STALE_TARGET|TARGET_INVALID)/u.test(message)) {
+    return "Qoo10의 최신 고객 문의와 답변 대상을 다시 확인해 주세요. 답변은 접수하지 않았습니다.";
+  }
   if (message.includes("CHANNEL_GATEWAY_STATIC_EGRESS_REQUIRED")) {
     return "Vercel 고정 egress IP를 판매채널에 등록하고 서버 설정을 활성화한 뒤 다시 시도해 주세요.";
   }
@@ -83,6 +87,7 @@ function failureMessage(error: unknown) {
   if (message.includes("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED")) return "이 문의의 이전 답변 접수 여부를 먼저 판매자센터에서 확인해야 합니다.";
   if (message.includes("CHANNEL_GATEWAY_REPLY_PROVIDER_NOT_WAITING")) return "판매채널에서 이미 답변되었거나 종료된 문의입니다. 문의를 새로고침해 주세요.";
   if (message.includes("CHANNEL_GATEWAY_REPLY_CONTEXT_STALE")) return "최신 고객 메시지 연결을 확인할 수 없습니다. 문의를 새로고침해 주세요.";
+  if (message.includes("CHANNEL_GATEWAY_REPLY_MESSAGE_NOT_ACTIONABLE")) return "회수됐거나 원문 충돌 상태인 Lazada 메시지에는 답변을 전송할 수 없습니다.";
   if (/CREDENTIALS_MISSING|TOKEN_EXCHANGE_FAILED|ACCESS_TOKEN_MISSING/.test(message)) return "판매채널 인증값이 누락됐거나 만료됐습니다.";
   if (message.includes("CHANNEL_GATEWAY_REPLY_CONFLICT")) return "이 문의에는 다른 답변이 이미 전송 중이거나 전송 완료됐습니다. 판매자센터와 문의 상태를 확인해 주세요.";
   if (message.includes("EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS")) return "eBay 판매자 계정의 분당 답변 한도에 도달했습니다. 60초 뒤 다시 시도해 주세요.";
@@ -154,10 +159,24 @@ export async function POST(request: Request) {
     sellerAccountVerified: typeof ticket?.seller_account_verified_at === "string"
       && !Number.isNaN(Date.parse(ticket.seller_account_verified_at)),
     marketplaceBound,
+    conversationBound: providerContext.kind === "conversation"
+      && providerContext.conversationType === "FROM_MEMBERS"
+      && providerContext.replySupported === true
+      && typeof providerContext.conversationId === "string"
+      && providerContext.conversationId.length > 0,
   };
-  if (!ticket || !channel || !environment || !supportsInquiryReply(channel, environment, ebayRelease)) {
+  if (!ticket || !channel || !environment || providerContext.replySupported === false
+      || !supportsInquiryReply(channel, environment, ebayRelease)) {
     return NextResponse.json(
       { message: "이 판매채널은 SellerPilot에서 실제 CS 답변 전송을 지원하지 않습니다." },
+      { status: 409, headers: noStoreHeaders },
+    );
+  }
+  if (channel === "lazada" && (ticket.latest_message_state !== "normal" || ticket.reply_allowed !== true)) {
+    return NextResponse.json(
+      { message: ticket.latest_message_state === "recalled"
+        ? "최신 Lazada 고객 메시지가 회수되어 답변을 접수하지 않았습니다."
+        : "Lazada 원문 충돌을 검토하기 전에는 답변을 접수할 수 없습니다." },
       { status: 409, headers: noStoreHeaders },
     );
   }
@@ -182,7 +201,7 @@ export async function POST(request: Request) {
     );
   }
 
-  if (channel === "coupang" || channel === "smartstore") {
+  if (channel === "coupang" || channel === "elevenst" || channel === "smartstore") {
     const environmentReady = hasServerlessStaticEgressFor(
       configuredServerlessStaticEgressChannels(),
       [channel],
@@ -201,7 +220,17 @@ export async function POST(request: Request) {
   }
 
   try {
-    const replyArguments = buildInquiryReplyArguments(channel, externalTicketId, parsed.data.reply, providerContext);
+    const replyArguments = channel === "qoo10"
+      ? prepareQoo10GatewayReply({
+          externalTicketId,
+          replyText: parsed.data.reply,
+          replyContext: objectRecord(ticket.reply_context) ?? providerContext,
+          providerContext,
+          selectedInboundKey: parsed.data.expectedInboundKey,
+          latestInboundKey: String(ticket.latest_inbound_key ?? ""),
+          approved: true,
+        }).arguments
+      : buildInquiryReplyArguments(channel, externalTicketId, parsed.data.reply, providerContext);
     const { jobId } = await enqueueInquiryReplyViaChannelGateway({
       serviceClient: admin.serviceClient,
       ticketId: parsed.data.ticketId,
@@ -240,7 +269,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: failureMessage(error) }, {
       status: /EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(message)
         ? 429
-        : /CHANNEL_GATEWAY_(?:STATIC_EGRESS_REQUIRED|REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED|PROVIDER_NOT_WAITING|CONTEXT_STALE))/.test(message)
+        : /CHANNEL_GATEWAY_(?:STATIC_EGRESS_REQUIRED|REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED|PROVIDER_NOT_WAITING|CONTEXT_STALE|MESSAGE_NOT_ACTIONABLE))/.test(message)
           ? 409
           : 422,
       headers: noStoreHeaders,

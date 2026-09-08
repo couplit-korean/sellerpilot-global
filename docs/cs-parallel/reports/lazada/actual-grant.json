@@ -1,0 +1,67 @@
+{
+  "contract": "sellerpilot-lazada-actual-grant-evidence/1",
+  "checkedAt": "2026-09-08T09:58:30.769Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "scope": {
+    "environment": "production-read-only",
+    "country": "MY",
+    "seller": "MY4N...ISR2D",
+    "commerceAppKey": "137451",
+    "imAppKey": "137571",
+    "appsDistinct": true,
+    "commerceAndImTokensDistinct": true
+  },
+  "imToken": {
+    "fingerprint": "e337be34cc2b8a34",
+    "expiresAt": "2026-10-03T17:01:56.107Z",
+    "refreshFingerprint": "9157b0828f4747aa",
+    "refreshExpiresAt": "2027-03-02T17:01:56.114Z",
+    "sellerIdentityAttested": false,
+    "countryUserInfoCount": 0
+  },
+  "remote": {
+    "sessionList": {
+      "httpStatus": 200,
+      "providerCode": "0",
+      "rowsRead": 1,
+      "hasMore": true,
+      "continuationPresent": true
+    },
+    "selectedSession": {
+      "sessionIdFingerprint": "650199f2da1f01bf",
+      "sellerCenterClassification": "official",
+      "lastMessageIdFingerprint": "05adfa8fd450988d",
+      "lastMessageTime": "2026-09-03T06:00:28.177Z",
+      "unreadCount": 13,
+      "messagePages": 1,
+      "uniqueMessages": 13,
+      "duplicateObservations": 0,
+      "fullyPaginated": true,
+      "firstObservedMessageTime": "2026-04-30T05:11:25.195Z",
+      "lastObservedMessageTime": "2026-09-03T06:00:28.177Z",
+      "observedTemplateIds": [200016],
+      "rawContentStoredInReport": false
+    }
+  },
+  "database": {
+    "ticketRows": 0,
+    "messageRows": 0,
+    "rawInboxTablePresent": false,
+    "capabilityBindingTablePresent": false
+  },
+  "web": {
+    "sellerPilotTickets": 0,
+    "sellerPilotMessages": 0,
+    "connectionLabel": "연결 확인 필요",
+    "sellerCenterConversationRows": 1,
+    "sellerCenterUnreadCount": 13
+  },
+  "comparison": {
+    "remoteUniqueMessages": 13,
+    "matchedDatabaseMessages": 0,
+    "remoteOnlyMessages": 13,
+    "databaseOnlyMessages": 0,
+    "fullRemoteDbWebMatch": false
+  },
+  "secretsOrCustomerBodiesIncluded": false
+}

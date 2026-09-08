@@ -1,0 +1,65 @@
+--- a/scripts/ai-cli-worker.mjs
++++ b/scripts/ai-cli-worker.mjs
+@@ -83,6 +83,7 @@
+   smartstoreManualAdoptionReadbackJobSchema,
+ } from "../lib/channels/gateway-contract.ts";
+ import { csCredentialBindingEvidence } from "../lib/channels/cs-credential-binding.ts";
++import { buildGatewayWorkerFailedCompletionPayload } from "../lib/channels/cs/elevenst/worker-completion.ts";
+ import { smartstoreContentRepairTransmissionArgument } from "../lib/channels/smartstore-content-repair-contract.ts";
+ import { smartstoreContentRepairBinding } from "../lib/channels/smartstore-content-repair.ts";
+ import { buildSmartstoreContentRepairResult } from "../lib/channels/smartstore-content-repair-result.ts";
+@@ -4533,11 +4534,14 @@ async function processGatewayJob(job) {
+       ? result.retryContinuation
+       : null;
+     const completionPayload = completionStatus === "failed"
+-      ? {
+-        jobId: job.id, claimToken, status: "failed", error: result.safeMessage,
+-        ...(credentialRefresh ? { credentialRefresh } : {}),
+-        ...(retryContinuation ? { retryContinuation } : {}),
+-      }
++      ? buildGatewayWorkerFailedCompletionPayload({
++        job,
++        claimToken,
++        error: result.safeMessage,
++        result,
++        credentialRefresh,
++        retryContinuation,
++      })
+       : completionStatus === "reconciliation_required"
+         ? { jobId: job.id, claimToken, status: "reconciliation_required", error: result.safeMessage, result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) }
+         : { jobId: job.id, claimToken, status: "succeeded", result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) };
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -33,6 +33,10 @@ import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
+ import type { ChannelOperationResult } from "../../../../../lib/channels/operations";
+ import { supabaseUrl } from "../../../../../lib/supabase/config";
+ import { buildElevenstCsReadObservation } from "../../../../../lib/cs/channels/elevenst/read-observation";
++import {
++  safeElevenstProductQnaBusinessFailureResult,
++  sanitizedElevenstFailedInquiryStoredResult,
++} from "../../../../../lib/channels/cs/elevenst/worker-completion";
+ import { dispatchPendingPushNotifications } from "../../../../../lib/push-notifications";
+ import {
+   createBoundedSupabaseFetch,
+@@ -553,12 +557,20 @@ export async function POST(request: Request) {
+     if (!normalizationTimestamp) {
+       return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+     }
++    const safeFailedRead = safeElevenstProductQnaBusinessFailureResult(
++      { channel: String(job.channel), operation: String(job.operation) },
++      parsed.data.result,
++    );
++    if (!safeFailedRead) {
++      return NextResponse.json({ message: "11번가 상품 Q&A 실패 증거 형식이 올바르지 않습니다." }, { status: 409 });
++    }
+     elevenstReadReceipt = buildElevenstCsReadObservation({
+-      result: parsed.data.result,
++      result: safeFailedRead,
+       arguments: (job.request as { arguments: Record<string, unknown> }).arguments,
+       checkedAt: normalizationTimestamp,
+       normalizedInquiries: [],
+     });
++    storedResponse = sanitizedElevenstFailedInquiryStoredResult(safeFailedRead) as unknown as Record<string, unknown>;
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+     if (qoo10ReadbackCompletion) {

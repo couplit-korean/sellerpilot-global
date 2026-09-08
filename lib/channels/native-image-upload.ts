@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import {
   buildShopeeSignature,
   lazadaApiEndpoints,
+  providerFetch,
   readRemoteResponse,
   shopeeEnvironment,
   signLazadaRequest,
@@ -570,7 +571,7 @@ export type NativeImageUploadInput = {
   scene?: "normal" | "desc";
 };
 
-const defaultFetch: NativeFetch = (input, init) => fetch(input, init);
+const defaultFetch: NativeFetch = (input, init) => providerFetch(input, init);
 
 function chunks<T>(values: T[], size: number): T[][] {
   const result: T[][] = [];

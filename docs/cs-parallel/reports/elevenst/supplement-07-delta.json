@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-07-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "elevenst",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "appliesAfter": {
+    "path": "docs/cs-parallel/reports/elevenst/supplement-06-delta.json",
+    "sha256": "2d2e66eeadf746aea6e07807ee4e44fb56c465abe9127313a0f78d4ddf9c4e0a"
+  },
+  "files": [
+    {
+      "path": "lib/channels/cs/elevenst/contracts.ts",
+      "change": "modify",
+      "beforeSha256": "f8cea03456c57f908f7d0c3425e011c19018af4fa19c7145493b3e6885686eb2",
+      "afterSha256": "944cc15352002f2d1d30c64bd76d57b344ed2dbc3472581fcf604fff17c1cccb",
+      "reason": "Preserve the Seller Office maximum-three-month notice without converting it to a day count."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/limited-access.ts",
+      "change": "modify",
+      "beforeSha256": "ed8808c4233eea99348a0131d11316e94636c13fbdc50739c6954fb0d54f0de9",
+      "afterSha256": "6123b6da52c8abb222b6dec214a95eb4e4fd62128df4b68459cf3e797187127e",
+      "reason": "Replace retentionDays with month=3 and exactDays=null in limited-access projection v2."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/web-rpc.ts",
+      "change": "modify",
+      "beforeSha256": "c38f13384a7092874d4d7db9cd84cdffa8cb9b4dfc4b24f87129fc8d1461d346",
+      "afterSha256": "66897f4446ffeb65ced484ccdf54988950043786272440654535dbaee7999ca9",
+      "reason": "Version the authenticated API as v3 for the corrected retention contract."
+    },
+    {
+      "path": "lib/cs/channels/elevenst/read-state-contract.ts",
+      "change": "modify",
+      "beforeSha256": "e5e8912e593dad12d48dea3261907f76158c7beac6b8f856f1a4122d95381ca9",
+      "afterSha256": "491519f213e42de5a5ef2089a0690053ef026f8d9a1b2d237ae75d6fcdc1d337",
+      "reason": "Reject day-based SellerTalk retention and validate month=3 with unknown exact days."
+    },
+    {
+      "path": "app/cs/channels/elevenst/read-state.tsx",
+      "change": "modify",
+      "beforeSha256": "29b018c5a8dde2b6f6e1cdc73f746046a1a6c9c7adf69d41a395dccc0d3ed5ce",
+      "afterSha256": "1224c19a42deceb2af9affc9c0944a9a2772f1f574a15fe8e16332b819ed0b92",
+      "reason": "Render maximum three months and explicitly mark exact days as unconfirmed."
+    },
+    {
+      "path": "tests/cs-elevenst-contracts.test.ts",
+      "change": "modify",
+      "beforeSha256": "bd0a6236bcc7f2254247e888e3fa75a3605bc90eaca567b85858fc85f8e18b74",
+      "afterSha256": "e2652f9c6d229d59d5372f48465d2246bc683002f2dc8aa41d5bf2e3ac80be73",
+      "reason": "Require the official month unit and absence of retentionDays in the capability contract."
+    },
+    {
+      "path": "tests/cs-elevenst-limited-access.test.ts",
+      "change": "modify",
+      "beforeSha256": "08e899c6ce71fe2a80317c034fba5f4baaeb6d0a530fb9fce1ce83efe85d2821",
+      "afterSha256": "44f796d180597b0d491acc5b8539ac0d6c54d009df601618a6ca8508b2e07c5a",
+      "reason": "Prove the limited projection cannot expose an exact day retention value."
+    },
+    {
+      "path": "tests/cs-elevenst-read-state-web-panel.test.tsx",
+      "change": "modify",
+      "beforeSha256": "69c50c7a39dff411b4db59560ac05bb44a662fb01cd647e82ddd6eb6c5ee9e4f",
+      "afterSha256": "5da2aee1a85675aefa71cf9efc1a4d853c1b2e9e47b2dd9183a8eb80887f7b68",
+      "reason": "Verify the corrected UI text and reject a fabricated 90-day contract."
+    },
+    {
+      "path": "scripts/cs-elevenst-isolated-auth-web-smoke.mjs",
+      "change": "modify",
+      "beforeSha256": "b62188cdcd4d4d4e017fb8eceac46a5ec9021bf0e07dc49b0cd0d3f3277714bf",
+      "afterSha256": "36129ef5a01028b31056fcaeaa021d6221915a0cd70c5c16887d562c75d6240a",
+      "reason": "Exercise authenticated read-state v3 and emit only the month-unit retention shape."
+    },
+    {
+      "path": "tests/cs-elevenst-isolated-auth-web.test.mjs",
+      "change": "modify",
+      "beforeSha256": "571b737ed228574e2f839a161db7c8d01de0ea8f3803e307a782abcb09250299",
+      "afterSha256": "523e2e00b287da43f410fd155426dc0830a781758dbd7781e785968becf36f29",
+      "reason": "Require month=3 and exactDays=null from the actual Next smoke."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/evidence-retention-unit-20260909.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "09db30f33606ea3ff618f6fadd6db322cd89adc3bdcd2dde0777c02e59688805",
+      "reason": "Record the source wording, code-usage audit and corrected authenticated output."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-07-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "455247f8fe69386b9c697be22eef6cdca340e772568b2cfbfda4536434022cb4",
+      "reason": "Supersede only the supplement-06 90-day conversion while preserving all operational boundaries."
+    },
+    {
+      "path": "docs/cs-parallel/reports/elevenst/supplement-07-test-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e0333cacb76e2324a8c3ae4b29fbdb39b40331d54f9bec565353a980608633ec",
+      "reason": "Record source audit, Node 22 regression, authenticated Next v3, type and lint proof."
+    }
+  ],
+  "commonProposals": [],
+  "supersedes": {
+    "supplementId": "elevenst-supplement-06-20260909",
+    "only": "SellerTalk retentionDays=90 conversion and API/UI contract versions"
+  },
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

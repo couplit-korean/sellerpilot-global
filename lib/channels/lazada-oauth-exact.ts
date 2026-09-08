@@ -2,7 +2,7 @@ import { z } from "zod";
 import { gatewayClaimSchema } from "./gateway-contract";
 import { normalizeLazadaProviderAccountIdentity, readProviderAccountIdentity } from "./provider-account-identity";
 import { executeProviderOAuthExchange } from "./provider-oauth-runtime";
-import { signLazadaRequest } from "./protocols";
+import { providerFetch, signLazadaRequest } from "./protocols";
 export const lazadaExactAdminInput = z.discriminatedUnion("action", [
   z.object({ action: z.literal("prepare"), credentialId: z.string().uuid() }).strict(),
   z.object({ action: z.enum(["start","status"]), sessionId: z.string().uuid(), credentialId: z.string().uuid() }).strict(),
@@ -10,7 +10,7 @@ export const lazadaExactAdminInput = z.discriminatedUnion("action", [
 ]);
 export const lazadaExactWorkerInput = z.object({ action: z.enum(["pulse","claim","heartbeat","begin","provider","stage","complete","review"]), sessionId: z.string().uuid(), jobId: z.string().uuid().optional(), claimToken: z.string().uuid().optional(), payload: z.record(z.string(),z.unknown()).default({}) }).strict();
 export function lazadaExactFetch(input: RequestInfo | URL, init?: RequestInit) {
- const timeout=AbortSignal.timeout(20_000); return fetch(input,{...init,redirect:"error",signal:init?.signal?AbortSignal.any([init.signal,timeout]):timeout});
+ const timeout=AbortSignal.timeout(20_000); return providerFetch(input,{...init,redirect:"error",signal:init?.signal?AbortSignal.any([init.signal,timeout]):timeout});
 }
 export function parseLazadaExactClaim(value: unknown, sessionId: string) {
  const job=gatewayClaimSchema.parse(value);

@@ -4,6 +4,7 @@ import { Activity, KeyRound, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { ApiCredentialCenter } from "./api-credential-center";
 import { ChannelReadinessPage } from "./channel-readiness";
+import type { CsSyncStatus } from "./cs/workspace-contracts";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 type ConnectionSection = "status" | "settings";
@@ -11,7 +12,7 @@ type ConnectionSection = "status" | "settings";
 export function ChannelConnectionsPage({ notify, channelMetrics, syncStatus, onOpenCs }: {
   notify: (message: string) => void;
   channelMetrics: OperationsSnapshot["channelMetrics"];
-  syncStatus: OperationsSnapshot["syncStatus"];
+  syncStatus: Array<OperationsSnapshot["syncStatus"][number] | CsSyncStatus[number]>;
   onOpenCs: (channel: OperationsSnapshot["channelMetrics"][number]["channelKey"]) => void;
 }) {
   const [section, setSection] = useState<ConnectionSection>("status");

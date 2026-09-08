@@ -603,6 +603,55 @@ test("eBay and Temu cap continuations start at the first unprocessed page", asyn
   }
 });
 
+test("Temu after-sales rejects fractional and out-of-range pagination before provider access", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return Response.json({ success: true, result: { data: [] } }); };
+  const base = {
+    channel: "temu" as const,
+    operation: "inquiries.list" as const,
+    payload: { app_key: "fixture", app_secret: "fixture", access_token: "fixture" },
+    environment: "production" as const,
+  };
+  try {
+    await assert.rejects(executeChannelOperation({ ...base, arguments: { pageNo: 1.5 } }), /CHANNEL_ARGUMENT_INVALID:pageNo/);
+    await assert.rejects(executeChannelOperation({ ...base, arguments: { pageSize: 201 } }), /CHANNEL_ARGUMENT_INVALID:pageSize/);
+    await assert.rejects(executeChannelOperation({ ...base, arguments: { pageNo: "2" } }), /CHANNEL_ARGUMENT_INVALID:pageNo/);
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("large Shopee CS history rotates a bounded continuation generation without losing its cursor", async () => {
+  const originalFetch = globalThis.fetch;
+  let page = 0;
+  globalThis.fetch = async () => {
+    page++;
+    return Response.json({ error: "", response: {
+      item_comment_list: [{ comment_id: page, item_id: 10, comment: `comment-${page}` }],
+      more: true,
+      next_cursor: `cursor-${page}`,
+    } });
+  };
+  try {
+    const response = await executeChannelOperation({
+      channel: "shopee",
+      operation: "inquiries.list",
+      payload: { partner_id: "1", partner_key: "fixture", shop_id: "10", access_token: "fixture" },
+      arguments: { pageSize: 100, sellerpilotPaginationDepth: 49 },
+      environment: "production",
+    });
+    assert.equal(response.ok, true);
+    assert.equal(response.continuation?.arguments.cursor, "cursor-4");
+    assert.equal(response.continuation?.arguments.sellerpilotPaginationDepth, 1);
+    assert.equal(response.continuation?.arguments.sellerpilotPaginationEpoch, 1);
+    assert.equal((response.continuation?.arguments.sellerpilotPaginationTrail as string[]).length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("order and inquiry normalizers consume every successful provider page", async () => {
   const [orders, inquiries] = await Promise.all([
     readFile(new URL("../lib/channels/order-sync.ts", import.meta.url), "utf8"),

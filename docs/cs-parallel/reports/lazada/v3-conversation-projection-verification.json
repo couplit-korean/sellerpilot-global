@@ -1,0 +1,76 @@
+{
+  "contract": "sellerpilot-lazada-v3-conversation-projection-verification/1",
+  "checkedAt": "2026-09-08T23:47:59+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "node": "v22.23.2",
+  "currentIntegratedV3MigrationSha256": "b67d6901906ea6022471ba124520ae3a83a17e0708866ede8ab706dd9ddbeed7",
+  "finalIntegratedPreimageCheckedAt": "2026-09-08T23:54:59+09:00",
+  "finalIntegratedArchiveUiSha256": "9989494b9d6825fb4a9d71f24eddfedd375858f1305f5ebe535632ab1a49a82a",
+  "runs": [
+    {
+      "command": "node --import tsx --test tests/cs-lazada-v3-conversation-projection-get.test.mjs",
+      "environment": "PGlite isolated database plus actual exported admin GET routes",
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 2104.464833
+    },
+    {
+      "command": "node --import tsx --test tests/cs-lazada-ingest-v3-db.test.mjs tests/cs-lazada-runtime-v3-patch.test.mjs tests/cs-lazada-authenticated-raw-projection-get.test.mjs tests/cs-lazada-v3-conversation-projection-get.test.mjs",
+      "environment": "PGlite isolated database plus actual exported admin GET routes",
+      "tests": 15,
+      "passed": 15,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 4311.406125
+    },
+    {
+      "command": "eslint tests/cs-lazada-v3-conversation-projection-get.test.mjs",
+      "environment": "Node 22 existing repository dependencies",
+      "exitCode": 0
+    },
+    {
+      "command": "git apply --check /Users/kimchangheemac/dev/sellerpilot-cs-lazada/docs/cs-parallel/proposals/lazada/lazada-008-v3-conversation-projection.patch",
+      "environment": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "exitCode": 0
+    }
+  ],
+  "environmentNote": {
+    "initialCommand": "node --import tsx --test tests/cs-lazada-v3-conversation-projection-get.test.mjs",
+    "initialExitCode": 127,
+    "reason": "The non-login execution shell did not include node in PATH.",
+    "replacement": "Used /Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node without installing or changing the lockfile."
+  },
+  "reproducedCurrentDefect": {
+    "conversationReturnsPreRecallBody": true,
+    "archiveReturnsPreRecallPreview": true,
+    "currentConversationSchemaStripsMessageState": true,
+    "currentArchiveSchemaStripsLatestMessageState": true
+  },
+  "verifiedProposal": {
+    "recallBeforeMessageConverges": true,
+    "messageBeforeRecallConverges": true,
+    "recalledBodyMasked": true,
+    "recalledNativeMediaMasked": true,
+    "archivePreviewMasked": true,
+    "archiveJsonOmitsPreRecallBody": true,
+    "bodyOrAttachmentChangeNotSelectedAsLatest": true,
+    "conflictReviewStateVisible": true,
+    "unknownOrderRevisionNotProjected": true,
+    "sameRevisionReplayDoesNotAddLedgerRow": true,
+    "differentCredentialRevisionIsolated": true,
+    "differentSellerRevisionIsolated": true,
+    "nonLazadaConversationAndArchiveRemainNormal": true,
+    "nonAdminDenied": true,
+    "noDeleteOrProjectionMutation": true
+  },
+  "productionMutation": false,
+  "providerMutation": false,
+  "credentialMutation": false,
+  "commitOrPush": false
+}

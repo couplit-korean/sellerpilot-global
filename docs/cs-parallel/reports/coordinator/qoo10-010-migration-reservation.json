@@ -1,0 +1,15 @@
+{
+  "name": "20260908153341_cs_qoo10_reply_s3_actual_completion.sql",
+  "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-qoo10-010-migration-6uzmiu2c/supabase/migrations/20260908153341_cs_qoo10_reply_s3_actual_completion.sql",
+  "source": "docs/cs-parallel/proposals/qoo10/010-reply-s3-actual-completion-compat.sql",
+  "sourceSha256": "1b6a391f392a12622b6d6f76bd5b95502f4e250b25e8d7890f552e70b6e3e827",
+  "owner": "CS root integration",
+  "state": "created_local_candidate",
+  "readOnlyInputDrift": [
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "reason": "Shopee005 preserves exact 401/403 safe errors",
+      "current": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf"
+    }
+  ]
+}

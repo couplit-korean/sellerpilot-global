@@ -36,6 +36,7 @@ import {
   fetchNaverAccessToken,
   lazadaRequest,
   naverRequest,
+  providerFetch,
   readStoredNaverAccessToken,
   shopeeEnvironment,
   shopeeMerchantRequest,
@@ -197,7 +198,7 @@ async function uploadShopeeImage(
     form.append("scene", scene);
     await hooks.assertLeaseHealthy();
     await hooks.beginProviderMutation();
-    const response = await fetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
+    const response = await providerFetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
       method: "POST",
       body: form,
       signal: composedSignal(signal, 30_000),
@@ -1383,7 +1384,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
   if (contentRepair) smartstoreContentRepairTransmissionImagesSchema.parse(transmissionImages);
   await input.hooks.assertLeaseHealthy();
   await input.hooks.beginProviderMutation();
-  const uploadResponse = await fetch(
+  const uploadResponse = await providerFetch(
     "https://api.commerce.naver.com/external/v1/product-images/upload",
     {
       method: "POST",

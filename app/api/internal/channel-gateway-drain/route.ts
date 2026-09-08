@@ -1,5 +1,5 @@
-import { runServerlessCsGatewayDrain } from "../../../../lib/channels/serverless-cs-gateway";
-import { configuredServerlessCsGatewayDependencies } from "../../../../lib/channels/serverless-cs-gateway-runtime";
+import { runServerlessCsGatewayDrain } from "../../../../lib/channels/serverless-gateway";
+import { configuredServerlessCsGatewayDependencies } from "../../../../lib/channels/serverless-gateway-runtime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";

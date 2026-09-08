@@ -1,0 +1,14 @@
+{
+  "contract": "shopee_comment_readiness_evidence_v1",
+  "checked_at": "2026-09-07T10:43:29.773Z",
+  "environment": "production",
+  "oauth_shop_targets": 8,
+  "current_access_token_readable_shops": 0,
+  "access_token_refresh_required_shops": 8,
+  "refresh_token_ready_shops": 8,
+  "provider_read_attempted": false,
+  "total_comments": null,
+  "customer_content_logged": false,
+  "provider_mutation_performed": false,
+  "reason": "Refreshing a Shopee token rotates credential state. The local-only review did not write refreshed tokens to the production Vault."
+}
