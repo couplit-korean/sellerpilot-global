@@ -66,6 +66,10 @@ export const marginExchangeRateTimeoutMs = 12_000;
 export const marginExchangeRateRefreshMs = 60_000;
 const requiredMarginExchangeRateCodes = ["USD", "JPY", "SGD", "MYR"] as const;
 
+function createChannelCostConfirmations(): Record<ChannelKey, boolean> {
+  return Object.fromEntries(marginChannelProfiles.map((profile) => [profile.key, false])) as Record<ChannelKey, boolean>;
+}
+
 type MarginExchangeRatePayload = {
   source?: string;
   frequency?: "minute-market" | "daily-reference-fallback";
@@ -264,6 +268,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   const [feeOverrides, setFeeOverrides] = useState<Record<ChannelKey, number | null>>(() => createPlatformFeeOverrides());
   const [paymentFeeOverrides, setPaymentFeeOverrides] = useState<Record<ChannelKey, number>>(() => createPaymentFeeOverrides());
   const [channelCosts, setChannelCosts] = useState<Record<ChannelKey, ChannelMarginCosts>>(() => createChannelCostOverrides());
+  const [purchaseCostConfirmed, setPurchaseCostConfirmed] = useState(false);
+  const [channelCostConfirmations, setChannelCostConfirmations] = useState<Record<ChannelKey, boolean>>(() => createChannelCostConfirmations());
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey>("qoo10");
   const [localScenarios, setLocalScenarios] = useState<SavedScenario[]>([]);
   const [deletedScenarioIds, setDeletedScenarioIds] = useState<Set<string>>(() => new Set());
@@ -335,7 +341,31 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     ...profile,
     rateToKrw: profile.currency === "KRW" ? 1 : ratesFresh ? referenceRates[profile.currency] ?? null : null,
   })), [referenceRates, ratesFresh]);
-  const results = useMemo(() => calculateChannelMargins(form, feeOverrides, paymentFeeOverrides, channelCosts, calculationProfiles), [calculationProfiles, channelCosts, form, feeOverrides, paymentFeeOverrides]);
+  const calculatedResults = useMemo(() => calculateChannelMargins(form, feeOverrides, paymentFeeOverrides, channelCosts, calculationProfiles), [calculationProfiles, channelCosts, form, feeOverrides, paymentFeeOverrides]);
+  const results = useMemo(() => calculatedResults.map((result) => {
+    const missingCostBasis = !purchaseCostConfirmed || !channelCostConfirmations[result.key];
+    if (!missingCostBasis) return result;
+    return {
+      ...result,
+      calculationStatus: "invalid_input" as const,
+      profitabilityStatus: "unavailable" as const,
+      marketStatus: "unavailable" as const,
+      reasons: [...result.reasons, !purchaseCostConfirmed ? "purchase_cost_unconfirmed" : "channel_costs_unconfirmed"],
+      calculationReady: false,
+      variableRate: null,
+      variableCost: null,
+      profit: null,
+      margin: null,
+      breakEvenPrice: null,
+      recommendedPrice: null,
+      marketGapRate: null,
+      localBreakEvenPrice: null,
+      effectiveBreakEvenPriceKrw: null,
+      localRecommendedPrice: null,
+      effectiveRecommendedPriceKrw: null,
+      status: "계산 기준 확인" as const,
+    };
+  }), [calculatedResults, channelCostConfirmations, purchaseCostConfirmed]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
   const selectedCosts = channelCosts[selectedChannel];
   const selectedChannelInfo = channels[selectedChannel];
@@ -345,7 +375,12 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     : 0;
   const manualFeeMessage = `${selectedChannelInfo.name} 플랫폼 수수료를 직접 입력하세요.`;
   const exchangeRateMessage = `${selectedResult.currency} 실시간 환율을 수신한 뒤 계산할 수 있습니다.`;
-  const calculationBlockedMessage = !selectedResult.exchangeRateReady ? exchangeRateMessage : manualFeeMessage;
+  const costBasisMessage = !purchaseCostConfirmed
+    ? "매입 원가를 직접 입력해 확인한 뒤 계산할 수 있습니다."
+    : !channelCostConfirmations[selectedChannel]
+      ? `${selectedChannelInfo.name} 배송·3PL·통관 비용을 확인한 뒤 계산할 수 있습니다.`
+      : null;
+  const calculationBlockedMessage = costBasisMessage ?? (!selectedResult.exchangeRateReady ? exchangeRateMessage : manualFeeMessage);
   const savedScenarios = useMemo(() => {
     const operationScenarios = (Array.isArray(scenarios) ? scenarios : [])
       .map(savedScenarioFromOperation)
@@ -365,6 +400,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       ...current,
       [selectedChannel]: { ...current[selectedChannel], [key]: value },
     }));
+    setChannelCostConfirmations((current) => ({ ...current, [selectedChannel]: false }));
   };
 
   const resetInputs = () => {
@@ -373,6 +409,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     setFeeOverrides(createPlatformFeeOverrides());
     setPaymentFeeOverrides(createPaymentFeeOverrides());
     setChannelCosts(createChannelCostOverrides());
+    setPurchaseCostConfirmed(false);
+    setChannelCostConfirmations(createChannelCostConfirmations());
     setSelectedChannel("qoo10");
     notify("마진 계산 입력값을 초기화했습니다.");
   };
@@ -384,6 +422,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     setFeeOverrides(createPlatformFeeOverrides());
     setPaymentFeeOverrides(createPaymentFeeOverrides());
     setChannelCosts(createChannelCostOverrides());
+    setPurchaseCostConfirmed(false);
+    setChannelCostConfirmations(createChannelCostConfirmations());
     notify("상품이 변경되어 이전 상품의 원가·배송비·수수료 입력을 초기화했습니다. 새 상품의 비용을 입력해 주세요.");
     const product = products.find((item) => item.id === productId);
     if (product?.baseCurrency === "KRW" && product.baseSellingPrice !== null) {
@@ -392,6 +432,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const applyRecommendedPrice = () => {
+    if (costBasisMessage) return notify(costBasisMessage);
     if (!selectedResult.exchangeRateReady) return notify(exchangeRateMessage);
     if (!selectedResult.feeReady) return notify(manualFeeMessage);
     if (selectedResult.recommendedPrice === null) return;
@@ -401,6 +442,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 
   const saveScenario = async () => {
     if (mutationLock.current || mutationUncertain) return;
+    if (costBasisMessage) return notify(costBasisMessage);
     if (selectedResult.plannedSellingPriceKrw <= 0 || selectedResult.profit === null || selectedResult.margin === null) return notify("계획 판매가를 입력한 뒤 계산 결과를 저장할 수 있습니다.");
     if (selectedResult.currency !== "KRW" && !marginRateIsFresh(rateEvidence)) return notify("환율이 만료되었습니다. 최신 환율 수신 후 다시 저장해 주세요.");
     if (!selectedResult.exchangeRateReady) return notify(`${exchangeRateMessage} 실환율 없는 계산은 저장하지 않습니다.`);
@@ -532,12 +574,23 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
           <div className="margin-field-section">
             <div className="margin-section-title"><span className="metric-icon blue"><WalletCards size={17} /></span><div><b>{selectedChannelInfo.name} 건당 비용</b><small>매입 원가는 공통이고 배송·3PL·통관 비용은 현재 선택한 채널에만 적용됩니다.</small></div></div>
             <div className="margin-field-grid compact">
-              <MarginNumberField id="purchase-cost" label="매입 원가" value={form.purchaseCost} suffix="원" onChange={(value) => changeFormValue("purchaseCost", value)} />
+              <MarginNumberField id="purchase-cost" label="매입 원가" value={form.purchaseCost} suffix="원" onChange={(value) => { setPurchaseCostConfirmed(true); changeFormValue("purchaseCost", value); }} />
               <MarginNumberField id="international-shipping" label="국제 배송" value={selectedCosts.internationalShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("internationalShipping", value)} />
               <MarginNumberField id="local-shipping" label="현지 배송" value={selectedCosts.localShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("localShipping", value)} />
               <MarginNumberField id="fulfillment-cost" label="포장 · 3PL" value={selectedCosts.fulfillmentCost} suffix="원" onChange={(value) => changeCostValue("fulfillmentCost", value)} />
               <MarginNumberField id="fixed-cost" label="통관 · 기타 고정비" value={selectedCosts.fixedCost} suffix="원" onChange={(value) => changeCostValue("fixedCost", value)} />
             </div>
+            <button
+              type="button"
+              className="filter-button"
+              aria-pressed={channelCostConfirmations[selectedChannel]}
+              onClick={() => setChannelCostConfirmations((current) => ({ ...current, [selectedChannel]: !current[selectedChannel] }))}
+            >
+              <CheckCircle2 size={14} />
+              {channelCostConfirmations[selectedChannel] ? `${selectedChannelInfo.name} 비용 확인됨` : `${selectedChannelInfo.name} 배송·3PL·통관 비용 확인`}
+            </button>
+            {!purchaseCostConfirmed ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />매입 원가를 직접 입력해 주세요. 원가가 없다면 0원을 다시 입력해 확인합니다.</p> : null}
+            {!channelCostConfirmations[selectedChannel] ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{selectedChannelInfo.name} 배송·3PL·통관 비용을 확인해 주세요. 비용이 없다면 0원 상태를 확인합니다.</p> : null}
           </div>
 
           <div className="margin-field-section">
