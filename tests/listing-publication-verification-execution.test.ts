@@ -1868,7 +1868,7 @@ test("Coupang post-price verifier binds the original CREATE content and exact li
       items: [{
         vendorItemId: exactVendorItemId,
         itemId: exactItemId,
-        productId: exactProductId,
+        productId: null,
         itemName: exactBody.items[0].itemName,
         contents: coupangContents,
       }],
@@ -2010,6 +2010,10 @@ test("Coupang post-price verifier binds the original CREATE content and exact li
     for (const invalidReadback of [
       { seller: exactSellerResponse, vendor: { sellerItemId: "96027942779", onSale: true, amountInStock: 1, salePrice: 3190 } },
       { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, productId: "9725220701" } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
+      { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, items: [{ ...exactSellerResponse.data.items[0], productId: "9725220701" }] } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
+      { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, items: [{ ...exactSellerResponse.data.items[0], productId: false }] } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
+      { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, items: [{ ...exactSellerResponse.data.items[0], productId: {} }] } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
+      { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, items: [{ ...exactSellerResponse.data.items[0], productId: [] }] } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
       { seller: { ...exactSellerResponse, data: { ...exactSellerResponse.data, items: [{ ...exactSellerResponse.data.items[0], itemId: "29102903417" }] } }, vendor: { sellerItemId: exactVendorItemId, onSale: true, amountInStock: 1, salePrice: 3190 } },
     ]) {
       globalThis.fetch = async (request) => {

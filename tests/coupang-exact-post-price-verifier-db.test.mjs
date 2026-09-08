@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
@@ -10,6 +11,22 @@ const migration = await readFile(new URL(
 ), "utf8");
 const routeMigration = await readFile(new URL(
   "../supabase/migrations/20260908062500_bind_exact_coupang_post_price_verifier_route.sql",
+  import.meta.url,
+), "utf8");
+const vendorIdentityHydrationMigration = await readFile(new URL(
+  "../supabase/migrations/20260908063000_recover_exact_coupang_post_price_source_vendor_identity.sql",
+  import.meta.url,
+), "utf8");
+const optionalItemProductIdentityMigration = await readFile(new URL(
+  "../supabase/migrations/20260908064000_recover_exact_coupang_missing_item_product_identity.sql",
+  import.meta.url,
+), "utf8");
+const reaperCompletionMigration = await readFile(new URL(
+  "../supabase/migrations/20260908065000_complete_exact_coupang_post_price_after_reaper.sql",
+  import.meta.url,
+), "utf8");
+const priceSnapshotNormalizationMigration = await readFile(new URL(
+  "../supabase/migrations/20260908070352_normalize_exact_coupang_listing_price_snapshot.sql",
   import.meta.url,
 ), "utf8");
 
@@ -37,6 +54,25 @@ const egress =
   "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01";
 const tokenHash = "a".repeat(64);
 const workerVersion = `sellerpilot-cli-worker/1.61+${release}.${egress.slice(0, 11)}`;
+const productionVerifierJobId = "2d64d82c-ce61-427f-81f0-c622bfa8bab6";
+const productionQueuedJobSha =
+  "6a4dd03a0d9a8d7a0e34a4d61c30c79589f465a40a7142eecd531031c7800493";
+const productionClaimSha =
+  "4c08b0cf88c6d7543f7a4241ff6591624f1bb14bde18ff51ffa3ef985901da36";
+const productionResponseSha =
+  "77c6aa6a25c65f801b3064d776a80bbfce49408680a1916a12dd1112bfbd43d1";
+const productionCompletionFunctionSha =
+  "e3ad7aa1fcb0e3d2434bd3b112234e1d083d77c51504d4769308f8457d492085";
+const productionPredecessorFunctionSha =
+  "a7de4b91dbda703f55a7e0f98242185c84519b39d65883afeb63a4f78b1ffaba";
+const productionRecorderFunctionSha =
+  "c78c6f8adc8acb860387091f7dad1e5594b25aa815c36d1adc57dbda650e2de3";
+const productionRecoveryFunctionSha =
+  "e235bb0f6cb7e87e49bd85c42e3d4888be9f78ac22c0203559fb6a44317d760a";
+const productionNormalizedRecorderFunctionSha =
+  "2c4937db26550e697ed326886dc1fcb44ae36c7974054591e3c99a84fd8878b3";
+const productionNormalizedRecoveryFunctionSha =
+  "e8a0d50d042029d3af2c2a23a30fdce4207f365535fbfdf507a6a27de55ce311";
 const predecessorDigests = Object.freeze([
   [
     "sellerpilot_private.local_channel_executor_job_allowed(uuid,uuid,uuid,text,text,text)",
@@ -84,6 +120,109 @@ async function renderMigrationForFixture(db) {
   return rendered;
 }
 
+async function renderReaperCompletionMigrationForFixture(
+  db,
+  jobId,
+  claimToken,
+  response,
+) {
+  const jobSha = await scalar(db,
+    `select encode(extensions.digest(to_jsonb(job)::text,'sha256'),'hex')
+       from sellerpilot_private.channel_gateway_jobs job where job.id=$1`,
+    [jobId]);
+  const completionFunctionSha = await scalar(db,
+    `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+       'public.sellerpilot_service_complete_gateway_transaction(text,uuid,uuid,text,jsonb,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure
+     ),'sha256'),'hex')`);
+  const predecessorFunctionSha = await scalar(db,
+    `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+       'public.sellerpilot_complete_before_coupang_post_price(text,uuid,uuid,text,jsonb,text,jsonb,jsonb,jsonb,jsonb)'::regprocedure
+     ),'sha256'),'hex')`);
+  const recorderFunctionSha = await scalar(db,
+    `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+       'sellerpilot_private.record_coupang_exact_post_price_completion(uuid)'::regprocedure
+     ),'sha256'),'hex')`);
+  const claimSha = createHash("sha256").update(claimToken).digest("hex");
+  const responseSha = await scalar(db,
+    "select encode(extensions.digest($1::jsonb::text,'sha256'),'hex')",
+    [JSON.stringify(response)]);
+  assert.notEqual(jobSha, productionQueuedJobSha);
+  assert.notEqual(claimSha, productionClaimSha);
+  assert.notEqual(responseSha, productionResponseSha);
+  return reaperCompletionMigration
+    .replaceAll(productionVerifierJobId, jobId)
+    .replaceAll(productionQueuedJobSha, jobSha)
+    .replaceAll(productionClaimSha, claimSha)
+    .replaceAll(productionResponseSha, responseSha)
+    .replaceAll(productionCompletionFunctionSha, completionFunctionSha)
+    .replaceAll(productionPredecessorFunctionSha, predecessorFunctionSha)
+    .replaceAll(productionRecorderFunctionSha, recorderFunctionSha);
+}
+
+async function renderPriceSnapshotNormalizationMigrationForFixture(db, jobId) {
+  const oldPriceFragment = `'price', run.desired_price,\n    'updated_at', projection_at`;
+  const newPriceFragment = `'price', run.desired_price::numeric(14,2),\n    'updated_at', projection_at`;
+  const jobSha = await scalar(db,
+    `select encode(extensions.digest(to_jsonb(job)::text,'sha256'),'hex')
+       from sellerpilot_private.channel_gateway_jobs job where job.id=$1`,
+    [jobId]);
+  const recorderDefinition = await scalar(db,
+    "select pg_catalog.pg_get_functiondef('sellerpilot_private.record_coupang_exact_post_price_completion(uuid)'::regprocedure)");
+  const recoveryDefinition = await scalar(db,
+    "select pg_catalog.pg_get_functiondef('sellerpilot_private.complete_exact_coupang_post_price_after_reaper(uuid,jsonb)'::regprocedure)");
+  const recorderSha = await scalar(db,
+    "select encode(extensions.digest($1,'sha256'),'hex')",
+    [recorderDefinition]);
+  const recoverySha = await scalar(db,
+    "select encode(extensions.digest($1,'sha256'),'hex')",
+    [recoveryDefinition]);
+  assert.equal(recorderDefinition.split(oldPriceFragment).length - 1, 1);
+  assert.equal(recorderDefinition.includes(newPriceFragment), false);
+  const newRecorderDefinition = recorderDefinition.replace(
+    oldPriceFragment,
+    newPriceFragment,
+  );
+  let normalizedRecorderSha;
+  let normalizedRecoverySha;
+  await db.exec("begin");
+  try {
+    await db.exec(newRecorderDefinition);
+    normalizedRecorderSha = await scalar(db,
+      `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+         'sellerpilot_private.record_coupang_exact_post_price_completion(uuid)'::regprocedure
+       ),'sha256'),'hex')`);
+    assert.equal(recoveryDefinition.split(recorderSha).length - 1, 1);
+    await db.exec(recoveryDefinition.replace(recorderSha, normalizedRecorderSha));
+    normalizedRecoverySha = await scalar(db,
+      `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+         'sellerpilot_private.complete_exact_coupang_post_price_after_reaper(uuid,jsonb)'::regprocedure
+       ),'sha256'),'hex')`);
+  } finally {
+    await db.exec("rollback");
+  }
+  assert.equal(await scalar(db,
+    `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+       'sellerpilot_private.record_coupang_exact_post_price_completion(uuid)'::regprocedure
+     ),'sha256'),'hex')`), recorderSha);
+  assert.equal(await scalar(db,
+    `select encode(extensions.digest(pg_catalog.pg_get_functiondef(
+       'sellerpilot_private.complete_exact_coupang_post_price_after_reaper(uuid,jsonb)'::regprocedure
+     ),'sha256'),'hex')`), recoverySha);
+  return priceSnapshotNormalizationMigration
+    .replaceAll(productionVerifierJobId, jobId)
+    .replaceAll(productionQueuedJobSha, jobSha)
+    .replaceAll(productionRecorderFunctionSha, recorderSha)
+    .replaceAll(productionRecoveryFunctionSha, recoverySha)
+    .replaceAll(
+      productionNormalizedRecorderFunctionSha,
+      normalizedRecorderSha,
+    )
+    .replaceAll(
+      productionNormalizedRecoveryFunctionSha,
+      normalizedRecoverySha,
+    );
+}
+
 function sourcePayload() {
   const images = Array.from({ length: 8 }, (_, index) => ({
     role: `detail-${index + 1}`,
@@ -102,7 +241,10 @@ function sourcePayload() {
   };
 }
 
-function sourceResponse() {
+function sourceResponse({ persistVendorItemId = true } = {}) {
+  const item = persistVendorItemId
+    ? { vendorItemId: "96027942778" }
+    : {};
   return {
     ok: true,
     channel: "coupang",
@@ -118,7 +260,7 @@ function sourceResponse() {
           sellerProductId: "16375780938",
           requested: false,
           statusName: "승인완료",
-          items: [{ vendorItemId: "96027942778" }],
+          items: [item],
         },
       },
     }],
@@ -175,7 +317,7 @@ function completionResponse(priceRepairResponseSha256) {
             statusName: "승인완료",
             items: [{
               itemId: "29102903416",
-              productId: "9725220700",
+              productId: null,
               vendorItemId: "96027942778",
             }],
           },
@@ -279,8 +421,12 @@ function completionResponse(priceRepairResponseSha256) {
   };
 }
 
-async function database() {
+async function database({
+  persistSourceVendorItemId = true,
+  listingPriceScale = false,
+} = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
+  const listingPriceType = listingPriceScale ? "numeric(14,2)" : "numeric";
   await db.exec(String.raw`
     create role anon;
     create role authenticated;
@@ -338,7 +484,7 @@ async function database() {
       last_verified_at timestamptz,
       last_error text,
       currency text,
-      price numeric,
+      price ${listingPriceType},
       updated_at timestamptz not null default clock_timestamp()
     );
     create table sellerpilot_private.ai_cli_worker_tokens(
@@ -377,7 +523,25 @@ async function database() {
       write_resource_kind text,
       write_resource_key text,
       provider_mutation_started_at timestamptz,
-      oauth_provider_call_started_at timestamptz
+      oauth_provider_call_started_at timestamptz,
+      credential_refresh_in_flight boolean not null default false,
+      credential_refresh_fingerprint text,
+      prepared_credential_id uuid,
+      credential_refresh_prepared_at timestamptz,
+      credential_refresh_recovery_vault_id uuid,
+      credential_refresh_recovery_fingerprint text,
+      credential_refresh_recovery_staged_at timestamptz,
+      credential_refresh_started_at timestamptz,
+      oauth_request_vault_id uuid,
+      oauth_request_fingerprint text,
+      oauth_source_credential_id uuid,
+      oauth_exchange_completed boolean not null default false
+    );
+    create table sellerpilot_private.gateway_completion_receipts(
+      job_id uuid primary key,
+      worker_token_id uuid not null,
+      claim_token uuid not null,
+      completed_at timestamptz not null default clock_timestamp()
     );
     create table sellerpilot_private.local_channel_executor_routes(
       id uuid primary key,
@@ -628,9 +792,16 @@ async function database() {
              response_payload = p_response_payload,
              error_message = p_error_message,
              completed_at = clock_timestamp(),
+             worker_token_id = null,
+             claim_token = null,
              lease_expires_at = null,
              updated_at = clock_timestamp()
        where id = p_job_id;
+      insert into sellerpilot_private.gateway_completion_receipts(
+        job_id,worker_token_id,claim_token
+      ) values (
+        p_job_id,current_job.worker_token_id,p_claim_token
+      );
       return jsonb_build_object('status', 'completed', 'jobId', p_job_id);
     end
     $$;
@@ -765,7 +936,9 @@ async function database() {
       ids.sourceAttempt,
       ids.listing,
       JSON.stringify(sourcePayload()),
-      JSON.stringify(sourceResponse()),
+      JSON.stringify(sourceResponse({
+        persistVendorItemId: persistSourceVendorItemId,
+      })),
       ids.credentialOwner,
       sellerKey,
       sourceFingerprint,
@@ -813,6 +986,8 @@ async function database() {
   const renderedMigration = await renderMigrationForFixture(db);
   await db.exec(renderedMigration);
   renderedMigrations.set(db, renderedMigration);
+  await db.exec(vendorIdentityHydrationMigration);
+  await db.exec(optionalItemProductIdentityMigration);
   const fixtureAccessDigest = await scalar(
     db,
     `select encode(extensions.digest(
@@ -1096,6 +1271,222 @@ test("claim hydrates immutable CREATE evidence and successful GET-only completio
   }
 });
 
+test("claim recovers one missing source vendor identity from the immutable price-repair run", async () => {
+  const db = await database({ persistSourceVendorItemId: false });
+  try {
+    const sourceBefore = await scalar(db,
+      "select response_payload from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [ids.sourceJob]);
+    assert.equal(
+      sourceBefore.steps[0].data.data.items[0].vendorItemId,
+      undefined,
+    );
+    const { enqueued, claimed } = await enqueueAndClaim(db);
+    assert.equal(claimed.id, enqueued.jobId);
+    assert.deepEqual(
+      claimed.request.arguments.sellerpilotPublicationSource
+        .sourceResponsePayload.remoteState.resources.vendorItemIds,
+      ["96027942778"],
+    );
+    assert.deepEqual(await scalar(db,
+      "select response_payload from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [ids.sourceJob]), sourceBefore);
+    const { rows: [job] } = await db.query(
+      `select status,attempt_count,provider_mutation_started_at,
+              oauth_provider_call_started_at,write_resource_kind,write_resource_key
+         from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [enqueued.jobId],
+    );
+    assert.equal(job.status, "running");
+    assert.equal(job.attempt_count, 1);
+    assert.equal(job.provider_mutation_started_at, null);
+    assert.equal(job.oauth_provider_call_started_at, null);
+    assert.equal(job.write_resource_kind, null);
+    assert.equal(job.write_resource_key, null);
+  } finally {
+    await db.close();
+  }
+});
+
+test("reaped exact claim completes atomically without a second claim or provider mutation", async () => {
+  const db = await database({ listingPriceScale: true });
+  try {
+    const { enqueued, claimed } = await enqueueAndClaim(db);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status='queued',worker_token_id=null,claim_token=null,
+              lease_expires_at=null,completed_at=null,error_message=null,
+              updated_at='2026-09-08T06:02:01.03679Z'::timestamptz
+        where id=$1`,
+      [enqueued.jobId],
+    );
+    const queuedBefore = await scalar(db,
+      "select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job where id=$1",
+      [enqueued.jobId]);
+    assert.equal(queuedBefore.status, "queued");
+    assert.equal(queuedBefore.attempt_count, 1);
+    assert.equal(queuedBefore.claim_token, null);
+    const priceRepairResponseSha = await scalar(db,
+      "select price_repair_response_sha256 from sellerpilot_private.coupang_exact_post_price_verify_runs where verifier_job_id=$1",
+      [enqueued.jobId]);
+    const response = completionResponse(priceRepairResponseSha);
+    const renderedRecovery = await renderReaperCompletionMigrationForFixture(
+      db,
+      enqueued.jobId,
+      claimed.claim_token,
+      response,
+    );
+    await db.exec(renderedRecovery);
+    const renderedPriceNormalization =
+      await renderPriceSnapshotNormalizationMigrationForFixture(
+        db,
+        enqueued.jobId,
+      );
+    await db.exec(renderedPriceNormalization);
+    assert.deepEqual(await scalar(db,
+      "select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job where id=$1",
+      [enqueued.jobId]), queuedBefore);
+    assert.equal(await scalar(db,
+      `select count(*)::integer
+         from pg_catalog.pg_proc procedure
+        where procedure.oid in (
+          'sellerpilot_private.complete_exact_coupang_post_price_after_reaper(uuid,jsonb)'::regprocedure,
+          'sellerpilot_private.reject_coupang_exact_post_price_reaper_completion_change()'::regprocedure
+        ) and pg_catalog.pg_get_userbyid(procedure.proowner)='postgres'`), 2);
+    assert.equal(await scalar(db,
+      `select count(*)::integer
+         from pg_catalog.pg_class relation
+        where relation.oid='sellerpilot_private.coupang_exact_post_price_reaper_completions'::regclass
+          and pg_catalog.pg_get_userbyid(relation.relowner)='postgres'
+          and relation.relrowsecurity`), 1);
+    assert.equal(await scalar(db,
+      `select count(*)::integer from (
+         select acl.grantee
+           from pg_catalog.pg_proc procedure
+           cross join lateral pg_catalog.aclexplode(coalesce(
+             procedure.proacl,pg_catalog.acldefault('f',procedure.proowner)
+           )) acl
+          where procedure.oid in (
+            'sellerpilot_private.complete_exact_coupang_post_price_after_reaper(uuid,jsonb)'::regprocedure,
+            'sellerpilot_private.reject_coupang_exact_post_price_reaper_completion_change()'::regprocedure
+          ) and acl.grantee<>procedure.proowner
+         union all
+         select acl.grantee
+           from pg_catalog.pg_class relation
+           cross join lateral pg_catalog.aclexplode(coalesce(
+             relation.relacl,pg_catalog.acldefault('r',relation.relowner)
+           )) acl
+          where relation.oid='sellerpilot_private.coupang_exact_post_price_reaper_completions'::regclass
+            and acl.grantee<>relation.relowner
+       ) unauthorized`), 0);
+
+    const invalid = structuredClone(response);
+    invalid.steps[0].data.data.items[0].productId = "9725220701";
+    await assert.rejects(
+      db.query(
+        `select sellerpilot_private.complete_exact_coupang_post_price_after_reaper(
+          $1,$2::jsonb
+        )`,
+        [claimed.claim_token, JSON.stringify(invalid)],
+      ),
+      /COUPANG_POST_PRICE_REAPER_COMPLETION_RESPONSE_DRIFT/,
+    );
+    assert.deepEqual(await scalar(db,
+      "select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job where id=$1",
+      [enqueued.jobId]), queuedBefore);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+      [enqueued.jobId]), 0);
+
+    const recorderDefinition = await scalar(db,
+      "select pg_catalog.pg_get_functiondef('sellerpilot_private.record_coupang_exact_post_price_completion(uuid)'::regprocedure)");
+    await db.exec(`create or replace function sellerpilot_private.record_coupang_exact_post_price_completion(p_job_id uuid)
+      returns boolean language sql security definer set search_path='' as 'select false'`);
+    await assert.rejects(
+      db.query(
+        `select sellerpilot_private.complete_exact_coupang_post_price_after_reaper(
+          $1,$2::jsonb
+        )`,
+        [claimed.claim_token, JSON.stringify(response)],
+      ),
+      /COUPANG_POST_PRICE_REAPER_COMPLETION_CALL_GRAPH_DRIFT/,
+    );
+    assert.deepEqual(await scalar(db,
+      "select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job where id=$1",
+      [enqueued.jobId]), queuedBefore);
+    await db.exec(recorderDefinition);
+
+    const completed = await scalar(db,
+      `select sellerpilot_private.complete_exact_coupang_post_price_after_reaper(
+        $1,$2::jsonb
+      )`,
+      [claimed.claim_token, JSON.stringify(response)]);
+    assert.equal(completed.status, "completed");
+    assert.equal(completed.jobId, enqueued.jobId);
+    assert.equal(completed.attemptCount, 1);
+    assert.equal(completed.providerMutationPerformed, false);
+    const { rows: [job] } = await db.query(
+      `select status,attempt_count,worker_token_id,claim_token,lease_expires_at,
+              completed_at,response_payload,provider_mutation_started_at,
+              oauth_provider_call_started_at,write_resource_kind,write_resource_key
+         from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [enqueued.jobId],
+    );
+    assert.equal(job.status, "succeeded");
+    assert.equal(job.attempt_count, 1);
+    assert.equal(job.worker_token_id, null);
+    assert.equal(job.claim_token, null);
+    assert.equal(job.lease_expires_at, null);
+    assert.ok(job.completed_at);
+    assert.deepEqual(job.response_payload, response);
+    assert.equal(job.provider_mutation_started_at, null);
+    assert.equal(job.oauth_provider_call_started_at, null);
+    assert.equal(job.write_resource_kind, null);
+    assert.equal(job.write_resource_key, null);
+    assert.equal(await scalar(db,
+      `select (receipt.listing_after_snapshot->'price')::text
+         from sellerpilot_private.coupang_exact_post_price_verify_receipts receipt
+        where receipt.verifier_job_id=$1`,
+      [enqueued.jobId]), "3190.00");
+    assert.equal(await scalar(db,
+      `select receipt.listing_after_sha256=encode(
+         extensions.digest(to_jsonb(listing)::text,'sha256'),'hex'
+       )
+         from sellerpilot_private.coupang_exact_post_price_verify_receipts receipt
+         join sellerpilot_private.product_listings listing on listing.id=receipt.listing_id
+        where receipt.verifier_job_id=$1`,
+      [enqueued.jobId]), true);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.gateway_completion_receipts where job_id=$1",
+      [enqueued.jobId]), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_post_price_verify_receipts where verifier_job_id=$1 and claim_attempt_count=1 and provider_live_verified and not provider_mutation_performed",
+      [enqueued.jobId]), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_post_price_reaper_completions where verifier_job_id=$1 and not provider_mutation_performed",
+      [enqueued.jobId]), 1);
+
+    const replay = await scalar(db,
+      `select sellerpilot_private.complete_exact_coupang_post_price_after_reaper(
+        $1,$2::jsonb
+      )`,
+      [claimed.claim_token, JSON.stringify(response)]);
+    assert.equal(replay.status, "completed_replay");
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_post_price_reaper_completions where verifier_job_id=$1",
+      [enqueued.jobId]), 1);
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.coupang_exact_post_price_reaper_completions set recovered_at=clock_timestamp() where verifier_job_id=$1",
+        [enqueued.jobId],
+      ),
+      /COUPANG_POST_PRICE_REAPER_COMPLETION_IMMUTABLE/,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
 test("completion rejects missing or mismatched provider product, item, vendor and URL identity", async () => {
   const cases = [
     ["seller productId", (response) => {
@@ -1104,8 +1495,8 @@ test("completion rejects missing or mismatched provider product, item, vendor an
     ["seller itemId", (response) => {
       response.steps[0].data.data.items[0].itemId = "0";
     }],
-    ["seller item productId", (response) => {
-      delete response.steps[0].data.data.items[0].productId;
+    ["conflicting seller item productId", (response) => {
+      response.steps[0].data.data.items[0].productId = "0";
     }],
     ["vendor sellerItemId", (response) => {
       response.steps[1].data.data.sellerItemId = "0";

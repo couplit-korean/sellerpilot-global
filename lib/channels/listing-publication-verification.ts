@@ -786,12 +786,19 @@ export async function executeListingPublicationVerification(
       && Array.isArray(resources.vendorItemIds)
       && resources.vendorItemIds.length === 1
       && exactText(resources.vendorItemIds[0]) === marker.vendorItemId;
+    const rawItemProductId = sellerItems[0]?.productId;
+    const observedItemProductId = exactText(rawItemProductId);
+    const itemProductIdMissing = rawItemProductId == null
+      || (typeof rawItemProductId === "string" && rawItemProductId.trim() === "");
+    const itemProductIdExact = itemProductIdMissing
+      || ((typeof rawItemProductId === "string" || typeof rawItemProductId === "number")
+        && observedItemProductId === marker.productId);
     const sellerStateVerified = exactText(sellerRoot.sellerProductId) === marker.sellerProductId
       && exactText(sellerRoot.productId) === marker.productId
       && sellerRoot.requested === false
       && sellerItems.length === 1
       && exactText(sellerItems[0]?.vendorItemId) === marker.vendorItemId
-      && exactText(sellerItems[0]?.productId) === marker.productId
+      && itemProductIdExact
       && exactText(sellerItems[0]?.itemId) === marker.itemId;
     const contentExecution = verifiedExecution({
       channel: input.channel,
