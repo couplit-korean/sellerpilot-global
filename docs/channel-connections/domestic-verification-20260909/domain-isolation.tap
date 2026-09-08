@@ -1,0 +1,254 @@
+
+> site-creator-vinext-starter@0.1.0 test:domain-isolation
+> node --import tsx --test tests/cs-product-registration-boundary.test.mjs tests/shipping-domain-flow.test.mjs tests/shipping-product-independent-db.test.mjs tests/domain-completion-isolation.test.mjs tests/cs-provider-isolation.test.ts tests/cs-draft-queue-db.test.mjs tests/cs-independent-snapshot-db.test.mjs tests/cs-draft-api-flow.test.mjs
+
+TAP version 13
+# Subtest: Actual CS admin API -> isolated SQL queue -> actual worker API -> draft runner -> SQL completion -> admin readback
+ok 1 - Actual CS admin API -> isolated SQL queue -> actual worker API -> draft runner -> SQL completion -> admin readback
+  ---
+  duration_ms: 1406.073792
+  type: 'test'
+  ...
+# Subtest: CS-only DB queue executes with shared admin, own claim, immutable replay, and no product tables
+ok 2 - CS-only DB queue executes with shared admin, own claim, immutable replay, and no product tables
+  ---
+  duration_ms: 1639.061958
+  type: 'test'
+  ...
+# Subtest: Expired claims, revoked tokens, changed customer generation and cancellation cannot save drafts
+ok 3 - Expired claims, revoked tokens, changed customer generation and cancellation cannot save drafts
+  ---
+  duration_ms: 963.067042
+  type: 'test'
+  ...
+# Subtest: CS draft queue rejects unauthorized admins and recalled Lazada messages
+ok 4 - CS draft queue rejects unauthorized admins and recalled Lazada messages
+  ---
+  duration_ms: 449.847584
+  type: 'test'
+  ...
+# Subtest: Migration adopts existing CS jobs and revokes only their old leases without changing a running product job
+ok 5 - Migration adopts existing CS jobs and revokes only their old leases without changing a running product job
+  ---
+  duration_ms: 340.291375
+  type: 'test'
+  ...
+# Subtest: CS snapshot works with no product or order tables and preserves another administrator's seller-owned tickets
+ok 6 - CS snapshot works with no product or order tables and preserves another administrator's seller-owned tickets
+  ---
+  duration_ms: 1593.175792
+  type: 'test'
+  ...
+# Subtest: CS snapshot rejects unauthenticated and non-administrator sessions
+ok 7 - CS snapshot rejects unauthenticated and non-administrator sessions
+  ---
+  duration_ms: 978.309791
+  type: 'test'
+  ...
+# Subtest: CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+ok 8 - CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+  ---
+  duration_ms: 9.01025
+  type: 'test'
+  ...
+# Subtest: CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+ok 9 - CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+  ---
+  duration_ms: 0.488292
+  type: 'test'
+  ...
+# Subtest: CS workspace owns its state without importing the product shell or its snapshot hook
+ok 10 - CS workspace owns its state without importing the product shell or its snapshot hook
+  ---
+  duration_ms: 0.207708
+  type: 'test'
+  ...
+# Subtest: dependency traversal never stops at a shared execution boundary
+ok 11 - dependency traversal never stops at a shared execution boundary
+  ---
+  duration_ms: 0.145833
+  type: 'test'
+  ...
+# Subtest: Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+ok 12 - Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+  ---
+  duration_ms: 1.328292
+  type: 'test'
+  ...
+# Subtest: legacy CS and product AI API entry points participate in the ownership audit
+ok 13 - legacy CS and product AI API entry points participate in the ownership audit
+  ---
+  duration_ms: 0.106166
+  type: 'test'
+  ...
+# Subtest: Concurrent CS and commerce requests own independent budgets and cancellation signals
+ok 14 - Concurrent CS and commerce requests own independent budgets and cancellation signals
+  ---
+  duration_ms: 19.24625
+  type: 'test'
+  ...
+# Subtest: Each local provider handler rejects the other domain before starting a lease
+ok 15 - Each local provider handler rejects the other domain before starting a lease
+  ---
+  duration_ms: 1.434459
+  type: 'test'
+  ...
+# Subtest: CS local reply with an uncertain accepted write stays in reconciliation and never becomes a failed retry
+ok 16 - CS local reply with an uncertain accepted write stays in reconciliation and never becomes a failed retry
+  ---
+  duration_ms: 0.651541
+  type: 'test'
+  ...
+# Subtest: cs completion rejects product job before any database access
+ok 17 - cs completion rejects product job before any database access
+  ---
+  duration_ms: 0.615042
+  type: 'test'
+  ...
+# Subtest: cs completion cannot persist product result under its own claim
+ok 18 - cs completion cannot persist product result under its own claim
+  ---
+  duration_ms: 0.567125
+  type: 'test'
+  ...
+# Subtest: cs completion rejects shipping job before any database access
+ok 19 - cs completion rejects shipping job before any database access
+  ---
+  duration_ms: 0.050541
+  type: 'test'
+  ...
+# Subtest: cs completion cannot persist shipping result under its own claim
+ok 20 - cs completion cannot persist shipping result under its own claim
+  ---
+  duration_ms: 0.074083
+  type: 'test'
+  ...
+# Subtest: product completion rejects cs job before any database access
+ok 21 - product completion rejects cs job before any database access
+  ---
+  duration_ms: 0.126875
+  type: 'test'
+  ...
+# Subtest: product completion cannot persist cs result under its own claim
+ok 22 - product completion cannot persist cs result under its own claim
+  ---
+  duration_ms: 1.99725
+  type: 'test'
+  ...
+# Subtest: product completion rejects shipping job before any database access
+ok 23 - product completion rejects shipping job before any database access
+  ---
+  duration_ms: 0.047875
+  type: 'test'
+  ...
+# Subtest: product completion cannot persist shipping result under its own claim
+ok 24 - product completion cannot persist shipping result under its own claim
+  ---
+  duration_ms: 0.12475
+  type: 'test'
+  ...
+# Subtest: shipping completion rejects cs job before any database access
+ok 25 - shipping completion rejects cs job before any database access
+  ---
+  duration_ms: 0.439083
+  type: 'test'
+  ...
+# Subtest: shipping completion cannot persist cs result under its own claim
+ok 26 - shipping completion cannot persist cs result under its own claim
+  ---
+  duration_ms: 0.259167
+  type: 'test'
+  ...
+# Subtest: shipping completion rejects product job before any database access
+ok 27 - shipping completion rejects product job before any database access
+  ---
+  duration_ms: 0.073958
+  type: 'test'
+  ...
+# Subtest: shipping completion cannot persist product result under its own claim
+ok 28 - shipping completion cannot persist product result under its own claim
+  ---
+  duration_ms: 0.038875
+  type: 'test'
+  ...
+# Subtest: marketplace console cannot offer CS requests to the product endpoint
+ok 29 - marketplace console cannot offer CS requests to the product endpoint
+  ---
+  duration_ms: 97.715583
+  type: 'test'
+  ...
+# Subtest: actual shipping API and gateway use the order resource transaction, with no product binding
+ok 30 - actual shipping API and gateway use the order resource transaction, with no product binding
+  ---
+  duration_ms: 196.263958
+  type: 'test'
+  ...
+# Subtest: shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+ok 31 - shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+  ---
+  duration_ms: 118.228042
+  type: 'test'
+  ...
+# Subtest: pending and duplicate shipping receipts never create a second provider job
+ok 32 - pending and duplicate shipping receipts never create a second provider job
+  ---
+  duration_ms: 40.84875
+  type: 'test'
+  ...
+# Subtest: shipping provider rejects both other domains before lease or transport
+ok 33 - shipping provider rejects both other domains before lease or transport
+  ---
+  duration_ms: 0.298917
+  type: 'test'
+  ...
+# Subtest: shipping completion preserves the stable normalization boundary and strips raw order content
+ok 34 - shipping completion preserves the stable normalization boundary and strips raw order content
+  ---
+  duration_ms: 1.123833
+  type: 'test'
+  ...
+# Subtest: local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+ok 35 - local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+  ---
+  duration_ms: 0.365542
+  type: 'test'
+  ...
+# Subtest: three business domains have zero transitive imports in every direction and independent page roots
+ok 36 - three business domains have zero transitive imports in every direction and independent page roots
+  ---
+  duration_ms: 1338.211292
+  type: 'test'
+  ...
+# Subtest: product registration read model runs with shipping and CS tables absent
+ok 37 - product registration read model runs with shipping and CS tables absent
+  ---
+  duration_ms: 1574.986166
+  type: 'test'
+  ...
+# Subtest: shipping snapshot and sales run with product registration and CS tables absent
+ok 38 - shipping snapshot and sales run with product registration and CS tables absent
+  ---
+  duration_ms: 929.065708
+  type: 'test'
+  ...
+# Subtest: all new read models reject anonymous and non-admin sessions
+ok 39 - all new read models reject anonymous and non-admin sessions
+  ---
+  duration_ms: 453.557667
+  type: 'test'
+  ...
+# Subtest: shipping replay RPC only returns the exact credential/channel/operation attempt
+ok 40 - shipping replay RPC only returns the exact credential/channel/operation attempt
+  ---
+  duration_ms: 327.944584
+  type: 'test'
+  ...
+1..40
+# tests 40
+# suites 0
+# pass 40
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 3749.046

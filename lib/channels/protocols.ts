@@ -2119,8 +2119,6 @@ export async function elevenstSellerXmlRequest(input: {
       ...(Object.keys(product).length ? { product } : {}),
       ...(input.method === "GET"
         && input.path.startsWith("/rest/prodmarketservice/sellerprodcode/")
-        && !resultCode
-        && !productNo
         ? {
             lookupDocumentRoot: documentRoot.slice(0, 80),
             lookupBodyBytes: bytes.byteLength,

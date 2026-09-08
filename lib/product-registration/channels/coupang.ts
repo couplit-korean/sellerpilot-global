@@ -483,12 +483,9 @@ export async function executeCoupang(input: ExecuteInput) {
         typeof writeRemote.data.data === "string")
         ? String(writeRemote.data.data)
         : undefined;
-    const requestedId =
-      typeof body.sellerProductId === "number" ||
-      typeof body.sellerProductId === "string"
-        ? String(body.sellerProductId)
-        : undefined;
-    const remoteId = resumeRemoteId || responseId || requestedId;
+    // Only a provider response or the explicit persisted resume target identifies
+    // a created resource. A caller's body ID is never evidence of CREATE.
+    const remoteId = resumeRemoteId || responseId;
     const writeStep: ChannelOperationStep = writeRemote
       ? step(input.operation, writeRemote)
       : {

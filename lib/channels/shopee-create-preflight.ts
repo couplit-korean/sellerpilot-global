@@ -12,6 +12,7 @@ export function shopeeGlobalCreateBody(source: Record<string, unknown>, strict: 
   if (strict && !shopeeCreateConditionValid(body.condition)) {
     throw new Error("SHOPEE_CREATE_CONDITION_REQUIRED");
   }
+  if (shopeeCreateConditionValid(body.condition)) body.condition = String(body.condition).toUpperCase();
   const rows = skuRows(body.seller_stock);
   if (Object.hasOwn(body, "seller_stock")) {
     if (!everySku(rows, row => skuQuantity(row.stock))) throw new Error("SHOPEE_CREATE_STOCK_INVALID");
@@ -24,6 +25,9 @@ export function shopeeGlobalCreateBody(source: Record<string, unknown>, strict: 
     body.seller_stock = [{ stock: Number(body.normal_stock) }];
   }
   delete body.normal_stock;
+  if (strict && !everySku(skuRows(body.seller_stock), row => skuQuantity(row.stock))) {
+    throw new Error("SHOPEE_CREATE_STOCK_INVALID");
+  }
   return body;
 }
 

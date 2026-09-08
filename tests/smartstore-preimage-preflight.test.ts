@@ -428,3 +428,22 @@ test("Smartstore exact recovery rejects missing or null provider fields before a
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Smartstore existing seller code is rejected before uploading images", async () => {
+  const originalFetch = globalThis.fetch;
+  const mutations: string[] = [], calls: string[] = [];
+  globalThis.fetch = async (input) => {
+    const url = String(input); calls.push(url);
+    if (url.endsWith("/v1/categories/50001578")) return Response.json({ id: "50001578", name: "케이블 정리", last: true, exceptionalCategories: [] });
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, first: true, last: true, totalElements: 1, totalPages: 1,
+      contents: [{ originProductNo: 10000001, channelProducts: [{ sellerManagementCode, channelProductNo: 20000001 }] }],
+    });
+    throw new Error("Unexpected provider request");
+  };
+  try {
+    await assert.rejects(prepareMarketplaceListingArguments(runtimeInput("listing.create", mutations)), /NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE/);
+    assert.deepEqual(mutations, []);
+    assert.equal(calls.length, 2);
+  } finally { globalThis.fetch = originalFetch; }
+});

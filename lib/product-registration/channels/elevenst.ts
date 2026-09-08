@@ -1,3 +1,4 @@
+import { elevenstVerifiedSkuAbsence } from "../../channels/elevenst-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import { stringArgument, pathSegment } from "../../channels/operation-values";
 import { createHash } from "node:crypto";
@@ -402,23 +403,8 @@ export async function executeElevenst(input: ExecuteInput) {
       const productNo = String(remote.data.productNo ?? "").trim();
       if (productNo) return { remote, productNo };
       const resultCode = String(remote.data.resultCode ?? "").trim();
-      const lookupRoot = String(remote.data.lookupDocumentRoot ?? "").trim();
-      const lookupProducts = Array.isArray(remote.data.products)
-        ? remote.data.products
-        : null;
       const bodyBytes = Number(remote.data.lookupBodyBytes);
-      const verifiedEmptyCollection =
-        remote.response.status === 200 &&
-        remote.data.accepted === true &&
-        /^(?:[A-Za-z_][\w.-]*:)?products$/iu.test(lookupRoot) &&
-        lookupProducts?.length === 0 &&
-        Number.isSafeInteger(bodyBytes) &&
-        bodyBytes > 0 &&
-        bodyBytes <= 4_096;
-      const notFound =
-        remote.response.status === 404 ||
-        resultCode === "404" ||
-        verifiedEmptyCollection;
+      const notFound = elevenstVerifiedSkuAbsence(remote);
       if (!notFound) {
         const safeResultCode =
           resultCode

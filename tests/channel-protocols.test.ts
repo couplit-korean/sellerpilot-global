@@ -1881,6 +1881,9 @@ test("Naver product creation is only successful after the origin product readbac
     if (url.endsWith("/v1/oauth2/token")) {
       return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
     }
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, first: true, last: true, totalElements: 0, totalPages: 0, contents: [],
+    });
     if (url.endsWith("/v2/products") && init?.method === "POST") {
       return new Response(JSON.stringify({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 }), { status: 200, headers: { "content-type": "application/json" } });
     }
@@ -1891,7 +1894,7 @@ test("Naver product creation is only successful after the origin product readbac
       channel: "smartstore",
       operation: "listing.create",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
-      arguments: { body: { originProduct: { name: "API test" }, smartstoreChannelProduct: {} } },
+      arguments: { body: { originProduct: { name: "API test", detailAttribute: { sellerCodeInfo: { sellerManagementCode: "TEST-SKU" } } }, smartstoreChannelProduct: {} } },
       environment: "production",
     });
     assert.equal(result.ok, true);
@@ -1903,7 +1906,7 @@ test("Naver product creation is only successful after the origin product readbac
   }
 });
 
-test("Naver product creation reconciles an existing seller management code without creating a duplicate", async () => {
+test("Naver creation directs an existing seller code to verified update without any write", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
@@ -1913,7 +1916,7 @@ test("Naver product creation reconciles an existing seller management code witho
       return new Response(JSON.stringify({ access_token: "naver-token", expires_in: 10_800 }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (url.endsWith("/v1/products/search") && init?.method === "POST") {
-      return new Response(JSON.stringify({ contents: [{ originProductNo: 10000001, channelProducts: [{ sellerManagementCode: "SELLERPILOT-001", channelProductNo: 20000001 }] }] }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ page: 1, size: 50, first: true, last: true, totalElements: 1, totalPages: 1, contents: [{ originProductNo: 10000001, channelProducts: [{ sellerManagementCode: "SELLERPILOT-001", channelProductNo: 20000001 }] }] }), { status: 200, headers: { "content-type": "application/json" } });
     }
     if (url.endsWith("/v2/products/origin-products/10000001") && init?.method === "PUT") {
       return new Response(JSON.stringify({}), { status: 200, headers: { "content-type": "application/json" } });
@@ -1936,10 +1939,9 @@ test("Naver product creation reconciles an existing seller management code witho
       },
       environment: "production",
     });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "10000001");
-    assert.deepEqual(result.steps.map((item) => item.name), ["product-reconcile", "product-update", "product-readback"]);
-    assert.equal(calls.some((call) => call.url.endsWith("/v2/products") && call.init?.method === "POST"), false);
+    assert.equal(result.ok, false);
+    assert.match(JSON.stringify(result), /NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE/);
+    assert.equal(calls.some((call) => call.init?.method === "PUT" || (call.url.endsWith("/v2/products") && call.init?.method === "POST")), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

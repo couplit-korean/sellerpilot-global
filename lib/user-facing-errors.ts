@@ -74,6 +74,16 @@ export function userFacingErrorMessage(input: unknown, fallback = defaultErrorMe
   const raw = normalize(messageText(input));
   if (!raw) return fallback;
 
+  if (/NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE\b/.test(raw)) {
+    return "스마트스토어에 같은 판매자 상품코드의 상품이 있습니다. 기존 상품번호를 확인한 뒤 상품 정보 변경으로 진행해 주세요.";
+  }
+  if (/NAVER_DUPLICATE_PREFLIGHT_FAILED\b|ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED\b/.test(raw)) {
+    return "판매 채널의 기존 상품 조회 결과를 확인하지 못했습니다. 중복 등록을 막기 위해 등록을 중단했습니다. 채널 연결과 기존 상품을 먼저 확인해 주세요.";
+  }
+  if (/SHOPEE_CREATE_(?:CONDITION_REQUIRED|STOCK_INVALID|STOCK_CONFLICT)\b/.test(raw)) {
+    return "Shopee 상품 상태와 재고를 확인해 주세요. 새 상품·중고 상품을 선택하고 총재고와 창고별 재고를 일치시켜 주세요.";
+  }
+
   if (/EBAY_SHIPMENT_(?:EXISTING_CONFLICT|WRITE_UNCERTAIN|READBACK_UNAVAILABLE|READBACK_MISMATCH)\b/.test(raw)) {
     return "eBay의 송장 반영 결과를 먼저 확인해 주세요. 판매자센터에서 운송사·송장번호·주문 품목과 수량을 대조하기 전에는 다시 전송하지 마세요.";
   }

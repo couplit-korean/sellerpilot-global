@@ -1,3 +1,5 @@
+import { assertSmartstoreCreateAbsence } from "./smartstore-create-preflight";
+import { shopeeGlobalCreateBody } from "./shopee-create-preflight";
 import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
 import { temuCreateSkuChecks } from "./temu-create-preflight";
 import { smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema, type SmartstoreContentRepairTransmissionImages } from "./smartstore-content-repair-contract";
@@ -1291,9 +1293,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
         orderType: "NO",
       },
     });
-    if (!duplicateRemote.response.ok || !Array.isArray(duplicateRemote.data.contents)) {
-      throw new Error("NAVER_DUPLICATE_PREFLIGHT_FAILED");
-    }
+    assertSmartstoreCreateAbsence(duplicateRemote);
   } else {
     const remoteId = String(input.arguments.originProductNo ?? "").trim();
     if (!/^\d+$/.test(remoteId)) throw new Error("NAVER_ORIGIN_PRODUCT_ID_MISSING");
@@ -2103,6 +2103,9 @@ export async function prepareMarketplaceListingArguments(
   input: PrepareProviderListingInput,
 ): Promise<PreparedProviderListing> {
   if (input.operation === "listing.create" && input.arguments.publicationStateContract === "verified_remote_state_v1") {
+    if (input.channel === "shopee" && input.arguments.globalProduct === true && input.arguments.resumeOnly !== true) {
+      shopeeGlobalCreateBody(recordValue(input.arguments.body) ?? {}, true);
+    }
     const checks = input.channel === "lazada" ? lazadaCreateSkuChecks(input.arguments)
       : input.channel === "temu" ? temuCreateSkuChecks(input.arguments.body) : null;
     if (checks && Object.values(checks).some(value => !value)) {

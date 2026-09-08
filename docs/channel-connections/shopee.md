@@ -45,3 +45,7 @@ npm run build:vercel
 ## 2026-09-09 상품 등록 재검증
 
 [세 채널 공식 계약 대조와 현재 운영 상태](three-channel-product-verification-20260909.md)를 따른다. 해당 채널의 필수값 검증은 `lib/channels/shopee-create-preflight.ts`와 상품 전용 실행기에 연결돼 있다. 고유 로컬 회귀 299/299와 실제 신규 등록 완료 0/3은 다른 상태다. 운영 인증·상품 승인·공식 재조회 조건이 충족돼야 실제 완료 처리한다.
+
+## 2026-09-09 추가 보완
+
+[국내 3개 후속 보고서](domestic-product-verification-20260909.md)의 추가 보완 항목을 따른다. 글로벌 CREATE 상태·재고 검사 시점을 이미지 준비 전으로 당기고 NEW/USED 대문자 전송을 보장한다. 채널 재연결 요청의 헤더/본문 타임아웃도 AbortController로 처리한다. 전체 TS 2,966/2,966 통과. 실제 Shopee 앱/상점 인증·등록 성공 증거를 추가로 확보한 것은 아니다.

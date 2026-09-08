@@ -1182,3 +1182,22 @@ test("11st originally content-bound updates still enforce the real downstream co
     assert.equal(valid.reads.length, 2);
   }
 });
+
+for (const body of ["<html><body>not found</body></html>", "", "<ClientMessage><resultCode>500</resultCode></ClientMessage>"]) {
+  test(`11st CREATE rejects unverified HTTP 404 before any product POST: ${body || "blank"}`, async () => {
+    const originalFetch = globalThis.fetch;
+    const calls: Array<{ url: string; method: string }> = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input); calls.push({ url, method: init?.method ?? "GET" });
+      if (url.includes("category")) return new Response(categoryXml, { status: 200 });
+      assert.match(url, /\/sellerprodcode\//);
+      return new Response(body, { status: 404, headers: { "content-type": "text/xml;charset=UTF-8" } });
+    };
+    try {
+      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", environment: "production", payload: { api_key: apiKey }, arguments: { product: completeProduct() } });
+      assert.equal(result.ok, false);
+      assert.match(JSON.stringify(result), /ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED/);
+      assert.ok(calls.every(call => call.method === "GET"));
+    } finally { globalThis.fetch = originalFetch; }
+  });
+}

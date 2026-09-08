@@ -424,7 +424,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
   assert.match(page, /for \(const url of objectUrls\) URL\.revokeObjectURL\(url\)/);
   assert.doesNotMatch(page, /Promise\.allSettled\(selected\.map/);
-  assert.match(page, /result\.failed === 0 && result\.reconciliationRequired === 0/);
+  const shippingWorkspace = await readFile(new URL("../app/shipping/workspace.tsx", import.meta.url), "utf8");
+  assert.match(page, /import \{ OrdersPage \} from "\.\/shipping\/workspace"/);
+  assert.match(shippingWorkspace, /result\.failed === 0 && result\.reconciliationRequired === 0/);
   assert.doesNotMatch(page, /sellingPrice: current\.sellingPrice > 0 \? current\.sellingPrice : 5000/);
   assert.doesNotMatch(page, /brandName: text\("brandName", "No Brand"\)/);
   assert.doesNotMatch(page, /manufacturer: text\("manufacturer", "공급처 확인 필요"\)/);
@@ -446,8 +448,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /disabled=\{remoteListingState !== "ready" \|\| productRevision\?\.status === "pending"/);
   assert.match(page, /resolveHydratedProductEditDraft\(current, incomingEditDraft/);
   assert.match(page, /editDraftDirtyRef\.current = true;[\s\S]{0,120}setEditDraft/);
-  assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
-  assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
+  assert.match(publishWorkbench, /<input required value=\{context\.manualFields\.packageContents\}/);
+  assert.match(publishWorkbench, /updateProductFact\("packageContents", event\.target\.value\)/);
   assert.match(commerceStyles, /\.registration-filter-strip\s*\{[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /@media \(min-width: 901px\) and \(max-width: 1200px\)[\s\S]*?\.overview-toolbar[\s\S]*?flex-direction: column/);
   const narrowFixedSidebarMedia = cssMediaBody(mobileStyles, "(min-width: 901px) and (max-width: 1080px)");
@@ -493,7 +495,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
   assert.match(competitorPriceUi, /가격 다시 확인/);
   assert.match(page, /productResearchPendingStorageKey/);
-  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256\)/);
+  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256\)/);
   assert.match(page, /JSON\.stringify\(\{[\s\S]{0,220}version: 3,[\s\S]{0,120}jobId,[\s\S]{0,120}researchInput,[\s\S]{0,120}ownerId,[\s\S]{0,120}sourcePhotoSha256,[\s\S]{0,120}lineageReceipt,[\s\S]{0,220}imagePaths,[\s\S]{0,120}imageSpecs,[\s\S]{0,120}cleanupPaths/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);

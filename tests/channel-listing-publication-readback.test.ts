@@ -572,6 +572,7 @@ test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () 
 
 test("SmartStore safe-test create writes SUSPENSION and verifies it after origin-product GET", async () => {
   const originalFetch = globalThis.fetch;
+  let created = false;
   let createBody: Record<string, unknown> = {};
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
@@ -582,9 +583,13 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     }
     if (url.endsWith("/v2/products") && init?.method === "POST") {
+      created = true;
       createBody = JSON.parse(String(init.body));
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
+    if (url.endsWith("/v1/products/search") && !created) return Response.json({
+      page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [],
+    });
     if (url.endsWith("/v1/products/search")) return Response.json({
       page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
       contents: [{ originProductNo: "10000001", channelProducts: [{
@@ -605,7 +610,7 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       arguments: {
         ...publicationArguments("safe_test"),
         body: {
-          originProduct: { statusType: "SALE", detailContent: detailHtml() },
+          originProduct: { statusType: "SALE", detailContent: detailHtml(), detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } } },
           smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
         },
       },
@@ -628,13 +633,18 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
 
 test("SmartStore WAIT readback remains pending_review and is never counted as published", async () => {
   const originalFetch = globalThis.fetch;
+  let created = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const providerState = smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.endsWith("/v2/products") && init?.method === "POST") {
+      created = true;
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
+    if (url.endsWith("/v1/products/search") && !created) return Response.json({
+      page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [],
+    });
     if (url.endsWith("/v1/products/search")) return Response.json({
       page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
       contents: [{ originProductNo: "10000001", channelProducts: [{
@@ -655,7 +665,7 @@ test("SmartStore WAIT readback remains pending_review and is never counted as pu
       arguments: {
         ...publicationArguments("live"),
         body: {
-          originProduct: { detailContent: detailHtml() },
+          originProduct: { detailContent: detailHtml(), detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } } },
           smartstoreChannelProduct: {},
         },
       },

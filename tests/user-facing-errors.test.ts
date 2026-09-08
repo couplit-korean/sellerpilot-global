@@ -60,3 +60,11 @@ test("uncertain eBay shipment messages preserve the no-resend instruction before
     assert.equal(notice.tone, "warning");
   }
 });
+
+test("domestic duplicate failures guide sellers to lookup or update without blind retry", () => {
+  assert.match(userFacingErrorMessage("NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE"), /기존 상품번호.*상품 정보 변경/);
+  for (const code of ["NAVER_DUPLICATE_PREFLIGHT_FAILED", "ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED:HTTP_404"]) {
+    assert.match(userFacingErrorMessage(code), /중복 등록.*중단/);
+  }
+  assert.match(userFacingErrorMessage("SHOPEE_CREATE_STOCK_CONFLICT"), /총재고와 창고별 재고/);
+});

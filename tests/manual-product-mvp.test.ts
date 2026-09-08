@@ -788,7 +788,7 @@ test("channel operations binds request image mode to the server product lineage 
   assert.ok(claimIndex > bindingIndex, "content mode mismatch must fail before an idempotency attempt is claimed");
   assert.match(
     route,
-    /contentBoundListingOperation = operation === "listing\.create"[\s\S]{0,120}operation === "listing\.update" && isRecord\(parsed\.data\.arguments\.sellerpilotAssets\)/,
+    /contentBoundListingOperation = operation === "listing\.create"[\s\S]{0,120}operation === "listing\.update" && \(channel === "elevenst"\s*\? elevenstRequestedContentAssets\s*:\s*isRecord\(parsed\.data\.arguments\.sellerpilotAssets\)/,
   );
   assert.match(route, /prepared\.sellerpilotContentMode = "manual_mvp"/);
   assert.match(route, /delete prepared\.sellerpilotContentMode/);

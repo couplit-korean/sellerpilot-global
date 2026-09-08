@@ -628,7 +628,7 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /const comparisonDownloadGate = createConcurrencyGate\(3\)/);
   assert.match(worker, /downloadComparisonShots\([\s\S]{0,260}const expectedOrigin = resolveComparisonStorageOrigin\(job\)/);
   assert.match(worker, /comparisonById\.set\(image\.assetId, \{[\s\S]{0,180}validateComparisonSignedUrl\(image\.signedUrl, expectedOrigin, "재제작 중복 비교 이미지"\)/);
-  assert.match(worker, /fetch\(image\.signedUrl, \{[\s\S]{0,180}signal: downloadSignal\(leaseSignal, 30_000\),[\s\S]{0,80}redirect: "error"/);
+  assert.match(worker, /fetch\(image\.signedUrl, \{[\s\S]{0,180}signal: downloadSignal\(leaseSignal, 30_?000\),[\s\S]{0,80}redirect: "error"/);
   assert.match(worker, /expectedAssetIds[\s\S]*assetId !== targetAssetId/);
   assert.match(worker, /const previousAssetId = `previous:\$\{targetAssetId\}`/);
   assert.match(worker, /comparisonById\.size !== expectedAssetIds\.length \+ 1/);
@@ -673,7 +673,7 @@ test("both full-series and individual-regeneration worker paths use the same has
   assert.match(worker, /Keep the immutable source-product mask and follow the next deterministic background retry contract/);
   assert.match(worker, /maximumCrossProductComparisonProducts = 8/);
   assert.match(worker, /crossProductComparisonDownloadConcurrency = 4/);
-  assert.match(worker, /crossProductComparisonDownloadTimeoutMs = 25_000/);
+  assert.match(worker, /crossProductComparisonDownloadTimeoutMs = 25_?000/);
   assert.match(worker, /createConcurrencyGate\(crossProductComparisonDownloadConcurrency\)/);
   assert.match(worker, /downloadSignal\(leaseSignal, crossProductComparisonDownloadTimeoutMs\)/);
   assert.match(claimRoute, /createSignedUrls\([\s\S]{0,180}10 \* 60/);
@@ -709,7 +709,7 @@ test("image generation retries only the exact Codex timeout inside the finite sh
     timeoutRetryBlock,
     /attempt < maximumAttempt\s*&& error instanceof Error\s*&& error\.message === "Codex CLI 실행 제한시간을 초과했습니다\."/,
   );
-  assert.match(timeoutRetryBlock, /if \(!retryableGenerationTimeout\) throw error;/);
+  assert.match(timeoutRetryBlock, /if \(!retryableGenerationTimeout\)\s+throw error;/);
   assert.match(timeoutRetryBlock, /noveltyGuidance = `Image generation timeout retry/);
   assert.match(timeoutRetryBlock, /continue;/);
   assert.doesNotMatch(timeoutRetryBlock, /error\.message\.includes|error\.name|\/timeout\//i);
@@ -774,7 +774,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /trustedLegacyStudioImagePath\.test/);
   assert.match(worker, /const expectedBytes = preservedOriginal \? sourceSpec\.originalBytes : sourceSpec\.bytes/);
   assert.match(worker, /imageFiles\.some\(\(image\) => !image\.preservedOriginal\)/);
-  assert.match(worker, /preservedCount === 0[^\n]*legacy jobs/);
+  assert.match(worker, /preservedCount === 0\)\s+return null;[^\n]*legacy jobs/);
   assert.match(worker, /prepareIdentityCutoutsForJob\([\s\S]*prepareSourceIdentityCutouts/);
   assert.match(worker, /readResponseBodyBounded\([\s\S]*getReader\(\)/);
   assert.match(worker, /maximumCutoutInputCount = 8/);
@@ -811,7 +811,7 @@ test("protected products never send source pixels to image generation and preser
   assert.match(worker, /labelCandidateSnapshotFile[\s\S]*expectedPixelDigest = imageLabelPixelDigest\(normalized\)[\s\S]*assertSourcePixelLabelBaseline/);
   assert.match(worker, /candidatePath: labelCandidateSnapshotFile/);
   assert.match(worker, /finally \{[\s\S]*await assertLabelInputsIntact\(\)/);
-  assert.match(worker, /error instanceof ImageLabelPixelIntegrityError\) throw error/);
+  assert.match(worker, /error instanceof ImageLabelPixelIntegrityError\)\s+throw error/);
   assert.match(worker, /batchImageLabelFidelityReferencePaths\(requiredReferencePath, referencePaths\)/);
   assert.match(worker, /await writeFile\(file, sourceBytes, \{ flag: "wx", mode: 0o400 \}\)/);
   assert.match(worker, /!allowedRoleSet\.has\(role\)/);
