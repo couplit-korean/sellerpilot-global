@@ -77,7 +77,7 @@ function rateBudgetRpc(name: string) {
     : null;
 }
 
-test("generic serverless operation matrix is exact and price updates stay closed", () => {
+test("generic serverless operation matrix permits only the readback-verified Coupang price path", () => {
   for (const [operation, allowed] of Object.entries(expectedWrites)) {
     for (const channel of channels) {
       assert.equal(
@@ -109,7 +109,7 @@ test("generic serverless operation matrix is exact and price updates stay closed
     }
   }
   for (const channel of channels) {
-    assert.equal(serverlessGatewayOperationAllowed(channel, "price.update"), false);
+    assert.equal(serverlessGatewayOperationAllowed(channel, "price.update"), channel === "coupang");
     assert.equal(serverlessGatewayOperationAllowed(channel, "orders.list"), true);
     assert.equal(serverlessGatewayOperationAllowed(channel, "diagnostic.test"), true);
     assert.equal(

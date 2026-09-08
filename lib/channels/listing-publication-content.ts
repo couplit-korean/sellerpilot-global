@@ -564,6 +564,27 @@ function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+const coupangSourceImageUrl = /^https:\/\/sqaoqucxakebqkiygdxb\.supabase\.co\/storage\/v1\/object\/public\/sellerpilot-marketplace\/normalized\/([0-9a-f]{2})\/([0-9a-f]{64})\.jpg$/u;
+const coupangProviderImagePath = /^vendor_inventory\/([0-9a-f]{4})\/([0-9a-f]{60})\.jpg$/u;
+
+function coupangDetailImageContentIdentity(value: string) {
+  const providerPath = coupangProviderImagePath.exec(value);
+  if (providerPath) return `sha256:${providerPath[1]}${providerPath[2]}`;
+
+  const sourceUrl = coupangSourceImageUrl.exec(value);
+  if (!sourceUrl || sourceUrl[1] !== sourceUrl[2].slice(0, 2)) return value;
+  return `sha256:${sourceUrl[2]}`;
+}
+
+function comparableDetailImageIdentities(
+  channel: PublicationChannel,
+  identities: readonly string[],
+) {
+  return channel === "coupang"
+    ? identities.map(coupangDetailImageContentIdentity)
+    : [...identities];
+}
+
 function approvedSourceObjectPath(value: string) {
   return /^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(value)
     || /^external-detail\/(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/){4}[0-9a-f]{64}\.png$/iu.test(value);
@@ -959,12 +980,25 @@ export function verifyListingPublicationContent(input: {
       && providerEvidence.providerRepresentativeImageIdentity
       && providerEvidence.providerRepresentativeImageIdentity === sourceReadback.representativeImageIdentity
       && providerEvidence.providerRepresentativeImageIdentity === remote.representativeImageIdentity);
+  const comparableProviderIdentities = comparableDetailImageIdentities(
+    input.channel,
+    providerIdentities,
+  );
+  const comparableSourceReadbackIdentities = comparableDetailImageIdentities(
+    input.channel,
+    sourceReadback.detailImageIdentities,
+  );
+  const comparableRemoteIdentities = comparableDetailImageIdentities(
+    input.channel,
+    remote.detailImageIdentities,
+  );
   const detailImageCountVerified = input.expectedImageCount === 8
     && sourceReadback.detailImageCount === 8 && remote.detailImageCount === 8
-    && new Set(sourceReadback.detailImageIdentities).size === 8
-    && new Set(remote.detailImageIdentities).size === 8
-    && sameOrderedValues(providerIdentities, sourceReadback.detailImageIdentities)
-    && sameOrderedValues(providerIdentities, remote.detailImageIdentities);
+    && new Set(comparableProviderIdentities).size === 8
+    && new Set(comparableSourceReadbackIdentities).size === 8
+    && new Set(comparableRemoteIdentities).size === 8
+    && sameOrderedValues(comparableProviderIdentities, comparableSourceReadbackIdentities)
+    && sameOrderedValues(comparableProviderIdentities, comparableRemoteIdentities);
 
   const sourceResources = canonicalRemoteResources(input.channel, responseState.resources);
   const remoteResources = canonicalRemoteResources(input.channel, input.remoteResources);
@@ -1005,7 +1039,7 @@ export function verifyListingPublicationContent(input: {
     ...(representativeRequired
       ? { representativeImage: providerEvidence?.providerRepresentativeImageIdentity ?? "" }
       : {}),
-    detailImages: providerIdentities,
+    detailImages: comparableProviderIdentities,
   };
   const remoteProjection = {
     titleParts: remote.titleParts,
@@ -1016,12 +1050,12 @@ export function verifyListingPublicationContent(input: {
     ...(representativeRequired
       ? { representativeImage: remote.representativeImageIdentity ?? "" }
       : {}),
-    detailImages: remote.detailImageIdentities,
+    detailImages: comparableRemoteIdentities,
   };
   const sourceContentDigest = digest(sourceProjection);
   const remoteContentDigest = digest(remoteProjection);
-  const sourceImageDigest = digest(providerIdentities);
-  const remoteImageDigest = digest(remote.detailImageIdentities);
+  const sourceImageDigest = digest(comparableProviderIdentities);
+  const remoteImageDigest = digest(comparableRemoteIdentities);
   const contentDigestVerified = sourceContentDigest === remoteContentDigest;
   const mismatchFields = [
     ...(externalDetailChannelPayloadMatches(input.sourceArguments) ? [] : ["externalApprovedCopy"]),

@@ -1,3 +1,4 @@
+import { csEventState, csEventNotifications } from "../app/cs/event-notifications";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -347,9 +348,9 @@ test("order, delivery, CS, and synchronization events all enter the notification
   assert.deepEqual(operationEventNotifications(operationEventState(initial), next), [
     "주문 상태 변경: lazada O-1 · 배송 중",
     "새 주문: elevenst O-2 · 결제 완료",
-    "CS 상태 변경: qoo10 T-1 · 처리 완료",
     "shopee 주문 동기화 완료",
   ]);
+  assert.deepEqual(csEventNotifications(csEventState({ tickets: initial.tickets, syncStatus: [] }), { tickets: next.tickets, syncStatus: [] }), ["CS 상태 변경: qoo10 T-1 · 처리 완료"]);
 });
 
 test("product edit preserves sold-out stock and bounded promises cannot hang forever", async () => {
@@ -398,7 +399,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/commerce-ux-refactor.css", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/products/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/competitor-provider-snapshot.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url), "utf8"),
@@ -411,7 +412,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /상품 상세에서 다시 수정/);
   assert.match(page, /params\.set\("status", nextRegistrationStatus\)/);
   assert.match(page, /registrationActivityFilterFromValue\(params\.get\("status"\) \?\? \(typeof state\.status === "string" \? state\.status : null\)\)/);
-  assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(payload, payload\.registrationActivities/);
+  assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(\s*payload,\s*payload\.registrationActivities/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /const enqueueScope = createPageAbortScope\(\[productResearchController\.signal\], 30_000/);
   assert.match(page, /signal: enqueueScope\.signal/);
@@ -587,17 +588,17 @@ test("390px registration, CS, preview, and notification surfaces keep their mobi
 });
 
 test("Fold secondary controls keep a real 44px touch target", async () => {
-  const [page, acceptance, globals, mobileStyles, interactionStyles] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  const [shipping, acceptance, globals, mobileStyles, interactionStyles] = await Promise.all([
+    readFile(new URL("../app/shipping/workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
     readFile(new URL("../app/interaction-layers.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /<label className="search-field"><Search[\s\S]{0,220}aria-label="주문 검색"/);
-  assert.match(page, /<label className="order-checkbox-control"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
-  assert.match(page, /<label className="bulk-order-selection"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(shipping, /<label className="search-field">\s*<Search[\s\S]{0,400}aria-label="주문 검색"/);
+  assert.match(shipping, /<label className="order-checkbox-control">\s*<input\s+type="checkbox"\s+aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(shipping, /<label className="bulk-order-selection">\s*<input\s+type="checkbox"\s+aria-label="출고 가능 주문 전체 선택"/);
   assert.match(globals, /\.order-checkbox-control \{[^}]*width: 44px;[^}]*height: 44px/);
   assert.match(globals, /\.bulk-order-selection \{[^}]*min-height: 44px/);
   assert.match(mobileStyles, /\.bulk-order-bar > \.bulk-order-selection \{\s*width: 100%;\s*\}/);

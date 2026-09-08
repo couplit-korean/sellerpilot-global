@@ -128,6 +128,73 @@ type VerificationInput = {
   environment: "sandbox" | "production";
 };
 
+const coupangPostPriceVerificationSchema = z.object({
+  contract: z.literal("coupang_exact_post_price_publication_v1"),
+  verifierJobId: z.string().uuid(),
+  priceRepairJobId: z.literal("36fcb808-a2f1-42b7-a6c9-264d884f25fb"),
+  priceRepairAttemptId: z.literal("05508966-7665-4873-a89b-89fda8ea8a25"),
+  sellerProductId: z.literal("16375780938"),
+  vendorItemId: z.literal("96027942778"),
+  productId: z.literal("9725220700"),
+  itemId: z.literal("29102903416"),
+  desiredPrice: z.literal(3190),
+  currency: z.literal("KRW"),
+  priceRepairResponseSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+}).strict();
+
+const exactCoupangSourceJobId = "25adf712-1e9a-432b-8b0d-09cf35a826c5";
+const exactCoupangVendorSku = "AUTO-780720401E2D4E4EA45F";
+
+export function hasCoupangPostPricePublicationVerificationContext(input: {
+  channel: string;
+  arguments: Record<string, unknown>;
+}) {
+  if (input.channel !== "coupang" || input.arguments.sellerpilotReadOnly !== true) return false;
+  const marker = coupangPostPriceVerificationSchema.safeParse(
+    input.arguments.sellerpilotCoupangPostPriceVerification,
+  );
+  const source = listingPublicationVerificationSourceSchema.safeParse(
+    input.arguments.sellerpilotPublicationSource,
+  );
+  if (!marker.success || !source.success) return false;
+  const sourceArguments = recordValue(source.data.sourceArguments);
+  const sourceResponse = recordValue(source.data.sourceResponsePayload);
+  const sourceState = recordValue(sourceResponse.remoteState);
+  const sourceResources = recordValue(sourceState.resources);
+  const sourceEvidence = recordValue(sourceState.evidence);
+  const descendantBinding = recordValue(
+    sourceEvidence.providerAssignedDescendantIdentityBinding,
+  );
+  const sourceBody = recordValue(sourceArguments.body);
+  const sourceItems = Array.isArray(sourceBody.items)
+    ? sourceBody.items.map(recordValue)
+    : [];
+  return marker.data.verifierJobId === source.data.verificationJobId
+    && exactText(input.arguments.publicationReviewSourceJobId) === exactCoupangSourceJobId
+    && source.data.sourceJobId === exactCoupangSourceJobId
+    && source.data.sourceOperation === "listing.create"
+    && source.data.sourceFingerprint === exactText(input.arguments.publicationExpectedFingerprint)
+    && source.data.expectedRemoteId === marker.data.sellerProductId
+    && source.data.expectedLocale === "ko-KR"
+    && source.data.expectedImageCount === 8
+    && source.data.market === exactText(input.arguments.market)
+    && source.data.targetId === exactText(input.arguments.targetId)
+    && sourceItems.length === 1
+    && exactText(sourceItems[0]?.externalVendorSku) === exactCoupangVendorSku
+    && Number(sourceItems[0]?.salePrice) === marker.data.desiredPrice
+    && Number(sourceItems[0]?.maximumBuyCount) === 1
+    && exactText(sourceResponse.channel) === "coupang"
+    && exactText(sourceResponse.operation) === "listing.create"
+    && exactText(sourceResponse.remoteId) === marker.data.sellerProductId
+    && exactText(sourceResources.sellerProductId) === marker.data.sellerProductId
+    && Array.isArray(sourceResources.vendorItemIds)
+    && sourceResources.vendorItemIds.length === 1
+    && exactText(sourceResources.vendorItemIds[0]) === marker.data.vendorItemId
+    && descendantBinding.contract === "coupang_provider_assigned_vendor_items_v1"
+    && exactText(descendantBinding.sourceJobId) === exactCoupangSourceJobId
+    && exactText(descendantBinding.sellerProductId) === marker.data.sellerProductId;
+}
+
 export type ListingPublicationVerificationExecution = {
   steps: ChannelOperationStep[];
   remoteId: string;
@@ -636,6 +703,184 @@ function verifiedExecution(input: {
 export async function executeListingPublicationVerification(
   input: VerificationInput,
 ): Promise<ListingPublicationVerificationExecution> {
+  if (Object.hasOwn(input.arguments, "sellerpilotCoupangPostPriceVerification")) {
+    if (!hasCoupangPostPricePublicationVerificationContext(input)) {
+      throw new Error("COUPANG_POST_PRICE_PUBLICATION_CONTEXT_INVALID");
+    }
+    const marker = coupangPostPriceVerificationSchema.parse(
+      input.arguments.sellerpilotCoupangPostPriceVerification,
+    );
+    const { source, expected } = sourceContext(input);
+    const readback = await readCoupangListingPublicationState({
+      operation: "listing.create",
+      intent: "live",
+      remoteId: marker.sellerProductId,
+      expected,
+      readSellerProduct: (sellerProductId) => coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/${pathSegment(sellerProductId)}`,
+      }),
+      readVendorItem: (vendorItemId) => coupangRequest({
+        payload: input.payload,
+        method: "GET",
+        path: `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${pathSegment(vendorItemId)}/inventories`,
+      }),
+    });
+    const sellerProductStep = readback.sellerProductReadback
+      ? providerStep("seller-product-publication-reverification", readback.sellerProductReadback)
+      : {
+          name: "seller-product-publication-reverification",
+          ok: false,
+          status: 422,
+          data: { sellerpilotVerification: "COUPANG_SELLER_PRODUCT_READBACK_MISSING" },
+        } satisfies ChannelOperationStep;
+    const sellerRootCandidate = recordValue(readback.sellerProductReadback?.data.data);
+    const sellerRoot = Object.keys(sellerRootCandidate).length
+      ? sellerRootCandidate
+      : recordValue(readback.sellerProductReadback?.data);
+    const sellerItems = Array.isArray(sellerRoot.items)
+      ? sellerRoot.items.map(recordValue)
+      : [];
+    const vendorReadback = readback.vendorItemReadbacks.length === 1
+      && readback.vendorItemReadbacks[0]?.vendorItemId === marker.vendorItemId
+      ? readback.vendorItemReadbacks[0]
+      : undefined;
+    const vendorRoot = recordValue(vendorReadback?.remote.data.data);
+    const vendorData = Object.keys(vendorRoot).length
+      ? vendorRoot
+      : recordValue(vendorReadback?.remote.data);
+    const observedSellerItemId = exactText(vendorData.sellerItemId);
+    const priceVerified = vendorReadback !== undefined
+      && observedSellerItemId === marker.vendorItemId
+      && Number(vendorData.salePrice) === marker.desiredPrice
+      && Number(vendorData.amountInStock) === 1
+      && vendorData.onSale === true;
+    const vendorStep = vendorReadback
+      ? providerStep("vendor-item-publication-reverification", vendorReadback.remote)
+      : {
+          name: "vendor-item-publication-reverification",
+          ok: false,
+          status: 422,
+          data: {},
+        } satisfies ChannelOperationStep;
+    vendorStep.ok = vendorStep.ok && priceVerified;
+    vendorStep.data = {
+      ...vendorStep.data,
+      sellerpilotVendorItemId: marker.vendorItemId,
+      sellerpilotObservedSellerItemId: observedSellerItemId || null,
+      sellerpilotRequestedPrice: marker.desiredPrice,
+      sellerpilotObservedPrice: Number.isFinite(Number(vendorData.salePrice))
+        ? Number(vendorData.salePrice)
+        : null,
+      sellerpilotObservedStock: Number.isFinite(Number(vendorData.amountInStock))
+        ? Number(vendorData.amountInStock)
+        : null,
+      sellerpilotCurrency: marker.currency,
+      sellerpilotVerification: priceVerified
+        ? "COUPANG_POST_PRICE_PUBLICATION_PRICE_VERIFIED"
+        : "COUPANG_POST_PRICE_PUBLICATION_PRICE_MISMATCH",
+    };
+    const resources = recordValue(readback.state?.resources);
+    const exactIdentity = exactText(resources.sellerProductId) === marker.sellerProductId
+      && Array.isArray(resources.vendorItemIds)
+      && resources.vendorItemIds.length === 1
+      && exactText(resources.vendorItemIds[0]) === marker.vendorItemId;
+    const rawItemProductId = sellerItems[0]?.productId;
+    const observedItemProductId = exactText(rawItemProductId);
+    const itemProductIdMissing = rawItemProductId == null
+      || (typeof rawItemProductId === "string" && rawItemProductId.trim() === "");
+    const itemProductIdExact = itemProductIdMissing
+      || ((typeof rawItemProductId === "string" || typeof rawItemProductId === "number")
+        && observedItemProductId === marker.productId);
+    const sellerStateVerified = exactText(sellerRoot.sellerProductId) === marker.sellerProductId
+      && exactText(sellerRoot.productId) === marker.productId
+      && sellerRoot.requested === false
+      && sellerItems.length === 1
+      && exactText(sellerItems[0]?.vendorItemId) === marker.vendorItemId
+      && itemProductIdExact
+      && exactText(sellerItems[0]?.itemId) === marker.itemId;
+    const contentExecution = verifiedExecution({
+      channel: input.channel,
+      source,
+      remoteId: marker.sellerProductId,
+      expectedLocale: expected.locale,
+      steps: [sellerProductStep, vendorStep],
+      remoteState: readback.state,
+      remotePayload: readback.sellerProductReadback?.data ?? {},
+    });
+    const providerLiveVerified = contentExecution.remoteState?.visibility === "live"
+      && exactIdentity
+      && sellerStateVerified
+      && priceVerified;
+    const buyerProductId = exactText(sellerRoot.productId);
+    const buyerItemId = exactText(sellerItems[0]?.itemId);
+    const providerPublicUrl = sellerStateVerified
+      ? `https://www.coupang.com/vp/products/${marker.productId}?vendorItemId=${marker.vendorItemId}`
+      : "";
+    const remoteState = verifiedListingRemoteStateSchema.safeParse(
+      providerLiveVerified && contentExecution.remoteState
+        ? {
+            ...contentExecution.remoteState,
+            resources: {
+              ...contentExecution.remoteState.resources,
+              productId: marker.productId,
+              itemId: marker.itemId,
+            },
+            evidence: {
+              ...contentExecution.remoteState.evidence,
+              verificationScope: "provider_publication_after_price_repair",
+              priceRepairJobId: marker.priceRepairJobId,
+              priceRepairAttemptId: marker.priceRepairAttemptId,
+              priceRepairResponseSha256: marker.priceRepairResponseSha256,
+              sellerProductId: marker.sellerProductId,
+              vendorItemId: marker.vendorItemId,
+              desiredPrice: marker.desiredPrice,
+              observedPrice: marker.desiredPrice,
+              observedStock: 1,
+              currency: marker.currency,
+              ...(providerPublicUrl ? { providerPublicUrl } : {}),
+              priceRepairOfficialReadbackVerified: true,
+              postPricePublicationReadbackVerified: true,
+              providerMutationPerformed: false,
+              buyerVisibleVerified: false,
+            },
+          }
+        : null,
+    );
+    const verificationStep: ChannelOperationStep = {
+      name: "post-price-publication-verification",
+      ok: remoteState.success,
+      status: remoteState.success ? 200 : 422,
+      data: {
+        sellerpilotVerification: remoteState.success
+          ? "COUPANG_POST_PRICE_PUBLICATION_VERIFIED"
+          : "COUPANG_POST_PRICE_PUBLICATION_UNVERIFIED",
+        sellerProductId: marker.sellerProductId,
+        vendorItemId: marker.vendorItemId,
+        productId: buyerProductId || null,
+        itemId: buyerItemId || null,
+        desiredPrice: marker.desiredPrice,
+        observedPrice: priceVerified ? marker.desiredPrice : null,
+        observedStock: Number.isFinite(Number(vendorData.amountInStock))
+          ? Number(vendorData.amountInStock)
+          : null,
+        currency: marker.currency,
+        sellerRequested: sellerRoot.requested,
+        expectedProductId: marker.productId,
+        expectedItemId: marker.itemId,
+        ...(providerPublicUrl ? { publicUrl: providerPublicUrl } : {}),
+        providerMutationPerformed: false,
+        buyerVisibleVerified: false,
+      },
+    };
+    return {
+      remoteId: marker.sellerProductId,
+      steps: [...contentExecution.steps, verificationStep],
+      ...(remoteState.success ? { remoteState: remoteState.data } : {}),
+    };
+  }
+
   const {
     source,
     remoteId,

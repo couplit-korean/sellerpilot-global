@@ -241,9 +241,10 @@ test("Lazada IM follows string cursors and keeps every buyer message per session
 });
 
 test("Lazada IM and Temu after-sales sync use the fixed-egress channel gateway", async () => {
-  const route = await readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8");
-  assert.match(route, /gatewayChannels = new Set<ActiveChannelKey>\(\[.*"lazada".*"temu"/);
-  assert.equal((route.match(/gatewayChannels\.has\(channel\)/g) ?? []).length, 2);
+  const route = await readFile(new URL("../app/api/admin/cs/sync/route.ts", import.meta.url), "utf8");
+  assert.match(route, /inquirySyncRequests\(channel\)/);
+  assert.match(route, /sellerpilot_service_enqueue_periodic_sync/);
+  assert.doesNotMatch(route, /executeChannelOperation/);
   assert.match(route, /p_operation: "inquiries\.list"/);
 });
 

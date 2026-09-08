@@ -17,7 +17,7 @@
 
 | 영역 | registry | API·화면 | 완료/worker |
 |---|---|---|---|
-| 상품 | `lib/product-registration/channel-adapters.ts` | `/api/admin/channel-operations`, `/api/admin/products/snapshot`, 상품 작업대 | `commerce-provider.ts`, `commerce-completion.ts`, `commerce-worker-completion.ts`, `commerce-gateway-job.mjs` |
+| 상품 | `lib/product-registration/channel-adapters.ts` | `/api/admin/channel-operations`, `/api/admin/products/snapshot`, 상품 작업대 | `lib/channels/commerce-provider.ts`, `lib/channels/commerce-completion.ts`, `lib/channels/commerce-worker-completion.ts`, `scripts/commerce-gateway-job.mjs` |
 | CS | `lib/cs/operations/channel-adapters.ts` | `/cs`, `/api/admin/cs/*` | `lib/cs/operations/provider.ts`, `complete.ts`, `worker-completion.ts`, `scripts/cs-gateway-job.mjs` |
 | 배송 | `lib/shipping/channel-adapters.ts` | `/shipping`, `/api/admin/shipping/*`, 기존 `/api/admin/orders/fulfill` | `lib/shipping/provider.ts`, `complete.ts`, `worker-completion.ts`, `scripts/shipping-gateway-job.mjs` |
 

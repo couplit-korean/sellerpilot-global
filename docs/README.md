@@ -1,5 +1,7 @@
 > 최신 Aside 재개: [기존 등록 작업 재사용·최대 병렬 잔여 작업](./Aside-남은작업-병렬재개-20260906.md) · [복사할 시작 지시](./Aside-시작프롬프트.md) · [작업 원장](./Aside-작업원장-20260906.md)
 
+- **2026-09-09 구조 기준:** [상품·CS·배송 8채널 연결 지도](channel-connections/README.md) · [구조 정리/검증/Git 기록](cs-parallel/reports/coordinator/channel-domain-layout-20260909.md)
+
 # 문서 색인
 
 계정·Git·Vercel이 헷갈리면 [계정연결.md](./계정연결.md)를 먼저 본다. 운영 사실의 원장은 [현재상태.md](./현재상태.md)다.

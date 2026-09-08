@@ -1,0 +1,141 @@
+▲ Next.js 16.3.1 (webpack)
+✓ Running next.config.ts took 21ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 9.9s
+  Running TypeScript ...
+  Finished TypeScript in 5.9s ...
+  Collecting page data using 9 workers ...
+  Generating static pages using 9 workers (0/95) ...
+  Generating static pages using 9 workers (23/95)
+  Generating static pages using 9 workers (47/95)
+  Generating static pages using 9 workers (71/95)
+✓ Generating static pages using 9 workers (95/95) in 369ms
+  Finalizing page optimization ...
+  Collecting build traces ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ƒ /api/admin/account/credentials
+├ ƒ /api/admin/ai-jobs
+├ ƒ /api/admin/ai-worker-token
+├ ƒ /api/admin/channel-credentials/ebay/authorize
+├ ƒ /api/admin/channel-credentials/lazada/authorize
+├ ƒ /api/admin/channel-credentials/lazada/exact
+├ ƒ /api/admin/channel-credentials/rotate
+├ ƒ /api/admin/channel-credentials/shopee/authorize
+├ ƒ /api/admin/channel-credentials/shopee/exact
+├ ƒ /api/admin/channel-credentials/test
+├ ƒ /api/admin/channel-operations
+├ ƒ /api/admin/channel-targets
+├ ƒ /api/admin/competitor-prices
+├ ƒ /api/admin/competitor-prices/reviews
+├ ƒ /api/admin/cs/archive
+├ ƒ /api/admin/cs/channels/coupang/verification
+├ ƒ /api/admin/cs/channels/ebay/cases-disputes
+├ ƒ /api/admin/cs/channels/ebay/cases-disputes/history
+├ ƒ /api/admin/cs/channels/ebay/cases-disputes/history/sync
+├ ƒ /api/admin/cs/channels/elevenst/read-state
+├ ƒ /api/admin/cs/channels/shopee/history-progress
+├ ƒ /api/admin/cs/channels/smartstore/history-resume
+├ ƒ /api/admin/cs/channels/smartstore/history-resume-v5
+├ ƒ /api/admin/cs/credential-bindings
+├ ƒ /api/admin/cs/drafts
+├ ƒ /api/admin/cs/ebay-messages
+├ ƒ /api/admin/cs/history-coverage
+├ ƒ /api/admin/cs/import
+├ ƒ /api/admin/cs/lazada-quarantine
+├ ƒ /api/admin/cs/lazada-raw-inbox
+├ ƒ /api/admin/cs/lazada-raw-inbox/health
+├ ƒ /api/admin/cs/lazada-raw-inbox/reprocess
+├ ƒ /api/admin/cs/lazada-reply
+├ ƒ /api/admin/cs/order-bindings
+├ ƒ /api/admin/cs/recovery-readiness
+├ ƒ /api/admin/cs/reply
+├ ƒ /api/admin/cs/scope-health
+├ ƒ /api/admin/cs/snapshot
+├ ƒ /api/admin/cs/sync
+├ ƒ /api/admin/cs/ticket-status
+├ ƒ /api/admin/cs/tickets/[id]/messages
+├ ƒ /api/admin/listing-publication-release
+├ ƒ /api/admin/listings/elevenst-snapshot/recover
+├ ƒ /api/admin/listings/lineage/verify
+├ ƒ /api/admin/logistics/tracx
+├ ƒ /api/admin/orders/fulfill
+├ ƒ /api/admin/platform-usage
+├ ƒ /api/admin/product-detail-data
+├ ƒ /api/admin/product-listing-handoff
+├ ƒ /api/admin/product-registration-drafts
+├ ƒ /api/admin/products/[id]/detail-assets/import
+├ ƒ /api/admin/products/[id]/elevenst-cookie-create-recovery
+├ ƒ /api/admin/products/[id]/inventory
+├ ƒ /api/admin/products/[id]/margin-scenarios
+├ ƒ /api/admin/products/[id]/publish-context
+├ ƒ /api/admin/products/[id]/qoo10-s1-release
+├ ƒ /api/admin/products/[id]/qoo10-shipping-s1-release
+├ ƒ /api/admin/products/[id]/remote-edit
+├ ƒ /api/admin/products/[id]/revision
+├ ƒ /api/admin/products/[id]/shopee-existing-adoption
+├ ƒ /api/admin/products/[id]/smartstore-content-repair
+├ ƒ /api/admin/products/[id]/smartstore-manual-adoption
+├ ƒ /api/admin/products/[id]/temu-existing-adoption
+├ ƒ /api/admin/products/manual-intake
+├ ƒ /api/admin/products/snapshot
+├ ƒ /api/admin/push-notifications/test
+├ ƒ /api/admin/push-subscriptions
+├ ƒ /api/admin/server-runtime-smoke
+├ ƒ /api/admin/serverless-runtime-release
+├ ƒ /api/admin/shipping/operations
+├ ƒ /api/admin/shipping/snapshot
+├ ƒ /api/admin/templates
+├ ƒ /api/ai/jobs/[id]
+├ ƒ /api/ai/product-research
+├ ƒ /api/ai/product-research/recover
+├ ƒ /api/ai/product-studio
+├ ƒ /api/ai/product-studio/regenerate
+├ ƒ /api/ai/support-reply
+├ ƒ /api/ai/worker/claim
+├ ƒ /api/ai/worker/complete
+├ ƒ /api/ai/worker/heartbeat
+├ ƒ /api/ai/worker/result-upload-authorize
+├ ƒ /api/channel-gateway/worker/begin-mutation
+├ ƒ /api/channel-gateway/worker/claim
+├ ƒ /api/channel-gateway/worker/complete
+├ ƒ /api/channel-gateway/worker/credential-refresh
+├ ƒ /api/channel-gateway/worker/heartbeat
+├ ƒ /api/channel-gateway/worker/lazada-oauth-exact
+├ ƒ /api/channel-gateway/worker/lazada-recovery
+├ ƒ /api/channel-gateway/worker/rate-budget
+├ ƒ /api/channel-gateway/worker/shopee-exact-diagnostic/claim
+├ ƒ /api/channel-gateway/worker/shopee-oauth-exact
+├ ƒ /api/cs/worker/drafts
+├ ƒ /api/exchange-rates
+├ ƒ /api/images/import
+├ ƒ /api/integrations/kakao/callback
+├ ƒ /api/integrations/kakao/connect
+├ ƒ /api/integrations/kakao/settings
+├ ƒ /api/internal/channel-gateway-drain
+├ ƒ /api/internal/channel-sync
+├ ƒ /api/internal/competitor-prices
+├ ƒ /api/internal/kakao-notifications
+├ ƒ /api/internal/maintenance
+├ ƒ /api/internal/product-research
+├ ƒ /api/internal/product-studio-wake
+├ ƒ /api/internal/server-runtime-smoke
+├ ƒ /api/operations/product-readiness
+├ ƒ /api/operations/snapshot
+├ ƒ /api/operations/sync
+├ ƒ /api/webhooks/lazada-im
+├ ƒ /api/webhooks/tracx/delivery
+├ ƒ /auth/callback
+├ ƒ /cs
+├ ○ /privacy
+├ ○ /shipping
+└ ○ /update-password
+
+
+ƒ Proxy (Middleware)
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand

@@ -1,0 +1,67 @@
+{
+  "verifiedAt": "2026-09-08T19:28:01.730135+00:00",
+  "scope": "Local product/CS/shipping business separation and 24 channel entry modules; not provider/production E2E",
+  "regression": {
+    "tests": 686,
+    "pass": 686,
+    "fail": 0,
+    "skipped": 0
+  },
+  "upstreamCoupangIntegration": {
+    "tests": 190,
+    "pass": 190,
+    "fail": 0,
+    "skipped": 0
+  },
+  "expandedTypeScriptSuite": {
+    "tests": 2916,
+    "pass": 2909,
+    "fail": 7,
+    "skipped": 0
+  },
+  "businessImportCounts": {
+    "productTocs": 0,
+    "productToshipping": 0,
+    "csToproduct": 0,
+    "csToshipping": 0,
+    "shippingToproduct": 0,
+    "shippingTocs": 0
+  },
+  "channelEntryCount": 24,
+  "crossChannelModuleDependencies": 0,
+  "build": "Next webpack production build including TypeScript passed",
+  "lint": "channel modules and adjusted contract tests passed",
+  "generalFeatureImplementationsUnchanged": {
+    "scripts/product-ai-worker.mjs": {
+      "before": "f6be4bf033abab634860bb033fb90db0833671bf99be387b88e093afd745a8b8",
+      "after": "f6be4bf033abab634860bb033fb90db0833671bf99be387b88e093afd745a8b8",
+      "unchanged": true
+    },
+    "lib/channel-registration-form.ts": {
+      "before": "593af27beee48c7f67136f73d0d8c14823c8803c3878cbff6cff3339077c1e17",
+      "after": "593af27beee48c7f67136f73d0d8c14823c8803c3878cbff6cff3339077c1e17",
+      "unchanged": true
+    },
+    "app/api/admin/channel-operations/route.ts": {
+      "before": "d969d00e43c4c372db308f98fe0c09334e1b23d7ffbf94bdd8ede321a08285b6",
+      "after": "d969d00e43c4c372db308f98fe0c09334e1b23d7ffbf94bdd8ede321a08285b6",
+      "unchanged": true
+    },
+    "app/page.tsx": {
+      "before": "7dc521b6169ffb110fafebdc82d3ec2039e8b6503c78cfc4c1caf867cf8309e0",
+      "after": "7dc521b6169ffb110fafebdc82d3ec2039e8b6503c78cfc4c1caf867cf8309e0",
+      "unchanged": true
+    }
+  },
+  "initialCommit": "9b5e2c4b5",
+  "upstreamIncluded": "957db34238f64ad3d6f54c61adb0a5c970900aef",
+  "gitTarget": "origin/integration-aside",
+  "vercelDeploymentEnabledForTarget": false,
+  "vercelRemoteBefore": [
+    "957db34238f64ad3d6f54c61adb0a5c970900aef\trefs/heads/integration-aside",
+    "8109499b59b13456676f6b36ec8b2117c9945e0e\trefs/heads/main"
+  ],
+  "productionWritesThisTask": 0,
+  "providerWritesThisTask": 0,
+  "customerMessagesThisTask": 0
+}

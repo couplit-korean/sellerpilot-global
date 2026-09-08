@@ -8,6 +8,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260908034500_retire_exact_coupang_failed_completion_receipt.sql",
   import.meta.url,
 ), "utf8");
+const roleGuardRetryMigration = await readFile(new URL(
+  "../supabase/migrations/20260908045000_recover_exact_coupang_verifier_after_role_guard.sql",
+  import.meta.url,
+), "utf8");
 
 const id = Object.freeze({
   verifier: "86d2cb63-d382-4cc9-8153-654cf7ccec80",
@@ -33,6 +37,14 @@ const sellerKey = "e058c9ed30bbc778380a1791e943ce9dbb04a066f5000ea792e5cc95b33df
 const completionFingerprint = "238cbf895c00819732d7f3c038de800700c26557bc2f0d55765b43e4a5a92451";
 const productionJobSha = "3730e8557ea68c69c9b6924f4287a50c4b29cdb973ed4664303a60c42f106370";
 const productionReceiptSha = "0dd6addb8cb52743efd75c547913d92d7abfc6d4a824c4d1c76069b692dea9eb";
+const secondProductionJobSha = "a1829784b6eae6ab834b9bcffe5e2ba0542d0e77d691300931f752e0c7080c79";
+const productionRecoverySha = "855e30f766bc98895b247871d8d0b7017553c05821a391513eef5eac46ebbcd5";
+const productionSourceRouteSha = "39bdf32ea69af37d3adf254a724b942c1d9bfbbac6f1d3d44d21fb6e0d132a33";
+const productionExactRouteSha = "ebeabb6899f361e5e685523e1e6ad0adf2e9cd039b49100a2d576f95e430e446";
+const productionSourceRoute = "01ae9ad5-bf9d-4cfe-b900-c5ad332e28d8";
+const productionWorker = "02955cb4-fa9f-466b-824f-b61f06276190";
+const productionRequestFingerprint = "f7b6824dbf307943672d45cfa6edca817b46aaab9d924efa38d60ddec908221d";
+const productionResolverSourceSha = "af8340dcac984a197adf6dd7a9f3d54b61c32cdfeb5e5d6b040827266c1c8193";
 
 async function database({ seed = true } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
@@ -234,6 +246,61 @@ async function renderedMigration(db) {
     .replaceAll(productionReceiptSha, receipt_sha);
 }
 
+async function renderedRoleGuardRetry(db) {
+  await db.exec(String.raw`
+    update sellerpilot_private.local_channel_executor_routes
+       set expires_at=clock_timestamp()-interval '1 minute'
+     where id='${id.sourceRoute}';
+    update sellerpilot_private.coupang_exact_live_local_claim_routes
+       set expires_at=clock_timestamp()-interval '1 minute'
+     where job_id='${id.verifier}';
+    update sellerpilot_private.channel_gateway_jobs
+       set status='failed', attempt_count=4,
+           started_at='2026-09-07 19:12:17.050487+00',
+           completed_at='2026-09-07 19:27:22.398549+00',
+           updated_at='2026-09-07 19:27:22.398549+00',
+           error_message='Channel worker lease expired four times.'
+     where id='${id.verifier}';
+    create or replace function
+    public.sellerpilot_service_resolve_exact_coupang_live_verifier(uuid)
+    returns boolean language sql security definer set search_path=''
+    as $$ select false $$;
+  `);
+  const { rows: [hashes] } = await db.query(String.raw`
+    select
+      (select encode(extensions.digest(to_jsonb(job)::text,'sha256'),'hex')
+         from sellerpilot_private.channel_gateway_jobs job
+        where id='${id.verifier}') as job_sha,
+      (select encode(extensions.digest(to_jsonb(recovery)::text,'sha256'),'hex')
+         from sellerpilot_private.coupang_exact_live_completion_recoveries recovery
+        where verifier_job_id='${id.verifier}') as recovery_sha,
+      (select recovery.failed_job_sha256
+         from sellerpilot_private.coupang_exact_live_completion_recoveries recovery
+        where verifier_job_id='${id.verifier}') as initial_job_sha,
+      (select encode(extensions.digest(to_jsonb(route)::text,'sha256'),'hex')
+         from sellerpilot_private.local_channel_executor_routes route
+        where id='${id.sourceRoute}') as source_route_sha,
+      (select encode(extensions.digest(to_jsonb(route)::text,'sha256'),'hex')
+         from sellerpilot_private.coupang_exact_live_local_claim_routes route
+        where job_id='${id.verifier}') as exact_route_sha,
+      (select encode(extensions.digest(p.prosrc::bytea,'sha256'),'hex')
+         from pg_catalog.pg_proc p
+        where p.oid=
+          'public.sellerpilot_service_resolve_exact_coupang_live_verifier(uuid)'::regprocedure)
+        as resolver_source_sha
+  `);
+  return roleGuardRetryMigration
+    .replaceAll(secondProductionJobSha, hashes.job_sha)
+    .replaceAll(productionRecoverySha, hashes.recovery_sha)
+    .replaceAll(productionJobSha, hashes.initial_job_sha)
+    .replaceAll(productionSourceRouteSha, hashes.source_route_sha)
+    .replaceAll(productionExactRouteSha, hashes.exact_route_sha)
+    .replaceAll(productionSourceRoute, id.sourceRoute)
+    .replaceAll(productionWorker, id.worker)
+    .replaceAll(productionRequestFingerprint, "d".repeat(64))
+    .replaceAll(productionResolverSourceSha, hashes.resolver_source_sha);
+}
+
 test("migration is exact, immutable, GET-only and pins the production preimage", () => {
   assert.match(migration, /failed_job_sha256[\s\S]*3730e8557ea68c69c9b6924f4287a50c4b29cdb973ed4664303a60c42f106370/);
   assert.match(migration, /retired_completion_sha256[\s\S]*0dd6addb8cb52743efd75c547913d92d7abfc6d4a824c4d1c76069b692dea9eb/);
@@ -242,6 +309,28 @@ test("migration is exact, immutable, GET-only and pins the production preimage",
   assert.match(migration, /write_resource_kind is not null/);
   assert.match(migration, /exact_route\.release_sha is distinct from[\s\S]*a78cc371969f4954db4bcfa986d7494631e84cfb/);
   assert.doesNotMatch(migration, /listing\.(create|update|stop)|provider_mutation_started_at\s*=/);
+});
+
+test("role-guard retry is exact-row-only, GET-only and pins every production preimage", () => {
+  for (const digest of [
+    secondProductionJobSha,
+    productionRecoverySha,
+    productionSourceRouteSha,
+    productionExactRouteSha,
+    productionResolverSourceSha,
+  ]) assert.ok(roleGuardRetryMigration.includes(digest), digest);
+  assert.match(roleGuardRetryMigration, /status = 'queued'[\s\S]*attempt_count = 3/);
+  assert.match(roleGuardRetryMigration, /refreshed_expiry := clock_timestamp\(\) \+ interval '20 minutes'/);
+  assert.match(roleGuardRetryMigration, /worker\.last_seen_at is null/);
+  assert.match(roleGuardRetryMigration, /worker\.expires_at <= refreshed_expiry/);
+  assert.match(roleGuardRetryMigration, /credential\.expires_at is not null[\s\S]*credential\.expires_at <= refreshed_expiry/);
+  assert.match(roleGuardRetryMigration, /serverless_static_egress_policy/);
+  assert.match(roleGuardRetryMigration, /sellerpilot_service_resolve_exact_coupang_live_verifier\(uuid\)'::regprocedure/);
+  assert.match(roleGuardRetryMigration, /to_jsonb\(source_job\)[\s\S]*run\.source_job_sha256/);
+  assert.doesNotMatch(
+    roleGuardRetryMigration,
+    /listing\.(create|update|stop)|provider_mutation_started_at\s*=|write_resource_(?:kind|key)\s*=/,
+  );
 });
 
 test("empty database is a repeatable no-op", async () => {
@@ -333,6 +422,132 @@ test("job, receipt, source and route drift each fail closed without deleting evi
     );
     assert.equal(receipts, 1, name);
     assert.equal(recoveryTable, null, name);
+    assert.equal(status, "failed", name);
+    assert.equal(attempts, 4, name);
+    await db.close();
+  }
+});
+
+test("role-guard recovery preserves attempt four, refreshes exact routes and queues one GET-only retry", async () => {
+  const db = await database();
+  await db.exec(await renderedMigration(db));
+  const rendered = await renderedRoleGuardRetry(db);
+  const { rows: [before] } = await db.query(String.raw`
+    select
+      (select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job
+        where id='${id.verifier}') as job,
+      (select expires_at from sellerpilot_private.local_channel_executor_routes
+        where id='${id.sourceRoute}') as source_expiry,
+      (select expires_at from sellerpilot_private.coupang_exact_live_local_claim_routes
+        where job_id='${id.verifier}') as exact_expiry
+  `);
+
+  await db.exec(rendered);
+
+  const { rows: [after] } = await db.query(String.raw`
+    select
+      (select to_jsonb(job) from sellerpilot_private.channel_gateway_jobs job
+        where id='${id.verifier}') as job,
+      (select to_jsonb(recovery)
+         from sellerpilot_private.coupang_exact_live_role_guard_retry_recoveries recovery
+        where verifier_job_id='${id.verifier}') as recovery,
+      (select expires_at from sellerpilot_private.local_channel_executor_routes
+        where id='${id.sourceRoute}') as source_expiry,
+      (select expires_at from sellerpilot_private.coupang_exact_live_local_claim_routes
+        where job_id='${id.verifier}') as exact_expiry
+  `);
+  assert.deepEqual(after.recovery.failed_job_snapshot, before.job);
+  assert.equal(after.recovery.provider_mutation_performed, false);
+  assert.equal(after.job.status, "queued");
+  assert.equal(after.job.attempt_count, 3);
+  assert.equal(after.job.response_payload, null);
+  assert.equal(after.job.provider_mutation_started_at, null);
+  assert.ok(after.source_expiry > before.source_expiry);
+  assert.equal(after.source_expiry.getTime(), after.exact_expiry.getTime());
+
+  await db.exec(rendered);
+  await assert.rejects(
+    db.exec(`update sellerpilot_private.coupang_exact_live_role_guard_retry_recoveries set contract='x' where verifier_job_id='${id.verifier}'`),
+    /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_RECOVERY_IMMUTABLE/,
+  );
+  await db.close();
+});
+
+test("role-guard recovery rolls back its ledger and route refresh on exact job drift", async () => {
+  const db = await database();
+  await db.exec(await renderedMigration(db));
+  const rendered = await renderedRoleGuardRetry(db);
+  const { rows: [{ expires_at: expiryBefore }] } = await db.query(
+    `select expires_at from sellerpilot_private.local_channel_executor_routes where id='${id.sourceRoute}'`,
+  );
+  await db.exec(
+    `update sellerpilot_private.channel_gateway_jobs set response_payload='{}' where id='${id.verifier}'`,
+  );
+  await assert.rejects(
+    db.exec(rendered),
+    /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_JOB_DRIFT/,
+  );
+  await db.exec("rollback");
+  const { rows: [{ recovery_table: recoveryTable }] } = await db.query(
+    "select to_regclass('sellerpilot_private.coupang_exact_live_role_guard_retry_recoveries')::text as recovery_table",
+  );
+  const { rows: [{ expires_at: expiryAfter }] } = await db.query(
+    `select expires_at from sellerpilot_private.local_channel_executor_routes where id='${id.sourceRoute}'`,
+  );
+  assert.equal(recoveryTable, null);
+  assert.equal(expiryAfter.getTime(), expiryBefore.getTime());
+  await db.close();
+});
+
+test("role-guard recovery fails closed when a claim prerequisite drifts", async () => {
+  const cases = [
+    ["credential expired", `update sellerpilot_private.channel_credentials set expires_at=clock_timestamp()+interval '5 minutes' where id='${id.credential}'`],
+    ["credential seller binding", `update sellerpilot_private.channel_credentials set seller_account_key_source='manual' where id='${id.credential}'`],
+    ["worker missing heartbeat", `update sellerpilot_private.ai_cli_worker_tokens set last_seen_at=null where id='${id.worker}'`],
+    ["worker short lifetime", `update sellerpilot_private.ai_cli_worker_tokens set expires_at=clock_timestamp()+interval '5 minutes' where id='${id.worker}'`],
+    ["admin ownership removed", `delete from sellerpilot_private.admin_users where user_id='${id.tokenOwner}'`],
+    ["static egress reopened", `update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='coupang'`],
+  ];
+  for (const [name, mutation] of cases) {
+    const db = await database();
+    await db.exec(await renderedMigration(db));
+    const rendered = await renderedRoleGuardRetry(db);
+    await db.exec(mutation);
+    await assert.rejects(
+      db.exec(rendered),
+      /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_ROUTE_DRIFT/,
+      name,
+    );
+    await db.exec("rollback");
+    const { rows: [{ status, attempt_count: attempts }] } = await db.query(
+      `select status,attempt_count from sellerpilot_private.channel_gateway_jobs where id='${id.verifier}'`,
+    );
+    assert.equal(status, "failed", name);
+    assert.equal(attempts, 4, name);
+    await db.close();
+  }
+});
+
+test("role-guard recovery fails closed when immutable source binding drifts", async () => {
+  const cases = [
+    ["source job", `update sellerpilot_private.channel_gateway_jobs set response_payload='{"ok":false}' where id='${id.source}'`],
+    ["source attempt", `update sellerpilot_private.channel_operation_attempts set owner_id='${id.credentialOwner}' where id='${id.attempt}'`],
+    ["source listing", `update sellerpilot_private.product_listings set owner_id='${id.credentialOwner}' where id='${id.listing}'`],
+  ];
+  for (const [name, mutation] of cases) {
+    const db = await database();
+    await db.exec(await renderedMigration(db));
+    const rendered = await renderedRoleGuardRetry(db);
+    await db.exec(mutation);
+    await assert.rejects(
+      db.exec(rendered),
+      /COUPANG_EXACT_LIVE_ROLE_GUARD_RETRY_JOB_DRIFT/,
+      name,
+    );
+    await db.exec("rollback");
+    const { rows: [{ status, attempt_count: attempts }] } = await db.query(
+      `select status,attempt_count from sellerpilot_private.channel_gateway_jobs where id='${id.verifier}'`,
+    );
     assert.equal(status, "failed", name);
     assert.equal(attempts, 4, name);
     await db.close();

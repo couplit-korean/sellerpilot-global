@@ -147,6 +147,13 @@ test("eBay inventory PUT is treated as an observed listing update mutation", () 
   ]), "reconciliation_required");
 });
 
+test("failed publication verification remains reconciliation-required for durable evidence", () => {
+  assert.equal(gatewayJobCompletionStatus("listing.publication.verify", false, [
+    { name: "seller-product-publication-reverification", ok: true, status: 200 },
+    { name: "publication-content-verification", ok: false, status: 422 },
+  ]), "reconciliation_required");
+});
+
 test("verified listing exposure remains attached to the reconciliation completion", () => {
   const result = {
     ok: false,

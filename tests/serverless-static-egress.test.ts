@@ -101,12 +101,12 @@ test("Smartstore replies and channel writes fail before enqueue without both run
     readFile(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(replyRoute, /channel === "coupang" \|\| channel === "smartstore"/);
+  assert.match(replyRoute, /channel === "coupang" \|\| channel === "elevenst" \|\| channel === "smartstore"/);
   assert.match(replyRoute, /sellerpilot_service_serverless_static_egress_status/);
   assert.match(replyRoute, /databasePolicy\?\.\[channel\] !== true/);
-  assert.match(operationRoute, /if \(channel === "smartstore"\)/);
-  assert.match(operationRoute, /hasServerlessStaticEgressFor\([\s\S]*?\["smartstore"\]/);
-  assert.match(operationRoute, /databasePolicy\.smartstore !== true/);
+  assert.match(operationRoute, /channel === "smartstore"/);
+  assert.match(operationRoute, /hasServerlessStaticEgressFor\([\s\S]*?\[providerMutationStaticEgressChannel\]/);
+  assert.match(operationRoute, /databasePolicy\[providerMutationStaticEgressChannel\] !== true/);
   assert.match(operationRoute, /mode: "static_egress_required"/);
   assert.match(operationRoute, /mode: "serverless_worker_required"/);
 });
@@ -120,7 +120,7 @@ test("Coupang and 11st provider mutations fail before permit or queue creation w
     "const providerMutationStaticEgressChannel",
   );
   const preflightEnd = operationRoute.indexOf(
-    'if (channel === "smartstore")',
+    'if (channel === "smartstore" && isSmartstoreLocalReadOperation(operation))',
     preflightStart,
   );
   const preflight = operationRoute.slice(preflightStart, preflightEnd);
@@ -230,8 +230,8 @@ test("Temu periodic inquiry gate composes after the eBay wrapper with closed pre
 
 test("manual sync and the 30-day UI disclose static egress blocking without local fallback", async () => {
   const [route, page] = await Promise.all([
-    readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/cs/sync/route.ts", import.meta.url), "utf8"),
+    Promise.all(["../app/cs/workspace.tsx", "../app/cs/use-workspace.ts"].map((file) => readFile(new URL(file, import.meta.url), "utf8"))).then((parts) => parts.join("\n")),
   ]);
   assert.match(route, /status === "fixed_egress_required"/);
   assert.match(route, /staticEgressReady: false/);
@@ -242,7 +242,7 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.doesNotMatch(route, /로컬 스케줄러에서 처리합니다/);
   const inquiryFlow = route.slice(
     route.indexOf("const inquiryResults"),
-    route.indexOf("const push ="),
+    route.indexOf("const needsAttention ="),
   );
   const unsupportedBranch = inquiryFlow.indexOf("if (!requests.length)");
   const temuEgressGate = inquiryFlow.indexOf('channel === "temu" && !hasServerlessStaticEgressFor');

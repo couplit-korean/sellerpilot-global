@@ -70,8 +70,8 @@ test("중앙 편집과 원격 편집의 실제 지원 필드를 분리한다", (
 
 test("가격 readback이 없는 채널은 API 구현 유무와 무관하게 출시 차단한다", () => {
   for (const channel of activeChannelKeys) {
-    assert.equal(channelOperationAvailable(channel, "price.update"), false, channel);
-    assert.equal(channelOperationRelease(channel, "price.update").available, false, channel);
+    assert.equal(channelOperationAvailable(channel, "price.update"), channel === "coupang", channel);
+    assert.equal(channelOperationRelease(channel, "price.update").available, channel === "coupang", channel);
   }
   assert.match(channelOperationRelease("qoo10", "price.update").reason, /가격|readback/);
   assert.equal(channelOperationRelease("temu", "listing.update").mode, "release_verification_required");

@@ -739,7 +739,7 @@ test("gateway contracts accept only normalized listing lineage claims and comple
 });
 
 test("the worker routes lineage verification through the read-only normalized verifier", () => {
-  const worker = readFileSync(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const worker = readFileSync(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8");
   const branchStart = worker.indexOf('job.operation === "listing.lineage.verify"');
   const branchEnd = worker.indexOf('job.operation === "diagnostic.test"', branchStart);
   assert.ok(branchStart > 0 && branchEnd > branchStart);
@@ -750,5 +750,6 @@ test("the worker routes lineage verification through the read-only normalized ve
   assert.match(branch, /onCredentialRefresh: rememberCredentialRefresh/);
   assert.doesNotMatch(branch, /markExternalWriteStarted|externalWriteStarted\s*=\s*true/);
   assert.match(worker, /retryableLineageReadback[\s\S]*LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR/);
-  assert.match(worker, /const workerVersion = "sellerpilot-cli-worker\/1\.60"/);
+  const runtime = readFileSync(new URL("../scripts/channel-gateway-worker.mjs", import.meta.url), "utf8");
+  assert.match(runtime, /const workerVersion = localChannelExecutorAttestation/);
 });
