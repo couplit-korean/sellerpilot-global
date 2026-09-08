@@ -574,7 +574,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
           <div className="margin-field-section">
             <div className="margin-section-title"><span className="metric-icon blue"><WalletCards size={17} /></span><div><b>{selectedChannelInfo.name} 건당 비용</b><small>매입 원가는 공통이고 배송·3PL·통관 비용은 현재 선택한 채널에만 적용됩니다.</small></div></div>
             <div className="margin-field-grid compact">
-              <MarginNumberField id="purchase-cost" label="매입 원가" value={form.purchaseCost} suffix="원" onChange={(value) => { setPurchaseCostConfirmed(true); changeFormValue("purchaseCost", value); }} />
+              <MarginNumberField id="purchase-cost" label="매입 원가" value={form.purchaseCost} suffix="원" onChange={(value) => { setPurchaseCostConfirmed(false); changeFormValue("purchaseCost", value); }} />
               <MarginNumberField id="international-shipping" label="국제 배송" value={selectedCosts.internationalShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("internationalShipping", value)} />
               <MarginNumberField id="local-shipping" label="현지 배송" value={selectedCosts.localShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("localShipping", value)} />
               <MarginNumberField id="fulfillment-cost" label="포장 · 3PL" value={selectedCosts.fulfillmentCost} suffix="원" onChange={(value) => changeCostValue("fulfillmentCost", value)} />
@@ -583,14 +583,17 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
             <button
               type="button"
               className="filter-button"
-              aria-pressed={channelCostConfirmations[selectedChannel]}
-              onClick={() => setChannelCostConfirmations((current) => ({ ...current, [selectedChannel]: !current[selectedChannel] }))}
+              aria-pressed={purchaseCostConfirmed && channelCostConfirmations[selectedChannel]}
+              onClick={() => {
+                setPurchaseCostConfirmed(true);
+                setChannelCostConfirmations((current) => ({ ...current, [selectedChannel]: true }));
+              }}
             >
               <CheckCircle2 size={14} />
-              {channelCostConfirmations[selectedChannel] ? `${selectedChannelInfo.name} 비용 확인됨` : `${selectedChannelInfo.name} 배송·3PL·통관 비용 확인`}
+              {purchaseCostConfirmed && channelCostConfirmations[selectedChannel] ? `${selectedChannelInfo.name} 원가·배송비 확인됨` : `${selectedChannelInfo.name} 원가·배송비 확인`}
             </button>
-            {!purchaseCostConfirmed ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />매입 원가를 직접 입력해 주세요. 원가가 없다면 0원을 다시 입력해 확인합니다.</p> : null}
-            {!channelCostConfirmations[selectedChannel] ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{selectedChannelInfo.name} 배송·3PL·통관 비용을 확인해 주세요. 비용이 없다면 0원 상태를 확인합니다.</p> : null}
+            {!purchaseCostConfirmed ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />매입 원가를 입력한 뒤 원가·배송비 확인 버튼을 눌러 주세요. 원가가 없다면 0원 상태를 확인합니다.</p> : null}
+            {!channelCostConfirmations[selectedChannel] ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{selectedChannelInfo.name} 배송·3PL·통관 비용을 입력한 뒤 원가·배송비 확인 버튼을 눌러 주세요. 비용이 없다면 0원 상태를 확인합니다.</p> : null}
           </div>
 
           <div className="margin-field-section">
