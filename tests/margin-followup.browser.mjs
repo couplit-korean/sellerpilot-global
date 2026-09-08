@@ -51,11 +51,13 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     await page.locator('#margin-product-id').selectOption('a');
     assert.equal(await page.locator('.margin-profit-value strong').innerText(),'—');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),true);
+    await page.getByRole('button',{name:/Qoo10 Japan 원가·배송비 확인/}).click();
+    assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),false);
     await page.locator('#purchase-cost').fill('20000');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),true);
     await page.locator('#international-shipping').fill('5000');
     await page.locator('#local-shipping').fill('2000');
-    await page.getByRole('button',{name:/Qoo10 Japan 배송·3PL·통관 비용 확인/}).click();
+    await page.getByRole('button',{name:/Qoo10 Japan 원가·배송비 확인/}).click();
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),false);
     await page.getByRole('tab',{name:/eBay/}).click();
     assert.equal(await page.locator('#international-shipping').inputValue(),'0');
@@ -71,7 +73,7 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     assert.equal(await page.locator('#selling-price').inputValue(),'0');
     await page.locator('#selling-price').fill('50000');
     await page.locator('#purchase-cost').fill('20000');
-    await page.getByRole('button',{name:/Qoo10 Japan 배송·3PL·통관 비용 확인/}).click();
+    await page.getByRole('button',{name:/Qoo10 Japan 원가·배송비 확인/}).click();
     ratesFail = true;
     await page.clock.fastForward(301000);
     await page.clock.runFor(1100);
@@ -79,7 +81,7 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     assert.equal(await page.locator('.margin-result-head em').innerText(),'계산 기준 확인 필요');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),true);
     await page.getByRole('tab',{name:/SmartStore|스마트스토어|네이버/}).click();
-    await page.getByRole('button',{name:/네이버 스마트스토어 배송·3PL·통관 비용 확인/}).click();
+    await page.getByRole('button',{name:/네이버 스마트스토어 원가·배송비 확인/}).click();
     await page.getByRole('button',{name:'계산 결과 저장'}).click();
     await page.waitForFunction(()=>document.querySelector('button') && window.messages.length>0);
     // Let token resolution dispatch the request before advancing its deadline.
