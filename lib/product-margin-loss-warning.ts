@@ -1,3 +1,5 @@
+import { marginRateIsFresh, type MarginRateEvidence } from "./pricing/margin-rate-freshness";
+
 export type ProductMarginScenarioLike = {
   id: string;
   productId: string | null;
@@ -59,6 +61,7 @@ export type ProductMarginWarningUnavailableReason =
   | "invalid-baseline"
   | "missing-or-invalid-fees"
   | "inconsistent-baseline"
+  | "exchange-rate-expired"
   | "invalid-edit";
 
 export type ProductMarginWarningEvaluation =
@@ -180,16 +183,19 @@ export function editedProductSellingPriceKrw({
   scenario,
   sellingPrice,
   currency,
+  now = Date.now(),
 }: {
   scenario: ProductMarginScenarioLike | null;
   sellingPrice: number;
   currency: string;
+  now?: number;
 }) {
   const normalizedPrice = positiveFiniteNumber(sellingPrice);
   if (normalizedPrice === null) return null;
   const normalizedCurrency = currency.trim().toUpperCase();
   if (normalizedCurrency === "KRW") return normalizedPrice;
   if (!scenario) return null;
+  if (!savedMarginExchangeRateIsFresh(scenario, now)) return null;
   const savedCurrency = typeof scenario.inputs.currency === "string"
     ? scenario.inputs.currency.trim().toUpperCase()
     : "";
@@ -197,6 +203,15 @@ export function editedProductSellingPriceKrw({
   if (!savedCurrency || savedCurrency !== normalizedCurrency || rateToKrw === null) return null;
   const converted = normalizedPrice * rateToKrw;
   return Number.isFinite(converted) && converted > 0 ? converted : null;
+}
+
+function savedMarginExchangeRateIsFresh(scenario: ProductMarginScenarioLike, now: number) {
+  const evidence = scenario.inputs.rateEvidence;
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)) return false;
+  const fields = evidence as Record<string, unknown>;
+  if (typeof fields.fetchedAt !== "string" || typeof fields.asOf !== "string"
+      || (fields.frequency !== "minute-market" && fields.frequency !== "daily-reference-fallback")) return false;
+  return marginRateIsFresh(fields as MarginRateEvidence, now);
 }
 
 function baselineFromScenario(scenario: ProductMarginScenarioLike) {
@@ -262,10 +277,12 @@ export function evaluateProductMarginLossWarning({
   productId,
   scenarios,
   edit,
+  now = Date.now(),
 }: {
   productId: string;
   scenarios: readonly ProductMarginScenarioLike[];
   edit: ProductMarginChannelEdit;
+  now?: number;
 }): ProductMarginWarningEvaluation {
   const scenario = latestProductMarginScenario(productId, edit.channelKey, scenarios);
   if (!scenario) {
@@ -281,6 +298,11 @@ export function evaluateProductMarginLossWarning({
     };
   }
 
+  const currency = typeof scenario.inputs.currency === "string" ? scenario.inputs.currency.trim().toUpperCase() : "";
+  if (currency && currency !== "KRW" && !savedMarginExchangeRateIsFresh(scenario, now)) {
+    return { status: "unavailable", productId, channelKey: edit.channelKey, scenarioId: scenario.id,
+      baseline: null, edited: null, warning: null, reason: "exchange-rate-expired" };
+  }
   const baselineResult = baselineFromScenario(scenario);
   if (!baselineResult.calculation) {
     return {
@@ -343,10 +365,12 @@ export function evaluateProductMarginLossWarnings({
   productId,
   scenarios,
   edits,
+  now = Date.now(),
 }: {
   productId: string;
   scenarios: readonly ProductMarginScenarioLike[];
   edits: readonly ProductMarginChannelEdit[];
+  now?: number;
 }) {
-  return edits.map((edit) => evaluateProductMarginLossWarning({ productId, scenarios, edit }));
+  return edits.map((edit) => evaluateProductMarginLossWarning({ productId, scenarios, edit, now }));
 }

@@ -192,7 +192,9 @@ test("rejects null and non-finite edited values", () => {
 });
 
 test("converts a foreign edit only with the matching saved exchange-rate lineage", () => {
-  const usdScenario = scenario({ inputOverrides: { currency: "USD", rateToKrw: 1_300 } });
+  const instant = new Date().toISOString();
+  const usdScenario = scenario({ inputOverrides: { currency: "USD", rateToKrw: 1_300,
+    rateEvidence: { fetchedAt: instant, asOf: instant, frequency: "minute-market" } } });
 
   assert.equal(editedProductSellingPriceKrw({ scenario: usdScenario, sellingPrice: 10, currency: "USD" }), 13_000);
   assert.equal(editedProductSellingPriceKrw({ scenario: usdScenario, sellingPrice: 10, currency: "JPY" }), null);
