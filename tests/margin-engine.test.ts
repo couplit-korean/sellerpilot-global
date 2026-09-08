@@ -148,6 +148,7 @@ test("server save verification rejects a manipulated foreign-currency quote", ()
     localPriceIncrement: 10,
     currency: "JPY" as const,
     rateToKrw: 9.2,
+    rateEvidence: { fetchedAt: new Date().toISOString(), asOf: new Date().toISOString(), frequency: "minute-market" as const },
     suppliedResult: result,
   };
   assert.deepEqual(verifyMarginScenarioForSave(valid), { ok: true, result });

@@ -28,6 +28,8 @@ import {
   type ChannelMarginResult,
   type MarginFormBase,
 } from "../lib/pricing/channel-margin";
+import { marginRateIsFresh, type MarginRateEvidence } from "../lib/pricing/margin-rate-freshness";
+import { requestMarginMutation, MarginMutationUncertain } from "../lib/pricing/margin-mutation";
 import { MARGIN_ENGINE_VERSION } from "../lib/pricing/margin-engine";
 import { createClient } from "../lib/supabase/client";
 import { fetchJsonWithDeadline } from "../lib/bounded-json-request";
@@ -93,8 +95,10 @@ export async function fetchMarginReferenceRates({
   signal,
   timeoutMs = marginExchangeRateTimeoutMs,
   fetcher = fetch,
+  now = Date.now(),
 }: {
   signal: AbortSignal;
+  now?: number;
   timeoutMs?: number;
   fetcher?: (input: string, init?: RequestInit) => Promise<Response>;
 }) {
@@ -123,6 +127,12 @@ export async function fetchMarginReferenceRates({
   if (!requiredMarginExchangeRateCodes.every((code) => normalizedByCode.has(code))) {
     throw new Error("필수 기준환율이 누락되었습니다.");
   }
+  const evidence: MarginRateEvidence = {
+    fetchedAt: payload.fetchedAt ?? "",
+    asOf: payload.providerAsOf ?? payload.asOf ?? "",
+    frequency: payload.fallback || payload.frequency === "daily-reference-fallback" ? "daily-reference-fallback" : "minute-market",
+  };
+  if (!marginRateIsFresh(evidence, now)) throw new Error("기준환율 유효기간이 지났거나 갱신 시각이 없습니다.");
   const receivedAt = formatMarginExchangeRateTimestamp(payload.fetchedAt);
   const basis = payload.frequency === "daily-reference-fallback" || payload.fallback
     ? `${payload.source ?? "일일 기준환율"} · 일일 기준 대체값 ${payload.asOf ?? "기준일 확인 중"} · 수신 ${receivedAt}`
@@ -130,6 +140,7 @@ export async function fetchMarginReferenceRates({
   return {
     rates: Object.fromEntries(requiredMarginExchangeRateCodes.map((code) => [code, normalizedByCode.get(code)!])),
     basis,
+    evidence,
   };
 }
 
@@ -259,6 +270,10 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   const [pendingDeleteScenario, setPendingDeleteScenario] = useState<SavedScenario | null>(null);
   const [deletingScenarioId, setDeletingScenarioId] = useState<string | null>(null);
   const [savingScenario, setSavingScenario] = useState(false);
+  const [mutationUncertain, setMutationUncertain] = useState(false);
+  const [rateEvidence, setRateEvidence] = useState<MarginRateEvidence | null>(null);
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  const mutationLock = useRef(false);
   const [referenceRates, setReferenceRates] = useState<Record<string, number>>({});
   const [rateBasis, setRateBasis] = useState("실시간 환율 수신 전 · 해외 채널 계산 잠김");
   const rateRequestRef = useRef<AbortController | null>(null);
@@ -282,6 +297,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
         if (!active || controller.signal.aborted) return;
         rateReceivedRef.current = true;
         setReferenceRates(loaded.rates);
+        setRateEvidence(loaded.evidence);
+        setClockNow(Date.now());
         setRateBasis(loaded.basis);
       } catch {
         if (active && !controller.signal.aborted) {
@@ -298,6 +315,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       }
     };
     void loadRates();
+    const freshnessInterval = window.setInterval(() => setClockNow(Date.now()), 1_000);
     const interval = window.setInterval(() => void loadRates(), marginExchangeRateRefreshMs);
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") void loadRates();
@@ -306,15 +324,17 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     return () => {
       active = false;
       window.clearInterval(interval);
+      window.clearInterval(freshnessInterval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       rateRequestRef.current?.abort(new DOMException("마진 계산 화면이 닫혀 기준환율 요청을 취소했습니다.", "AbortError"));
       rateRequestRef.current = null;
     };
   }, []);
+  const ratesFresh = marginRateIsFresh(rateEvidence, clockNow);
   const calculationProfiles = useMemo(() => marginChannelProfiles.map((profile) => ({
     ...profile,
-    rateToKrw: profile.currency === "KRW" ? 1 : referenceRates[profile.currency] ?? null,
-  })), [referenceRates]);
+    rateToKrw: profile.currency === "KRW" ? 1 : ratesFresh ? referenceRates[profile.currency] ?? null : null,
+  })), [referenceRates, ratesFresh]);
   const results = useMemo(() => calculateChannelMargins(form, feeOverrides, paymentFeeOverrides, channelCosts, calculationProfiles), [calculationProfiles, channelCosts, form, feeOverrides, paymentFeeOverrides]);
   const selectedResult = results.find((result) => result.key === selectedChannel) ?? results[0];
   const selectedCosts = channelCosts[selectedChannel];
@@ -358,7 +378,13 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const selectProduct = (productId: string) => {
+    if (productId === selectedProductId) return;
     setSelectedProductId(productId);
+    setForm({ ...defaultMarginForm });
+    setFeeOverrides(createPlatformFeeOverrides());
+    setPaymentFeeOverrides(createPaymentFeeOverrides());
+    setChannelCosts(createChannelCostOverrides());
+    notify("상품이 변경되어 이전 상품의 원가·배송비·수수료 입력을 초기화했습니다. 새 상품의 비용을 입력해 주세요.");
     const product = products.find((item) => item.id === productId);
     if (product?.baseCurrency === "KRW" && product.baseSellingPrice !== null) {
       changeFormValue("sellingPrice", product.baseSellingPrice);
@@ -374,8 +400,9 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const saveScenario = async () => {
-    if (savingScenario) return;
+    if (mutationLock.current || mutationUncertain) return;
     if (selectedResult.plannedSellingPriceKrw <= 0 || selectedResult.profit === null || selectedResult.margin === null) return notify("계획 판매가를 입력한 뒤 계산 결과를 저장할 수 있습니다.");
+    if (selectedResult.currency !== "KRW" && !marginRateIsFresh(rateEvidence)) return notify("환율이 만료되었습니다. 최신 환율 수신 후 다시 저장해 주세요.");
     if (!selectedResult.exchangeRateReady) return notify(`${exchangeRateMessage} 실환율 없는 계산은 저장하지 않습니다.`);
     if (!selectedResult.calculationReady || selectedResult.platformFee === null) return notify(`${manualFeeMessage} 입력 후 계산 결과를 저장할 수 있습니다.`);
     if (!selectedProduct) return notify("마진 계산을 연결할 실제 상품을 먼저 선택해 주세요.");
@@ -390,15 +417,12 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
       margin: selectedResult.margin ?? 0,
       savedAt: `오늘 ${now.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false })}`,
     };
+    mutationLock.current = true;
     setSavingScenario(true);
     try {
-      const { data } = await createClient().auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("마진 계산을 저장하려면 다시 로그인해 주세요.");
-      const response = await fetch("/api/operations/snapshot", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({
+      const payload = await requestMarginMutation({
+        getAccessToken: async () => (await createClient().auth.getSession()).data.session?.access_token,
+        body: {
           action: "margin_save",
           name: saved.product,
           channelKey: selectedChannel,
@@ -411,6 +435,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
             currency: selectedResult.currency,
             rateToKrw: selectedResult.rateToKrw,
             rateBasis,
+            rateEvidence,
             engineVersion: MARGIN_ENGINE_VERSION,
           },
           result: {
@@ -429,41 +454,39 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
             marketGapRate: selectedResult.marketGapRate,
             status: selectedResult.status,
           },
-        }),
+        },
       });
-      const payload = await response.json().catch(() => ({ message: "저장 응답을 읽지 못했습니다." })) as { id?: string; message?: string };
-      if (!response.ok) throw new Error(payload.message ?? "마진 계산 결과를 저장하지 못했습니다.");
-      setLocalScenarios((current) => [{ ...saved, id: payload.id ?? saved.id }, ...current].slice(0, 5));
+      setLocalScenarios((current) => [{ ...saved, id: payload.id! }, ...current].slice(0, 5));
       onChanged?.();
       notify(`${selectedChannelInfo.name} 마진 계산 결과를 운영 DB에 저장했습니다.`);
     } catch (error) {
+      if (error instanceof MarginMutationUncertain) { setMutationUncertain(true); onChanged?.(); }
       notify(error instanceof Error ? error.message : "마진 계산 결과를 저장하지 못했습니다.");
     } finally {
+      mutationLock.current = false;
       setSavingScenario(false);
     }
   };
 
   const deleteScenario = async (scenario: SavedScenario) => {
-    if (deletingScenarioId) return;
+    if (mutationLock.current || mutationUncertain) return;
+    mutationLock.current = true;
     setDeletingScenarioId(scenario.id);
     try {
-      const { data } = await createClient().auth.getSession();
-      const accessToken = data.session?.access_token;
-      if (!accessToken) throw new Error("마진 계산을 삭제하려면 다시 로그인해 주세요.");
-      const response = await fetch("/api/operations/snapshot", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },
-        body: JSON.stringify({ action: "margin_delete", id: scenario.id }),
+      await requestMarginMutation({
+        getAccessToken: async () => (await createClient().auth.getSession()).data.session?.access_token,
+        body: { action: "margin_delete", id: scenario.id },
       });
-      if (!response.ok) throw new Error("저장된 마진 계산을 삭제하지 못했습니다.");
       setLocalScenarios((current) => current.filter((item) => item.id !== scenario.id));
       setDeletedScenarioIds((current) => new Set(current).add(scenario.id));
       setPendingDeleteScenario(null);
       onChanged?.();
       notify("저장된 마진 계산을 운영 DB에서 삭제했습니다.");
     } catch (error) {
+      if (error instanceof MarginMutationUncertain) { setMutationUncertain(true); setPendingDeleteScenario(null); onChanged?.(); }
       notify(error instanceof Error ? error.message : "저장된 마진 계산을 삭제하지 못했습니다.");
     } finally {
+      mutationLock.current = false;
       setDeletingScenarioId(null);
     }
   };
@@ -528,17 +551,17 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
               <MarginNumberField id="target-margin" label="목표 마진율" value={form.targetMargin} suffix="%" step={0.5} onChange={(value) => changeFormValue("targetMargin", value)} />
             </div>
             {!selectedResult.feeReady ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{selectedChannelInfo.name} 플랫폼 수수료가 미확인입니다. 확인된 0%라면 0을 직접 입력하세요.</p> : null}
-            {!selectedResult.exchangeRateReady ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{exchangeRateMessage} 실환율 수신 전에는 해외채널 예상 손익·권장가·저장을 표시하지 않습니다.</p> : null}
+            {!selectedResult.exchangeRateReady ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />{exchangeRateMessage} 환율은 실시간 값 5분, 일일 대체값 기준일 4일 이내이며 수신 후 5분까지 유효합니다. 유효한 환율이 없으면 해외채널 예상 손익·권장가·저장을 표시하지 않습니다.</p> : null}
             {selectedResult.calculationStatus === "target_unreachable" ? <p className="margin-manual-fee-warning" role="status"><AlertCircle size={14} />수수료·변동비와 목표 마진의 합이 100% 이상이라 목표 판매가를 계산할 수 없습니다.</p> : null}
           </div>
         </article>
 
         <div className="margin-result-column">
           <article className={`margin-result-card ${selectedResult.calculationReady && selectedResult.profitabilityStatus === "target_met" ? "positive" : "warning"}`}>
-            <div className="margin-result-head"><div><span style={{ "--channel-color": selectedChannelInfo.color } as React.CSSProperties}>{selectedChannelInfo.mark}</span><div><small>{selectedChannelInfo.name} 예상 손익</small><b>{selectedResult.status}</b></div></div><em>{selectedResult.profitabilityStatus === "target_met" ? <><CheckCircle2 size={15} />목표 마진 충족</> : selectedResult.margin !== null ? <><AlertCircle size={15} />{Math.max(0, form.targetMargin - selectedResult.margin).toFixed(1)}%p 부족</> : <><AlertCircle size={15} />계산 기준 확인 필요</>}</em></div>
+            <div className="margin-result-head"><div><span style={{ "--channel-color": selectedChannelInfo.color } as React.CSSProperties}>{selectedChannelInfo.mark}</span><div><small>{selectedChannelInfo.name} 예상 손익</small><b>{selectedResult.status}</b></div></div><em>{selectedResult.calculationReady && selectedResult.profitabilityStatus === "target_met" ? <><CheckCircle2 size={15} />목표 마진 충족</> : selectedResult.calculationReady && selectedResult.margin !== null ? <><AlertCircle size={15} />{Math.max(0, form.targetMargin - selectedResult.margin).toFixed(1)}%p 부족</> : <><AlertCircle size={15} />계산 기준 확인 필요</>}</em></div>
             <div className="margin-profit-value"><small>주문 1건 예상 순이익</small><strong>{selectedResult.calculationReady && selectedResult.profit !== null ? formatWon(selectedResult.profit) : "—"}</strong><span>{selectedResult.calculationReady && selectedResult.localSellingPrice !== null ? `${formatLocalAmount(selectedResult.localSellingPrice, selectedResult)} 판매 · 환산 ${formatWon(selectedResult.effectiveSellingPriceKrw ?? 0)}` : calculationBlockedMessage}</span></div>
             <div className="margin-progress"><div><span>예상 마진율</span><b>{selectedResult.calculationReady && selectedResult.margin !== null ? `${selectedResult.margin.toFixed(1)}%` : "—"}</b></div><span><i style={{ width: `${targetProgress}%` }} /></span><small>{selectedResult.calculationReady && selectedResult.variableRate !== null ? `목표 ${form.targetMargin.toFixed(1)}% · 변동비율 ${selectedResult.variableRate.toFixed(2)}%` : `${calculationBlockedMessage} 계산은 잠겨 있습니다.`}</small></div>
-            <div className="margin-result-actions"><button type="button" onClick={applyRecommendedPrice} disabled={!selectedResult.calculationReady || selectedResult.recommendedPrice === null} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Target size={15} />권장 판매가 적용</button><button type="button" onClick={() => void saveScenario()} disabled={savingScenario || !selectedResult.calculationReady || selectedResult.plannedSellingPriceKrw <= 0 || selectedResult.profit === null} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Save size={15} />{savingScenario ? "저장 중" : "계산 결과 저장"}</button></div>
+            <div className="margin-result-actions"><button type="button" onClick={applyRecommendedPrice} disabled={!selectedResult.calculationReady || selectedResult.recommendedPrice === null} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Target size={15} />권장 판매가 적용</button><button type="button" onClick={() => void saveScenario()} disabled={mutationUncertain || savingScenario || Boolean(deletingScenarioId) || !selectedResult.calculationReady || selectedResult.plannedSellingPriceKrw <= 0 || selectedResult.profit === null} title={!selectedResult.calculationReady ? calculationBlockedMessage : undefined}><Save size={15} />{savingScenario ? "저장 중" : "계산 결과 저장"}</button></div>
           </article>
 
           <section className="margin-summary-grid">
@@ -562,7 +585,8 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 
       <section className="panel saved-margin-panel">
         <div className="panel-heading"><div><span className="panel-kicker">RECENT CALCULATIONS</span><h3>최근 저장한 계산</h3></div><small>운영 DB 저장 후 최근 5개를 화면에 표시합니다.</small></div>
-        <div className="saved-margin-list">{scenarioState === "unavailable" ? <div className="live-empty-state" role="alert"><AlertCircle size={25} /><b>저장된 계산 이력을 불러오지 못했습니다.</b><small>{scenarioMessage ?? "잠시 후 다시 확인해 주세요."}</small></div> : scenarioState === "checking" && savedScenarios.length === 0 ? <div className="live-empty-state" role="status"><RefreshCw size={25} /><b>저장된 계산 이력을 확인하고 있습니다.</b><small>상품·주문 원장은 먼저 사용할 수 있습니다.</small></div> : <>{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}{scenario.productId ? " · 상품 연결됨" : " · 기존 미연결 계산"}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" aria-label={`${scenario.product} 계산 삭제 확인`} aria-haspopup="dialog" aria-expanded={pendingDeleteScenario?.id === scenario.id} onClick={() => setPendingDeleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</>}</div>
+        {mutationUncertain ? <p role="alert">저장·삭제 처리 여부 확인이 필요해 추가 요청을 잠갔습니다. <button type="button" onClick={() => onChanged?.()}>계산 이력 새로 조회</button> 이력을 확인한 후 화면을 다시 열어 주세요.</p> : null}
+        <div className="saved-margin-list">{scenarioState === "unavailable" ? <div className="live-empty-state" role="alert"><AlertCircle size={25} /><b>저장된 계산 이력을 불러오지 못했습니다.</b><small>{scenarioMessage ?? "잠시 후 다시 확인해 주세요."}</small></div> : scenarioState === "checking" && savedScenarios.length === 0 ? <div className="live-empty-state" role="status"><RefreshCw size={25} /><b>저장된 계산 이력을 확인하고 있습니다.</b><small>상품·주문 원장은 먼저 사용할 수 있습니다.</small></div> : <>{savedScenarios.map((scenario) => { const channel = channels[scenario.channelKey]; return <article key={scenario.id}><span style={{ "--channel-color": channel.color } as React.CSSProperties}>{channel.mark}</span><div><b>{scenario.product}</b><small>{channel.name} · {scenario.savedAt}{scenario.productId ? " · 상품 연결됨" : " · 기존 미연결 계산"}</small></div><dl><div><dt>판매가</dt><dd>{formatWon(scenario.sellingPrice)}</dd></div><div><dt>순이익</dt><dd>{formatWon(scenario.profit)}</dd></div><div><dt>마진</dt><dd>{scenario.margin.toFixed(1)}%</dd></div></dl><button type="button" disabled={mutationUncertain || savingScenario || Boolean(deletingScenarioId)} aria-label={`${scenario.product} 계산 삭제 확인`} aria-haspopup="dialog" aria-expanded={pendingDeleteScenario?.id === scenario.id} onClick={() => setPendingDeleteScenario(scenario)}><Trash2 size={15} /></button></article>; })}{savedScenarios.length === 0 ? <div className="live-empty-state"><Calculator size={25} /><b>저장된 실제 계산이 없습니다.</b><small>상품 비용을 입력하고 결과를 운영 DB에 저장하면 여기에 표시됩니다.</small></div> : null}</>}</div>
         {pendingDeleteScenario ? <div
           ref={deleteConfirmationRef}
           className="publish-write-confirmation channel"

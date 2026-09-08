@@ -81,6 +81,7 @@ test("margin exchange-rate request propagates owner cancellation and parses a va
 
   const loaded = await fetchMarginReferenceRates({
     signal: new AbortController().signal,
+    now: Date.parse("2026-08-28T01:02:03.000Z"),
     fetcher: async () => new Response(JSON.stringify({
       source: "Coinbase Data API",
       frequency: "minute-market",
