@@ -21,6 +21,14 @@ const actualAttemptSchemaCorrection = await readFile(new URL(
   "../supabase/migrations/20260908055500_bind_exact_coupang_price_repair_to_actual_attempt_schema.sql",
   import.meta.url,
 ), "utf8");
+const deadWorkerRecoveryCorrection = await readFile(new URL(
+  "../supabase/migrations/20260908060000_allow_exact_coupang_dead_worker_price_recovery.sql",
+  import.meta.url,
+), "utf8");
+
+const productionRepairJob = "36fcb808-a2f1-42b7-a6c9-264d884f25fb";
+const productionRepairAttempt = "05508966-7665-4873-a89b-89fda8ea8a25";
+const productionRelease = "f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca";
 
 const id = Object.freeze({
   owner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
@@ -158,6 +166,9 @@ async function database({ listingSellerKey = sellerKey, marketplaceSku =
       singleton boolean primary key,is_open boolean,opened_channel text,
       opened_release_sha text
     );
+    create table sellerpilot_private.serverless_static_egress_policy(
+      channel text primary key,enabled boolean not null
+    );
 
     create function sellerpilot_private.active_serverless_runtime_release_sha()
     returns text language sql stable set search_path='' as
@@ -171,6 +182,16 @@ async function database({ listingSellerKey = sellerKey, marketplaceSku =
           and gate.opened_channel=p_channel
           and gate.opened_release_sha=
             sellerpilot_private.active_serverless_runtime_release_sha()),false)
+    $$;
+    create function sellerpilot_private.local_channel_executor_access(
+      p_channel text,p_operation text
+    )returns text language sql stable set search_path='' as $$
+      select case
+        when p_channel='coupang' and p_operation in(
+          'categories.attributes','categories.validate'
+        ) then 'read'
+        when p_channel='coupang' and p_operation='listing.create' then 'write'
+        else null end
     $$;
     create function
     sellerpilot_private.coupang_exact_live_price_drift_reconciliation_resolved(
@@ -344,6 +365,9 @@ async function database({ listingSellerKey = sellerKey, marketplaceSku =
       clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',true)`,
     [id.route, id.owner, id.credential, sellerKey, id.worker, release, egress],
   );
+  await db.exec(
+    "insert into sellerpilot_private.serverless_static_egress_policy values('coupang',false)",
+  );
   await db.query(
     `insert into sellerpilot_private.listing_mutation_release_gate
       values(true,true,'coupang',$1)`, [release],
@@ -514,6 +538,29 @@ test("attempt-schema correction removes only the nonexistent created_at write", 
     /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
   assert.doesNotMatch(actualAttemptSchemaCorrection,
     /update\s+sellerpilot_private\.channel_operation_attempts/iu);
+});
+
+test("dead-worker correction is recovery-only and contains no provider or enqueue call", () => {
+  assert.match(deadWorkerRecoveryCorrection,
+    /coupang_exact_price_repair_stale_recovery_context_is_current/u);
+  assert.match(deadWorkerRecoveryCorrection,
+    /sellerpilot\.coupang_exact_price_repair_permit_recover/u);
+  assert.match(deadWorkerRecoveryCorrection,
+    /job\.provider_mutation_started_at is null/u);
+  assert.match(deadWorkerRecoveryCorrection,
+    /job\.lease_expires_at <= clock_timestamp\(\)/u);
+  assert.match(deadWorkerRecoveryCorrection,
+    /a9ce721ca8a5db0d382a84be5b6fdd2471368975549fcff16202c0efc06f311d/u);
+  assert.match(deadWorkerRecoveryCorrection,
+    /878f51ccfaa60dc6386d4def313fb7175d48a621c0d53b988c7a4dcfedc046b7/u);
+  assert.doesNotMatch(deadWorkerRecoveryCorrection,
+    /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
+  assert.doesNotMatch(deadWorkerRecoveryCorrection,
+    /update\s+sellerpilot_private\.ai_cli_worker_tokens/iu);
+  assert.doesNotMatch(deadWorkerRecoveryCorrection,
+    /update\s+sellerpilot_private\.channel_gateway_jobs/iu);
+  assert.doesNotMatch(deadWorkerRecoveryCorrection,
+    /update\s+sellerpilot_private\.coupang_exact_price_repair_permits/iu);
 });
 
 test("rollback leaves no repair and committed replay reuses exactly one job", async () => {
@@ -831,6 +878,248 @@ test("one pre-provider lease loss rearms the same job once and never creates a d
     );
     assert.equal(await scalar(db,
       "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='price.update'"), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("a stale dead worker rearms only the same production-shape repair and must heartbeat before claim", async () => {
+  const db = await database({
+    listingSellerKey: null,
+    marketplaceSku: null,
+    attemptHasCreatedAt: false,
+  });
+  try {
+    await applyNullListingLineageCorrection(db);
+    const enqueued = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs set
+        status='running',worker_token_id=$2,claim_token=$3,attempt_count=1,
+        started_at=clock_timestamp(),
+        lease_expires_at=clock_timestamp()+interval '5 minutes'
+       where id=$1`,
+      [enqueued.jobId, id.worker, id.claim],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set last_seen_at=clock_timestamp()-interval '20 minutes'
+        where id=$1`,
+      [id.worker],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set started_at=clock_timestamp()-interval '16 minutes',
+              lease_expires_at=clock_timestamp()-interval '1 minute'
+        where id=$1`,
+      [enqueued.jobId],
+    );
+
+    const jobIdsBefore = (await db.query(
+      `select jsonb_agg(id order by id) ids
+         from sellerpilot_private.channel_gateway_jobs
+        where channel='coupang' and operation='price.update'`,
+    )).rows[0].ids;
+    const attemptIdsBefore = (await db.query(
+      `select jsonb_agg(id order by id) ids
+         from sellerpilot_private.channel_operation_attempts
+        where channel='coupang' and operation='price.update'`,
+    )).rows[0].ids;
+    const repairJobBefore = (await db.query(
+      `select jsonb_build_object(
+        'id',id,'attemptId',attempt_id,'listingId',listing_id,
+        'credentialId',credential_id,'channel',channel,'operation',operation,
+        'environment',environment,'requestPayload',request_payload,
+        'requestFingerprint',request_fingerprint,
+        'sellerAccountKey',seller_account_key,
+        'writeResourceKind',write_resource_kind,
+        'writeResourceKey',write_resource_key,'createdBy',created_by
+      ) snapshot from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [enqueued.jobId],
+    )).rows[0].snapshot;
+    const repairAttemptBefore = (await db.query(
+      `select to_jsonb(attempt) snapshot
+         from sellerpilot_private.channel_operation_attempts attempt
+        where id=$1`,
+      [enqueued.attemptId],
+    )).rows[0].snapshot;
+    const evidenceBefore = (await db.query(
+      `select jsonb_build_object(
+        'sourceJob',(select to_jsonb(job)
+          from sellerpilot_private.channel_gateway_jobs job where job.id=$1),
+        'sourceAttempt',(select to_jsonb(attempt)
+          from sellerpilot_private.channel_operation_attempts attempt
+         where attempt.id=$2),
+        'verifier',(select to_jsonb(job)
+          from sellerpilot_private.channel_gateway_jobs job where job.id=$3),
+        'listing',(select to_jsonb(listing)
+          from sellerpilot_private.product_listings listing where listing.id=$4),
+        'adjudication',(select to_jsonb(row)
+          from sellerpilot_private.coupang_exact_live_price_drift_adjudications row
+         where row.source_job_id=$1)
+      ) snapshot`,
+      [id.sourceJob, id.sourceAttempt, id.verifier, id.listing],
+    )).rows[0].snapshot;
+
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.coupang_exact_price_repair_snapshot_is_current($1)`,
+      [enqueued.jobId]), false);
+    const fixtureCorrection = deadWorkerRecoveryCorrection
+      .replaceAll(productionRepairJob, enqueued.jobId)
+      .replaceAll(productionRepairAttempt, enqueued.attemptId)
+      .replaceAll(productionRelease, release);
+    await db.exec(fixtureCorrection);
+    const recovered = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(recovered.jobId, enqueued.jobId);
+    assert.equal(recovered.attemptId, enqueued.attemptId);
+    assert.equal(recovered.status, "queued");
+    assert.equal(recovered.reused, true);
+    assert.equal(recovered.rearmed, true);
+    assert.equal(recovered.recoveryReason, "claim_lease_expired_before_provider");
+    assert.equal(recovered.providerMutationStarted, false);
+    assert.equal(recovered.permitConsumed, false);
+    assert.equal(recovered.providerMutationPerformed, false);
+
+    const job = (await db.query(
+      `select status,attempt_count,worker_token_id,claim_token,started_at,
+              lease_expires_at,provider_mutation_started_at,completed_at,
+              response_payload,error_message
+         from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [enqueued.jobId],
+    )).rows[0];
+    assert.equal(job.status, "queued");
+    assert.equal(job.attempt_count, 1);
+    assert.equal(job.worker_token_id, null);
+    assert.equal(job.claim_token, null);
+    assert.equal(job.started_at, null);
+    assert.equal(job.lease_expires_at, null);
+    assert.equal(job.provider_mutation_started_at, null);
+    assert.equal(job.completed_at, null);
+    assert.equal(job.response_payload, null);
+    assert.equal(job.error_message, null);
+    const permit = (await db.query(
+      `select claim_count,recovery_count,recovered_at,bound_at,
+              bound_worker_token_id,bound_claim_token,consumed_at
+         from sellerpilot_private.coupang_exact_price_repair_permits`,
+    )).rows[0];
+    assert.equal(permit.claim_count, 1);
+    assert.equal(permit.recovery_count, 1);
+    assert.ok(permit.recovered_at);
+    assert.equal(permit.bound_at, null);
+    assert.equal(permit.bound_worker_token_id, null);
+    assert.equal(permit.bound_claim_token, null);
+    assert.equal(permit.consumed_at, null);
+    assert.deepEqual((await db.query(
+      `select jsonb_agg(id order by id) ids
+         from sellerpilot_private.channel_gateway_jobs
+        where channel='coupang' and operation='price.update'`,
+    )).rows[0].ids, jobIdsBefore);
+    assert.deepEqual((await db.query(
+      `select jsonb_agg(id order by id) ids
+         from sellerpilot_private.channel_operation_attempts
+        where channel='coupang' and operation='price.update'`,
+    )).rows[0].ids, attemptIdsBefore);
+    assert.deepEqual((await db.query(
+      `select jsonb_build_object(
+        'id',id,'attemptId',attempt_id,'listingId',listing_id,
+        'credentialId',credential_id,'channel',channel,'operation',operation,
+        'environment',environment,'requestPayload',request_payload,
+        'requestFingerprint',request_fingerprint,
+        'sellerAccountKey',seller_account_key,
+        'writeResourceKind',write_resource_kind,
+        'writeResourceKey',write_resource_key,'createdBy',created_by
+      ) snapshot from sellerpilot_private.channel_gateway_jobs where id=$1`,
+      [enqueued.jobId],
+    )).rows[0].snapshot, repairJobBefore);
+    assert.deepEqual((await db.query(
+      `select to_jsonb(attempt) snapshot
+         from sellerpilot_private.channel_operation_attempts attempt
+        where id=$1`,
+      [enqueued.attemptId],
+    )).rows[0].snapshot, repairAttemptBefore);
+    assert.deepEqual((await db.query(
+      `select jsonb_build_object(
+        'sourceJob',(select to_jsonb(job)
+          from sellerpilot_private.channel_gateway_jobs job where job.id=$1),
+        'sourceAttempt',(select to_jsonb(attempt)
+          from sellerpilot_private.channel_operation_attempts attempt
+         where attempt.id=$2),
+        'verifier',(select to_jsonb(job)
+          from sellerpilot_private.channel_gateway_jobs job where job.id=$3),
+        'listing',(select to_jsonb(listing)
+          from sellerpilot_private.product_listings listing where listing.id=$4),
+        'adjudication',(select to_jsonb(row)
+          from sellerpilot_private.coupang_exact_live_price_drift_adjudications row
+         where row.source_job_id=$1)
+      ) snapshot`,
+      [id.sourceJob, id.sourceAttempt, id.verifier, id.listing],
+    )).rows[0].snapshot, evidenceBefore);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_operation_attempts where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_price_repair_permits"), 1);
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.coupang_exact_price_repair_snapshot_is_current($1)`,
+      [enqueued.jobId]), false);
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), false);
+
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set last_seen_at=clock_timestamp(),last_version=$2
+        where id=$1`,
+      [id.worker, workerVersion],
+    );
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.coupang_exact_price_repair_snapshot_is_current($1)`,
+      [enqueued.jobId]), true);
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), true);
+
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs set
+        status='running',worker_token_id=$2,claim_token=$3,
+        attempt_count=attempt_count+1,started_at=clock_timestamp(),
+        lease_expires_at=clock_timestamp()+interval '5 minutes'
+       where id=$1`,
+      [enqueued.jobId, id.worker, id.secondClaim],
+    );
+    await db.query(
+      `update sellerpilot_private.ai_cli_worker_tokens
+          set last_seen_at=clock_timestamp()-interval '20 minutes'
+        where id=$1`,
+      [id.worker],
+    );
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set lease_expires_at=clock_timestamp()-interval '1 minute'
+        where id=$1`,
+      [enqueued.jobId],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1)",
+        [release],
+      ),
+      /COUPANG_EXACT_PRICE_REPAIR_RECOVERY_EXHAUSTED/u,
+    );
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_operation_attempts where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_price_repair_permits"), 1);
   } finally {
     await db.close();
   }
