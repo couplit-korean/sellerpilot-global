@@ -43,3 +43,7 @@
 이번 요청은 비공개 `origin`의 `integration-aside`에 커밋·푸시까지만 수행한다. Vercel 연결 원격은 갱신하지 않는다. `vercel.json`의 `git.deploymentEnabled`에서 `integration-aside`와 이번 작업 브랜치를 false로 지정했다. 다른 브랜치의 설정은 보존한다. [Vercel 공식 Git 설정](https://vercel.com/docs/project-configuration/git-configuration) 기준이다. 배포 CLI/API/운영 migration 적용은 하지 않는다.
 
 검증 수치와 커밋 통합 범위는 [정리 결과](../cs-parallel/reports/coordinator/channel-domain-layout-20260909.md)와 [현재 상태](../현재상태.md)를 따른다.
+
+## 독립 개발 전 재검토 기준
+
+[CS·상품 독립 개발 재검증](../cs-parallel/reports/coordinator/domain-separation-reaudit-20260909.md)에 각 영역 파일과 공통 파일의 변경 규칙을 정리했다. 공통 인증/DB/큐/transaction/전역 CSS는 공동 기반이며, 해당 변경을 CS 또는 상품 전용 변경으로 취급하지 않는다. `build:vercel`은 업무·채널 경계 검사를 통과해야 빌드한다.

@@ -492,7 +492,7 @@ test("eBay operator API derives release availability from the selected credentia
   assert.ok(environmentOffset > 0);
   assert.ok(releaseOffset > environmentOffset);
   assert.match(consoleSource, /channelOperationAvailable\(target\.channel\.key, item\.value, target\.credential\.environment\)/);
-  assert.match(consoleSource, /startCreationTime:[\s\S]*endCreationTime:[\s\S]*marketplaceId: "EBAY_US"/);
+  assert.match(consoleSource, /href="\/cs">CS 전용 화면/);
 });
 
 test("periodic eBay ASQ sync uses the credential marketplace while manual reads stay explicit", () => {

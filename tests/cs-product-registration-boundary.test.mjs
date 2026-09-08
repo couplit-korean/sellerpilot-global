@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { audit, buildGraph, pathsToForbidden } from "../scripts/audit-cs-commerce-boundaries.mjs";
+import { audit, buildGraph, pathsToForbidden, isCs, isCommerce } from "../scripts/audit-cs-commerce-boundaries.mjs";
 
 const graph = buildGraph();
 
@@ -35,4 +35,18 @@ test("dependency traversal never stops at a shared execution boundary", () => {
 test("Standalone CS page and its entire import graph cannot load product UI, product data or worker code", () => {
   assert.ok(graph.has("app/cs/page.tsx"));
   assert.deepEqual(pathsToForbidden(graph, ["app/cs/page.tsx"], file => /product|commerce|ai-cli-contract|use-operations-snapshot|app\/page/.test(file)), []);
+});
+
+// Legacy URLs remain owned by their domain even when they are compatibility routes.
+test("legacy CS and product AI API entry points participate in the ownership audit", () => {
+  assert.equal(isCs("app/api/ai/support-reply/route.ts"), true);
+  assert.equal(isCommerce("app/api/ai/support-reply/route.ts"), false);
+  assert.equal(isCs("app/cs-navigation.ts"), true);
+  assert.equal(isCommerce("app/api/ai/worker/complete/route.ts"), true);
+  const synthetic = new Map([
+    ["app/api/ai/worker/complete/route.ts", ["shared"]],
+    ["shared", ["lib/cs/draft-contract.ts"]],
+    ["lib/cs/draft-contract.ts", []],
+  ]);
+  assert.equal(audit(synthetic).commerceToCs.length, 1);
 });

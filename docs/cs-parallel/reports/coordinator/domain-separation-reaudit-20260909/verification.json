@@ -1,0 +1,29 @@
+{
+  "verifiedAt": "2026-09-08T19:37:43.356065+00:00",
+  "baseCommit": "6f64476dbf402e25cd7b418692e492f8ee2bdddb",
+  "regression": {
+    "tests": 396,
+    "pass": 396,
+    "fail": 0,
+    "skipped": 0
+  },
+  "build": "passed including mandatory domain/channel guards and TypeScript",
+  "eslint": "passed",
+  "foundAndFixed": [
+    "Marketplace API console retained CS read option routed to product endpoint; removed obsolete option/template and linked dedicated CS workspace.",
+    "Ownership audit did not classify product AI API and retired CS alias endpoints; expanded classification.",
+    "Domain/channel checks were optional; build:vercel now executes both before Next build."
+  ],
+  "crossDomainCompletionNegativeTests": 12,
+  "sharedInfrastructure": [
+    "auth and account credentials",
+    "HTTP protocols with per-invocation AsyncLocalStorage",
+    "physical database and gateway queue",
+    "common completion RPC and migration sequencing",
+    "application root layout and global CSS",
+    "common gateway worker process and provider request budgets"
+  ],
+  "providerWrites": 0,
+  "productionDbChanges": 0,
+  "vercelDeployments": 0
+}

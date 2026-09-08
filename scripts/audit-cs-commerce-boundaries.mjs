@@ -53,11 +53,13 @@ export function pathsToForbidden(graph, roots, forbidden) {
   return result;
 }
 export function isCs(file) {
-  return /^(?:scripts\/cs-(?:draft-worker|gateway-job)\.mjs$|app\/api\/cs\/|app\/cs\/|app\/api\/admin\/cs\/|lib\/cs\/|lib\/channels\/cs\/)/u.test(file)
+  return /^app\/(?:cs-[^/]+|api\/ai\/support-reply\/)/u.test(file)
+    || /^(?:scripts\/cs-(?:draft-worker|gateway-job)\.mjs$|app\/api\/cs\/|app\/cs\/|app\/api\/admin\/cs\/|lib\/cs\/|lib\/channels\/cs\/)/u.test(file)
     || /^lib\/channels\/(?:cs-|inquiry|reply|.*-inquiries|.*-messages|.*-inquiry-history|lazada-im)/u.test(file);
 }
 export function isCommerce(file) {
-  return /^(?:scripts\/(?:product-ai-worker|commerce-gateway-job)\.mjs$|app\/_publishing\/|app\/api\/admin\/(?:listing|listings|products?)\/|lib\/(?:product|publish|server-product|channel-listing-handoff))/u.test(file)
+  return (/^app\/api\/ai\//u.test(file) && !/^app\/api\/ai\/support-reply\//u.test(file))
+    || /^(?:scripts\/(?:product-ai-worker|commerce-gateway-job)\.mjs$|app\/_publishing\/|app\/api\/admin\/(?:listing|listings|products?)\/|lib\/(?:product|publish|server-product|channel-listing-handoff))/u.test(file)
     || /^(?:app\/use-operations-snapshot|app\/api\/operations\/(?:snapshot|product-readiness)\/|app\/api\/admin\/channel-operations\/)/u.test(file)
     || /^lib\/ai-cli-contract\.ts$/.test(file)
     || /^app\/(?:product-|ai-product-studio)/u.test(file)
