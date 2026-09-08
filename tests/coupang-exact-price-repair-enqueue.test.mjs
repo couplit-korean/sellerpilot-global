@@ -13,6 +13,10 @@ const draftlessCorrection = await readFile(new URL(
   "../supabase/migrations/20260908054500_rebind_exact_coupang_price_repair_without_publish_draft.sql",
   import.meta.url,
 ), "utf8");
+const nullListingLineageCorrection = await readFile(new URL(
+  "../supabase/migrations/20260908055000_allow_exact_coupang_price_repair_from_null_listing_lineage.sql",
+  import.meta.url,
+), "utf8");
 
 const id = Object.freeze({
   owner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
@@ -44,7 +48,8 @@ async function scalar(db, sql, params = []) {
   return Object.values(result.rows[0] ?? {})[0];
 }
 
-async function database() {
+async function database({ listingSellerKey = sellerKey, marketplaceSku =
+  "AUTO-780720401E2D4E4EA45F" } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(String.raw`
     create role anon;
@@ -198,9 +203,37 @@ async function database() {
     create function sellerpilot_private.guard_gateway_job_seller_lineage()
     returns trigger language plpgsql set search_path='' as $$
     declare
+      v_credential_key text;
+      v_listing record;
       v_requested_remote_id text;
       v_expected_remote_id text;
     begin
+      if tg_op = 'INSERT' then
+        select credential.seller_account_key into v_credential_key
+          from sellerpilot_private.channel_credentials credential
+         where credential.id = new.credential_id
+           and credential.channel = new.channel;
+        if not found then
+          raise exception 'gateway credential lineage unavailable';
+        end if;
+        new.seller_account_key := v_credential_key;
+      end if;
+      if tg_op = 'INSERT' and new.listing_id is not null then
+        select listing.id,listing.channel_key,listing.remote_id,
+               listing.seller_account_key
+          into v_listing
+          from sellerpilot_private.product_listings listing
+         where listing.id = new.listing_id;
+        if not found or v_listing.channel_key <> new.channel then
+          raise exception 'gateway listing lineage mismatch';
+        end if;
+      if new.operation in ('price.update', 'inventory.update') and (
+        v_listing.seller_account_key is null
+        or v_listing.seller_account_key is distinct from v_credential_key
+      ) then
+          raise exception 'gateway listing seller account mismatch';
+        end if;
+      end if;
       if tg_op='INSERT' and new.operation in ('price.update','inventory.update') then
         v_requested_remote_id:=coalesce(
           new.request_payload#>>'{arguments,vendorItemId}',
@@ -286,8 +319,8 @@ async function database() {
     )values($1,$2,$3,$4,'coupang','','',$5,$6,'16375780938','failed',
       'external_action','live','live','APPROVED|requested=false|onSale=true',
       $7::jsonb,'KRW',3190,clock_timestamp())`,
-    [id.listing, id.owner, id.product, id.sourceAttempt, sellerKey,
-      "AUTO-780720401E2D4E4EA45F", JSON.stringify(remoteResources)],
+    [id.listing, id.owner, id.product, id.sourceAttempt, listingSellerKey,
+      marketplaceSku, JSON.stringify(remoteResources)],
   );
   await db.query(
     `insert into sellerpilot_private.ai_cli_worker_tokens values(
@@ -418,6 +451,12 @@ async function applyDraftlessCorrection(db) {
   await db.exec(draftlessCorrection);
 }
 
+async function applyNullListingLineageCorrection(db) {
+  await prepareDraftlessFixture(db);
+  await db.exec(draftlessCorrection);
+  await db.exec(nullListingLineageCorrection);
+}
+
 test("migration is an exact price-only lane and contains no production call", () => {
   assert.match(migration, /operation = 'price\.update'/u);
   assert.match(migration, /vendorItemId','96027942778'/u);
@@ -430,6 +469,19 @@ test("migration is an exact price-only lane and contains no production call", ()
   assert.doesNotMatch(migration, /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/u);
   assert.doesNotMatch(migration, /update\s+sellerpilot_private\.channel_gateway_jobs\s+set\s+status\s*=\s*'queued'/iu);
   assert.doesNotMatch(migration, /vendorItemIds,0\}'\s*=\s*and/u);
+});
+
+test("NULL-listing correction preserves the listing and contains no production call", () => {
+  assert.match(nullListingLineageCorrection,
+    /listing\.seller_account_key is null/u);
+  assert.match(nullListingLineageCorrection,
+    /candidate\.seller_account_key = credential\.seller_account_key/u);
+  assert.match(nullListingLineageCorrection,
+    /source_attempt\.seller_account_key = permit\.seller_account_key/u);
+  assert.doesNotMatch(nullListingLineageCorrection,
+    /update\s+sellerpilot_private\.product_listings[\s\S]*seller_account_key/iu);
+  assert.doesNotMatch(nullListingLineageCorrection,
+    /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
 });
 
 test("rollback leaves no repair and committed replay reuses exactly one job", async () => {
@@ -1034,6 +1086,194 @@ test("draftless evidence drift blocks the exact job before provider claim", asyn
       "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='listing.create'"), 1);
     assert.equal(await scalar(db,
       "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='listing.publication.verify'"), 1);
+  } finally {
+    await db.close();
+  }
+});
+
+test("NULL listing uses the verified credential lineage only for the exact repair", async () => {
+  const db = await database({ listingSellerKey: null, marketplaceSku: null });
+  try {
+    await prepareDraftlessFixture(db);
+    await db.exec(draftlessCorrection);
+
+    const genericInsert = (operation) => db.query(
+      `insert into sellerpilot_private.channel_gateway_jobs(
+        id,credential_id,listing_id,channel,operation,environment,
+        request_payload,status,request_fingerprint,created_by
+      ) values(
+        gen_random_uuid(),$1,$2,'coupang',$3,'production',
+        '{"arguments":{"vendorItemId":"96027942778"}}'::jsonb,
+        'queued',$4,$5
+      )`,
+      [id.credential, id.listing, operation, "9".repeat(64), id.actor],
+    );
+    await assert.rejects(genericInsert("price.update"),
+      /gateway listing seller account mismatch/u);
+
+    const immutableBefore = (await db.query(
+      `select jsonb_build_object(
+        'listing',(select to_jsonb(row) from sellerpilot_private.product_listings row
+          where row.id=$1),
+        'sourceJob',(select to_jsonb(row) from sellerpilot_private.channel_gateway_jobs row
+          where row.id=$2),
+        'sourceAttempt',(select to_jsonb(row) from sellerpilot_private.channel_operation_attempts row
+          where row.id=$3),
+        'verifier',(select to_jsonb(row) from sellerpilot_private.channel_gateway_jobs row
+          where row.id=$4),
+        'adjudication',(select to_jsonb(row)
+          from sellerpilot_private.coupang_exact_live_price_drift_adjudications row
+          where row.source_job_id=$2)
+      ) snapshot`,
+      [id.listing, id.sourceJob, id.sourceAttempt, id.verifier],
+    )).rows[0].snapshot;
+
+    await db.exec(nullListingLineageCorrection);
+    await assert.rejects(genericInsert("price.update"),
+      /gateway listing seller account mismatch/u);
+    await assert.rejects(genericInsert("inventory.update"),
+      /gateway listing seller account mismatch/u);
+
+    const first = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    const replay = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(first.status, "queued");
+    assert.equal(first.reused, false);
+    assert.equal(replay.reused, true);
+    assert.equal(replay.jobId, first.jobId);
+    assert.equal(replay.attemptId, first.attemptId);
+
+    const keys = (await db.query(
+      `select listing.seller_account_key listing_key,
+              credential.seller_account_key credential_key,
+              route.seller_account_key route_key,
+              source_job.seller_account_key source_job_key,
+              source_attempt.seller_account_key source_attempt_key,
+              repair_job.seller_account_key repair_job_key,
+              repair_attempt.seller_account_key repair_attempt_key,
+              permit.seller_account_key permit_key,
+              repair_job.provider_mutation_started_at,
+              permit.consumed_at
+         from sellerpilot_private.coupang_exact_price_repair_permits permit
+         join sellerpilot_private.product_listings listing
+           on listing.id=permit.listing_id
+         join sellerpilot_private.channel_credentials credential
+           on credential.id=permit.credential_id
+         join sellerpilot_private.local_channel_executor_routes route
+           on route.id=permit.source_route_id
+         join sellerpilot_private.channel_gateway_jobs source_job
+           on source_job.id=permit.source_job_id
+         join sellerpilot_private.channel_operation_attempts source_attempt
+           on source_attempt.id=permit.source_attempt_id
+         join sellerpilot_private.channel_gateway_jobs repair_job
+           on repair_job.id=permit.repair_job_id
+         join sellerpilot_private.channel_operation_attempts repair_attempt
+           on repair_attempt.id=permit.repair_attempt_id`,
+    )).rows[0];
+    assert.equal(keys.listing_key, null);
+    for (const name of [
+      "credential_key", "route_key", "source_job_key", "source_attempt_key",
+      "repair_job_key", "repair_attempt_key", "permit_key",
+    ]) assert.equal(keys[name], sellerKey);
+    assert.equal(keys.provider_mutation_started_at, null);
+    assert.equal(keys.consumed_at, null);
+
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.channel_operation_attempts where operation='price.update'"), 1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_price_repair_permits"), 1);
+    const immutableAfter = (await db.query(
+      `select jsonb_build_object(
+        'listing',(select to_jsonb(row) from sellerpilot_private.product_listings row
+          where row.id=$1),
+        'sourceJob',(select to_jsonb(row) from sellerpilot_private.channel_gateway_jobs row
+          where row.id=$2),
+        'sourceAttempt',(select to_jsonb(row) from sellerpilot_private.channel_operation_attempts row
+          where row.id=$3),
+        'verifier',(select to_jsonb(row) from sellerpilot_private.channel_gateway_jobs row
+          where row.id=$4),
+        'adjudication',(select to_jsonb(row)
+          from sellerpilot_private.coupang_exact_live_price_drift_adjudications row
+          where row.source_job_id=$2)
+      ) snapshot`,
+      [id.listing, id.sourceJob, id.sourceAttempt, id.verifier],
+    )).rows[0].snapshot;
+    assert.deepEqual(immutableAfter, immutableBefore);
+    assert.equal(await scalar(db,
+      `select to_jsonb(listing)=adjudication.listing_after_snapshot
+          and encode(extensions.digest(to_jsonb(listing)::text,'sha256'),'hex')=
+            adjudication.listing_after_sha256
+         from sellerpilot_private.product_listings listing
+         join sellerpilot_private.coupang_exact_live_price_drift_adjudications adjudication
+           on adjudication.listing_id=listing.id
+        where listing.id=$1`, [id.listing]), true);
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.coupang_exact_price_repair_insert_identity_allowed(job)
+         from sellerpilot_private.channel_gateway_jobs job where job.id=$1`,
+      [first.jobId]), false);
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(await scalar(db,
+        `select has_function_privilege($1,
+          'sellerpilot_private.coupang_exact_price_repair_insert_identity_allowed(sellerpilot_private.channel_gateway_jobs)',
+          'EXECUTE')`, [role]), false);
+    }
+
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [first.jobId, id.credential, id.worker, workerVersion, release, egress]), true);
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs set
+        status='running',worker_token_id=$2,claim_token=$3,attempt_count=1,
+        started_at=clock_timestamp(),lease_expires_at=clock_timestamp()+interval '5 minutes'
+       where id=$1`,
+      [first.jobId, id.worker, id.claim],
+    );
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+      [tokenHash, first.jobId, id.claim]), true);
+    assert.ok(await scalar(db,
+      "select consumed_at from sellerpilot_private.coupang_exact_price_repair_permits"));
+    assert.ok(await scalar(db,
+      "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [first.jobId]));
+  } finally {
+    await db.close();
+  }
+});
+
+test("NULL listing evidence drift blocks provider claim", async () => {
+  const db = await database({ listingSellerKey: null, marketplaceSku: null });
+  try {
+    await applyNullListingLineageCorrection(db);
+    const enqueued = (await db.query(
+      "select public.sellerpilot_service_enqueue_exact_coupang_price_repair($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), true);
+    await db.query(
+      "update sellerpilot_private.channel_gateway_jobs set error_message='SOURCE_DRIFT' where id=$1",
+      [id.sourceJob],
+    );
+    assert.equal(await scalar(db,
+      `select sellerpilot_private.local_channel_executor_job_allowed(
+        $1,$2,$3,$4,$5,$6)`,
+      [enqueued.jobId, id.credential, id.worker, workerVersion, release, egress]), false);
+    assert.equal(await scalar(db,
+      "select provider_mutation_started_at from sellerpilot_private.channel_gateway_jobs where id=$1",
+      [enqueued.jobId]), null);
+    assert.equal(await scalar(db,
+      "select consumed_at from sellerpilot_private.coupang_exact_price_repair_permits"), null);
   } finally {
     await db.close();
   }
