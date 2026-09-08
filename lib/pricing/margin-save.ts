@@ -1,3 +1,4 @@
+import { marginRateIsFresh, type MarginRateEvidence } from "./margin-rate-freshness";
 import {
   calculateMargin,
   marginResultMatches,
@@ -9,7 +10,7 @@ import { marginChannelProfiles, quoteKrwPrice, type MarginCurrency } from "./cha
 
 export type MarginSaveVerification =
   | { ok: true; result: MarginEngineResult }
-  | { ok: false; reason: "selling_price_required" | "calculation_not_ready" | "exchange_rate_required" | "channel_profile_mismatch" | "exchange_conversion_mismatch" | "result_mismatch" };
+  | { ok: false; reason: "selling_price_required" | "calculation_not_ready" | "exchange_rate_required" | "channel_profile_mismatch" | "exchange_conversion_mismatch" | "result_mismatch" | "exchange_rate_expired" };
 
 export function verifyMarginScenarioForSave(input: {
   channelKey: ActiveChannelKey;
@@ -20,6 +21,8 @@ export function verifyMarginScenarioForSave(input: {
   currency: MarginCurrency;
   rateToKrw: number | null;
   suppliedResult: Record<string, unknown>;
+  rateEvidence?: MarginRateEvidence | null;
+  now?: number;
 }): MarginSaveVerification {
   if (input.plannedSellingPriceKrw <= 0 || input.engineInput.sellingPrice <= 0) return { ok: false, reason: "selling_price_required" };
   const baseProfile = marginChannelProfiles.find((profile) => profile.key === input.channelKey);
@@ -28,6 +31,9 @@ export function verifyMarginScenarioForSave(input: {
   }
   if (input.currency === "KRW" && input.rateToKrw !== 1) return { ok: false, reason: "channel_profile_mismatch" };
   if (input.currency !== "KRW" && input.rateToKrw === null) return { ok: false, reason: "exchange_rate_required" };
+  if (input.currency !== "KRW" && !marginRateIsFresh(input.rateEvidence, input.now)) {
+    return { ok: false, reason: "exchange_rate_expired" };
+  }
   const profile = { ...baseProfile, rateToKrw: input.currency === "KRW" ? 1 : input.rateToKrw };
   let quote;
   try {

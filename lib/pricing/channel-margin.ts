@@ -179,6 +179,12 @@ export function calculateChannelMargins(
     return {
       ...channel,
       ...engineResult,
+      ...(!exchangeRateReady ? {
+        profitabilityStatus: "unavailable" as const,
+        marketStatus: "unavailable" as const,
+        profit: null, margin: null, variableCost: null,
+        recommendedPrice: null, breakEvenPrice: null, marketGapRate: null,
+      } : {}),
       engineInput,
       costs,
       platformFee: feeOverrides[channel.key],

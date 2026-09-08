@@ -39,6 +39,11 @@ const marginInputsSchema = z.object({
   productId: z.string().uuid(),
   currency: z.enum(["JPY", "SGD", "MYR", "KRW", "USD"]),
   rateToKrw: z.number().finite().positive().max(10_000_000).nullable(),
+  rateEvidence: z.object({
+    fetchedAt: z.string().datetime(),
+    asOf: z.string().min(1).max(64),
+    frequency: z.enum(["minute-market", "daily-reference-fallback"]),
+  }).strict().nullable().optional(),
   rateBasis: z.string().trim().min(1).max(500),
   engineVersion: z.literal(MARGIN_ENGINE_VERSION),
 }).strict();
@@ -261,6 +266,7 @@ export async function POST(request: Request) {
       currency,
       rateToKrw,
       rateBasis,
+      rateEvidence,
       engineVersion,
       productId,
       plannedSellingPriceKrw,
@@ -277,6 +283,7 @@ export async function POST(request: Request) {
       currency,
       rateToKrw,
       suppliedResult: parsed.data.result,
+      rateEvidence,
     });
     if (!verification.ok) {
       return NextResponse.json({ message: "수수료·환율·목표 마진 계산 기준을 확인해 주세요." }, { status: 400 });
@@ -290,6 +297,7 @@ export async function POST(request: Request) {
       currency,
       rateToKrw,
       rateBasis,
+      rateEvidence,
       engineVersion,
     };
     const verifiedResult = { ...verification.result, calculatedAt: new Date().toISOString() };
