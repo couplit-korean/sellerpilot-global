@@ -22,6 +22,8 @@ declare
   helper_definition text;
   snapshot_definition text;
   enqueue_definition text;
+  enqueue_preimage_sha256 constant text :=
+    'ba8bc3c8c2004efff02f664761420c9166f52c9d5041136a325e2a2254aa4532';
   columns_fragment constant text :=
     '    seller_account_key,created_at,started_at';
   values_fragment constant text :=
@@ -133,6 +135,8 @@ begin
        'source_attempt.seller_account_key = permit.seller_account_key') = 0
      or pg_catalog.strpos(enqueue_definition,
        'candidate.seller_account_key = credential.seller_account_key') = 0
+     or encode(extensions.digest(enqueue_definition,'sha256'),'hex')
+       <> enqueue_preimage_sha256
      or (length(enqueue_definition)-length(replace(
        enqueue_definition,columns_fragment,''
      ))) / length(columns_fragment) <> 1
@@ -148,6 +152,8 @@ $preflight$;
 do $patch_enqueue$
 declare
   definition text;
+  enqueue_postimage_sha256 constant text :=
+    '6099a7e5566c6b7264696a1a0482780d42074d82b7e8eef18cdfd428bb627752';
   columns_fragment constant text :=
     '    seller_account_key,created_at,started_at';
   values_fragment constant text :=
@@ -169,7 +175,9 @@ begin
        '    seller_account_key,started_at') = 0
      or pg_catalog.strpos(definition,
        '    request_sha,''running'',true,false,credential.seller_account_key,now_at'
-     ) = 0 then
+     ) = 0
+     or encode(extensions.digest(definition,'sha256'),'hex')
+       <> enqueue_postimage_sha256 then
     raise exception 'COUPANG_EXACT_ATTEMPT_SCHEMA_PATCH_FAILED'
       using errcode = '55000';
   end if;
@@ -188,6 +196,8 @@ declare
   enqueue_volatility "char";
   enqueue_config text[];
   enqueue_oid oid;
+  enqueue_postimage_sha256 constant text :=
+    '6099a7e5566c6b7264696a1a0482780d42074d82b7e8eef18cdfd428bb627752';
 begin
   if exists (
        select 1
@@ -237,6 +247,8 @@ begin
        'false,credential.seller_account_key,now_at,now_at') > 0
      or pg_catalog.strpos(enqueue_definition,
        'false,credential.seller_account_key,now_at') = 0
+     or encode(extensions.digest(enqueue_definition,'sha256'),'hex')
+       <> enqueue_postimage_sha256
      or enqueue_language <> 'plpgsql'
      or not enqueue_security_definer
      or enqueue_volatility <> 'v'

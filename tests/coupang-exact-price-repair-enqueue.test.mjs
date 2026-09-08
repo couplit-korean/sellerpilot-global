@@ -502,6 +502,14 @@ test("attempt-schema correction removes only the nonexistent created_at write", 
     /seller_account_key,created_at,started_at/u);
   assert.match(actualAttemptSchemaCorrection,
     /seller_account_key,started_at/u);
+  assert.match(actualAttemptSchemaCorrection,
+    /ba8bc3c8c2004efff02f664761420c9166f52c9d5041136a325e2a2254aa4532/u);
+  assert.match(actualAttemptSchemaCorrection,
+    /6099a7e5566c6b7264696a1a0482780d42074d82b7e8eef18cdfd428bb627752/u);
+  assert.match(actualAttemptSchemaCorrection,
+    /digest\(enqueue_definition,'sha256'\)/u);
+  assert.match(actualAttemptSchemaCorrection,
+    /digest\(definition,'sha256'\)/u);
   assert.doesNotMatch(actualAttemptSchemaCorrection,
     /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
   assert.doesNotMatch(actualAttemptSchemaCorrection,
