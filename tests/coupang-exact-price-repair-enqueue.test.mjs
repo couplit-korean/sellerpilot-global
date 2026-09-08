@@ -17,6 +17,10 @@ const nullListingLineageCorrection = await readFile(new URL(
   "../supabase/migrations/20260908055000_allow_exact_coupang_price_repair_from_null_listing_lineage.sql",
   import.meta.url,
 ), "utf8");
+const actualAttemptSchemaCorrection = await readFile(new URL(
+  "../supabase/migrations/20260908055500_bind_exact_coupang_price_repair_to_actual_attempt_schema.sql",
+  import.meta.url,
+), "utf8");
 
 const id = Object.freeze({
   owner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
@@ -49,7 +53,7 @@ async function scalar(db, sql, params = []) {
 }
 
 async function database({ listingSellerKey = sellerKey, marketplaceSku =
-  "AUTO-780720401E2D4E4EA45F" } = {}) {
+  "AUTO-780720401E2D4E4EA45F", attemptHasCreatedAt = true } = {}) {
   const db = new PGlite({ extensions: { pgcrypto } });
   await db.exec(String.raw`
     create role anon;
@@ -389,6 +393,14 @@ async function database({ listingSellerKey = sellerKey, marketplaceSku =
         and status in('queued','running','reconciliation_required')
   `);
   await db.exec(migration);
+  if (!attemptHasCreatedAt) {
+    await db.exec(`
+      alter table sellerpilot_private.channel_operation_attempts
+        drop column created_at;
+      alter table sellerpilot_private.channel_operation_attempts
+        alter column started_at set not null;
+    `);
+  }
   await db.exec("set request.jwt.claim.role='service_role'");
   return db;
 }
@@ -455,6 +467,7 @@ async function applyNullListingLineageCorrection(db) {
   await prepareDraftlessFixture(db);
   await db.exec(draftlessCorrection);
   await db.exec(nullListingLineageCorrection);
+  await db.exec(actualAttemptSchemaCorrection);
 }
 
 test("migration is an exact price-only lane and contains no production call", () => {
@@ -482,6 +495,17 @@ test("NULL-listing correction preserves the listing and contains no production c
     /update\s+sellerpilot_private\.product_listings[\s\S]*seller_account_key/iu);
   assert.doesNotMatch(nullListingLineageCorrection,
     /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
+});
+
+test("attempt-schema correction removes only the nonexistent created_at write", () => {
+  assert.match(actualAttemptSchemaCorrection,
+    /seller_account_key,created_at,started_at/u);
+  assert.match(actualAttemptSchemaCorrection,
+    /seller_account_key,started_at/u);
+  assert.doesNotMatch(actualAttemptSchemaCorrection,
+    /select\s+public\.sellerpilot_service_enqueue_exact_coupang_price_repair/iu);
+  assert.doesNotMatch(actualAttemptSchemaCorrection,
+    /update\s+sellerpilot_private\.channel_operation_attempts/iu);
 });
 
 test("rollback leaves no repair and committed replay reuses exactly one job", async () => {
@@ -1092,7 +1116,11 @@ test("draftless evidence drift blocks the exact job before provider claim", asyn
 });
 
 test("NULL listing uses the verified credential lineage only for the exact repair", async () => {
-  const db = await database({ listingSellerKey: null, marketplaceSku: null });
+  const db = await database({
+    listingSellerKey: null,
+    marketplaceSku: null,
+    attemptHasCreatedAt: false,
+  });
   try {
     await prepareDraftlessFixture(db);
     await db.exec(draftlessCorrection);
@@ -1129,6 +1157,7 @@ test("NULL listing uses the verified credential lineage only for the exact repai
     )).rows[0].snapshot;
 
     await db.exec(nullListingLineageCorrection);
+    await db.exec(actualAttemptSchemaCorrection);
     await assert.rejects(genericInsert("price.update"),
       /gateway listing seller account mismatch/u);
     await assert.rejects(genericInsert("inventory.update"),
@@ -1250,7 +1279,11 @@ test("NULL listing uses the verified credential lineage only for the exact repai
 });
 
 test("NULL listing evidence drift blocks provider claim", async () => {
-  const db = await database({ listingSellerKey: null, marketplaceSku: null });
+  const db = await database({
+    listingSellerKey: null,
+    marketplaceSku: null,
+    attemptHasCreatedAt: false,
+  });
   try {
     await applyNullListingLineageCorrection(db);
     const enqueued = (await db.query(
