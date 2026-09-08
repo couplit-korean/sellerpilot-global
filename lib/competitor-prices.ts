@@ -6,6 +6,7 @@ import {
 } from "./channels/serverless-static-egress";
 import {
   COMPETITOR_MATCHER_VERSION,
+  competitorLowestPriceEligibility,
   deduplicateCompetitorObservations,
   deduplicateCompetitorSourceObservations,
   enrichCompetitorCandidateV3,
@@ -2118,15 +2119,26 @@ function isCompetitorV3Candidate(
     && Array.isArray(item.provenance);
 }
 
+function compareEligibleCompetitorPrices(left: CompetitorPriceCandidateV3, right: CompetitorPriceCandidateV3, now: number) {
+  const leftEligible = competitorLowestPriceEligibility(left, { now }).eligible;
+  const rightEligible = competitorLowestPriceEligibility(right, { now }).eligible;
+  if (leftEligible !== rightEligible) return leftEligible ? -1 : 1;
+  return leftEligible && rightEligible
+    ? left.totalPurchasePrice!.krwAmount! - right.totalPurchasePrice!.krwAmount!
+    : 0;
+}
+
 function groupCompetitorV3Candidates(
   items: CompetitorPriceCandidateV3[],
 ) {
   const visibleCounts = new Map<CompetitorMarketplace, number>();
   const rejectedCounts = new Map<CompetitorMarketplace, number>();
   const tierOrder: Record<CompetitorMatchTier, number> = { exact: 0, probable: 1, rejected: 2 };
+  const now = Date.now();
   return items
     .sort((left, right) => (
-      competitorMarketplaceOrder.indexOf(left.marketplace) - competitorMarketplaceOrder.indexOf(right.marketplace)
+      compareEligibleCompetitorPrices(left, right, now)
+      || competitorMarketplaceOrder.indexOf(left.marketplace) - competitorMarketplaceOrder.indexOf(right.marketplace)
       || tierOrder[left.matchTier] - tierOrder[right.matchTier]
       || right.matchScore - left.matchScore
       || (left.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY) - (right.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY)
@@ -2152,8 +2164,10 @@ function capCompetitorV3SourceCandidates(
   limit = 30,
 ) {
   const tierOrder: Record<CompetitorMatchTier, number> = { exact: 0, probable: 1, rejected: 2 };
+  const now = Date.now();
   const sorted = [...items].sort((left, right) => (
-    tierOrder[left.matchTier] - tierOrder[right.matchTier]
+    compareEligibleCompetitorPrices(left, right, now)
+    || tierOrder[left.matchTier] - tierOrder[right.matchTier]
     || right.matchScore - left.matchScore
     || competitorMarketplaceOrder.indexOf(left.marketplace) - competitorMarketplaceOrder.indexOf(right.marketplace)
     || (left.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY) - (right.totalPurchasePrice?.krwAmount ?? Number.POSITIVE_INFINITY)

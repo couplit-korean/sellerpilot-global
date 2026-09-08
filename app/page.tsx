@@ -1377,6 +1377,8 @@ function productMarginUnavailableReasonMessage(reason: ProductMarginUnavailableE
       return "저장된 플랫폼·결제·세금·광고·적립 수수료 중 누락되거나 잘못된 값이 있어 계산하지 않았습니다.";
     case "inconsistent-baseline":
       return "저장된 입력값과 손익 결과가 서로 일치하지 않아 계산하지 않았습니다.";
+    case "exchange-rate-expired":
+      return "저장된 해외 환율이 만료되었거나 확인되지 않아 손익을 계산하지 않았습니다. 마진 계산기에서 최신 환율로 다시 계산하고 저장해 주세요.";
     case "invalid-edit":
       return "현재 판매가·통화·배송비를 저장 기준에 안전하게 적용할 수 없어 계산하지 않았습니다.";
   }
@@ -1484,6 +1486,12 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
   const [regeneratingDetailAsset, setRegeneratingDetailAsset] = useState("");
   const [editDraft, setEditDraft] = useState<ProductIntakeDraft | null>(null);
   const [editOpen, setEditOpen] = useState(false);
+  const [marginEvaluationNow, setMarginEvaluationNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!editOpen) return;
+    const interval = window.setInterval(() => setMarginEvaluationNow(Date.now()), 1_000);
+    return () => window.clearInterval(interval);
+  }, [editOpen]);
   const [editSaving, setEditSaving] = useState(false);
   const [editErrors, setEditErrors] = useState<Record<string, string>>({});
   const [showAllDetailAssets, setShowAllDetailAssets] = useState(false);
@@ -1515,6 +1523,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     return evaluateProductMarginLossWarnings({
       productId: product.sourceId,
       scenarios: productMarginData.scenarios,
+      now: marginEvaluationNow,
       edits: detailChannelKeys.map((channelKey) => {
         const scenario = latestProductMarginScenario(product.sourceId, channelKey, productMarginData.scenarios);
         return {
@@ -1523,12 +1532,13 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
             scenario,
             sellingPrice: editDraft.sellingPrice,
             currency: editDraft.currency,
+            now: marginEvaluationNow,
           }),
           localShipping: editDraft.shippingFeeKrw,
         };
       }),
     });
-  }, [detailChannelKeys, editDraft, product.sourceId, productMarginData.scenarios]);
+  }, [detailChannelKeys, editDraft, product.sourceId, productMarginData.scenarios, marginEvaluationNow]);
   const detailRegenerationControllerRef = useRef<AbortController | null>(null);
   const revisionSubmissionControllerRef = useRef<AbortController | null>(null);
   const revisionCompletionAnnouncedRef = useRef(new Set<string>());
@@ -2311,7 +2321,7 @@ function ProductDetailPage({ product, marginScenarios, onBack, onEditChannels, o
     <div className="page-stack product-detail-page">
       <div className="product-detail-actions">
         <button type="button" className="product-detail-back" onClick={onBack}><ArrowLeft size={16} />상품 목록으로</button>
-        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" title={remoteListingState === "unavailable" ? "상품 정보를 다시 불러온 뒤 수정할 수 있습니다." : undefined} disabled={remoteListingState !== "ready" || productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { if (remoteListingState !== "ready") return; editDialogOpenRef.current = true; editDraftDirtyRef.current = false; setEditErrors({}); beginRevisionPhotoSession(); setEditDraft(productEditDraft(product, detailContext.manualFields)); setEditOpen(true); }}>{remoteListingState === "loading" || productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : remoteListingState === "unavailable" ? <AlertCircle size={15} /> : <PencilRuler size={15} />}{remoteListingState === "loading" ? "수정 정보 불러오는 중" : remoteListingState === "unavailable" ? "수정 정보 확인 필요" : productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
+        <div><span><Clock3 size={14} />최근 수정 {formatProductUpdatedAt(product.updatedAt)}</span><button type="button" className="credential-secondary" onClick={onEditChannels}><RefreshCw size={15} />채널 상품 수정</button><button type="button" className="publish-execute" title={remoteListingState === "unavailable" ? "상품 정보를 다시 불러온 뒤 수정할 수 있습니다." : undefined} disabled={remoteListingState !== "ready" || productRevision?.status === "pending" || productRevision?.status === "confirmation_required"} onClick={() => { if (remoteListingState !== "ready") return; editDialogOpenRef.current = true; editDraftDirtyRef.current = false; setEditErrors({}); beginRevisionPhotoSession(); setEditDraft(productEditDraft(product, detailContext.manualFields)); setMarginEvaluationNow(Date.now()); setEditOpen(true); }}>{remoteListingState === "loading" || productRevision?.status === "pending" ? <LoaderCircle className="spin" size={15} /> : remoteListingState === "unavailable" ? <AlertCircle size={15} /> : <PencilRuler size={15} />}{remoteListingState === "loading" ? "수정 정보 불러오는 중" : remoteListingState === "unavailable" ? "수정 정보 확인 필요" : productRevision?.status === "pending" ? "사진 수정 진행 중" : productRevision?.status === "confirmation_required" ? "접수 확인 필요" : "상품 전체 수정"}</button></div>
       </div>
 
       {productRevision ? <section className={`product-revision-status ${productRevision.status}`} role="status">
