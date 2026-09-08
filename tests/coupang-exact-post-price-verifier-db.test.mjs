@@ -8,6 +8,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260908061500_enqueue_exact_coupang_post_price_publication_verifier.sql",
   import.meta.url,
 ), "utf8");
+const routeMigration = await readFile(new URL(
+  "../supabase/migrations/20260908062500_bind_exact_coupang_post_price_verifier_route.sql",
+  import.meta.url,
+), "utf8");
 
 const ids = Object.freeze({
   sellerOwner: "768ce4ac-0ef2-4e01-89dc-05aa4fa8543c",
@@ -19,6 +23,7 @@ const ids = Object.freeze({
   credential: "32de2968-d4b7-4fda-a84b-16a7ce0257cc",
   worker: "02955cb4-fa9f-466b-824f-b61f06276190",
   route: "11111111-1111-4111-8111-111111111111",
+  predecessorRoute: "73e07b05-b3bd-47e4-be92-062d537150e9",
   repairJob: "36fcb808-a2f1-42b7-a6c9-264d884f25fb",
   repairAttempt: "05508966-7665-4873-a89b-89fda8ea8a25",
   repairClaim: "22222222-2222-4222-8222-222222222222",
@@ -55,6 +60,7 @@ const predecessorDigests = Object.freeze([
   ],
 ]);
 const renderedMigrations = new WeakMap();
+const renderedRouteMigrations = new WeakMap();
 
 async function scalar(db, sql, params = []) {
   const result = await db.query(sql, params);
@@ -294,7 +300,8 @@ async function database() {
       status text not null,
       expires_at timestamptz,
       last_check_status text,
-      seller_account_key text
+      seller_account_key text,
+      seller_account_key_source text not null default 'provider_certified_v1'
     );
     create table sellerpilot_private.channel_operation_attempts(
       id uuid primary key,
@@ -385,7 +392,16 @@ async function database() {
       approved_by uuid not null,
       approved_at timestamptz not null,
       expires_at timestamptz not null,
-      enabled boolean not null
+      enabled boolean not null,
+      created_at timestamptz not null default clock_timestamp(),
+      constraint local_channel_executor_routes_operation_check check (
+        (channel = 'coupang' and operation in (
+          'categories.attributes','categories.validate','listing.create'
+        ))
+        or (channel = 'smartstore' and operation in (
+          'listing.create','listing.update'
+        ))
+      )
     );
     create table sellerpilot_private.serverless_static_egress_policy(
       channel text primary key,
@@ -426,6 +442,29 @@ async function database() {
     create function sellerpilot_private.active_serverless_runtime_release_sha()
     returns text language sql stable set search_path = '' as
       $$ select current_setting('fixture.release', true) $$;
+
+    create function sellerpilot_private.listing_mutation_release_gate_is_effective(
+      p_channel text
+    ) returns boolean language sql stable set search_path = '' as
+      $$ select false $$;
+
+    create function public.sellerpilot_service_listing_mutation_release_gate_status()
+    returns jsonb language sql stable security definer set search_path = '' as
+      $$ select '{"open":false,"effectiveOpen":false}'::jsonb $$;
+
+    create function sellerpilot_private.local_channel_executor_access(
+      p_channel text, p_operation text
+    ) returns text language sql immutable set search_path = '' as $function$
+     select case
+     when p_channel = 'coupang' and p_operation in ('categories.attributes','categories.validate') then 'read'
+     when p_operation = 'listing.create' and p_channel in ('coupang','smartstore') then 'write'
+     when p_channel = 'smartstore' and p_operation = 'listing.update' then 'write'
+     else null
+     end
+    $function$;
+    revoke all on function
+      sellerpilot_private.local_channel_executor_access(text,text)
+      from public, anon, authenticated, service_role;
 
     create function sellerpilot_private.local_channel_executor_route_is_current(
       p_owner uuid, p_channel text, p_operation text, p_credential uuid,
@@ -623,7 +662,10 @@ async function database() {
     [ids.sellerOwner, ids.credentialOwner],
   );
   await db.query(
-    `insert into sellerpilot_private.channel_credentials values(
+    `insert into sellerpilot_private.channel_credentials(
+      id,created_by,channel,environment,status,expires_at,
+      last_check_status,seller_account_key
+    ) values(
       $1,$2,'coupang','production','active',clock_timestamp()+interval '1 day',
       'passed',$3
     )`,
@@ -671,9 +713,17 @@ async function database() {
     [ids.worker, ids.credentialOwner, tokenHash, workerVersion],
   );
   await db.query(
-    `insert into sellerpilot_private.local_channel_executor_routes values(
+    `insert into sellerpilot_private.local_channel_executor_routes(
+      id,owner_id,channel,operation,credential_id,seller_account_key,
+      worker_token_id,release_sha,egress_ip_sha256,approved_by,
+      approved_at,expires_at,enabled
+    ) values(
       $1,$2,'coupang','categories.attributes',$3,$4,$5,$6,$7,$8,
       clock_timestamp()-interval '1 minute',clock_timestamp()+interval '1 day',true
+    ),(
+      $9,$2,'coupang','listing.create',$3,$4,$5,
+      'f0b9af0df9e3a01f1efaeb8bf886bb87879a56ca',$7,$2,
+      clock_timestamp()-interval '1 day',clock_timestamp()+interval '1 hour',true
     )`,
     [
       ids.route,
@@ -683,7 +733,8 @@ async function database() {
       ids.worker,
       release,
       egress,
-      ids.credentialOwner,
+      ids.sellerOwner,
+      ids.predecessorRoute,
     ],
   );
   await db.exec("insert into sellerpilot_private.serverless_static_egress_policy values('coupang',false)");
@@ -692,17 +743,18 @@ async function database() {
     `insert into sellerpilot_private.channel_gateway_jobs(
       id,credential_id,attempt_id,listing_id,channel,operation,environment,
       request_payload,response_payload,status,created_by,seller_account_key,
-      request_fingerprint,provider_mutation_started_at,started_at,completed_at
+      request_fingerprint,attempt_count,provider_mutation_started_at,
+      started_at,completed_at
     ) values
       ($1,$4,$5,$6,'coupang','listing.create','production',$7::jsonb,
-       $8::jsonb,'reconciliation_required',$9,$10,$11,
+       $8::jsonb,'reconciliation_required',$9,$10,$11,1,
        clock_timestamp()-interval '2 hours',clock_timestamp()-interval '2 hours',
        clock_timestamp()-interval '1 hour'),
       ($2,$4,null,$6,'coupang','listing.publication.verify','production','{}',
-       '{}','reconciliation_required',$9,$10,$11,null,
+       '{}','reconciliation_required',$9,$10,$11,4,null,
        clock_timestamp()-interval '90 minutes',clock_timestamp()-interval '1 hour'),
       ($3,$4,$12,$6,'coupang','price.update','production',$13::jsonb,
-       $14::jsonb,'succeeded',$9,$10,$15,
+       $14::jsonb,'succeeded',$9,$10,$15,2,
        clock_timestamp()-interval '25 minutes',clock_timestamp()-interval '30 minutes',
        clock_timestamp()-interval '20 minutes')`,
     [
@@ -761,6 +813,28 @@ async function database() {
   const renderedMigration = await renderMigrationForFixture(db);
   await db.exec(renderedMigration);
   renderedMigrations.set(db, renderedMigration);
+  const fixtureAccessDigest = await scalar(
+    db,
+    `select encode(extensions.digest(
+       pg_catalog.pg_get_functiondef(
+         'sellerpilot_private.local_channel_executor_access(text,text)'::regprocedure
+       ),'sha256'
+     ),'hex')`,
+  );
+  const renderedRouteMigration = routeMigration.replaceAll(
+    "835e89f37898c7ef411a7831c80ec5d481cc3719ac7a822af0d177be9258743a",
+    fixtureAccessDigest,
+  );
+  await db.exec(renderedRouteMigration);
+  renderedRouteMigrations.set(db, renderedRouteMigration);
+  const bound = (await db.query(
+    "select public.sellerpilot_service_bind_exact_coupang_post_price_route($1) result",
+    [release],
+  )).rows[0].result;
+  assert.equal(bound.status, "ready");
+  assert.equal(bound.reused, false);
+  assert.equal(bound.providerMutationPerformed, false);
+  assert.equal(bound.gatewayJobCreated, false);
   return db;
 }
 
@@ -791,6 +865,48 @@ test("migration applies to an exact successful price-repair preimage and reapply
     await db.exec("rollback");
     assert.equal(await scalar(db,
       "select count(*)::integer from sellerpilot_private.coupang_exact_post_price_verify_runs"), 0);
+  } finally {
+    await db.close();
+  }
+});
+
+test("direct publication route binds once as read-only without creating a gateway job", async () => {
+  const db = await database();
+  try {
+    assert.equal(await scalar(db,
+      "select sellerpilot_private.local_channel_executor_access('coupang','listing.publication.verify')"),
+    "read");
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.local_channel_executor_routes where channel='coupang' and operation='listing.publication.verify'"),
+    1);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.coupang_exact_post_price_route_bindings"),
+    1);
+    assert.equal(await scalar(db,
+      `select count(*)::integer from sellerpilot_private.channel_gateway_jobs job
+        where coalesce((job.request_payload#>'{arguments}')
+          ? 'sellerpilotCoupangPostPriceVerification',false)`),
+    0);
+    const replay = (await db.query(
+      "select public.sellerpilot_service_bind_exact_coupang_post_price_route($1) result",
+      [release],
+    )).rows[0].result;
+    assert.equal(replay.reused, true);
+    assert.equal(replay.providerMutationPerformed, false);
+    assert.equal(replay.gatewayJobCreated, false);
+    assert.equal(await scalar(db,
+      "select count(*)::integer from sellerpilot_private.local_channel_executor_routes where operation='listing.publication.verify'"),
+    1);
+    await assert.rejects(
+      db.exec(renderedRouteMigrations.get(db)),
+      /COUPANG_POST_PRICE_ROUTE_(?:ACCESS_PREIMAGE_DRIFT|INSTALL_PREIMAGE_REJECTED|CONSTRAINT_PREIMAGE_DRIFT)/u,
+    );
+    await db.exec("rollback");
+    await assert.rejects(
+      db.exec("update sellerpilot_private.coupang_exact_post_price_route_bindings set expires_at=expires_at+interval '1 minute'"),
+      /COUPANG_POST_PRICE_ROUTE_BINDING_IMMUTABLE/u,
+    );
+    await db.exec("rollback");
   } finally {
     await db.close();
   }

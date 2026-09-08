@@ -569,7 +569,7 @@ as $$
             from sellerpilot_private.coupang_exact_price_repair_permits permit
            where permit.repair_job_id = run.price_repair_job_id)
        and route.channel = 'coupang'
-       and route.operation in ('categories.attributes', 'categories.validate')
+       and route.operation = 'listing.publication.verify'
        and route.credential_id = run.credential_id
        and route.worker_token_id = run.worker_token_id
        and route.seller_account_key = job.seller_account_key
@@ -1570,7 +1570,7 @@ begin
     from sellerpilot_private.local_channel_executor_routes candidate
    where candidate.owner_id = permit.seller_owner_id
      and candidate.channel = 'coupang'
-     and candidate.operation in ('categories.attributes', 'categories.validate')
+     and candidate.operation = 'listing.publication.verify'
      and candidate.credential_id = permit.credential_id
      and candidate.seller_account_key = permit.seller_account_key
      and candidate.release_sha = p_release_sha

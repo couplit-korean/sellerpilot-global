@@ -6,6 +6,10 @@ const migration = await readFile(new URL(
   "../supabase/migrations/20260908061500_enqueue_exact_coupang_post_price_publication_verifier.sql",
   import.meta.url,
 ), "utf8");
+const routeMigration = await readFile(new URL(
+  "../supabase/migrations/20260908062500_bind_exact_coupang_post_price_verifier_route.sql",
+  import.meta.url,
+), "utf8");
 const runtime = await readFile(new URL(
   "../lib/channels/listing-publication-verification.ts",
   import.meta.url,
@@ -124,4 +128,47 @@ test("migration is install-only until the service enqueue RPC is called", () => 
   assert.match(migration, /receipt\.listing_after_snapshot = to_jsonb\(listing\)/u);
   assert.equal((migration.match(/^begin;$/gmu) ?? []).length, 1);
   assert.equal((migration.match(/^commit;$/gmu) ?? []).length, 1);
+});
+
+test("exact verifier uses its own direct read-only local executor route", () => {
+  assert.equal(
+    (migration.match(/(?:route|candidate)\.operation = 'listing\.publication\.verify'/gu) ?? []).length,
+    2,
+  );
+  assert.doesNotMatch(
+    migration,
+    /(?:route|candidate)\.operation in \('categories\.attributes', 'categories\.validate'\)/u,
+  );
+  assert.match(
+    migration,
+    /route\.operation = 'listing\.publication\.verify'[\s\S]*local_channel_executor_route_is_current/u,
+  );
+  assert.match(
+    migration,
+    /candidate\.operation = 'listing\.publication\.verify'[\s\S]*insert into sellerpilot_private\.channel_gateway_jobs/u,
+  );
+});
+
+test("direct route installer is release-bound, read-only, and install-only", () => {
+  assert.match(routeMigration, /listing\.publication\.verify[\s\S]*then 'read'/u);
+  assert.match(routeMigration,
+    /sellerpilot_service_bind_exact_coupang_post_price_route\(\s*p_release_sha text/u);
+  assert.match(routeMigration,
+    /active_serverless_runtime_release_sha\(\)[\s\S]*is distinct from p_release_sha/u);
+  assert.match(routeMigration,
+    /worker\.last_seen_at < clock_timestamp\(\) - interval '3 minutes'/u);
+  assert.match(routeMigration,
+    /COUPANG_POST_PRICE_ROUTE_PROTECTED_JOB_DRIFT/u);
+  assert.match(routeMigration,
+    /provider_mutation_performed boolean not null default false/u);
+  assert.match(routeMigration,
+    /gateway_job_created boolean not null default false/u);
+  const bindStart = routeMigration.indexOf(
+    "create function public.sellerpilot_service_bind_exact_coupang_post_price_route",
+  );
+  assert.ok(bindStart > 0);
+  assert.doesNotMatch(routeMigration.slice(0, bindStart),
+    /insert into sellerpilot_private\.local_channel_executor_routes/u);
+  assert.doesNotMatch(routeMigration,
+    /insert into sellerpilot_private\.channel_gateway_jobs/u);
 });
