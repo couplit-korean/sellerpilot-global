@@ -1,0 +1,182 @@
+
+> site-creator-vinext-starter@0.1.0 test:channel-isolation
+> node --import tsx --test tests/channel-module-boundaries.test.mjs
+
+TAP version 13
+# Subtest: 24 channel entry modules exist and cannot transitively import a different channel directory
+ok 1 - 24 channel entry modules exist and cannot transitively import a different channel directory
+  ---
+  duration_ms: 543.867
+  type: 'test'
+  ...
+# Subtest: PRODUCT registry covers exactly the eight supported channels
+ok 2 - PRODUCT registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.1315
+  type: 'test'
+  ...
+# Subtest: PRODUCT/qoo10 rejects the wrong channel before credentials or transport
+ok 3 - PRODUCT/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.629875
+  type: 'test'
+  ...
+# Subtest: PRODUCT/shopee rejects the wrong channel before credentials or transport
+ok 4 - PRODUCT/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.385542
+  type: 'test'
+  ...
+# Subtest: PRODUCT/lazada rejects the wrong channel before credentials or transport
+ok 5 - PRODUCT/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.192583
+  type: 'test'
+  ...
+# Subtest: PRODUCT/coupang rejects the wrong channel before credentials or transport
+ok 6 - PRODUCT/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.345833
+  type: 'test'
+  ...
+# Subtest: PRODUCT/elevenst rejects the wrong channel before credentials or transport
+ok 7 - PRODUCT/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.353125
+  type: 'test'
+  ...
+# Subtest: PRODUCT/smartstore rejects the wrong channel before credentials or transport
+ok 8 - PRODUCT/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.241334
+  type: 'test'
+  ...
+# Subtest: PRODUCT/ebay rejects the wrong channel before credentials or transport
+ok 9 - PRODUCT/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.432625
+  type: 'test'
+  ...
+# Subtest: PRODUCT/temu rejects the wrong channel before credentials or transport
+ok 10 - PRODUCT/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.798959
+  type: 'test'
+  ...
+# Subtest: CS registry covers exactly the eight supported channels
+ok 11 - CS registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.072167
+  type: 'test'
+  ...
+# Subtest: CS/qoo10 rejects the wrong channel before credentials or transport
+ok 12 - CS/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.077792
+  type: 'test'
+  ...
+# Subtest: CS/shopee rejects the wrong channel before credentials or transport
+ok 13 - CS/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.038208
+  type: 'test'
+  ...
+# Subtest: CS/lazada rejects the wrong channel before credentials or transport
+ok 14 - CS/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.032625
+  type: 'test'
+  ...
+# Subtest: CS/coupang rejects the wrong channel before credentials or transport
+ok 15 - CS/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.029667
+  type: 'test'
+  ...
+# Subtest: CS/elevenst rejects the wrong channel before credentials or transport
+ok 16 - CS/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.028417
+  type: 'test'
+  ...
+# Subtest: CS/smartstore rejects the wrong channel before credentials or transport
+ok 17 - CS/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.041958
+  type: 'test'
+  ...
+# Subtest: CS/ebay rejects the wrong channel before credentials or transport
+ok 18 - CS/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.030625
+  type: 'test'
+  ...
+# Subtest: CS/temu rejects the wrong channel before credentials or transport
+ok 19 - CS/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.03625
+  type: 'test'
+  ...
+# Subtest: SHIPPING registry covers exactly the eight supported channels
+ok 20 - SHIPPING registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.062708
+  type: 'test'
+  ...
+# Subtest: SHIPPING/qoo10 rejects the wrong channel before credentials or transport
+ok 21 - SHIPPING/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.04325
+  type: 'test'
+  ...
+# Subtest: SHIPPING/shopee rejects the wrong channel before credentials or transport
+ok 22 - SHIPPING/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.068584
+  type: 'test'
+  ...
+# Subtest: SHIPPING/lazada rejects the wrong channel before credentials or transport
+ok 23 - SHIPPING/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.140125
+  type: 'test'
+  ...
+# Subtest: SHIPPING/coupang rejects the wrong channel before credentials or transport
+ok 24 - SHIPPING/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.077208
+  type: 'test'
+  ...
+# Subtest: SHIPPING/elevenst rejects the wrong channel before credentials or transport
+ok 25 - SHIPPING/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.038125
+  type: 'test'
+  ...
+# Subtest: SHIPPING/smartstore rejects the wrong channel before credentials or transport
+ok 26 - SHIPPING/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.077
+  type: 'test'
+  ...
+# Subtest: SHIPPING/ebay rejects the wrong channel before credentials or transport
+ok 27 - SHIPPING/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.066208
+  type: 'test'
+  ...
+# Subtest: SHIPPING/temu rejects the wrong channel before credentials or transport
+ok 28 - SHIPPING/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.132333
+  type: 'test'
+  ...
+1..28
+# tests 28
+# suites 0
+# pass 28
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1146.145708

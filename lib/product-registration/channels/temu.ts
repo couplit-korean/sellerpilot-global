@@ -1,3 +1,4 @@
+import { temuCreateSkuChecks } from "../../channels/temu-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import {
   objectValue,
@@ -841,6 +842,12 @@ export async function executeTemu(input: ExecuteInput) {
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
     const expectedSkus = temuPublicationExpectedSkus(body);
     if (strictPublication) {
+      const skuChecks = temuCreateSkuChecks(body);
+      if (Object.values(skuChecks).some(value => !value)) {
+        return result(input, [{ name: "publication-prewrite", ok: false, status: 422,
+          data: { error: "TEMU_PUBLICATION_PREWRITE_INVALID", skuChecks, sellerpilotNoWriteConfirmed: true,
+            sellerpilotVerification: "TEMU_PUBLICATION_PREWRITE_REJECTED" } }]);
+      }
       const providerLanguage = String(
         body.language ?? goodsBasic.language ?? "",
       )

@@ -260,6 +260,9 @@ test("Temu preflight requires a numeric leaf category and an explicit shipping t
         { name: "Material", value: ["ABS"] },
       ],
       skuList: [{
+        externalSkuId: "QA-20260823-CC-001",
+        images: ["https://example.com/hero.jpg"],
+        variations: [{ name: "Type", value: "Standard" }],
         price: { basePrice: { amount: "5000", currency: "KRW" } },
         quantity: 1,
         packageInfo: { weight: "100", length: "10", width: "8", height: "2" },

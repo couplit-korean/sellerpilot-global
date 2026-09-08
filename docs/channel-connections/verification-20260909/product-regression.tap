@@ -1,0 +1,1396 @@
+TAP version 13
+# Subtest: Coupang CEA authorization signs the documented canonical value
+ok 1 - Coupang CEA authorization signs the documented canonical value
+  ---
+  duration_ms: 1.783792
+  type: 'test'
+  ...
+# Subtest: Naver client secret signature is a bcrypt hash wrapped in Base64
+ok 2 - Naver client secret signature is a bcrypt hash wrapped in Base64
+  ---
+  duration_ms: 212.811667
+  type: 'test'
+  ...
+# Subtest: Naver seller data token rejects SELLER without account_id
+ok 3 - Naver seller data token rejects SELLER without account_id
+  ---
+  duration_ms: 0.309375
+  type: 'test'
+  ...
+# Subtest: Naver self-store token uses SELF without account_id
+ok 4 - Naver self-store token uses SELF without account_id
+  ---
+  duration_ms: 267.304125
+  type: 'test'
+  ...
+# Subtest: Naver token failure 403 is reduced to NAVER_IP_NOT_ALLOWED
+ok 5 - Naver token failure 403 is reduced to NAVER_IP_NOT_ALLOWED
+  ---
+  duration_ms: 209.593042
+  type: 'test'
+  ...
+# Subtest: Naver token failure 401 is reduced to NAVER_AUTH_FAILED
+ok 6 - Naver token failure 401 is reduced to NAVER_AUTH_FAILED
+  ---
+  duration_ms: 215.460584
+  type: 'test'
+  ...
+# Subtest: Naver token failure 503 is reduced to NAVER_PROVIDER_UNAVAILABLE
+ok 7 - Naver token failure 503 is reduced to NAVER_PROVIDER_UNAVAILABLE
+  ---
+  duration_ms: 204.86175
+  type: 'test'
+  ...
+# Subtest: Naver token failure 400 is reduced to NAVER_TOKEN_EXCHANGE_FAILED
+ok 8 - Naver token failure 400 is reduced to NAVER_TOKEN_EXCHANGE_FAILED
+  ---
+  duration_ms: 202.639959
+  type: 'test'
+  ...
+# Subtest: Qoo10 uses current QAPI endpoint and qualified method name
+ok 9 - Qoo10 uses current QAPI endpoint and qualified method name
+  ---
+  duration_ms: 0.275875
+  type: 'test'
+  ...
+# Subtest: 11st fixed-IP diagnostic calls ProductSearch and returns only safe XML metadata
+ok 10 - 11st fixed-IP diagnostic calls ProductSearch and returns only safe XML metadata
+  ---
+  duration_ms: 0.97875
+  type: 'test'
+  ...
+# Subtest: Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state
+ok 11 - Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state
+  ---
+  duration_ms: 0.417417
+  type: 'test'
+  ...
+# Subtest: Coupang cancellation sync uses the documented minute range with the Korean UTC offset
+ok 12 - Coupang cancellation sync uses the documented minute range with the Korean UTC offset
+  ---
+  duration_ms: 0.071583
+  type: 'test'
+  ...
+# Subtest: 11st periodic windows keep stable dedupe keys while advancing provider dates
+ok 13 - 11st periodic windows keep stable dedupe keys while advancing provider dates
+  ---
+  duration_ms: 0.070625
+  type: 'test'
+  ...
+# Subtest: Qoo10 inquiry sync covers every documented state with disjoint periodic identities
+ok 14 - Qoo10 inquiry sync covers every documented state with disjoint periodic identities
+  ---
+  duration_ms: 0.19175
+  type: 'test'
+  ...
+# Subtest: eBay inquiry sync schedules ASQ, mailbox and Commerce Message with separate durable identities
+ok 15 - eBay inquiry sync schedules ASQ, mailbox and Commerce Message with separate durable identities
+  ---
+  duration_ms: 0.091083
+  type: 'test'
+  ...
+# Subtest: Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys
+ok 16 - Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys
+  ---
+  duration_ms: 0.049125
+  type: 'test'
+  ...
+# Subtest: Coupang inquiry sync separates product, call-center and all three after-sales queues
+ok 17 - Coupang inquiry sync separates product, call-center and all three after-sales queues
+  ---
+  duration_ms: 0.140292
+  type: 'test'
+  ...
+# Subtest: periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight
+ok 18 - periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight
+  ---
+  duration_ms: 0.046208
+  type: 'test'
+  ...
+# Subtest: inquiry history refresh is bounded to verified provider windows
+ok 19 - inquiry history refresh is bounded to verified provider windows
+  ---
+  duration_ms: 0.822125
+  type: 'test'
+  ...
+# Subtest: Temu order and after-sales sync use the documented update checkpoints
+ok 20 - Temu order and after-sales sync use the documented update checkpoints
+  ---
+  duration_ms: 0.058792
+  type: 'test'
+  ...
+# Subtest: shipment drafts map carrier and tracking fields without changing internal order state
+ok 21 - shipment drafts map carrier and tracking fields without changing internal order state
+  ---
+  duration_ms: 0.185959
+  type: 'test'
+  ...
+# Subtest: shipment acknowledgement and readback use the same provider-specific order identity
+ok 22 - shipment acknowledgement and readback use the same provider-specific order identity
+  ---
+  duration_ms: 0.078417
+  type: 'test'
+  ...
+# Subtest: Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode
+ok 23 - Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode
+  ---
+  duration_ms: 0.172625
+  type: 'test'
+  ...
+# Subtest: shipment drafts fail closed for incomplete marketplace-specific data
+ok 24 - shipment drafts fail closed for incomplete marketplace-specific data
+  ---
+  duration_ms: 0.123708
+  type: 'test'
+  ...
+# Subtest: Qoo10 category inspection requires one exact Japanese leaf before DB confirmation
+ok 25 - Qoo10 category inspection requires one exact Japanese leaf before DB confirmation
+  ---
+  duration_ms: 1.600917
+  type: 'test'
+  ...
+# Subtest: Qoo10 product creation uses SetNewGoods v1.1 and records GdNo
+ok 26 - Qoo10 product creation uses SetNewGoods v1.1 and records GdNo
+  ---
+  duration_ms: 1.352334
+  type: 'test'
+  ...
+# Subtest: listing create never succeeds when the provider omits the remote identity
+ok 27 - listing create never succeeds when the provider omits the remote identity
+  ---
+  duration_ms: 0.255458
+  type: 'test'
+  ...
+# Subtest: Qoo10 pauses a created item when detail-image readback is incomplete
+ok 28 - Qoo10 pauses a created item when detail-image readback is incomplete
+  ---
+  duration_ms: 4511.953666
+  type: 'test'
+  ...
+# Subtest: Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period
+ok 29 - Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period
+  ---
+  duration_ms: 1.196458
+  type: 'test'
+  ...
+# Subtest: Qoo10 provider errors are useful without exposing remote URLs or tokens
+ok 30 - Qoo10 provider errors are useful without exposing remote URLs or tokens
+  ---
+  duration_ms: 1.427083
+  type: 'test'
+  ...
+# Subtest: eBay consent URL separates sandbox and production and includes CSRF state
+ok 31 - eBay consent URL separates sandbox and production and includes CSRF state
+  ---
+  duration_ms: 0.342875
+  type: 'test'
+  ...
+# Subtest: eBay Sell requests override the runtime Accept-Language wildcard
+ok 32 - eBay Sell requests override the runtime Accept-Language wildcard
+  ---
+  duration_ms: 0.693083
+  type: 'test'
+  ...
+# Subtest: Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state
+ok 33 - Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state
+  ---
+  duration_ms: 0.299334
+  type: 'test'
+  ...
+# Subtest: Shopee MediaSpace partner signature excludes shop authorization dimensions
+ok 34 - Shopee MediaSpace partner signature excludes shop authorization dimensions
+  ---
+  duration_ms: 0.071083
+  type: 'test'
+  ...
+# Subtest: all eight active channels define every normalized capability
+ok 35 - all eight active channels define every normalized capability
+  ---
+  duration_ms: 0.136417
+  type: 'test'
+  ...
+# Subtest: Shopee operation routing signs the shop request and uses v2 order detail
+ok 36 - Shopee operation routing signs the shop request and uses v2 order detail
+  ---
+  duration_ms: 0.884667
+  type: 'test'
+  ...
+# Subtest: Shopee main-account code exchange uses main_account_id and returns the authorized shop lists
+ok 37 - Shopee main-account code exchange uses main_account_id and returns the authorized shop lists
+  ---
+  duration_ms: 0.434458
+  type: 'test'
+  ...
+# Subtest: Shopee operation token selection projects the requested authorized shop without exposing another shop token
+ok 38 - Shopee operation token selection projects the requested authorized shop without exposing another shop token
+  ---
+  duration_ms: 0.695334
+  type: 'test'
+  ...
+# Subtest: Shopee merchant token and GlobalProduct category request use the merchant signature dimension
+ok 39 - Shopee merchant token and GlobalProduct category request use the merchant signature dimension
+  ---
+  duration_ms: 1.6295
+  type: 'test'
+  ...
+# Subtest: Shopee global category validation requires one exact provider leaf and returns its full ancestry
+ok 40 - Shopee global category validation requires one exact provider leaf and returns its full ancestry
+  ---
+  duration_ms: 1.154584
+  type: 'test'
+  ...
+# Subtest: Lazada product create serializes the structured request as official XML and reads the item back
+ok 41 - Lazada product create serializes the structured request as official XML and reads the item back
+  ---
+  duration_ms: 2.796042
+  type: 'test'
+  ...
+# Subtest: Lazada request retries once after the provider frequency-limit window
+ok 42 - Lazada request retries once after the provider frequency-limit window
+  ---
+  duration_ms: 254.72875
+  type: 'test'
+  ...
+# Subtest: Lazada order sync enriches actionable orders with official order item details
+ok 43 - Lazada order sync enriches actionable orders with official order item details
+  ---
+  duration_ms: 2.818916
+  type: 'test'
+  ...
+# Subtest: Lazada order sync also enriches ready-to-ship orders needed by fulfillment
+ok 44 - Lazada order sync also enriches ready-to-ship orders needed by fulfillment
+  ---
+  duration_ms: 1.246875
+  type: 'test'
+  ...
+# Subtest: Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters
+ok 45 - Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters
+  ---
+  duration_ms: 2.159041
+  type: 'test'
+  ...
+# Subtest: Lazada inventory update uses SkuId and verifies the resulting quantity
+ok 46 - Lazada inventory update uses SkuId and verifies the resulting quantity
+  ---
+  duration_ms: 3.565042
+  type: 'test'
+  ...
+# Subtest: Lazada category suggestion forwards the mandatory product image URL
+ok 47 - Lazada category suggestion forwards the mandatory product image URL
+  ---
+  duration_ms: 2.204833
+  type: 'test'
+  ...
+# Subtest: Coupang operation routing uses the documented item price endpoint
+ok 48 - Coupang operation routing uses the documented item price endpoint
+  ---
+  duration_ms: 3.041834
+  type: 'test'
+  ...
+# Subtest: Coupang price update fails closed when the exact vendor item readback has another price
+ok 49 - Coupang price update fails closed when the exact vendor item readback has another price
+  ---
+  duration_ms: 0.863625
+  type: 'test'
+  ...
+# Subtest: Coupang category recommendation sends the official product context payload
+ok 50 - Coupang category recommendation sends the official product context payload
+  ---
+  duration_ms: 0.3755
+  type: 'test'
+  ...
+# Subtest: Coupang category list uses the required root or parent category path segment
+ok 51 - Coupang category list uses the required root or parent category path segment
+  ---
+  duration_ms: 0.431042
+  type: 'test'
+  ...
+# Subtest: Coupang product creation is only successful after seller-product readback matches
+ok 52 - Coupang product creation is only successful after seller-product readback matches
+  ---
+  duration_ms: 0.804667
+  type: 'test'
+  ...
+# Subtest: Coupang listing resume waits for SAVED before requesting approval without creating a duplicate
+ok 53 - Coupang listing resume waits for SAVED before requesting approval without creating a duplicate
+  ---
+  duration_ms: 1508.798167
+  type: 'test'
+  ...
+# Subtest: Coupang approval readback trusts the seller-product state when nested items remain SAVED
+ok 54 - Coupang approval readback trusts the seller-product state when nested items remain SAVED
+  ---
+  duration_ms: 764.664917
+  type: 'test'
+  ...
+# Subtest: Coupang product update reads first, preserves remote policy fields, and verifies requested content
+ok 55 - Coupang product update reads first, preserves remote policy fields, and verifies requested content
+  ---
+  duration_ms: 8.018417
+  type: 'test'
+  ...
+# Subtest: Naver order detail routing exchanges a token and uses the official batch query
+ok 56 - Naver order detail routing exchanges a token and uses the official batch query
+  ---
+  duration_ms: 223.963292
+  type: 'test'
+  ...
+# Subtest: Naver seller request refreshes once after GW.AUTHN
+ok 57 - Naver seller request refreshes once after GW.AUTHN
+  ---
+  duration_ms: 413.570875
+  type: 'test'
+  ...
+# Subtest: Naver category preflight loads the category, attributes, values, and standard options
+ok 58 - Naver category preflight loads the category, attributes, values, and standard options
+  ---
+  duration_ms: 214.7925
+  type: 'test'
+  ...
+# Subtest: Naver category preflight accepts an official NOT_FOUND response as empty optional metadata
+ok 59 - Naver category preflight accepts an official NOT_FOUND response as empty optional metadata
+  ---
+  duration_ms: 203.32475
+  type: 'test'
+  ...
+# Subtest: Naver product creation is only successful after the origin product readback succeeds
+ok 60 - Naver product creation is only successful after the origin product readback succeeds
+  ---
+  duration_ms: 208.758208
+  type: 'test'
+  ...
+# Subtest: Naver product creation reconciles an existing seller management code without creating a duplicate
+ok 61 - Naver product creation reconciles an existing seller management code without creating a duplicate
+  ---
+  duration_ms: 212.314333
+  type: 'test'
+  ...
+# Subtest: eBay listing workflow creates inventory, creates an offer, then publishes
+ok 62 - eBay listing workflow creates inventory, creates an offer, then publishes
+  ---
+  duration_ms: 1.035625
+  type: 'test'
+  ...
+# Subtest: eBay listing rejects server-managed policies before any provider request
+ok 63 - eBay listing rejects server-managed policies before any provider request
+  ---
+  duration_ms: 0.136958
+  type: 'test'
+  ...
+# Subtest: eBay listing rejects a server-managed inventory location instead of creating one
+ok 64 - eBay listing rejects a server-managed inventory location instead of creating one
+  ---
+  duration_ms: 0.081792
+  type: 'test'
+  ...
+# Subtest: eBay preserves an accepted offer marker when create omits offerId and reconciliation misses
+ok 65 - eBay preserves an accepted offer marker when create omits offerId and reconciliation misses
+  ---
+  duration_ms: 0.365167
+  type: 'test'
+  ...
+# Subtest: provider listing errors expose a sanitized actionable message
+ok 66 - provider listing errors expose a sanitized actionable message
+  ---
+  duration_ms: 0.317792
+  type: 'test'
+  ...
+# Subtest: eBay listing retry reconciles an existing SKU offer and returns its published listing
+ok 67 - eBay listing retry reconciles an existing SKU offer and returns its published listing
+  ---
+  duration_ms: 0.549209
+  type: 'test'
+  ...
+# Subtest: eBay stops before offer creation when the inventory image readback loses detail images
+ok 68 - eBay stops before offer creation when the inventory image readback loses detail images
+  ---
+  duration_ms: 0.212208
+  type: 'test'
+  ...
+# Subtest: Temu signs compact request values in ASCII key order
+ok 69 - Temu signs compact request values in ASCII key order
+  ---
+  duration_ms: 0.124916
+  type: 'test'
+  ...
+# Subtest: Temu order and after-sales operations paginate provider result arrays
+ok 70 - Temu order and after-sales operations paginate provider result arrays
+  ---
+  duration_ms: 0.935584
+  type: 'test'
+  ...
+# Subtest: Temu shipment confirmation resolves warehouse and carrier then verifies tracking readback
+ok 71 - Temu shipment confirmation resolves warehouse and carrier then verifies tracking readback
+  ---
+  duration_ms: 0.877292
+  type: 'test'
+  ...
+# Subtest: Temu V3 product creation requires an external-id readback match
+ok 72 - Temu V3 product creation requires an external-id readback match
+  ---
+  duration_ms: 1.31675
+  type: 'test'
+  ...
+# Subtest: Temu preserves an accepted create marker when goodsId and reconciliation are both missing
+ok 73 - Temu preserves an accepted create marker when goodsId and reconciliation are both missing
+  ---
+  duration_ms: 0.285542
+  type: 'test'
+  ...
+# Subtest: Temu create preflight blocks an existing external ID without issuing a provider write
+ok 74 - Temu create preflight blocks an existing external ID without issuing a provider write
+  ---
+  duration_ms: 0.157375
+  type: 'test'
+  ...
+# Subtest: Temu listing fails verification when processed detail images are missing
+ok 75 - Temu listing fails verification when processed detail images are missing
+  ---
+  duration_ms: 0.376125
+  type: 'test'
+  ...
+# Subtest: eBay does not invent a domestic-style order acknowledgement step
+ok 76 - eBay does not invent a domestic-style order acknowledgement step
+  ---
+  duration_ms: 0.04625
+  type: 'test'
+  ...
+# Subtest: eBay refreshes an expired two-hour access token before a live operation
+ok 77 - eBay refreshes an expired two-hour access token before a live operation
+  ---
+  duration_ms: 0.2275
+  type: 'test'
+  ...
+# Subtest: Shopee refresh rotates both the four-hour access token and thirty-day refresh token
+ok 78 - Shopee refresh rotates both the four-hour access token and thirty-day refresh token
+  ---
+  duration_ms: 0.191
+  type: 'test'
+  ...
+# Subtest: Lazada OAuth state, authorize URL, callback and gateway request are fixed to MY
+ok 79 - Lazada OAuth state, authorize URL, callback and gateway request are fixed to MY
+  ---
+  duration_ms: 38.634083
+  type: 'test'
+  ...
+# Subtest: Lazada OAuth stages only a provider-attested MY seller identity
+ok 80 - Lazada OAuth stages only a provider-attested MY seller identity
+  ---
+  duration_ms: 63.126875
+  type: 'test'
+  ...
+# Subtest: Lazada OAuth fails closed before staging when token identity has no MY seller
+ok 81 - Lazada OAuth fails closed before staging when token identity has no MY seller
+  ---
+  duration_ms: 2.266834
+  type: 'test'
+  ...
+# Subtest: Lazada OAuth rejects a missing or non-MY provider-attested country before staging
+ok 82 - Lazada OAuth rejects a missing or non-MY provider-attested country before staging
+  ---
+  duration_ms: 0.727584
+  type: 'test'
+  ...
+# Subtest: Lazada OAuth rejects a non-MY request or credential before any provider call
+ok 83 - Lazada OAuth rejects a non-MY request or credential before any provider call
+  ---
+  duration_ms: 0.140167
+  type: 'test'
+  ...
+# Subtest: Lazada target cache decision is exact for the MY seller before and after persistence
+ok 84 - Lazada target cache decision is exact for the MY seller before and after persistence
+  ---
+  duration_ms: 0.524625
+  type: 'test'
+  ...
+# Subtest: Lazada target route exposes a typed sync-only 409 and blocks MY lineage mismatch
+ok 85 - Lazada target route exposes a typed sync-only 409 and blocks MY lineage mismatch
+  ---
+  duration_ms: 2.984417
+  type: 'test'
+  ...
+# Subtest: Lazada MY existing listing preflights item, leaf category and immutable SKU before nine image migrations
+ok 86 - Lazada MY existing listing preflights item, leaf category and immutable SKU before nine image migrations
+  ---
+  duration_ms: 22.208583
+  type: 'test'
+  ...
+# Subtest: Lazada MY blocks absent or duplicate GetProducts SellerSku identity before every mutation
+ok 87 - Lazada MY blocks absent or duplicate GetProducts SellerSku identity before every mutation
+  ---
+  duration_ms: 12.665042
+  type: 'test'
+  ...
+# Subtest: Lazada MY requires GetProducts and GetProductItem to return the same immutable SkuId
+ok 88 - Lazada MY requires GetProducts and GetProductItem to return the same immutable SkuId
+  ---
+  duration_ms: 0.709417
+  type: 'test'
+  ...
+# Subtest: Lazada MY category or leaf mismatch fails before image validation and every provider mutation
+ok 89 - Lazada MY category or leaf mismatch fails before image validation and every provider mutation
+  ---
+  duration_ms: 22.368792
+  type: 'test'
+  ...
+# Subtest: Lazada MY rejects a price that is not the fresh 5,000 KRW equivalent before every provider mutation
+ok 90 - Lazada MY rejects a price that is not the fresh 5,000 KRW equivalent before every provider mutation
+  ---
+  duration_ms: 0.504417
+  type: 'test'
+  ...
+# Subtest: Lazada MY validates all nine public image URLs before the first image migration
+ok 91 - Lazada MY validates all nine public image URLs before the first image migration
+  ---
+  duration_ms: 0.399791
+  type: 'test'
+  ...
+# Subtest: Lazada exact MY content contract fails before every provider read or mutation
+ok 92 - Lazada exact MY content contract fails before every provider read or mutation
+  ---
+  duration_ms: 1.401083
+  type: 'test'
+  ...
+# Subtest: Lazada exact MY requires an already live provider item before image migration
+ok 93 - Lazada exact MY requires an already live provider item before image migration
+  ---
+  duration_ms: 2.091292
+  type: 'test'
+  ...
+# Subtest: Lazada create shaping forces every SKU inactive for safe_test and active for live
+ok 94 - Lazada create shaping forces every SKU inactive for safe_test and active for live
+  ---
+  duration_ms: 0.4995
+  type: 'test'
+  ...
+# Subtest: Lazada update and deactivate shaping bind the exact remote ItemId without mutating the source
+ok 95 - Lazada update and deactivate shaping bind the exact remote ItemId without mutating the source
+  ---
+  duration_ms: 0.2515
+  type: 'test'
+  ...
+# Subtest: Lazada GetProductItem normalization binds country, localized content, identity, status and eight images
+ok 96 - Lazada GetProductItem normalization binds country, localized content, identity, status and eight images
+  ---
+  duration_ms: 1.47875
+  type: 'test'
+  ...
+# Subtest: Lazada QC pending and rejected override an otherwise active item and SKU
+ok 97 - Lazada QC pending and rejected override an otherwise active item and SKU
+  ---
+  duration_ms: 2.887541
+  type: 'test'
+  ...
+# Subtest: Lazada live readback requires the exact requested SKU set and every SKU active
+ok 98 - Lazada live readback requires the exact requested SKU set and every SKU active
+  ---
+  duration_ms: 6.243083
+  type: 'test'
+  ...
+# Subtest: Lazada publication evidence fails shut on wrong country, content or image cardinality
+ok 99 - Lazada publication evidence fails shut on wrong country, content or image cardinality
+  ---
+  duration_ms: 2.065
+  type: 'test'
+  ...
+# Subtest: Lazada independent readback defers only provider URL migration to immutable source evidence
+ok 100 - Lazada independent readback defers only provider URL migration to immutable source evidence
+  ---
+  duration_ms: 0.92
+  type: 'test'
+  ...
+# Subtest: Lazada safe_test create writes inactive and completes only after exact non-public readback
+ok 101 - Lazada safe_test create writes inactive and completes only after exact non-public readback
+  ---
+  duration_ms: 21.352541
+  type: 'test'
+  ...
+# Subtest: Lazada live create writes active but a QC-pending readback is not counted as published
+ok 102 - Lazada live create writes active but a QC-pending readback is not counted as published
+  ---
+  duration_ms: 1.252875
+  type: 'test'
+  ...
+# Subtest: Lazada update binds the existing item and verifies localized fields and eight images
+ok 103 - Lazada update binds the existing item and verifies localized fields and eight images
+  ---
+  duration_ms: 7.43125
+  type: 'test'
+  ...
+# Subtest: Lazada deactivate binds ItemId from the request and verifies the same item is offline
+ok 104 - Lazada deactivate binds ItemId from the request and verifies the same item is offline
+  ---
+  duration_ms: 1.005
+  type: 'test'
+  ...
+# Subtest: only the active production Lazada credential can select targets
+ok 105 - only the active production Lazada credential can select targets
+  ---
+  duration_ms: 0.399375
+  type: 'test'
+  ...
+# Subtest: active Lazada envelope requires exact credential id and an attested account identity
+ok 106 - active Lazada envelope requires exact credential id and an attested account identity
+  ---
+  duration_ms: 0.505
+  type: 'test'
+  ...
+# Subtest: cached Lazada targets must cover the exact countries and seller ids of the active account
+ok 107 - cached Lazada targets must cover the exact countries and seller ids of the active account
+  ---
+  duration_ms: 0.366625
+  type: 'test'
+  ...
+# Subtest: channel target route validates current Lazada production lineage before cache return and cache store
+ok 108 - channel target route validates current Lazada production lineage before cache return and cache store
+  ---
+  duration_ms: 8.083833
+  type: 'test'
+  ...
+# Subtest: eBay preflight blocks server-managed policy and location placeholders
+ok 109 - eBay preflight blocks server-managed policy and location placeholders
+  ---
+  duration_ms: 2.176833
+  type: 'test'
+  ...
+# Subtest: manual policy input updates only the requested channel payload path
+ok 110 - manual policy input updates only the requested channel payload path
+  ---
+  duration_ms: 0.403833
+  type: 'test'
+  ...
+# Subtest: Coupang account fields are explicit runtime checks while unknown product facts block publishing
+ok 111 - Coupang account fields are explicit runtime checks while unknown product facts block publishing
+  ---
+  duration_ms: 0.606875
+  type: 'test'
+  ...
+# Subtest: Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content
+ok 112 - Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content
+  ---
+  duration_ms: 0.573
+  type: 'test'
+  ...
+# Subtest: zero price and stock are rejected before a write
+ok 113 - zero price and stock are rejected before a write
+  ---
+  duration_ms: 0.635375
+  type: 'test'
+  ...
+# Subtest: Qoo10 UpdateGoods carrier fields are required before create or update preparation
+ok 114 - Qoo10 UpdateGoods carrier fields are required before create or update preparation
+  ---
+  duration_ms: 0.230625
+  type: 'test'
+  ...
+# Subtest: Qoo10 unique account fields are editable instead of a dead-end checklist
+ok 115 - Qoo10 unique account fields are editable instead of a dead-end checklist
+  ---
+  duration_ms: 0.119791
+  type: 'test'
+  ...
+# Subtest: 11st processed-food notices stay hidden until that category is selected
+ok 116 - 11st processed-food notices stay hidden until that category is selected
+  ---
+  duration_ms: 0.128167
+  type: 'test'
+  ...
+# Subtest: Smartstore preflight exposes the official purchase-age and display-status fields
+ok 117 - Smartstore preflight exposes the official purchase-age and display-status fields
+  ---
+  duration_ms: 0.333291
+  type: 'test'
+  ...
+# Subtest: Temu preflight requires a numeric leaf category and an explicit shipping template
+ok 118 - Temu preflight requires a numeric leaf category and an explicit shipping template
+  ---
+  duration_ms: 3.164333
+  type: 'test'
+  ...
+# Subtest: Shopee global image planning uses the category-scoped gallery limit and fails closed without an eight-image detail surface
+ok 119 - Shopee global image planning uses the category-scoped gallery limit and fails closed without an eight-image detail surface
+  ---
+  duration_ms: 7.531083
+  type: 'test'
+  ...
+# Subtest: Shopee SG validates logistics, the global category/attributes, and the recommended local category before uploading representative plus eight details
+ok 120 - Shopee SG validates logistics, the global category/attributes, and the recommended local category before uploading representative plus eight details
+  ---
+  duration_ms: 18.252708
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact create scans every Global and SG inventory page before the first media mutation
+ok 121 - Shopee SG exact create scans every Global and SG inventory page before the first media mutation
+  ---
+  duration_ms: 7.782041
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact create rejects any existing exact SKU globally or locally with zero provider writes
+ok 122 - Shopee SG exact create rejects any existing exact SKU globally or locally with zero provider writes
+  ---
+  duration_ms: 22.075
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact create fails closed on incomplete, duplicate, or failed inventory reads
+ok 123 - Shopee SG exact create fails closed on incomplete, duplicate, or failed inventory reads
+  ---
+  duration_ms: 4.476292
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact create binds the provider-selected merchant and shop before every provider read
+ok 124 - Shopee SG exact create binds the provider-selected merchant and shop before every provider read
+  ---
+  duration_ms: 0.455708
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact create cannot use resume-only to bypass a fresh pre-media inventory scan
+ok 125 - Shopee SG exact create cannot use resume-only to bypass a fresh pre-media inventory scan
+  ---
+  duration_ms: 0.338833
+  type: 'test'
+  ...
+# Subtest: Shopee SG falls back to buyer-visible extended description without dropping any approved detail image
+ok 126 - Shopee SG falls back to buyer-visible extended description without dropping any approved detail image
+  ---
+  duration_ms: 1.333459
+  type: 'test'
+  ...
+# Subtest: Shopee SG provider-preflight failure occurs before any image mutation
+ok 127 - Shopee SG provider-preflight failure occurs before any image mutation
+  ---
+  duration_ms: 5.633417
+  type: 'test'
+  ...
+# Subtest: Shopee SG publish.shop_region alone cannot bypass strict CREATE preflight
+ok 128 - Shopee SG publish.shop_region alone cannot bypass strict CREATE preflight
+  ---
+  duration_ms: 0.882125
+  type: 'test'
+  ...
+# Subtest: Shopee global publication shaping uses UNLIST for safe_test and NORMAL for live
+ok 129 - Shopee global publication shaping uses UNLIST for safe_test and NORMAL for live
+  ---
+  duration_ms: 0.50875
+  type: 'test'
+  ...
+# Subtest: Shopee base-info normalization distinguishes live, review, and non-public states with exact evidence
+ok 130 - Shopee base-info normalization distinguishes live, review, and non-public states with exact evidence
+  ---
+  duration_ms: 12.924833
+  type: 'test'
+  ...
+# Subtest: Shopee readback counts all eight approved details behind a representative gallery image or extended description
+ok 131 - Shopee readback counts all eight approved details behind a representative gallery image or extended description
+  ---
+  duration_ms: 3.507292
+  type: 'test'
+  ...
+# Subtest: Shopee independent readback ignores only unresolved pre-upload image and attribute placeholders
+ok 132 - Shopee independent readback ignores only unresolved pre-upload image and attribute placeholders
+  ---
+  duration_ms: 0.296333
+  type: 'test'
+  ...
+# Subtest: Shopee publication evidence fails shut on wrong shop, market, mutable content, or image count
+ok 133 - Shopee publication evidence fails shut on wrong shop, market, mutable content, or image count
+  ---
+  duration_ms: 1.061708
+  type: 'test'
+  ...
+# Subtest: Shopee publication evidence fails shut when base-info returns duplicate immutable item ids
+ok 134 - Shopee publication evidence fails shut when base-info returns duplicate immutable item ids
+  ---
+  duration_ms: 1.677166
+  type: 'test'
+  ...
+# Subtest: Shopee SG global CREATE fails shut when publish.shop_region is SG but strict context and evidence are missing
+ok 135 - Shopee SG global CREATE fails shut when publish.shop_region is SG but strict context and evidence are missing
+  ---
+  duration_ms: 21.780291
+  type: 'test'
+  ...
+# Subtest: Shopee final local GET rejects item-shaped non-2xx and provider-error responses before normalization
+ok 136 - Shopee final local GET rejects item-shaped non-2xx and provider-error responses before normalization
+  ---
+  duration_ms: 0.918459
+  type: 'test'
+  ...
+# Subtest: Shopee verified global safe publication forces UNLIST and is finalized only by local base-info readback
+ok 137 - Shopee verified global safe publication forces UNLIST and is finalized only by local base-info readback
+  ---
+  duration_ms: 2016.757667
+  type: 'test'
+  ...
+# Subtest: Shopee live REVIEWING readback remains pending and never counts as published
+ok 138 - Shopee live REVIEWING readback remains pending and never counts as published
+  ---
+  duration_ms: 2.207458
+  type: 'test'
+  ...
+# Subtest: Shopee stop binds the requested local item id and verifies UNLIST with a GET
+ok 139 - Shopee stop binds the requested local item id and verifies UNLIST with a GET
+  ---
+  duration_ms: 4.529667
+  type: 'test'
+  ...
+# Subtest: Shopee listing update verifies the same local item, localized fields, status and eight images
+ok 140 - Shopee listing update verifies the same local item, localized fields, status and eight images
+  ---
+  duration_ms: 3.234166
+  type: 'test'
+  ...
+# Subtest: Shopee safe_test direct local create is rejected before a provider call
+ok 141 - Shopee safe_test direct local create is rejected before a provider call
+  ---
+  duration_ms: 0.391417
+  type: 'test'
+  ...
+# Subtest: Shopee SG adoption marker accepts only the exact pre-approved identity
+ok 142 - Shopee SG adoption marker accepts only the exact pre-approved identity
+  ---
+  duration_ms: 0.758375
+  type: 'test'
+  ...
+# Subtest: Shopee SG adoption readback returns bounded evidence for exact seller, shop, locale, currency, UNLIST state, and 1+8 images
+ok 143 - Shopee SG adoption readback returns bounded evidence for exact seller, shop, locale, currency, UNLIST state, and 1+8 images
+  ---
+  duration_ms: 3.619541
+  type: 'test'
+  ...
+# Subtest: Shopee SG adoption readback fails closed for every material identity mismatch
+ok 144 - Shopee SG adoption readback fails closed for every material identity mismatch
+  ---
+  duration_ms: 0.586666
+  type: 'test'
+  ...
+# Subtest: listing.lineage.verify transports the exact adoption evidence through the worker contract
+ok 145 - listing.lineage.verify transports the exact adoption evidence through the worker contract
+  ---
+  duration_ms: 30.379125
+  type: 'test'
+  ...
+# Subtest: listing.lineage.verify rejects the approved item when one adoption proof changes
+ok 146 - listing.lineage.verify rejects the approved item when one adoption proof changes
+  ---
+  duration_ms: 0.535334
+  type: 'test'
+  ...
+# Subtest: Shopee SG adoption refuses stale OAuth instead of refreshing or calling the provider
+ok 147 - Shopee SG adoption refuses stale OAuth instead of refreshing or calling the provider
+  ---
+  duration_ms: 0.135
+  type: 'test'
+  ...
+# Subtest: Shopee SG adoption API checks static egress and worker readiness before enqueue
+ok 148 - Shopee SG adoption API checks static egress and worker readiness before enqueue
+  ---
+  duration_ms: 36.572334
+  type: 'test'
+  ...
+# Subtest: Shopee uses the exact stored provider ancestry and only returns complete leaf paths
+ok 149 - Shopee uses the exact stored provider ancestry and only returns complete leaf paths
+  ---
+  duration_ms: 1.542792
+  type: 'test'
+  ...
+# Subtest: Shopee SG context binds the exact central SKU, 5,000 KRW, stock one, category and request-time SGD/USD prices
+ok 150 - Shopee SG context binds the exact central SKU, 5,000 KRW, stock one, category and request-time SGD/USD prices
+  ---
+  duration_ms: 7.216584
+  type: 'test'
+  ...
+# Subtest: Shopee SG exact context rejects product, SKU, or shop drift before provider access
+ok 151 - Shopee SG exact context rejects product, SKU, or shop drift before provider access
+  ---
+  duration_ms: 2.101917
+  type: 'test'
+  ...
+# Subtest: Coinbase KRW exchange response is converted to authoritative KRW-per-SGD and KRW-per-USD evidence
+ok 152 - Coinbase KRW exchange response is converted to authoritative KRW-per-SGD and KRW-per-USD evidence
+  ---
+  duration_ms: 37.590208
+  type: 'test'
+  ...
+# Subtest: Shopee SG prewrite and request-time FX checks fail before provider image mutation on any guessed commerce field
+ok 153 - Shopee SG prewrite and request-time FX checks fail before provider image mutation on any guessed commerce field
+  ---
+  duration_ms: 6.847542
+  type: 'test'
+  ...
+# Subtest: Shopee prepared evidence survives provider schema stripping without allowing a forged local category or digest
+ok 154 - Shopee prepared evidence survives provider schema stripping without allowing a forged local category or digest
+  ---
+  duration_ms: 12.389125
+  type: 'test'
+  ...
+# Subtest: Shopee CREATE readback requires exact global/local identity, linkage, category, central SKU, execution price and stock
+ok 155 - Shopee CREATE readback requires exact global/local identity, linkage, category, central SKU, execution price and stock
+  ---
+  duration_ms: 5.236333
+  type: 'test'
+  ...
+# Subtest: only the active production Shopee credential can select targets
+ok 156 - only the active production Shopee credential can select targets
+  ---
+  duration_ms: 0.338792
+  type: 'test'
+  ...
+# Subtest: active credential envelope requires both exact lineage id and decrypted object
+ok 157 - active credential envelope requires both exact lineage id and decrypted object
+  ---
+  duration_ms: 0.30275
+  type: 'test'
+  ...
+# Subtest: cached Shopee targets are returned only when every market belongs to the active account
+ok 158 - cached Shopee targets are returned only when every market belongs to the active account
+  ---
+  duration_ms: 0.9915
+  type: 'test'
+  ...
+# Subtest: channel target route validates active production lineage before returning a Shopee cache
+ok 159 - channel target route validates active production lineage before returning a Shopee cache
+  ---
+  duration_ms: 5.817959
+  type: 'test'
+  ...
+# Subtest: Temu existing adoption marker is exact and read-only
+ok 160 - Temu existing adoption marker is exact and read-only
+  ---
+  duration_ms: 1.116833
+  type: 'test'
+  ...
+# Subtest: Temu credential certification binds one exact read-only marker and redacts token material
+ok 161 - Temu credential certification binds one exact read-only marker and redacts token material
+  ---
+  duration_ms: 1.504875
+  type: 'test'
+  ...
+# Subtest: Temu credential certification calls only access-token info and emits no secret
+ok 162 - Temu credential certification calls only access-token info and emits no secret
+  ---
+  duration_ms: 4.734208
+  type: 'test'
+  ...
+# Subtest: fresh ACTIVE Korean KRW readback with one hero and eight distinct details is digest-bound
+ok 163 - fresh ACTIVE Korean KRW readback with one hero and eight distinct details is digest-bound
+  ---
+  duration_ms: 0.850042
+  type: 'test'
+  ...
+# Subtest: Temu existing adoption fails closed on status, locale, commerce, SKU, and image drift
+ok 164 - Temu existing adoption fails closed on status, locale, commerce, SKU, and image drift
+  ---
+  duration_ms: 0.339542
+  type: 'test'
+  ...
+# Subtest: serverless gateway accepts only the exact adoption marker without opening a provider mutation fence
+ok 165 - serverless gateway accepts only the exact adoption marker without opening a provider mutation fence
+  ---
+  duration_ms: 0.978708
+  type: 'test'
+  ...
+# Subtest: Temu exact adoption executes four independent reads and returns one digest-bound observation
+ok 166 - Temu exact adoption executes four independent reads and returns one digest-bound observation
+  ---
+  duration_ms: 2.377792
+  type: 'test'
+  ...
+# Subtest: Temu exact existing update binds only the adopted ACTIVE item and immutable commerce
+ok 167 - Temu exact existing update binds only the adopted ACTIVE item and immutable commerce
+  ---
+  duration_ms: 2.821917
+  type: 'test'
+  ...
+# Subtest: Temu exact update performs one partial mutation between four-field pre/post readbacks
+ok 168 - Temu exact update performs one partial mutation between four-field pre/post readbacks
+  ---
+  duration_ms: 9.033125
+  type: 'test'
+  ...
+# Subtest: Temu exact update fails before any provider request when its marker drifts
+ok 169 - Temu exact update fails before any provider request when its marker drifts
+  ---
+  duration_ms: 0.614208
+  type: 'test'
+  ...
+# Subtest: Temu exact update never reaches the mutation without the current partial-update scope
+ok 170 - Temu exact update never reaches the mutation without the current partial-update scope
+  ---
+  duration_ms: 1.091166
+  type: 'test'
+  ...
+# Subtest: serverless Temu exact update delays the provider fence until all pre-readbacks pass
+ok 171 - serverless Temu exact update delays the provider fence until all pre-readbacks pass
+  ---
+  duration_ms: 5.273
+  type: 'test'
+  ...
+# Subtest: serverless Temu non-exact update reaches neither provider nor mutation fence
+ok 172 - serverless Temu non-exact update reaches neither provider nor mutation fence
+  ---
+  duration_ms: 0.196166
+  type: 'test'
+  ...
+# Subtest: Temu exact preflight rejects changed remote SKU and non-ACTIVE live aliases before mutation
+ok 173 - Temu exact preflight rejects changed remote SKU and non-ACTIVE live aliases before mutation
+  ---
+  duration_ms: 1.909584
+  type: 'test'
+  ...
+# Subtest: Temu operator copy names every mutable content field
+ok 174 - Temu operator copy names every mutable content field
+  ---
+  duration_ms: 6.597708
+  type: 'test'
+  ...
+# Subtest: Temu binds ko-KR, immutable goods IDs, and the exact ordered eight-image readback
+ok 175 - Temu binds ko-KR, immutable goods IDs, and the exact ordered eight-image readback
+  ---
+  duration_ms: 3.637625
+  type: 'test'
+  ...
+# Subtest: Temu rejects mismatched SKU identity, base price, and regular stock readbacks
+ok 176 - Temu rejects mismatched SKU identity, base price, and regular stock readbacks
+  ---
+  duration_ms: 0.399291
+  type: 'test'
+  ...
+# Subtest: Temu pending review is durable evidence but never fulfilled publication
+ok 177 - Temu pending review is durable evidence but never fulfilled publication
+  ---
+  duration_ms: 0.354666
+  type: 'test'
+  ...
+# Subtest: Temu rejects 7, 9, duplicate, and reordered approved detail-image readbacks
+ok 178 - Temu rejects 7, 9, duplicate, and reordered approved detail-image readbacks
+  ---
+  duration_ms: 0.503542
+  type: 'test'
+  ...
+# Subtest: Temu rejects missing, extra, reused, and drifted representative-image readbacks
+ok 179 - Temu rejects missing, extra, reused, and drifted representative-image readbacks
+  ---
+  duration_ms: 0.221541
+  type: 'test'
+  ...
+# Subtest: Temu rejects unknown status, locale drift, and externalGoodsId drift
+ok 180 - Temu rejects unknown status, locale drift, and externalGoodsId drift
+  ---
+  duration_ms: 0.116083
+  type: 'test'
+  ...
+# Subtest: Temu fails closed on numeric-only or conflicting status evidence
+ok 181 - Temu fails closed on numeric-only or conflicting status evidence
+  ---
+  duration_ms: 0.258083
+  type: 'test'
+  ...
+# Subtest: Temu safe-test and stop require an off-shelf readback
+ok 182 - Temu safe-test and stop require an off-shelf readback
+  ---
+  duration_ms: 0.289834
+  type: 'test'
+  ...
+# Subtest: Temu activation verifies exact price and stock before and after the provider write
+ok 183 - Temu activation verifies exact price and stock before and after the provider write
+  ---
+  duration_ms: 11.136625
+  type: 'test'
+  ...
+# Subtest: Temu activation blocks before the provider write when source stock no longer matches
+ok 184 - Temu activation blocks before the provider write when source stock no longer matches
+  ---
+  duration_ms: 1.197583
+  type: 'test'
+  ...
+# Subtest: Temu create timeout reconciles once by externalGoodsId and never sends a second create
+ok 185 - Temu create timeout reconciles once by externalGoodsId and never sends a second create
+  ---
+  duration_ms: 1.316917
+  type: 'test'
+  ...
+# Subtest: Temu strict create returns pending-review without claiming publication success
+ok 186 - Temu strict create returns pending-review without claiming publication success
+  ---
+  duration_ms: 0.744458
+  type: 'test'
+  ...
+# Subtest: Temu strict safe-test immediately goes off-shelf and binds the same eight images
+ok 187 - Temu strict safe-test immediately goes off-shelf and binds the same eight images
+  ---
+  duration_ms: 0.742291
+  type: 'test'
+  ...
+# Subtest: Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf and readback calls
+ok 188 - Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf and readback calls
+  ---
+  duration_ms: 1.16075
+  type: 'test'
+  ...
+# Subtest: Temu safe-test off-shelves before a missing first readback and never reports success
+ok 189 - Temu safe-test off-shelves before a missing first readback and never reports success
+  ---
+  duration_ms: 0.555083
+  type: 'test'
+  ...
+# Subtest: Temu definite create rejection never looks up or off-shelves an existing external ID
+ok 190 - Temu definite create rejection never looks up or off-shelves an existing external ID
+  ---
+  duration_ms: 0.370916
+  type: 'test'
+  ...
+# Subtest: Temu rejects an invalid strict image contract before the create call
+ok 191 - Temu rejects an invalid strict image contract before the create call
+  ---
+  duration_ms: 0.256583
+  type: 'test'
+  ...
+# Subtest: Temu requires an exact leaf category, shipping template, and one distinct representative before create
+ok 192 - Temu requires an exact leaf category, shipping template, and one distinct representative before create
+  ---
+  duration_ms: 1.079333
+  type: 'test'
+  ...
+# Subtest: Temu rejects an incomplete strict price or stock contract before the create call
+ok 193 - Temu rejects an incomplete strict price or stock contract before the create call
+  ---
+  duration_ms: 0.16125
+  type: 'test'
+  ...
+# Subtest: Temu quarantines a provider-accepted create when price or stock readback drifts
+ok 194 - Temu quarantines a provider-accepted create when price or stock readback drifts
+  ---
+  duration_ms: 1.276542
+  type: 'test'
+  ...
+# Subtest: Temu strict stop performs off-shelf mutation and verifies the same goodsId pair
+ok 195 - Temu strict stop performs off-shelf mutation and verifies the same goodsId pair
+  ---
+  duration_ms: 0.600042
+  type: 'test'
+  ...
+# Subtest: complete multi-SKU contracts pass without changing caller data
+ok 196 - complete multi-SKU contracts pass without changing caller data
+  ---
+  duration_ms: 0.954333
+  type: 'test'
+  ...
+# Subtest: lazada: a later SKU cannot reuse the first SKU identity
+ok 197 - lazada: a later SKU cannot reuse the first SKU identity
+  ---
+  duration_ms: 0.189333
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity -1 is blocked
+ok 198 - lazada: later SKU quantity -1 is blocked
+  ---
+  duration_ms: 0.146917
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity 0.5 is blocked
+ok 199 - lazada: later SKU quantity 0.5 is blocked
+  ---
+  duration_ms: 0.057292
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity null is blocked
+ok 200 - lazada: later SKU quantity null is blocked
+  ---
+  duration_ms: 0.093042
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity true is blocked
+ok 201 - lazada: later SKU quantity true is blocked
+  ---
+  duration_ms: 0.043958
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity  is blocked
+ok 202 - lazada: later SKU quantity  is blocked
+  ---
+  duration_ms: 0.098667
+  type: 'test'
+  ...
+# Subtest: lazada: later SKU quantity Infinity is blocked
+ok 203 - lazada: later SKU quantity Infinity is blocked
+  ---
+  duration_ms: 0.040834
+  type: 'test'
+  ...
+# Subtest: lazada: missing later packaging is blocked before any provider request
+ok 204 - lazada: missing later packaging is blocked before any provider request
+  ---
+  duration_ms: 1.387958
+  type: 'test'
+  ...
+# Subtest: temu: a later SKU cannot reuse the first SKU identity
+ok 205 - temu: a later SKU cannot reuse the first SKU identity
+  ---
+  duration_ms: 5.043667
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity -1 is blocked
+ok 206 - temu: later SKU quantity -1 is blocked
+  ---
+  duration_ms: 0.934
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity 0.5 is blocked
+ok 207 - temu: later SKU quantity 0.5 is blocked
+  ---
+  duration_ms: 0.278875
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity null is blocked
+ok 208 - temu: later SKU quantity null is blocked
+  ---
+  duration_ms: 0.190584
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity true is blocked
+ok 209 - temu: later SKU quantity true is blocked
+  ---
+  duration_ms: 0.080791
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity  is blocked
+ok 210 - temu: later SKU quantity  is blocked
+  ---
+  duration_ms: 0.054458
+  type: 'test'
+  ...
+# Subtest: temu: later SKU quantity Infinity is blocked
+ok 211 - temu: later SKU quantity Infinity is blocked
+  ---
+  duration_ms: 0.047875
+  type: 'test'
+  ...
+# Subtest: temu: missing later packaging is blocked before any provider request
+ok 212 - temu: missing later packaging is blocked before any provider request
+  ---
+  duration_ms: 1.132417
+  type: 'test'
+  ...
+# Subtest: Temu requires image and specification data for every SKU
+ok 213 - Temu requires image and specification data for every SKU
+  ---
+  duration_ms: 0.128291
+  type: 'test'
+  ...
+# Subtest: Temu optional list price must exceed base price in the same currency
+ok 214 - Temu optional list price must exceed base price in the same currency
+  ---
+  duration_ms: 0.063
+  type: 'test'
+  ...
+# Subtest: documented zero inventory remains a valid integer; malformed prices never pass
+ok 215 - documented zero inventory remains a valid integer; malformed prices never pass
+  ---
+  duration_ms: 0.082208
+  type: 'test'
+  ...
+# Subtest: Shopee removes the sunset stock field without mutating the source or changing inventory
+ok 216 - Shopee removes the sunset stock field without mutating the source or changing inventory
+  ---
+  duration_ms: 0.451625
+  type: 'test'
+  ...
+# Subtest: Shopee rejects missing or unsupported condition before global create reaches the provider
+ok 217 - Shopee rejects missing or unsupported condition before global create reaches the provider
+  ---
+  duration_ms: 0.623042
+  type: 'test'
+  ...
+# Subtest: identity-bearing item arrays reject deletion, insertion, reorder and identity changes
+ok 218 - identity-bearing item arrays reject deletion, insertion, reorder and identity changes
+  ---
+  duration_ms: 1.318459
+  type: 'test'
+  ...
+# Subtest: normal scalar edits and identity-free notice deletion remain restorable
+ok 219 - normal scalar edits and identity-free notice deletion remain restorable
+  ---
+  duration_ms: 1.572166
+  type: 'test'
+  ...
+# Subtest: fresh hidden and signed evidence is neither an identity issue nor a saved patch
+ok 220 - fresh hidden and signed evidence is neither an identity issue nor a saved patch
+  ---
+  duration_ms: 0.429459
+  type: 'test'
+  ...
+# Subtest: adding a protected identity to an identity-free draft is rejected
+ok 221 - adding a protected identity to an identity-free draft is rejected
+  ---
+  duration_ms: 0.186083
+  type: 'test'
+  ...
+# Subtest: restoring stale or malicious parent patches cannot smuggle bound identities
+ok 222 - restoring stale or malicious parent patches cannot smuggle bound identities
+  ---
+  duration_ms: 0.851292
+  type: 'test'
+  ...
+# Subtest: typed fields preserve false, zero, blank and independent package/net weight
+ok 223 - typed fields preserve false, zero, blank and independent package/net weight
+  ---
+  duration_ms: 1.308792
+  type: 'test'
+  ...
+# Subtest: common update regenerates inherited values and preserves edited price/notices
+ok 224 - common update regenerates inherited values and preserves edited price/notices
+  ---
+  duration_ms: 0.378708
+  type: 'test'
+  ...
+# Subtest: patches cannot rebind protected SKU inside arrays or leak internal evidence
+ok 225 - patches cannot rebind protected SKU inside arrays or leak internal evidence
+  ---
+  duration_ms: 0.197333
+  type: 'test'
+  ...
+# Subtest: restoring field edits does not reuse stale signed image URLs from evidence
+ok 226 - restoring field edits does not reuse stale signed image URLs from evidence
+  ---
+  duration_ms: 0.090333
+  type: 'test'
+  ...
+# Subtest: bank identities separate seller account, marketplace and target
+ok 227 - bank identities separate seller account, marketplace and target
+  ---
+  duration_ms: 0.060792
+  type: 'test'
+  ...
+# Subtest: category multi-values and Coupang notices/certificates reach native fields
+ok 228 - category multi-values and Coupang notices/certificates reach native fields
+  ---
+  duration_ms: 0.214042
+  type: 'test'
+  ...
+# Subtest: Smartstore required typed unit-capacity fields are available before payload keys exist
+ok 229 - Smartstore required typed unit-capacity fields are available before payload keys exist
+  ---
+  duration_ms: 0.439041
+  type: 'test'
+  ...
+# Subtest: draft client does not call a failed or mismatched response saved
+ok 230 - draft client does not call a failed or mismatched response saved
+  ---
+  duration_ms: 20.626375
+  type: 'test'
+  ...
+# Subtest: native notice deletion is durable rather than resurrecting old rows
+ok 231 - native notice deletion is durable rather than resurrecting old rows
+  ---
+  duration_ms: 0.70925
+  type: 'test'
+  ...
+1..231
+# tests 231
+# suites 0
+# pass 231
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 10597.3265

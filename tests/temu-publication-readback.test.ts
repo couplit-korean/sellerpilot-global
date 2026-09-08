@@ -17,6 +17,9 @@ const SKU_ID = "91000001";
 const BASE_PRICE = { amount: "5000", currency: "KRW" };
 const QUANTITY = 1;
 const SOURCE_SKU = {
+  images: REPRESENTATIVE_IMAGES,
+  packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
+  variations: [{ name: "Type", value: "Standard" }],
   externalSkuId: EXTERNAL_GOODS_ID,
   price: { basePrice: BASE_PRICE },
   quantity: QUANTITY,

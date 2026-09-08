@@ -1,3 +1,6 @@
+import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
+import { shopeeCreateConditionValid, shopeeCreateStockValid } from "./shopee-create-preflight";
+import { temuCreateSkuChecks } from "./temu-create-preflight";
 import type { ActiveChannelKey } from "./catalog";
 import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
@@ -292,6 +295,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     },
   ],
   shopee: [
+    { key: "condition", label: "상품 상태 (NEW·USED)", source: "상품 정보", test: (draft) => shopeeCreateConditionValid(valueAt(draft, ["body", "condition"])), manualPath: ["body", "condition"], help: "2026-09-01 공식 변경: 글로벌 상품 등록에는 상품 상태가 필수입니다." },
     { key: "shop", label: "승인 Shop ID", source: "판매자 계정", path: ["shopId"] },
     { key: "category", label: "Shopee 말단 카테고리", source: "카테고리", path: ["body", "category_id"] },
     { key: "title", label: "글로벌 상품명", source: "상품 정보", path: ["body", "global_item_name"] },
@@ -299,7 +303,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "brand", "original_brand_name"] },
     sharedImage(["imageUrls"]),
     { key: "price", label: "글로벌 기준가", source: "상품 정보", test: positive(["body", "original_price"]) },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["body", "normal_stock"]) },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => shopeeCreateStockValid(valueAt(draft, ["body"])) },
     { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => positiveFields(draft, [["body", "weight"], ["body", "dimension", "package_length"], ["body", "dimension", "package_width"], ["body", "dimension", "package_height"]]) },
     { key: "logistics", label: "활성 물류 채널", source: "판매자 계정", runtime: true, help: "등록 직전 Shopee 계정의 활성 물류 채널을 자동 조회합니다." },
   ],
@@ -310,10 +314,10 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "description"] },
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "brand"] },
     sharedImage(["imageUrls"]),
-    { key: "sku", label: "판매자 SKU", source: "상품 정보", path: ["request", "Request", "Product", "Skus", "Sku", 0, "SellerSku"] },
-    { key: "price", label: "판매가", source: "상품 정보", test: positive(["request", "Request", "Product", "Skus", "Sku", 0, "price"]) },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["request", "Request", "Product", "Skus", "Sku", 0, "quantity"]) },
-    { key: "package", label: "포장 내용·중량·규격", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["request", "Request", "Product", "Skus", "Sku", 0, "package_content"])) && positiveFields(draft, [["request", "Request", "Product", "Skus", "Sku", 0, "package_weight"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_length"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_width"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_height"]]) },
+    { key: "sku", label: "판매자 SKU", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).sku },
+    { key: "price", label: "판매가", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).price },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).stock },
+    { key: "package", label: "포장 내용·중량·규격", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).package },
   ],
   coupang: [
     { key: "category", label: "쿠팡 노출 카테고리", source: "카테고리", path: ["body", "displayCategoryCode"] },
@@ -395,6 +399,9 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "uploaded-image", label: "네이버 이미지 업로드", source: "판매자 계정", runtime: true, help: "원본 이미지를 Commerce API로 업로드한 URL로 교체합니다." },
   ],
   temu: [
+    { key: "sku", label: "모든 옵션의 고유 SKU", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).sku },
+    { key: "sku-images", label: "모든 옵션의 이미지", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).images },
+    { key: "variations", label: "모든 옵션의 사양명·값", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).variations },
     {
       key: "category",
       label: "Temu 말단 카테고리 ID",
@@ -419,9 +426,9 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "manufacturer", label: "제조사", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Manufacturer") },
     { key: "origin", label: "원산지", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Country of origin") },
     { key: "material", label: "재질·성분", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Material") },
-    { key: "price", label: "판매가·통화", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["body", "skuList", 0, "price", "basePrice", "currency"])) && Number(valueAt(draft, ["body", "skuList", 0, "price", "basePrice", "amount"])) > 0 },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["body", "skuList", 0, "quantity"]) },
-    { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => positiveFields(draft, [["body", "skuList", 0, "packageInfo", "weight"], ["body", "skuList", 0, "packageInfo", "length"], ["body", "skuList", 0, "packageInfo", "width"], ["body", "skuList", 0, "packageInfo", "height"]]) },
+    { key: "price", label: "판매가·통화", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).price },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).stock },
+    { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).package },
   ],
   ebay: [
     { key: "category", label: "eBay 말단 카테고리", source: "카테고리", path: ["offer", "categoryId"] },

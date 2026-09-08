@@ -1,3 +1,4 @@
+import { lazadaCreateSkuChecks } from "../../channels/lazada-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import {
   objectValue,
@@ -314,6 +315,13 @@ export async function executeLazada(input: ExecuteInput) {
   const write = writeChannelOperations.has(input.operation);
   let effectiveArguments = input.arguments;
   if (input.operation === "listing.create") {
+    if (verifiedPublicationRequested) {
+      const checks = lazadaCreateSkuChecks(input.arguments);
+      if (Object.values(checks).some(value => !value)) {
+        return result(input, [{ name: "listing-create-sku-prewrite", ok: false, status: 422,
+          data: { error: "LAZADA_CREATE_SKU_CONTRACT_INVALID", checks, sellerpilotNoWriteConfirmed: true } }]);
+      }
+    }
     effectiveArguments = await prepareLazadaNativeImageArguments(
       input,
       effectiveArguments,

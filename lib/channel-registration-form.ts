@@ -139,12 +139,13 @@ export function applyRegistrationPatches(base: Record<string,unknown>, patches: 
   return patches.reduce((draft,patch)=>{
     // Ancestors of the narrow internal allowlist are traversable while deriving
     // patches, but may never be replaced by a caller-supplied patch.
-    if(!editableRegistrationPatchPath(patch.path)||containsNonEditablePath(patch.value,patch.path))return draft;
+    if(!editableRegistrationPatchPath(patch.path))return draft;
     if(containsBoundIdentity(patch.value)) {
       const error=new Error("REGISTRATION_PATCH_IDENTITY_FORBIDDEN");
       error.name="RegistrationIdentityError";
       throw error;
     }
+    if(containsNonEditablePath(patch.value,patch.path))return draft;
     const next=setRegistrationValue(draft,patch.path,patch.value);
     if(registrationIdentityIssue(draft,next)) {
       const error=new Error("REGISTRATION_PATCH_IDENTITY_FORBIDDEN");

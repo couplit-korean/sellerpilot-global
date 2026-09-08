@@ -1,3 +1,4 @@
+import { shopeeGlobalCreateBody } from "../../channels/shopee-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import {
   objectValue,
@@ -216,7 +217,7 @@ export async function executeShopee(input: ExecuteInput) {
         environment: input.environment,
         method: "POST",
         path: "/api/v2/global_product/add_global_item",
-        body: objectValue(input.arguments, "body"),
+        body: shopeeGlobalCreateBody(objectValue(input.arguments, "body"), verifiedPublicationRequested),
       });
       const createStep = step("global-item-create", createRemote);
       globalItemId =

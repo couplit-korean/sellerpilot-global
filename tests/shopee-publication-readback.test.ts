@@ -363,9 +363,11 @@ test("Shopee final local GET rejects item-shaped non-2xx and provider-error resp
 test("Shopee verified global safe publication forces UNLIST and is finalized only by local base-info readback", async () => {
   const originalFetch = globalThis.fetch;
   let publishBody: Record<string, unknown> = {};
+  let createBody: Record<string, unknown> = {};
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     if (url.includes("/add_global_item")) {
+      createBody = JSON.parse(String(init?.body ?? "{}"));
       return Response.json({ error: "", response: { global_item_id: 7001 } });
     }
     if (url.includes("/get_global_item_info")) {
@@ -393,7 +395,7 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
         ...genericArguments.publish,
         shop_region: "MY",
       },
-      body: { global_item_name: "Verified cup" },
+      body: { global_item_name: "Verified cup", condition: "NEW", normal_stock: 2 },
     };
     const providerResult = await executeChannelOperation({
       channel: "shopee",
@@ -408,6 +410,9 @@ test("Shopee verified global safe publication forces UNLIST and is finalized onl
       environment: "production",
     });
     assert.equal(providerResult.remoteId, "9001");
+    assert.deepEqual(createBody.seller_stock, [{ stock: 2 }]);
+    assert.equal(Object.hasOwn(createBody, "normal_stock"), false);
+    assert.equal(arguments_.body.normal_stock, 2, "the original draft remains unchanged");
     assert.equal(providerResult.ok, false, "the merchant-scoped phase cannot claim publication without the shop readback");
     assert.equal((publishBody.item as Record<string, unknown>).item_status, "UNLIST");
 

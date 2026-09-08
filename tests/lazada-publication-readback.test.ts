@@ -31,6 +31,7 @@ function argumentsFor(intent: "safe_test" | "live") {
           Skus: {
             Sku: [{
               SellerSku: "CAWAN-MY-1",
+              package_content: "Cup", package_weight: "0.1", package_length: "10", package_width: "8", package_height: "2",
               price: "39.90",
               quantity: "1",
               Status: intent === "safe_test" ? "inactive" : "active",
@@ -61,6 +62,7 @@ function readback(status: string, qcStatus?: string) {
       skus: [{
         SkuId: 555001,
         SellerSku: "CAWAN-MY-1",
+              package_content: "Cup", package_weight: "0.1", package_length: "10", package_width: "8", package_height: "2",
         price: 39.90,
         quantity: 1,
         special_price: 0,

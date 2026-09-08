@@ -1,0 +1,48 @@
+{
+  "verifiedAt": "2026-09-08T20:03:46.505707+00:00",
+  "productRegression": {
+    "tests": 231,
+    "pass": 231,
+    "fail": 0
+  },
+  "domainIsolation": {
+    "tests": 40,
+    "pass": 40,
+    "fail": 0
+  },
+  "channelIsolation": {
+    "tests": 28,
+    "pass": 28,
+    "fail": 0
+  },
+  "uniqueTests": 299,
+  "formRetest": {
+    "tests": 14,
+    "pass": 14,
+    "overlapsProductRegression": true
+  },
+  "typecheck": "passed",
+  "changedFilesEslint": "passed",
+  "localBuild": "passed",
+  "domainCrossDependencies": 0,
+  "channelCrossDependencies": 0,
+  "providerCreates": 0,
+  "productionDataWrites": 0,
+  "deployments": 0,
+  "liveCompletion": "0/3",
+  "remainingEarlierFullSuiteFailures": {
+    "previous": 7,
+    "fixed": 1,
+    "otherSixNotClaimedResolved": true
+  },
+  "artifacts": {
+    "build.log": "7b7daf9ecad87167f59c81bf92348b085f9da8cda9156b581ea1b38a688f4bad",
+    "channel-boundaries.json": "80c1a3c4c7be38335487266330d1c68ac0a2c586ba8b8da1a6cd1282e1dd4100",
+    "channel-isolation.tap": "0624134a2ceb4245eb6d5d8986c18330d1f2b387699ea386b5ec08e3cc054945",
+    "domain-boundaries.json": "7de032d31f132db713a19c77814eaaf0680289db6d31fed1466fd363089d5759",
+    "domain-isolation.tap": "1ed043a8a8988539fc0ff5be783798f68bbb1ad1be21cf8ae3e7b750190e01d2",
+    "operational-state.json": "47d7be1efd956891234998eb05f1b3e3f2363cfbadaf35c42b02b866e5968697",
+    "product-regression.tap": "34950453a4aa19a0576e8446b6befbd545e7a6d73d4409b3218cd3ba0b457b5d",
+    "registration-form.tap": "18f5c126e149093a85a9389b39fc1f93df29ab7085b76d4fd056c92208e7b831"
+  }
+}

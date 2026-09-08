@@ -1,3 +1,5 @@
+import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
+import { temuCreateSkuChecks } from "./temu-create-preflight";
 import { smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema, type SmartstoreContentRepairTransmissionImages } from "./smartstore-content-repair-contract";
 import { prepareSmartstoreContentRepairBody, smartstoreContentRepairBinding, smartstoreContentRepairBodyHashes, inspectSmartstoreContentRepairTransmission } from "./smartstore-content-repair";
 import { readSmartstoreUpdateIdentity } from "./smartstore-update-identity";
@@ -2100,6 +2102,13 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
 export async function prepareMarketplaceListingArguments(
   input: PrepareProviderListingInput,
 ): Promise<PreparedProviderListing> {
+  if (input.operation === "listing.create" && input.arguments.publicationStateContract === "verified_remote_state_v1") {
+    const checks = input.channel === "lazada" ? lazadaCreateSkuChecks(input.arguments)
+      : input.channel === "temu" ? temuCreateSkuChecks(input.arguments.body) : null;
+    if (checks && Object.values(checks).some(value => !value)) {
+      throw new Error(`${input.channel.toUpperCase()}_CREATE_SKU_CONTRACT_INVALID`);
+    }
+  }
   assertListingShippingReady(input.channel, input.arguments, input.operation);
   if (input.channel === "qoo10" && input.operation === "listing.update") {
     return {
