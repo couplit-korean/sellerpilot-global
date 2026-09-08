@@ -146,6 +146,7 @@ function ebayOffer(input: {
 }) {
   return {
     offerId: "offer-123",
+    format: "FIXED_PRICE",
     sku: "SELLERPILOT-001",
     marketplaceId: input.marketplaceId ?? "EBAY_US",
     status: input.status,
@@ -781,12 +782,17 @@ test("eBay read-only publication boundary binds getOffer to getInventoryItem", a
 test("eBay safe-test create keeps an unpublished offer even when legacy publish=true is supplied", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
+  let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
     calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+      return Response.json(ebayCreateArguments("live").inventoryItem);
     }
     if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
     if (url.endsWith("/offer/offer-123") && method === "GET") {
@@ -804,6 +810,7 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
     });
     assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
     assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
+      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "POST /sell/inventory/v1/offer",
@@ -823,11 +830,16 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
 test("eBay live create requires final PUBLISHED ACTIVE readback after publishOffer", async () => {
   const originalFetch = globalThis.fetch;
   let published = false;
+  let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+      return Response.json(ebayCreateArguments("live").inventoryItem);
     }
     if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
     if (url.endsWith("/offer/offer-123") && method === "GET") {

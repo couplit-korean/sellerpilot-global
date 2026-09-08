@@ -13,6 +13,8 @@
 | eBay (`ebay`) | [연결 지침](ebay.md) | `lib/product-registration/channels/ebay.ts` | `lib/cs/channels/ebay/adapter.ts` | `lib/shipping/channels/ebay.ts` |
 | Temu (`temu`) | [연결 지침](temu.md) | `lib/product-registration/channels/temu.ts` | `lib/cs/channels/temu/adapter.ts` | `lib/shipping/channels/temu.ts` |
 
+최신 상품 등록 보완·실운영 잔여 조건은 [8채널 검증 기록](remaining-product-verification-20260909.md)을 따른다. 3,000개 로컬 회귀 통과와 실제 계정/상품 연결 완료는 구분한다.
+
 ## 공통 연결 위치
 
 | 영역 | registry | API·화면 | 완료/worker |

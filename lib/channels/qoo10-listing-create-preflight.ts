@@ -356,7 +356,22 @@ function collectRecords(value: unknown, depth = 0, records: UnknownRecord[] = []
 
 function responseAccepted(remote: RemoteResponse) {
   const code = remote.data.ResultCode ?? remote.data.ErrorCode;
-  return remote.response.ok && (code === undefined || code === null || String(code) === "0");
+  return remote.response.ok && (code !== undefined && code !== null && String(code) === "0");
+}
+
+/** GetItemDetailInfo 1.2 documents -10001 as missing ItemCode/SellerCode.
+ * Authentication/permission errors and malformed or contradictory data never prove absence.
+ */
+export function qoo10SellerCodeAbsent(remote: RemoteResponse) {
+  if (!remote.response.ok) return false;
+  const code = remote.data.ResultCode;
+  if (code === undefined || code === null) return false;
+  if (remote.data.ErrorCode !== undefined && remote.data.ErrorCode !== null
+      && String(remote.data.ErrorCode) !== String(code)) return false;
+  const value = remote.data.ResultObject;
+  const empty = Array.isArray(value) && value.length === 0;
+  return (String(code) === "0" && empty)
+    || (String(code) === "-10001" && (value === undefined || value === null || empty));
 }
 
 function failedRemoteResponse(): RemoteResponse {
@@ -464,7 +479,7 @@ export async function runQoo10ListingCreateProviderPreflight(input: {
   expectation: Qoo10ListingCreateExpectation;
   request: Qoo10ReadRequest;
 }): Promise<Qoo10ProviderPreflightResult> {
-  const [sellerRemote, categoryRemote, shippingRemote] = await Promise.all([
+  const [sellerRemote, categoryRemote, shippingRemote, duplicateRemote] = await Promise.all([
     settledRead(() => input.request({
       payload: input.payload,
       service: "ItemsLookup",
@@ -484,12 +499,24 @@ export async function runQoo10ListingCreateProviderPreflight(input: {
       method: "GetSellerDeliveryGroupInfo",
       params: {},
     })),
+    settledRead(() => input.request({
+      payload: input.payload, service: "ItemsLookup", method: "GetItemDetailInfo", version: "1.2",
+      params: { ItemCode: "", SellerCode: input.expectation.sellerCode },
+    })),
   ]);
   const seller = sellerIdentityVerification(sellerRemote, input.expectation);
+  const absent = qoo10SellerCodeAbsent(duplicateRemote);
   const steps = [
     seller.step,
     categoryVerification(categoryRemote, input.expectation),
     shippingVerification(shippingRemote, input.expectation),
+    {
+      name: "qoo10-seller-code-absence-preflight",
+      ok: absent,
+      status: duplicateRemote.response.status,
+      data: { ResultMsg: absent
+        ? "QOO10_SELLER_CODE_ABSENCE_VERIFIED" : "QOO10_SELLER_CODE_ABSENCE_UNVERIFIED" },
+    },
   ];
   const ok = steps.every((step) => step.ok) && Boolean(seller.identityDigest);
   return {

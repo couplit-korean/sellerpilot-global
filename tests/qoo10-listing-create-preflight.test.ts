@@ -6,6 +6,7 @@ import { listingPublicationProviderAssetEvidence } from "../lib/channels/listing
 import { executeListingPublicationVerification } from "../lib/channels/listing-publication-verification";
 import { qoo10VerifiedListingRemoteState } from "../lib/channels/qoo10-listing-publication";
 import {
+  qoo10SellerCodeAbsent,
   buildQoo10ListingCreateContext,
   qoo10ListingCreateExpectation,
   qoo10ListingCreateContextContract,
@@ -311,6 +312,9 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
     const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
     methods.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode) {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
     if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
       return Response.json({
         ResultCode: 0,
@@ -388,6 +392,9 @@ test("Qoo10 create preserves eight verified detail images and rolls back a misma
     const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
     calls.push({ method, ...(body.Status ? { status: body.Status } : {}) });
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode) {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
     if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
       return Response.json({
         ResultCode: 0,
@@ -477,6 +484,9 @@ test("Qoo10 create never treats eight images from a failed readback plus rollbac
     const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
     calls.push({ method, ...(body.Status ? { status: body.Status } : {}) });
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode) {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
     if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
       return Response.json({
         ResultCode: 0,
@@ -557,6 +567,9 @@ test("Qoo10 category ambiguity fails closed after read-only preflight and never 
     const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
     methods.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode) {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
     if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
       return Response.json({ ResultCode: 0, ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "BOUND" } });
     }
@@ -574,7 +587,7 @@ test("Qoo10 category ambiguity fails closed after read-only preflight and never 
       environment: "production",
     });
     assert.equal(result.ok, false);
-    assert.equal(methods.length, 3);
+    assert.equal(methods.length, 4);
     assert.equal(methods.some((method) => method === "ItemsBasic.SetNewGoods" || method === "ItemsContents.EditGoodsContents"), false);
     assert.equal(result.steps.find((step) => step.name === "qoo10-leaf-category-preflight")?.ok, false);
   } finally {
@@ -705,3 +718,54 @@ test("independent Qoo10 publication reverification re-attests the seller account
     globalThis.fetch = originalFetch;
   }
 });
+
+for (const [name, data, accepted, httpStatus] of [
+  ["normal empty", { ResultCode: 0, ResultObject: [] }, true, 200],
+  ["documented missing", { ResultCode: -10001, ResultObject: null }, true, 200],
+  ["documented missing no object", { ResultCode: "-10001" }, true, 200],
+  ["existing item", { ResultCode: 0, ResultObject: [{ ItemCode: ITEM_CODE, SellerCode: SKU }] }, false, 200],
+  ["missing success code", { ResultObject: [] }, false, 200],
+  ["malformed success", { ResultCode: 0, ResultObject: {} }, false, 200],
+  ["contradictory missing", { ResultCode: -10001, ResultObject: [{ ItemCode: ITEM_CODE }] }, false, 200],
+  ["conflicting code", { ResultCode: -10001, ErrorCode: 0 }, false, 200],
+  ["auth expired", { ResultCode: -90004, ResultObject: [] }, false, 200],
+  ["permission denied", { ResultCode: -90002, ResultObject: [] }, false, 200],
+  ["HTTP error", { ResultCode: -10001 }, false, 403],
+] as const) {
+  test(`Qoo10 SellerCode absence: ${name}`, () => {
+    const value = structuredClone(data);
+    assert.equal(qoo10SellerCodeAbsent({ data: value, text: "", response: Response.json(value, { status: httpStatus }) }), accepted);
+  });
+}
+
+for (const scenario of ["existing", "missing-code", "auth", "timeout"] as const) {
+  test(`Qoo10 create ${scenario} lookup prevents all mutations`, async () => {
+    const original = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      methods.push(method);
+      if (method === "ItemsLookup.GetItemDetailInfo" && body.SellerCode === SKU && body.ItemCode === "") {
+        if (scenario === "timeout") throw new TypeError("timed out");
+        return Response.json(scenario === "existing" ? { ResultCode: 0, ResultObject: [{ ItemCode: ITEM_CODE, SellerCode: SKU }] }
+          : scenario === "auth" ? { ResultCode: -90004 } : { ResultObject: [] });
+      }
+      if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
+        return Response.json({ ResultCode: 0, ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "BOUND" } });
+      }
+      if (method === "CommonInfoLookup.GetCatagoryListAll") return Response.json({ ResultCode: 0,
+        ResultObject: [{ CATE_L_CD: "100000019", CATE_M_CD: "200000146", CATE_S_CD: "320000542" }] });
+      if (method === "ItemsLookup.GetSellerDeliveryGroupInfo") return Response.json({ ResultCode: 0, ResultObject: [] });
+      throw new Error(`Unexpected mutation ${method}`);
+    };
+    try {
+      const operation = await executeChannelOperation({ channel: "qoo10", operation: "listing.create", payload,
+        arguments: strictArguments(), environment: "production" });
+      assert.equal(operation.ok, false);
+      assert.equal(operation.steps.find(step => step.name === "qoo10-seller-code-absence-preflight")?.ok, false);
+      assert.equal(methods.length, 4);
+      assert.equal(methods.some(method => /SetNewGoods|EditGoods/.test(method)), false);
+    } finally { globalThis.fetch = original; }
+  });
+}

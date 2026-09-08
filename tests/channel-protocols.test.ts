@@ -1958,13 +1958,24 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
     "https://cdn.example.com/detail-4.jpg",
   ];
   const listingDescription = imageUrls.slice(1).map((url) => `<img src="${url}" />`).join("");
+  let inventoryWritten = false;
+  let inventoryBody: Record<string, unknown> = {};
+  let offerBody: Record<string, unknown> = {};
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "PUT") {
+      inventoryWritten = true;
+      inventoryBody = JSON.parse(String(init?.body));
+    }
+    if (url.endsWith("/offer") && method === "POST") offerBody = JSON.parse(String(init?.body));
     calls.push({ url, method });
-    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls } });
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json(inventoryBody);
     if (url.endsWith("/offer") && method === "POST") return new Response(JSON.stringify({ offerId: "36445435465" }), { status: 201, headers: { "content-type": "application/json" } });
-    if (url.endsWith("/offer/36445435465") && method === "GET") return Response.json({ listingDescription });
+    if (url.endsWith("/offer/36445435465") && method === "GET") return Response.json({ ...offerBody, offerId: "36445435465" });
     if (url.endsWith("/publish")) return new Response(JSON.stringify({ listingId: "110000000001" }), { status: 200, headers: { "content-type": "application/json" } });
     return new Response(null, { status: 204 });
   };
@@ -1991,6 +2002,7 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "110000000001");
     assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
+      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "POST /sell/inventory/v1/offer",
@@ -2074,11 +2086,20 @@ test("eBay listing rejects a server-managed inventory location instead of creati
 test("eBay preserves an accepted offer marker when create omits offerId and reconciliation misses", async () => {
   const originalFetch = globalThis.fetch;
   const imageUrls = ["https://cdn.example.com/item.jpg"];
+  let inventoryWritten = false;
+  let inventoryBody: Record<string, unknown> = {};
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "PUT") {
+      inventoryWritten = true;
+      inventoryBody = JSON.parse(String(init?.body));
+    }
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls } });
+      return Response.json(inventoryBody);
     }
     if (url.endsWith("/offer") && method === "POST") {
       return Response.json({}, { status: 201 });
@@ -2149,19 +2170,31 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
     "https://cdn.example.com/detail-4.jpg",
   ];
   const listingDescription = imageUrls.slice(1).map((url) => `<img src="${url}" />`).join("");
+  let inventoryWritten = false;
+  let inventoryBody: Record<string, unknown> = {};
+  let offerBody: Record<string, unknown> = {};
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "PUT") {
+      inventoryWritten = true;
+      inventoryBody = JSON.parse(String(init?.body));
+    }
+    if (url.endsWith("/offer") && method === "POST") offerBody = JSON.parse(String(init?.body));
     calls.push({ url, method });
-    if (url.includes("/inventory_item/") && method === "GET") return Response.json({ product: { imageUrls } });
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
+    if (url.includes("/inventory_item/") && method === "GET") return Response.json(inventoryBody);
     if (url.endsWith("/offer") && method === "POST") {
       return Response.json({ errors: [{ errorId: 25002, message: "Offer already exists" }] }, { status: 409 });
     }
     if (url.includes("/offer?sku=") && method === "GET") {
-      return Response.json({ offers: [{ offerId: "existing-offer", marketplaceId: "EBAY_US", format: "FIXED_PRICE", status: "PUBLISHED" }] });
+      return Response.json({ total: 1, offers: [{ sku: "SELLERPILOT-RETRY", offerId: "existing-offer", marketplaceId: "EBAY_US", format: "FIXED_PRICE", status: "PUBLISHED" }] });
     }
     if (url.endsWith("/offer/existing-offer") && method === "GET") {
       return Response.json({
+        ...offerBody,
         offerId: "existing-offer",
         marketplaceId: "EBAY_US",
         format: "FIXED_PRICE",
@@ -2199,7 +2232,6 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
       "inventory-item",
       "inventory-image-readback",
       "offer-reconcile",
-      "offer-update-after-reconcile",
       "offer-detail-image-readback",
     ]);
     assert.equal(result.steps[2].data.sellerpilotVerification, "EXISTING_OFFER_RECOVERED");
@@ -2212,10 +2244,17 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
 test("eBay stops before offer creation when the inventory image readback loses detail images", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
+  let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     const method = init?.method ?? "GET";
+    if (url.includes("/inventory_item/") && method === "PUT") {
+      inventoryWritten = true;
+    }
     calls.push({ url, method });
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
       return Response.json({ product: { imageUrls: ["https://cdn.example.com/hero.jpg"] } });
     }

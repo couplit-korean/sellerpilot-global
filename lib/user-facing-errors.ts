@@ -74,6 +74,15 @@ export function userFacingErrorMessage(input: unknown, fallback = defaultErrorMe
   const raw = normalize(messageText(input));
   if (!raw) return fallback;
 
+  if (/EBAY_EXISTING_INVENTORY_REQUIRES_UPDATE\b/.test(raw)) {
+    return "eBay에 같은 판매자 상품코드의 재고가 있습니다. 기존 상품과 오퍼번호를 확인한 뒤 상품 정보 변경으로 진행해 주세요.";
+  }
+  if (/EBAY_INVENTORY_ABSENCE_UNVERIFIED\b|QOO10_SELLER_CODE_ABSENCE_UNVERIFIED\b/.test(raw)) {
+    return "판매 채널의 기존 상품이 없다는 확인을 받지 못해 중복 등록을 중단했습니다. 계정 연결과 기존 상품코드를 먼저 조회해 주세요.";
+  }
+  if (/EBAY_CREATE_READBACK_MISMATCH\b/.test(raw)) {
+    return "eBay에 저장된 상품 정보가 등록 요청과 달라 발행을 중단했습니다. 상품코드·가격·수량·정책과 상세 내용을 확인한 뒤 기존 상품 변경으로 진행해 주세요.";
+  }
   if (/NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE\b/.test(raw)) {
     return "스마트스토어에 같은 판매자 상품코드의 상품이 있습니다. 기존 상품번호를 확인한 뒤 상품 정보 변경으로 진행해 주세요.";
   }
