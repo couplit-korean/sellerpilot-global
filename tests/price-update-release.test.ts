@@ -4,6 +4,7 @@ import test from "node:test";
 import { activeChannelKeys } from "../lib/channels/catalog";
 import { channelOperationRelease } from "../lib/channels/operation-availability";
 import { channelPriceUpdateRelease } from "../lib/channels/price-update-release";
+import { localChannelExecutorAccess } from "../lib/channels/local-channel-executor";
 import { serverlessGatewayOperationAllowed } from "../lib/channels/serverless-gateway-provider";
 import { channelListingRemoteIdentity, listingLedgerRemoteIdentity } from "../lib/channels/write-resource";
 
@@ -68,6 +69,7 @@ test("Qoo10 가격 대상은 게시 원장의 ItemCode와 검증된 판매자 �
 });
 
 test("Coupang 가격 작업은 게시 원장의 단일 vendorItemId와 요청 대상을 결속한다", () => {
+  assert.equal(localChannelExecutorAccess("coupang", "price.update"), "write");
   const argumentsValue = { vendorItemId: "96027942778", price: 3190 };
   const listing = {
     remoteId: "16375780938",

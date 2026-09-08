@@ -17,6 +17,7 @@ const readOnlyTuples = new Set([
 
 const writeTuples = new Set([
   "coupang:listing.create",
+  "coupang:price.update",
   "smartstore:listing.create",
   "smartstore:listing.update",
 ]);
