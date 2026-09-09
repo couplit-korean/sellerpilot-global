@@ -109,8 +109,12 @@ async function testCoupang(payload: SecretPayload): Promise<ChannelDiagnostic> {
 
 async function testElevenst(payload: SecretPayload): Promise<ChannelDiagnostic> {
   const apiKey = textValue(payload, "api_key");
+  const sellerId = textValue(payload, "seller_id");
   if (!/^[A-Za-z0-9]{32}$/.test(apiKey)) {
     return { status: "failed", message: "11번가에서 발급한 32자리 OPEN API Key가 필요합니다." };
+  }
+  if (sellerId.length < 2 || sellerId.length > 100 || [...sellerId].some((character) => character.charCodeAt(0) <= 31 || character.charCodeAt(0) === 127)) {
+    return { status: "failed", message: "11번가 셀러오피스 판매자 ID가 별도로 필요합니다." };
   }
   const remote = await elevenstRequest({
     payload,
@@ -118,7 +122,7 @@ async function testElevenst(payload: SecretPayload): Promise<ChannelDiagnostic> 
     params: { keyword: "생활용품", pageNum: "1", pageSize: "1" },
   });
   if (remote.response.ok && remote.data.accepted === true) {
-    return { status: "passed", message: "11번가 OPEN API Key와 등록 IP에서 상품 검색 읽기가 정상 응답했습니다." };
+    return { status: "passed", message: "11번가 OPEN API Key와 등록 IP에서 상품 검색 읽기가 정상 응답했습니다. 판매자 ID는 선택한 credential에 별도 연결되며 이 응답은 계정 ID를 되돌려주지 않습니다." };
   }
   const errorCode = textValue(remote.data, "errorCode");
   return { status: "failed", message: `11번가 OPEN API 연결 검사 실패${errorCode ? ` · ${errorCode}` : ` · HTTP ${remote.response.status}`}` };

@@ -36,6 +36,7 @@ export type Qoo10ListingCreateExpectation = {
   sellerCode: string;
   itemTitle: string;
   categoryCode: string;
+  retailPrice: number;
   price: number;
   quantity: number;
   shippingNo: string;
@@ -100,6 +101,19 @@ function positiveAmount(value: unknown, maximum: number) {
   return Number.isFinite(parsed) && parsed > 0 && parsed <= maximum
     ? parsed
     : null;
+}
+
+function isoCalendarDate(value: unknown) {
+  const normalized = exactText(value);
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/u);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
 }
 
 function digest(value: unknown) {
@@ -303,9 +317,9 @@ export function qoo10ListingCreateExpectation(input: {
     ...(quantity === context.quantity ? [] : ["ItemQty"]),
     ...(/^\d+$/u.test(shippingNo) ? [] : ["ShippingNo"]),
     ...(recordText(params, ["TaxRate"]).match(/^(?:S|10|8|0)$/u) ? [] : ["TaxRate"]),
-    ...(recordText(params, ["ExpireDate"]).match(/^\d{4}-\d{2}-\d{2}$/u) ? [] : ["ExpireDate"]),
+    ...(isoCalendarDate(recordText(params, ["ExpireDate"])) ? [] : ["ExpireDate"]),
     ...(recordText(params, ["AvailableDateType"]) === "0" ? [] : ["AvailableDateType"]),
-    ...(recordText(params, ["AvailableDateValue"]).match(/^\d{1,3}$/u) ? [] : ["AvailableDateValue"]),
+    ...(/^[1-3]$/u.test(recordText(params, ["AvailableDateValue"])) ? [] : ["AvailableDateValue"]),
     ...(standardImage ? [] : ["StandardImage"]),
     ...(htmlBytes > 0 && htmlBytes <= qoo10DetailHtmlTransportMaximumBytes
       && htmlBytes <= qoo10DetailHtmlProviderMaximumBytes ? [] : ["ItemDescription.bytes"]),
@@ -315,7 +329,7 @@ export function qoo10ListingCreateExpectation(input: {
       && sameOrderedValues(detailImageUrls, boundDetailUrls) ? [] : ["ItemDescription.detailImages"]),
     ...(standardImage && !boundDetailDigests.includes(standardImage.digest) ? [] : ["StandardImage.digestIndependence"]),
   ];
-  if (mismatches.length || itemPrice === null || quantity === null || !standardImage) {
+  if (mismatches.length || itemPrice === null || retailPrice === null || quantity === null || !standardImage) {
     return { ok: false, code: "QOO10_CREATE_PREWRITE_MISMATCH", mismatchFields: [...new Set(mismatches)] };
   }
   const detailImageDigest = digest(boundDetailDigests);
@@ -328,6 +342,7 @@ export function qoo10ListingCreateExpectation(input: {
       sellerCode,
       itemTitle,
       categoryCode,
+      retailPrice,
       price: itemPrice,
       quantity,
       shippingNo,

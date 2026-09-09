@@ -210,7 +210,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
     oauth: false,
     fields: [
       { key: "api_key", label: "OPEN API Key", secret: true, placeholder: "11번가에서 발급한 32자리 Key", help: "OPEN API → API 관리 → API KEY 관리에서 확인합니다." },
-      { key: "seller_id", label: "판매자 ID", optional: true, placeholder: "셀러오피스 판매자 ID" },
+      { key: "seller_id", label: "판매자 ID", placeholder: "셀러오피스 판매자 ID" },
     ],
     officialDocs: [
       { label: "OPEN API 관리", url: "https://openapi.11st.co.kr/openapi/OpenApiServiceRegister.tmall" },

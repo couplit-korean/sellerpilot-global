@@ -106,7 +106,7 @@ for (const [channel, credentials, data] of [
   ["lazada", { country: "my" }, { code: "0" }],
   ["shopee", { partner_id: "1", partner_key: "fixture", shop_id: "2", access_token: "fixture" }, {}],
   ["qoo10", { api_key: "fixture", seller_id: "fixture", test_item_code: "fixture" }, { ResultCode: "0", ResultObject: {} }],
-  ["elevenst", { api_key: "a".repeat(32) }, { accepted: true }],
+  ["elevenst", { api_key: "a".repeat(32), seller_id: "fixture-seller" }, { accepted: true }],
   ["smartstore", {}, {}],
   ["ebay", { access_token: "fixture", refresh_token: "fixture" }, { sellerRegistrationCompleted: true }],
   ["temu", { app_key: "fixture", app_secret: "fixture", access_token: "fixture" }, { success: true }],

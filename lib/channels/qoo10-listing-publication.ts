@@ -262,8 +262,9 @@ export function normalizeQoo10ListingPublicationReadback(
   const sellPrice = exactJpyInteger(item, ["SellPrice", "ItemPrice"]);
   const retailPrice = exactJpyInteger(item, ["RetailPrice"]);
   const quantity = exactInteger(item, ["ItemQty", "Qty", "StockQty"]);
-  const retailPriceVerified = !recovery
-    || (recoveryExpectationVerified && retailPrice === recovery.retailPriceJpy);
+  const retailPriceVerified = (!strict || retailPrice === strict.retailPrice)
+    && (!recovery
+      || (recoveryExpectationVerified && retailPrice === recovery.retailPriceJpy));
   const sellPriceVerified = !recovery
     || (recoveryExpectationVerified && sellPrice === recovery.sellPriceJpy);
   const quantityVerified = !recovery
@@ -316,10 +317,10 @@ export function normalizeQoo10ListingPublicationReadback(
     priceQuantityVerified,
     representativeImageVerified,
     detailImageDigestVerified,
+    ...(strict || recovery ? { retailPriceVerified } : {}),
     ...(recovery
       ? {
           recoveryExpectationVerified,
-          retailPriceVerified,
           sellPriceVerified,
           quantityVerified,
           confirmedBiCdnImageVerified,
@@ -364,6 +365,8 @@ export function normalizeQoo10ListingPublicationReadback(
             sourceCurrency: strict.context.sourceCurrency,
             sourcePrice: strict.context.sourcePrice,
             qapiPriceJpy: strict.price,
+            qapiRetailPriceJpy: strict.retailPrice,
+            retailPriceVerified: true,
             representativeImageVerified: true,
             representativeImageDigest: strict.standardImageDigest,
             representativeImageBinding,

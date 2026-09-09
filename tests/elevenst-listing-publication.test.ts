@@ -9,6 +9,10 @@ import { executeChannelOperation } from "../lib/channels/operations";
 import { elevenstListingUpdateProjectionDigestInput } from "../lib/channels/listing-update";
 
 const API_KEY = "A".repeat(32);
+const ELEVENST_CREDENTIAL = {
+  api_key: API_KEY,
+  seller_id: "fixture-seller",
+};
 const FINGERPRINT = "b".repeat(64);
 const CATEGORY_XML = `<?xml version="1.0" encoding="euc-kr"?><ns2:categorys xmlns:ns2="urn:test">
   <ns2:category><depth>1</depth><dispNm>생활잡화</dispNm><dispNo>1001387</dispNo><leafYn>N</leafYn><parentDispNo>0</parentDispNo></ns2:category>
@@ -81,9 +85,14 @@ function exactProductXml(productNo: string, product: Record<string, unknown>, st
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
   const scalarFields = [
-    "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
+    "sellerPrdCd", "selMthdCd", "dispCtgrNo", "prdTypCd", "prdNm", "brand",
+    "rmaterialTypCd", "orgnTypCd", "orgnNmVal", "suplDtyfrPrdClfCd",
+    "forAbrdBuyClf", "prdStatCd", "minorSelCnYn",
     "prdImage01", "prdImage02", "prdImage03", "prdImage04",
-    "asDetail", "rtngExchDetail",
+    "selPrdClfCd", "aplBgnDy", "aplEndDy", "selPrc", "prdSelQty",
+    "dlvCnAreaCd", "dlvWyCd", "dlvCstInstBasiCd", "dlvCst1",
+    "bndlDlvCnYn", "dlvCstPayTypCd", "rtngdDlvCst", "exchDlvCst",
+    "addrSeqOut", "addrSeqIn", "asDetail", "rtngExchDetail",
   ];
   const scalars = scalarFields.flatMap((field) => product[field] === undefined || product[field] === ""
     ? []
@@ -92,7 +101,17 @@ function exactProductXml(productNo: string, product: Record<string, unknown>, st
   const notificationXml = `<ProductNotification><type>${escape(notification.type)}</type>${notification.item
     .map((item) => `<item><code>${escape(item.code)}</code><name>${escape(item.name)}</name></item>`)
     .join("")}</ProductNotification>`;
-  return `<Product><prdNo>${productNo}</prdNo><selStatCd>${status}</selStatCd><selStatNm>상태 ${status}</selStatNm>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${notificationXml}</Product>`;
+  const certificationXml = Array.isArray(product.ProductCertGroup)
+    ? product.ProductCertGroup.map((item) => {
+      const group = item as Record<string, unknown>;
+      return `<ProductCertGroup><crtfGrpTypCd>${escape(group.crtfGrpTypCd)}</crtfGrpTypCd><crtfGrpObjClfCd>${escape(group.crtfGrpObjClfCd)}</crtfGrpObjClfCd></ProductCertGroup>`;
+    }).join("")
+    : "";
+  return `<Product><prdNo>${productNo}</prdNo><selStatCd>${status}</selStatCd><selStatNm>상태 ${status}</selStatNm>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${certificationXml}${notificationXml}</Product>`;
+}
+
+function exactStockXml(productNo: string, quantity = "1") {
+  return `<ns2:ProductStocks xmlns:ns2="urn:fixture"><ns2:ProductStock><prdNo>${productNo}</prdNo><prdStckNo>987654321</prdStckNo><stckQty>${quantity}</stckQty><prdStckStatCd>01</prdStckStatCd></ns2:ProductStock></ns2:ProductStocks>`;
 }
 
 function publicationArguments(intent: "live" | "safe_test" = "live", imageCount = 8) {
@@ -178,7 +197,7 @@ test("11st safe_test create rejects before category, seller, or write requests",
     const operation = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: API_KEY },
+      payload: ELEVENST_CREDENTIAL,
       arguments: { ...publicationArguments("safe_test"), product: completeProduct() },
       environment: "production",
     });
@@ -202,13 +221,14 @@ test("11st live create uses the exact single-product GET before returning verifi
     if (call.url.includes("/rest/prodmarketservice/sellerprodcode/")) return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
     if (call.url.endsWith("/rest/prodservices/product")) return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     if (call.url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) return new Response(exactProductXml("123456789", product, "103"), { status: 200 });
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/stck/123456789")) return new Response(exactStockXml("123456789"), { status: 200 });
     throw new Error(`unexpected request: ${call.url}`);
   };
   try {
     const operation = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: API_KEY },
+      payload: ELEVENST_CREDENTIAL,
       arguments: { ...publicationArguments(), product },
       environment: "production",
     });
@@ -217,7 +237,7 @@ test("11st live create uses the exact single-product GET before returning verifi
     assert.equal(operation.remoteState?.visibility, "live");
     assert.equal(operation.remoteState?.imageCount, 8);
     assert.equal(calls.at(-1)?.method, "GET");
-    assert.match(calls.at(-1)?.url ?? "", /prodmarket\/123456789$/u);
+    assert.match(calls.at(-1)?.url ?? "", /prodmarket\/stck\/123456789$/u);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -231,13 +251,14 @@ test("11st pending approval remains verified but not publication-fulfilled", asy
     if (url.includes("/rest/cateservice/category")) return new Response(CATEGORY_XML, { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } });
     if (url.includes("/rest/prodmarketservice/sellerprodcode/")) return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
     if (url.endsWith("/rest/prodservices/product")) return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+    if (url.endsWith("/rest/prodmarketservice/prodmarket/stck/123456789")) return new Response(exactStockXml("123456789"), { status: 200 });
     return new Response(exactProductXml("123456789", product, "101"), { status: 200 });
   };
   try {
     const operation = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: API_KEY },
+      payload: ELEVENST_CREDENTIAL,
       arguments: { ...publicationArguments(), product },
       environment: "production",
     });
@@ -245,6 +266,36 @@ test("11st pending approval remains verified but not publication-fulfilled", asy
     assert.equal(operation.publicationFulfilled, false);
     assert.equal(operation.remoteState?.visibility, "pending_review");
     assert.equal(operation.remoteState?.providerStatus, "101");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st publication state cannot hide a price mismatch in the full Product readback", async () => {
+  const originalFetch = globalThis.fetch;
+  const expected = completeProduct();
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/rest/cateservice/category")) return new Response(CATEGORY_XML, { status: 200 });
+    if (url.includes("/rest/prodmarketservice/sellerprodcode/")) return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
+    if (url.endsWith("/rest/prodservices/product")) return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+    if (url.endsWith("/rest/prodmarketservice/prodmarket/stck/123456789")) return new Response(exactStockXml("123456789"), { status: 200 });
+    return new Response(exactProductXml("123456789", { ...expected, selPrc: "20000" }, "103"), { status: 200 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: ELEVENST_CREDENTIAL,
+      arguments: { ...publicationArguments(), product: expected },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.remoteState, undefined);
+    assert.match(
+      JSON.stringify(operation.steps[1]?.data.sellerpilotMismatches),
+      /product\.selPrc/u,
+    );
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -268,7 +319,7 @@ test("11st update verifies mutable content and live status in the same exact GET
     const operation = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.update",
-      payload: { api_key: API_KEY },
+      payload: ELEVENST_CREDENTIAL,
       arguments: {
         ...publicationArguments(),
         productNo: "123456789",
@@ -303,7 +354,7 @@ test("11st stop is complete only after exact GET returns status 105", async () =
     const operation = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.stop",
-      payload: { api_key: API_KEY },
+      payload: ELEVENST_CREDENTIAL,
       arguments: {
         publicationStateContract: "verified_remote_state_v1",
         publicationExpectedLocale: "ko-KR",

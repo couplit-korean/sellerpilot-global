@@ -140,6 +140,7 @@ function providerReadback() {
     SellerCode: params.SellerCode,
     SecondSubCatCd: params.SecondSubCat,
     ShippingNo: params.ShippingNo,
+    RetailPrice: params.RetailPrice,
     SellPrice: params.ItemPrice,
     ItemQty: params.ItemQty,
     ItemDetail: params.ItemDescription,
@@ -165,6 +166,7 @@ test("Qoo10 strict create contract binds QA SKU, 5,000 KRW source, JP/ja-JP, sep
   assert.equal(parsed.expectation.context.sourceCurrency, "KRW");
   assert.equal(parsed.expectation.context.sourcePrice, SOURCE_PRICE_KRW);
   assert.equal(parsed.expectation.context.currency, "JPY");
+  assert.equal(parsed.expectation.retailPrice, QAPI_PRICE_JPY);
   assert.equal(parsed.expectation.price, QAPI_PRICE_JPY);
   assert.equal(parsed.expectation.quantity, 1);
   assert.equal(parsed.expectation.detailImageUrls.length, 8);
@@ -193,6 +195,7 @@ test("Qoo10 strict live readback independently rejects category, shipping, price
   for (const [field, value] of [
     ["SecondSubCatCd", "999999999"],
     ["ShippingNo", "42"],
+    ["RetailPrice", "4999"],
     ["SellPrice", "4999"],
     ["ItemQty", "2"],
     ["ImageUrl", normalizedImage(10).publicUrl],
@@ -277,6 +280,8 @@ test("Qoo10 strict create rejects commerce, current field-name, active HTML, and
     ["price", strictArguments({ params: { ...(strictArguments().params as object), ItemPrice: "4999" } })],
     ["unsupported-currency-field", strictArguments({ params: { ...(strictArguments().params as object), Currency: "KRW" } })],
     ["stock", strictArguments({ params: { ...(strictArguments().params as object), ItemQty: "2" } })],
+    ["invalid-expiry-date", strictArguments({ params: { ...(strictArguments().params as object), ExpireDate: "2027-02-30" } })],
+    ["invalid-general-availability", strictArguments({ params: { ...(strictArguments().params as object), AvailableDateValue: "4" } })],
     ["legacy-adult-field", strictArguments({ params: { ...(strictArguments().params as object), AdultYN: undefined, AudultYN: "N" } })],
     ["japan-as-imported-origin", strictArguments({ params: { ...(strictArguments().params as object), ProductionPlaceType: "2", ProductionPlace: "JP" } })],
     ["active-html", strictArguments({ params: { ...(strictArguments().params as object), ItemDescription: `${detailHtml()}<script>alert(1)</script>` } })],
@@ -406,6 +411,8 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
     assert.equal(result.remoteState?.evidence.categoryVerified, true);
     assert.equal(result.remoteState?.evidence.shippingVerified, true);
     assert.equal(result.remoteState?.evidence.priceQuantityVerified, true);
+    assert.equal(result.remoteState?.evidence.retailPriceVerified, true);
+    assert.equal(result.remoteState?.evidence.qapiRetailPriceJpy, QAPI_PRICE_JPY);
     assert.equal(result.remoteState?.evidence.representativeImageVerified, true);
     assert.equal(result.remoteState?.evidence.representativeImageBinding, "set_new_goods_bi_contents_no");
     assert.equal(result.remoteState?.evidence.representativeImageContentIdVerified, true);

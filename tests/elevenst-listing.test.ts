@@ -21,6 +21,10 @@ import {
 } from "../lib/channels/elevenst-listing";
 
 const apiKey = "A".repeat(32);
+const elevenstCredential = {
+  api_key: apiKey,
+  seller_id: "fixture-seller",
+};
 const categoryXml = `<?xml version="1.0" encoding="euc-kr"?><ns2:categorys xmlns:ns2="urn:test">
   <ns2:category><depth>1</depth><dispNm>생활잡화</dispNm><dispNo>1001387</dispNo><leafYn>N</leafYn><parentDispNo>0</parentDispNo></ns2:category>
   <ns2:category><depth>2</depth><dispNm>정리소품</dispNm><dispNo>1340388</dispNo><leafYn>N</leafYn><parentDispNo>1001387</parentDispNo></ns2:category>
@@ -112,9 +116,12 @@ function exactProductXml(productNo: string, product: Record<string, unknown>) {
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
   const scalarFields = [
-    "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
+    "sellerPrdCd", "selMthdCd", "dispCtgrNo", "prdTypCd", "prdNm", "brand",
+    "rmaterialTypCd", "orgnTypCd", "orgnNmVal", "suplDtyfrPrdClfCd",
+    "forAbrdBuyClf", "prdStatCd", "minorSelCnYn",
     "prdImage01", "prdImage02", "prdImage03", "prdImage04",
-    "asDetail", "rtngExchDetail",
+    "selPrdClfCd", "aplBgnDy", "aplEndDy", "selPrc", "prdSelQty",
+    "dlvCnAreaCd", "dlvWyCd", "asDetail", "rtngExchDetail",
     "dlvCstInstBasiCd", "dlvCst1", "dlvCstPayTypCd", "bndlDlvCnYn", "rtngdDlvCst", "exchDlvCst", "addrSeqOut", "addrSeqIn",
   ];
   const scalars = scalarFields.flatMap((field) => product[field] === undefined || product[field] === ""
@@ -126,7 +133,17 @@ function exactProductXml(productNo: string, product: Record<string, unknown>) {
       .map((item) => `<item><code>${escape(item.code)}</code><name>${escape(item.name)}</name></item>`)
       .join("")}</ProductNotification>`
     : "";
-  return `<Product><prdNo>${productNo}</prdNo>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${notificationXml}</Product>`;
+  const certificationXml = Array.isArray(product.ProductCertGroup)
+    ? product.ProductCertGroup.map((item) => {
+      const group = item as Record<string, unknown>;
+      return `<ProductCertGroup><crtfGrpTypCd>${escape(group.crtfGrpTypCd)}</crtfGrpTypCd><crtfGrpObjClfCd>${escape(group.crtfGrpObjClfCd)}</crtfGrpObjClfCd></ProductCertGroup>`;
+    }).join("")
+    : "";
+  return `<Product><prdNo>${productNo}</prdNo>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${certificationXml}${notificationXml}</Product>`;
+}
+
+function exactStockXml(productNo: string, quantity = "1") {
+  return `<ns2:ProductStocks xmlns:ns2="urn:fixture"><ns2:ProductStock><prdNo>${productNo}</prdNo><prdStckNo>987654321</prdStckNo><stckQty>${quantity}</stckQty><prdStckStatCd>01</prdStckStatCd></ns2:ProductStock></ns2:ProductStocks>`;
 }
 
 function trustedSnapshotFingerprint(product: Record<string, unknown>) {
@@ -166,7 +183,7 @@ test("11st category suggestion ranks the official cable-organizer leaf and rejec
     const suggestion = await executeChannelOperation({
       channel: "elevenst",
       operation: "categories.suggest",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { query: "부착형 케이블 정리 클립 6개 세트" },
     });
@@ -177,14 +194,14 @@ test("11st category suggestion ranks the official cable-organizer leaf and rejec
     const leaf = await executeChannelOperation({
       channel: "elevenst",
       operation: "categories.validate",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { categoryId: "1341821" },
     });
     const parent = await executeChannelOperation({
       channel: "elevenst",
       operation: "categories.validate",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { categoryId: "1340388" },
     });
@@ -202,7 +219,7 @@ test("11st category suggestion does not accept unrelated leaves only because the
     const suggestion = await executeChannelOperation({
       channel: "elevenst",
       operation: "categories.suggest",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { query: "무관한 화장품 세럼" },
     });
@@ -229,7 +246,7 @@ test("11st seller XML request keeps the key in the header and returns only safe 
   };
   try {
     const result = await elevenstSellerXmlRequest({
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       method: "POST",
       path: "/rest/prodservices/product",
       body: "<Product><prdNm>SellerPilot QA</prdNm></Product>",
@@ -270,7 +287,7 @@ test("11st listing failures preserve the provider result message without exposin
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct({ selPrc: "10" }) },
     });
@@ -285,6 +302,10 @@ test("11st listing failures preserve the provider result message without exposin
 test("11st verification listing creates, reads back, and stops the exact remote product", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string; body: string }> = [];
+  const product = completeProduct({
+    prdNm: "SellerPilot <QA>",
+    sellerPrdCd: "QA-001",
+  });
   globalThis.fetch = async (input, init) => {
     const call = { url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") };
     if (call.url.includes("/rest/cateservice/category")) {
@@ -298,7 +319,10 @@ test("11st verification listing creates, reads back, and stops the exact remote 
       return new Response("<ClientMessage><message>created</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
     if (call.url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
-      return new Response(exactProductXml("123456789", completeProduct({ sellerPrdCd: "QA-001" })), { status: 200 });
+      return new Response(exactProductXml("123456789", product), { status: 200 });
+    }
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/stck/123456789")) {
+      return new Response(exactStockXml("123456789"), { status: 200 });
     }
     return new Response("<ClientMessage><message>stopped</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
   };
@@ -306,21 +330,18 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         verificationOnly: true,
-        product: completeProduct({
-          prdNm: "SellerPilot <QA>",
-          sellerPrdCd: "QA-001",
-        }),
+        product,
       },
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "123456789");
     assert.equal(result.publicUrl, "https://www.11st.co.kr/products/123456789");
-    assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "verification-stop-display"]);
-    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET", "PUT"]);
+    assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "product-stock-readback", "verification-stop-display"]);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET", "GET", "PUT"]);
     assert.match(calls[0].url, /sellerprodcode\/QA-001$/);
     assert.match(calls[1].body, /SellerPilot &lt;QA&gt;/);
     assert.match(calls[1].body, /<aplBgnDy>2026\/08\/24<\/aplBgnDy>/);
@@ -328,7 +349,8 @@ test("11st verification listing creates, reads back, and stops the exact remote 
     assert.match(calls[1].body, /<ProductCertGroup><crtfGrpTypCd>01<\/crtfGrpTypCd><crtfGrpObjClfCd>03<\/crtfGrpObjClfCd><\/ProductCertGroup>/);
     assert.doesNotMatch(calls[1].body, /<certTypeCd>|<certKey>/);
     assert.match(calls[2].url, /prodmarket\/123456789$/);
-    assert.match(calls[3].url, /stopdisplay\/123456789$/);
+    assert.match(calls[3].url, /prodmarket\/stck\/123456789$/);
+    assert.match(calls[4].url, /stopdisplay\/123456789$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -338,6 +360,7 @@ test("11st listing reconciles a timed-out create by seller product code without 
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
   let sellerLookupCount = 0;
+  const product = completeProduct({ sellerPrdCd: "QA-TIMEOUT-001", prdNm: "SellerPilot timeout QA" });
   globalThis.fetch = async (input, init) => {
     const call = { url: String(input), method: String(init?.method ?? "GET") };
     if (call.url.includes("/rest/cateservice/category")) {
@@ -351,7 +374,10 @@ test("11st listing reconciles a timed-out create by seller product code without 
     }
     if (call.url.endsWith("/rest/prodservices/product")) throw new DOMException("timed out", "TimeoutError");
     if (call.url.endsWith("/rest/prodmarketservice/prodmarket/987654321")) {
-      return new Response("<Product><prdNo>987654321</prdNo><sellerPrdCd>QA-TIMEOUT-001</sellerPrdCd></Product>", { status: 200 });
+      return new Response(exactProductXml("987654321", product), { status: 200 });
+    }
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/stck/987654321")) {
+      return new Response(exactStockXml("987654321"), { status: 200 });
     }
     return new Response("<ClientMessage><message>stopped</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
   };
@@ -359,16 +385,16 @@ test("11st listing reconciles a timed-out create by seller product code without 
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         verificationOnly: true,
-        product: completeProduct({ sellerPrdCd: "QA-TIMEOUT-001", prdNm: "SellerPilot timeout QA" }),
+        product,
       },
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
-    assert.deepEqual(result.steps.map((item) => item.name), ["product-create-reconcile", "product-readback", "verification-stop-display"]);
+    assert.deepEqual(result.steps.map((item) => item.name), ["product-create-reconcile", "product-readback", "product-stock-readback", "verification-stop-display"]);
     assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
     assert.equal(calls.filter((call) => call.url.includes("/sellerprodcode/")).length, 2);
   } finally {
@@ -448,7 +474,7 @@ test("11st server contract rejects copied no-certification metadata for another 
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: copiedContract },
     });
@@ -473,7 +499,7 @@ test("11st listing rejects an invalid local contract before any provider request
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct({ sellerPrdCd: "" }) },
     });
@@ -505,7 +531,7 @@ test("11st listing verifies the exact official leaf category before seller looku
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct() },
     });
@@ -532,7 +558,7 @@ test("11st listing stops before create when the stable seller-code idempotency l
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct({ sellerPrdCd: "QA-FENCE-001" }) },
     });
@@ -566,20 +592,23 @@ test("11st treats only the official namespaced empty products document as an abs
     if (call.url.endsWith("/rest/prodmarketservice/prodmarket/777888111")) {
       return new Response(exactProductXml("777888111", completeProduct({ sellerPrdCd: "QA-EMPTY-001" })), { status: 200 });
     }
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/stck/777888111")) {
+      return new Response(exactStockXml("777888111"), { status: 200 });
+    }
     throw new Error(`unexpected URL ${call.url}`);
   };
   try {
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct({ sellerPrdCd: "QA-EMPTY-001" }) },
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "777888111");
     assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
-    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET"]);
+    assert.deepEqual(calls.map((call) => call.method), ["GET", "POST", "GET", "GET"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -589,6 +618,7 @@ test("11st reconciles an accepted create response without productNo and never re
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
   let sellerLookupCount = 0;
+  const product = completeProduct({ sellerPrdCd: "QA-NO-ID-001" });
   globalThis.fetch = async (input, init) => {
     const call = { url: String(input), method: String(init?.method ?? "GET") };
     if (call.url.includes("/rest/cateservice/category")) {
@@ -604,19 +634,22 @@ test("11st reconciles an accepted create response without productNo and never re
     if (call.url.endsWith("/rest/prodservices/product")) {
       return new Response("<ClientMessage><message>created</message><resultCode>200</resultCode></ClientMessage>", { status: 200 });
     }
-    return new Response("<Product><prdNo>777888999</prdNo><sellerPrdCd>QA-NO-ID-001</sellerPrdCd></Product>", { status: 200 });
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/stck/777888999")) {
+      return new Response(exactStockXml("777888999"), { status: 200 });
+    }
+    return new Response(exactProductXml("777888999", product), { status: 200 });
   };
   try {
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
-      arguments: { product: completeProduct({ sellerPrdCd: "QA-NO-ID-001" }) },
+      arguments: { product },
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "777888999");
-    assert.deepEqual(result.steps.map((step) => step.name), ["product-create-reconcile", "product-readback"]);
+    assert.deepEqual(result.steps.map((step) => step.name), ["product-create-reconcile", "product-readback", "product-stock-readback"]);
     assert.equal(calls.filter((call) => call.url.endsWith("/rest/prodservices/product")).length, 1);
     assert.equal(calls.filter((call) => call.url.includes("/sellerprodcode/")).length, 2);
   } finally {
@@ -645,13 +678,13 @@ test("11st readback timeout preserves the observed create step for reconciliatio
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.create",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: { product: completeProduct({ sellerPrdCd: "QA-READBACK-001" }) },
     });
     assert.equal(result.ok, false);
     assert.equal(result.remoteId, "555666777");
-    assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback"]);
+    assert.deepEqual(result.steps.map((step) => step.name), ["product-create", "product-readback", "product-stock-readback"]);
     assert.equal(result.steps[0]?.ok, true);
     assert.equal(result.steps[1]?.status, 503);
     assert.equal(gatewayJobCompletionStatus(result.operation, result.ok, result.steps), "reconciliation_required");
@@ -684,7 +717,7 @@ test("11st listing update preserves the trusted full document and verifies the e
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.update",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         productNo: "123456789",
@@ -722,7 +755,7 @@ test("11st accepted update with stale exact readback requires reconciliation ins
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.update",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         productNo: "123456789",
@@ -757,7 +790,7 @@ test("11st update blocks a stale trusted snapshot before PUT and requires reconc
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.update",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         productNo: "123456789",
@@ -792,7 +825,7 @@ test("11st update requires exact HTTP 200 even when a different 2xx carries resu
     const result = await executeChannelOperation({
       channel: "elevenst",
       operation: "listing.update",
-      payload: { api_key: apiKey },
+      payload: elevenstCredential,
       environment: "production",
       arguments: {
         productNo: "123456789",
@@ -943,7 +976,7 @@ test("11st execution rejects mismatched paid shipping fields before any provider
       };
       const before = structuredClone(args);
       const outcome = await executeChannelOperation({
-        channel: "elevenst", operation, payload: { api_key: apiKey }, environment: "production", arguments: args,
+        channel: "elevenst", operation, payload: elevenstCredential, environment: "production", arguments: args,
       });
       assert.equal(outcome.ok, false);
       assert.equal(outcome.steps.length, 1);
@@ -968,7 +1001,7 @@ test("11st execution rejects unknown shipping source before create/update provid
   try {
     for (const operation of ["listing.create", "listing.update"] as const) {
       const outcome = await executeChannelOperation({
-        channel: "elevenst", operation, payload: { api_key: apiKey }, environment: "production",
+        channel: "elevenst", operation, payload: elevenstCredential, environment: "production",
         arguments: { product: completeProduct(), productNo: "123456789", sellerpilotAssets: { shipping: { shippingFeeKrw: null } } },
       });
       assert.equal(outcome.ok, false);
@@ -991,6 +1024,7 @@ test("11st execution keeps explicit zero-fee create/update working without seria
         calls.push(call);
         if (call.url.includes("/rest/cateservice/category")) return new Response(categoryXml);
         if (call.url.includes("/sellerprodcode/")) return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
+        if (call.url.includes("/prodmarket/stck/123456789")) return new Response(exactStockXml("123456789"));
         if (call.url.includes("/prodmarket/123456789")) return new Response(exactProductXml("123456789", product));
         if (call.url.includes("/rest/prodservices/product")) return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>");
         throw new Error(`Unexpected provider URL: ${call.url}`);
@@ -1003,7 +1037,7 @@ test("11st execution keeps explicit zero-fee create/update working without seria
       const before = structuredClone(args);
       const route = await runElevenstShippingRouteBranch({ argumentsValue: args, operation, context: authoritativeShippingContext(0) });
       assert.equal(route.response, null, "stored zero must pass the real route source-binding branch");
-      const outcome = await executeChannelOperation({ channel: "elevenst", operation, payload: { api_key: apiKey }, environment: "production", arguments: route.argumentsValue });
+      const outcome = await executeChannelOperation({ channel: "elevenst", operation, payload: elevenstCredential, environment: "production", arguments: route.argumentsValue });
       assert.equal(outcome.ok, true, outcome.safeMessage);
       assert.equal(outcome.remoteId, "123456789");
       const writes = calls.filter(call => call.method === "POST" || call.method === "PUT");
@@ -1215,7 +1249,7 @@ for (const body of ["<html><body>not found</body></html>", "", "<ClientMessage><
       return new Response(body, { status: 404, headers: { "content-type": "text/xml;charset=UTF-8" } });
     };
     try {
-      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", environment: "production", payload: { api_key: apiKey }, arguments: { product: completeProduct() } });
+      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", environment: "production", payload: elevenstCredential, arguments: { product: completeProduct() } });
       assert.equal(result.ok, false);
       assert.match(JSON.stringify(result), /ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED/);
       assert.ok(calls.every(call => call.method === "GET"));
@@ -1237,7 +1271,7 @@ for (const field of ["rtngdDlvCst", "exchDlvCst"] as const) {
           new RegExp(`ELEVENST_CONTRACT_FIELD_INVALID:${field}`));
         const result = await executeChannelOperation({
           channel: "elevenst", operation: "listing.create",
-          payload: { api_key: apiKey }, arguments: { product: completeProduct({ [field]: value }) }, environment: "production"
+          payload: elevenstCredential, arguments: { product: completeProduct({ [field]: value }) }, environment: "production"
         });
         assert.equal(result.ok, false);
         assert.match(JSON.stringify(result.steps), /ELEVENST_PREWRITE_VALIDATION_FAILED/);
@@ -1273,7 +1307,7 @@ test("11st fixed prepaid shipping binds authoritative fee without changing free 
 });
 
 for (const wrongFee of [false, true]) {
-  test(`11st fixed shipping create sends official XML and checks remote fee (mismatch=${wrongFee})`, async () => {
+  test(`11st fixed shipping create sends official XML without treating undocumented Product GET fee echo as proof (changed=${wrongFee})`, async () => {
     const product = completeProduct({ ...elevenstListingShippingFields({ shippingFeeKrw: 3000 }), addrSeqOut: "1234", addrSeqIn: "5678" });
     const before = structuredClone(product);
     const originalFetch = globalThis.fetch;
@@ -1286,16 +1320,28 @@ for (const wrongFee of [false, true]) {
         writes.push(String(init.body));
         return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
       }
+      if (url.includes("/prodmarket/stck/123456789")) return new Response(exactStockXml("123456789"), { status: 200 });
       return new Response(exactProductXml("123456789", { ...product, ...(wrongFee ? { dlvCst1: "0" } : {}) }), { status: 200 });
     };
     try {
-      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", payload: { api_key: apiKey }, environment: "production", arguments: { product, sellerpilotAssets: { shipping: { shippingFeeKrw: 3000 } } } });
+      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", payload: elevenstCredential, environment: "production", arguments: { product, sellerpilotAssets: { shipping: { shippingFeeKrw: 3000 } } } });
       assert.equal(writes.length, 1);
       assert.match(writes[0], /<dlvCstInstBasiCd>02<\/dlvCstInstBasiCd>/);
       assert.match(writes[0], /<dlvCst1>3000<\/dlvCst1>/);
       assert.match(writes[0], /<addrSeqOut>1234<\/addrSeqOut>/);
       assert.doesNotMatch(writes[0], /shippingFeeKrw/);
-      assert.equal(result.ok, !wrongFee);
+      assert.equal(result.ok, true);
+      assert.equal(
+        result.steps[1]?.data.sellerpilotAdditionalEvidenceRequired,
+        true,
+      );
+      assert.match(
+        JSON.stringify(
+          result.steps[1]?.data
+            .sellerpilotProviderReadbackUnavailableFields,
+        ),
+        /dlvCst1/u,
+      );
       assert.deepEqual(product, before);
     } finally {
       globalThis.fetch = originalFetch;

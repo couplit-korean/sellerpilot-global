@@ -823,6 +823,7 @@ export async function executeQoo10(input: ExecuteInput) {
           sourceCurrency: strictCreateExpectation.context.sourceCurrency,
           sourcePrice: strictCreateExpectation.context.sourcePrice,
           currency: strictCreateExpectation.context.currency,
+          retailPrice: strictCreateExpectation.retailPrice,
           price: strictCreateExpectation.price,
           quantity: strictCreateExpectation.quantity,
           categoryCode: strictCreateExpectation.categoryCode,
