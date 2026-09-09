@@ -182,6 +182,24 @@ test("content repair polling separates provider mutation from strict verificatio
     verificationJobId,
     message: verified.message,
   });
+
+  const exactSuccessorVerified = {
+    ...verified,
+    providerMutationPerformed: false,
+    message: "추가 PUT 없이 공식 재검증 완료",
+  };
+  assert.deepEqual(parseVerifiedSmartstoreContentRepair(exactSuccessorVerified, productId), {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    message: exactSuccessorVerified.message,
+  });
+  assert.equal(parseVerifiedSmartstoreContentRepair({
+    ...exactSuccessorVerified,
+    providerMutationPerformed: null,
+  }, productId), null);
 });
 
 test("error copy accepts only bounded server messages", () => {

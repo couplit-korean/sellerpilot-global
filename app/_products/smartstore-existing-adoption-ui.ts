@@ -235,7 +235,7 @@ export function parseVerifiedSmartstoreContentRepair(
       || result.status !== "verified"
       || result.apiCreateSucceeded !== false
       || result.contentVerified !== true
-      || result.providerMutationPerformed !== true
+      || typeof result.providerMutationPerformed !== "boolean"
       || result.normalUpdateEligible !== true
       || !uuidPattern.test(expectedProductId)
       || productId !== expectedProductId

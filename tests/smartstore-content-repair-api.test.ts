@@ -7,6 +7,7 @@ import ts from "typescript";
 import { z as zod } from "zod";
 
 import * as repairContract from "../lib/server-smartstore-content-repair";
+import { parseVerifiedSmartstoreContentRepair } from "../app/_products/smartstore-existing-adoption-ui";
 import {
   smartstoreContentRepairCompletionSchema,
   smartstoreContentRepairRequestSchema,
@@ -18,6 +19,8 @@ const listingId = "22222222-2222-4222-8222-222222222222";
 const jobId = "33333333-3333-4333-8333-333333333333";
 const baselineId = "44444444-4444-4444-8444-444444444444";
 const verificationJobId = "55555555-5555-4555-8555-555555555555";
+const successorId = "66666666-6666-4666-8666-666666666666";
+const predecessorRecheckId = "77777777-7777-4777-8777-777777777777";
 const digest = "a".repeat(64);
 
 const stateBase = {
@@ -124,6 +127,51 @@ test("fresh remote-state reconciliation is readable without claiming a successfu
     { ...verified, verificationJobId: null },
     { ...verified, contentVerified: false },
     { ...verified, apiCreateSucceeded: true },
+  ]) {
+    assert.equal(smartstoreContentRepairStateSchema.safeParse(invalid).success, false);
+  }
+});
+
+test("exact GET-only successor completion is exposed as verified without claiming another provider write", async () => {
+  const verified = {
+    ...stateBase,
+    status: "verified",
+    reason: "EXACT_SUCCESSOR_REMOTE_STATE_VERIFIED",
+    verificationJobId,
+    successorId,
+    predecessorRecheckId,
+    contentVerified: true,
+    providerMutationPerformed: false,
+    normalUpdateEligible: true,
+  };
+  const response = await callRoute({ method: "GET", rpcData: verified });
+  assert.equal(response.routeResponse.status, 200);
+  assert.deepEqual(structuredClone(response.calls), [{
+    name: "sellerpilot_service_get_smartstore_content_repair_status",
+    args: { p_actor: "88888888-8888-4888-8888-888888888888", p_product_id: productId },
+  }]);
+  const body = await response.routeResponse.json();
+  assert.equal(body.status, "verified");
+  assert.equal(body.verificationJobId, verificationJobId);
+  assert.equal(body.providerMutationPerformed, false);
+  assert.equal(body.contentVerified, true);
+  assert.equal(body.normalUpdateEligible, true);
+  assert.equal("successorId" in body, false);
+  assert.equal("predecessorRecheckId" in body, false);
+  assert.deepEqual(parseVerifiedSmartstoreContentRepair(body, productId), {
+    productId,
+    listingId,
+    jobId,
+    baselineId,
+    verificationJobId,
+    message: body.message,
+  });
+
+  for (const invalid of [
+    { ...verified, successorId: undefined },
+    { ...verified, predecessorRecheckId: null },
+    { ...verified, providerMutationPerformed: true },
+    { ...verified, reason: "ADOPTION_ALREADY_VERIFIED" },
   ]) {
     assert.equal(smartstoreContentRepairStateSchema.safeParse(invalid).success, false);
   }
