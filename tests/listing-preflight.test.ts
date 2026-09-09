@@ -64,6 +64,41 @@ test("Coupang account fields are explicit runtime checks while unknown product f
   assert.ok(blockingListingRequirements("coupang", draft).some((item) => item.key === "notices"));
 });
 
+test("Coupang preflight applies the exact identifier and purchase-option rules to every item", () => {
+  const valid = {
+    itemName: "옵션 1",
+    externalVendorSku: "CP-UI-001",
+    barcode: "8802259030799",
+    emptyBarcode: false,
+    modelNo: "",
+    attributes: [{ attributeTypeName: "수량", attributeValueName: "1개", exposed: "EXPOSED" }],
+  };
+  const draft = {
+    body: {
+      brand: "SellerPilotBrand",
+      items: [valid, {
+        ...valid,
+        itemName: "옵션 2",
+        externalVendorSku: "CP-UI-002",
+        barcode: "8802259030798",
+        modelNo: "MODEL-CANNOT-BYPASS-BAD-GTIN",
+      }],
+    },
+  };
+  assert.equal(inspectListingDraft("coupang", draft).find((row) => row.key === "product-identifier")?.status, "manual");
+
+  const noGtin = structuredClone(draft);
+  Object.assign(noGtin.body.items[1], {
+    barcode: "",
+    emptyBarcode: true,
+    emptyBarcodeReason: "제조사 바코드 미부여",
+    modelNo: "BRAND-MODEL-002",
+    attributes: [{ attributeTypeName: "검색필터", attributeValueName: "값", exposed: "NONE" }],
+  });
+  assert.equal(inspectListingDraft("coupang", noGtin).find((row) => row.key === "product-identifier")?.status, "ready");
+  assert.equal(inspectListingDraft("coupang", noGtin).find((row) => row.key === "purchase-option")?.status, "manual");
+});
+
 test("Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content", () => {
   const draft = {
     facts: { manufacturer: "롯데", countryOfOrigin: "대한민국", material: "밀가루" },
@@ -242,12 +277,11 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
   assert.deepEqual(blockingListingRequirements("smartstore", draft), []);
 });
 
-test("Temu preflight requires a numeric leaf category and an explicit shipping template", () => {
+test("Temu preflight accepts an optional external category and rejects leaf IDs or costTemplate", () => {
   const draft = {
     body: {
       goodsBasic: {
         extCatName: "생활 > 정리",
-        costTemplate: "",
         goodsName: "부착형 케이블 정리 클립 6개 세트",
         goodsDesc: "케이블 정리 상품의 구성과 사용 방법을 안내합니다.",
         externalGoodsId: "QA-20260823-CC-001",
@@ -270,11 +304,13 @@ test("Temu preflight requires a numeric leaf category and an explicit shipping t
     },
   };
 
-  assert.deepEqual(
-    blockingListingRequirements("temu", draft).map((item) => item.key),
-    ["category", "shipping-template"],
+  assert.deepEqual(blockingListingRequirements("temu", draft), []);
+  const numericLeaf = setListingDraftValue(draft, ["body", "goodsBasic", "extCatName"], "601099");
+  assert.deepEqual(blockingListingRequirements("temu", numericLeaf).map((item) => item.key), ["category"]);
+  const unsupportedTemplate = setListingDraftValue(
+    draft,
+    ["body", "goodsBasic", "costTemplate"],
+    "QA_KR_STANDARD",
   );
-  const withCategory = setListingDraftValue(draft, ["body", "goodsBasic", "extCatName"], "601099");
-  const ready = setListingDraftValue(withCategory, ["body", "goodsBasic", "costTemplate"], "QA_KR_STANDARD");
-  assert.deepEqual(blockingListingRequirements("temu", ready), []);
+  assert.deepEqual(blockingListingRequirements("temu", unsupportedTemplate).map((item) => item.key), ["shipping-template"]);
 });

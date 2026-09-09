@@ -112,6 +112,20 @@ test("shipping policy inspection prevents free/paying fee drift including 11st f
   assert.throws(() => assertListingShippingReady("elevenst", elevenst, "listing.create"), /shipping-supported-fee/);
 });
 
+test("Temu shipping omits costTemplate and relies on the store default", () => {
+  const input = context();
+  input.manualFields.shippingRule = "";
+  input.manualFields.packagingRule = "";
+  const temu = draft("temu", input);
+  const goodsBasic = (temu.body as { goodsBasic: Record<string, unknown> }).goodsBasic;
+  const shipping = (temu.sellerpilotAssets as { shipping: Record<string, unknown> }).shipping;
+  shipping.policyReview = "확인";
+  assert.equal(Object.hasOwn(goodsBasic, "costTemplate"), false);
+  assert.doesNotThrow(() => assertListingShippingReady("temu", temu, "listing.create"));
+  goodsBasic.costTemplate = "QA_KR_STANDARD";
+  assert.throws(() => assertListingShippingReady("temu", temu, "listing.create"), /shipping-policy-id/);
+});
+
 test("structured Smartstore fee, claim fees and address IDs normalize text inputs without free defaults", () => {
   const delivery = {
     deliveryType: "DELIVERY", deliveryCompany: "CJGLS",

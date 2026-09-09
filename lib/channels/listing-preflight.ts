@@ -2,6 +2,12 @@ import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
 import { shopeeCreateConditionValid, shopeeCreateStockValid } from "./shopee-create-preflight";
 import { temuCreateSkuChecks } from "./temu-create-preflight";
 import type { ActiveChannelKey } from "./catalog";
+import {
+  coupangCreateItems,
+  hasValidCoupangBrand,
+  hasValidCoupangProductIdentifier,
+  hasValidCoupangPurchaseOption,
+} from "../product-registration/coupang/create-required-fields";
 import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
   elevenstProcessedFoodCategoryId,
@@ -134,6 +140,28 @@ function coupangNativeNoticesConfirmed(value: unknown) {
 function coupangNoticesConfirmed(draft: Record<string, unknown>) {
   return Boolean(parseCoupangNoticeEnvelope(valueAt(draft, ["facts", "noticeContent"])))
     || coupangNativeNoticesConfirmed(valueAt(draft, ["body", "items", 0, "notices"]));
+}
+
+function coupangEveryCreateItem(
+  draft: Record<string, unknown>,
+  predicate: (item: Record<string, unknown>) => boolean,
+) {
+  const items = coupangCreateItems(valueAt(draft, ["body", "items"]));
+  return Boolean(items && items.every(predicate));
+}
+
+function coupangBrandConfirmed(draft: Record<string, unknown>) {
+  const body = valueAt(draft, ["body"]);
+  return Boolean(body && typeof body === "object" && !Array.isArray(body)
+    && hasValidCoupangBrand(body as Record<string, unknown>));
+}
+
+function coupangProductIdentifiersConfirmed(draft: Record<string, unknown>) {
+  return coupangEveryCreateItem(draft, hasValidCoupangProductIdentifier);
+}
+
+function coupangPurchaseOptionsConfirmed(draft: Record<string, unknown>) {
+  return coupangEveryCreateItem(draft, hasValidCoupangPurchaseOption);
 }
 
 const sharedImage = (path: Array<string | number>): RequirementSpec => ({
@@ -322,7 +350,9 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   coupang: [
     { key: "category", label: "쿠팡 노출 카테고리", source: "카테고리", path: ["body", "displayCategoryCode"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "sellerProductName"] },
-    { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "brand"] },
+    { key: "brand", label: "브랜드 또는 브랜드 ID", source: "상품 정보", test: coupangBrandConfirmed, manualPath: ["body", "brand"], help: "브랜드 ID가 없으면 공백·특수문자 없는 쿠팡 표준 브랜드명을 입력하세요." },
+    { key: "product-identifier", label: "모든 옵션의 GTIN 또는 실제 모델번호", source: "상품 정보", test: coupangProductIdentifiersConfirmed, manualPath: ["body", "items", "0", "modelNo"], help: "바코드가 있으면 유효한 GTIN이어야 합니다. 바코드가 없으면 미부여 사유와 브랜드가 부여한 실제 모델번호를 모든 옵션에 입력하세요. 내부 판매자 SKU는 모델번호 근거가 아닙니다." },
+    { key: "purchase-option", label: "모든 쿠팡 구매옵션", source: "카테고리", test: coupangPurchaseOptionsConfirmed, manualPath: ["body", "items", "0", "attributes", "0", "attributeValueName"], help: "모든 옵션에 카테고리 메타와 일치하는 노출 구매옵션 이름과 값을 한 개 이상 확인하세요." },
     { key: "manufacturer", label: "제조사·공급처", source: "상품 정보", path: ["facts", "manufacturer"] },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["facts", "countryOfOrigin"] },
     { key: "material", label: "재질·성분", source: "상품 정보", path: ["facts", "material"] },
@@ -404,19 +434,27 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "variations", label: "모든 옵션의 사양명·값", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).variations },
     {
       key: "category",
-      label: "Temu 말단 카테고리 ID",
+      label: "Temu 외부 카테고리명(선택)",
       source: "카테고리",
-      test: (draft) => /^[1-9]\d*$/u.test(String(valueAt(draft, ["body", "goodsBasic", "extCatName"]) ?? "").trim()),
-      help: "Temu V3가 추천 카테고리로 대체하지 않도록 확정된 말단 카테고리 ID를 전송합니다.",
+      test: (draft) => {
+        const goodsBasic = valueAt(draft, ["body", "goodsBasic"]);
+        if (!goodsBasic || typeof goodsBasic !== "object" || Array.isArray(goodsBasic)) return false;
+        if (!Object.hasOwn(goodsBasic, "extCatName")) return true;
+        const category = String((goodsBasic as Record<string, unknown>).extCatName ?? "").trim();
+        return meaningful(category) && !/^[1-9]\d*$/u.test(category);
+      },
+      help: "V3 extCatName은 외부 플랫폼의 카테고리명/경로입니다. 생략 시 Temu가 자동 추천하며 숫자 Temu leaf ID 지원은 공식 문서에 없습니다.",
     },
     {
       key: "shipping-template",
-      label: "Temu 배송 템플릿 ID 또는 이름",
+      label: "Temu 기본 배송 템플릿",
       source: "판매자 계정",
-      path: ["body", "goodsBasic", "costTemplate"],
-      manualPath: ["body", "goodsBasic", "costTemplate"],
-      placeholder: "Temu Seller Centre의 배송 템플릿 ID 또는 정확한 이름",
-      help: "비워 두면 스토어 기본 템플릿이 자동 적용되므로 exact QA 등록에서는 명시적으로 확인해야 합니다.",
+      test: (draft) => {
+        const goodsBasic = valueAt(draft, ["body", "goodsBasic"]);
+        return Boolean(goodsBasic && typeof goodsBasic === "object" && !Array.isArray(goodsBasic)
+          && !Object.hasOwn(goodsBasic, "costTemplate"));
+      },
+      help: "V3는 상품 서비스 정보를 판매자 입력으로 받지 않고 스토어 기본 배송 템플릿을 자동 적용하므로 costTemplate을 전송하지 않습니다.",
     },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "goodsBasic", "goodsName"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["body", "goodsBasic", "goodsDesc"] },

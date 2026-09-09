@@ -32,8 +32,7 @@ const EXPECTED_SKUS = [{
 const GOODS_BASIC = {
   externalGoodsId: EXTERNAL_GOODS_ID,
   goodsName: "한국어로 확인된 테무 판매 상품",
-  extCatName: "601099",
-  costTemplate: "QA_KR_STANDARD",
+  extCatName: "Home & Kitchen / Storage & Organization / Cable Management",
   goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
   bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
   goodsCarouselImage: REPRESENTATIVE_IMAGES,
@@ -50,12 +49,13 @@ function listData(overrides: Record<string, unknown> = {}) {
         status: 1,
         ...overrides,
       }],
+      total: 1,
     },
   };
 }
 
 function emptyListData() {
-  return { success: true, result: { goodsList: [] } };
+  return { success: true, result: { goodsList: [], total: 0 } };
 }
 
 function statusData(
@@ -305,7 +305,12 @@ test("Temu safe-test and stop require an off-shelf readback", () => {
 
 function strictArguments(intent: "live" | "safe_test" = "live") {
   return {
-    body: { language: "ko", goodsBasic: GOODS_BASIC, skuList: [SOURCE_SKU] },
+    body: {
+      language: "ko",
+      goodsBasic: GOODS_BASIC,
+      attributes: [{ name: "Material", value: ["ABS"] }],
+      skuList: [SOURCE_SKU],
+    },
     publicationIntent: intent,
     publicationStateContract: "verified_remote_state_v1",
     publicationExpectedLocale: "ko-KR",
@@ -441,7 +446,7 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
     calls.push(body);
     if (body.type === "temu.local.goods.list.retrieve") {
       listReadCount += 1;
-      return Response.json(listReadCount === 1 ? emptyListData() : listData());
+      return Response.json(listReadCount <= 2 ? emptyListData() : listData({ goodsStatus: "ACTIVE" }));
     }
     if (body.type === "temu.local.goods.v3.add") throw new DOMException("timed out", "TimeoutError");
     if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData());
@@ -449,11 +454,12 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
     return Response.json(detailData());
   };
   try {
+    const argumentsValue = strictArguments();
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: strictArguments(),
+      arguments: argumentsValue,
       environment: "production",
     });
     assert.equal(result.ok, true);
@@ -477,7 +483,7 @@ test("Temu strict create returns pending-review without claiming publication suc
     }
     if (body.type === "temu.local.goods.list.retrieve") {
       listReadCount += 1;
-      return Response.json(listReadCount === 1 ? emptyListData() : listData());
+      return Response.json(listReadCount <= 2 ? emptyListData() : listData({ goodsStatus: "INCOMPLETE" }));
     }
     if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData(1, 1));
     if (body.type === "temu.local.goods.sku.stock.query") return Response.json(stockData());
@@ -494,6 +500,8 @@ test("Temu strict create returns pending-review without claiming publication suc
     assert.equal(result.ok, true);
     assert.equal(result.remoteState?.visibility, "pending_review");
     assert.equal(result.publicationFulfilled, false);
+    assert.equal(result.steps[1].data.sellerpilotPublicationConfirmed, false);
+    assert.equal((result.steps[2].data.sellerpilotTemuCreateProcessingState as Record<string, unknown>).reviewState, "pending_review");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -511,7 +519,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
     }
     if (body.type === "temu.local.goods.list.retrieve") {
       listReadCount += 1;
-      return Response.json(listReadCount === 1 ? emptyListData() : listData({ onsale: 0 }));
+      return Response.json(listReadCount <= 2 ? emptyListData() : listData({ goodsStatus: "INACTIVE", onsale: 0 }));
     }
     if (body.type === "bg.local.goods.sale.status.set") {
       return Response.json({ success: true, result: { goodsId: Number(GOODS_ID) } });
@@ -533,6 +541,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
     assert.equal(result.remoteState?.imageCount, 8);
     assert.equal(result.publicationFulfilled, true);
     assert.deepEqual(calls.map((call) => call.type), [
+      "temu.local.goods.list.retrieve",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
       "bg.local.goods.sale.status.set",
@@ -563,9 +572,9 @@ test("Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf a
     }
     if (body.type === "temu.local.goods.list.retrieve") {
       listReadCount += 1;
-      return Response.json(listReadCount === 1 ? emptyListData() : {
+      return Response.json(listReadCount <= 2 ? emptyListData() : {
         success: true,
-        result: { goodsList: [{ goodsId: longGoodsId, outGoodsSn: EXTERNAL_GOODS_ID, onsale: 0 }] },
+        result: { goodsList: [{ goodsId: longGoodsId, outGoodsSn: EXTERNAL_GOODS_ID, goodsStatus: "INACTIVE", onsale: 0 }], total: 1 },
       });
     }
     if (body.type === "bg.local.goods.sale.status.set") {
@@ -649,6 +658,7 @@ test("Temu safe-test off-shelves before a missing first readback and never repor
     assert.notEqual(result.publicationFulfilled, true);
     assert.deepEqual(calls.map((call) => call.type), [
       "temu.local.goods.list.retrieve",
+      "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
       "bg.local.goods.sale.status.set",
       "temu.local.goods.list.retrieve",
@@ -686,6 +696,7 @@ test("Temu definite create rejection never looks up or off-shelves an existing e
     assert.equal(result.ok, false);
     assert.deepEqual(calls.map((call) => call.type), [
       "temu.local.goods.list.retrieve",
+      "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
     ]);
     assert.equal(result.steps[1]?.data.sellerpilotVerification, "TEMU_EXTERNAL_ID_COLLISION_MANUAL_RECONCILIATION");
@@ -698,32 +709,7 @@ test("Temu definite create rejection never looks up or off-shelves an existing e
   }
 });
 
-test("Temu rejects an invalid strict image contract before the create call", async () => {
-  const originalFetch = globalThis.fetch;
-  let fetchCount = 0;
-  globalThis.fetch = async () => {
-    fetchCount += 1;
-    throw new Error("unexpected provider call");
-  };
-  try {
-    const invalid = strictArguments();
-    invalid.body.goodsBasic = { ...GOODS_BASIC, detailImage: DETAIL_IMAGES.slice(0, 7) };
-    const result = await executeChannelOperation({
-      channel: "temu",
-      operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
-      arguments: invalid,
-      environment: "production",
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_PUBLICATION_PREWRITE_REJECTED");
-    assert.equal(fetchCount, 0);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Temu requires an exact leaf category, shipping template, and one distinct representative before create", async () => {
+test("Temu rejects invalid image counts and unfiltered invalid URL elements before the create call", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
   globalThis.fetch = async () => {
@@ -732,8 +718,41 @@ test("Temu requires an exact leaf category, shipping template, and one distinct 
   };
   try {
     for (const goodsBasic of [
-      { ...GOODS_BASIC, extCatName: "케이블 > 정리" },
+      { ...GOODS_BASIC, detailImage: DETAIL_IMAGES.slice(0, 7) },
+      { ...GOODS_BASIC, goodsCarouselImage: [REPRESENTATIVE_IMAGES[0], "not-a-url"] },
+      { ...GOODS_BASIC, detailImage: [...DETAIL_IMAGES, "not-a-url"] },
+    ]) {
+      const invalid = strictArguments();
+      invalid.body.goodsBasic = goodsBasic;
+      const result = await executeChannelOperation({
+        channel: "temu",
+        operation: "listing.create",
+        payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+        arguments: invalid,
+        environment: "production",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_PUBLICATION_PREWRITE_REJECTED");
+    }
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu rejects invalid external categories, costTemplate, and representative-image drift before create", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    throw new Error("unexpected provider call");
+  };
+  try {
+    for (const goodsBasic of [
+      { ...GOODS_BASIC, extCatName: "" },
+      { ...GOODS_BASIC, extCatName: "601099" },
       { ...GOODS_BASIC, costTemplate: "" },
+      { ...GOODS_BASIC, costTemplate: "QA_KR_STANDARD" },
       { ...GOODS_BASIC, goodsCarouselImage: [] },
       { ...GOODS_BASIC, goodsCarouselImage: [REPRESENTATIVE_IMAGES[0], "https://cdn.example.test/temu/hero-2.jpg"] },
       { ...GOODS_BASIC, goodsCarouselImage: [DETAIL_IMAGES[0]] },
@@ -797,7 +816,7 @@ test("Temu quarantines a provider-accepted create when price or stock readback d
       }
       if (body.type === "temu.local.goods.list.retrieve") {
         listReadCount += 1;
-        return Response.json(listReadCount === 1 ? emptyListData() : listData());
+        return Response.json(listReadCount <= 2 ? emptyListData() : listData({ goodsStatus: "ACTIVE" }));
       }
       if (body.type === "bg.local.goods.publish.status.get") return Response.json(statusData());
       if (body.type === "temu.local.goods.sku.stock.query") {

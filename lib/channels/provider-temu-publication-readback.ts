@@ -209,7 +209,6 @@ export function temuExactGoodsListArguments(externalGoodsId: string) {
   return {
     outGoodsSnList: [exactExternalGoodsId],
     pageSize: 25,
-    goodsSearchType: "ALL",
   };
 }
 

@@ -413,7 +413,7 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
-test("Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied", () => {
+test("Temu draft sends the external category path and omits unsupported costTemplate", () => {
   const context = manualContext();
   context.assignments = [{
     ...context.assignments[0],
@@ -432,9 +432,9 @@ test("Temu draft sends the confirmed leaf ID and blocks until a shipping templat
     5,
   ) as Record<string, unknown>;
   const body = draft.body as { goodsBasic: Record<string, unknown> };
-  assert.equal(body.goodsBasic.extCatName, "601099");
-  assert.equal(body.goodsBasic.costTemplate, "");
-  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), true);
+  assert.equal(body.goodsBasic.extCatName, "Electronics / Cable organizers");
+  assert.equal(Object.hasOwn(body.goodsBasic, "costTemplate"), false);
+  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), false);
 });
 
 test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
@@ -528,7 +528,7 @@ test("manual MVP image contract reaches URL validation instead of the AI detail 
   );
 });
 
-test("Qoo10 manual MVP accepts and reads back one explicit source detail image", async () => {
+test("Qoo10 manual content mode cannot bypass the verified create context", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
@@ -567,9 +567,10 @@ test("Qoo10 manual MVP accepts and reads back one explicit source detail image",
       },
       environment: "production",
     });
-    assert.equal(result.ok, true);
-    assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
-    assert.equal(calls.includes("ItemsBasic.EditGoodsStatus"), false);
+    assert.equal(result.ok, false);
+    assert.equal(result.steps[0]?.name, "qoo10-create-contract-preflight");
+    assert.equal(result.steps[0]?.data.ResultMsg, "QOO10_CREATE_CONTEXT_INVALID");
+    assert.deepEqual(calls, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

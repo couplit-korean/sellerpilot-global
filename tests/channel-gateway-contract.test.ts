@@ -37,6 +37,7 @@ import {
   gatewayJobCompletionStatus,
   gatewayJobCompletionStatusAtJobBoundary,
   gatewayResultHasObservedMutation,
+  gatewayResultRequiresAdditionalEvidence,
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
 import {
@@ -152,6 +153,20 @@ test("failed publication verification remains reconciliation-required for durabl
     { name: "seller-product-publication-reverification", ok: true, status: 200 },
     { name: "publication-content-verification", ok: false, status: 422 },
   ]), "reconciliation_required");
+});
+
+test("successful listing API results with missing evidence cannot complete the listing ledger", () => {
+  const steps = [{ name: "product-publication-readback", ok: true, status: 200,
+    data: { sellerpilotAdditionalEvidenceRequired: true } }];
+  for (const operation of ["listing.create", "listing.update", "listing.publication.verify"]) {
+    assert.equal(gatewayJobCompletionStatus(operation, true, steps), "reconciliation_required");
+  }
+  for (const operation of ["orders.list", "inquiries.list", "shipment.confirm"]) {
+    assert.equal(gatewayJobCompletionStatus(operation, true, steps), "succeeded");
+  }
+  assert.equal(gatewayResultRequiresAdditionalEvidence([null, [], { data: null }, { data: [] }]), false);
+  assert.equal(gatewayResultRequiresAdditionalEvidence([{ data: { sellerpilotAdditionalEvidenceRequired: "true" } }]), false);
+  assert.equal(gatewayJobCompletionStatus("listing.create", true, [{ ...steps[0], data: {} }]), "succeeded");
 });
 
 test("verified listing exposure remains attached to the reconciliation completion", () => {
@@ -738,6 +753,11 @@ test("successful listing completion is reconciled unless readback is at the prov
     result,
     "2026-08-29T20:00:00.000Z",
   ), "succeeded");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    { ...result, steps: [{ data: { sellerpilotAdditionalEvidenceRequired: true } }] },
+    "2026-08-29T20:00:00.000Z",
+  ), "reconciliation_required", "fresh remote state cannot override remaining verification evidence");
   assert.equal(gatewayJobCompletionStatusAtJobBoundary(
     "succeeded",
     result,

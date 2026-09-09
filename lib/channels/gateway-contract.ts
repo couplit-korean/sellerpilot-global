@@ -1,3 +1,5 @@
+import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
+export { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 import { z } from "zod";
 import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operation-names";
@@ -836,6 +838,10 @@ export function gatewayJobCompletionStatus(
   ok: boolean,
   steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
 ): "succeeded" | "failed" | "reconciliation_required" {
+  if (listingOperationRequiresVerifiedRemoteState(operation)
+    && gatewayResultRequiresAdditionalEvidence(steps)) {
+    return "reconciliation_required";
+  }
   if (!ok && operation === "listing.publication.verify") {
     return "reconciliation_required";
   }
@@ -853,6 +859,7 @@ export function gatewayJobCompletionStatusAtJobBoundary(
     ok?: unknown;
     operation?: unknown;
     remoteState?: unknown;
+    steps?: unknown;
   } | null | undefined,
   jobBoundary: unknown,
 ): "succeeded" | "failed" | "reconciliation_required" {
@@ -861,6 +868,9 @@ export function gatewayJobCompletionStatusAtJobBoundary(
     || typeof result.operation !== "string"
     || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
     return status;
+  }
+  if (Array.isArray(result.steps) && gatewayResultRequiresAdditionalEvidence(result.steps)) {
+    return "reconciliation_required";
   }
   return listingRemoteStateVerifiedAtOrAfterJobBoundary(result.remoteState, jobBoundary)
     ? status

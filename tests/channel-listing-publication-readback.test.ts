@@ -11,6 +11,7 @@ import type { RemoteResponse } from "../lib/channels/protocols";
 
 const fingerprint = "a".repeat(64);
 const smartstoreSellerSku = "SMARTSTORE-PUBLICATION-TEST";
+const coupangSellerSku = "COUPANG-PUBLICATION-TEST";
 
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   return {
@@ -27,6 +28,34 @@ function coupangContents(count = 8) {
   }));
 }
 
+function coupangCreateItem(contents = coupangContents()) {
+  return {
+    itemName: "검증 옵션 1",
+    externalVendorSku: coupangSellerSku,
+    barcode: "8802259030799",
+    emptyBarcode: false,
+    emptyBarcodeReason: "",
+    modelNo: "",
+    maximumBuyCount: 1,
+    unitCount: 1,
+    attributes: [{
+      attributeTypeName: "수량",
+      attributeValueName: "1개",
+      exposed: "EXPOSED",
+    }],
+    contents,
+  };
+}
+
+function coupangCreateBody(sellerProductName: string, requested: boolean, contents = coupangContents()) {
+  return {
+    sellerProductName,
+    brand: "SellerPilotBrand",
+    requested,
+    items: [coupangCreateItem(contents)],
+  };
+}
+
 function coupangSellerProduct(input: {
   requested: boolean;
   statusName: string;
@@ -37,9 +66,12 @@ function coupangSellerProduct(input: {
     code: "SUCCESS",
     data: {
       sellerProductId: 987654321,
+      vendorId: "A00012345",
       requested: input.requested,
       statusName: input.statusName,
       items: [{
+        sellerProductItemId: 3333,
+        externalVendorSku: coupangSellerSku,
         ...(input.vendorItemId ? { vendorItemId: Number(input.vendorItemId) } : {}),
         contents: coupangContents(input.imageCount ?? 8),
       }],
@@ -246,11 +278,7 @@ test("Coupang safe-test create forces requested false and verifies a non-public 
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: {
-          sellerProductName: "안전 초안",
-          requested: true,
-          items: [{ contents: coupangContents() }],
-        },
+        body: coupangCreateBody("안전 초안", true),
       },
       environment: "production",
     });
@@ -289,7 +317,7 @@ test("Coupang live create is not published until vendor-item onSale is read back
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("live"),
-        body: { sellerProductName: "판매 상품", requested: false, items: [{ contents: coupangContents() }] },
+        body: coupangCreateBody("판매 상품", false),
       },
       environment: "production",
     });
@@ -318,7 +346,7 @@ test("Coupang approval acceptance without a vendor item remains pending review",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("live"),
-        body: { sellerProductName: "심사 상품", requested: true, items: [{ contents: coupangContents() }] },
+        body: coupangCreateBody("심사 상품", true),
       },
       environment: "production",
     });
@@ -432,7 +460,7 @@ test("Coupang refuses verified success when the detail readback is not exactly e
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: { sellerProductName: "이미지 불일치", items: [{ contents: coupangContents(7) }] },
+        body: coupangCreateBody("이미지 불일치", false, coupangContents(7)),
       },
       environment: "production",
     });

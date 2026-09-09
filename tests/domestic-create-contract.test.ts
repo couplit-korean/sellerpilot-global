@@ -12,6 +12,26 @@ const naverCredential = { access_token: "fixture-token", access_token_expires_at
 const naverArguments = () => ({ body: { originProduct: {
   detailAttribute: { sellerCodeInfo: { sellerManagementCode: "TEST-SKU" } },
 }, smartstoreChannelProduct: {} } });
+const coupangValidBody = () => ({
+  sellerProductId: 12345678,
+  brand: "SellerPilotBrand",
+  requested: false,
+  items: [{
+    itemName: "검증 옵션 1",
+    externalVendorSku: "COUPANG-NO-REMOTE-ID-TEST",
+    barcode: "8802259030799",
+    emptyBarcode: false,
+    emptyBarcodeReason: "",
+    modelNo: "",
+    maximumBuyCount: 1,
+    unitCount: 1,
+    attributes: [{
+      attributeTypeName: "수량",
+      attributeValueName: "1개",
+      exposed: "EXPOSED",
+    }],
+  }],
+});
 
 for (const [label, status, data] of [
   ["unauthorized", 401, { code: "UNAUTHORIZED" }],
@@ -70,7 +90,7 @@ test("Coupang CREATE cannot substitute caller body ID for missing provider ID", 
   try {
     const result = await executeChannelOperation({ channel: "coupang", operation: "listing.create", environment: "production",
       payload: { vendor_id: "A00000000", access_key: "fixture-access", secret_key: "fixture-secret" },
-      arguments: { body: { sellerProductId: 12345678, requested: false } },
+      arguments: { body: coupangValidBody() },
     });
     assert.equal(result.ok, false);
     assert.equal(result.remoteId, undefined);

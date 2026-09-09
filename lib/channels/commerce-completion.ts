@@ -1,4 +1,4 @@
-import { gatewayWorkerCompletionSchema, gatewayJobCompletionStatusAtJobBoundary, type GatewayWorkerCompletion } from "./gateway-contract";
+import { gatewayWorkerCompletionSchema, gatewayJobCompletionStatusAtJobBoundary, gatewayResultRequiresAdditionalEvidence, type GatewayWorkerCompletion } from "./gateway-contract";
 import type { ProviderJob as ServerlessGatewayClaim } from "./provider-execution-contract";
 import { callRpc, completionContext, recordValue, type CompletionDependencies as ServerlessCsGatewayDependencies, type CompletionResult } from "./gateway-completion-runtime";
 const COMPLETE_TRANSACTION_RPC = "sellerpilot_service_complete_serverless_cs_transaction";
@@ -161,7 +161,9 @@ export async function completeCommerceClaim(
   const effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(parsed.data.status,
     completionProviderResult as unknown as Record<string, unknown> | undefined, context.publication_verification_boundary);
   const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required" && parsed.data.status === "succeeded"
-    ? "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH" : parsed.data.status === "succeeded" ? null : parsed.data.error;
+    ? (gatewayResultRequiresAdditionalEvidence("steps" in parsed.data.result ? parsed.data.result.steps : [])
+      ? "LISTING_ADDITIONAL_EVIDENCE_REQUIRED"
+      : "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH") : parsed.data.status === "succeeded" ? null : parsed.data.error;
   if (job.operation === "listing.lineage.verify") return completeListingLineageClaim(dependencies, gatewayTokenHash, job, parsed.data);
   const storedResponse: unknown = parsed.data.result ?? null;
   const arguments_ = {

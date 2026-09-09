@@ -1341,6 +1341,48 @@ test("Coupang category list uses the required root or parent category path segme
   }
 });
 
+const coupangCreateTestSku = "COUPANG-PROTOCOL-TEST";
+
+function coupangCreateTestBody(requested: boolean) {
+  return {
+    sellerProductName: "[API TEST]",
+    vendorUserId: "wing-user",
+    brand: "SellerPilotBrand",
+    requested,
+    items: [{
+      itemName: "검증 옵션 1",
+      externalVendorSku: coupangCreateTestSku,
+      barcode: "8802259030799",
+      emptyBarcode: false,
+      emptyBarcodeReason: "",
+      modelNo: "",
+      maximumBuyCount: 1,
+      unitCount: 1,
+      attributes: [{
+        attributeTypeName: "수량",
+        attributeValueName: "1개",
+        exposed: "EXPOSED",
+      }],
+    }],
+  };
+}
+
+function coupangCreateTestReadback(
+  product: Record<string, unknown>,
+  item: Record<string, unknown> = {},
+) {
+  return {
+    sellerProductId: 987654321,
+    vendorId: "A00012345",
+    items: [{
+      sellerProductItemId: 3333,
+      externalVendorSku: coupangCreateTestSku,
+      ...item,
+    }],
+    ...product,
+  };
+}
+
 test("Coupang product creation is only successful after seller-product readback matches", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
@@ -1353,7 +1395,7 @@ test("Coupang product creation is only successful after seller-product readback 
         headers: { "content-type": "application/json" },
       });
     }
-    return new Response(JSON.stringify({ code: "SUCCESS", data: { sellerProductId: 987654321, requested: true } }), {
+    return new Response(JSON.stringify({ code: "SUCCESS", data: coupangCreateTestReadback({ requested: true }) }), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -1363,7 +1405,7 @@ test("Coupang product creation is only successful after seller-product readback 
       channel: "coupang",
       operation: "listing.create",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
-      arguments: { body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] } },
+      arguments: { body: coupangCreateTestBody(true) },
       environment: "production",
     });
     assert.equal(result.ok, true);
@@ -1393,10 +1435,10 @@ test("Coupang listing resume waits for SAVED before requesting approval without 
     if (init?.method === "POST") throw new Error("resume must not create another seller product");
     readbackCount += 1;
     const data = readbackCount === 1
-      ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_ID_GEN" }
+      ? coupangCreateTestReadback({ requested: false, mdId: "NLUP_ID_GEN" })
       : readbackCount === 2
-        ? { sellerProductId: 987654321, requested: false, mdId: "NLUP_TEMP_SAVED" }
-        : { sellerProductId: 987654321, requested: true, mdId: "NLUP_APPROVAL_REQUESTED" };
+        ? coupangCreateTestReadback({ requested: false, mdId: "NLUP_TEMP_SAVED" })
+        : coupangCreateTestReadback({ requested: true, mdId: "NLUP_APPROVAL_REQUESTED" });
     return new Response(JSON.stringify({ code: "SUCCESS", data }), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -1409,7 +1451,7 @@ test("Coupang listing resume waits for SAVED before requesting approval without 
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         resumeRemoteId: "987654321",
-        body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] },
+        body: coupangCreateTestBody(true),
       },
       environment: "production",
     });
@@ -1452,21 +1494,14 @@ test("Coupang approval readback trusts the seller-product state when nested item
     return Response.json({
       code: "SUCCESS",
       data: readbackCount === 1
-        ? {
-            sellerProductId: 987654321,
-            requested: false,
-            status: "TEMP_SAVED",
-            statusName: "임시저장중",
-            items: [{ status: "SAVED", vendorItemId: 4444, contents: detailContents }],
-          }
-        : {
-            sellerProductId: 987654321,
-            requested: false,
-            mdId: "NLUP_ID_GEN",
-            status: "APPROVAL_REQUESTED",
-            statusName: "승인대기중",
-            items: [{ status: "SAVED", vendorItemId: 4444, contents: detailContents }],
-          },
+        ? coupangCreateTestReadback(
+            { requested: false, status: "TEMP_SAVED", statusName: "임시저장중" },
+            { status: "SAVED", vendorItemId: 4444, contents: detailContents },
+          )
+        : coupangCreateTestReadback(
+            { requested: false, mdId: "NLUP_ID_GEN", status: "APPROVAL_REQUESTED", statusName: "승인대기중" },
+            { status: "SAVED", vendorItemId: 4444, contents: detailContents },
+          ),
     });
   };
   try {
@@ -1476,7 +1511,7 @@ test("Coupang approval readback trusts the seller-product state when nested item
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         resumeRemoteId: "987654321",
-        body: { sellerProductName: "[API TEST]", vendorUserId: "wing-user", requested: true, items: [{}] },
+        body: coupangCreateTestBody(true),
         publicationIntent: "live",
         publicationStateContract: "verified_remote_state_v1",
         publicationExpectedLocale: "ko-KR",

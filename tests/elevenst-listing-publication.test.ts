@@ -7,6 +7,7 @@ import {
 } from "../lib/channels/elevenst-listing-publication";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { elevenstListingUpdateProjectionDigestInput } from "../lib/channels/listing-update";
+import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 
 const API_KEY = "A".repeat(32);
 const ELEVENST_CREDENTIAL = {
@@ -108,6 +109,20 @@ function exactProductXml(productNo: string, product: Record<string, unknown>, st
     }).join("")
     : "";
   return `<Product><prdNo>${productNo}</prdNo><selStatCd>${status}</selStatCd><selStatNm>상태 ${status}</selStatNm>${scalars}<htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail>${certificationXml}${notificationXml}</Product>`;
+}
+
+function officialCreateProductGetXml(
+  productNo: string,
+  product: Record<string, unknown>,
+  status = "103",
+) {
+  const escape = (value: unknown) => String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+  return `<Product><prdNo>${productNo}</prdNo><selStatCd>${status}</selStatCd><selStatNm>판매중</selStatNm><dispCtgrNo>${escape(product.dispCtgrNo)}</dispCtgrNo><prdNm>${escape(product.prdNm)}</prdNm><sellerPrdCd>${escape(product.sellerPrdCd)}</sellerPrdCd><selPrc>${escape(product.selPrc)}</selPrc><bndlDlvCnYn>${escape(product.bndlDlvCnYn)}</bndlDlvCnYn><rtngdDlvCst>${escape(product.rtngdDlvCst)}</rtngdDlvCst><exchDlvCst>${escape(product.exchDlvCst)}</exchDlvCst><asDetail>${escape(product.asDetail)}</asDetail><aplBgnDy>2026-08-30 00:00:00</aplBgnDy><aplEndDy>2029-08-29 23:59:59</aplEndDy><htmlDetail><![CDATA[${String(product.htmlDetail)}]]></htmlDetail></Product>`;
 }
 
 function exactStockXml(productNo: string, quantity = "1") {
@@ -238,6 +253,76 @@ test("11st live create uses the exact single-product GET before returning verifi
     assert.equal(operation.remoteState?.imageCount, 8);
     assert.equal(calls.at(-1)?.method, "GET");
     assert.match(calls.at(-1)?.url ?? "", /prodmarket\/stck\/123456789$/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st CREATE API completion remains distinct from user-request full verification when official Product GET omits evidence", async () => {
+  const originalFetch = globalThis.fetch;
+  const product = completeProduct({
+    dlvCstInstBasiCd: "02",
+    dlvCst1: "3000",
+    dlvCstPayTypCd: "03",
+    addrSeqOut: "1234",
+    addrSeqIn: "5678",
+  });
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.includes("/rest/cateservice/category")) {
+      return new Response(CATEGORY_XML, { status: 200 });
+    }
+    if (url.includes("/rest/prodmarketservice/sellerprodcode/")) {
+      return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
+    }
+    if (url.endsWith("/rest/prodservices/product")) {
+      return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+    }
+    if (url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
+      return new Response(officialCreateProductGetXml("123456789", product), { status: 200 });
+    }
+    if (url.endsWith("/rest/prodmarketservice/prodmarket/stck/123456789")) {
+      return new Response(exactStockXml("123456789"), { status: 200 });
+    }
+    throw new Error(`unexpected request: ${url}`);
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: ELEVENST_CREDENTIAL,
+      arguments: { ...publicationArguments(), product },
+      environment: "production",
+    });
+    const productReadback = operation.steps.find((step) =>
+      step.name === "product-readback"
+      || step.name === "product-publication-readback"
+      || step.name === "listing-readback"
+    );
+    const unavailable = productReadback?.data
+      .sellerpilotProviderReadbackUnavailableFields as string[];
+    const providerCreateApiCompleted = operation.ok === true
+      && operation.publicationFulfilled === true;
+    const userRequestedFullVerificationComplete = providerCreateApiCompleted
+      && productReadback?.data.sellerpilotAdditionalEvidenceRequired !== true;
+
+    assert.equal(providerCreateApiCompleted, true);
+    assert.equal(operation.remoteState?.visibility, "live");
+    assert.equal(productReadback?.data.sellerpilotAdditionalEvidenceRequired, true);
+    assert.equal(userRequestedFullVerificationComplete, false);
+    assert.equal(gatewayJobCompletionStatus(operation.operation, operation.ok, operation.steps), "reconciliation_required");
+    for (const field of [
+      "prdImage01",
+      "ProductNotification",
+      "ProductCertGroup",
+      "dlvCstInstBasiCd",
+      "dlvCst1",
+      "dlvCstPayTypCd",
+      "addrSeqOut",
+      "addrSeqIn",
+    ]) {
+      assert.ok(unavailable.includes(field), field);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }

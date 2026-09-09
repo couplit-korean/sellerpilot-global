@@ -13,6 +13,7 @@ import { readShopeeGlobalListingPublicationState, readShopeeListingPublicationSt
 import { qoo10ResultMessage } from "./qoo10";
 import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
 import { qoo10ListingCreateExpectation, qoo10SellerAccountIdentityDigestFromReadback } from "./qoo10-listing-create-preflight";
+import { inspectTemuGeneralCreateBody } from "../product-registration/temu/create-contract";
 
 import { normalizeTemuListingPublicationReadback, temuExactLongGoodsId, temuExactGoodsListArguments, temuPublicationExpectedSkus } from "./provider-temu-publication-readback";
 
@@ -702,6 +703,7 @@ export async function executeListingPublicationVerification(input: VerificationI
     const immutableExternalGoodsId = exactText(immutableResources.externalGoodsId);
     const sourceBody = recordValue(sourceArguments.body);
     const sourceGoodsBasic = recordValue(sourceBody.goodsBasic);
+    const sourceBodyInspection = inspectTemuGeneralCreateBody(sourceBody);
     const sourceExternalGoodsId = exactText(sourceGoodsBasic.externalGoodsId);
     const exactGoodsId = temuExactLongGoodsId(remoteId);
     const expectedRepresentativeImages = Array.isArray(sourceGoodsBasic.goodsCarouselImage)
@@ -720,8 +722,7 @@ export async function executeListingPublicationVerification(input: VerificationI
       || immutableExternalGoodsId !== sourceExternalGoodsId
       || sourceBody.language !== "ko"
       || expected.locale !== "ko-KR"
-      || !/^[1-9]\d*$/u.test(exactText(sourceGoodsBasic.extCatName))
-      || !exactText(sourceGoodsBasic.costTemplate)
+      || !sourceBodyInspection.ok
       || !expectedSkus
       || expectedRepresentativeImages.length !== 1
       || expectedDetailImages.includes(expectedRepresentativeImages[0])

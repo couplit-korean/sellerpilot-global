@@ -1,4 +1,3 @@
-import { temuCreateSkuChecks } from "../../channels/temu-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import {
   objectValue,
@@ -30,6 +29,14 @@ import {
   booleanArgument,
   inventoryQuantityVerificationStep,
 } from "../execution-shared";
+import {
+  inspectTemuGeneralCreateBody,
+  normalizeTemuCreateProcessingState,
+  normalizeTemuCreateReceipt,
+  normalizeTemuIdentityRead,
+  temuGeneralCreateIdentityQueries,
+  type TemuIdentityQuery,
+} from "../temu/create-contract";
 export function temuResultObject(data: Record<string, unknown>) {
   const value = data.result;
   return value && typeof value === "object" && !Array.isArray(value)
@@ -151,8 +158,7 @@ export async function executeTemu(input: ExecuteInput) {
     const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
     const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);
     const expectedImageCount = Number(input.arguments.publicationExpectedImageCount);
-    const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
-    const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
+    const generalCreateInspection = inspectTemuGeneralCreateBody(body);
     const exactInput = Boolean(activation &&
       input.arguments.publicationStateContract ===
       listingRemoteStateContractVersion &&
@@ -161,10 +167,7 @@ export async function executeTemu(input: ExecuteInput) {
       body.language === "ko" &&
       /^[a-f0-9]{64}$/u.test(expectedFingerprint) &&
       expectedImageCount === marketplaceChannelDetailImageCount &&
-      /^[1-9]\d*$/u.test(exactLeafCategoryId) &&
-      Boolean(shippingTemplate) &&
-      shippingTemplate.length <= 500 &&
-      !/\p{Cc}/u.test(shippingTemplate) &&
+      generalCreateInspection.ok &&
       expectedRepresentativeImages.length === 1 &&
       /^https:\/\//u.test(expectedRepresentativeImages[0]) &&
       !expectedDetailImages.includes(expectedRepresentativeImages[0]) &&
@@ -364,13 +367,18 @@ export async function executeTemu(input: ExecuteInput) {
     const expectedDetailImages = temuStringArray(goodsBasic.detailImage);
     const expectedBulletPoints = temuStringArray(goodsBasic.bulletPoints);
     const expectedSkus = temuPublicationExpectedSkus(body);
+    const generalCreateInspection = strictPublication
+      ? inspectTemuGeneralCreateBody(body)
+      : null;
     if (strictPublication) {
-      const skuChecks = temuCreateSkuChecks(body);
-      if (Object.values(skuChecks).some(value => !value)) {
+      if (!generalCreateInspection?.ok) {
         return result(input, [{
           name: "publication-prewrite", ok: false, status: 422,
           data: {
-            error: "TEMU_PUBLICATION_PREWRITE_INVALID", skuChecks, sellerpilotNoWriteConfirmed: true,
+            error: "TEMU_PUBLICATION_PREWRITE_INVALID",
+            sellerpilotTemuCreateIssues: generalCreateInspection?.issues,
+            sellerpilotTemuSkuChecks: generalCreateInspection?.skuChecks,
+            sellerpilotNoWriteConfirmed: true,
             sellerpilotVerification: "TEMU_PUBLICATION_PREWRITE_REJECTED"
           }
         }]);
@@ -379,19 +387,13 @@ export async function executeTemu(input: ExecuteInput) {
         .trim()
         .replaceAll("_", "-")
         .toLowerCase();
-      const exactLeafCategoryId = stringArgument(goodsBasic, "extCatName", false);
-      const shippingTemplate = stringArgument(goodsBasic, "costTemplate", false);
       const exactPublicationInput = Boolean(publicationIntent &&
+        generalCreateInspection.ok &&
         expectedLocale === "ko-KR" &&
         (providerLanguage === "ko" || providerLanguage === "ko-kr") &&
         /^[a-f0-9]{64}$/u.test(expectedFingerprint) &&
         input.arguments.publicationExpectedImageCount ===
         marketplaceChannelDetailImageCount &&
-        /^[1-9]\d*$/u.test(exactLeafCategoryId) &&
-        Boolean(shippingTemplate) &&
-        shippingTemplate.length <= 500 &&
-        !/\p{Cc}/u.test(shippingTemplate) &&
-        !/^(?:server_managed|unknown|n\/a|미확인|확인 필요)$/iu.test(shippingTemplate) &&
         expectedRepresentativeImages.length === 1 &&
         /^https:\/\//u.test(expectedRepresentativeImages[0]) &&
         !expectedDetailImages.includes(expectedRepresentativeImages[0]) &&
@@ -416,29 +418,69 @@ export async function executeTemu(input: ExecuteInput) {
       }
     }
     const steps: ChannelOperationStep[] = [];
-    const preflightRemote = await temuRequest({
-      payload: input.payload,
-      type: "temu.local.goods.list.retrieve",
-      arguments: temuExactGoodsListArguments(externalGoodsId),
-    });
-    const preflightStep = step("goods-create-external-id-preflight", preflightRemote);
-    const preflightGoods = temuResultObject(preflightRemote.data).goodsList;
-    const preflightListVerified = Array.isArray(preflightGoods);
-    const preflightEmpty = preflightListVerified && preflightGoods.length === 0;
-    preflightStep.ok = preflightStep.ok && preflightEmpty;
+    const identityQueries: TemuIdentityQuery[] = strictPublication
+      ? temuGeneralCreateIdentityQueries(body)
+      : [{
+          method: "temu.local.goods.list.retrieve",
+          arguments: temuExactGoodsListArguments(externalGoodsId),
+        }];
+    const identityReads: Array<ReturnType<typeof normalizeTemuIdentityRead>> = [];
+    const identityRemoteSteps: ChannelOperationStep[] = [];
+    let preflightRemote: RemoteResponse | null = null;
+    for (const query of identityQueries) {
+      const remote = await temuRequest({
+        payload: input.payload,
+        type: query.method,
+        arguments: query.arguments,
+      });
+      preflightRemote ??= remote;
+      identityRemoteSteps.push(step(
+        query.arguments.outGoodsSnList
+          ? "goods-create-external-goods-id-preflight"
+          : "goods-create-external-sku-id-preflight",
+        remote,
+      ));
+      if (strictPublication) {
+        identityReads.push(normalizeTemuIdentityRead({ query, response: remote.data }));
+      }
+    }
+    const preflightStep = step(
+      strictPublication
+        ? "goods-create-external-identity-preflight"
+        : "goods-create-external-id-preflight",
+      preflightRemote!,
+    );
+    const legacyGoods = strictPublication ? null : temuResultObject(preflightRemote!.data).goodsList;
+    const legacyGoodsList = Array.isArray(legacyGoods) ? legacyGoods : null;
+    const preflightListVerified = strictPublication
+      ? identityReads.length === identityQueries.length && identityReads.every((read) => read.complete)
+      : Boolean(legacyGoodsList);
+    const preflightEmpty = strictPublication
+      ? preflightListVerified && identityReads.every((read) => read.empty)
+      : preflightListVerified && legacyGoodsList!.length === 0;
+    const observedGoodsCount = strictPublication
+      ? identityReads.reduce((sum, read) => sum + (read.observedGoodsCount ?? 0), 0)
+      : preflightListVerified ? legacyGoodsList!.length : undefined;
+    preflightStep.ok = identityRemoteSteps.every((candidate) => candidate.ok) && preflightEmpty;
     preflightStep.data = {
       ...preflightStep.data,
       ...(preflightListVerified && !preflightEmpty
         ? { sellerpilotReconciliationRequired: true }
         : {}),
-      observedGoodsCount: preflightListVerified
-        ? preflightGoods.length
-        : undefined,
+      observedGoodsCount,
+      duplicateQueryCount: identityQueries.length,
+      ...(strictPublication ? { sellerpilotTemuIdentityReads: identityReads } : {}),
       sellerpilotVerification: preflightEmpty
-        ? "TEMU_EXTERNAL_ID_AVAILABLE"
+        ? strictPublication
+          ? "TEMU_EXTERNAL_GOODS_AND_SKU_IDS_AVAILABLE"
+          : "TEMU_EXTERNAL_ID_AVAILABLE"
         : preflightListVerified
-          ? "TEMU_EXTERNAL_ID_ALREADY_EXISTS"
-          : "TEMU_EXTERNAL_ID_PREFLIGHT_UNVERIFIED",
+          ? strictPublication
+            ? "TEMU_EXTERNAL_GOODS_OR_SKU_ID_ALREADY_EXISTS"
+            : "TEMU_EXTERNAL_ID_ALREADY_EXISTS"
+          : strictPublication
+            ? "TEMU_EXTERNAL_ID_PREFLIGHT_INCOMPLETE"
+            : "TEMU_EXTERNAL_ID_PREFLIGHT_UNVERIFIED",
     };
     steps.push(preflightStep);
     if (!preflightStep.ok) return result(input, steps);
@@ -457,13 +499,36 @@ export async function executeTemu(input: ExecuteInput) {
       createTransportUncertain = true;
     }
     const created = createRemote ? temuResultObject(createRemote.data) : {};
-    let remoteId = temuExactLongGoodsId(created.goodsId) ?? "";
+    const createReceipt = strictPublication && createRemote
+      ? normalizeTemuCreateReceipt({ body, response: createRemote.data })
+      : null;
+    let remoteId = createReceipt?.goodsId
+      ?? (strictPublication ? "" : temuExactLongGoodsId(created.goodsId) ?? "");
     const createStep = createRemote ? step("goods-v3-add", createRemote) : null;
-    if (createStep?.ok && remoteId) {
+    const providerCreateAccepted = createStep?.ok === true;
+    if (createStep?.ok && remoteId && (!strictPublication || createReceipt)) {
+      if (createReceipt) {
+        createStep.data = {
+          ...createStep.data,
+          sellerpilotTemuCreateReceipt: createReceipt,
+          sellerpilotPublicationConfirmed: false,
+          sellerpilotInternalCompletionEligible: false,
+          sellerpilotVerification: "TEMU_CREATE_RECEIPT_IDENTITY_ONLY",
+        };
+      }
       steps.push(createStep);
     }
     else {
       if (createStep) {
+        if (strictPublication && providerCreateAccepted && !createReceipt) {
+          createStep.ok = false;
+          createStep.status = 422;
+          createStep.data = {
+            ...createStep.data,
+            sellerpilotReconciliationRequired: true,
+            sellerpilotVerification: "TEMU_CREATE_RECEIPT_IDENTITY_UNVERIFIED",
+          };
+        }
         if (
           !createStep.ok &&
           createRemote &&
@@ -485,7 +550,7 @@ export async function executeTemu(input: ExecuteInput) {
       const recoveryAllowed =
         preflightEmpty &&
         temuCreateCorrelationMatches(input.arguments, externalGoodsId) &&
-        (createTransportUncertain || createStep?.ok === true);
+        (createTransportUncertain || providerCreateAccepted);
       if (!recoveryAllowed) {
         if (createTransportUncertain) {
           steps.push({
@@ -512,6 +577,12 @@ export async function executeTemu(input: ExecuteInput) {
         type: "temu.local.goods.list.retrieve",
         arguments: temuExactGoodsListArguments(externalGoodsId),
       });
+      const reconcileIdentityRead = strictPublication
+        ? normalizeTemuIdentityRead({
+            query: identityQueries[0],
+            response: reconcileRemote.data,
+          })
+        : null;
       const reconcileGoods = temuResultObject(reconcileRemote.data).goodsList;
       const matchingGoods = Array.isArray(reconcileGoods)
         ? (reconcileGoods.filter((item) => {
@@ -526,13 +597,18 @@ export async function executeTemu(input: ExecuteInput) {
       remoteId = temuExactLongGoodsId(existing?.goodsId) ?? "";
       const reconcileStep = step("goods-reconcile", reconcileRemote);
       reconcileStep.ok =
-        reconcileStep.ok && matchingGoods.length === 1 && Boolean(remoteId);
+        reconcileStep.ok &&
+        (!strictPublication || reconcileIdentityRead?.complete === true) &&
+        matchingGoods.length === 1 && Boolean(remoteId);
       reconcileStep.data = {
         ...reconcileStep.data,
         recoveredGoodsId: remoteId || undefined,
         matchingGoodsCount: matchingGoods.length,
         createStatus: createRemote?.response.status,
         createTransportUncertain,
+        ...(reconcileIdentityRead
+          ? { sellerpilotTemuIdentityRead: reconcileIdentityRead }
+          : {}),
         ...(!remoteId || matchingGoods.length !== 1
           ? { sellerpilotReconciliationRequired: true }
           : {}),
@@ -619,12 +695,33 @@ export async function executeTemu(input: ExecuteInput) {
     const matched =
       Array.isArray(goodsList) &&
       goodsList.some((item) => temuGoodsMatch(item, remoteId, externalGoodsId));
-    readbackStep.ok = readbackStep.ok && matched;
+    const processingState = strictPublication
+      ? normalizeTemuCreateProcessingState({
+          listResponse: readbackRemote.data,
+          goodsId: remoteId,
+          externalGoodsId,
+        })
+      : null;
+    const terminalBeforeReview = processingState?.providerStatus === "DRAFT"
+      || processingState?.providerStatus === "DELETED";
+    readbackStep.ok = readbackStep.ok
+      && matched
+      && (!strictPublication || Boolean(processingState))
+      && !terminalBeforeReview;
     readbackStep.data = {
       ...readbackStep.data,
-      sellerpilotVerification: matched
-        ? "EXTERNAL_ID_VERIFIED"
-        : "TEMU_EXTERNAL_ID_READBACK_MISSING",
+      ...(processingState
+        ? { sellerpilotTemuCreateProcessingState: processingState }
+        : {}),
+      sellerpilotVerification: !matched
+        ? "TEMU_EXTERNAL_ID_READBACK_MISSING"
+        : strictPublication && !processingState
+          ? "TEMU_OFFICIAL_PROCESSING_STATE_UNVERIFIED"
+          : processingState?.providerStatus === "DRAFT"
+            ? "TEMU_DRAFT_NOT_SUBMITTED"
+            : processingState?.providerStatus === "DELETED"
+              ? "TEMU_CREATED_GOODS_DELETED"
+              : "EXTERNAL_ID_AND_PROCESSING_STATE_VERIFIED",
     };
     steps.push(readbackStep);
     if (!readbackStep.ok) return result(input, steps, remoteId);

@@ -1683,10 +1683,16 @@ export async function POST(request: NextRequest) {
           inProgress: false,
           manualRequired: true,
           reconciliationRequired: true,
+          ...(error.additionalEvidenceRequired ? {
+            additionalEvidenceRequired: true,
+            mode: "listing_additional_evidence_required",
+          } : {}),
           jobId: error.jobId,
           attemptId: error.attemptId ?? attemptId,
           listingId: errorListingId,
-          message: "판매채널이 작업을 수락했는지 확정할 수 없습니다. 원격 판매자센터와 진행 현황을 수동 확인하기 전에는 다시 실행할 수 없습니다.",
+          message: error.additionalEvidenceRequired
+            ? "판매채널 API 처리 결과는 보존됐지만 이미지·인증·배송 조건 등 추가 확인 증거가 남아 있습니다. 판매자센터 또는 구매자 화면에서 해당 항목을 확인하기 전에는 전체 검증 완료로 처리하지 않으며 재등록하지 않습니다."
+            : "판매채널이 작업을 수락했는지 확정할 수 없습니다. 원격 판매자센터와 진행 현황을 수동 확인하기 전에는 다시 실행할 수 없습니다.",
         }, {
           status: 409,
           headers: { "cache-control": "no-store, max-age=0" },

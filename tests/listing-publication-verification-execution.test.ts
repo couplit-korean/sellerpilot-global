@@ -280,8 +280,7 @@ const ebayInventory = {
 const temuGoodsBasic = {
   externalGoodsId: "TEMU-KR-001",
   goodsName: "한국어로 확인된 테무 판매 상품",
-  extCatName: "601099",
-  costTemplate: "QA_KR_STANDARD",
+  extCatName: "Home & Kitchen / Storage & Organization / Cable Management",
   goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
   bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
   goodsCarouselImage: [galleryUrl],
@@ -289,8 +288,11 @@ const temuGoodsBasic = {
 };
 const temuSku = {
   externalSkuId: "TEMU-KR-001-01",
+  images: [galleryUrl],
   quantity: 2,
   price: { basePrice: { amount: "5000", currency: "KRW" } },
+  packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
+  variations: [{ name: "Type", value: "Standard" }],
 };
 const temuDetailData = {
   success: true,
@@ -600,7 +602,12 @@ const fixtures: Fixture[] = [
       publicationExpectedLocale: "ko-KR",
       publicationExpectedFingerprint: FINGERPRINT,
       publicationExpectedImageCount: 8,
-      body: { language: "ko", goodsBasic: temuGoodsBasic, skuList: [temuSku] },
+      body: {
+        language: "ko",
+        goodsBasic: temuGoodsBasic,
+        attributes: [{ name: "Brand", value: ["COUPLIT"] }, { name: "Material", value: ["ABS"] }],
+        skuList: [temuSku],
+      },
     }),
     sourceStepName: "goods-detail-image-readback",
     remoteData: temuDetailData,

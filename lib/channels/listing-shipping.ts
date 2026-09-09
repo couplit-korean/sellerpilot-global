@@ -219,9 +219,13 @@ export function listingShippingRequirements(
       "입력 기본 배송비와 전송 배송비, 택배사·출고지·반품지·반품/교환비를 확인하세요. 수량별/구간별 배송은 별도 정책 검토가 필요합니다.");
   } else {
     const policyPath = channel === "qoo10" ? ["params", "ShippingNo"]
-      : channel === "ebay" ? ["offer", "listingPolicies", "fulfillmentPolicyId"]
-        : channel === "temu" ? ["body", "goodsBasic", "costTemplate"] : null;
+      : channel === "ebay" ? ["offer", "listingPolicies", "fulfillmentPolicyId"] : null;
     const policy = policyPath ? text(at(draft, policyPath)) : "";
+    if (channel === "temu") {
+      const goodsBasic = record(at(draft, ["body", "goodsBasic"]));
+      add("policy-id", "Temu 스토어 기본 배송 템플릿", !Object.hasOwn(goodsBasic, "costTemplate"), undefined,
+        "V3 상품 등록에는 costTemplate을 보내지 않습니다. Temu가 현재 스토어의 기본 배송 템플릿을 자동 적용합니다.");
+    }
     if (policyPath) add("policy-id", "적용 배송 정책", Boolean(policy) && policy !== "SERVER_MANAGED"
       && (channel !== "qoo10" || /^\d+$/.test(policy)), policyPath,
       "현재 판매자 계정의 배송 정책을 확인하세요. Qoo10 무료배송 0도 직접 확인해 입력해야 합니다.");

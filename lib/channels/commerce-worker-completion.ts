@@ -1,7 +1,7 @@
 
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { gatewayJobCompletionStatusAtJobBoundary, smartstoreContentRepairWorkerResultSchema, smartstoreManualAdoptionLineageResultSchema } from "./gateway-contract";
+import { gatewayJobCompletionStatusAtJobBoundary, gatewayResultRequiresAdditionalEvidence, smartstoreContentRepairWorkerResultSchema, smartstoreManualAdoptionLineageResultSchema } from "./gateway-contract";
 import { smartstoreContentRepairCompletionSchema } from "../server-smartstore-content-repair";
 import { workerRpcErrorMessage, workerRpcErrorStatus } from "../worker-rpc";
 
@@ -129,7 +129,9 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     publicationVerificationBoundary,
   );
   const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required" && parsed.data.status === "succeeded"
-    ? "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH" : parsed.data.status === "succeeded" ? null : parsed.data.error;
+    ? (gatewayResultRequiresAdditionalEvidence("steps" in parsed.data.result ? parsed.data.result.steps : [])
+      ? "LISTING_ADDITIONAL_EVIDENCE_REQUIRED"
+      : "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH") : parsed.data.status === "succeeded" ? null : parsed.data.error;
 
   let storedResponse: Record<string, unknown> | null = null;
   const completionResult = parsed.data.status === "succeeded"

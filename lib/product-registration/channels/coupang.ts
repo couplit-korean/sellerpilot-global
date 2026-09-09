@@ -10,6 +10,8 @@ import { coupangRequest, textValue } from "../../channels/protocols";
 import {
   coupangListingUpdateWrite,
 } from "../../channels/coupang-listing-update";
+import { verifyCoupangCreateReadback } from "../coupang/create-readback";
+import { assertCoupangGeneralCreateRequiredFields } from "../coupang/create-required-fields";
 
 
 import { listingPublicationIntentFromArguments } from "../../channels/listing-publication-state";
@@ -257,6 +259,7 @@ export async function executeCoupang(input: ExecuteInput) {
       ...objectValue(input.arguments, "body"),
       vendorId,
     };
+    assertCoupangGeneralCreateRequiredFields(body);
     if (listingPublicationReadbackRequested(input)) {
       body.requested =
         listingPublicationIntentFromArguments(input.arguments) === "live";
@@ -314,6 +317,12 @@ export async function executeCoupang(input: ExecuteInput) {
       );
       const identityMatches =
         readbackId !== undefined && String(readbackId) === remoteId;
+      const createIdentity = verifyCoupangCreateReadback({
+        requestBody: body,
+        sellerProduct,
+        expectedVendorId: vendorId,
+        expectedSellerProductId: remoteId,
+      });
       const saved =
         state.family === "draft" &&
         [
@@ -330,9 +339,20 @@ export async function executeCoupang(input: ExecuteInput) {
         requested === true ||
         state.family === "pending" ||
         state.family === "approved";
-      const providerAndIdentityOk = readbackStep.ok && identityMatches;
+      const providerAndIdentityOk =
+        readbackStep.ok && identityMatches && createIdentity.ok;
       readbackStep.ok =
         providerAndIdentityOk && (body.requested !== true || approvalObserved);
+      readbackStep.data = {
+        ...readbackStep.data,
+        sellerpilotCreateIdentity: createIdentity.code,
+        sellerpilotExpectedSellerSkuCount:
+          createIdentity.expectedSellerSkuCount,
+        sellerpilotObservedSellerSkuCount:
+          createIdentity.observedSellerSkuCount,
+        sellerpilotObservedSellerProductItemIdCount:
+          createIdentity.observedSellerProductItemIdCount,
+      };
       return { readbackStep, providerAndIdentityOk, approvalObserved, saved };
     };
     let initialReadback = verifyReadback("listing-readback");

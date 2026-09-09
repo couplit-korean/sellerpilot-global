@@ -12,7 +12,9 @@ const ebayAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/ebay
 const shopeeAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/shopee/authorize/route.ts", import.meta.url);
 const lazadaAuthorizeRouteUrl = new URL("../app/api/admin/channel-credentials/lazada/authorize/route.ts", import.meta.url);
 const gatewayContractUrl = new URL("../lib/channels/gateway-contract.ts", import.meta.url);
-const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
+const workerUrl = new URL("../scripts/commerce-gateway-job.mjs", import.meta.url);
+const workerHostUrl = new URL("../scripts/channel-gateway-worker.mjs", import.meta.url);
+const commerceCompletionUrl = new URL("../lib/channels/commerce-worker-completion.ts", import.meta.url);
 const providerListingRuntimeUrl = new URL(
   "../lib/channels/provider-listing-runtime.ts",
   import.meta.url,
@@ -44,11 +46,12 @@ test("gateway completion bounds Supabase calls and classifies only authorization
   const source = await readFile(completeRouteUrl, "utf8");
   const snapshotFailure = source.indexOf("if (snapshotError)");
   const domainConflict = source.indexOf('if (!job || (job.status !== "running" && job.status !== "completed_replay"))');
-  const normalization = source.indexOf("normalizedOrders = normalizeChannelOrders");
-  const lineageTerminal = source.indexOf('if (job.operation === "listing.lineage.verify")', normalization);
-  const finalRpc = source.lastIndexOf('serviceClient.rpc("sellerpilot_service_complete_gateway_transaction"');
-  const finalFailure = source.indexOf("if (error) {", finalRpc);
-  const finalConflict = source.indexOf('if (completion?.status !== "completed")');
+  const dispatch = source.indexOf("return isCsOperation");
+  const commerce = await readFile(commerceCompletionUrl, "utf8");
+  const lineageTerminal = commerce.indexOf('if (job.operation === "listing.lineage.verify")');
+  const finalRpc = commerce.lastIndexOf('serviceClient.rpc("sellerpilot_service_complete_gateway_transaction"');
+  const finalFailure = commerce.indexOf("if (error) {", finalRpc);
+  const finalConflict = commerce.indexOf('if (completion?.status !== "completed")');
 
   assert.match(source, /workerToken\.length < 24[\s\S]*status: 401/);
   assert.match(source, /if \(!supabaseUrl \|\| !secretKey\)[\s\S]*workerRpcErrorMessage\(503\)[\s\S]*status: 503/);
@@ -56,17 +59,20 @@ test("gateway completion bounds Supabase calls and classifies only authorization
   assert.equal(snapshotFailure >= 0 && snapshotFailure < domainConflict, true);
   assert.match(source.slice(snapshotFailure, domainConflict), /workerRpcErrorStatus\(snapshotError\)/);
   assert.match(source.slice(snapshotFailure, domainConflict), /workerRpcErrorMessage\(status\)/);
-  assert.match(source.slice(domainConflict, normalization), /status: 409/);
+  assert.match(source.slice(domainConflict, dispatch), /status: 409/);
+  assert.match(source.slice(dispatch), /completeCsWorker[\s\S]*completeShippingWorker[\s\S]*completeCommerceWorker/);
+  assert.match(source, /import \{ completeCommerceWorker \} from "[^"\n]*commerce-worker-completion"/);
   assert.equal(finalFailure >= 0 && finalFailure < finalConflict, true);
-  assert.match(source.slice(finalFailure, finalConflict), /workerRpcErrorStatus\(error\)/);
-  assert.match(source.slice(finalFailure, finalConflict), /workerRpcErrorMessage\(status\)/);
-  assert.match(source.slice(finalConflict), /status: 409/);
-  assert.ok((source.match(/p_claim_token: parsed\.data\.claimToken/g) ?? []).length >= 3);
-  assert.equal(lineageTerminal > normalization && lineageTerminal < finalRpc, true);
-  assert.doesNotMatch(source, /serviceClient\.rpc\("sellerpilot_service_(?:ingest_orders|ingest_inquiries|mark_channel_sync|prepare_gateway_credential_refresh)"/);
-  assert.match(source.slice(finalRpc), /p_normalized_orders: normalizedOrders/);
-  assert.match(source.slice(finalRpc), /p_normalized_inquiries: normalizedInquiries/);
-  assert.match(source.slice(finalRpc), /p_credential_refresh: credentialRefresh \?\? null/);
+  assert.match(commerce.slice(finalFailure, finalConflict), /workerRpcErrorStatus\(error\)/);
+  assert.match(commerce.slice(finalFailure, finalConflict), /workerRpcErrorMessage\(status\)/);
+  assert.match(commerce.slice(finalConflict), /status: 409/);
+  assert.equal(lineageTerminal >= 0 && lineageTerminal < finalRpc, true);
+  assert.doesNotMatch(commerce, /serviceClient\.rpc\("sellerpilot_service_(?:ingest_orders|ingest_inquiries|mark_channel_sync|prepare_gateway_credential_refresh)"/);
+  assert.match(commerce.slice(finalRpc), /p_claim_token: parsed\.data\.claimToken/);
+  assert.match(commerce.slice(finalRpc), /p_normalized_orders: null/);
+  assert.match(commerce.slice(finalRpc), /p_normalized_inquiries: null/);
+  assert.match(commerce.slice(finalRpc), /p_credential_refresh: credentialRefresh \?\? null/);
+
 });
 
 test("gateway heartbeat separates auth and configuration failures and rejects lost ownership", async () => {
@@ -91,12 +97,12 @@ test("gateway heartbeat separates auth and configuration failures and rejects lo
 });
 
 test("local gateway requests reserve the same durable provider budget", async()=>{
- const [claimSource,rateSource,workerSource]=await Promise.all([readFile(claimRouteUrl,"utf8"),readFile(rateBudgetRouteUrl,"utf8"),readFile(workerUrl,"utf8")]);
+ const [claimSource,rateSource,workerSource]=await Promise.all([readFile(claimRouteUrl,"utf8"),readFile(rateBudgetRouteUrl,"utf8"),readFile(workerHostUrl,"utf8")]);
  assert.match(claimSource,/sellerpilot_service_reserve_provider_rate_budget_v1/);
  assert.match(rateSource,/sellerpilot_service_reserve_provider_request_rate_budget_v1/);
  assert.match(rateSource,/workerToken\.length < 24[\s\S]*status: 401/);
  assert.match(rateSource,/cache-control[\s\S]*no-store/);
- assert.match(workerSource,/runWithProviderRequestBudget/);
+ assert.match(workerSource,/runWithProviderTransportContext\(\{ reserve \}/);
  assert.match(workerSource,/\/api\/channel-gateway\/worker\/rate-budget/);
 });
 
@@ -160,7 +166,7 @@ test("gateway mutation marker replay is reconciliation-safe and never reaches th
 
 test("gateway completion accepts a terminal reconciliation state without disguising it as failure", async () => {
   const [routeSource, contractSource, migrationSource] = await Promise.all([
-    readFile(completeRouteUrl, "utf8"),
+    readFile(commerceCompletionUrl, "utf8"),
     readFile(gatewayContractUrl, "utf8"),
     readFile(credentialRefreshMigrationUrl, "utf8"),
   ]);
@@ -184,7 +190,7 @@ test("listing media mutations are fenced before upload and preserved in structur
   const [workerSource, listingRuntimeSource, routeSource] = await Promise.all([
     readFile(workerUrl, "utf8"),
     readFile(providerListingRuntimeUrl, "utf8"),
-    readFile(completeRouteUrl, "utf8"),
+    readFile(commerceCompletionUrl, "utf8"),
   ]);
 
   const shopeeUpload = listingRuntimeSource.indexOf("async function uploadShopeeImage");
@@ -203,15 +209,15 @@ test("listing media mutations are fenced before upload and preserved in structur
   assert.match(listingRuntimeSource, /assertPublicReferenceUrl\(imageUrl, \{ signal: input\.signal \}\)/);
   assert.match(workerSource, /name: "listing-image-upload"[\s\S]*sellerpilotMutation: "accepted"/);
   assert.match(workerSource, /gatewayJobCompletionStatus\(result\.operation, result\.ok, result\.steps \?\? \[\]\)/);
-  assert.match(workerSource, /status: "reconciliation_required", error: result\.safeMessage, result/);
+  assert.match(workerSource, /status: completionStatus, result,[\s\S]*completionStatus === "reconciliation_required" \? \{ error: result\.safeMessage \}/);
   assert.doesNotMatch(workerSource, /\[Lazada listing debug\]/);
-  assert.match(routeSource, /parsed\.data\.status === "reconciliation_required" && parsed\.data\.result/);
+  assert.match(routeSource, /parsed\.data\.status === "reconciliation_required"[\s\S]*\? parsed\.data\.result/);
   assert.match(routeSource, /storedResponse = parsed\.data\.result/);
 });
 
 test("gateway credential refresh preparation is ownership-bound and never forces a provider-success job to failed", async () => {
   const [source, migration] = await Promise.all([
-    readFile(completeRouteUrl, "utf8"),
+    readFile(commerceCompletionUrl, "utf8"),
     readFile(atomicCompletionMigrationUrl, "utf8"),
   ]);
   const refreshSelection = source.indexOf("const credentialRefresh = parsed.data.credentialRefresh");
@@ -260,7 +266,7 @@ test("all OAuth callbacks use the durable gateway and keep one-time grants out o
 test("gateway stages every received OAuth token under the exact live claim before terminal completion", async () => {
   const [stageSource, completeSource, contractSource, migrationSource] = await Promise.all([
     readFile(credentialStageRouteUrl, "utf8"),
-    readFile(completeRouteUrl, "utf8"),
+    readFile(commerceCompletionUrl, "utf8"),
     readFile(gatewayContractUrl, "utf8"),
     readFile(credentialRefreshMigrationUrl, "utf8"),
   ]);

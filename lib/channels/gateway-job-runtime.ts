@@ -1,5 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 type GatewayJobSnapshot = {
   status?: unknown;
   response?: unknown;
@@ -28,17 +29,20 @@ export class ChannelGatewayReconciliationRequiredError extends Error {
   readonly jobId: string;
   readonly attemptId: string | null;
   readonly listingId: string | null;
+  readonly additionalEvidenceRequired: boolean;
 
   constructor(
     jobId: string,
     attemptId: string | null,
     listingId: string | null = null,
+    additionalEvidenceRequired = false,
   ) {
     super("CHANNEL_GATEWAY_RECONCILIATION_REQUIRED");
     this.name = "ChannelGatewayReconciliationRequiredError";
     this.jobId = jobId;
     this.attemptId = attemptId;
     this.listingId = listingId;
+    this.additionalEvidenceRequired = additionalEvidenceRequired;
   }
 }
 
@@ -112,10 +116,13 @@ export async function waitForGatewayJob(
     )
       return job.response;
     if (job?.status === "reconciliation_required") {
+      const response = job.response && typeof job.response === "object" && !Array.isArray(job.response)
+        ? job.response as Record<string, unknown> : null;
       throw new ChannelGatewayReconciliationRequiredError(
         jobId,
         attemptId,
         listingId,
+        gatewayResultRequiresAdditionalEvidence(Array.isArray(response?.steps) ? response.steps : []),
       );
     }
     if (job?.status === "failed" || job?.status === "cancelled") {

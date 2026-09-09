@@ -737,6 +737,10 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
   }
   if (channel === "temu") {
     const externalGoodsId = (manual.sellerSku || product.sku).slice(0, 128);
+    const externalCategoryName = assignment?.categoryPath
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(" / ") ?? "";
     return {
       sellerpilotAssets,
       body: {
@@ -744,11 +748,9 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         goodsBasic: {
           externalGoodsId,
           goodsName: title.slice(0, 500),
-          // Temu V3 accepts a leaf category ID in extCatName. A path/name can
-          // fall back to an algorithmic recommendation, which is not exact
-          // enough for the one-product QA release.
-          extCatName: assignment?.categoryId ?? "",
-          costTemplate: "",
+          // V3 accepts an optional external-platform category name/path and
+          // automatically assigns Temu category and default shipping service.
+          ...(externalCategoryName ? { extCatName: externalCategoryName } : {}),
           goodsDesc: temuPlainDescription,
           goodsCarouselImage: galleryImageUrls.slice(0, 1),
           detailImage: detailImageUrls.slice(0, 8),
@@ -836,8 +838,6 @@ export function missingNativeValues(channel: ActiveChannelKey, value: Record<str
     json.includes('"skuList":[]') ? "skuList" : "",
     json.includes('"images":[]') ? "images" : "",
     json.includes('"externalGoodsId":""') ? "externalGoodsId" : "",
-    json.includes('"extCatName":""') ? "Temu leaf category ID" : "",
-    json.includes('"costTemplate":""') ? "Temu shipping template" : "",
   ].filter(Boolean);
   if (operation === "listing.update") return assetRequirements;
   return [...assetRequirements, json.includes('"fulfillmentPolicyId":""') ? "business policy IDs" : "", json.includes('"merchantLocationKey":""') ? "merchantLocationKey" : ""].filter(Boolean);
