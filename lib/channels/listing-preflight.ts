@@ -23,6 +23,7 @@ export type ListingRequirement = {
   status: ListingRequirementStatus;
   manualPath?: string[];
   inputType?: "boolean" | "number";
+  options?: string[];
   placeholder?: string;
   help?: string;
 };
@@ -276,6 +277,61 @@ const smartstoreCapacityRequirements: RequirementSpec[] = [
     help: `공식 단위 중 상품에 맞는 값을 입력하세요: ${smartstoreIndicationUnits.join(", ")}` },
 ];
 
+const smartstoreCertificationPath = [
+  "body",
+  "originProduct",
+  "detailAttribute",
+  "certificationTargetExcludeContent",
+];
+const smartstoreCertificationRequirements: RequirementSpec[] = [
+  {
+    key: "certification-child-exclusion",
+    label: "어린이제품 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "childCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "childCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+  {
+    key: "certification-kc-exclusion",
+    label: "KC 상품 인증 대상 구분",
+    source: "카테고리",
+    options: ["FALSE", "KC_EXEMPTION_OBJECT", "TRUE"],
+    manualPath: [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"],
+    test: (draft) => ["FALSE", "KC_EXEMPTION_OBJECT", "TRUE"].includes(String(valueAt(draft, [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"]))),
+    help: "FALSE=인증 대상, TRUE=인증 대상 아님, KC_EXEMPTION_OBJECT=안전기준준수·구매대행·병행수입입니다.",
+  },
+  {
+    key: "certification-kc-type",
+    label: "KC 면제 대상 타입",
+    source: "카테고리",
+    options: ["OVERSEAS", "SAFE_CRITERION", "PARALLEL_IMPORT"],
+    manualPath: [...smartstoreCertificationPath, "kcExemptionType"],
+    applies: (draft) => valueAt(draft, [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"]) === "KC_EXEMPTION_OBJECT",
+    test: (draft) => ["OVERSEAS", "SAFE_CRITERION", "PARALLEL_IMPORT"].includes(String(valueAt(draft, [...smartstoreCertificationPath, "kcExemptionType"]))),
+    help: "KC_EXEMPTION_OBJECT를 선택한 경우에만 실제 유형을 직접 선택하세요.",
+  },
+  {
+    key: "certification-green-exclusion",
+    label: "친환경 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "greenCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "greenCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+  {
+    key: "certification-chemical-exclusion",
+    label: "생활화학/살생물제 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "chemicalCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "chemicalCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+];
+
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
     { key: "category", label: "Qoo10 말단 카테고리", source: "카테고리", path: ["params", "SecondSubCat"] },
@@ -415,8 +471,11 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   ],
   smartstore: [
     ...smartstoreCapacityRequirements,
+    ...smartstoreCertificationRequirements,
     { key: "category", label: "스마트스토어 말단 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "originProduct", "name"] },
+    { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "naverShoppingSearchInfo", "brandName"] },
+    { key: "seller-code", label: "판매자 SKU", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "sellerCodeInfo", "sellerManagementCode"] },
     { key: "description", label: "상세 설명", source: "상품 정보", path: ["body", "originProduct", "detailContent"] },
     sharedImage(["imageUrls"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["body", "originProduct", "salePrice"]) },
@@ -425,6 +484,8 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "minor-purchasable", label: "미성년자 구매 가능 여부", source: "상품 정보", test: (draft) => typeof valueAt(draft, ["body", "originProduct", "detailAttribute", "minorPurchasable"]) === "boolean", help: "일반 상품은 true, 성인 카테고리 상품은 false가 필요합니다." },
     { key: "provided-notice", label: "상품정보제공고시", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "productInfoProvidedNotice", "productInfoProvidedNoticeType"], help: "상품군 유형과 필수 고시 항목을 채널 payload에 포함합니다." },
     { key: "display-status", label: "스마트스토어 전시 상태", source: "상품 정보", test: (draft) => ["ON", "SUSPENSION"].includes(String(valueAt(draft, ["body", "smartstoreChannelProduct", "channelProductDisplayStatusType"]))), help: "상품 등록에는 ON 또는 SUSPENSION만 허용됩니다." },
+    { key: "naver-shopping-registration", label: "네이버쇼핑 등록 여부", source: "상품 정보", test: (draft) => typeof valueAt(draft, ["body", "smartstoreChannelProduct", "naverShoppingRegistration"]) === "boolean" },
+    { key: "channel-title", label: "스토어 채널 상품명", source: "상품 정보", path: ["body", "smartstoreChannelProduct", "channelProductName"] },
     { key: "phone", label: "스토어 A/S 전화번호", source: "판매자 계정", runtime: true, help: "Vault의 실제 스마트스토어 A/S 번호를 등록 직전에 적용합니다." },
     { key: "uploaded-image", label: "네이버 이미지 업로드", source: "판매자 계정", runtime: true, help: "원본 이미지를 Commerce API로 업로드한 URL로 교체합니다." },
   ],
@@ -510,6 +571,7 @@ export function inspectListingDraft(
       : (spec.test ? spec.test(draft) : meaningful(valueAt(draft, spec.path ?? []))) ? "ready" : "manual",
     manualPath: spec.manualPath,
     inputType: spec.inputType,
+    options: spec.options,
     placeholder: spec.placeholder,
     help: spec.help,
   }));

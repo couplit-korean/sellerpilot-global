@@ -6,12 +6,92 @@ import { assertSmartstoreCreateAbsence } from "../lib/channels/smartstore-create
 import { readElevenstSellerProdcode } from "../lib/channels/elevenst-sellerprodcode-read";
 import { elevenstVerifiedSkuAbsence } from "../lib/channels/elevenst-create-preflight";
 import { shopeeGlobalCreateBody } from "../lib/channels/shopee-create-preflight";
+import { smartstoreListingCreateContract } from "../lib/channels/smartstore-listing-create-contract";
 
 const emptySearch = () => ({ page: 1, size: 50, first: true, last: true, totalElements: 0, totalPages: 0, contents: [] });
 const naverCredential = { access_token: "fixture-token", access_token_expires_at: "2099-01-01T00:00:00.000Z" };
-const naverArguments = () => ({ body: { originProduct: {
-  detailAttribute: { sellerCodeInfo: { sellerManagementCode: "TEST-SKU" } },
-}, smartstoreChannelProduct: {} } });
+const smartstoreImageUrl = (index: number) =>
+  `https://shop-phinf.pstatic.net/20260909_sellerpilot/domestic-${index}.jpg`;
+const naverArguments = () => ({
+  sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+  publicationIntent: "live",
+  publicationStateContract: "verified_remote_state_v1",
+  publicationExpectedLocale: "ko-KR",
+  publicationExpectedFingerprint: "a".repeat(64),
+  publicationExpectedImageCount: 8,
+  body: {
+    originProduct: {
+      statusType: "SALE",
+      saleType: "NEW",
+      leafCategoryId: "50022679",
+      name: "SmartStore contract fixture",
+      detailContent: Array.from({ length: 8 }, (_, index) =>
+        `<img src="${smartstoreImageUrl(index + 1)}" />`).join(""),
+      images: {
+        representativeImage: { url: smartstoreImageUrl(0) },
+        optionalImages: Array.from({ length: 8 }, (_, index) => ({
+          url: smartstoreImageUrl(index + 1),
+        })),
+      },
+      salePrice: 10_000,
+      stockQuantity: 1,
+      deliveryInfo: {
+        deliveryType: "DELIVERY",
+        deliveryAttributeType: "NORMAL",
+        deliveryCompany: "HANJIN",
+        deliveryFee: {
+          deliveryFeeType: "PAID",
+          baseFee: 3_000,
+          deliveryFeePayType: "PREPAID",
+        },
+        claimDeliveryInfo: {
+          returnDeliveryCompanyPriorityType: "PRIMARY",
+          returnDeliveryFee: 3_000,
+          exchangeDeliveryFee: 6_000,
+          shippingAddressId: 123,
+          returnAddressId: 456,
+        },
+      },
+      detailAttribute: {
+        naverShoppingSearchInfo: { brandName: "TEST" },
+        afterServiceInfo: {
+          afterServiceTelephoneNumber: "02-1234-5678",
+          afterServiceGuideContent: "Test fixture",
+        },
+        originAreaInfo: { originAreaCode: "04", content: "대한민국" },
+        sellerCodeInfo: { sellerManagementCode: "TEST-SKU" },
+        certificationTargetExcludeContent: {
+          childCertifiedProductExclusionYn: true,
+          kcCertifiedProductExclusionYn: "TRUE",
+          greenCertifiedProductExclusionYn: true,
+          chemicalCertifiedProductExclusionYn: true,
+        },
+        productInfoProvidedNotice: {
+          productInfoProvidedNoticeType: "ETC",
+          etc: {
+            returnCostReason: "상품상세 참조",
+            noRefundReason: "상품상세 참조",
+            qualityAssuranceStandard: "상품상세 참조",
+            compensationProcedure: "상품상세 참조",
+            troubleShootingContents: "상품상세 참조",
+            itemName: "Test fixture",
+            modelName: "TEST-SKU",
+            certificateDetails: "해당사항 없음",
+            manufacturer: "TEST",
+            customerServicePhoneNumber: "02-1234-5678",
+          },
+        },
+        optionInfo: {},
+        unitCapacity: { unitPriceYn: false },
+      },
+    },
+    smartstoreChannelProduct: {
+      naverShoppingRegistration: true,
+      channelProductName: "SmartStore contract fixture",
+      channelProductDisplayStatusType: "ON",
+    },
+  },
+});
 const coupangValidBody = () => ({
   sellerProductId: 12345678,
   brand: "SellerPilotBrand",
@@ -59,22 +139,25 @@ for (const [label, status, data] of [
   });
 }
 
-test("SmartStore complete empty search permits one create followed by exact GET", async () => {
+test("SmartStore empty search permits one create but missing paired identity stops without GET", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input); calls.push(`${init?.method} ${url}`);
     if (url.endsWith("/products/search")) return Response.json(emptySearch());
     if (url.endsWith("/v2/products")) return Response.json({ originProductNo: 10000001 });
-    assert.ok(url.endsWith("/v2/products/origin-products/10000001"));
-    return Response.json({ originProduct: { statusType: "SALE" } });
+    return Response.json({ code: "UNEXPECTED" }, { status: 500 });
   };
   try {
     const result = await executeChannelOperation({ channel: "smartstore", operation: "listing.create", environment: "production", payload: naverCredential, arguments: naverArguments() });
-    assert.equal(result.ok, true); // Legacy protocol only; strict completion remains separately gated.
+    assert.equal(result.ok, false);
     assert.equal(result.remoteId, "10000001");
-    assert.equal(calls.length, 3);
-    assert.deepEqual(calls.map(x => x.split(" ")[0]), ["POST", "POST", "GET"]);
+    assert.deepEqual(result.steps.map((item) => item.name), [
+      "product-create",
+      "product-create-identity",
+    ]);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls.map(x => x.split(" ")[0]), ["POST", "POST"]);
   } finally { globalThis.fetch = originalFetch; }
 });
 

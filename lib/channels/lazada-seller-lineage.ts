@@ -52,6 +52,9 @@ export function assertLazadaActiveSellerLineage(input: {
   if (country !== "my" || !/^\d+$/u.test(expectedSellerId)) {
     throw new Error("LAZADA_SELLER_TARGET_INVALID");
   }
+  if (text(input.credential.account_platform).toLowerCase() !== "seller_center") {
+    throw new Error("LAZADA_SELLER_ACCOUNT_PLATFORM_MISMATCH");
+  }
   const credentialSellerId = activeLazadaSellerIdForMarket(
     input.credential,
     country,

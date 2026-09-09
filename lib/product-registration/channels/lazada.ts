@@ -1,4 +1,9 @@
-import { lazadaCreateSkuChecks } from "../../channels/lazada-create-preflight";
+import {
+  assertLazadaCreateSellerSkuAbsence,
+  lazadaCreateSellerSkus,
+  lazadaCreateSkuChecks,
+} from "../../channels/lazada-create-preflight";
+import { assertLazadaActiveSellerLineage } from "../../channels/lazada-seller-lineage";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import {
   objectValue,
@@ -19,6 +24,7 @@ import {
   type LazadaPublicationReadbackVerification,
 } from "../../channels/provider-lazada-publication-readback";
 import { uploadChannelNativeImages } from "../../channels/native-image-upload";
+import { assertLazadaMyListingCreateContext } from "../lazada/listing-create-context";
 import {
   type ExecuteInput,
   nativeImageSourceUrls,
@@ -314,12 +320,138 @@ export async function executeLazada(input: ExecuteInput) {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
   const write = writeChannelOperations.has(input.operation);
   let effectiveArguments = input.arguments;
+  const prewriteSteps: ChannelOperationStep[] = [];
   if (input.operation === "listing.create") {
-    if (verifiedPublicationRequested) {
-      const checks = lazadaCreateSkuChecks(input.arguments);
-      if (Object.values(checks).some(value => !value)) {
-        return result(input, [{ name: "listing-create-sku-prewrite", ok: false, status: 422,
-          data: { error: "LAZADA_CREATE_SKU_CONTRACT_INVALID", checks, sellerpilotNoWriteConfirmed: true } }]);
+    if (!verifiedPublicationRequested) {
+      return result(input, [{
+        name: "listing-create-contract-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          error: "LAZADA_CREATE_PUBLICATION_CONTRACT_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    let createContext;
+    try {
+      createContext = assertLazadaMyListingCreateContext(input.arguments);
+    } catch (error) {
+      return result(input, [{
+        name: "listing-create-contract-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          error: error instanceof Error
+            ? error.message
+            : "LAZADA_MY_CREATE_CONTEXT_INVALID",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    if (!publicationIntent) {
+      return result(input, [{
+        name: "listing-create-contract-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          error: "LAZADA_PUBLICATION_INTENT_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    const checks = lazadaCreateSkuChecks(
+      input.arguments,
+      createContext.sellerMode,
+    );
+    if (Object.values(checks).some(value => !value)) {
+      return result(input, [{ name: "listing-create-sku-prewrite", ok: false, status: 422,
+        data: { error: "LAZADA_CREATE_SKU_CONTRACT_INVALID", checks, sellerpilotNoWriteConfirmed: true } }]);
+    }
+    {
+      const country = String(input.payload.country ?? "").trim().toLowerCase();
+      const expectedSellerId = createContext.sellerId;
+      const sellerRemote = await lazadaRequest({
+        payload: input.payload,
+        path: "/seller/get",
+      });
+      try {
+        if (!sellerRemote.response.ok
+            || String(sellerRemote.data.code ?? "").trim() !== "0") {
+          throw new Error("LAZADA_SELLER_READBACK_FAILED");
+        }
+        const seller = assertLazadaActiveSellerLineage({
+          credential: input.payload,
+          remoteData: sellerRemote.data,
+          country,
+          expectedSellerId,
+        });
+        prewriteSteps.push({
+          name: "listing-create-seller-account-readback",
+          ok: true,
+          status: sellerRemote.response.status,
+          data: {
+            sellerpilotVerification: "LAZADA_ACTIVE_MY_SELLER_VERIFIED",
+            sellerId: seller.sellerId,
+            country,
+          },
+        });
+      } catch (error) {
+        return result(input, [{
+          name: "listing-create-seller-account-readback",
+          ok: false,
+          status: sellerRemote.response.ok ? 409 : sellerRemote.response.status,
+          data: {
+            error: error instanceof Error
+              ? error.message
+              : "LAZADA_SELLER_READBACK_FAILED",
+            sellerpilotVerification: "LAZADA_SELLER_PREWRITE_REJECTED",
+            sellerpilotNoWriteConfirmed: true,
+          },
+        }]);
+      }
+      const sellerSkus = lazadaCreateSellerSkus(input.arguments);
+      const absenceRemote = await lazadaRequest({
+        payload: input.payload,
+        path: "/products/get",
+        params: {
+          filter: "all",
+          sku_seller_list: JSON.stringify(sellerSkus),
+          options: "1",
+          limit: "100",
+          offset: "0",
+        },
+      });
+      try {
+        const evidence = assertLazadaCreateSellerSkuAbsence(
+          absenceRemote,
+          sellerSkus,
+        );
+        prewriteSteps.push({
+          name: "listing-create-seller-sku-absence",
+          ok: true,
+          status: absenceRemote.response.status,
+          data: {
+            sellerpilotVerification: "LAZADA_CREATE_SELLER_SKU_ABSENCE_VERIFIED",
+            ...evidence,
+          },
+        });
+      } catch (error) {
+        const code = error instanceof Error
+          ? error.message
+          : "LAZADA_CREATE_SELLER_SKU_PREFLIGHT_FAILED";
+        return result(input, [{
+          name: "listing-create-seller-sku-absence",
+          ok: false,
+          status: absenceRemote.response.ok
+            ? code === "LAZADA_CREATE_SELLER_SKU_ALREADY_EXISTS" ? 409 : 502
+            : absenceRemote.response.status,
+          data: {
+            error: code,
+            sellerpilotVerification: "LAZADA_CREATE_SELLER_SKU_PREWRITE_REJECTED",
+            sellerpilotNoWriteConfirmed: true,
+          },
+        }]);
       }
     }
     effectiveArguments = await prepareLazadaNativeImageArguments(
@@ -409,7 +541,7 @@ export async function executeLazada(input: ExecuteInput) {
     applyLazadaPublicationVerification(readbackStep, verification);
     return result(
       input,
-      [writeStep, readbackStep],
+      [...prewriteSteps, writeStep, readbackStep],
       remoteId,
       undefined,
       verification.remoteState,
@@ -443,7 +575,7 @@ export async function executeLazada(input: ExecuteInput) {
       readbackData.item_id ??
       readbackData.itemId;
     readbackStep.ok = readbackStep.ok && String(readbackId ?? "") === remoteId;
-    return result(input, [writeStep, readbackStep], remoteId);
+    return result(input, [...prewriteSteps, writeStep, readbackStep], remoteId);
   }
-  return result(input, [writeStep], remoteId);
+  return result(input, [...prewriteSteps, writeStep], remoteId);
 }

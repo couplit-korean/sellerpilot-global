@@ -168,7 +168,7 @@ export function channelRegistrationFields(channel: ActiveChannelKey,draft: Recor
     const path=requirement.manualPath;
     if(!path || !editableRegistrationPath(path) || (channel==="coupang" && requirement.key==="notices")) continue;
     const value=registrationValueAt(draft,path);
-    fields.set(JSON.stringify(path),{path,label:requirement.label,value:(value==="SERVER_MANAGED"?null:value??null) as RegistrationValue,required:requirement.status!=="runtime",issue:requirement.status==="manual"?"필수값을 확인해 주세요.":undefined,help:requirement.help,inputType:requirement.inputType,...(requirement.key==="unit-indication"?{options:["g","kg","ml","L","cm","m","개","개입","매","매입","정","캡슐","구미","포","구"]}:{})});
+    fields.set(JSON.stringify(path),{path,label:requirement.label,value:(value==="SERVER_MANAGED"?null:value??null) as RegistrationValue,required:requirement.status!=="runtime",issue:requirement.status==="manual"?"필수값을 확인해 주세요.":undefined,help:requirement.help,inputType:requirement.inputType,options:requirement.options,...(requirement.key==="unit-indication"?{options:["g","kg","ml","L","cm","m","개","개입","매","매입","정","캡슐","구미","포","구"]}:{})});
   }
   return [...fields.values()];
 }

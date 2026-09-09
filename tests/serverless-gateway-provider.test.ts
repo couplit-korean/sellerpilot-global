@@ -349,6 +349,29 @@ test("Temu safe-test requires the approved localized asset binding before its mu
   assert.deepEqual(events, []);
 });
 
+test("Temu legacy create jobs fail before credentials, media preparation, or mutation fences", async () => {
+  const events: string[] = [];
+  const job = genericClaim("temu", "listing.create");
+  job.request = { arguments: { body: {} } };
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async () => {
+      events.push("provider");
+      throw new Error("provider must not run");
+    }),
+    /TEMU_CREATE_CONTRACT_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
+});
+
 test("legacy eBay diagnostic stages immutable GetUser identity before privilege read", async () => {
   const originalFetch = globalThis.fetch;
   const events: string[] = [];

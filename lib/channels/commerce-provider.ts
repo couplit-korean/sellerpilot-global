@@ -399,6 +399,12 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
     }
     const rawArguments = requestArguments(input.job);
     assertNoRetiredProductRecovery(rawArguments);
+    if (input.job.channel === "temu"
+      && input.job.operation === "listing.create"
+      && (rawArguments.publicationStateContract !== "verified_remote_state_v1"
+        || !["live", "safe_test"].includes(String(rawArguments.publicationIntent ?? "")))) {
+      throw new Error("TEMU_CREATE_CONTRACT_REQUIRED");
+    }
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"
       || input.job.operation === "listing.update"

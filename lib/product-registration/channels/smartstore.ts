@@ -38,6 +38,12 @@ import {
   listingUpdateReadbackStep,
   inventoryQuantityVerificationStep,
 } from "../execution-shared";
+import {
+  assertSmartstoreCreateBodyReady,
+  smartstoreCreateIdentity,
+  smartstoreStrictCreateRequested,
+  type SmartstoreCreateIdentity,
+} from "../../channels/smartstore-listing-create-contract";
 
 export type SmartstoreOptionStockExpectation = {
   kind: "combination" | "standard";
@@ -188,6 +194,7 @@ export async function smartstoreListingResultWithPublicationReadback(
   steps: ChannelOperationStep[],
   remoteId: string,
   request: Parameters<typeof readSmartstoreUpdateIdentity>[0]["request"],
+  expectedCreateIdentity?: SmartstoreCreateIdentity,
 ) {
   if (
     !listingPublicationReadbackRequested(input) ||
@@ -221,6 +228,32 @@ export async function smartstoreListingResultWithPublicationReadback(
     sellerSku: smartstoreSellerSkuFromArguments(input.arguments) || undefined,
     request,
   });
+  const officialOriginProductNo = String(
+    readback.state?.resources.originProductNo ?? "",
+  ).trim();
+  const officialChannelProductNo = String(
+    readback.state?.resources.smartstoreChannelProductNo ?? "",
+  ).trim();
+  const createIdentityMatches = !expectedCreateIdentity
+    || (officialOriginProductNo === expectedCreateIdentity.originProductNo
+      && officialChannelProductNo === expectedCreateIdentity.channelProductNo);
+  const createIdentityStep: ChannelOperationStep[] = expectedCreateIdentity
+    ? [{
+        name: "product-create-identity-readback",
+        ok: createIdentityMatches,
+        status: readback.state ? 200 : 422,
+        data: {
+          sellerpilotVerification:
+            createIdentityMatches
+              ? "SMARTSTORE_CREATE_IDENTITIES_VERIFIED"
+              : "SMARTSTORE_CREATE_IDENTITIES_MISMATCH",
+          expectedOriginProductNo: expectedCreateIdentity.originProductNo,
+          expectedChannelProductNo: expectedCreateIdentity.channelProductNo,
+          officialOriginProductNo: officialOriginProductNo || null,
+          officialChannelProductNo: officialChannelProductNo || null,
+        },
+      }]
+    : [];
   return result(
     input,
     [
@@ -245,6 +278,7 @@ export async function smartstoreListingResultWithPublicationReadback(
             ),
           ]
         : []),
+      ...createIdentityStep,
       publicationStateVerificationStep(
         input.channel,
         readback.state,
@@ -253,7 +287,7 @@ export async function smartstoreListingResultWithPublicationReadback(
     ],
     remoteId,
     undefined,
-    readback.state,
+    createIdentityMatches ? readback.state : undefined,
   );
 }
 
@@ -263,6 +297,15 @@ export async function executeSmartstore(input: ExecuteInput) {
   const contentRepair = smartstoreContentRepairBinding(input.arguments);
   if (contentRepair && input.operation !== "listing.update") {
     throw new Error("SMARTSTORE_CONTENT_REPAIR_UPDATE_ONLY");
+  }
+  let prevalidatedCreateBody: Record<string, unknown> | undefined;
+  if (input.operation === "listing.create") {
+    smartstoreStrictCreateRequested(input.arguments);
+    prevalidatedCreateBody = smartstoreBodyForPublicationIntent(
+      input,
+      objectValue(input.arguments, "body"),
+    );
+    assertSmartstoreCreateBodyReady(prevalidatedCreateBody);
   }
   const storedAccessToken = readStoredNaverAccessToken(input.payload);
   let token = storedAccessToken
@@ -348,7 +391,7 @@ export async function executeSmartstore(input: ExecuteInput) {
     return result(input, [step("category-validation", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
-    const body = smartstoreBodyForPublicationIntent(
+    const body = prevalidatedCreateBody ?? smartstoreBodyForPublicationIntent(
       input,
       objectValue(input.arguments, "body"),
     );
@@ -389,12 +432,27 @@ export async function executeSmartstore(input: ExecuteInput) {
       path: "/v2/products",
       body,
     });
-    const remoteId =
-      createRemote.data.originProductNo === undefined
-        ? undefined
-        : String(createRemote.data.originProductNo);
     const steps = [step("product-create", createRemote)];
-    if (!steps[0].ok || !remoteId) return result(input, steps, remoteId);
+    if (!steps[0].ok) return result(input, steps);
+    const createIdentity = smartstoreCreateIdentity(createRemote.data);
+    const remoteId = createIdentity?.originProductNo
+      ?? (createRemote.data.originProductNo === undefined
+        ? undefined
+        : String(createRemote.data.originProductNo));
+    if (!createIdentity) {
+      return result(input, [
+        ...steps,
+        {
+          name: "product-create-identity",
+          ok: false,
+          status: 422,
+          data: {
+            sellerpilotVerification: "SMARTSTORE_CREATE_IDENTITIES_MISSING",
+          },
+        },
+      ], remoteId);
+    }
+    if (!remoteId) return result(input, steps);
     const readbackRemote = await request({
       method: "GET",
       path: `/v2/products/origin-products/${pathSegment(remoteId)}`,
@@ -412,6 +470,7 @@ export async function executeSmartstore(input: ExecuteInput) {
       steps,
       remoteId,
       request,
+      createIdentity ?? undefined,
     );
   }
   if (input.operation === "listing.update") {

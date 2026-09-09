@@ -135,26 +135,39 @@ export async function loadAuthoritativeKrwPerMyr(input: {
   };
 }
 
-function requestedLazadaSkuPrice(argumentsValue: UnknownRecord) {
+function requestedLazadaSkuPrices(
+  argumentsValue: UnknownRecord,
+  priceField: "price" | "supply_price",
+) {
   const request = recordValue(argumentsValue.request);
   const requestRoot = recordValue(request.Request);
   const product = recordValue(requestRoot.Product);
   const skus = recordValue(product.Skus);
   const rows = Array.isArray(skus.Sku) ? skus.Sku.map(recordValue) : [];
-  if (rows.length !== 1) return null;
-  return finitePositive(rows[0].price ?? rows[0].Price);
+  if (!rows.length) return null;
+  const prices = rows.map((row) => priceField === "supply_price"
+    ? finitePositive(row.supply_price ?? row.SupplyPrice)
+    : finitePositive(row.price ?? row.Price));
+  return prices.every((price): price is number => price !== null)
+    ? prices
+    : null;
 }
 
 export function assertLazadaKrwMyrPricePolicy(input: {
   argumentsValue: UnknownRecord;
   authoritativeRate: LazadaKrwMyrRateEvidence;
+  priceField?: "price" | "supply_price";
   now?: Date;
 }) {
   const policy = lazadaKrwMyrPricePolicyFromArguments(input.argumentsValue);
   if (!policy) throw new Error("LAZADA_KRW_MYR_PRICE_POLICY_REQUIRED");
-  const requestedPrice = requestedLazadaSkuPrice(input.argumentsValue);
-  if (requestedPrice === null
-      || Math.abs(requestedPrice - policy.targetPriceMyr) > 0.000_001) {
+  const requestedPrices = requestedLazadaSkuPrices(
+    input.argumentsValue,
+    input.priceField ?? "price",
+  );
+  if (!requestedPrices
+      || requestedPrices.some((requestedPrice) =>
+        Math.abs(requestedPrice - policy.targetPriceMyr) > 0.000_001)) {
     throw new Error("LAZADA_KRW_MYR_TARGET_PRICE_MISMATCH");
   }
   const nowMs = (input.now ?? new Date()).getTime();

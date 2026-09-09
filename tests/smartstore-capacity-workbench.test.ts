@@ -101,6 +101,25 @@ function context(): Parameters<typeof buildChannelArguments>[1] {
   };
 }
 const packageFields = { weight: 0.2, length: 10, width: 8, height: 4 };
+test("actual common SmartStore create maps brand and leaves certification decisions unselected", () => {
+  const initial = buildChannelArguments("smartstore", context(), 3190, 1, undefined, packageFields, 10) as Record<string, unknown>;
+  const detailAttribute = ((initial.body as { originProduct: { detailAttribute: Record<string, unknown> } }).originProduct.detailAttribute);
+  assert.deepEqual(detailAttribute.naverShoppingSearchInfo, { brandName: "TEST" });
+  assert.deepEqual(detailAttribute.certificationTargetExcludeContent, {
+    childCertifiedProductExclusionYn: null,
+    kcCertifiedProductExclusionYn: "",
+    greenCertifiedProductExclusionYn: null,
+    chemicalCertifiedProductExclusionYn: null,
+  });
+  const certification = inspectListingDraft("smartstore", initial)
+    .filter((field) => field.key.startsWith("certification-"));
+  assert.deepEqual(certification.map((field) => [field.key, field.status]), [
+    ["certification-child-exclusion", "manual"],
+    ["certification-kc-exclusion", "manual"],
+    ["certification-green-exclusion", "manual"],
+    ["certification-chemical-exclusion", "manual"],
+  ]);
+});
 test("actual common price/stock/packaging synchronization preserves exact entered capacity and current asset contract", () => {
   const input = context();
   const initial = buildChannelArguments("smartstore", input, 3190, 1, undefined, packageFields, 10) as Record<string, unknown>;

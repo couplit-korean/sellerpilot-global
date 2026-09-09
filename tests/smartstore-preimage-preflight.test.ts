@@ -27,6 +27,7 @@ function listingArguments(operation: "listing.create" | "listing.update") {
   return {
     ...(operation === "listing.update" ? { originProductNo: "13671684696" } : {}),
     publicationIntent: "live",
+    ...(operation === "listing.create" ? { publicationStateContract: "verified_remote_state_v1" } : {}),
     imageUrls: [representativeUrl, ...detailUrls],
     body: {
       originProduct: {
@@ -36,8 +37,11 @@ function listingArguments(operation: "listing.create" | "listing.update") {
         salePrice: 5_000,
         stockQuantity: 1,
         ...(operation === "listing.create" ? {
+          statusType: "SALE",
+          saleType: "NEW",
           deliveryInfo: {
             deliveryType: "DELIVERY",
+            deliveryAttributeType: "NORMAL",
             deliveryCompany: "CJGLS",
             deliveryFee: { deliveryFeeType: "PAID", baseFee: 3_500, deliveryFeePayType: "PREPAID" },
             claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3_500, exchangeDeliveryFee: 7_000, shippingAddressId: 123, returnAddressId: 456 },
@@ -45,10 +49,30 @@ function listingArguments(operation: "listing.create" | "listing.update") {
         } : {}),
         detailAttribute: {
           sellerCodeInfo: { sellerManagementCode },
+          ...(operation === "listing.create" ? {
+            naverShoppingSearchInfo: { brandName: "Fixture Brand" },
+            afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" },
+            originAreaInfo: { originAreaCode: "04", content: "중국" },
+            certificationTargetExcludeContent: {
+              childCertifiedProductExclusionYn: true,
+              kcCertifiedProductExclusionYn: "TRUE",
+              greenCertifiedProductExclusionYn: true,
+              chemicalCertifiedProductExclusionYn: true,
+            },
+            productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: {
+              returnCostReason: "Fixture return policy", noRefundReason: "Fixture exclusions",
+              qualityAssuranceStandard: "Fixture warranty", compensationProcedure: "Fixture procedure",
+              troubleShootingContents: "Fixture support", itemName: "Fixture cable clip",
+              modelName: "FIXTURE-CLIP-001", certificateDetails: "Fixture certification decision",
+              manufacturer: "Fixture manufacturer", customerServicePhoneNumber: "SERVER_MANAGED",
+            } },
+            unitCapacity: { unitPriceYn: false },
+          } : {}),
         },
       },
       smartstoreChannelProduct: {
         channelProductName: "부착형 케이블 정리 클립 6개 세트",
+        ...(operation === "listing.create" ? { naverShoppingRegistration: true, channelProductDisplayStatusType: "ON" } : {}),
       },
     },
   };

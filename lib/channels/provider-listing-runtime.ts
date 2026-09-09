@@ -1,7 +1,11 @@
 import { assertNoRetiredProductRecovery } from "./retired-product-recovery";
 import { assertSmartstoreCreateAbsence } from "./smartstore-create-preflight";
 import { shopeeGlobalCreateBody } from "./shopee-create-preflight";
-import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
+import {
+  assertLazadaCreateSellerSkuAbsence,
+  lazadaCreateSellerSkus,
+  lazadaCreateSkuChecks,
+} from "./lazada-create-preflight";
 import { temuCreateSkuChecks } from "./temu-create-preflight";
 import { smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema, type SmartstoreContentRepairTransmissionImages } from "./smartstore-content-repair-contract";
 import { prepareSmartstoreContentRepairBody, smartstoreContentRepairBinding, smartstoreContentRepairBodyHashes, inspectSmartstoreContentRepairTransmission } from "./smartstore-content-repair";
@@ -11,10 +15,14 @@ import type { GatewayClaim } from "./gateway-contract";
 import { mergeShopeeRequiredAttributes, normalizeCoupangAttributeValue, normalizeTenWonAmount, replaceMarketplaceImageUrls } from "./listing-normalization";
 import { assertLazadaExistingListingGetProductsPreflight, assertLazadaExistingListingUpdatePreflight, bindLazadaExistingSkuToUpdateRequest, lazadaCategoryAttributeCount, lazadaCategoryTreeLeaf, lazadaPrimaryCategory, lazadaRequestedUpdateSellerSku } from "./lazada-listing-update";
 import { assertLazadaKrwMyrPricePolicy, loadAuthoritativeKrwPerMyr, type LazadaKrwMyrRateEvidence } from "./lazada-price-policy";
+import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
+import { assertLazadaMyListingCreateContext, type LazadaMyListingCreateContext } from "../product-registration/lazada/listing-create-context";
+import { assertLazadaMyCreateMetadata } from "../product-registration/lazada/my-create-contract";
 
 import { downloadMarketplaceImage } from "./marketplace-images";
 import { buildShopeeSignature, coupangRequest, fetchNaverAccessToken, lazadaRequest, naverRequest, providerFetch, readStoredNaverAccessToken, shopeeEnvironment, shopeeMerchantRequest, shopeeRequest, textValue, type SecretPayload } from "./protocols";
 import { bindSmartstoreUploadedProductImages, finalizeSmartstoreListingBody, smartstoreImageUploadPlan } from "./smartstore-image-contract";
+import { assertSmartstoreCreateBodyReady, assertSmartstoreCreateDraftReady, smartstoreListingCreateContract } from "./smartstore-listing-create-contract";
 import { assertSmartstoreUnitCapacity, smartstoreUpdateOriginProductWithPreservedUnitCapacity } from "./smartstore-unit-capacity";
 import { assertShopeeSgCreateProviderBinding, assertShopeeSgCurrentPrice, buildShopeeSgPreparedCreateEvidence, loadAuthoritativeKrwSgdUsdRate, shopeeSgExpectedCategoryPathVerified, shopeeSgListingCreateRequested, shopeeSgListingCreateExpectation } from "./shopee-sg-listing-create";
 import { parseCoupangNoticeEnvelope } from "./listing-preflight";
@@ -790,8 +798,109 @@ const lazadaListingRuntimeDependencies: LazadaListingRuntimeDependencies = {
   loadKrwPerMyr: (signal) => loadAuthoritativeKrwPerMyr({ signal }),
 };
 export async function prepareLazadaListing(input: PrepareProviderListingInput, dependencies: LazadaListingRuntimeDependencies = lazadaListingRuntimeDependencies): Promise<UnknownRecord> {
+  let createContext: LazadaMyListingCreateContext | null = null;
+  let createCategoryAttributes: unknown = null;
+  let createAttributeImageSources: string[] = [];
+  if (input.operation === "listing.create") {
+    if (input.arguments.publicationStateContract !== "verified_remote_state_v1") {
+      throw new Error("LAZADA_CREATE_PUBLICATION_CONTRACT_REQUIRED");
+    }
+    createContext = assertLazadaMyListingCreateContext(input.arguments);
+    if (input.arguments.publicationIntent !== "safe_test"
+        && input.arguments.publicationIntent !== "live") {
+      throw new Error("LAZADA_PUBLICATION_INTENT_REQUIRED");
+    }
+    const checks = lazadaCreateSkuChecks(
+      input.arguments,
+      createContext.sellerMode,
+    );
+    if (Object.values(checks).some((value) => !value)) {
+      throw new Error("LAZADA_CREATE_SKU_CONTRACT_INVALID");
+    }
+    const product = recordValue(
+      recordValue(recordValue(input.arguments.request)?.Request)?.Product,
+    );
+    const primaryCategory = lazadaPrimaryCategory(product ?? {});
+    const sellerSkus = lazadaCreateSellerSkus(input.arguments);
+    const languageCode = lazadaLanguageCode("my");
+    if (primaryCategory !== createContext.categoryId || !languageCode) {
+      throw new Error("LAZADA_MY_CREATE_PREFLIGHT_ARGUMENTS_INVALID");
+    }
+    await input.hooks.assertLeaseHealthy();
+    const [sellerRemote, productsRemote, treeRemote, attributesRemote, authoritativeRate] = await Promise.all([
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/seller/get",
+      }),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/products/get",
+        params: {
+          filter: "all",
+          sku_seller_list: JSON.stringify(sellerSkus),
+          options: "1",
+          limit: "100",
+          offset: "0",
+        },
+      }),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/category/tree/get",
+        params: { language_code: languageCode },
+      }),
+      dependencies.lazadaRequest({
+        payload: input.credential,
+        path: "/category/attributes/get",
+        params: {
+          primary_category_id: primaryCategory,
+          language_code: languageCode,
+        },
+      }),
+      dependencies.loadKrwPerMyr(input.signal),
+    ]);
+    if (!lazadaAccepted(sellerRemote)) {
+      throw new Error("LAZADA_MY_CREATE_SELLER_PREFLIGHT_FAILED");
+    }
+    assertLazadaActiveSellerLineage({
+      credential: input.credential,
+      remoteData: sellerRemote.data,
+      country: "my",
+      expectedSellerId: createContext.sellerId,
+    });
+    assertLazadaCreateSellerSkuAbsence(productsRemote, sellerSkus);
+    if (!lazadaAccepted(treeRemote)
+        || !lazadaCategoryTreeLeaf(treeRemote.data, primaryCategory)) {
+      throw new Error("LAZADA_MY_CREATE_LEAF_CATEGORY_PREFLIGHT_FAILED");
+    }
+    if (!lazadaAccepted(attributesRemote)
+        || lazadaCategoryAttributeCount(attributesRemote.data) < 1) {
+      throw new Error("LAZADA_MY_CREATE_CATEGORY_ATTRIBUTES_PREFLIGHT_FAILED");
+    }
+    assertLazadaKrwMyrPricePolicy({
+      argumentsValue: input.arguments,
+      authoritativeRate,
+      priceField: createContext.sellerMode === "marketplace_ease"
+        ? "supply_price"
+        : "price",
+    });
+    const sourceMetadata = assertLazadaMyCreateMetadata({
+      argumentsValue: input.arguments,
+      categoryAttributes: attributesRemote.data,
+      mode: createContext.sellerMode,
+      imageStage: "source",
+    });
+    createAttributeImageSources = sourceMetadata.attributeImageUrls;
+    createCategoryAttributes = attributesRemote.data;
+  }
 
-  const sources = lazadaBoundPublicationImageSources(input.arguments);
+  const boundSources = lazadaBoundPublicationImageSources(input.arguments);
+  const sources = {
+    ...boundSources,
+    migrationSources: [...new Set([
+      ...boundSources.migrationSources,
+      ...createAttributeImageSources,
+    ])],
+  };
   if (!sources.migrationSources.length || !sources.representative) {
     throw new Error("LAZADA_LISTING_IMAGES_MISSING");
   }
@@ -924,7 +1033,7 @@ export async function prepareLazadaListing(input: PrepareProviderListingInput, d
     const row = recordValue(sku);
     if (row) row.Images = { Image: listingImages };
   }
-  return {
+  const providerArguments = {
     ...preparedArguments,
     ...(preparedArguments.publicationStateContract === "verified_remote_state_v1"
       ? {
@@ -936,6 +1045,15 @@ export async function prepareLazadaListing(input: PrepareProviderListingInput, d
       : {}),
     request,
   };
+  if (createContext) {
+    assertLazadaMyCreateMetadata({
+      argumentsValue: providerArguments,
+      categoryAttributes: createCategoryAttributes,
+      mode: createContext.sellerMode,
+      imageStage: "provider",
+    });
+  }
+  return providerArguments;
 }
 async function prepareSmartstoreListing(input: PrepareProviderListingInput): Promise<UnknownRecord> {
   const contentRepair = smartstoreContentRepairBinding(input.arguments);
@@ -945,6 +1063,7 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     const originProduct = recordValue(sourceBody.originProduct) ?? {};
     originProduct.deliveryInfo = validatedSmartstoreShippingInfo(originProduct.deliveryInfo);
     sourceBody.originProduct = originProduct;
+    assertSmartstoreCreateDraftReady(sourceBody);
   }
   const imagePlan = smartstoreImageUploadPlan({
     imageUrls: input.arguments.imageUrls,
@@ -1104,6 +1223,9 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
     publicationIntent: input.arguments.publicationIntent,
     afterServicePhone: phone,
   });
+  if (input.operation === "listing.create") {
+    assertSmartstoreCreateBodyReady(body);
+  }
   if (contentRepair && smartstoreContentRepairBodyHashes({
     originProduct: recordValue(body.originProduct) ?? {},
     smartstoreChannelProduct: recordValue(body.smartstoreChannelProduct) ?? {},
@@ -1112,6 +1234,9 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
   }
   return {
     ...input.arguments, imageUrls: uploadedUrls, body,
+    ...(input.operation === "listing.create"
+      ? { sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract }
+      : {}),
     ...(contentRepair ? { [smartstoreContentRepairTransmissionArgument]: transmissionImages } : {}),
   };
 }
@@ -1672,12 +1797,34 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
 }
 export async function prepareMarketplaceListingArguments(input: PrepareProviderListingInput): Promise<PreparedProviderListing> {
   assertNoRetiredProductRecovery(input.arguments);
+  if (input.channel === "smartstore" && input.operation === "listing.create"
+    && input.arguments.publicationStateContract !== "verified_remote_state_v1") {
+    throw new Error("NAVER_CREATE_PUBLICATION_CONTRACT_REQUIRED");
+  }
+  if (input.channel === "temu"
+    && input.operation === "listing.create"
+    && (input.arguments.publicationStateContract !== "verified_remote_state_v1"
+      || !["live", "safe_test"].includes(String(input.arguments.publicationIntent ?? "")))) {
+    throw new Error("TEMU_CREATE_CONTRACT_REQUIRED");
+  }
+  if (input.operation === "listing.create" && input.channel === "lazada") {
+    if (input.arguments.publicationStateContract !== "verified_remote_state_v1") {
+      throw new Error("LAZADA_CREATE_PUBLICATION_CONTRACT_REQUIRED");
+    }
+    const createContext = assertLazadaMyListingCreateContext(input.arguments);
+    const checks = lazadaCreateSkuChecks(
+      input.arguments,
+      createContext.sellerMode,
+    );
+    if (Object.values(checks).some((value) => !value)) {
+      throw new Error("LAZADA_CREATE_SKU_CONTRACT_INVALID");
+    }
+  }
   if (input.operation === "listing.create" && input.arguments.publicationStateContract === "verified_remote_state_v1") {
     if (input.channel === "shopee" && input.arguments.globalProduct === true && input.arguments.resumeOnly !== true) {
       shopeeGlobalCreateBody(recordValue(input.arguments.body) ?? {}, true);
     }
-    const checks = input.channel === "lazada" ? lazadaCreateSkuChecks(input.arguments)
-      : input.channel === "temu" ? temuCreateSkuChecks(input.arguments.body) : null;
+    const checks = input.channel === "temu" ? temuCreateSkuChecks(input.arguments.body) : null;
     if (checks && Object.values(checks).some(value => !value)) {
       throw new Error(`${input.channel.toUpperCase()}_CREATE_SKU_CONTRACT_INVALID`);
     }

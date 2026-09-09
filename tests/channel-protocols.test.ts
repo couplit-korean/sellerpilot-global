@@ -21,6 +21,7 @@ import {
   lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
 import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests, orderSyncRequests } from "../lib/channels/sync-arguments";
 import {
@@ -962,12 +963,58 @@ test("Shopee global category validation requires one exact provider leaf and ret
 test("Lazada product create serializes the structured request as official XML and reads the item back", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; body: string }> = [];
+  const images = Array.from(
+    { length: 8 },
+    (_, index) => `https://example.com/cup-${index + 1}.jpg`,
+  );
   globalThis.fetch = async (input, init) => {
-    calls.push({ url: String(input), body: String(init?.body ?? "") });
-    const creating = String(input).includes("/product/create");
-    return new Response(JSON.stringify(creating
-      ? { code: "0", request_id: "create-request", data: { item_id: 987654321 } }
-      : { code: "0", request_id: "read-request", data: { item_id: 987654321, primary_category: 12345 } }), {
+    const url = String(input);
+    calls.push({ url, body: String(init?.body ?? "") });
+    let data: Record<string, unknown>;
+    if (url.includes("/seller/get")) {
+      data = {
+        code: "0",
+        data: { seller_id: "200100300", is_active: true, status: "active" },
+      };
+    } else if (url.includes("/products/get")) {
+      data = { code: "0", data: { total_products: 0, products: [] } };
+    } else if (url.includes("/product/create")) {
+      data = {
+        code: "0",
+        request_id: "create-request",
+        data: { item_id: 987654321 },
+      };
+    } else {
+      data = {
+        code: "0",
+        request_id: "read-request",
+        data: {
+          item_id: 987654321,
+          primary_category: 12345,
+          status: "inactive",
+          images,
+          attributes: {
+            name: "White cup",
+            description: "Cup & mug",
+            "Units_(per_Bundle)": "",
+          },
+          skus: [{
+            SkuId: 555001,
+            SellerSku: "CUP-001",
+            price: 12.9,
+            quantity: 1,
+            package_content: "One cup",
+            package_weight: 0.2,
+            package_length: 10,
+            package_width: 8,
+            package_height: 3,
+            Status: "inactive",
+            Images: images,
+          }],
+        },
+      };
+    }
+    return new Response(JSON.stringify(data), {
       status: 200,
       headers: { "content-type": "application/json" },
     });
@@ -976,15 +1023,64 @@ test("Lazada product create serializes the structured request as official XML an
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "listing.create",
-      payload: { app_key: "app-key", app_secret: "app-secret", access_token: "access-token", country: "my" },
+      payload: withLazadaProviderAccountIdentity({
+        app_key: "app-key",
+        app_secret: "app-secret",
+        access_token: "access-token",
+        country: "my",
+      }, {
+        account_platform: "seller_center",
+        country_user_info: [{
+          country: "my",
+          seller_id: "200100300",
+          user_id: "300100200",
+        }],
+      }).payload,
       arguments: {
+        publicationStateContract: "verified_remote_state_v1",
+        publicationIntent: "safe_test",
+        publicationExpectedLocale: "ms-MY",
+        publicationExpectedFingerprint: "c".repeat(64),
+        publicationExpectedImageCount: 8,
+        country: "my",
+        sellerpilotExpectedSellerId: "200100300",
+        sellerpilotExpectedPrimaryCategory: "12345",
+        sellerpilotLazadaMyCreateContext: {
+          contract: "lazada_my_listing_create_context_v1",
+          productId: "20000000-0000-4000-8000-000000000003",
+          sellerSku: "CUP-001",
+          sourceCurrency: "KRW",
+          sourcePriceKrw: 3000,
+          market: "MY",
+          locale: "ms-MY",
+          sellerId: "200100300",
+          targetCurrency: "MYR",
+          targetPriceMyr: 12.9,
+          quantity: 1,
+          categoryId: "12345",
+          categoryConfirmedAt: "2026-09-09T00:00:00.000Z",
+          sellerMode: "standard",
+          sellerModeVerifiedAt: "2026-09-09T00:00:00.000Z",
+          sellerModeEvidenceSource: "lazada-seller-center",
+        },
         request: {
           Request: {
             Product: {
               PrimaryCategory: "12345",
-              Images: { Image: ["https://example.com/cup-1.jpg", "https://example.com/cup-2.jpg"] },
+              Images: { Image: images },
               Attributes: { name: "White cup", description: "Cup & mug", "Units_(per_Bundle)": "" },
-              Skus: { Sku: [{ SellerSku: "CUP-001", price: "12.90", quantity: "1", Status: "inactive", Images: { Image: ["https://example.com/cup-1.jpg"] } }] },
+              Skus: { Sku: [{
+                SellerSku: "CUP-001",
+                price: "12.90",
+                quantity: "1",
+                package_content: "One cup",
+                package_weight: "0.2",
+                package_length: "10",
+                package_width: "8",
+                package_height: "3",
+                Status: "inactive",
+                Images: { Image: images },
+              }] },
             },
           },
         },
@@ -993,17 +1089,20 @@ test("Lazada product create serializes the structured request as official XML an
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
-    assert.equal(calls.length, 2);
-    const form = new URLSearchParams(calls[0].body);
+    assert.equal(calls.length, 4);
+    assert.match(calls[0].url, /\/seller\/get/u);
+    assert.match(calls[1].url, /\/products\/get/u);
+    const form = new URLSearchParams(calls[2].body);
     const xml = form.get("payload") ?? "";
     assert.match(xml, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
     assert.match(xml, /<Request><Product><PrimaryCategory>12345<\/PrimaryCategory>/);
-    assert.match(xml, /<Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><Image>https:\/\/example\.com\/cup-2\.jpg<\/Image><\/Images>/);
+    assert.match(xml, /<Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image>/);
+    assert.match(xml, /<Image>https:\/\/example\.com\/cup-8\.jpg<\/Image><\/Images>/);
     assert.match(xml, /<description>Cup &amp; mug<\/description>/);
     assert.doesNotMatch(xml, /Units_\(per_Bundle\)/);
     assert.match(xml, /<Skus><Sku><SellerSku>CUP-001<\/SellerSku>/);
-    assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image><\/Images>/);
-    assert.match(calls[1].url, /\/product\/item\/get/);
+    assert.match(xml, /<Status>inactive<\/Status><Images><Image>https:\/\/example\.com\/cup-1\.jpg<\/Image>/);
+    assert.match(calls[3].url, /\/product\/item\/get/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -1756,7 +1855,7 @@ test("Naver category preflight accepts an official NOT_FOUND response as empty o
   }
 });
 
-test("Naver product creation is only successful after the origin product readback succeeds", async () => {
+test("Naver unmarked direct product creation is rejected before token or provider requests", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
@@ -1774,23 +1873,20 @@ test("Naver product creation is only successful after the origin product readbac
     return new Response(JSON.stringify({ originProduct: { statusType: "SALE" } }), { status: 200, headers: { "content-type": "application/json" } });
   };
   try {
-    const result = await executeChannelOperation({
+    await assert.rejects(executeChannelOperation({
       channel: "smartstore",
       operation: "listing.create",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: { body: { originProduct: { name: "API test", detailAttribute: { sellerCodeInfo: { sellerManagementCode: "TEST-SKU" } } }, smartstoreChannelProduct: {} } },
       environment: "production",
-    });
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "10000001");
-    assert.deepEqual(result.steps.map((item) => item.name), ["product-create", "product-readback"]);
-    assert.equal(calls.some((call) => call.url.endsWith("/v2/products/origin-products/10000001") && call.init?.method === "GET"), true);
+    }), /NAVER_CREATE_CONTRACT_REQUIRED/);
+    assert.deepEqual(calls, []);
   } finally {
     globalThis.fetch = originalFetch;
   }
 });
 
-test("Naver creation directs an existing seller code to verified update without any write", async () => {
+test("Naver unmarked direct creation cannot reach an existing seller code lookup or write", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; init?: RequestInit }> = [];
   globalThis.fetch = async (input, init) => {
@@ -1811,7 +1907,7 @@ test("Naver creation directs an existing seller code to verified update without 
     return new Response(JSON.stringify({ code: "UNEXPECTED" }), { status: 500, headers: { "content-type": "application/json" } });
   };
   try {
-    const result = await executeChannelOperation({
+    await assert.rejects(executeChannelOperation({
       channel: "smartstore",
       operation: "listing.create",
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
@@ -1822,10 +1918,8 @@ test("Naver creation directs an existing seller code to verified update without 
         },
       },
       environment: "production",
-    });
-    assert.equal(result.ok, false);
-    assert.match(JSON.stringify(result), /NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE/);
-    assert.equal(calls.some((call) => call.init?.method === "PUT" || (call.url.endsWith("/v2/products") && call.init?.method === "POST")), false);
+    }), /NAVER_CREATE_CONTRACT_REQUIRED/);
+    assert.deepEqual(calls, []);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2289,7 +2383,106 @@ test("Temu shipment confirmation resolves warehouse and carrier then verifies tr
   }
 });
 
-test("Temu V3 product creation requires an external-id readback match", async () => {
+const TEMU_PROTOCOL_HERO = "https://cdn.example.com/temu/hero.jpg";
+const TEMU_PROTOCOL_DETAILS = Array.from(
+  { length: 8 },
+  (_, index) => `https://cdn.example.com/temu/detail-${index + 1}.jpg`,
+);
+
+function temuProtocolCreateArguments(externalGoodsId: string) {
+  return {
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "live" as const,
+    publicationExpectedLocale: "ko-KR",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 8,
+    sellerpilotTemuCreateCorrelation: {
+      version: "temu_create_attempt_external_id_v1",
+      sourceSellerSku: externalGoodsId,
+      externalGoodsId,
+      scopeFingerprint: "b".repeat(64),
+      skuCount: 1,
+    },
+    body: {
+      language: "ko",
+      goodsBasic: {
+        externalGoodsId,
+        goodsName: "Temu protocol test product",
+        extCatName: "Home & Kitchen / Storage & Organization / Cable Management",
+        goodsDesc: "Temu protocol create and readback verification fixture.",
+        goodsCarouselImage: [TEMU_PROTOCOL_HERO],
+        detailImage: TEMU_PROTOCOL_DETAILS,
+        bulletPoints: ["Protocol fixture"],
+        productType: 1,
+      },
+      attributes: [{ name: "Material", value: ["ABS"] }],
+      skuList: [{
+        externalSkuId: externalGoodsId,
+        images: [TEMU_PROTOCOL_HERO],
+        price: { basePrice: { amount: "5000", currency: "KRW" } },
+        quantity: 1,
+        packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
+        variations: [{ name: "Type", value: "Standard" }],
+      }],
+    },
+  };
+}
+
+function temuProtocolEmptyList() {
+  return { success: true, result: { goodsList: [], total: 0 } };
+}
+
+function temuProtocolList(externalGoodsId: string, goodsId: number) {
+  return {
+    success: true,
+    result: { goodsList: [{ goodsId, outGoodsSn: externalGoodsId, goodsStatus: "ACTIVE" }], total: 1 },
+  };
+}
+
+function temuProtocolStatus(goodsId: number) {
+  return {
+    success: true,
+    result: { goodsPublishStatusList: [{ goodsId, status: 1, subStatus: 2, statusName: "ACTIVE" }] },
+  };
+}
+
+function temuProtocolDetail(externalGoodsId: string, goodsId: number, detailImage = TEMU_PROTOCOL_DETAILS) {
+  return {
+    success: true,
+    result: {
+      goodsId,
+      outGoodsSn: externalGoodsId,
+      goodsName: "Temu protocol test product",
+      goodsDesc: "Temu protocol create and readback verification fixture.",
+      bulletPoints: ["Protocol fixture"],
+      goodsGallery: { goodsCarouselImage: [TEMU_PROTOCOL_HERO], detailImage },
+      skuList: [{
+        skuId: 910001,
+        outSkuSn: externalGoodsId,
+        price: { retailPrice: { amount: "5000", currency: "KRW" } },
+        retailPrice: { amount: "5000", currency: "KRW" },
+      }],
+    },
+  };
+}
+
+function temuProtocolStock(externalGoodsId: string, goodsId: number) {
+  return {
+    success: true,
+    result: {
+      stockList: [{
+        goodsId,
+        skuStockInfoList: [{
+          skuId: 910001,
+          outSkuSn: externalGoodsId,
+          selfOrdinaryStock: { stock: 1, stockType: 1 },
+        }],
+      }],
+    },
+  };
+}
+
+test("Temu V3 product creation uses the verified contract and exact readback", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
   let listReads = 0;
@@ -2301,43 +2494,45 @@ test("Temu V3 product creation requires an external-id readback match", async ()
     }
     if (body.type === "temu.local.goods.list.retrieve") {
       listReads += 1;
-      if (listReads === 1) {
-        return new Response(JSON.stringify({ success: true, result: { goodsList: [] } }), { status: 200, headers: { "content-type": "application/json" } });
-      }
-      return new Response(JSON.stringify({ success: true, result: { goodsList: [{ goodsId: 900001, outGoodsSn: "TEST-TEMU-001", status: 1 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+      return Response.json(listReads <= 2
+        ? temuProtocolEmptyList()
+        : temuProtocolList("TEST-TEMU-001", 900001));
     }
     if (body.type === "bg.local.goods.publish.status.get") {
-      return new Response(JSON.stringify({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900001, status: 1, subStatus: 2 }] } }), { status: 200, headers: { "content-type": "application/json" } });
+      return Response.json(temuProtocolStatus(900001));
     }
-    return new Response(JSON.stringify({ success: true, result: { goodsId: 900001, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] } } }), { status: 200, headers: { "content-type": "application/json" } });
+    if (body.type === "temu.local.goods.sku.stock.query") {
+      return Response.json(temuProtocolStock("TEST-TEMU-001", 900001));
+    }
+    return Response.json(temuProtocolDetail("TEST-TEMU-001", 900001));
   };
   try {
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: { body: { goodsBasic: { externalGoodsId: "TEST-TEMU-001", goodsName: "API test", goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] }, skuList: [{ externalSkuId: "TEST-TEMU-001" }] } },
+      arguments: temuProtocolCreateArguments("TEST-TEMU-001"),
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "900001");
     assert.deepEqual(calls.map((call) => call.type), [
       "temu.local.goods.list.retrieve",
+      "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
       "temu.local.goods.list.retrieve",
       "bg.local.goods.publish.status.get",
       "bg.local.goods.detail.query",
+      "temu.local.goods.sku.stock.query",
     ]);
     assert.deepEqual(calls[0].outGoodsSnList, ["TEST-TEMU-001"]);
-    assert.deepEqual(calls[2].outGoodsSnList, ["TEST-TEMU-001"]);
-    assert.deepEqual(calls[3].goodsIdList, [900001]);
-    assert.equal(calls[4].versionQueryType, 1);
-    assert.equal(result.steps[3].data.sellerpilotVerification, "PUBLISH_STATUS_VERIFIED");
-    assert.equal(result.steps[4].data.sellerpilotVerification, "IMAGES_VERIFIED");
-    assert.equal(result.steps[4].data.actualCarouselImageCount, 1);
-    assert.equal(result.steps[4].data.actualDetailImageCount, 1);
-    assert.equal("app_secret" in calls[1], false);
-    assert.match(String(calls[1].sign), /^[0-9A-F]{32}$/);
+    assert.deepEqual(calls[1].outSkuSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[3].outGoodsSnList, ["TEST-TEMU-001"]);
+    assert.deepEqual(calls[4].goodsIdList, [900001]);
+    assert.equal(calls[5].versionQueryType, 1);
+    assert.equal(result.remoteState?.visibility, "live");
+    assert.equal("app_secret" in calls[2], false);
+    assert.match(String(calls[2].sign), /^[0-9A-F]{32}$/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2350,36 +2545,20 @@ test("Temu preserves an accepted create marker when goodsId and reconciliation a
     if (body.type === "temu.local.goods.v3.add") {
       return Response.json({ success: true, result: {} });
     }
-    return Response.json({ success: true, result: { goodsList: [] } });
+    return Response.json(temuProtocolEmptyList());
   };
   try {
     const operation = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: {
-        sellerpilotTemuCreateCorrelation: {
-          version: "temu_create_attempt_external_id_v1",
-          sourceSellerSku: "TEST-TEMU-NO-ID",
-          externalGoodsId: "TEST-TEMU-NO-ID",
-          scopeFingerprint: "a".repeat(64),
-          skuCount: 1,
-        },
-        body: {
-          goodsBasic: {
-            externalGoodsId: "TEST-TEMU-NO-ID",
-            goodsName: "Missing ID test",
-            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
-            detailImage: ["https://cdn.example.com/detail.jpg"],
-          },
-          skuList: [{ externalSkuId: "TEST-TEMU-NO-ID" }],
-        },
-      },
+      arguments: temuProtocolCreateArguments("TEST-TEMU-NO-ID"),
       environment: "production",
     });
     assert.equal(operation.ok, false);
     assert.equal(operation.remoteId, undefined);
-    assert.equal(operation.steps.find((item) => item.name === "goods-v3-add")?.ok, true);
+    assert.equal(operation.steps.find((item) => item.name === "goods-v3-add")?.ok, false);
+    assert.equal(operation.steps.find((item) => item.name === "goods-v3-add")?.data.sellerpilotVerification, "TEMU_CREATE_RECEIPT_IDENTITY_UNVERIFIED");
     assert.equal(operation.steps.find((item) => item.name === "goods-reconcile")?.ok, false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -2396,10 +2575,9 @@ test("Temu create preflight blocks an existing external ID without issuing a pro
       return new Response(JSON.stringify({ success: false, errorCode: 150010041, errorMsg: "externalGoodsId already exists" }), { status: 409, headers: { "content-type": "application/json" } });
     }
     if (body.type === "temu.local.goods.list.retrieve") {
-      return Response.json({ success: true, result: { goodsList: [{ goodsId: 900002, outGoodsSn: "TEST-TEMU-RETRY" }] } });
-    }
-    if (body.type === "bg.local.goods.publish.status.get") {
-      return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900002, status: 1, subStatus: 1 }] } });
+      return Response.json(Array.isArray(body.outGoodsSnList)
+        ? temuProtocolList("TEST-TEMU-RETRY", 900002)
+        : temuProtocolEmptyList());
     }
     return Response.json({ success: true, result: { goodsId: 900002, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: ["https://cdn.example.com/detail.jpg"] } } });
   };
@@ -2408,29 +2586,22 @@ test("Temu create preflight blocks an existing external ID without issuing a pro
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: {
-        body: {
-          goodsBasic: {
-            externalGoodsId: "TEST-TEMU-RETRY",
-            goodsName: "Retry test",
-            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
-            detailImage: ["https://cdn.example.com/detail.jpg"],
-          },
-          skuList: [{ externalSkuId: "TEST-TEMU-RETRY" }],
-        },
-      },
+      arguments: temuProtocolCreateArguments("TEST-TEMU-RETRY"),
       environment: "production",
     });
 
     assert.equal(result.ok, false);
     assert.equal(result.remoteId, undefined);
     assert.deepEqual(result.steps.map((item) => item.name), [
-      "goods-create-external-id-preflight",
+      "goods-create-external-identity-preflight",
     ]);
-    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_ID_ALREADY_EXISTS");
+    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_GOODS_OR_SKU_ID_ALREADY_EXISTS");
     assert.equal(result.steps[0].data.sellerpilotReconciliationRequired, true);
     assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 0);
-    assert.deepEqual(calls.map((call) => call.type), ["temu.local.goods.list.retrieve"]);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "temu.local.goods.list.retrieve",
+      "temu.local.goods.list.retrieve",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2444,36 +2615,26 @@ test("Temu listing fails verification when processed detail images are missing",
     if (body.type === "temu.local.goods.v3.add") return Response.json({ success: true, result: { goodsId: 900003 } });
     if (body.type === "temu.local.goods.list.retrieve") {
       listReads += 1;
-      return Response.json({
-        success: true,
-        result: { goodsList: listReads === 1 ? [] : [{ goodsId: 900003, outGoodsSn: "TEST-TEMU-IMAGE-FAIL" }] },
-      });
+      return Response.json(listReads <= 2
+        ? temuProtocolEmptyList()
+        : temuProtocolList("TEST-TEMU-IMAGE-FAIL", 900003));
     }
-    if (body.type === "bg.local.goods.publish.status.get") return Response.json({ success: true, result: { goodsPublishStatusList: [{ goodsId: 900003, status: 1, subStatus: 1 }] } });
-    return Response.json({ success: true, result: { goodsId: 900003, goodsGallery: { goodsCarouselImage: ["https://cdn.example.com/hero.jpg"], detailImage: [] } } });
+    if (body.type === "bg.local.goods.publish.status.get") return Response.json(temuProtocolStatus(900003));
+    if (body.type === "temu.local.goods.sku.stock.query") return Response.json(temuProtocolStock("TEST-TEMU-IMAGE-FAIL", 900003));
+    return Response.json(temuProtocolDetail("TEST-TEMU-IMAGE-FAIL", 900003, []));
   };
   try {
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
       payload: { app_key: "app-key", app_secret: "app-secret", access_token: "seller-token" },
-      arguments: {
-        body: {
-          goodsBasic: {
-            externalGoodsId: "TEST-TEMU-IMAGE-FAIL",
-            goodsName: "Image test",
-            goodsCarouselImage: ["https://cdn.example.com/hero.jpg"],
-            detailImage: ["https://cdn.example.com/detail-1.jpg", "https://cdn.example.com/detail-2.jpg"],
-          },
-          skuList: [{ externalSkuId: "TEST-TEMU-IMAGE-FAIL" }],
-        },
-      },
+      arguments: temuProtocolCreateArguments("TEST-TEMU-IMAGE-FAIL"),
       environment: "production",
     });
 
     assert.equal(result.ok, false);
     assert.equal(result.steps.at(-1)?.name, "goods-detail-image-readback");
-    assert.equal(result.steps.at(-1)?.data.expectedDetailImageCount, 2);
+    assert.equal(result.steps.at(-1)?.data.expectedDetailImageCount, 8);
     assert.equal(result.steps.at(-1)?.data.actualDetailImageCount, 0);
     assert.equal(result.steps.at(-1)?.data.sellerpilotVerification, "TEMU_IMAGE_READBACK_MISSING");
   } finally {

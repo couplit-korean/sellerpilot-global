@@ -38,7 +38,23 @@ export type CredentialRow = {
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
 export type OperationPayload = { ok?: boolean; steps?: OperationStep[]; remoteId?: string; message?: string };
 type CategorySuggestion = { id: string; name: string; path: string[]; confidence: number; leaf: boolean };
-export type ChannelTarget = { targetId: string; displayName: string; marketCode: string; locale: string; language: string; currency: string; status?: string };
+export type ChannelTarget = {
+  targetId: string;
+  displayName: string;
+  marketCode: string;
+  locale: string;
+  language: string;
+  currency: string;
+  status?: string;
+  sellerModeEvidence?: {
+    status: "verified" | "unknown";
+    sellerId?: string;
+    sellerMode?: "standard" | "marketplace_ease";
+    verifiedAt?: string;
+    evidenceSource?: string;
+    reason?: string;
+  };
+};
 export type EbayCategoryTreeBinding = { marketplaceId: string; categoryTreeId: string };
 const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_US", displayName: "United States", marketCode: "US", locale: "en-US", language: "English", currency: "USD" },
@@ -1420,6 +1436,10 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const target = selectedTarget(channel);
     if (!state?.selected || !credential) return;
     const selectedCategory = state.selected;
+    if (channel === "lazada" && target?.sellerModeEvidence?.status !== "verified") {
+      notify("현재 Commerce seller 조회에서 표준/Marketplace Ease 유형을 확인하지 못했습니다. 임의 유형으로 카테고리를 확정하지 않았습니다.");
+      return;
+    }
     if (!productId) {
       notify("ChatGPT CLI 분석과 상품 원장 저장을 먼저 완료해 주세요.");
       return;
@@ -1472,6 +1492,13 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           noticeCategories: [],
           certifications: [],
         },
+        ...(channel === "lazada" ? {
+          sellerModeStatus: target?.sellerModeEvidence?.status ?? "unknown",
+          sellerMode: target?.sellerModeEvidence?.sellerMode ?? null,
+          sellerModeVerifiedAt: target?.sellerModeEvidence?.verifiedAt ?? null,
+          sellerModeEvidenceSource: target?.sellerModeEvidence?.evidenceSource ?? null,
+          sellerModeSellerId: target?.sellerModeEvidence?.sellerId ?? null,
+        } : {}),
       },
       p_confirm: true,
     })));

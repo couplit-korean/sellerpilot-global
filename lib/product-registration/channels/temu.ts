@@ -353,12 +353,23 @@ export async function executeTemu(input: ExecuteInput) {
     return result(input, [preflightStep, activateStep, postStockStep, postStep], activation.goodsId, undefined, postPublication.remoteState);
   }
   if (input.operation === "listing.create") {
+    const strictPublication = input.arguments.publicationStateContract ===
+      listingRemoteStateContractVersion;
+    if (!strictPublication) {
+      return result(input, [{
+        name: "publication-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          error: "TEMU_CREATE_CONTRACT_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+          sellerpilotVerification: "TEMU_CREATE_CONTRACT_REQUIRED",
+        },
+      }]);
+    }
     const body = objectValue(input.arguments, "body");
     const goodsBasic = objectValue(body, "goodsBasic");
     const externalGoodsId = stringArgument(goodsBasic, "externalGoodsId");
-    const strictPublication =
-      input.arguments.publicationStateContract ===
-      listingRemoteStateContractVersion;
     const publicationIntent = listingPublicationIntentFromArguments(input.arguments);
     const expectedLocale = stringArgument(input.arguments, "publicationExpectedLocale", false);
     const expectedFingerprint = stringArgument(input.arguments, "publicationExpectedFingerprint", false);

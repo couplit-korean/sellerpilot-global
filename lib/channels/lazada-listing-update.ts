@@ -34,9 +34,10 @@ function strictArray(value: unknown) {
   return Object.keys(row).length ? [row] : [];
 }
 
-function finiteDecimal(value: unknown) {
+function finiteDecimal(value: unknown, precision = 2) {
   const raw = exactText(value);
-  if (!raw || !/^\d+(?:\.\d{1,2})?$/u.test(raw)) return null;
+  const decimal = new RegExp(`^\\d+(?:\\.\\d{1,${precision}})?$`, "u");
+  if (!raw || !decimal.test(raw)) return null;
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 && parsed <= 999_999_999
     ? parsed
@@ -330,13 +331,22 @@ export function lazadaUpdateCommerceReadbackVerified(
     sku,
   ]));
   if (remoteBySellerSku.size !== remoteSkus.length || remoteBySellerSku.has("")) return false;
+  const context = recordValue(
+    mutationArguments.sellerpilotLazadaMyCreateContext,
+  );
+  const marketplaceEase = context.contract === "lazada_my_listing_create_context_v1"
+    && context.sellerMode === "marketplace_ease";
   return expectedSkus.every((expected) => {
     const sellerSku = exactText(expected.SellerSku ?? expected.seller_sku);
     const remote = remoteBySellerSku.get(sellerSku);
     if (!sellerSku || !remote) return false;
     const expectedSkuId = remoteSkuId(expected);
-    const expectedPrice = finiteDecimal(expected.price ?? expected.Price);
-    const remotePrice = finiteDecimal(remote.price ?? remote.Price);
+    const expectedPrice = marketplaceEase
+      ? finiteDecimal(expected.supply_price ?? expected.SupplyPrice, 3)
+      : finiteDecimal(expected.price ?? expected.Price);
+    const remotePrice = marketplaceEase
+      ? finiteDecimal(remote.supply_price ?? remote.SupplyPrice, 3)
+      : finiteDecimal(remote.price ?? remote.Price);
     const expectedQuantity = nonNegativeInteger(expected.quantity ?? expected.Quantity);
     const remoteQuantity = nonNegativeInteger(remote.quantity ?? remote.Quantity);
     return Boolean(

@@ -1,4 +1,5 @@
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
+import { bindLazadaMyListingCreateContext, buildLazadaMyListingCreateContext, lazadaMySellerModeEvidenceFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
 import { hasRetiredProductRecovery } from "../../../../lib/channels/retired-product-recovery";
 import { readApprovedExternalDetailPublishContext } from "../../../../lib/server-external-detail-publish-context";
@@ -14,7 +15,7 @@ import { z } from "zod";
 import { executeChannelOperation } from "../../../../lib/channels/commerce-operations";
 import { channelOperationCapabilities, channelOperationNames, writeChannelOperations } from "../../../../lib/channels/operation-names";
 import { channelCatalog } from "../../../../lib/channels/catalog";
-import { ChannelGatewayInProgressError, ChannelGatewayCredentialUnattestedError, ChannelGatewayListingAlreadyPublishedError, ChannelGatewayListingBlockedError, ChannelGatewayReconciliationRequiredError, ChannelGatewayRemoteFailedError, executeViaChannelGateway } from "../../../../lib/channels/gateway";
+import { ChannelGatewayInProgressError, ChannelGatewayCredentialUnattestedError, ChannelGatewayListingAlreadyPublishedError, ChannelGatewayListingBlockedError, ChannelGatewayReconciliationRequiredError, ChannelGatewayRemoteFailedError, executeChannelTargetDiscovery, executeViaChannelGateway } from "../../../../lib/channels/gateway";
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
 
@@ -1206,6 +1207,72 @@ export async function POST(request: NextRequest) {
 
   let effectiveCurrency = boundListingCurrency ?? parsed.data.currency;
   let effectivePrice = boundListingPrice ?? parsed.data.price;
+  const strictLazadaMyCreate = channel === "lazada"
+    && operation === "listing.create"
+    && parsed.data.market.trim().toUpperCase() === "MY";
+  if (strictLazadaMyCreate) {
+    let sellerModeEvidence = null;
+    try {
+      const sellerDiscovery = await executeChannelTargetDiscovery({
+        serviceClient,
+        credentialId: parsed.data.credentialId,
+        channel: "lazada",
+        request: { country: "my" },
+      });
+      sellerModeEvidence = lazadaMySellerModeEvidenceFromGatewayResult({
+        result: sellerDiscovery,
+        expectedSellerId: parsed.data.targetId,
+        verifiedAt: new Date().toISOString(),
+      });
+    } catch {
+      return NextResponse.json({
+        message: "Lazada MY seller 유형을 현재 Commerce 인증 계보의 공식 seller 조회로 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: "lazada_my_seller_mode_evidence_unavailable",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!sellerModeEvidence) {
+      return NextResponse.json({
+        message: "Lazada 공식 seller 조회에 표준 또는 Marketplace Ease 유형의 명시적 근거가 없어 등록을 시작하지 않았습니다.",
+        mode: "lazada_my_seller_mode_unverified",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    const createContext = buildLazadaMyListingCreateContext({
+      productId: parsed.data.productId,
+      product: verifiedPublishContext?.product,
+      manualFields: verifiedPublishContext?.manualFields,
+      assignments: verifiedPublishContext?.assignments,
+      market: parsed.data.market,
+      sellerId: parsed.data.targetId,
+      currency: effectiveCurrency,
+      price: effectivePrice,
+      sellerModeEvidence,
+    });
+    const pricePolicy = lazadaKrwMyrPricePolicyFromArguments(effectiveArguments);
+    if (!createContext
+        || !pricePolicy
+        || pricePolicy.sourceCurrency !== createContext.sourceCurrency
+        || pricePolicy.sourcePriceKrw !== createContext.sourcePriceKrw
+        || pricePolicy.targetCurrency !== createContext.targetCurrency
+        || pricePolicy.targetPriceMyr !== createContext.targetPriceMyr) {
+      return NextResponse.json({
+        message: "Lazada MY 상품·Seller ID·확정 카테고리·SKU·KRW 원가·MYR 가격·재고·seller 유형을 서버 원장에서 확정하지 못해 등록을 시작하지 않았습니다.",
+        mode: "lazada_my_listing_create_context_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      effectiveArguments = bindLazadaMyListingCreateContext(
+        effectiveArguments,
+        createContext,
+      );
+    } catch {
+      return NextResponse.json({
+        message: "Lazada MY 단일 canonical SKU를 서버 확정값에 결속하지 못해 등록을 시작하지 않았습니다.",
+        mode: "lazada_my_listing_create_binding_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveCurrency = createContext.targetCurrency;
+    effectivePrice = createContext.targetPriceMyr;
+  }
   const strictShopeeSgCreate = channel === "shopee"
     && operation === "listing.create"
     && parsed.data.market.trim().toUpperCase() === "SG";

@@ -101,25 +101,73 @@ function runtimeInput(unitCapacity: unknown, mutations: string[]) {
     channel: "smartstore" as const, operation: "listing.create" as const, environment: "production" as const,
     credential: { access_token: "test-only", access_token_expires_at: "2099-01-01T00:00:00.000Z", after_service_phone: "02-1234-5678" },
     arguments: {
-      publicationIntent: "live", imageUrls: urls,
+      publicationIntent: "live", publicationStateContract: "verified_remote_state_v1", imageUrls: urls,
       body: { originProduct: {
-        ...product(unitCapacity), name: "롯샌 315g (6봉입)", stockQuantity: 1,
+        ...product(unitCapacity), statusType: "SALE", saleType: "NEW", name: "롯샌 315g (6봉입)", stockQuantity: 1,
         detailContent: urls.slice(1).map(url => `<img src="${url}" />`).join(""),
-        detailAttribute: { unitCapacity, sellerCodeInfo: { sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" } },
-        deliveryInfo: { deliveryType: "DELIVERY", deliveryCompany: "HANJIN",
+        detailAttribute: {
+          unitCapacity,
+          naverShoppingSearchInfo: { brandName: "TEST" },
+          afterServiceInfo: { afterServiceTelephoneNumber: "SERVER_MANAGED", afterServiceGuideContent: "SERVER_MANAGED" },
+          originAreaInfo: { originAreaCode: "04", content: "대한민국" },
+          sellerCodeInfo: { sellerManagementCode: "UNIT-CAPACITY-TEST-ONLY" },
+          certificationTargetExcludeContent: {
+            childCertifiedProductExclusionYn: true,
+            kcCertifiedProductExclusionYn: "TRUE",
+            greenCertifiedProductExclusionYn: true,
+            chemicalCertifiedProductExclusionYn: true,
+          },
+          productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: {
+            returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조",
+            qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조",
+            troubleShootingContents: "상품상세 참조", itemName: "롯샌 315g",
+            modelName: "UNIT-CAPACITY-TEST-ONLY", certificateDetails: "해당사항 없음",
+            manufacturer: "TEST", customerServicePhoneNumber: "SERVER_MANAGED",
+          } },
+          optionInfo: {},
+        },
+        deliveryInfo: { deliveryType: "DELIVERY", deliveryAttributeType: "NORMAL", deliveryCompany: "HANJIN",
           deliveryFee: { deliveryFeeType: "PAID", baseFee: 3000, deliveryFeePayType: "PREPAID" },
           claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3000, exchangeDeliveryFee: 6000, shippingAddressId: 123, returnAddressId: 456 } },
-      }, smartstoreChannelProduct: {} },
+      }, smartstoreChannelProduct: { naverShoppingRegistration: true, channelProductName: "롯샌 315g (6봉입)", channelProductDisplayStatusType: "ON" } },
     },
     signal: new AbortController().signal,
     hooks: { assertLeaseHealthy: async () => {}, beginProviderMutation: async () => { mutations.push("mutation"); } },
   };
 }
 
-test("runtime missing/disabled/malformed capacity stops after category GET before search, image fetch/upload or mutation", async () => {
+test("runtime rejects missing or altered publication contract before token, media, or provider requests", async () => {
   const originalFetch = globalThis.fetch;
   try {
-    for (const invalid of [undefined, { unitPriceYn: false }, { ...capacity, totalCapacityValue: undefined }, { ...capacity, unitCapacity: undefined }]) {
+    for (const contract of [undefined, "verified_remote_state_v0"]) {
+      const calls: string[] = []; const mutations: string[] = [];
+      const input = runtimeInput(capacity, mutations);
+      input.credential = {
+        client_id: "test-only-client",
+        client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+        token_type: "SELLER",
+        account_id: "test-only-account",
+        after_service_phone: "02-1234-5678",
+      };
+      (input.arguments as Record<string, unknown>).publicationStateContract = contract;
+      globalThis.fetch = async (request) => {
+        calls.push(String(request));
+        return Response.json({ code: "UNEXPECTED" }, { status: 500 });
+      };
+      await assert.rejects(
+        prepareMarketplaceListingArguments(input),
+        /NAVER_CREATE_PUBLICATION_CONTRACT_REQUIRED/,
+      );
+      assert.deepEqual(calls, []);
+      assert.deepEqual(mutations, []);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("runtime disabled capacity reaches category while malformed capacity stops before token or provider reads", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const invalid of [{ unitPriceYn: false }]) {
       const calls: string[] = []; const mutations: string[] = [];
       globalThis.fetch = async (input) => {
         const url = String(input); calls.push(url);
@@ -128,6 +176,38 @@ test("runtime missing/disabled/malformed capacity stops after category GET befor
       };
       await assert.rejects(prepareMarketplaceListingArguments(runtimeInput(invalid, mutations)), /NAVER_UNIT_/);
       assert.equal(calls.length, 1); assert.deepEqual(mutations, []);
+    }
+    for (const invalid of [undefined, { ...capacity, totalCapacityValue: undefined }, { ...capacity, unitCapacity: undefined }]) {
+      const calls: string[] = []; const mutations: string[] = [];
+      globalThis.fetch = async (input) => { calls.push(String(input)); return Response.json(category); };
+      await assert.rejects(prepareMarketplaceListingArguments(runtimeInput(invalid, mutations)), /NAVER_CREATE_UNIT_CAPACITY_INVALID/);
+      assert.deepEqual(calls, []); assert.deepEqual(mutations, []);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("runtime rejects missing brand or certification before token, category, image, or mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const missing of ["brand", "certification"] as const) {
+      const calls: string[] = []; const mutations: string[] = [];
+      const input = runtimeInput(capacity, mutations);
+      input.credential = {
+        client_id: "test-only-client",
+        client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+        token_type: "SELLER",
+        account_id: "test-only-account",
+        after_service_phone: "02-1234-5678",
+      };
+      const detailAttribute = input.arguments.body.originProduct.detailAttribute;
+      if (missing === "brand") delete detailAttribute.naverShoppingSearchInfo;
+      else delete detailAttribute.certificationTargetExcludeContent;
+      globalThis.fetch = async (request) => { calls.push(String(request)); return Response.json({ code: "UNEXPECTED" }, { status: 500 }); };
+      await assert.rejects(
+        prepareMarketplaceListingArguments(input),
+        missing === "brand" ? /NAVER_CREATE_BRAND_REQUIRED/ : /NAVER_CREATE_CERTIFICATION_DECISION_REQUIRED/,
+      );
+      assert.deepEqual(calls, []); assert.deepEqual(mutations, []);
     }
   } finally { globalThis.fetch = originalFetch; }
 });

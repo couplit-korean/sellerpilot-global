@@ -261,12 +261,24 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
         stockQuantity: 1,
         detailAttribute: {
           unitCapacity: { unitPriceYn: false }, // Explicit fixture; runtime still verifies category eligibility.
+          naverShoppingSearchInfo: { brandName: "Fixture Brand" },
+          sellerCodeInfo: { sellerManagementCode: "FIXTURE-SMARTSTORE-001" },
+          certificationTargetExcludeContent: {
+            childCertifiedProductExclusionYn: false,
+            kcCertifiedProductExclusionYn: "FALSE",
+            greenCertifiedProductExclusionYn: false,
+            chemicalCertifiedProductExclusionYn: false,
+          },
           originAreaInfo: { content: "중국" },
           minorPurchasable: true,
           productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC" },
         },
       },
-      smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
+      smartstoreChannelProduct: {
+        channelProductDisplayStatusType: "ON",
+        naverShoppingRegistration: true,
+        channelProductName: "[API TEST] 수납함",
+      },
     },
   };
 

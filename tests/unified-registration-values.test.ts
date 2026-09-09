@@ -57,6 +57,35 @@ test('Smartstore required typed unit-capacity fields are available before payloa
   const confirmed=setRegistrationValue(draft,['body','originProduct','detailAttribute','unitCapacity','unitPriceYn'],true);
   assert.ok(channelRegistrationFields('smartstore',confirmed,inspectListingDraft('smartstore',confirmed)).some(field=>field.path.at(-1)==='totalCapacityValue'));
 });
+test('Smartstore certification controls preserve false and require a conditional KC enum',()=>{
+  const certificationPath=['body','originProduct','detailAttribute','certificationTargetExcludeContent'];
+  let draft: Record<string,unknown>={body:{originProduct:{detailAttribute:{certificationTargetExcludeContent:{
+    childCertifiedProductExclusionYn:null,
+    kcCertifiedProductExclusionYn:'',
+    greenCertifiedProductExclusionYn:null,
+    chemicalCertifiedProductExclusionYn:null,
+  }}}}};
+  let requirements=inspectListingDraft('smartstore',draft);
+  let fields=channelRegistrationFields('smartstore',draft,requirements);
+  assert.equal(fields.find(field=>field.path.at(-1)==='childCertifiedProductExclusionYn')?.inputType,'boolean');
+  assert.deepEqual(fields.find(field=>field.path.at(-1)==='kcCertifiedProductExclusionYn')?.options,['FALSE','KC_EXEMPTION_OBJECT','TRUE']);
+  assert.equal(requirements.some(field=>field.key==='certification-kc-type'),false);
+  for(const key of ['childCertifiedProductExclusionYn','greenCertifiedProductExclusionYn','chemicalCertifiedProductExclusionYn']) {
+    draft=setRegistrationValue(draft,[...certificationPath,key],false);
+  }
+  draft=setRegistrationValue(draft,[...certificationPath,'kcCertifiedProductExclusionYn'],'KC_EXEMPTION_OBJECT');
+  requirements=inspectListingDraft('smartstore',draft);
+  fields=channelRegistrationFields('smartstore',draft,requirements);
+  assert.equal(fields.find(field=>field.path.at(-1)==='childCertifiedProductExclusionYn')?.value,false);
+  assert.equal(requirements.find(field=>field.key==='certification-kc-type')?.status,'manual');
+  assert.deepEqual(fields.find(field=>field.path.at(-1)==='kcExemptionType')?.options,['OVERSEAS','SAFE_CRITERION','PARALLEL_IMPORT']);
+  draft=setRegistrationValue(draft,[...certificationPath,'kcExemptionType'],'SAFE_CRITERION');
+  assert.equal(inspectListingDraft('smartstore',draft).filter(field=>field.key.startsWith('certification-')).every(field=>field.status==='ready'),true);
+  const restored=applyRegistrationPatches({},registrationPatches({},draft));
+  assert.equal(registrationValueAt(restored,[...certificationPath,'childCertifiedProductExclusionYn']),false);
+  const invalid=setRegistrationValue(draft,[...certificationPath,'kcExemptionType'],'GUESSED');
+  assert.equal(inspectListingDraft('smartstore',invalid).find(field=>field.key==='certification-kc-type')?.status,'manual');
+});
 const draftId='88ab2c29-7381-4bee-8191-19bf59933c97';
 const row={draftId,kind:'publish',productId:draftId,version:1,data:{incomplete:true},updatedAt:'2026-09-07T01:00:00.000Z'};
 test('draft client does not call a failed or mismatched response saved',async()=>{

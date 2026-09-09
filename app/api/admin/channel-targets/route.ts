@@ -22,6 +22,7 @@ import {
   lineageBoundShopeeTargets,
 } from "../../../../lib/channels/shopee-target-lineage";
 import { isCompleteChannelTarget, shopeeShopTargetIds, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import { lazadaMySellerModeEvidenceFromGatewayResult, lazadaSellerProfileFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -412,9 +413,15 @@ export async function POST(request: Request) {
       const currentCredentialId = await activeCredentialId();
       if (currentCredentialId !== activeLazadaCredentialId) throw new Error("ACTIVE_CHANNEL_CREDENTIAL_CHANGED");
       const result = await executeChannelTargetDiscovery({ serviceClient, credentialId: activeLazadaCredentialId, channel: "lazada", request: { country: market.code.toLowerCase() } });
-      const profile = remoteProfile(result);
+      const profile = lazadaSellerProfileFromGatewayResult(result);
+      if (!profile) throw new Error("LAZADA_SELLER_GATEWAY_RESULT_INVALID");
       const remoteTargetId = textValue(profile.seller_id || profile.sellerId);
       if (remoteTargetId !== expectedSellerId) throw new Error("LAZADA_SELLER_LINEAGE_MISMATCH");
+      const sellerModeEvidence = lazadaMySellerModeEvidenceFromGatewayResult({
+        result,
+        expectedSellerId,
+        verifiedAt: new Date().toISOString(),
+      });
       profiles.push({
         targetId: remoteTargetId,
         displayName: textValue(profile.name || profile.seller_name || profile.short_code),
@@ -423,6 +430,14 @@ export async function POST(request: Request) {
         language: market.language,
         currency: market.currency,
         status: textValue(profile.status),
+        sellerModeEvidence: sellerModeEvidence
+          ? { status: "verified", ...sellerModeEvidence }
+          : {
+            status: "unknown",
+            market: "MY",
+            sellerId: remoteTargetId,
+            reason: "LAZADA_MY_SELLER_MODE_UNVERIFIED",
+          },
       });
       const latestCredentialId = await activeCredentialId();
       if (latestCredentialId !== activeLazadaCredentialId) throw new Error("ACTIVE_CHANNEL_CREDENTIAL_CHANGED");

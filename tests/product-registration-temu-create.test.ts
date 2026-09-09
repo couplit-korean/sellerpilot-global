@@ -256,3 +256,34 @@ test("Temu runtime treats malformed continuation metadata as incomplete and perf
     }
   }
 });
+
+test("Temu runtime rejects missing or legacy CREATE contracts before any provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider transport must remain unused");
+  };
+  try {
+    for (const publicationStateContract of [undefined, "legacy_remote_state_v0"]) {
+      const argumentsValue = strictArguments() as Record<string, unknown>;
+      if (publicationStateContract === undefined) delete argumentsValue.publicationStateContract;
+      else argumentsValue.publicationStateContract = publicationStateContract;
+      const result = await executeTemu({
+        channel: "temu",
+        operation: "listing.create",
+        payload: { app_key: "fixture-app", app_secret: "fixture-secret", access_token: "fixture-token" },
+        arguments: argumentsValue,
+        environment: "production",
+      });
+      assert.equal(result.ok, false);
+      assert.equal(result.steps.length, 1);
+      assert.equal(result.steps[0].name, "publication-prewrite");
+      assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_CREATE_CONTRACT_REQUIRED");
+      assert.equal(result.steps[0].data.sellerpilotNoWriteConfirmed, true);
+    }
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

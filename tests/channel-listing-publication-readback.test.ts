@@ -8,6 +8,7 @@ import {
 } from "../lib/channels/listing-publication-readback";
 import { executeChannelOperation } from "../lib/channels/operations";
 import type { RemoteResponse } from "../lib/channels/protocols";
+import { smartstoreListingCreateContract } from "../lib/channels/smartstore-listing-create-contract";
 
 const fingerprint = "a".repeat(64);
 const smartstoreSellerSku = "SMARTSTORE-PUBLICATION-TEST";
@@ -103,6 +104,57 @@ function smartstoreDetailHtml(count = 8) {
   return Array.from({ length: count }, (_, index) => (
     `<img src="${smartstoreImageUrl(index + 1)}" alt="detail ${index + 1}" />`
   )).join("");
+}
+
+function smartstoreStrictCreateBody() {
+  return {
+    originProduct: {
+      statusType: "SALE",
+      saleType: "NEW",
+      leafCategoryId: "50022679",
+      name: "검증된 스마트스토어 신규 상품명",
+      detailContent: smartstoreDetailHtml(),
+      images: {
+        representativeImage: { url: smartstoreImageUrl(0) },
+        optionalImages: Array.from({ length: 8 }, (_, index) => ({ url: smartstoreImageUrl(index + 1) })),
+      },
+      salePrice: 3190,
+      stockQuantity: 1,
+      deliveryInfo: {
+        deliveryType: "DELIVERY",
+        deliveryAttributeType: "NORMAL",
+        deliveryCompany: "HANJIN",
+        deliveryFee: { deliveryFeeType: "PAID", baseFee: 3000, deliveryFeePayType: "PREPAID" },
+        claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3000, exchangeDeliveryFee: 6000, shippingAddressId: 123, returnAddressId: 456 },
+      },
+      detailAttribute: {
+        naverShoppingSearchInfo: { brandName: "TEST" },
+        afterServiceInfo: { afterServiceTelephoneNumber: "02-1234-5678", afterServiceGuideContent: "판매자 안내에 따라 접수합니다." },
+        originAreaInfo: { originAreaCode: "04", content: "대한민국" },
+        sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku },
+        certificationTargetExcludeContent: {
+          childCertifiedProductExclusionYn: true,
+          kcCertifiedProductExclusionYn: "TRUE",
+          greenCertifiedProductExclusionYn: true,
+          chemicalCertifiedProductExclusionYn: true,
+        },
+        productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: {
+          returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조",
+          qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조",
+          troubleShootingContents: "상품상세 참조", itemName: "검증 상품",
+          modelName: "SMARTSTORE-PUBLICATION-TEST", certificateDetails: "해당사항 없음",
+          manufacturer: "TEST", customerServicePhoneNumber: "02-1234-5678",
+        } },
+        optionInfo: {},
+        unitCapacity: { unitPriceYn: false },
+      },
+    },
+    smartstoreChannelProduct: {
+      naverShoppingRegistration: true,
+      channelProductName: "검증된 스마트스토어 신규 상품명",
+      channelProductDisplayStatusType: "ON",
+    },
+  };
 }
 
 function smartstoreOriginProduct(input: {
@@ -638,10 +690,8 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: {
-          originProduct: { statusType: "SALE", detailContent: detailHtml(), detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } } },
-          smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
-        },
+        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+        body: smartstoreStrictCreateBody(),
       },
       environment: "production",
     });
@@ -693,10 +743,8 @@ test("SmartStore WAIT readback remains pending_review and is never counted as pu
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: {
         ...publicationArguments("live"),
-        body: {
-          originProduct: { detailContent: detailHtml(), detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } } },
-          smartstoreChannelProduct: {},
-        },
+        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+        body: smartstoreStrictCreateBody(),
       },
       environment: "production",
     });

@@ -13,6 +13,52 @@ function lazada() {
     package_weight: "0.1", package_length: "10", package_width: "8", package_height: "2",
   })) } } } } };
 }
+function strictLazadaSingle() {
+  return {
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "safe_test",
+    country: "my",
+    sellerpilotExpectedSellerId: "200100300",
+    sellerpilotExpectedPrimaryCategory: "10100205",
+    sellerpilotLazadaMyCreateContext: {
+      contract: "lazada_my_listing_create_context_v1",
+      productId: "20000000-0000-4000-8000-000000000005",
+      sellerSku: "A",
+      sourceCurrency: "KRW",
+      sourcePriceKrw: 5000,
+      market: "MY",
+      locale: "ms-MY",
+      sellerId: "200100300",
+      targetCurrency: "MYR",
+      targetPriceMyr: 12.5,
+      quantity: 1,
+      categoryId: "10100205",
+      categoryConfirmedAt: "2026-09-09T00:00:00.000Z",
+      sellerMode: "standard",
+      sellerModeVerifiedAt: "2026-09-09T00:00:00.000Z",
+      sellerModeEvidenceSource: "lazada-seller-center",
+    },
+    request: {
+      Request: {
+        Product: {
+          PrimaryCategory: "10100205",
+          Skus: {
+            Sku: [{
+              SellerSku: "A",
+              price: "12.50",
+              quantity: "1",
+              package_content: "One item",
+              package_weight: "",
+              package_length: "10",
+              package_width: "8",
+              package_height: "2",
+            }],
+          },
+        },
+      },
+    },
+  };
+}
 function temu() {
   return { publicationStateContract: "verified_remote_state_v1", publicationIntent: "live", body: {
     goodsBasic: { externalGoodsId: "PRODUCT-A" }, skuList: ["A", "B"].map(externalSkuId => ({
@@ -54,11 +100,12 @@ for (const channel of ["lazada", "temu"] as const) {
     let calls = 0, mutations = 0;
     globalThis.fetch = async () => { calls++; throw Error("Unexpected provider request"); };
     try {
-      const result = await executeChannelOperation({ channel, operation: "listing.create", environment: "production", payload: {}, arguments: draft });
+      const executionDraft = channel === "lazada" ? strictLazadaSingle() : draft;
+      const result = await executeChannelOperation({ channel, operation: "listing.create", environment: "production", payload: {}, arguments: executionDraft });
       assert.equal(result.ok, false);
       assert.equal(result.steps[0].status, 422);
       await assert.rejects(prepareMarketplaceListingArguments({
-        channel, operation: "listing.create", environment: "production", credential: {}, arguments: draft,
+        channel, operation: "listing.create", environment: "production", credential: {}, arguments: executionDraft,
         signal: new AbortController().signal,
         hooks: { assertLeaseHealthy: async () => {}, beginProviderMutation: async () => { mutations++; } },
       }), /CREATE_SKU_CONTRACT_INVALID/);
