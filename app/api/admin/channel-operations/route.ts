@@ -1,6 +1,7 @@
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { bindLazadaMyListingCreateContext, buildLazadaMyListingCreateContext, lazadaMySellerModeEvidenceFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
+import { bindCoupangCreateSourceIdentity } from "../../../../lib/channels/coupang-create-source-identity";
 import { hasRetiredProductRecovery } from "../../../../lib/channels/retired-product-recovery";
 import { readApprovedExternalDetailPublishContext } from "../../../../lib/server-external-detail-publish-context";
 import { readExternalDetailImportContext, externalDetailImportTarget, verifyExternalDetailOriginalSnapshot } from "../../../../lib/server-external-detail-import-api";
@@ -22,6 +23,8 @@ import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
 
 import { bindShopeeSgListingCreateArguments, buildShopeeSgListingCreateContext, loadAuthoritativeKrwSgdUsdRate, shopeeSgArgumentsForFingerprint } from "../../../../lib/channels/shopee-sg-listing-create";
+import { PRODUCT_REGISTRATION_DRAFT_GET_RPC, productRegistrationDraftRpcResult } from "../../../../lib/product-registration-draft";
+import { shopeeSgStoredCreatePrices } from "../../../../lib/product-registration/shopee/stored-prices";
 
 import { bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage, mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 
@@ -1145,6 +1148,16 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  if (channel === "coupang" && operation === "listing.create") {
+    try {
+      effectiveArguments = bindCoupangCreateSourceIdentity(effectiveArguments, verifiedPublishContext);
+    } catch {
+      return NextResponse.json({
+        message: "쿠팡 상품 및 옵션 SKU가 현재 상품 원장의 확정 SKU와 일치하지 않아 등록을 시작하지 않았습니다.",
+        mode: "coupang_create_source_identity_mismatch",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   if (channel === "temu" && operation === "listing.create") {
     const product = isRecord(verifiedPublishContext?.product)
       ? verifiedPublishContext.product
@@ -1286,6 +1299,39 @@ export async function POST(request: NextRequest) {
     && operation === "listing.create"
     && parsed.data.market.trim().toUpperCase() === "SG";
   if (strictShopeeSgCreate) {
+    let storedPrices: ReturnType<typeof shopeeSgStoredCreatePrices>;
+    try {
+      const { data: registrationDraftData, error: registrationDraftError } = await serviceClient.rpc(
+        PRODUCT_REGISTRATION_DRAFT_GET_RPC,
+        {
+          p_owner_id: userData.user.id,
+          p_draft_id: parsed.data.productId!,
+          p_kind: "publish",
+        },
+      );
+      if (registrationDraftError) throw new Error("SHOPEE_SG_STORED_PRICES_UNVERIFIED");
+      const registrationDraft = productRegistrationDraftRpcResult(registrationDraftData);
+      if (!registrationDraft
+        || registrationDraft.draftId !== parsed.data.productId
+        || registrationDraft.productId !== parsed.data.productId
+        || registrationDraft.kind !== "publish") {
+        throw new Error("SHOPEE_SG_STORED_PRICES_UNVERIFIED");
+      }
+      const shopeeBody = isRecord(effectiveArguments.body) ? effectiveArguments.body : {};
+      storedPrices = shopeeSgStoredCreatePrices({
+        draftData: registrationDraft.data,
+        credentialId: parsed.data.credentialId,
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+        categoryId: shopeeBody.category_id,
+        transmittedArguments: effectiveArguments,
+      });
+    } catch {
+      return NextResponse.json({
+        message: "Shopee Singapore의 직접 저장된 SGD 판매가와 Global USD 기준가를 현재 상품·숍·키·카테고리 초안에서 확인하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "shopee_sg_stored_prices_unverified",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
     let rate;
     try {
       rate = await loadAuthoritativeKrwSgdUsdRate({ signal: request.signal });
@@ -1303,11 +1349,13 @@ export async function POST(request: NextRequest) {
       market: parsed.data.market,
       targetId: parsed.data.targetId,
       currency: "SGD",
+      targetPrice: storedPrices.targetPriceSgd,
+      globalPrice: storedPrices.globalPriceUsd,
       rate,
     });
     if (!createContext) {
       return NextResponse.json({
-        message: "Shopee Singapore 상품의 확정 카테고리·SKU·5,000 KRW 원가·재고·SGD 환율 결속을 서버에서 확정하지 못해 원격 등록을 시작하지 않았습니다.",
+        message: "Shopee Singapore 상품의 확정 카테고리·SKU·재고·저장된 SGD/USD 가격·현재 환율 근거 결속을 서버에서 확정하지 못해 원격 등록을 시작하지 않았습니다.",
         mode: "shopee_sg_listing_create_context_invalid",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }

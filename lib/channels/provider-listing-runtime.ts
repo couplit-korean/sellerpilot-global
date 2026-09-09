@@ -28,6 +28,8 @@ import { assertShopeeSgCreateProviderBinding, assertShopeeSgCurrentPrice, buildS
 import { parseCoupangNoticeEnvelope } from "./listing-preflight";
 import { assertListingShippingReady, validatedCoupangShippingFees, validatedSmartstoreShippingInfo } from "./listing-shipping";
 import { prepareQoo10ShippingPreservedUpdate } from "./qoo10-update-shipping";
+import { prepareShopeeSgOfficialRequirements } from "../product-registration/shopee/provider-requirements";
+import { compileCoupangOptionItems } from "../product-registration/coupang/option-items";
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
 export type ProviderListingRuntimeHooks = {
@@ -576,9 +578,9 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
   if (!shopPayload) throw new Error("SHOPEE_GLOBAL_SHOP_CREDENTIAL_MISSING");
   const imageUrls = uniqueImageUrls(input.arguments.imageUrls, 9);
   if (imageUrls.length !== 9) throw new Error("SHOPEE_APPROVED_DETAIL_IMAGES_INCOMPLETE");
-  const body = structuredClone(recordValue(input.arguments.body) ?? {});
+  let body = structuredClone(recordValue(input.arguments.body) ?? {});
   const publish = structuredClone(recordValue(input.arguments.publish) ?? {});
-  const publishItem = recordValue(publish.item) ?? {};
+  let publishItem = recordValue(publish.item) ?? {};
   const strictSgCreate = input.operation === "listing.create"
     && shopeeSgListingCreateRequested(input.arguments);
   const strictExpectation = strictSgCreate
@@ -612,6 +614,16 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
       query,
     });
   };
+  const merchantPostRead = async (path: string, requestBody: UnknownRecord) => {
+    await input.hooks.assertLeaseHealthy();
+    return merchantRequest({
+      payload: input.credential,
+      environment: input.environment,
+      method: "POST",
+      path,
+      body: requestBody,
+    });
+  };
   const shopRead = async (path: string, query: URLSearchParams) => {
     await input.hooks.assertLeaseHealthy();
     return shopRequest({
@@ -624,7 +636,13 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
   };
   // Every provider validation is completed before the first media mutation.
   // This prevents a category/logistics failure from leaving orphaned uploads.
-  const logistics = await activeShopeeLogistics(shopPayload, input.environment, input.hooks, shopRequest);
+  const exactSkuAbsenceEvidence = exactCreateIdentity
+    ? await assertShopeeSgExactSkuAbsent({
+      merchantRead,
+      shopRead,
+      sku: exactCreateIdentity.sku,
+    })
+    : null;
   const globalCategoryRemote = await merchantRead("/api/v2/global_product/get_category", new URLSearchParams({ language: "en" }));
   const providerGlobalCategoryPath = strictExpectation?.ok
     ? shopeeSgExpectedCategoryPathVerified(globalCategoryRemote.data, strictExpectation.expectation.context)
@@ -637,6 +655,26 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
   }
   const globalAttributeRemote = await merchantRead("/api/v2/global_product/get_attribute_tree", new URLSearchParams({ category_id_list: String(globalCategoryId), language: "en" }));
   const globalAttributeMetadata = exactShopeeAttributeMetadata(globalAttributeRemote, globalCategoryId, "SHOPEE_GLOBAL_ATTRIBUTES_QUERY_FAILED");
+  const strictRequirements = strictExpectation?.ok
+    ? await prepareShopeeSgOfficialRequirements({
+      body,
+      publishItem,
+      targetShopId: exactCreateIdentity!.shopId,
+      globalAttributeResponse: globalAttributeRemote.data,
+      readers: {
+        merchantGet: merchantRead,
+        merchantPost: merchantPostRead,
+        shopGet: shopRead,
+      },
+    })
+    : null;
+  if (strictRequirements) {
+    body = strictRequirements.body;
+    publishItem = strictRequirements.publishItem;
+  }
+  const logistics = strictRequirements
+    ? strictRequirements.publishItem.logistic
+    : await activeShopeeLogistics(shopPayload, input.environment, input.hooks, shopRequest);
   const localizedItemName = String(publishItem.item_name ?? "").trim();
   if (!localizedItemName) throw new Error("SHOPEE_LOCAL_ITEM_NAME_MISSING");
   const localRecommendationRemote = await shopRead("/api/v2/product/category_recommend", new URLSearchParams({ item_name: localizedItemName }));
@@ -653,19 +691,14 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
     assertShopeeSgCurrentPrice({ expectation: strictExpectation.expectation, authoritativeRate });
   }
   const productHint = `${String(publishItem.item_name ?? body.global_item_name ?? "")} ${String(publishItem.description ?? body.description ?? "")}`;
-  const globalAttributes = requiredShopeeAttributes({
-    supplied: body.attribute_list,
-    metadata: globalAttributeMetadata,
-    productHint,
-    errorCode: "SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING",
-  });
-  const exactSkuAbsenceEvidence = exactCreateIdentity
-    ? await assertShopeeSgExactSkuAbsent({
-      merchantRead,
-      shopRead,
-      sku: exactCreateIdentity.sku,
-    })
-    : null;
+  const globalAttributes = strictRequirements
+    ? strictRequirements.body.attribute_list
+    : requiredShopeeAttributes({
+      supplied: body.attribute_list,
+      metadata: globalAttributeMetadata,
+      productHint,
+      errorCode: "SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING",
+    });
   const imageIds: string[] = [];
   for (const [index, imageUrl] of imageUrls.entries()) {
     await input.hooks.assertLeaseHealthy();
@@ -707,6 +740,9 @@ export async function prepareShopeeGlobalListing(input: PrepareProviderListingIn
       : {}),
     ...(providerGlobalCategoryPath
       ? { sellerpilotProviderGlobalCategoryPath: providerGlobalCategoryPath }
+      : {}),
+    ...(strictRequirements
+      ? { sellerpilotShopeeSgOfficialRequirementEvidence: strictRequirements.evidence }
       : {}),
     ...(strictExpectation?.ok && providerGlobalCategoryPath
       ? {
@@ -1646,7 +1682,12 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   if (!requestedBy) throw new Error("COUPANG_WING_USER_ID_MISSING");
   const strictArguments = input.arguments;
   const requested = coupangRequestedPublication(strictArguments.publicationIntent);
-  const body = structuredClone(recordValue(strictArguments.body) ?? {});
+  const facts = recordValue(strictArguments.facts) ?? {};
+  const body = compileCoupangOptionItems(
+    structuredClone(recordValue(strictArguments.body) ?? {}),
+    Object.hasOwn(facts, "coupangOptionRows") ? facts.coupangOptionRows : [],
+    strictArguments.sellerpilotCoupangBaseSku,
+  );
   const shippingFees = validatedCoupangShippingFees(body);
   const categoryCode = Number(body.displayCategoryCode);
   if (!Number.isSafeInteger(categoryCode) || categoryCode <= 0) {
@@ -1757,7 +1798,6 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   if (!returnCenterCode)
     throw new Error("COUPANG_RETURN_CENTER_CODE_MISSING");
   const metadata = coupangMetadata(metadataRemote.data);
-  const facts = recordValue(strictArguments.facts) ?? {};
   const items = Array.isArray(body.items)
     ? body.items.map((item) => {
       const prepared = prepareCoupangItem(item, metadata, facts);

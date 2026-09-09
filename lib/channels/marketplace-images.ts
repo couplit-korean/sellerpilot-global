@@ -707,6 +707,11 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
   if (shipping) next.sellerpilotAssets = { shipping };
   const manualSourceMode = assets?.contentMode === "manual_mvp"
     && assets.detailAssetMode === "manual_source";
+  if (channel === "qoo10"
+    && manualSourceMode
+    && next.publicationStateContract === "verified_remote_state_v1") {
+    throw new Error("MARKETPLACE_DETAIL_IMAGE_REQUIRED:QOO10_MANUAL_SOURCE_INTAKE_ONLY");
+  }
   if (manualSourceMode) next.sellerpilotContentMode = "manual_mvp";
   const elevenstProductPatch = channel === "elevenst" ? record(next.productPatch) : null;
   const elevenstMediaFields = ["prdImage01", "prdImage02", "prdImage03", "prdImage04", "htmlDetail"] as const;

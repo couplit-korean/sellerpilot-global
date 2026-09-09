@@ -71,7 +71,7 @@ export async function providerFetch(input: Parameters<typeof fetch>[0], init?: P
 
 function assertProviderReadOnlyTransport(
   method: string,
-  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "smartstore_read_rpc" | "temu_read_rpc",
+  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "smartstore_read_rpc" | "temu_read_rpc" | "shopee_merchant_read_rpc",
 ) {
   if (!providerTransportContext.getStore()?.readOnly) return;
   const normalized = method.trim().toUpperCase();
@@ -80,7 +80,8 @@ function assertProviderReadOnlyTransport(
     && (exception === "qoo10_read_rpc"
       || exception === "ebay_trading_read"
       || exception === "smartstore_read_rpc"
-      || exception === "temu_read_rpc")) return;
+      || exception === "temu_read_rpc"
+      || exception === "shopee_merchant_read_rpc")) return;
   throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
 
@@ -852,7 +853,13 @@ export async function shopeeMerchantRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
-  assertProviderReadOnlyTransport(input.method);
+  const merchantReadPost = input.method === "POST"
+    && (input.path === "/api/v2/merchant/get_merchant_warehouse_list"
+      || input.path === "/api/v2/merchant/get_warehouse_eligible_shop_list");
+  assertProviderReadOnlyTransport(
+    input.method,
+    merchantReadPost ? "shopee_merchant_read_rpc" : undefined,
+  );
   const partnerId = textValue(input.payload, "partner_id");
   const partnerKey = textValue(input.payload, "partner_key");
   const merchantId = textValue(input.payload, "merchant_id");

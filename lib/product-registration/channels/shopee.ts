@@ -196,14 +196,17 @@ export async function executeShopee(input: ExecuteInput) {
     }
     const publish = structuredClone(suppliedPublish);
     const publishItem = objectValue(publish, "item", false);
+    const requestedShopId = String(publish.shop_id ?? "").trim();
+    if (Object.keys(publish).length && !/^[1-9][0-9]{0,31}$/u.test(requestedShopId)) {
+      throw new Error("SHOPEE_PUBLISH_SHOP_ID_REQUIRED");
+    }
     if (publicationIntent && Object.keys(publish).length) {
       publish.item = {
         ...publishItem,
         item_status: publicationIntent === "safe_test" ? "UNLIST" : "NORMAL",
       };
     }
-    const finalLocalReadback = (localItemId: string) =>
-      result(input, steps, localItemId);
+    const finalLocalReadback = (localItemId: string) => result(input, steps, localItemId);
     if (!globalItemId) {
       const createRemote = await shopeeMerchantRequest({
         payload: input.payload,
@@ -227,7 +230,27 @@ export async function executeShopee(input: ExecuteInput) {
       path: "/api/v2/global_product/get_global_item_info",
       query: new URLSearchParams({ global_item_id_list: globalItemId }),
     });
-    steps.push(step("global-item-readback", readbackRemote));
+    const globalReadbackStep = step("global-item-readback", readbackRemote);
+    const globalResponse = objectValue(readbackRemote.data, "response", false);
+    const globalRows = Array.isArray(globalResponse.global_item_list)
+      ? globalResponse.global_item_list.filter((item): item is Record<string, unknown> => (
+        Boolean(item) && typeof item === "object" && !Array.isArray(item)
+      ))
+      : [];
+    const expectedGlobalSku = String(objectValue(input.arguments, "body").global_item_sku ?? "").trim();
+    const globalMatches = globalRows.filter((item) => String(item.global_item_id ?? "") === globalItemId
+      && (!expectedGlobalSku || String(item.global_item_sku ?? item.item_sku ?? "").trim() === expectedGlobalSku));
+    globalReadbackStep.ok = globalReadbackStep.ok && globalMatches.length === 1;
+    globalReadbackStep.data = {
+      ...globalReadbackStep.data,
+      sellerpilotVerification: globalReadbackStep.ok
+        ? "SHOPEE_GLOBAL_ITEM_IDENTITY_VERIFIED"
+        : "SHOPEE_GLOBAL_ITEM_IDENTITY_UNVERIFIED",
+      expectedSku: expectedGlobalSku,
+      exactMatchCount: globalMatches.length,
+    };
+    steps.push(globalReadbackStep);
+    if (!globalReadbackStep.ok) return result(input, steps, globalItemId);
     const publishedItem = async (maxAttempts = 1) => {
       for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
         if (attempt > 0)
@@ -254,22 +277,30 @@ export async function executeShopee(input: ExecuteInput) {
             Array.isArray((response as Record<string, unknown>).published_item)
             ? (response as { published_item: unknown[] }).published_item
             : [];
-        const requestedShopId = String(publish.shop_id ?? "");
-        const row = rows.find(
+        const matches = rows.filter(
           (item) =>
             item &&
             typeof item === "object" &&
             !Array.isArray(item) &&
-            (!requestedShopId ||
-              String((item as Record<string, unknown>).shop_id ?? "") ===
-              requestedShopId),
-        ) as Record<string, unknown> | undefined;
+            String((item as Record<string, unknown>).shop_id ?? "") === requestedShopId,
+        ) as Record<string, unknown>[];
+        const row = matches.length === 1 ? matches[0] : undefined;
         const itemId = row?.item_id;
         if (typeof itemId === "string" || typeof itemId === "number")
           return { itemId: String(itemId), ok: publishedStep.ok };
         if (!publishedStep.ok) return { itemId: "", ok: false };
+        if (attempt === maxAttempts - 1) {
+          publishedStep.ok = false;
+          publishedStep.data = {
+            ...publishedStep.data,
+            sellerpilotVerification: "SHOPEE_EXACT_SHOP_LINKAGE_UNVERIFIED",
+            expectedShopId: requestedShopId,
+            exactMatchCount: matches.length,
+          };
+          return { itemId: "", ok: false };
+        }
       }
-      return { itemId: "", ok: true };
+      return { itemId: "", ok: false };
     };
     if (booleanArgument(input.arguments, "recoverPublished")) {
       const published = await publishedItem();

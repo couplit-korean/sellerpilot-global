@@ -31,6 +31,7 @@ function draft(overrides: Record<string, unknown> = {}) {
   return {
     publicationStateContract: "verified_remote_state_v1",
     publicationIntent: "safe_test",
+    sellerpilotCoupangBaseSku: sellerSku,
     sellerpilotAssets: {
       shipping: {
         shippingFeeKrw: 3_000,
@@ -154,6 +155,76 @@ test("Coupang create checks the exact external seller SKU before all write prepa
   assert.equal(result.calls.length, 5);
   assert.equal(result.mutationStarted, false);
   assert.equal((result.prepared.arguments.body as Record<string, unknown>).vendorId, vendorId);
+});
+
+test("saved Coupang option rows compile before exact duplicate lookup", async () => {
+  const argumentsValue = draft();
+  argumentsValue.facts = {
+    coupangOptionRows: [{
+      skuSuffix: "RED-M",
+      itemName: "롯데샌드 315g 빨강 M",
+      barcode: "8802259030799",
+      modelNo: "",
+      emptyBarcodeReason: "",
+      salePrice: 3_190,
+      stock: 2,
+      unitCount: 1,
+      purchaseOptions: [{ name: "색상", value: "빨강" }, { name: "사이즈", value: "M" }],
+    }, {
+      skuSuffix: "BLUE-L",
+      itemName: "롯데샌드 315g 파랑 L",
+      barcode: "",
+      modelNo: "LOTTE-BLUE-L",
+      emptyBarcodeReason: "제조사 바코드 미부여",
+      salePrice: 3_290,
+      stock: 3,
+      unitCount: 1,
+      purchaseOptions: [{ name: "색상", value: "파랑" }, { name: "사이즈", value: "L" }],
+    }],
+  };
+  (argumentsValue.body as Record<string, unknown>).brand = "롯데";
+  const template = ((argumentsValue.body as { items: Array<Record<string, unknown>> }).items)[0];
+  template.unitCount = 1;
+  const result = await prepare({ argumentsValue });
+  const lookups = result.calls
+    .filter((call) => call.url.includes("/external-vendor-sku-codes/"))
+    .map((call) => decodeURIComponent(new URL(call.url).pathname.split("/").at(-1) ?? ""));
+  assert.deepEqual(lookups, [`${sellerSku}-RED-M`, `${sellerSku}-BLUE-L`]);
+  const items = (result.prepared.arguments.body as { items: Array<Record<string, unknown>> }).items;
+  assert.deepEqual(items.map((item) => [item.externalVendorSku, item.salePrice, item.maximumBuyCount, item.unitCount]), [
+    [`${sellerSku}-RED-M`, 3_190, 2, 1],
+    [`${sellerSku}-BLUE-L`, 3_290, 3, 1],
+  ]);
+});
+
+test("provider preparation never strips a matching suffix from the explicit base SKU", async () => {
+  const argumentsValue = draft({ sellerpilotCoupangBaseSku: "CP-RED-M" });
+  const body = argumentsValue.body as { brand?: string; items: Array<Record<string, unknown>> };
+  body.brand = "롯데";
+  body.items[0].externalVendorSku = "CP-RED-M";
+  body.items[0].unitCount = 1;
+  argumentsValue.facts = { coupangOptionRows: [{
+    skuSuffix: "RED-M",
+    itemName: "접미사 충돌 검증 옵션",
+    barcode: "8802259030799",
+    modelNo: "",
+    emptyBarcodeReason: "",
+    salePrice: 3_190,
+    stock: 2,
+    unitCount: 1,
+    purchaseOptions: [{ name: "색상", value: "빨강" }],
+  }] };
+  const result = await prepare({ argumentsValue });
+  const lookup = result.calls.find((call) => call.url.includes("/external-vendor-sku-codes/"));
+  assert.ok(lookup);
+  assert.equal(decodeURIComponent(new URL(lookup.url).pathname.split("/").at(-1) ?? ""), "CP-RED-M-RED-M");
+});
+
+test("Coupang provider preparation rejects malformed option facts before any lookup", async () => {
+  await assert.rejects(
+    prepare({ argumentsValue: draft({ facts: { coupangOptionRows: true } }) }),
+    /COUPANG_OPTION_ROWS_INVALID/,
+  );
 });
 
 test("Coupang create blocks an existing exact seller SKU from the authenticated vendor", async () => {

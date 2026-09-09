@@ -2,10 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
-import {
-  ebayExactExistingQaRecoveryBindingValue,
-  ebayExactExistingQaRecoveryIdentity,
-} from "../lib/channels/ebay-exact-existing-qa-recovery.ts";
 
 const migrationUrl = new URL(
   "../supabase/migrations/20260901194336_rebind_ebay_exact_current_credential_lineage.sql",
@@ -193,14 +189,6 @@ test("the exact identity RPC accepts a later sole active credential and rejects 
       v103Identity.sourceAttemptId,
       "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77",
     );
-    assert.equal(
-      ebayExactExistingQaRecoveryBindingValue(v103Identity)?.credentialId,
-      activeV103,
-    );
-    assert.equal(
-      v103Identity.sourceAttemptId,
-      ebayExactExistingQaRecoveryIdentity.sourceAttemptId,
-    );
     await db.exec(`
       update sellerpilot_private.channel_credentials
          set status = 'revoked'
@@ -217,11 +205,6 @@ test("the exact identity RPC accepts a later sole active credential and rejects 
       v104Identity.sourceAttemptId,
       "07b8ced8-fa77-4c22-a708-2ce1ec4e3c77",
     );
-    assert.equal(
-      ebayExactExistingQaRecoveryBindingValue(v104Identity)?.credentialId,
-      activeV104,
-    );
-
     await db.exec(`
       insert into sellerpilot_private.channel_credentials values (
         '3c46d19a-60b8-43fa-91df-b21769f97503', 'ebay', 'production',

@@ -25,6 +25,7 @@ import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLoca
 import { normalizeProductSaleConfiguration } from "../lib/product-sale-configuration";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
+import { evaluateShopeeSgRequirementSelection, serializeShopeeSgChannelPatches, shopeeSgChannelExecutionAllowed, ShopeeSgRequirementCandidateFields, type ShopeeSgRequirementLoadState, type ShopeeSgRequirementSelectionState } from "./_publishing/shopee/requirement-candidate-fields";
 import { channels } from "./channel-config";
 import { fetchProductDetailData, productDetailDataToHtml } from "./_publishing/product-detail-html";
 import type { ProductDetailData } from "./product-detail-puck";
@@ -604,6 +605,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
     return {
       sellerpilotAssets,
       ...(existingListing?.remoteId && existingListing.status !== "published" ? { resumeRemoteId: existingListing.remoteId } : {}),
+      sellerpilotCoupangBaseSku: manual.sellerSku || product.sku,
       facts: {
         material: manual.material,
         packageContents: manual.packageContents,
@@ -611,6 +613,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         manufacturer: manual.manufacturer,
         weightKg: packageFields.weight,
         dimensionsCm: [packageFields.length, packageFields.width, packageFields.height],
+        coupangOptionRows: [],
       },
       body: {
         displayCategoryCode: Number(assignment?.categoryId ?? 0),
@@ -637,7 +640,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
         returnAddress: "",
         returnAddressDetail: "",
         requested: false,
-        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: resolveCoupangShippingLeadTime(manual.shippingRule).outboundShippingTimeDay, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: manual.sellerSku || product.sku, images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: categoryInput.notices, certifications: categoryInput.certifications, attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: puckDetailHtml || plainDescription, detailType: "TEXT" }] }] }],
+        items: [{ itemName: title.slice(0, 100), originalPrice: channelPrice, salePrice: channelPrice, maximumBuyCount: quantity, maximumBuyForPerson: quantity, maximumBuyForPersonPeriod: 1, outboundShippingTimeDay: resolveCoupangShippingLeadTime(manual.shippingRule).outboundShippingTimeDay, unitCount: 1, adultOnly: "EVERYONE", taxType: "TAX", parallelImported: "NOT_PARALLEL_IMPORTED", overseasPurchased: "NOT_OVERSEAS_PURCHASED", pccNeeded: false, externalVendorSku: manual.sellerSku || product.sku, barcode: manual.gtinStatus === "HAS_GTIN" ? manual.gtin : "", emptyBarcode: manual.gtinStatus === "NO_GTIN", emptyBarcodeReason: manual.gtinStatus === "NO_GTIN" ? "바코드가 없는 상품" : "", modelNo: "", images: galleryImageUrls.map((url, index) => ({ imageOrder: index, imageType: index === 0 ? "REPRESENTATION" : "DETAIL", vendorPath: url })), notices: categoryInput.notices, certifications: categoryInput.certifications, attributes: categoryAttributes, contents: [{ contentsType: "TEXT", contentDetails: [{ content: puckDetailHtml || plainDescription, detailType: "TEXT" }] }] }],
       },
     };
   }
@@ -798,11 +801,14 @@ export function missingNativeValues(channel: ActiveChannelKey, value: Record<str
   const galleryImages = Array.isArray(assets.galleryImageUrls) ? assets.galleryImageUrls.filter(Boolean) : [];
   const detailImages = Array.isArray(assets.detailImageUrls) ? assets.detailImageUrls.filter(Boolean) : [];
   const manualMvp = assets.contentMode === "manual_mvp" && assets.detailAssetMode === "manual_source";
+  const qoo10ManualCreateIntakeOnly = channel === "qoo10" && operation === "listing.create" && manualMvp;
   const requireDedicatedDetails = operation !== "listing.update" && !manualMvp;
   const assetRequirements = [
     galleryImages.length === 0 ? "marketplace thumbnail image" : "",
     manualMvp
-      ? detailImages.length === 0 ? "manual source detail image" : ""
+      ? qoo10ManualCreateIntakeOnly
+        ? `approved marketplace detail images (${marketplaceChannelDetailImageCount})`
+        : detailImages.length === 0 ? "manual source detail image" : ""
       : requireDedicatedDetails && (assets.detailAssetMode !== "dedicated" || detailImages.length < marketplaceChannelDetailImageCount)
         ? `dedicated marketplace detail images (${marketplaceChannelDetailImageCount})`
         : "",
@@ -1119,6 +1125,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [registrationBaseDrafts, setRegistrationBaseDrafts] = useState<Partial<Record<ActiveChannelKey, string>>>({});
   const [registrationChannelBank, setRegistrationChannelBank] = useState<PublishRegistrationData["channels"]>({});
   const [registrationLoaded, setRegistrationLoaded] = useState(false);
+  const [shopeeRequirementRemote, setShopeeRequirementRemote] = useState<{ key: string; source: ShopeeSgRequirementLoadState }>({ key: "", source: { state: "loading" } });
+  const [shopeeRequirementSelection, setShopeeRequirementSelection] = useState<ShopeeSgRequirementSelectionState>({ saveAllowed: false, blockers: [], patches: [], evidence: null });
+  const [shopeeRequirementRefreshRevision, setShopeeRequirementRefreshRevision] = useState(0);
   const registrationBaseDraftsRef = useRef<Partial<Record<ActiveChannelKey, string>>>({});
   const registrationChannelBankRef = useRef<PublishRegistrationData["channels"]>({});
   const registrationSaveInFlightRef = useRef(false);
@@ -1494,6 +1503,89 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     return byChannel;
   }, [credentials]);
   const visibleChannels = useMemo(() => publicationSelectableChannelKeys.filter((channel) => selectedChannels.includes(channel)), [selectedChannels]);
+  const shopeeTarget = selectedTargets.shopee;
+  const shopeeCredential = activeCredentials.get("shopee");
+  const shopeeAssignment = context?.assignments.find((item) => item.channel === "shopee"
+    && item.status === "confirmed"
+    && (!shopeeTarget || item.market === shopeeTarget.marketCode));
+  const shopeeListing = context?.listings.find((item) => item.channel === "shopee"
+    && (!shopeeTarget || item.market === shopeeTarget.marketCode && item.targetId === shopeeTarget.targetId));
+  const shopeeRequirementRequired = visibleChannels.includes("shopee")
+    && listingWriteOperation(shopeeListing) === "listing.create";
+  const shopeeCredentialId = shopeeCredential?.id ?? "";
+  const shopeeTargetId = shopeeTarget?.targetId ?? "";
+  const shopeeTargetMarket = shopeeTarget?.marketCode ?? "";
+  const shopeeCategoryId = shopeeAssignment?.categoryId ?? "";
+  const shopeeRequirementRequestKey = [
+    shopeeCredentialId,
+    shopeeTargetId,
+    shopeeTargetMarket,
+    shopeeCategoryId,
+    registrationSourceFingerprint,
+  ].join("\u0000");
+  const shopeeRequirementSource = useMemo<ShopeeSgRequirementLoadState>(() => {
+    if (!shopeeRequirementRequired) return { state: "missing", reason: "Shopee 신규 SG 등록에만 공식 필수조건 선택이 필요합니다." };
+    if (!shopeeCredentialId || !shopeeTargetId || !shopeeCategoryId || !registrationSourceFingerprint) {
+      return { state: "missing", reason: "현재 Shopee credential, SG shop, leaf category, 원상품 정체성을 먼저 확인해 주세요." };
+    }
+    if (shopeeTargetMarket !== "SG") return { state: "blocked", code: "SHOPEE_SG_TARGET_REQUIRED", message: "이 필수조건 화면은 exact SG shop에만 사용할 수 있습니다." };
+    return shopeeRequirementRemote.key === shopeeRequirementRequestKey
+      ? shopeeRequirementRemote.source
+      : { state: "loading" };
+  }, [registrationSourceFingerprint, shopeeCategoryId, shopeeCredentialId, shopeeRequirementRemote, shopeeRequirementRequestKey, shopeeRequirementRequired, shopeeTargetId, shopeeTargetMarket]);
+  const shopeeRequirementBlocked = shopeeRequirementRequired
+    && (shopeeRequirementSource.state !== "ready" || !shopeeRequirementSelection.saveAllowed);
+  const updateShopeeRequirementSelection = useCallback((next: ShopeeSgRequirementSelectionState) => {
+    setShopeeRequirementSelection((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+  }, []);
+  const refreshShopeeRequirements = useCallback(() => {
+    setShopeeRequirementRemote({ key: shopeeRequirementRequestKey, source: { state: "loading" } });
+    setShopeeRequirementSelection({ saveAllowed: false, blockers: [{ code: "SHOPEE_SG_REQUIREMENT_LOADING", message: "공식 필수조건을 다시 조회하고 있습니다." }], patches: [], evidence: null });
+    setShopeeRequirementRefreshRevision((current) => current + 1);
+  }, [shopeeRequirementRequestKey]);
+  useEffect(() => {
+    if (!shopeeRequirementRequired || !shopeeCredentialId || !shopeeTargetId || !shopeeCategoryId
+      || !registrationSourceFingerprint || shopeeTargetMarket !== "SG") return;
+    void shopeeRequirementRefreshRevision;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        await Promise.resolve();
+        if (controller.signal.aborted) return;
+        setShopeeRequirementRemote({ key: shopeeRequirementRequestKey, source: { state: "loading" } });
+        setShopeeRequirementSelection({ saveAllowed: false, blockers: [{ code: "SHOPEE_SG_REQUIREMENT_LOADING", message: "공식 필수조건을 조회하고 있습니다." }], patches: [], evidence: null });
+        const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+        if (!accessToken) throw new Error("상품등록 관리자 로그인이 필요합니다.");
+        const response = await fetch("/api/admin/shopee-requirements", {
+          method: "POST",
+          headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            credentialId: shopeeCredentialId,
+            shopId: shopeeTargetId,
+            categoryId: shopeeCategoryId,
+            sourceFingerprint: registrationSourceFingerprint,
+          }),
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null) as unknown;
+        if (controller.signal.aborted) return;
+        if (payload && typeof payload === "object" && !Array.isArray(payload)
+          && (payload as Record<string, unknown>).contract === "sellerpilot_shopee_sg_requirement_snapshot_v1") {
+          setShopeeRequirementRemote({ key: shopeeRequirementRequestKey, source: { state: "ready", snapshot: payload as Extract<ShopeeSgRequirementLoadState, { state: "ready" }>["snapshot"] } });
+          return;
+        }
+        const message = payload && typeof payload === "object" && !Array.isArray(payload) && typeof (payload as Record<string, unknown>).message === "string"
+          ? String((payload as Record<string, unknown>).message)
+          : "Shopee SG 공식 필수조건을 불러오지 못했습니다.";
+        setShopeeRequirementRemote({ key: shopeeRequirementRequestKey, source: { state: "blocked", code: `SHOPEE_SG_REQUIREMENT_HTTP_${response.status}`, message } });
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setShopeeRequirementRemote({ key: shopeeRequirementRequestKey, source: { state: "blocked", code: "SHOPEE_SG_REQUIREMENT_REQUEST_FAILED", message: error instanceof Error ? error.message : "Shopee SG 공식 필수조건 요청이 실패했습니다." } });
+      }
+    })();
+    return () => controller.abort(new DOMException("Shopee SG 필수조건 대상이 변경되었습니다.", "AbortError"));
+  }, [registrationSourceFingerprint, shopeeCategoryId, shopeeCredentialId, shopeeRequirementRefreshRevision, shopeeRequirementRequestKey, shopeeRequirementRequired, shopeeTargetId, shopeeTargetMarket]);
   const registrationIssues = useMemo(() => {
     const issues: Partial<Record<ActiveChannelKey, string>> = {};
     for (const channel of activeChannelKeys) {
@@ -1517,12 +1609,36 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const current = parseDraft(drafts[channel]);
       if (!base || !current) continue;
       const key = publishRegistrationIdentity(channel, target?.marketCode ?? fallbackChannelMarkets[channel], target?.targetId ?? "", credential?.id ?? "");
-      channels[key] = { categoryId: assignment?.categoryId ?? "", patches: registrationPatches(base, current) };
+      channels[key] = {
+        categoryId: assignment?.categoryId ?? "",
+        patches: channel === "shopee"
+          ? serializeShopeeSgChannelPatches(base, current)
+          : registrationPatches(base, current),
+      };
     }
     return { schemaVersion: 1, sourceFingerprint: registrationSourceFingerprint, common: { fields: editableCommonFacts(context.manualFields), price, globalBaseUsdPrice, quantity, packageFields }, channels };
   }, [context, drafts, selectedTargets, activeCredentials, price, globalBaseUsdPrice, quantity, packageFields, registrationChannelBank, registrationBaseDrafts, registrationSourceFingerprint, registrationHasIssues, registrationTargetLoading]);
   const registrationSignature = JSON.stringify(registrationData);
   useEffect(() => { registrationCurrentSignatureRef.current = registrationSignature; }, [registrationSignature]);
+  const currentShopeeRequirementValidation = useCallback((): ShopeeSgRequirementSelectionState => {
+    if (!shopeeRequirementRequired) return { saveAllowed: true, blockers: [], patches: [], evidence: null };
+    const baseDraft = parseDraft(registrationBaseDrafts.shopee);
+    const currentDraft = parseDraft(drafts.shopee);
+    if (!registrationData || !baseDraft || !currentDraft) {
+      return { saveAllowed: false, blockers: [{ code: "SHOPEE_SG_DRAFT_DATA_INVALID", message: "현재 Shopee SG 초안과 기준 payload를 읽을 수 없습니다." }], patches: [], evidence: null };
+    }
+    return evaluateShopeeSgRequirementSelection({
+      source: shopeeRequirementSource,
+      credentialId: shopeeCredentialId,
+      shopId: shopeeTargetId,
+      categoryId: shopeeCategoryId,
+      sourceFingerprint: registrationSourceFingerprint,
+      draftData: registrationData,
+      baseDraft,
+      currentDraft,
+      now: new Date(),
+    });
+  }, [drafts.shopee, registrationBaseDrafts.shopee, registrationData, registrationSourceFingerprint, shopeeCategoryId, shopeeCredentialId, shopeeRequirementRequired, shopeeRequirementSource, shopeeTargetId]);
   const saveRegistrationDraft = useCallback(async () => {
     if (!productId || !registrationData || !registrationLoadedRef.current || registrationSourceChanged || registrationTargetLoading || registrationSaveInFlightRef.current) return false;
     if (registrationSavedRef.current === registrationSignature) return true;
@@ -1612,7 +1728,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     const previousAssignment = context.assignments.find(item => item.channel === channel && (!previousTarget || item.market === previousTarget.marketCode));
     const previousDraft = parseDraft(drafts[channel]);
     const previousBase = parseDraft(registrationBaseDraftsRef.current[channel]);
-    if (previousDraft && previousBase) registrationChannelBankRef.current[previousIdentity] = { categoryId: previousAssignment?.categoryId ?? "", patches: registrationPatches(previousBase, previousDraft) };
+    if (previousDraft && previousBase) registrationChannelBankRef.current[previousIdentity] = {
+      categoryId: previousAssignment?.categoryId ?? "",
+      patches: channel === "shopee"
+        ? serializeShopeeSgChannelPatches(previousBase, previousDraft)
+        : registrationPatches(previousBase, previousDraft),
+    };
     const nextTargets = { ...selectedTargets, [channel]: nextTarget };
     registrationTargetBusyRef.current = true;
     setRegistrationTargetLoading(true);
@@ -1705,6 +1826,17 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       return false;
     }
     if (context.publicationBlocker) { notify(context.publicationBlocker.message); return false; }
+    const credential = activeCredentials.get(channel);
+    const target = selectedTargets[channel];
+    const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
+    const listing = context.listings.find((item) => item.channel === channel
+      && (!target || item.market === target.marketCode && item.targetId === target.targetId));
+    const operation = listingWriteOperation(listing);
+    const shopeeValidation = currentShopeeRequirementValidation();
+    if (!shopeeSgChannelExecutionAllowed(channel, operation, shopeeValidation)) {
+      notify(`Shopee SG 등록 조건 확인: ${shopeeValidation.blockers[0]?.code ?? "SHOPEE_SG_REQUIREMENT_SAVE_BLOCKED"}`);
+      return false;
+    }
     if (!(await saveRegistrationDraft())) { notify("입력 내용을 서버에 저장하고 변경 충돌을 확인한 뒤 등록해 주세요."); return false; }
     if (workbenchStudioPublicationBlocked(context)) {
       notify(context.studioQuality?.message ?? "대체 제작 결과는 다시 제작하고 검수한 뒤에만 채널에 전송할 수 있습니다.");
@@ -1714,16 +1846,6 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify(imagePackageBlockedMessage);
       return false;
     }
-    const credential = activeCredentials.get(channel);
-
-
-    const target = selectedTargets[channel];
-    const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
-
-
-    const listing = context.listings.find((item) => item.channel === channel
-      && (!target || item.market === target.marketCode && item.targetId === target.targetId));
-    const operation = listingWriteOperation(listing);
     if (listing && ["queued", "publishing"].includes(listing.status)) {
       notify(`${channelCatalog[channel].name} 상품 작업이 이미 백그라운드에서 진행 중입니다.`);
       return false;
@@ -1986,7 +2108,9 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         || blockingWorkbenchListingRequirements(channel, parsedDraft, operation).length > 0
         || missingNativeValues(channel, parsedDraft, operation).length > 0;
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
-      return Boolean(imagePackageReady
+      const shopeeValidation = currentShopeeRequirementValidation();
+      return Boolean(shopeeSgChannelExecutionAllowed(channel, operation, shopeeValidation)
+        && imagePackageReady
         && !workbenchStudioPublicationBlocked(context)
         && channelOperationAvailable(channel, operation)
         && credential
@@ -2334,7 +2458,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     {registrationTargetLoading && <p role="status">판매 국가별 입력을 불러오고 있습니다. 완료되면 이어서 편집할 수 있습니다.</p>}
     <fieldset className="registration-workbench-fields" disabled={registrationTargetLoading} aria-label="통합 상품 등록 입력">
       <ol className="registration-steps" aria-label="상품 등록 순서"><li><span>1</span><div><b>공통정보 확인</b><small>자동 입력된 사실을 한 번 보완</small></div></li><li><span>2</span><div><b>채널별 추가정보</b><small>카테고리·고시·판매 조건 확인</small></div></li><li><span>3</span><div><b>검토 후 자동 등록</b><small>준비된 채널부터 등록·결과 확인</small></div></li></ol>
-      <div className={`registration-draft-bar ${registrationSaveStatus}`} role="status"><div><b>{registrationSourceChanged ? "원상품 정보 변경 · 저장된 입력 재검토 필요" : registrationSaveStatus === "saving" ? "초안 저장 중…" : registrationSaveStatus === "saved" && registrationSavedSignature === registrationSignature ? "입력 내용 서버 저장됨" : registrationSaveStatus === "error" || registrationSaveStatus === "conflict" ? "초안 저장 확인 필요" : "등록 초안 자동 저장"}</b><small>{registrationSourceChanged ? "원상품의 정보가 이전 초안 이후 변경됐습니다. 복원한 값을 검토한 뒤 저장하세요." : registrationSaveMessage}</small></div><div className="registration-draft-actions">{registrationSourceChanged && <button type="button" onClick={() => { setRegistrationSourceChanged(false); setRegistrationSaveStatus("dirty"); }}>변경 내용 검토 완료</button>}<button type="button" disabled={registrationHasIssues || registrationTargetLoading || registrationSaveStatus === "saving" || registrationSourceChanged || !registrationLoaded} onClick={() => void saveRegistrationDraft()}>초안 저장</button>{["error", "conflict"].includes(registrationSaveStatus) && <button type="button" onClick={() => { if (window.confirm("현재 화면의 미저장 값을 서버 초안으로 바꿉니다. 계속할까요?")) void load(); }}>서버 초안 다시 불러오기</button>}</div></div>
+      <div className={`registration-draft-bar ${registrationSaveStatus}`} role="status"><div><b>{registrationSourceChanged ? "원상품 정보 변경 · 저장된 입력 재검토 필요" : registrationSaveStatus === "saving" ? "초안 저장 중…" : registrationSaveStatus === "saved" && registrationSavedSignature === registrationSignature ? shopeeRequirementBlocked ? "Shopee 미완성 입력 서버 보존됨" : "입력 내용 서버 저장됨" : registrationSaveStatus === "error" || registrationSaveStatus === "conflict" ? "초안 저장 확인 필요" : "등록 초안 자동 저장"}</b><small>{shopeeRequirementBlocked ? "Shopee SG 공식 필수조건은 아직 완료되지 않았습니다. 현재 입력은 복원을 위해 저장하지만 Shopee 등록은 차단합니다." : registrationSourceChanged ? "원상품의 정보가 이전 초안 이후 변경됐습니다. 복원한 값을 검토한 뒤 저장하세요." : registrationSaveMessage}</small></div><div className="registration-draft-actions">{registrationSourceChanged && <button type="button" onClick={() => { setRegistrationSourceChanged(false); setRegistrationSaveStatus("dirty"); }}>변경 내용 검토 완료</button>}<button type="button" disabled={registrationHasIssues || registrationTargetLoading || registrationSaveStatus === "saving" || registrationSourceChanged || !registrationLoaded} onClick={() => void saveRegistrationDraft()}>초안 저장</button>{["error", "conflict"].includes(registrationSaveStatus) && <button type="button" onClick={() => { if (window.confirm("현재 화면의 미저장 값을 서버 초안으로 바꿉니다. 계속할까요?")) void load(); }}>서버 초안 다시 불러오기</button>}</div></div>
       {registrationHasIssues && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>입력 구조를 확인해 주세요 · 저장과 전송이 보류되었습니다</b>{Object.entries(registrationIssues).map(([channel, issue]) => <small key={channel}>{channelCatalog[channel as ActiveChannelKey].name} · {issue}</small>)}</div></div>}
       {context.publicationBlocker && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>입력은 계속할 수 있습니다 · 전송 승인 확인 필요</b><small>{context.publicationBlocker.message}</small></div></div>}
       <div className="publish-workbench-head"><div><span className="panel-kicker">상품 등록 검토</span><h3>공통정보 확인 · 채널별 자동 등록</h3><p>AI가 채운 공통정보를 확인하고 채널별 추가 항목을 보완하세요. 검토한 채널부터 프로그램이 등록하며, 이미 등록된 상품은 기존 상품의 지원 항목을 수정합니다.</p></div><div className="publish-head-actions"><span className="step-chip">FINAL</span><button type="button" className="publish-bulk-execute" disabled={bulkRunning || bulkConfirming || !imagePackageReady || studioBlocked} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeReadyChannels()}>{bulkRunning ? <LoaderCircle className="spin" size={15} /> : <Rocket size={15} />}{bulkRunning ? "채널 병렬 처리 중" : bulkConfirming ? "최종 확인 열림" : studioBlocked ? "재제작 필요" : !imagePackageReady ? "이미지 세트 완료 후 채널 전송" : "선택 채널 등록·콘텐츠 수정"}</button></div></div>
@@ -2375,7 +2499,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         <label><span>판매 구성 <i>필수</i></span><input required value={context.manualFields.packageContents} onChange={(event) => updateProductFact("packageContents", event.target.value)} placeholder="예: 1박스 · 박스당 6봉 · 총 315g" /></label>
         <span className="publish-common-sync-status" role="status"><RefreshCw size={14} />공통값 변경 즉시 채널 초안에 자동 반영</span>
       </div>
-      <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 직접 사용` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
+      <div className="publish-source-proof"><span><ShieldCheck size={15} /><b>필수값 원장</b>{context.manualFields.sellerSku}</span><span><Check size={15} /><b>마켓 이미지 세트</b>{manualMvp ? `원본 ${context.sourceImages.filter((item) => item.url).length}장 보관 · 전송 전 승인 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표 ${marketplaceThumbnailCount}장 · 상세 전용 ${dedicatedDetailImageCount}/${marketplaceChannelDetailImageCount}장`}</span><span><Check size={15} /><b>등록 직전 보정</b>대표 1200×1200 JPEG · 상세 원본 비율 · 각 3MB 이하 · 공개 URL 재검증</span><span><Check size={15} /><b>카테고리 확정</b>{context.assignments.filter((item) => item.status === "confirmed").length}개 채널</span></div>
       {!imagePackageReady && <div className="publish-write-confirmation" role="alert"><AlertTriangle size={18} /><div><b>{manualMvp ? "승인된 상세페이지 이미지 8장이 없습니다." : `채널 업로드 이미지 미완료 · 대표 ${marketplaceThumbnailCount}/${marketplaceMinimumThumbnailCount}장 · 승인 상세 ${approvedDetailManifest?.images.length ?? 0}/${marketplaceChannelDetailImageCount}장`}</b><small>{manualMvp ? "상세페이지 8장 운영 원장이 없는 직접등록 상품은 단일·일괄 채널 전송을 모두 차단합니다." : `마스터 ${marketplaceGeneratedAssetCount}종 이미지 원장은 보존하고, 상세페이지에 선택·저장된 서로 다른 8장만 게시 원장으로 승인해야 합니다.`}</small></div></div>}
       {studioBlocked && <div className="publish-write-confirmation" role="alert" data-studio-quality="degraded"><AlertTriangle size={18} /><div><b>재제작 필요</b><small>{studioBlockedMessage}</small></div></div>}
       <div className="publish-channel-cards">{visibleChannels.map((channel) => {
@@ -2471,7 +2595,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           </section>}
           {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />{"원격 반영 차단 · 판매자센터 수동 수정"}</button>}
           {operationAvailable && <>
-            <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? "원본 사진 등록" : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
+            <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? `원본 저장 · 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
             {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
             {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
             {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{typeof draftObject?.sellerpilotDraftError === "string" ? "채널 payload 조립 실패" : "채널 JSON 형식 확인 필요"}</b><small>{typeof draftObject?.sellerpilotDraftError === "string" ? String(draftObject.sellerpilotDraftError) : "아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다."}</small></div> : <div className="publish-required-fields">
@@ -2480,6 +2604,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
                 <span>{item.status === "ready" ? <CircleCheck size={14} /> : item.status === "runtime" ? <RefreshCw size={14} /> : <AlertTriangle size={14} />}<b>{item.label}</b><small>{item.source}</small></span>
                 <em>{item.status === "ready" ? "확인됨" : item.status === "runtime" ? "API 자동조회" : "수동 입력 필수"}</em>
               </div>)}</div>
+              {channel === "shopee" && operation === "listing.create" && registrationData && parseDraft(registrationBaseDrafts.shopee) && <ShopeeSgRequirementCandidateFields source={shopeeRequirementSource} credentialId={credential?.id ?? ""} shopId={target?.targetId ?? ""} categoryId={assignment?.categoryId ?? ""} sourceFingerprint={registrationSourceFingerprint} draftData={registrationData} baseDraft={parseDraft(registrationBaseDrafts.shopee)!} currentDraft={draftObject} onRefresh={refreshShopeeRequirements} onValidationChange={updateShopeeRequirementSelection} onChange={(path, value) => {
+                try { setDrafts(current => ({ ...current, shopee: JSON.stringify(setRegistrationValue(parseDraft(current.shopee) ?? {}, path, value), null, 2) })); }
+                catch { notify("Shopee SG 필수조건 입력 구조를 확인해 주세요. 기존 값은 유지했습니다."); }
+              }} />}
               <ChannelRegistrationFields channel={channel} draft={draftObject} requirements={requirements} editedPaths={registrationIssues[channel] ? [] : registrationPatches(parseDraft(registrationBaseDrafts[channel]) ?? {}, draftObject).map(patch => JSON.stringify(patch.path))} onChange={(path, value) => {
                 if (channel === "smartstore" && isSmartstoreCapacityPath(path)) { updateManualDraftField(channel, path, value == null ? "" : String(value)); return; }
                 try { setDrafts(current => ({ ...current, [channel]: JSON.stringify(setRegistrationValue(parseDraft(current[channel]) ?? {}, path, value), null, 2) })); }
@@ -2492,10 +2620,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
             {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
             {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-            {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || studioBlocked} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
+            {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || studioBlocked || !shopeeSgChannelExecutionAllowed(channel, operation, currentShopeeRequirementValidation())} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
             {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
             {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
-            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
+            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || (channel === "shopee" && shopeeRequirementBlocked) || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : channel === "shopee" && shopeeRequirementBlocked ? "Shopee 공식 필수조건 선택 후 등록" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
             {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           </>}
           {temuActivationLedgerEligible && listing && <>

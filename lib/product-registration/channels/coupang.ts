@@ -12,6 +12,7 @@ import {
 } from "../../channels/coupang-listing-update";
 import { verifyCoupangCreateReadback } from "../coupang/create-readback";
 import { assertCoupangGeneralCreateRequiredFields } from "../coupang/create-required-fields";
+import { compileCoupangOptionItems } from "../coupang/option-items";
 
 
 import { listingPublicationIntentFromArguments } from "../../channels/listing-publication-state";
@@ -255,8 +256,14 @@ export async function executeCoupang(input: ExecuteInput) {
     );
   }
   if (input.operation === "listing.create") {
+    const facts = objectValue(input.arguments, "facts", false);
+    const compiledBody = compileCoupangOptionItems(
+      objectValue(input.arguments, "body"),
+      Object.hasOwn(facts, "coupangOptionRows") ? facts.coupangOptionRows : [],
+      input.arguments.sellerpilotCoupangBaseSku,
+    );
     const body: Record<string, unknown> = {
-      ...objectValue(input.arguments, "body"),
+      ...compiledBody,
       vendorId,
     };
     assertCoupangGeneralCreateRequiredFields(body);

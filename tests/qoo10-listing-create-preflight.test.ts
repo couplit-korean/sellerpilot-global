@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { applyPreparedQoo10Images } from "../lib/channels/marketplace-images";
 import { listingPublicationProviderAssetEvidence } from "../lib/channels/listing-publication-content";
 import { executeListingPublicationVerification } from "../lib/channels/listing-publication-verification";
 import { qoo10VerifiedListingRemoteState } from "../lib/channels/qoo10-listing-publication";
@@ -332,6 +333,63 @@ test("Qoo10 listing.create without the strict publication contract is rejected b
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Qoo10 manual source preparation is intake-only until the exact approved eight-image binding replaces it", () => {
+  const sourceOnlyArguments = strictArguments({
+    sellerpilotContentMode: "manual_mvp",
+    params: {
+      ...(strictArguments().params as Record<string, unknown>),
+      ItemDescription: '<section lang="ja-JP"><h2>販売者確認済み商品</h2><p>販売者が確認した商品の説明です。</p></section>',
+    },
+  });
+  delete sourceOnlyArguments.sellerpilotPublicationAssetBinding;
+  applyPreparedQoo10Images(
+    sourceOnlyArguments,
+    [normalizedImage(9).publicUrl],
+    [normalizedImage(1).publicUrl],
+    ["販売者確認済みの原本画像"],
+  );
+  const preparedHtml = String((sourceOnlyArguments.params as Record<string, unknown>).ItemDescription ?? "");
+  assert.equal([...preparedHtml.matchAll(/<img\b/giu)].length, 1, "manual intake keeps its one explicit source image");
+
+  const unbound = qoo10ListingCreateExpectation({
+    arguments: sourceOnlyArguments,
+    payload,
+  });
+  assert.equal(unbound.ok, false);
+  if (unbound.ok) return;
+  assert.equal(unbound.code, "QOO10_CREATE_CONTEXT_INVALID");
+  assert.deepEqual(unbound.mismatchFields, ["sellerpilotPublicationAssetBinding"]);
+
+  const forgedBinding = qoo10ListingCreateExpectation({
+    arguments: {
+      ...sourceOnlyArguments,
+      sellerpilotPublicationAssetBinding: publicationBinding(),
+    },
+    payload,
+  });
+  assert.equal(forgedBinding.ok, false);
+  if (forgedBinding.ok) return;
+  assert.equal(forgedBinding.code, "QOO10_CREATE_PREWRITE_MISMATCH");
+  assert.equal(forgedBinding.mismatchFields.includes("ItemDescription.detailImages"), true);
+
+  const approvedArguments = strictArguments({
+    sellerpilotContentMode: "manual_mvp",
+    params: {
+      ...(strictArguments().params as Record<string, unknown>),
+      ItemDescription: '<section lang="ja-JP"><h2>販売者確認済み商品</h2><p>承認された詳細画像で商品の内容をご案内します。</p></section>',
+    },
+  });
+  applyPreparedQoo10Images(
+    approvedArguments,
+    [normalizedImage(9).publicUrl],
+    roles.map((_role, index) => normalizedImage(index + 1).publicUrl),
+    roles.map((_role, index) => `承認済み商品詳細 ${index + 1}`),
+    roles,
+  );
+  const approved = qoo10ListingCreateExpectation({ arguments: approvedArguments, payload });
+  assert.equal(approved.ok, true, "the final prepared payload needs the exact eight-image binding");
 });
 
 test("Qoo10 verifies account-bound seller item, exact leaf category, and shipping setting before SetNewGoods, then verifies the exact live readback", async () => {

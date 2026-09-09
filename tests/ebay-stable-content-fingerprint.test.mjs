@@ -11,10 +11,6 @@ const serverRepresentativeMigrationUrl = new URL(
   "../supabase/migrations/20260902101500_bind_ebay_exact_server_representative.sql",
   import.meta.url,
 );
-const recoveryUrl = new URL(
-  "../lib/channels/ebay-exact-existing-qa-recovery.ts",
-  import.meta.url,
-);
 const routeUrl = new URL(
   "../app/api/admin/channel-operations/route.ts",
   import.meta.url,
@@ -32,8 +28,6 @@ const oldFingerprint =
   "bda8692c79751806c5a1103a955a13462522ad0adf889259d3a804ba2a4ac231";
 const stableFingerprint =
   "acb0e555ffeef218ce12fb30ee4b5e4824e8524d7dbc2ceab19d1076597940ef";
-const currentBaseFingerprint =
-  "8eeb374c49a1e4ec6a3d95c55e407993d8a5938dbc77d4f0c7d33b290cfd5591";
 const currentFingerprint =
   "4d3fb2652d0b7de0e4fb9c933aee4bec975ee6a0a081fb94530aae7418f7014e";
 const representativeSourcePath =
@@ -54,9 +48,8 @@ function extractFunction(source, signature) {
 }
 
 test("eBay stable fingerprint migration changes only the exact content permit contract", async () => {
-  const [migration, recovery, route] = await Promise.all([
+  const [migration, route] = await Promise.all([
     readFile(migrationUrl, "utf8"),
-    readFile(recoveryUrl, "utf8"),
     readFile(routeUrl, "utf8"),
   ]);
 
@@ -71,12 +64,7 @@ test("eBay stable fingerprint migration changes only the exact content permit co
   ]) {
     assert.match(migration, new RegExp(exactValue, "u"));
   }
-  assert.match(recovery, new RegExp(currentBaseFingerprint, "u"));
-  assert.match(recovery, new RegExp(currentFingerprint, "u"));
-  assert.match(
-    route,
-    /fingerprintArguments = ebayExactV101ArgumentsForFingerprint\(\s*channelFingerprintArguments/u,
-  );
+  assert.doesNotMatch(route, /ebayExactV101ArgumentsForFingerprint|sellerpilot_service_atomic_enqueue_ebay_exact/u);
   assert.match(
     migration,
     /permit\.request_fingerprint in \([\s\S]*bda8692c[\s\S]*acb0e555/u,

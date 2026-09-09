@@ -37,7 +37,8 @@ const initialDraft = {
   requested: false,
   shipping: { fee: 0 },
   description: "사실에 근거한 상품 설명",
-  facts: { noticeContent: { noticeCategoryName: "기타 재화", details: { "품명 및 모델명": "기존 머그", "제조국": "대한민국" } } },
+  sellerpilotCoupangBaseSku: "MUG-001",
+  facts: { noticeContent: { noticeCategoryName: "기타 재화", details: { "품명 및 모델명": "기존 머그", "제조국": "대한민국" } }, coupangOptionRows: [] },
   body: { deliveryCompanyCode: "", returnCharge: 0, items: [{ notices: [
     { noticeCategoryName: "기타 재화", noticeCategoryDetailName: "품명 및 모델명", content: "기존 머그" },
     { noticeCategoryName: "기타 재화", noticeCategoryDetailName: "제조국", content: "대한민국" },
@@ -186,7 +187,7 @@ test("통합 등록 실제 React 폼은 필터·검색과 false/0 및 쿠팡 고
     assert.equal(state.body.returnCharge, 3000);
 
     await page.getByRole("button", { name: /^전체 항목/ }).click();
-    assert.equal(await page.getByLabel("상품명").inputValue(), "자동 상품명");
+    assert.equal(await page.locator("#coupang-registration-title").inputValue(), "자동 상품명");
     await page.getByPlaceholder("상품명, 배송비, 고시…").fill("상품명");
     assert.deepEqual(await page.locator(".registration-field-title b").allTextContents(), ["상품명"]);
     await page.getByPlaceholder("상품명, 배송비, 고시…").fill("");
@@ -222,12 +223,31 @@ test("통합 등록 실제 React 폼은 필터·검색과 false/0 및 쿠팡 고
     assert.deepEqual(state.body.items[0].notices, [], "deleting the final native notice stores an explicit empty array");
     assert.deepEqual(state.facts.noticeContent.details, {}, "deleting the final native notice clears the synchronized envelope");
 
+    const optionForm = page.locator(".registration-option-form");
+    await optionForm.getByRole("button", { name: "옵션 상품 추가" }).click();
+    const suffixInput = optionForm.getByLabel("판매자 SKU 접미사");
+    await suffixInput.fill("");
+    await suffixInput.pressSequentially("RED-M");
+    assert.equal(await suffixInput.evaluate((element) => document.activeElement === element), true, "editing a SKU suffix must not remount the option row or lose focus");
+    await optionForm.getByLabel("옵션 상품명").fill("자동 상품명 빨강 M");
+    await optionForm.getByLabel("판매가 KRW").fill("10000");
+    await optionForm.getByLabel("재고").fill("3");
+    await optionForm.getByLabel("실제 모델번호").fill("MUG-RED-M");
+    await optionForm.getByLabel("바코드 없는 사유").fill("제조사 바코드 미부여");
+    await optionForm.getByLabel("옵션명").fill("색상");
+    await optionForm.getByLabel("옵션값").fill("빨강");
+    state = await draftState(page);
+    assert.equal(state.facts.coupangOptionRows.length, 1);
+    assert.equal(state.facts.coupangOptionRows[0].skuSuffix, "RED-M");
+    assert.deepEqual(state.facts.coupangOptionRows[0].purchaseOptions, [{ name: "색상", value: "빨강" }]);
+
     await page.getByRole("button", { name: "초안 변경 저장" }).click();
     const patches = await savedPatches(page);
     assert.ok(patches.some((patch) => JSON.stringify(patch.path) === JSON.stringify(["body", "deliveryCompanyCode"])), "saved patches preserve the operator-confirmed Coupang carrier code");
     assert.ok(patches.some((patch) => JSON.stringify(patch.path) === JSON.stringify(["body", "returnCharge"])), "saved patches preserve the operator-confirmed Coupang return fee");
     assert.ok(patches.some((patch) => JSON.stringify(patch.path) === JSON.stringify(["body", "items"])), "saved patches include the atomic native notices array");
     assert.ok(patches.some((patch) => JSON.stringify(patch.path) === JSON.stringify(["facts", "noticeContent", "details"]) && JSON.stringify(patch.value) === "{}"), "saved patches preserve the synchronized empty notice object");
+    assert.ok(patches.some((patch) => JSON.stringify(patch.path) === JSON.stringify(["facts", "coupangOptionRows"])), "saved patches preserve structured option rows without raw provider identity fields");
     await page.getByRole("button", { name: "초안 원본 복원" }).click();
     assert.equal(await notice.locator(".registration-notice-row").count(), 2);
     await page.getByRole("button", { name: "저장 초안 복원" }).click();
@@ -235,6 +255,7 @@ test("통합 등록 실제 React 폼은 필터·검색과 false/0 및 쿠팡 고
     assert.equal(state.body.deliveryCompanyCode, "CJGLS", "restoring saved patches preserves the operator-confirmed carrier code");
     assert.equal(state.body.returnCharge, 3000, "restoring saved patches preserves the operator-confirmed one-way return fee");
     assert.deepEqual(state.body.items[0].notices, [], "restoring saved patches preserves an explicit empty native notice array");
+    assert.equal(state.facts.coupangOptionRows[0].modelNo, "MUG-RED-M", "restoring saved patches preserves the seller-confirmed option model");
     assert.equal(await notice.locator(".registration-notice-row").count(), 0, "an empty native notice array remains authoritative after restore");
 
     await page.getByRole("button", { name: "초안 원본 복원" }).click();

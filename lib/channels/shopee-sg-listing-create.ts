@@ -12,7 +12,7 @@ export {
 type UnknownRecord = Record<string, unknown>;
 
 export const shopeeSgListingCreateContextContract =
-  "sellerpilot_shopee_sg_listing_create_context_v1" as const;
+  "sellerpilot_shopee_sg_listing_create_context_v2" as const;
 export const shopeeSgPreparedCreateEvidenceContract =
   "sellerpilot_shopee_sg_prepared_create_evidence_v1" as const;
 
@@ -42,8 +42,10 @@ export type ShopeeSgListingCreateContext = {
   targetId: string;
   targetCurrency: "SGD";
   targetPriceSgd: number;
+  targetPriceSource: "stored_channel_price";
   globalCurrency: "USD";
   globalPriceUsd: number;
+  globalPriceSource: "stored_global_price";
   quantity: number;
   categoryId: string;
   categoryPath: string[];
@@ -167,20 +169,15 @@ export function shopeeSgListingCreateContextFromArguments(
     || value.locale !== "en-SG"
     || !/^[1-9][0-9]{0,31}$/u.test(targetId)
     || value.targetCurrency !== "SGD"
+    || value.targetPriceSource !== "stored_channel_price"
     || value.globalCurrency !== "USD"
+    || value.globalPriceSource !== "stored_global_price"
     || !/^[1-9][0-9]{0,31}$/u.test(categoryId)
     || categoryPath.length < 2 || categoryPath.length > 12
     || new Set(categoryPath).size !== categoryPath.length
     || !categoryConfirmedAt || !rate
     || sourcePriceKrw === null || targetPriceSgd === null
     || globalPriceUsd === null || quantity === null) return null;
-  const declaredSgd = shopeeSgdPriceFromKrw(sourcePriceKrw, rate.krwPerSgd);
-  const declaredUsd = shopeeUsdPriceFromKrw(sourcePriceKrw, rate.krwPerUsd);
-  if (declaredSgd === null || declaredUsd === null
-    || Math.abs(declaredSgd - targetPriceSgd) > 0.000_001
-    || Math.abs(declaredUsd - globalPriceUsd) > 0.000_001) return null;
-
-
   return {
     contract: shopeeSgListingCreateContextContract,
     productId,
@@ -192,8 +189,10 @@ export function shopeeSgListingCreateContextFromArguments(
     targetId,
     targetCurrency: "SGD",
     targetPriceSgd,
+    targetPriceSource: "stored_channel_price",
     globalCurrency: "USD",
     globalPriceUsd,
+    globalPriceSource: "stored_global_price",
     quantity,
     categoryId,
     categoryPath,
@@ -288,6 +287,8 @@ export function buildShopeeSgListingCreateContext(input: {
   market: unknown;
   targetId: unknown;
   currency: unknown;
+  targetPrice?: unknown;
+  globalPrice?: unknown;
   rate: ShopeeKrwSgdUsdRateEvidence;
 }) {
   const productId = exactText(input.productId).toLowerCase();
@@ -307,8 +308,8 @@ export function buildShopeeSgListingCreateContext(input: {
   const sourcePriceKrw = finitePositive(manual.sellingPrice);
   const quantity = positiveInteger(product.onHand ?? manual.stock);
   if (!rate || sourcePriceKrw === null || quantity === null) return null;
-  const targetPriceSgd = shopeeSgdPriceFromKrw(sourcePriceKrw, rate.krwPerSgd);
-  const globalPriceUsd = shopeeUsdPriceFromKrw(sourcePriceKrw, rate.krwPerUsd);
+  const targetPriceSgd = finitePositive(input.targetPrice);
+  const globalPriceUsd = finitePositive(input.globalPrice);
   if (targetPriceSgd === null || globalPriceUsd === null) return null;
   return shopeeSgListingCreateContextFromArguments({
     sellerpilotShopeeSgCreateContext: {
@@ -322,8 +323,10 @@ export function buildShopeeSgListingCreateContext(input: {
       targetId: exactText(input.targetId),
       targetCurrency: exactText(input.currency).toUpperCase(),
       targetPriceSgd,
+      targetPriceSource: "stored_channel_price",
       globalCurrency: "USD",
       globalPriceUsd,
+      globalPriceSource: "stored_global_price",
       quantity,
       categoryId: assignment.categoryId,
       categoryPath,
@@ -569,11 +572,12 @@ export function assertShopeeSgCurrentPrice(input: {
   if (fetchedAtMs > nowMs + 60_000 || nowMs - fetchedAtMs > 10 * 60 * 1_000) {
     throw new Error("SHOPEE_KRW_SGD_RATE_STALE");
   }
-  const currentSgdValue = context.targetPriceSgd * input.authoritativeRate.krwPerSgd;
-  const currentUsdValue = context.globalPriceUsd * input.authoritativeRate.krwPerUsd;
-  const allowedKrwDrift = Math.max(1, context.sourcePriceKrw * 0.01);
-  if (Math.abs(currentSgdValue - context.sourcePriceKrw) > allowedKrwDrift
-    || Math.abs(currentUsdValue - context.sourcePriceKrw) > allowedKrwDrift) {
+  const sgdRateDrift = Math.abs(context.rate.krwPerSgd - input.authoritativeRate.krwPerSgd)
+    / input.authoritativeRate.krwPerSgd;
+  const usdRateDrift = Math.abs(context.rate.krwPerUsd - input.authoritativeRate.krwPerUsd)
+    / input.authoritativeRate.krwPerUsd;
+  if (!Number.isFinite(sgdRateDrift) || !Number.isFinite(usdRateDrift)
+      || sgdRateDrift > 0.01 || usdRateDrift > 0.01) {
     throw new Error("SHOPEE_KRW_SGD_AUTHORITATIVE_RATE_MISMATCH");
   }
   return context;

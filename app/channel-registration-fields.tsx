@@ -13,8 +13,44 @@ import {
   readCoupangLeadTimeDraftConfirmation,
   updateCoupangLeadTimeDraftConfirmation,
 } from "../lib/channels/coupang-registration-input";
+import type { CoupangOptionRow } from "../lib/product-registration/coupang/option-items";
 
 type Props = { channel: ActiveChannelKey; draft: Record<string,unknown>; requirements: RegistrationRequirement[]; editedPaths: string[]; onChange:(path:string[],value:RegistrationValue)=>void };
+function optionRecord(value: unknown): Record<string,unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string,unknown> : {};
+}
+function optionText(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "";
+}
+function optionNumber(value: unknown, fallback: number) {
+  const parsed = typeof value === "number"
+    ? value
+    : typeof value === "string" && value.trim() !== ""
+      ? Number(value)
+      : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+function readCoupangOptionRows(value: unknown): CoupangOptionRow[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((candidate) => {
+    const row = optionRecord(candidate);
+    const rawOptions = Array.isArray(row.purchaseOptions) ? row.purchaseOptions : [];
+    return {
+      skuSuffix: optionText(row.skuSuffix),
+      itemName: optionText(row.itemName),
+      barcode: optionText(row.barcode),
+      modelNo: optionText(row.modelNo),
+      emptyBarcodeReason: optionText(row.emptyBarcodeReason),
+      salePrice: optionNumber(row.salePrice, 0),
+      stock: optionNumber(row.stock, 0),
+      unitCount: optionNumber(row.unitCount, 1),
+      purchaseOptions: rawOptions.map((candidateOption) => {
+        const option = optionRecord(candidateOption);
+        return { name: optionText(option.name), value: optionText(option.value) };
+      }),
+    };
+  });
+}
 export function ChannelRegistrationFields({channel,draft,requirements,editedPaths,onChange}:Props) {
   const [view,setView]=useState<"review"|"all">("review");
   const [search,setSearch]=useState("");
@@ -42,6 +78,25 @@ export function ChannelRegistrationFields({channel,draft,requirements,editedPath
   const coupangItemPaths=channel==="coupang"?coupangLeadTimeItemPaths(draft):[];
   const coupangCommonDay=coupangCommonLeadTimeDay(draft);
   const coupangRequirement=(key:string)=>requirements.find((requirement)=>requirement.key===key);
+  const coupangOptionRows=readCoupangOptionRows(registrationValueAt(draft,["facts","coupangOptionRows"]));
+  const writeCoupangOptionRows=(rows:CoupangOptionRow[])=>onChange(["facts","coupangOptionRows"],rows);
+  const updateCoupangOptionRow=(index:number,update:Partial<CoupangOptionRow>)=>writeCoupangOptionRows(coupangOptionRows.map((row,rowIndex)=>rowIndex===index?{...row,...update}:row));
+  const addCoupangOptionRow=()=>{
+    const item=optionRecord(registrationValueAt(draft,["body","items","0"]));
+    const sellerSku=optionText(item.externalVendorSku);
+    const modelNo=optionText(item.modelNo);
+    writeCoupangOptionRows([...coupangOptionRows,{
+      skuSuffix:`OPT${coupangOptionRows.length+1}`,
+      itemName:optionText(item.itemName),
+      barcode:optionText(item.barcode),
+      modelNo:modelNo===sellerSku?"":modelNo,
+      emptyBarcodeReason:optionText(item.emptyBarcodeReason),
+      salePrice:optionNumber(item.salePrice,0),
+      stock:optionNumber(item.maximumBuyCount,0),
+      unitCount:optionNumber(item.unitCount,1),
+      purchaseOptions:[{name:"",value:""}],
+    }]);
+  };
   const writeCoupangConfirmation=(update:Parameters<typeof updateCoupangLeadTimeDraftConfirmation>[1])=>
     onChange([...coupangLeadTimeConfirmationPath],asRegistrationValue(updateCoupangLeadTimeDraftConfirmation(draft,update)));
   const writeNotices=(rows:typeof noticeRows,group=noticeGroup)=>{
@@ -64,6 +119,7 @@ export function ChannelRegistrationFields({channel,draft,requirements,editedPath
       return <label className={`registration-field ${field.issue?"needs-review":""}`} key={key}><span className="registration-field-title"><b>{field.label}</b><small>{field.required?"필수":"추가정보"}</small></span><span className={`registration-value-source ${edited?"human":""}`}>{edited?"직접 수정":value===""?"입력 필요":"자동 입력 · 검토 가능"}</span>{field.inputType==="boolean"?<select {...inputProps} value={value} onChange={event=>change(event.target.value)}><option value="">확인 후 선택</option><option value="true">예</option><option value="false">아니요</option></select>:field.options?<select {...inputProps} value={value} onChange={event=>change(event.target.value)}><option value="">확인 후 선택</option>{field.options.map(option=><option key={option}>{option}</option>)}</select>:longText?<textarea {...inputProps} rows={3} value={value} onChange={event=>change(event.target.value)} />:<input {...inputProps} type={field.inputType==="number"?"number":"text"} step={field.inputType==="number"?"any":undefined} value={value} onChange={event=>change(event.target.value)} />}{field.issue&&<small className="registration-field-error">{field.issue}</small>}{field.help&&<small id={`${channel}-${encodeURIComponent(key)}-help`}>{field.help}</small>}</label>;
     })}</div>
     {!visible.length&&<p className="registration-empty">{search?"일치하는 항목이 없습니다.":"현재 보기에서 추가로 입력할 항목이 없습니다. 전체 항목에서 자동 입력값을 확인할 수 있습니다."}</p>}
+    {channel==="coupang"&&<fieldset className="registration-option-form"><legend>쿠팡 옵션 구성</legend><p>옵션이 없는 단일 상품은 아래 목록을 비워 두세요. 옵션 상품은 행을 추가해 옵션별 가격·재고·수량·바코드 또는 실제 모델번호를 입력합니다.</p>{coupangOptionRows.map((row,index)=><div className="registration-option-row" key={index}><header><strong>옵션 상품 {index+1}</strong><button type="button" onClick={()=>writeCoupangOptionRows(coupangOptionRows.filter((_,rowIndex)=>rowIndex!==index))}>옵션 삭제</button></header><div className="registration-option-grid"><label><span>판매자 SKU 접미사</span><input value={row.skuSuffix} onChange={event=>updateCoupangOptionRow(index,{skuSuffix:event.target.value.trim().toUpperCase()})} placeholder="예: RED-M" /></label><label><span>옵션 상품명</span><input value={row.itemName} onChange={event=>updateCoupangOptionRow(index,{itemName:event.target.value})} /></label><label><span>판매가 KRW</span><input type="number" min="1" step="1" value={row.salePrice||""} onChange={event=>updateCoupangOptionRow(index,{salePrice:event.target.value===""?0:Number(event.target.value)})} /></label><label><span>재고</span><input type="number" min="1" max="99999" step="1" value={row.stock||""} onChange={event=>updateCoupangOptionRow(index,{stock:event.target.value===""?0:Number(event.target.value)})} /></label><label><span>판매 구성 수량</span><input type="number" min="1" max="99999" step="1" value={row.unitCount||""} onChange={event=>updateCoupangOptionRow(index,{unitCount:event.target.value===""?0:Number(event.target.value)})} /></label><label><span>GTIN 바코드</span><input inputMode="numeric" value={row.barcode} onChange={event=>updateCoupangOptionRow(index,{barcode:event.target.value.trim(),emptyBarcodeReason:event.target.value.trim()?"":row.emptyBarcodeReason})} /></label><label><span>실제 모델번호</span><input value={row.modelNo} onChange={event=>updateCoupangOptionRow(index,{modelNo:event.target.value})} /><small>판매자 SKU를 모델번호로 복사하지 않습니다.</small></label><label><span>바코드 없는 사유</span><input value={row.emptyBarcodeReason} disabled={Boolean(row.barcode)} onChange={event=>updateCoupangOptionRow(index,{emptyBarcodeReason:event.target.value})} /></label></div><strong>구매 옵션값</strong>{row.purchaseOptions.map((option,optionIndex)=><div className="registration-option-value" key={optionIndex}><label><span>옵션명</span><input value={option.name} onChange={event=>updateCoupangOptionRow(index,{purchaseOptions:row.purchaseOptions.map((current,currentIndex)=>currentIndex===optionIndex?{...current,name:event.target.value}:current)})} placeholder="예: 색상" /></label><label><span>옵션값</span><input value={option.value} onChange={event=>updateCoupangOptionRow(index,{purchaseOptions:row.purchaseOptions.map((current,currentIndex)=>currentIndex===optionIndex?{...current,value:event.target.value}:current)})} placeholder="예: 빨강" /></label><button type="button" onClick={()=>updateCoupangOptionRow(index,{purchaseOptions:row.purchaseOptions.filter((_,currentIndex)=>currentIndex!==optionIndex)})}>옵션값 삭제</button></div>)}<button type="button" onClick={()=>updateCoupangOptionRow(index,{purchaseOptions:[...row.purchaseOptions,{name:"",value:""}]})}>구매 옵션값 추가</button></div>)}<button type="button" onClick={addCoupangOptionRow}>옵션 상품 추가</button><small>입력값은 초안에 저장되며 등록 직전에 채널 payload로 변환됩니다. SKU 본체와 카테고리 식별값은 변경하지 않습니다.</small></fieldset>}
     {channel==="coupang"&&<fieldset className="registration-shipping-form"><legend>쿠팡 출고 설정 확인</legend><p>WING의 현재 설정에서 출고 소요일과 기준을 직접 대조하세요. 문구의 범위나 기본값으로 일수를 추정하지 않습니다.</p>
       <label><span>택배사 코드</span><input value={typeof coupangDeliveryCompanyCode==="string"||typeof coupangDeliveryCompanyCode==="number"?String(coupangDeliveryCompanyCode):""} onChange={event=>onChange(["body","deliveryCompanyCode"],event.target.value.trim().toUpperCase())} placeholder="예: CJGLS" /><small>반품지 API의 계약 택배사 코드를 우선 사용합니다. API가 빈값을 반환할 때만 여기에서 WING으로 확인한 코드를 사용합니다.</small></label>
       <label><span>반품 편도 배송비 KRW</span><input type="number" min="1" max="250000" step="1" value={typeof coupangReturnCharge==="string"||typeof coupangReturnCharge==="number"?String(coupangReturnCharge):""} onChange={event=>onChange(["body","returnCharge"],event.target.value===""?null:Number(event.target.value))} /><small>반품지 API의 양수 비용을 우선 사용합니다. API가 빈값일 때만 WING에서 확인한 편도 비용을 사용하며, 왕복 비용은 편도 비용의 두 배로 확인하세요.</small></label>

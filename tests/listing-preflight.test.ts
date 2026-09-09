@@ -100,6 +100,60 @@ test("Coupang preflight applies the exact identifier and purchase-option rules t
   assert.equal(inspectListingDraft("coupang", noGtin).find((row) => row.key === "purchase-option")?.status, "manual");
 });
 
+test("Coupang preflight validates saved option rows through the same payload compiler", () => {
+  const draft = {
+    sellerpilotCoupangBaseSku: "CP-OPTIONS",
+    facts: {
+      coupangOptionRows: [{
+        skuSuffix: "RED-M",
+        itemName: "옵션 상품 빨강 M",
+        barcode: "",
+        modelNo: "BRAND-RED-M",
+        emptyBarcodeReason: "제조사 바코드 미부여",
+        salePrice: 10_000,
+        stock: 2,
+        unitCount: 1,
+        purchaseOptions: [{ name: "색상", value: "빨강" }, { name: "사이즈", value: "M" }],
+      }, {
+        skuSuffix: "BLUE-L",
+        itemName: "옵션 상품 파랑 L",
+        barcode: "8802259030799",
+        modelNo: "",
+        emptyBarcodeReason: "",
+        salePrice: 11_000,
+        stock: 3,
+        unitCount: 1,
+        purchaseOptions: [{ name: "색상", value: "파랑" }, { name: "사이즈", value: "L" }],
+      }],
+    },
+    body: {
+      brand: "SellerPilotBrand",
+      items: [{
+        itemName: "기본 상품",
+        externalVendorSku: "CP-OPTIONS",
+        barcode: "",
+        emptyBarcode: true,
+        emptyBarcodeReason: "바코드 없음",
+        modelNo: "",
+        maximumBuyCount: 1,
+        unitCount: 1,
+        attributes: [{ attributeTypeName: "수량", attributeValueName: "1개", exposed: "EXPOSED" }],
+      }],
+    },
+  };
+  const requirements = inspectListingDraft("coupang", draft);
+  assert.equal(requirements.find((row) => row.key === "product-identifier")?.status, "ready");
+  assert.equal(requirements.find((row) => row.key === "purchase-option")?.status, "ready");
+
+  draft.facts.coupangOptionRows[1].purchaseOptions = [];
+  const invalid = inspectListingDraft("coupang", draft);
+  assert.equal(invalid.find((row) => row.key === "product-identifier")?.status, "manual");
+  assert.equal(invalid.find((row) => row.key === "purchase-option")?.status, "manual");
+
+  const malformed = { ...draft, facts: { coupangOptionRows: true } };
+  assert.equal(inspectListingDraft("coupang", malformed).find((row) => row.key === "product-identifier")?.status, "manual");
+});
+
 test("Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content", () => {
   const draft = {
     facts: { manufacturer: "롯데", countryOfOrigin: "대한민국", material: "밀가루" },

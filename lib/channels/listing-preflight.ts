@@ -8,6 +8,7 @@ import {
   hasValidCoupangProductIdentifier,
   hasValidCoupangPurchaseOption,
 } from "../product-registration/coupang/create-required-fields";
+import { compileCoupangOptionItems } from "../product-registration/coupang/option-items";
 import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
   elevenstProcessedFoodCategoryId,
@@ -147,7 +148,27 @@ function coupangEveryCreateItem(
   draft: Record<string, unknown>,
   predicate: (item: Record<string, unknown>) => boolean,
 ) {
-  const items = coupangCreateItems(valueAt(draft, ["body", "items"]));
+  let body = valueAt(draft, ["body"]);
+  const facts = valueAt(draft, ["facts"]);
+  const hasOptionRows = Boolean(facts && typeof facts === "object" && !Array.isArray(facts)
+    && Object.hasOwn(facts as Record<string, unknown>, "coupangOptionRows"));
+  const optionRows = hasOptionRows
+    ? (facts as Record<string, unknown>).coupangOptionRows
+    : [];
+  if (!Array.isArray(optionRows)) return false;
+  if (optionRows.length
+    && body && typeof body === "object" && !Array.isArray(body)) {
+    try {
+      body = compileCoupangOptionItems(
+        body as Record<string, unknown>,
+        optionRows,
+        valueAt(draft, ["sellerpilotCoupangBaseSku"]),
+      );
+    } catch {
+      return false;
+    }
+  }
+  const items = coupangCreateItems(valueAt(body, ["items"]));
   return Boolean(items && items.every(predicate));
 }
 

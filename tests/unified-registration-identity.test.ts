@@ -102,3 +102,10 @@ test("restoring stale or malicious parent patches cannot smuggle bound identitie
     "a direct protected path remains ignored rather than applied",
   );
 });
+
+test("the server-derived Coupang option base SKU cannot be edited or restored from patches",()=>{
+  const base={sellerpilotCoupangBaseSku:"CP-BASE",facts:{coupangOptionRows:[]},body:{items:[{externalVendorSku:"CP-BASE"}]}};
+  const edited=structuredClone(base);edited.sellerpilotCoupangBaseSku="CP-ATTACK";
+  assert.throws(()=>registrationPatches(base,edited),/채널 상품 식별 구조/);
+  assert.deepEqual(applyRegistrationPatches(base,[{path:["sellerpilotCoupangBaseSku"],value:"CP-ATTACK"}]),base);
+});

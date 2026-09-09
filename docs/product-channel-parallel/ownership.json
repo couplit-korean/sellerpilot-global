@@ -15,8 +15,8 @@
       "branch": "codex/product-shopee-20260909",
       "report": "docs/product-channel-parallel/reports/shopee",
       "port": 3211,
-      "status": "active",
-      "lastCursor": "28df907c-6c56-4683-a153-362281fe1ea0:9",
+      "status": "idle",
+      "lastCursor": "28df907c-6c56-4683-a153-362281fe1ea0:10",
       "turnId": "01a08501-88c1-71e2-b7e8-974e6ac2473e",
       "startedAt": 1788927053,
       "dispatchAccepted": true,
@@ -27,7 +27,9 @@
       "reasoningEffort": "high",
       "modelOverrideAccepted": true,
       "observedTitle": "4번 상품등록 · Shopee",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralBasicFlowVerified": true,
+      "centralIntegrationRecord": "integrations/20260909-review-06.md"
     },
     {
       "number": 2,
@@ -39,8 +41,8 @@
       "branch": "codex/product-lazada-20260909",
       "report": "docs/product-channel-parallel/reports/lazada",
       "port": 3212,
-      "status": "idle",
-      "lastCursor": "5acfbd6c-14be-4844-a3f6-2f7ce1768771:9",
+      "status": "notLoaded",
+      "lastCursor": "5acfbd6c-14be-4844-a3f6-2f7ce1768771:10",
       "turnId": "01a084e7-716e-7710-9e6c-763471eaeed4",
       "startedAt": 1788927058,
       "dispatchAccepted": true,
@@ -50,8 +52,9 @@
       "startupConfirmed": true,
       "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-lazada-20260909/docs/product-channel-parallel/reports/lazada/status.json",
       "observedTitle": "6번 상품등록 · Lazada",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00",
-      "centralIntegrationRecord": "integrations/20260909-review-04.md"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralIntegrationRecord": "integrations/20260909-review-04.md",
+      "centralBasicFlowVerified": true
     },
     {
       "number": 3,
@@ -63,8 +66,8 @@
       "branch": "codex/product-temu-20260909",
       "report": "docs/product-channel-parallel/reports/temu",
       "port": 3213,
-      "status": "idle",
-      "lastCursor": "4ddcb618-c3ec-4471-9b3a-450431033f88:9",
+      "status": "notLoaded",
+      "lastCursor": "4ddcb618-c3ec-4471-9b3a-450431033f88:10",
       "turnId": "01a084ad-1f7e-7020-815f-d97ead9f881d",
       "startedAt": 1788927063,
       "dispatchAccepted": true,
@@ -75,8 +78,9 @@
       "reasoningEffort": "high",
       "modelOverrideAccepted": true,
       "observedTitle": "7번 상품등록 · Temu",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00",
-      "centralIntegrationRecord": "integrations/20260909-review-04.md"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralIntegrationRecord": "integrations/20260909-review-04.md",
+      "centralBasicFlowVerified": true
     },
     {
       "number": 4,
@@ -88,9 +92,9 @@
       "branch": "codex/product-smartstore-20260909",
       "report": "docs/product-channel-parallel/reports/smartstore",
       "port": 3214,
-      "status": "idle",
-      "lastCursor": "2448c8ca-ab4b-44f1-a21a-8818cce942ff:10",
-      "turnId": "01a084d3-b382-7302-949a-b4f818cf0d29",
+      "status": "active",
+      "lastCursor": "2448c8ca-ab4b-44f1-a21a-8818cce942ff:12",
+      "turnId": "01a08559-d80f-78e3-8a5a-d8159f606d19",
       "startedAt": 1788927065,
       "dispatchAccepted": true,
       "startupConfirmed": true,
@@ -100,8 +104,10 @@
       "reasoningEffort": "high",
       "modelOverrideAccepted": true,
       "observedTitle": "4번 상품등록 · 스마트스토어",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00",
-      "centralIntegrationRecord": "integrations/20260909-review-04.md"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralIntegrationRecord": "integrations/20260909-review-04.md",
+      "centralBasicFlowVerified": true,
+      "currentAssignment": "current Commerce API read-only connection verification"
     },
     {
       "number": 5,
@@ -114,8 +120,8 @@
       "report": "docs/product-channel-parallel/reports/coupang",
       "port": 3215,
       "status": "idle",
-      "lastCursor": "85cc6473-a085-4caf-89e9-a778e0fa9904:17",
-      "turnId": "01a084b8-5ca4-7510-beab-0865197c8c50",
+      "lastCursor": "85cc6473-a085-4caf-89e9-a778e0fa9904:20",
+      "turnId": "01a08514-822a-7433-bc47-e1fcdb04aec9",
       "startedAt": 1788927116,
       "dispatchAccepted": true,
       "model": "gpt-5.6-sol",
@@ -124,7 +130,9 @@
       "startupConfirmed": true,
       "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-coupang-20260909/docs/product-channel-parallel/reports/coupang/status.json",
       "observedTitle": "5번 상품등록 · 쿠팡",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralBasicFlowVerified": true,
+      "centralIntegrationRecord": "integrations/20260909-review-06.md"
     },
     {
       "number": 6,
@@ -136,9 +144,9 @@
       "branch": "codex/product-elevenst-20260909",
       "report": "docs/product-channel-parallel/reports/elevenst",
       "port": 3216,
-      "status": "idle",
-      "lastCursor": "4224add3-5868-4bbf-a5cc-79f444fa8589:10",
-      "turnId": "01a084ad-eb39-71f0-91a8-761565d267a9",
+      "status": "notLoaded",
+      "lastCursor": "4224add3-5868-4bbf-a5cc-79f444fa8589:11",
+      "turnId": "01a084b8-5db3-7133-9b81-8b056b238c8d",
       "startedAt": 1788927068,
       "dispatchAccepted": true,
       "startupConfirmed": true,
@@ -148,7 +156,8 @@
       "reasoningEffort": "high",
       "modelOverrideAccepted": true,
       "observedTitle": "6번 상품등록 · 11번가",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralBasicFlowVerified": true
     },
     {
       "number": 7,
@@ -160,8 +169,8 @@
       "branch": "codex/product-qoo10-20260909",
       "report": "docs/product-channel-parallel/reports/qoo10",
       "port": 3217,
-      "status": "active",
-      "lastCursor": "31cf2f08-25ed-4dea-a2d8-ca07df7c1b32:10",
+      "status": "idle",
+      "lastCursor": "31cf2f08-25ed-4dea-a2d8-ca07df7c1b32:11",
       "turnId": "01a08510-ea8e-7561-9810-1a754dabd93c",
       "startedAt": 1788927070,
       "dispatchAccepted": true,
@@ -171,7 +180,9 @@
       "startupConfirmed": true,
       "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-qoo10-20260909/docs/product-channel-parallel/reports/qoo10/status.json",
       "observedTitle": "7번 상품등록 · Qoo10",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00"
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralBasicFlowVerified": true,
+      "centralIntegrationRecord": "integrations/20260909-review-06.md"
     },
     {
       "number": 8,
@@ -183,8 +194,8 @@
       "branch": "codex/product-ebay-20260909",
       "report": "docs/product-channel-parallel/reports/ebay",
       "port": 3218,
-      "status": "active",
-      "lastCursor": "0bb8f970-0d0b-4b0d-a541-ceb541df5967:10",
+      "status": "idle",
+      "lastCursor": "0bb8f970-0d0b-4b0d-a541-ceb541df5967:11",
       "turnId": "01a0850f-c2ee-7fd0-9cf7-549c863ef5ac",
       "startedAt": 1788927073,
       "dispatchAccepted": true,
@@ -194,9 +205,10 @@
       "model": "gpt-5.6-sol",
       "reasoningEffort": "high",
       "modelOverrideAccepted": true,
-      "observedTitle": "8번 상품등록 · eBay",
-      "lastCheckedAt": "2026-09-09T07:29:33.575649+00:00",
-      "centralIntegrationRecord": "integrations/20260909-review-05.md"
+      "observedTitle": "5번 상품등록 · eBay",
+      "lastCheckedAt": "2026-09-09T08:49:31.217491+00:00",
+      "centralIntegrationRecord": "integrations/20260909-review-06.md",
+      "centralBasicFlowVerified": true
     }
   ],
   "sidebarSectionId": "7d8955fd-e468-4cfa-afda-95da579960a3",

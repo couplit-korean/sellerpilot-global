@@ -89,6 +89,7 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(JSON.stringify(draft).includes("detail-overview"), false);
   assert.equal(missingNativeValues("qoo10", draft).some((item) => item.includes("dedicated marketplace")), false);
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
+  assert.equal(missingNativeValues("qoo10", draft).includes("approved marketplace detail images (8)"), true);
 });
 
 test("one rejected channel localization keeps every unrelated draft available", () => {
@@ -528,6 +529,26 @@ test("manual MVP image contract reaches URL validation instead of the AI detail 
   );
 });
 
+test("Qoo10 final preparation rejects intake-only manual source images before normalization", async () => {
+  await assert.rejects(
+    prepareMarketplaceImages({} as SupabaseClient, "qoo10", {
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      sellerpilotAssets: {
+        contentMode: "manual_mvp",
+        detailAssetMode: "manual_source",
+        galleryImageUrls: ["https://example.test/manual.jpg"],
+        detailImageUrls: ["https://example.test/manual.jpg"],
+      },
+      params: {
+        StandardImage: "https://example.test/manual.jpg",
+        ItemDescription: "<p>판매자 확인 설명</p>",
+      },
+    }),
+    /MARKETPLACE_DETAIL_IMAGE_REQUIRED:QOO10_MANUAL_SOURCE_INTAKE_ONLY/,
+  );
+});
+
 test("Qoo10 manual content mode cannot bypass the verified create context", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
@@ -599,6 +620,7 @@ test("manual intake route validates preserved photos and the client retries the 
   assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)[\s\S]{0,360}onManualProductCreated\(\)/);
   assert.match(page, /onManualProductCreated=\{\(\) => void operations\.reloadAfterMutation\(\)\}/);
   assert.match(marketplaceImages, /uniqueStrings\(manualSourceMode \? gallery : \[\.\.\.gallery, \.\.\.details\]\)/);
+  assert.match(studio, /채널 전송 전에는 상세페이지 8장을 별도로 제작·승인해야 합니다/);
   assert.match(marketplaceImages, /if \(!productPatch && index > 0\) product\[field\] = ""/);
   assert.doesNotMatch(route, /sellerpilot_create_ai_job/);
 });

@@ -5,13 +5,13 @@ export type RegistrationValue = string | number | boolean | null | RegistrationV
 export type RegistrationPatch = { path: string[]; value: RegistrationValue };
 export type RegistrationField = { path: string[]; label: string; value: RegistrationValue; required: boolean; issue?: string; help?: string; inputType?: "number" | "boolean"; options?: string[] };
 const blocked = new Set(["__proto__", "prototype", "constructor"]);
-const hidden = new Set(["sellerpilotAssets", "sellerpilotLazadaPricePolicy", "sellerpilotLazadaPricePolicyRequired", "sellerpilotDraftError", "resumeRemoteId", "shopId", "country", "sku"]);
+const hidden = new Set(["sellerpilotAssets", "sellerpilotCoupangBaseSku", "sellerpilotLazadaPricePolicy", "sellerpilotLazadaPricePolicyRequired", "sellerpilotDraftError", "resumeRemoteId", "shopId", "country", "sku"]);
 const editableInternalPaths = [
   ["sellerpilotAssets", "shipping", "shippingRuleReview"],
   ["sellerpilotAssets", "shipping", "packagingRuleReview"],
   ["sellerpilotAssets", "shipping", "coupangLeadTimeConfirmation"],
 ] as const;
-const boundKeys = new Set(["SellerCode", "sellerPrdCd", "sellerManagementCode", "externalVendorSku", "externalGoodsId", "externalSkuId", "SellerSku", "sellerSku", "sku", "marketplaceId", "categoryId", "category_id", "leafCategoryId", "displayCategoryCode", "dispCtgrNo", "SecondSubCat", "PrimaryCategory", "extCatName", "sellerProductId", "productId", "vendorId"]);
+const boundKeys = new Set(["SellerCode", "sellerPrdCd", "sellerManagementCode", "externalVendorSku", "externalGoodsId", "externalSkuId", "SellerSku", "sellerSku", "sku", "sellerpilotCoupangBaseSku", "marketplaceId", "categoryId", "category_id", "leafCategoryId", "displayCategoryCode", "dispCtgrNo", "SecondSubCat", "PrimaryCategory", "extCatName", "sellerProductId", "productId", "vendorId"]);
 const registrationIdentityChangedMessage = "채널 상품 식별 구조(SKU·카테고리)가 변경되어 저장할 수 없습니다. 원래 채널 초안을 다시 불러온 뒤 값만 수정해 주세요.";
 const labels: Record<string,string> = {
   ItemTitle:"현지 상품명", PromotionName:"홍보 문구", ItemDescription:"상품 설명", StandardImage:"대표 이미지 주소", ItemPrice:"판매가", RetailPrice:"정가", ItemQty:"판매 가능 수량", ShippingNo:"배송비 코드", AvailableDateType:"출고일 유형", AvailableDateValue:"출고 소요일", ProductionPlace:"원산지", ProductionPlaceType:"원산지 유형", Keyword:"검색어", ExpireDate:"판매 종료일", ContactTel:"고객상담 연락처", TaxRate:"세금 유형", AdultYN:"성인용 여부", IndustrialCode:"상품 바코드", IndustrialCodeType:"바코드 유형", BrandNo:"브랜드 코드", ManufactureNo:"제조사 코드", OuterSecondSubCat:"외부 분류", Drugtype:"의약품 분류", AdditionalOption:"추가 옵션", ItemType:"상품 유형",
@@ -158,7 +158,7 @@ export function applyRegistrationPatches(base: Record<string,unknown>, patches: 
 export function channelRegistrationFields(channel: ActiveChannelKey,draft: Record<string,unknown>,requirements: RegistrationRequirement[]): RegistrationField[] {
   const fields=new Map<string,RegistrationField>();
   const walk=(value: unknown,path: string[],depth=0)=>{
-    if(depth>16 || (path.length && !editableRegistrationPath(path)) || (channel === "coupang" && (path.includes("notices") || path.includes("noticeContent")))) return;
+    if(depth>16 || (path.length && !editableRegistrationPath(path)) || (channel === "coupang" && (path.includes("notices") || path.includes("noticeContent") || path.includes("coupangOptionRows")))) return;
     if(Array.isArray(value)) value.forEach((child,index)=>walk(child,[...path,String(index)],depth+1));
     else if(value && typeof value==="object") Object.entries(value).forEach(([key,child])=>walk(child,[...path,key],depth+1));
     else if(path.length && value!=="SERVER_MANAGED" && value!=="PROGRAM_UPLOAD_PENDING") fields.set(JSON.stringify(path),{path,label:registrationFieldLabel(path),value:(value??null) as RegistrationValue,required:false,inputType:typeof value==="number"?"number":typeof value==="boolean"?"boolean":undefined});
