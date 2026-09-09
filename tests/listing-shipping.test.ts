@@ -74,7 +74,7 @@ test("Coupang and Smartstore drafts carry the entered fee in official provider f
   assert.throws(() => validatedSmartstoreShippingInfo(smartstore.originProduct.deliveryInfo), /SHIPPING_POLICY_CONFIRMATION_REQUIRED/);
 });
 
-test("shipping policy inspection prevents free/paying fee drift and unimplemented 11st paid shipping", () => {
+test("shipping policy inspection prevents free/paying fee drift including 11st fixed fees", () => {
   const input = context();
   input.manualFields.shippingRule = "";
   input.manualFields.packagingRule = "";
@@ -104,6 +104,11 @@ test("shipping policy inspection prevents free/paying fee drift and unimplemente
 
   const elevenst = draft("elevenst", input);
   ((elevenst.sellerpilotAssets as Record<string, unknown>).shipping as Record<string, unknown>).policyReview = "확인";
+  assert.doesNotThrow(() => assertListingShippingReady("elevenst", elevenst, "listing.create"));
+  const native = elevenst.product as Record<string, unknown>;
+  assert.equal(native.dlvCstInstBasiCd, "02");
+  assert.equal(native.dlvCst1, String(input.manualFields.shippingFeeKrw));
+  native.dlvCst1 = "0";
   assert.throws(() => assertListingShippingReady("elevenst", elevenst, "listing.create"), /shipping-supported-fee/);
 });
 

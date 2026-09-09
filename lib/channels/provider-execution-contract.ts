@@ -5,14 +5,7 @@ export type ServerlessGatewayExecutionHooks = {
   beginOAuthProviderCall?: () => Promise<void>;
   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
   beginProviderMutation: (options?: { fresh?: boolean }) => Promise<void>;
-  bindCoupangRepresentativePrewrite?: (
-    images: Array<{
-      imageOrder: number;
-      imageType: "REPRESENTATION" | "DETAIL";
-      cdnPath: string;
-      vendorPath: string;
-    }>,
-  ) => Promise<{ prewriteSnapshotSha256: string }>;
+
   assertLeaseHealthy: () => Promise<void>;
   reserveProviderRequest?: () => Promise<void>;
 };

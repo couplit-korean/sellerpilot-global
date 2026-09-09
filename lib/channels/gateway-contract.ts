@@ -60,8 +60,8 @@ export const gatewayClaimSchema = z.object({
   // executable as legacy jobs, while every new admin request injects the
   // normalized default before it is enqueued.
   if (listingOperationUsesPublicationIntent(value.operation)
-      && publicationIntent !== undefined
-      && !listingPublicationIntentSchema.safeParse(publicationIntent).success) {
+    && publicationIntent !== undefined
+    && !listingPublicationIntentSchema.safeParse(publicationIntent).success) {
     context.addIssue({
       code: "custom",
       path: ["request", "arguments", "publicationIntent"],
@@ -104,19 +104,19 @@ function validShopeeInquiryContinuation(next: Record<string, unknown>) {
     typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
   if (!integer(next.pageSize, 1, 100)) return false;
   if (next.sellerpilotPaginationEpoch !== undefined
-      && !integer(next.sellerpilotPaginationEpoch, 0, Number.MAX_SAFE_INTEGER)) return false;
+    && !integer(next.sellerpilotPaginationEpoch, 0, Number.MAX_SAFE_INTEGER)) return false;
   const trail = next.sellerpilotPaginationTrail;
   if (trail !== undefined && (!Array.isArray(trail) || trail.length > 50
-      || trail.some((entry) => typeof entry !== "string" || !/^[a-f0-9]{64}$/.test(entry)))) return false;
+    || trail.some((entry) => typeof entry !== "string" || !/^[a-f0-9]{64}$/.test(entry)))) return false;
   if (next.kind === "product_review") {
     return typeof next.cursor === "string" && next.cursor.trim().length > 0 && next.cursor.length <= 500;
   }
   if (next.kind !== "return_refund"
-      || !integer(next.createTimeFrom, 1, 9_999_999_999)
-      || !integer(next.createTimeTo, 1, 9_999_999_999)
-      || Number(next.createTimeTo) <= Number(next.createTimeFrom)
-      || Number(next.createTimeTo) - Number(next.createTimeFrom) > 15 * 86_400
-      || !integer(next.pageNo, 1, 1_000_000)) return false;
+    || !integer(next.createTimeFrom, 1, 9_999_999_999)
+    || !integer(next.createTimeTo, 1, 9_999_999_999)
+    || Number(next.createTimeTo) <= Number(next.createTimeFrom)
+    || Number(next.createTimeTo) - Number(next.createTimeFrom) > 15 * 86_400
+    || !integer(next.pageNo, 1, 1_000_000)) return false;
   if (next.returnQueue === undefined) return next.nextPageNo === undefined;
   const queue = next.returnQueue;
   return Array.isArray(queue) && queue.length > 0 && queue.length <= Number(next.pageSize)
@@ -160,10 +160,10 @@ const operationResultSchema = z.object({
   safeMessage: z.string().min(1).max(1_000),
 }).superRefine((value, context) => {
   if (listingOperationRequiresVerifiedRemoteState(value.operation)
-      && !value.publicationStateContract
-      && (value.publicationIntent !== undefined
-        || value.remoteState !== undefined
-        || value.publicationFulfilled !== undefined)) {
+    && !value.publicationStateContract
+    && (value.publicationIntent !== undefined
+      || value.remoteState !== undefined
+      || value.publicationFulfilled !== undefined)) {
     context.addIssue({
       code: "custom",
       path: ["publicationStateContract"],
@@ -250,31 +250,31 @@ const operationResultSchema = z.object({
       ? nonEmpty(query.cursor)
       : value.channel === "shopee" && value.operation === "inquiries.list"
         ? validShopeeInquiryContinuation(next)
-      : value.channel === "lazada" && value.operation === "orders.list"
-        ? nonNegativeInteger(queryParams.offset)
-        : value.channel === "coupang" && value.operation === "orders.list"
-          ? nonEmpty(query.nextToken)
-          : value.channel === "coupang" && value.operation === "inquiries.list"
-            ? next.kind === "exchange_request" ? nonEmpty(query.nextToken) : positiveInteger(query.pageNum)
-            : value.channel === "smartstore" && value.operation === "orders.list"
-              ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
-              : value.channel === "smartstore" && value.operation === "inquiries.list"
-                ? positiveInteger(query.page)
-                : value.channel === "ebay" && value.operation === "orders.list"
-                  ? nonNegativeInteger(query.offset)
-                : value.channel === "ebay" && value.operation === "inquiries.list"
-                    ? next.kind === "conversation"
-                      ? next.conversationType === "FROM_MEMBERS" || next.conversationType === "FROM_EBAY"
-                        ? typeof next.conversationId === "string" && next.conversationId.length > 0
-                          ? nonNegativeMultiple(next.messageOffset, 25)
-                          : nonNegativeMultiple(next.conversationOffset, 10)
-                        : false
-                      : positiveInteger(next.pageNumber)
-                    : value.channel === "temu" && value.operation === "orders.list"
-                      ? positiveInteger(next.pageNumber)
-                      : value.channel === "temu" && value.operation === "inquiries.list"
-                        ? positiveInteger(next.pageNo)
-                        : false;
+        : value.channel === "lazada" && value.operation === "orders.list"
+          ? nonNegativeInteger(queryParams.offset)
+          : value.channel === "coupang" && value.operation === "orders.list"
+            ? nonEmpty(query.nextToken)
+            : value.channel === "coupang" && value.operation === "inquiries.list"
+              ? next.kind === "exchange_request" ? nonEmpty(query.nextToken) : positiveInteger(query.pageNum)
+              : value.channel === "smartstore" && value.operation === "orders.list"
+                ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
+                : value.channel === "smartstore" && value.operation === "inquiries.list"
+                  ? positiveInteger(query.page)
+                  : value.channel === "ebay" && value.operation === "orders.list"
+                    ? nonNegativeInteger(query.offset)
+                    : value.channel === "ebay" && value.operation === "inquiries.list"
+                      ? next.kind === "conversation"
+                        ? next.conversationType === "FROM_MEMBERS" || next.conversationType === "FROM_EBAY"
+                          ? typeof next.conversationId === "string" && next.conversationId.length > 0
+                            ? nonNegativeMultiple(next.messageOffset, 25)
+                            : nonNegativeMultiple(next.conversationOffset, 10)
+                          : false
+                        : positiveInteger(next.pageNumber)
+                      : value.channel === "temu" && value.operation === "orders.list"
+                        ? positiveInteger(next.pageNumber)
+                        : value.channel === "temu" && value.operation === "inquiries.list"
+                          ? positiveInteger(next.pageNo)
+                          : false;
     if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
   }
 });
@@ -348,25 +348,7 @@ const listingLineageEvidenceBaseSchema = z.object({
   evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
   marketplaceSku: z.string().min(1).max(160).optional(),
   providerResourceId: z.string().min(1).max(240).optional(),
-  shopeeAdoption: z.object({
-    contract: z.literal("sellerpilot_shopee_sg_existing_adoption_readback_v1"),
-    itemId: z.literal("53717126190"),
-    sku: z.literal("QA-20260823-CC-001"),
-    merchantId: z.literal("5511564"),
-    shopId: z.literal("1719148844"),
-    market: z.literal("SG"),
-    locale: z.literal("en-SG"),
-    currency: z.literal("SGD"),
-    price: z.number().positive().max(999_999_999),
-    providerStatus: z.literal("UNLIST"),
-    galleryImageCount: z.number().int().min(1).max(9),
-    detailImageCount: z.literal(8),
-    representativeImageVerified: z.literal(true),
-    titleLanguageVerified: z.literal(true),
-    descriptionLanguageVerified: z.literal(true),
-    titleDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-    descriptionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-  }).strict().optional(),
+
 });
 
 const listingLineageStepDataSchema = z.object({
@@ -481,10 +463,10 @@ export const smartstoreContentRepairResultSchema = z.object({
     });
   }
   if (value.observedAt !== value.postwriteReadback.observedAt
-      || value.postwriteReadback.originReadback.path
-        !== `/v2/products/origin-products/${value.originProductNo}`
-      || value.postwriteReadback.channelReadback.path
-        !== `/v2/products/channel-products/${value.channelProductNo}`) {
+    || value.postwriteReadback.originReadback.path
+    !== `/v2/products/origin-products/${value.originProductNo}`
+    || value.postwriteReadback.channelReadback.path
+    !== `/v2/products/channel-products/${value.channelProductNo}`) {
     context.addIssue({
       code: "custom",
       path: ["postwriteReadback"],
@@ -492,21 +474,21 @@ export const smartstoreContentRepairResultSchema = z.object({
     });
   }
   if (value.approvedTransmissionImages.some((image, index) => image.index !== index)
-      || new Set(value.approvedTransmissionImages.map((image) => image.url)).size !== 8
-      || new Set(value.approvedTransmissionImages.map((image) => image.contentSha256)).size !== 8
-      || new Set(value.approvedTransmissionImages.map((image) => image.decodedRgbaSha256)).size !== 8
-      || value.approvedTransmissionImages.some((image) => {
-        try {
-          const target = new URL(image.url);
-          return target.protocol !== "https:"
-            || Boolean(target.search || target.hash)
-            || target.pathname !== `/storage/v1/object/public/sellerpilot-marketplace/normalized/${image.contentSha256.slice(0, 2)}/${image.contentSha256}.jpg`;
-        } catch {
-          return true;
-        }
-      })
-      || value.postwriteReadback.detailImagePixelSha256s.some((digest, index) =>
-        digest !== value.approvedTransmissionImages[index]?.decodedRgbaSha256)) {
+    || new Set(value.approvedTransmissionImages.map((image) => image.url)).size !== 8
+    || new Set(value.approvedTransmissionImages.map((image) => image.contentSha256)).size !== 8
+    || new Set(value.approvedTransmissionImages.map((image) => image.decodedRgbaSha256)).size !== 8
+    || value.approvedTransmissionImages.some((image) => {
+      try {
+        const target = new URL(image.url);
+        return target.protocol !== "https:"
+          || Boolean(target.search || target.hash)
+          || target.pathname !== `/storage/v1/object/public/sellerpilot-marketplace/normalized/${image.contentSha256.slice(0, 2)}/${image.contentSha256}.jpg`;
+      } catch {
+        return true;
+      }
+    })
+    || value.postwriteReadback.detailImagePixelSha256s.some((digest, index) =>
+      digest !== value.approvedTransmissionImages[index]?.decodedRgbaSha256)) {
     context.addIssue({
       code: "custom",
       path: ["approvedTransmissionImages"],
@@ -605,18 +587,11 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
   if (value.channel !== "ebay" && (value.evidence.marketplaceSku || value.evidence.providerResourceId)) {
     context.addIssue({ code: "custom", message: "non-ebay lineage cannot carry ebay resource evidence" });
   }
-  if (value.channel !== "shopee" && value.evidence.shopeeAdoption) {
-    context.addIssue({ code: "custom", message: "non-shopee lineage cannot carry adoption evidence" });
-  }
+
   if (value.channel === "shopee" && !/^\d+$/.test(value.evidence.targetId)) {
     context.addIssue({ code: "custom", message: "verified shopee lineage requires a numeric shop id" });
   }
-  if (value.evidence.shopeeAdoption
-      && (value.evidence.expectedRemoteId !== value.evidence.shopeeAdoption.itemId
-        || value.evidence.targetId !== value.evidence.shopeeAdoption.shopId
-        || market !== value.evidence.shopeeAdoption.market)) {
-    context.addIssue({ code: "custom", message: "shopee adoption evidence identity mismatch" });
-  }
+
 });
 
 const TEMU_AFTER_SALES_RETRYABLE_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
@@ -643,26 +618,26 @@ function validTemuAfterSalesRetryQueue(value: unknown, allowEmpty: boolean) {
     const afterSalesSn = row.parentAfterSalesSn;
     const orderSn = row.parentOrderSn;
     if (typeof afterSalesSn !== "string"
-        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(afterSalesSn)
-        || typeof orderSn !== "string"
-        || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(orderSn)
-        || serials.has(afterSalesSn)) return false;
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(afterSalesSn)
+      || typeof orderSn !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(orderSn)
+      || serials.has(afterSalesSn)) return false;
     serials.add(afterSalesSn);
     const operations = row.availableOperateList;
     if (!Array.isArray(operations)
-        || operations.length > 100
-        || operations.some((operation) => typeof operation !== "string"
-          && (typeof operation !== "number" || !Number.isFinite(operation)))) return false;
+      || operations.length > 100
+      || operations.some((operation) => typeof operation !== "string"
+        && (typeof operation !== "number" || !Number.isFinite(operation)))) return false;
     if (row.operateExpireTimeMs !== null
-        && (!Number.isSafeInteger(row.operateExpireTimeMs)
-          || Number(row.operateExpireTimeMs) <= 0)) return false;
+      && (!Number.isSafeInteger(row.operateExpireTimeMs)
+        || Number(row.operateExpireTimeMs) <= 0)) return false;
     for (const key of [
       "afterSalesStatusGroup", "returnDeliveryType", "parentAfterSalesStatus",
       "updateAt", "afterSalesType", "createAt",
     ]) {
       const scalar = row[key];
       if (scalar !== null && typeof scalar !== "string"
-          && (typeof scalar !== "number" || !Number.isFinite(scalar))) return false;
+        && (typeof scalar !== "number" || !Number.isFinite(scalar))) return false;
     }
   }
   return true;
@@ -690,20 +665,20 @@ export const temuAfterSalesDetailRetryContinuationSchema = z.object({
     : [];
   const serialized = JSON.stringify(arguments_);
   if (arguments_.kind !== "after_sales"
-      || arguments_.includeDetails !== true
-      || arguments_.sellerpilotTemuDetailRetryCount !== value.retryCount
-      || value.retryAfterSeconds !== 5 * 2 ** (value.retryCount - 1)
-      || detailLength !== value.deferredCount
-      || replayLength !== value.replayCount
-      || detailLength + replayLength > 200
-      || !queuesValid
-      || new Set(serials).size !== serials.length
-      || !TEMU_AFTER_SALES_RETRYABLE_STATUSES.has(value.providerStatus)
-      || serialized.length > 64_000
-      || /"(phone|phoneNumber|address|contact|email|mobile)"\s*:/iu.test(serialized)
-      || "sellerpilotPaginationDepth" in arguments_
-      || "sellerpilotPaginationEpoch" in arguments_
-      || "sellerpilotPaginationTrail" in arguments_) {
+    || arguments_.includeDetails !== true
+    || arguments_.sellerpilotTemuDetailRetryCount !== value.retryCount
+    || value.retryAfterSeconds !== 5 * 2 ** (value.retryCount - 1)
+    || detailLength !== value.deferredCount
+    || replayLength !== value.replayCount
+    || detailLength + replayLength > 200
+    || !queuesValid
+    || new Set(serials).size !== serials.length
+    || !TEMU_AFTER_SALES_RETRYABLE_STATUSES.has(value.providerStatus)
+    || serialized.length > 64_000
+    || /"(phone|phoneNumber|address|contact|email|mobile)"\s*:/iu.test(serialized)
+    || "sellerpilotPaginationDepth" in arguments_
+    || "sellerpilotPaginationEpoch" in arguments_
+    || "sellerpilotPaginationTrail" in arguments_) {
     context.addIssue({ code: "custom", message: "invalid Temu after-sales detail retry continuation" });
   }
 });
@@ -763,10 +738,10 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
   }),
 ]).superRefine((value, context) => {
   if (value.status === "failed" && value.result
-      && (value.result.ok !== false
-        || (value.result.channel !== "elevenst"
-          && !(value.result.channel === "ebay" && value.result.steps.length === 1 && value.result.steps[0]?.name === "ebay-case-dispute-history-page"))
-        || value.result.operation !== "inquiries.list")) {
+    && (value.result.ok !== false
+      || (value.result.channel !== "elevenst"
+        && !(value.result.channel === "ebay" && value.result.steps.length === 1 && value.result.steps[0]?.name === "ebay-case-dispute-history-page"))
+      || value.result.operation !== "inquiries.list")) {
     context.addIssue({
       code: "custom",
       path: ["result"],
@@ -780,8 +755,8 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     }
   }
   if (value.status === "failed"
-      && value.retryContinuation
-      && value.credentialRefresh) {
+    && value.retryContinuation
+    && value.credentialRefresh) {
     context.addIssue({
       code: "custom", path: ["credentialRefresh"],
       message: "Temu detail retry cannot rotate credentials",
@@ -882,9 +857,9 @@ export function gatewayJobCompletionStatusAtJobBoundary(
   jobBoundary: unknown,
 ): "succeeded" | "failed" | "reconciliation_required" {
   if (status !== "succeeded"
-      || result?.ok !== true
-      || typeof result.operation !== "string"
-      || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
+    || result?.ok !== true
+    || typeof result.operation !== "string"
+    || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
     return status;
   }
   return listingRemoteStateVerifiedAtOrAfterJobBoundary(result.remoteState, jobBoundary)

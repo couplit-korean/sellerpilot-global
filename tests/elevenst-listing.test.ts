@@ -12,6 +12,8 @@ import {
   assertElevenstListingShippingSource,
   bindElevenstAuthoritativeShippingSource,
   elevenstSaleDateRange,
+  elevenstListingShippingFields,
+  elevenstFixedShippingReadbackMatches,
   elevenstShippingContractErrorMessage,
   mergeElevenstListingUpdateProduct,
   validateElevenstListingArguments,
@@ -113,6 +115,7 @@ function exactProductXml(productNo: string, product: Record<string, unknown>) {
     "sellerPrdCd", "prdNm", "brand", "orgnNmVal", "prdStatCd",
     "prdImage01", "prdImage02", "prdImage03", "prdImage04",
     "asDetail", "rtngExchDetail",
+    "dlvCstInstBasiCd", "dlvCst1", "dlvCstPayTypCd", "bndlDlvCnYn", "rtngdDlvCst", "exchDlvCst", "addrSeqOut", "addrSeqIn",
   ];
   const scalars = scalarFields.flatMap((field) => product[field] === undefined || product[field] === ""
     ? []
@@ -259,9 +262,9 @@ test("11st listing failures preserve the provider result message without exposin
       return new Response("<ClientMessage><resultCode>404</resultCode></ClientMessage>", { status: 404 });
     }
     return new Response(
-        "<?xml version=\"1.0\"?><ClientMessage><message>상품등록실패 : 판매가는 10원 단위로 입력해 주세요.</message><resultCode>500</resultCode></ClientMessage>",
-        { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } },
-      );
+      "<?xml version=\"1.0\"?><ClientMessage><message>상품등록실패 : 판매가는 10원 단위로 입력해 주세요.</message><resultCode>500</resultCode></ClientMessage>",
+      { status: 200, headers: { "content-type": "text/xml; charset=utf-8" } },
+    );
   };
   try {
     const result = await executeChannelOperation({
@@ -845,14 +848,16 @@ test("11st sale period uses the official inclusive three-year date range", () =>
 
 test("11st native create/update argument fence rejects paid source facts without erasing them", () => {
   for (const operation of ["listing.create", "listing.update"] as const) {
-    for (const shippingFeeKrw of [3000, "3000", 1, " 3000 "]) {
+    for (const shippingFeeKrw of [3000, "3000", " 3000 "]) {
       const args = {
         product: completeProduct(),
         ...(operation === "listing.update" ? { productNo: "123456789" } : {}),
-        sellerpilotAssets: { shipping: {
-          shippingFeeKrw, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "완충재 포장",
-          policyReview: "확인", shippingRuleReview: "확인", packagingRuleReview: "확인",
-        } },
+        sellerpilotAssets: {
+          shipping: {
+            shippingFeeKrw, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "완충재 포장",
+            policyReview: "확인", shippingRuleReview: "확인", packagingRuleReview: "확인",
+          }
+        },
       };
       const before = structuredClone(args);
       assert.throws(() => validateElevenstListingArguments(args), /ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:\d+/);
@@ -864,13 +869,13 @@ test("11st native create/update argument fence rejects paid source facts without
 test("11st shipping errors survive the existing safe-code filter and explain the exact mismatch", () => {
   const code = "ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:3000";
   assert.match(code, /^ELEVENST_[A-Z0-9_:-]+$/u);
-  assert.match(elevenstShippingContractErrorMessage(code) ?? "", /입력 배송비 3000 KRW.*무료배송 계약/);
+  assert.match(elevenstShippingContractErrorMessage(code) ?? "", /입력 배송비 3000 KRW.*유료배송 필드/);
   assert.match(elevenstShippingContractErrorMessage("ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED") ?? "", /미입력.*무료배송으로 처리하지/);
   assert.equal(elevenstShippingContractErrorMessage(code + "<unsafe>"), undefined);
 });
 
 test("11st source fence never coerces missing, malformed or negative fees into free shipping", () => {
-  for (const fee of [undefined, null, "", " ", true, false, -1, "-1", 0.5, "NaN", Infinity, {}, [], Number.MAX_SAFE_INTEGER + 1]) {
+  for (const fee of [undefined, null, "", " ", true, false, -1, "-1", 1, 0.5, 10_000_000, "NaN", Infinity, {}, [], Number.MAX_SAFE_INTEGER + 1]) {
     assert.throws(() => assertElevenstListingShippingSource({ shippingFeeKrw: fee }), /ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED/);
     assert.throws(() => validateElevenstListingArguments({ product: completeProduct(), sellerpilotAssets: { shipping: { shippingFeeKrw: fee } } }), /ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED/);
   }
@@ -912,7 +917,7 @@ test("11st update merge cannot project away a known paid source before validatio
 });
 
 
-test("11st execution rejects paid shipping on create and existing update before any provider call", async () => {
+test("11st execution rejects mismatched paid shipping fields before any provider call", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
   globalThis.fetch = async (input, init) => {
@@ -929,10 +934,12 @@ test("11st execution rejects paid shipping on create and existing update before 
           productPatch: { prdNm: product.prdNm },
           sellerpilotSnapshotMutableFingerprint: trustedSnapshotFingerprint(product),
         } : {}),
-        sellerpilotAssets: { shipping: {
-          shippingFeeKrw: 3000, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "완충재 포장",
-          policyReview: "확인", shippingRuleReview: "확인", packagingRuleReview: "확인",
-        } },
+        sellerpilotAssets: {
+          shipping: {
+            shippingFeeKrw: 3000, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "완충재 포장",
+            policyReview: "확인", shippingRuleReview: "확인", packagingRuleReview: "확인",
+          }
+        },
       };
       const before = structuredClone(args);
       const outcome = await executeChannelOperation({
@@ -944,12 +951,14 @@ test("11st execution rejects paid shipping on create and existing update before 
       assert.equal(outcome.steps[0].status, 422);
       assert.equal(outcome.steps[0].data.error, "ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:3000");
       assert.equal(outcome.steps[0].data.sellerpilotVerification, "ELEVENST_PREWRITE_REJECTED");
-      assert.match(outcome.safeMessage, /입력 배송비 3000 KRW.*무료배송 계약/);
+      assert.match(outcome.safeMessage, /입력 배송비 3000 KRW.*유료배송 필드/);
       assert.doesNotMatch(outcome.safeMessage, new RegExp(apiKey));
       assert.deepEqual(args, before, "source facts, native values and existing remote ID must be unchanged");
       assert.equal(calls.length, 0, `${operation} must reject before category GET, SKU GET, POST or PUT`);
     }
-  } finally { globalThis.fetch = originalFetch; }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("11st execution rejects unknown shipping source before create/update provider calls", async () => {
@@ -1005,7 +1014,9 @@ test("11st execution keeps explicit zero-fee create/update working without seria
       assert.doesNotMatch(writes[0].body, /sellerpilotAssets|shippingFeeKrw|packagingRule/);
       assert.deepEqual(args, before);
     }
-  } finally { globalThis.fetch = originalFetch; }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 
@@ -1051,20 +1062,24 @@ async function runElevenstShippingRouteBranch(input: {
   const parsed = { data: { productId: "1ed4acfc-7603-48ec-a638-241131e59358", arguments: input.argumentsValue } };
   const reads: unknown[] = [];
   const observations: { contentBound?: boolean; contentModePassed?: boolean } = {};
-  const response = await executeBranch({ rpc: async (name: string, args: unknown) => {
-    assert.equal(name, "sellerpilot_get_product_publish_context", "only a read-only context RPC is allowed");
-    reads.push(args);
-    return { data: input.context, error: input.contextError ?? null };
-  } }, parsed, input.channel ?? "elevenst", input.operation, bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage,
-  { json: (value: unknown, init: ResponseInit) => new Response(JSON.stringify(value), init) },
-  (value: unknown) => Boolean(value) && typeof value === "object" && !Array.isArray(value), observations) as Response | null;
+  const response = await executeBranch({
+    rpc: async (name: string, args: unknown) => {
+      assert.equal(name, "sellerpilot_get_product_publish_context", "only a read-only context RPC is allowed");
+      reads.push(args);
+      return { data: input.context, error: input.contextError ?? null };
+    }
+  }, parsed, input.channel ?? "elevenst", input.operation, bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage,
+    { json: (value: unknown, init: ResponseInit) => new Response(JSON.stringify(value), init) },
+    (value: unknown) => Boolean(value) && typeof value === "object" && !Array.isArray(value), observations) as Response | null;
   return { response, argumentsValue: parsed.data.arguments, reads, observations };
 }
 
 function authoritativeShippingContext(fee: unknown) {
-  return { product: { id: "1ed4acfc-7603-48ec-a638-241131e59358" }, manualFields: {
-    shippingFeeKrw: fee, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "식품용 외부 포장 및 완충재 포장",
-  } };
+  return {
+    product: { id: "1ed4acfc-7603-48ec-a638-241131e59358" }, manualFields: {
+      shippingFeeKrw: fee, shippingRule: "결제 후 1~2영업일 내 출고", packagingRule: "식품용 외부 포장 및 완충재 포장",
+    }
+  };
 }
 
 test("11st actual route branch rejects stored 3000 with missing or zero-forged metadata before provider and enqueue", async () => {
@@ -1091,7 +1106,7 @@ test("11st actual route branch rejects stored 3000 with missing or zero-forged m
 
 test("11st actual route branch fails closed for missing stored fee, wrong product and context errors", async () => {
   for (const context of [authoritativeShippingContext(null), authoritativeShippingContext(undefined), null,
-    { ...authoritativeShippingContext(0), product: { id: "different-product" } }]) {
+  { ...authoritativeShippingContext(0), product: { id: "different-product" } }]) {
     const outcome = await runElevenstShippingRouteBranch({ argumentsValue: { product: completeProduct(), sellerpilotAssets: { shipping: { shippingFeeKrw: 0 } } }, operation: "listing.update", context });
     assert.equal(outcome.response?.status, 409);
   }
@@ -1100,9 +1115,11 @@ test("11st actual route branch fails closed for missing stored fee, wrong produc
 });
 
 test("11st actual route binds stored zero over browser fee/rules without changing product, SKU or remote ID", async () => {
-  const args = { product: completeProduct(), productNo: "9598600918", sellerpilotAssets: {
-    contentMode: "ai_generated", shipping: { shippingFeeKrw: 3000, shippingRule: "browser forged", packagingRule: "browser forged" },
-  } };
+  const args = {
+    product: completeProduct(), productNo: "9598600918", sellerpilotAssets: {
+      contentMode: "ai_generated", shipping: { shippingFeeKrw: 3000, shippingRule: "browser forged", packagingRule: "browser forged" },
+    }
+  };
   const before = structuredClone(args);
   const result = await runElevenstShippingRouteBranch({ argumentsValue: args, operation: "listing.update", context: authoritativeShippingContext(0) });
   assert.equal(result.response, null);
@@ -1148,8 +1165,10 @@ test("11st stored paid fee blocks legacy omission and forged zero before downstr
   try {
     for (const assets of [undefined, { shipping: { shippingFeeKrw: 0 } }]) {
       const result = await runElevenstShippingRouteBranch({
-        argumentsValue: { productNo: "9598600918", productPatch: { prdNm: "existing verified product name" },
-          ...(assets === undefined ? {} : { sellerpilotAssets: assets }) },
+        argumentsValue: {
+          productNo: "9598600918", productPatch: { prdNm: "existing verified product name" },
+          ...(assets === undefined ? {} : { sellerpilotAssets: assets })
+        },
         operation: "listing.update", throughContentMode: true,
         context: { ...authoritativeShippingContext(3000), contentMode: "ai_generated" },
       });
@@ -1172,8 +1191,10 @@ test("11st originally content-bound updates still enforce the real downstream co
     assert.equal(invalid.response?.status, 409);
     assert.equal((await invalid.response!.json()).mode, "product_content_mode_mismatch");
     const valid = await runElevenstShippingRouteBranch({
-      argumentsValue: { productNo: "9598600918", productPatch: { prdNm: "existing verified product name" },
-        sellerpilotAssets: { contentMode: "manual_mvp", detailAssetMode: "manual_source" } },
+      argumentsValue: {
+        productNo: "9598600918", productPatch: { prdNm: "existing verified product name" },
+        sellerpilotAssets: { contentMode: "manual_mvp", detailAssetMode: "manual_source" }
+      },
       operation, throughContentMode: true, context: { ...authoritativeShippingContext(0), contentMode: "manual_mvp" },
     });
     assert.equal(valid.response, null);
@@ -1214,8 +1235,10 @@ for (const field of ["rtngdDlvCst", "exchDlvCst"] as const) {
       for (const value of ["1", "2999", "3001", "3,000", "3000.5"]) {
         assert.throws(() => validateElevenstListingProduct(completeProduct({ [field]: value })),
           new RegExp(`ELEVENST_CONTRACT_FIELD_INVALID:${field}`));
-        const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create",
-          payload: { api_key: apiKey }, arguments: { product: completeProduct({ [field]: value }) }, environment: "production" });
+        const result = await executeChannelOperation({
+          channel: "elevenst", operation: "listing.create",
+          payload: { api_key: apiKey }, arguments: { product: completeProduct({ [field]: value }) }, environment: "production"
+        });
         assert.equal(result.ok, false);
         assert.match(JSON.stringify(result.steps), /ELEVENST_PREWRITE_VALIDATION_FAILED/);
       }
@@ -1230,3 +1253,60 @@ for (const field of ["rtngdDlvCst", "exchDlvCst"] as const) {
     assert.deepEqual(snapshot, before);
   });
 }
+
+test("11st fixed prepaid shipping binds authoritative fee without changing free legacy XML", () => {
+  assert.deepEqual(elevenstListingShippingFields({ shippingFeeKrw: 0 }), { dlvCstInstBasiCd: "01", dlvCstPayTypCd: "03" });
+  const source = { shippingFeeKrw: 3000 };
+  const fields = elevenstListingShippingFields(source);
+  assert.deepEqual(fields, { dlvCstInstBasiCd: "02", dlvCstPayTypCd: "03", dlvCst1: "3000" });
+  const product = completeProduct({ ...fields, addrSeqOut: "1234", addrSeqIn: "5678" });
+  assert.strictEqual(validateElevenstListingArguments({ product, sellerpilotAssets: { shipping: source } }), product);
+  const bound = bindElevenstAuthoritativeShippingSource({ product }, { product: { id: "same-product" }, manualFields: source }, "same-product");
+  assert.deepEqual((bound.sellerpilotAssets as { shipping: unknown }).shipping, { shippingFeeKrw: 3000, shippingRule: undefined, packagingRule: undefined });
+  for (const shippingFeeKrw of [undefined, null, "", true, 1, 2999, -10, 10_000_000]) {
+    assert.throws(() => elevenstListingShippingFields({ shippingFeeKrw }), /ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED/);
+  }
+  for (const invalid of [{ dlvCst1: "4000" }, { dlvCstPayTypCd: "02" }, { dlvCstInstBasiCd: "01" }]) {
+    assert.throws(() => validateElevenstListingArguments({ product: { ...product, ...invalid }, sellerpilotAssets: { shipping: source } }), /ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED/);
+  }
+  assert.throws(() => validateElevenstListingArguments({ product, sellerpilotAssets: { shipping: { shippingFeeKrw: 0 } } }), /ELEVENST_FREE_SHIPPING_AMOUNT_INVALID/);
+});
+
+for (const wrongFee of [false, true]) {
+  test(`11st fixed shipping create sends official XML and checks remote fee (mismatch=${wrongFee})`, async () => {
+    const product = completeProduct({ ...elevenstListingShippingFields({ shippingFeeKrw: 3000 }), addrSeqOut: "1234", addrSeqIn: "5678" });
+    const before = structuredClone(product);
+    const originalFetch = globalThis.fetch;
+    const writes: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const url = String(input);
+      if (url.includes("category")) return new Response(categoryXml, { status: 200 });
+      if (url.includes("sellerprodcode")) return new Response("<ClientMessage><resultCode>404</resultCode><message>상품이 없습니다.</message></ClientMessage>", { status: 404 });
+      if (init?.method === "POST") {
+        writes.push(String(init.body));
+        return new Response("<ClientMessage><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>", { status: 200 });
+      }
+      return new Response(exactProductXml("123456789", { ...product, ...(wrongFee ? { dlvCst1: "0" } : {}) }), { status: 200 });
+    };
+    try {
+      const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create", payload: { api_key: apiKey }, environment: "production", arguments: { product, sellerpilotAssets: { shipping: { shippingFeeKrw: 3000 } } } });
+      assert.equal(writes.length, 1);
+      assert.match(writes[0], /<dlvCstInstBasiCd>02<\/dlvCstInstBasiCd>/);
+      assert.match(writes[0], /<dlvCst1>3000<\/dlvCst1>/);
+      assert.match(writes[0], /<addrSeqOut>1234<\/addrSeqOut>/);
+      assert.doesNotMatch(writes[0], /shippingFeeKrw/);
+      assert.equal(result.ok, !wrongFee);
+      assert.deepEqual(product, before);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+test("11st fixed shipping readback rejects changed or missing amount, address and return policy", () => {
+  const product = completeProduct({ ...elevenstListingShippingFields({ shippingFeeKrw: 3000 }), addrSeqOut: "1234", addrSeqIn: "5678" });
+  assert.equal(elevenstFixedShippingReadbackMatches(product, structuredClone(product)), true);
+  for (const field of ["dlvCst1", "dlvCstPayTypCd", "bndlDlvCnYn", "rtngdDlvCst", "exchDlvCst", "addrSeqOut", "addrSeqIn"]) {
+    assert.equal(elevenstFixedShippingReadbackMatches(product, { ...product, [field]: undefined }), false, field);
+  }
+});

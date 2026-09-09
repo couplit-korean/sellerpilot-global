@@ -133,7 +133,7 @@ test("Coupang and 11st provider mutations fail before permit or queue creation w
 
   assert.ok(preflightStart >= 0, "the Korean provider-mutation preflight must exist");
   assert.ok(preflightEnd > preflightStart, "the preflight must be independently bounded");
-  assert.ok(preflightStart < permitIndex, "static egress must fail before an exact permit is armed");
+  assert.equal(permitIndex, -1, "retired product-specific permits must stay removed");
   assert.ok(preflightStart < attemptIndex, "static egress must fail before an attempt or job is created");
   assert.match(
     preflight,

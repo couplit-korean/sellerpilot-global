@@ -77,10 +77,10 @@ function assertProviderReadOnlyTransport(
   const normalized = method.trim().toUpperCase();
   if (normalized === "GET") return;
   if (normalized === "POST"
-      && (exception === "qoo10_read_rpc"
-        || exception === "ebay_trading_read"
-        || exception === "smartstore_read_rpc"
-        || exception === "temu_read_rpc")) return;
+    && (exception === "qoo10_read_rpc"
+      || exception === "ebay_trading_read"
+      || exception === "smartstore_read_rpc"
+      || exception === "temu_read_rpc")) return;
   throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
 
@@ -308,7 +308,7 @@ export type TemuExactLong = {
 export function temuExactLong(value: string): TemuExactLong {
   const decimal = value.trim();
   if (!/^[1-9]\d{0,18}$/u.test(decimal)
-      || BigInt(decimal) > BigInt("9223372036854775807")) {
+    || BigInt(decimal) > BigInt("9223372036854775807")) {
     throw new Error("TEMU_GOODS_ID_NOT_EXACT_LONG");
   }
   return Object.freeze({ decimal, [temuExactLongBrand]: true as const });
@@ -320,12 +320,12 @@ function temuJson(value: unknown) {
   }).rawJSON;
   const serialized = JSON.stringify(value, (_key, candidate) => {
     if (!candidate
-        || typeof candidate !== "object"
-        || !(temuExactLongBrand in candidate)) return candidate;
+      || typeof candidate !== "object"
+      || !(temuExactLongBrand in candidate)) return candidate;
     const exact = candidate as TemuExactLong;
     if (exact[temuExactLongBrand] !== true
-        || temuExactLong(exact.decimal).decimal !== exact.decimal
-        || typeof rawJson !== "function") {
+      || temuExactLong(exact.decimal).decimal !== exact.decimal
+      || typeof rawJson !== "function") {
       throw new Error("TEMU_EXACT_LONG_JSON_UNSUPPORTED");
     }
     return rawJson(exact.decimal);
@@ -406,8 +406,8 @@ export async function temuRequest(input: {
       context,
     ) {
       if (["goodsId", "skuId"].includes(key)
-          && typeof value === "number"
-          && /^[1-9]\d{0,18}$/u.test(context?.source ?? "")) {
+        && typeof value === "number"
+        && /^[1-9]\d{0,18}$/u.test(context?.source ?? "")) {
         return context!.source!;
       }
       return value;
@@ -572,7 +572,7 @@ export function readStoredShopeeShopAccessToken(
     if (!storedIdentity) return null;
     assertProviderAccountIdentity(payload, shopeeProviderAccountIdentityFromPayload(payload));
     if (storedIdentity.subject.startsWith("shopee:shop:")
-        && storedIdentity.subject !== `shopee:shop:${shopId}`) {
+      && storedIdentity.subject !== `shopee:shop:${shopId}`) {
       return null;
     }
   } catch {
@@ -595,10 +595,10 @@ export function readStoredShopeeShopAccessToken(
     ? Date.parse(authorizationExpiresAtText)
     : null;
   if (!accessToken
-      || !Number.isFinite(accessExpiresAt)
-      || accessExpiresAt <= nowMs + Math.max(0, bufferMs)
-      || (authorizationExpiresAt !== null
-        && (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt <= nowMs))) {
+    || !Number.isFinite(accessExpiresAt)
+    || accessExpiresAt <= nowMs + Math.max(0, bufferMs)
+    || (authorizationExpiresAt !== null
+      && (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt <= nowMs))) {
     return null;
   }
   return selectedPayload;
@@ -628,7 +628,7 @@ async function ensureShopeeTargetAccessToken(
   const selectedTarget = requestedTargetId
     ? targets.find((target) => target.type === targetType && target.id === requestedTargetId)
     : targets.find((target) => target.type === targetType && target.id === textValue(payload, targetKey))
-      ?? targets.find((target) => target.type === targetType);
+    ?? targets.find((target) => target.type === targetType);
   if (requestedTargetId && !selectedTarget) throw new Error(targetType === "shop" ? "SHOPEE_SHOP_NOT_AUTHORIZED" : "SHOPEE_MERCHANT_NOT_AUTHORIZED");
   const selectedPayload = selectedTarget ? projectShopeeTarget(payload, selectedTarget) : payload;
   const selectedTargetId = textValue(selectedPayload, targetKey);
@@ -638,9 +638,9 @@ async function ensureShopeeTargetAccessToken(
     targetId: selectedTargetId,
   };
   if ((storedAccountIdentity || requireProviderIdentity)
-      && expectedAccountIdentity.subject.startsWith("shopee:shop:")
-      && (targetType !== "shop"
-        || expectedAccountIdentity.subject !== `shopee:shop:${selectedTargetId}`)) {
+    && expectedAccountIdentity.subject.startsWith("shopee:shop:")
+    && (targetType !== "shop"
+      || expectedAccountIdentity.subject !== `shopee:shop:${selectedTargetId}`)) {
     throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISMATCH");
   }
   const accessToken = textValue(selectedPayload, "access_token");
@@ -1016,9 +1016,9 @@ export async function ensureLazadaAccessToken(
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
   if (!accountAttestationRequired
-      && accessToken
-      && Number.isFinite(accessExpiresAt)
-      && accessExpiresAt > Date.now() + bufferMs) {
+    && accessToken
+    && Number.isFinite(accessExpiresAt)
+    && accessExpiresAt > Date.now() + bufferMs) {
     return { payload, refreshed: false as const, credentialExpiresAt: textValue(payload, "refresh_token_expires_at") || null };
   }
 
@@ -1529,9 +1529,9 @@ function parseEbayXml(xml: string, expectedRoot: string) {
       const instructionEnd = xml.indexOf("?>", markupStart + 2);
       const instruction = instructionEnd < 0 ? "" : xml.slice(markupStart + 2, instructionEnd).trim();
       if (instructionEnd < 0
-          || !/^xml\s+version\s*=\s*(?:"1\.0"|'1\.0')(?:\s+encoding\s*=\s*(?:"utf-8"|'utf-8'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/i.test(instruction)
-          || root
-          || stack.length) {
+        || !/^xml\s+version\s*=\s*(?:"1\.0"|'1\.0')(?:\s+encoding\s*=\s*(?:"utf-8"|'utf-8'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/i.test(instruction)
+        || root
+        || stack.length) {
         invalidEbayTradingResponse();
       }
       cursor = instructionEnd + 2;
@@ -1544,7 +1544,7 @@ function parseEbayXml(xml: string, expectedRoot: string) {
     if (tagSource.startsWith("/")) {
       const qualifiedName = tagSource.slice(1).trim();
       if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(qualifiedName)
-          || stack.at(-1)?.qualifiedName !== qualifiedName) {
+        || stack.at(-1)?.qualifiedName !== qualifiedName) {
         invalidEbayTradingResponse();
       }
       stack.pop();
@@ -1632,9 +1632,9 @@ function ebayXmlOptionalBoolean(node: EbayXmlNode, name: string) {
 
 export function parseEbayTradingResponse(callName: EbayTradingCallName, xml: string) {
   if (!ebayTradingCalls.has(callName)
-      || !xml
-      || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
-      || /<!DOCTYPE|<!ENTITY/i.test(xml)) {
+    || !xml
+    || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
+    || /<!DOCTYPE|<!ENTITY/i.test(xml)) {
     throw new Error("EBAY_TRADING_RESPONSE_INVALID");
   }
   const expectedRoot = `${callName}Response`;
@@ -1806,9 +1806,9 @@ export async function ebayTradingRequest(input: {
   const accessToken = textValue(input.payload, "access_token");
   if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
   if (!ebayTradingCalls.has(input.callName)
-      || !new RegExp(`^<\\?xml[^>]*>\\s*<${input.callName}Request\\b`, "i").test(input.body)
-      || Buffer.byteLength(input.body, "utf8") > 64_000
-      || /<!DOCTYPE|<!ENTITY/i.test(input.body)) {
+    || !new RegExp(`^<\\?xml[^>]*>\\s*<${input.callName}Request\\b`, "i").test(input.body)
+    || Buffer.byteLength(input.body, "utf8") > 64_000
+    || /<!DOCTYPE|<!ENTITY/i.test(input.body)) {
     throw new Error("EBAY_TRADING_REQUEST_INVALID");
   }
   const response = await providerFetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
@@ -2076,7 +2076,7 @@ export async function elevenstSellerXmlRequest(input: {
     "prdStatCd", "minorSelCnYn", "selStatCd", "selStatNm", "prdImage01", "prdImage02",
     "prdImage03", "prdImage04", "htmlDetail", "selPrdClfCd", "aplBgnDy", "aplEndDy",
     "selPrc", "prdSelQty", "dlvCnAreaCd", "dlvWyCd", "dlvCstInstBasiCd", "bndlDlvCnYn",
-    "dlvCstPayTypCd", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail",
+    "dlvCstPayTypCd", "dlvCst1", "addrSeqOut", "addrSeqIn", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail",
   ] as const;
   const product = Object.fromEntries(productScalarFields.flatMap((field) => {
     const value = productNode ? elevenstNamespacedXmlValue(productNode, field) : "";
@@ -2094,12 +2094,12 @@ export async function elevenstSellerXmlRequest(input: {
   }
   const certificationGroups = productNode
     ? elevenstXmlNodes(productNode, "ProductCertGroup").flatMap((groupNode) => {
-        const crtfGrpTypCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpTypCd");
-        const crtfGrpObjClfCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpObjClfCd");
-        return crtfGrpTypCd && crtfGrpObjClfCd
-          ? [{ crtfGrpTypCd, crtfGrpObjClfCd }]
-          : [];
-      })
+      const crtfGrpTypCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpTypCd");
+      const crtfGrpObjClfCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpObjClfCd");
+      return crtfGrpTypCd && crtfGrpObjClfCd
+        ? [{ crtfGrpTypCd, crtfGrpObjClfCd }]
+        : [];
+    })
     : [];
   if (certificationGroups.length) product.ProductCertGroup = certificationGroups;
   const products = elevenstXmlNodes(xml, "product").slice(0, 500).map((node) => ({
@@ -2120,12 +2120,20 @@ export async function elevenstSellerXmlRequest(input: {
       ...(input.method === "GET"
         && input.path.startsWith("/rest/prodmarketservice/sellerprodcode/")
         ? {
-            lookupDocumentRoot: documentRoot.slice(0, 80),
-            lookupBodyBytes: bytes.byteLength,
-          }
+          lookupDocumentRoot: documentRoot.slice(0, 80),
+          lookupBodyBytes: bytes.byteLength,
+        }
         : {}),
       products,
-
+      ...(input.method === "GET" && input.path.startsWith("/rest/prodmarketservice/prodmarket/stck/")
+        ? {
+          stockDocumentRoot: documentRoot,
+          stocks: elevenstXmlNodes(xml, "ProductStock").map((node) => Object.fromEntries(
+            ["prdNo", "prdStckNo", "stckQty", "optWght", "sellerStockCd", "prdStckStatCd"].map((field) =>
+              [field, elevenstNamespacedXmlValue(node, field)]),
+          )),
+        }
+        : {}),
     },
   } satisfies RemoteResponse;
 }

@@ -1,11 +1,6 @@
 import { qoo10Request, type SecretPayload } from "./protocols";
 import { qoo10RollbackUpdateRecoveryArgument, qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
-import {
-  qoo10ExactAdoptedLocalizationArgument,
-  qoo10ExactAdoptedLocalizationBinding,
-  qoo10ExactLocalizationUpdateArgument,
-  qoo10ExactLocalizationUpdateBinding,
-} from "./qoo10-exact-localization-identity";
+
 
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): RecordValue {
@@ -39,8 +34,8 @@ export function qoo10ShippingFromReadback(resultObject: unknown, itemCode: strin
   const shipping = aliases(rows[0], ["shippingno", "deliverygroupno"]);
   const sellers = aliases(rows[0], ["sellercode"]);
   if (!identities.every((value) => value === itemCode)
-      || shipping.length === 0 || new Set(shipping).size !== 1 || !/^\d+$/.test(shipping[0])
-      || (sellerCode && (sellers.length === 0 || !sellers.every((value) => value === sellerCode)))) {
+    || shipping.length === 0 || new Set(shipping).size !== 1 || !/^\d+$/.test(shipping[0])
+    || (sellerCode && (sellers.length === 0 || !sellers.every((value) => value === sellerCode)))) {
     throw new Error("QOO10_UPDATE_SHIPPING_UNVERIFIED");
   }
   return shipping[0];
@@ -51,13 +46,12 @@ export async function prepareQoo10ShippingPreservedUpdate(input: {
   credential: SecretPayload;
   assertLeaseHealthy: () => Promise<void>;
 }) {
-  const recoveryMarkers = [qoo10RollbackUpdateRecoveryArgument, qoo10ExactLocalizationUpdateArgument, qoo10ExactAdoptedLocalizationArgument];
+  const recoveryMarkers = [qoo10RollbackUpdateRecoveryArgument];
   if (recoveryMarkers.some((key) => Object.hasOwn(input.arguments, key))) {
     const rollback = qoo10RollbackUpdateRecoveryBinding(input.arguments);
-    const localized = qoo10ExactLocalizationUpdateBinding(input.arguments);
-    const adoptedValid = !Object.hasOwn(input.arguments, qoo10ExactAdoptedLocalizationArgument)
-      || qoo10ExactAdoptedLocalizationBinding(input.arguments);
-    if ((!rollback && !localized) || !adoptedValid) throw new Error("QOO10_UPDATE_SHIPPING_UNVERIFIED");
+
+
+    if (!rollback) throw new Error("QOO10_UPDATE_SHIPPING_UNVERIFIED");
     // These server-bound contracts already re-read and verify their exact
     // shipping group in operations.ts. Do not change their approved arguments.
     return input.arguments;

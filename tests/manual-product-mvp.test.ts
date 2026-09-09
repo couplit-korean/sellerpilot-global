@@ -3,32 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActiveChannelKey } from "../lib/channels/catalog";
-import {
-  buildChannelArguments,
-  buildDraftMap,
-  missingNativeValues,
-} from "../app/product-publish-workbench";
-import {
-  manualProductRequestFingerprint,
-  normalizePendingManualProductRequest,
-} from "../app/ai-product-studio";
+import { buildChannelArguments, buildDraftMap, missingNativeValues } from "../app/product-publish-workbench";
+import { manualProductRequestFingerprint, normalizePendingManualProductRequest } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
-import {
-  prepareListingUpdateArguments,
-  unapprovedLocalizationReviewMarker,
-} from "../lib/channels/listing-update";
-import { qoo10DetailImageUrls } from "../lib/channels/qoo10-listing-create-preflight";
+import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
+
 import { executeChannelOperation } from "../lib/channels/operations";
-import {
-  listingPublicationLanguageVerified,
-  normalizedListingPublicationText,
-} from "../lib/channels/listing-publication-content";
-import {
-  qoo10ExactForeignPriceCopyPresent,
-  bindQoo10ExactLocalizationUpdateArguments,
-  qoo10ExactLegacyRomanizedCopyPresent,
-  qoo10ExactLocalizationRecoveryIdentity,
-} from "../lib/channels/qoo10-exact-localization-recovery";
+import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
+
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -289,122 +271,6 @@ test("Qoo10 create and exact existing-product update replace legacy romanized re
     assert.equal(JSON.stringify(draft).includes(legacyQoo10ReviewedTitle), false, `${operation} full legacy title`);
     assert.equal(listingPublicationLanguageVerified("ja-JP", draft.params.ItemTitle, "title"), true);
   }
-});
-
-test("exact Qoo10 workbench draft discards source KRW and romanized copy before provider preparation", () => {
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  const context = productionLikeQoo10LegacyContext("update");
-  context.product.id = identity.productId;
-  context.product.sku = identity.sellerSku;
-  context.manualFields.sellerSku = identity.sellerSku;
-  context.manualFields.sellingPrice = 5_000;
-  context.manualFields.stock = 1;
-  context.manualFields.description = `${identity.legacyRomanizedName} 가격은 5,000원입니다.`;
-  context.assignments[0].categoryId = identity.categoryCode;
-
-  const draft = buildChannelArguments(
-    "qoo10",
-    context,
-    5_000,
-    1,
-    undefined,
-    { weight: 0.2, length: 10, width: 8, height: 4 },
-    10,
-  ) as {
-    params: Record<string, string>;
-    sellerpilotAssets: { detailImageUrls: string[] };
-  };
-
-  assert.equal(draft.params.ItemTitle, identity.title);
-  assert.equal(draft.params.PromotionName, identity.promotionName);
-  assert.equal(draft.params.SellerCode, identity.sellerSku);
-  assert.equal(draft.params.Keyword, identity.sourceKeyword);
-  assert.equal(draft.params.RetailPrice, String(identity.priceJpy));
-  assert.equal(draft.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(draft.params.ItemQty, String(identity.quantity));
-  assert.equal(draft.params.ShippingNo, identity.shippingNo);
-  assert.match(draft.params.ItemDescription, /販売価格は1,871円です/u);
-  assert.equal(qoo10ExactLegacyRomanizedCopyPresent(draft.params.ItemDescription), false);
-  assert.equal(qoo10ExactForeignPriceCopyPresent(draft.params.ItemDescription), false);
-  assert.doesNotMatch(draft.params.ItemDescription, /[가-힣]/u);
-  assert.equal(
-    listingPublicationLanguageVerified(
-      "ja-JP",
-      normalizedListingPublicationText(draft.params.ItemDescription),
-      "description",
-    ),
-    true,
-  );
-  assert.equal(draft.sellerpilotAssets.detailImageUrls.length, 8);
-  assert.deepEqual(
-    qoo10DetailImageUrls(draft.params.ItemDescription),
-    draft.sellerpilotAssets.detailImageUrls,
-  );
-  const prepared = prepareListingUpdateArguments(
-    "qoo10",
-    bindQoo10ExactLocalizationUpdateArguments(
-      draft as unknown as Record<string, unknown>,
-      "c".repeat(40),
-    ),
-    { status: "published", remoteId: identity.remoteId },
-  ) as { params: Record<string, string> };
-  assert.equal(prepared.params.SellerCode, identity.sellerSku);
-  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(prepared.params.ItemQty, String(identity.quantity));
-  assert.equal(prepared.params.ShippingNo, identity.shippingNo);
-});
-
-test("exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option", () => {
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  const context = productionLikeQoo10LegacyContext("update");
-  context.product.id = identity.productId;
-  context.product.sku = identity.sellerSku;
-  context.manualFields.sellerSku = identity.sellerSku;
-  context.manualFields.sellingPrice = 5_000;
-  context.manualFields.stock = 1;
-  context.assignments[0].categoryId = identity.categoryCode;
-  context.listings[0] = {
-    ...context.listings[0]!,
-    status: "failed",
-    failureClass: "external_action",
-    remoteVisibility: "unknown",
-    providerStatus: null,
-  };
-  const draft = buildChannelArguments(
-    "qoo10",
-    context,
-    5_000,
-    1,
-    undefined,
-    { weight: 0.2, length: 10, width: 8, height: 4 },
-    10,
-  ) as { params: Record<string, string> };
-  assert.equal(draft.params.ItemTitle, identity.title);
-  assert.throws(
-    () => prepareListingUpdateArguments("qoo10", draft, context.listings[0]!),
-    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
-    "the generic external_action path remains fenced",
-  );
-  const prepared = prepareListingUpdateArguments(
-    "qoo10",
-    draft,
-    { ...context.listings[0]!, listingId: context.listings[0]!.id },
-    { qoo10ExactLocalizationProductId: identity.productId },
-  ) as { params: Record<string, string> };
-  assert.equal(prepared.params.ItemCode, identity.remoteId);
-  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(prepared.params.ItemQty, String(identity.quantity));
-  assert.equal(Object.hasOwn(prepared.params, "StandardImage"), false);
-  assert.throws(
-    () => prepareListingUpdateArguments(
-      "qoo10",
-      draft,
-      { ...context.listings[0]!, listingId: context.listings[0]!.id, targetId: "OTHER" },
-      { qoo10ExactLocalizationProductId: identity.productId },
-    ),
-    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
-    "near-miss tuples remain fenced before a provider request can be built",
-  );
 });
 
 test("Qoo10 preserves seller-authored Japanese and Hangul titles and description text", () => {

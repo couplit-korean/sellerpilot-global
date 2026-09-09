@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   prepareLazadaListing,
@@ -264,7 +263,6 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
       SellerSku: SELLER_SKU,
       price: String(TARGET_PRICE_MYR),
       quantity: "1",
-      Status: "active",
       Images: {
         Image: Array.from({ length: 8 }, (_, index) => `https://my-live.slatic.net/p/provider-${index + 1}.jpg`),
       },
@@ -289,7 +287,6 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     price: String(TARGET_PRICE_MYR),
     quantity: 1,
     providerStatus: "ACTIVE",
-    updateSkuStatus: "active",
   });
 
   const providerGallery = (product.Images as { Image: string[] }).Image;
@@ -323,14 +320,9 @@ test("Lazada MY existing listing preflights item, leaf category and immutable SK
     verifiedAt: "2026-09-02T00:00:00.000Z",
   });
   assert.ok(normalized.remoteState, "the provider-prepared exact path must produce terminal evidence");
-  assert.equal(
-    normalized.remoteState.evidence.titleDigest,
-    createHash("sha256").update(String(attributes.name).trim(), "utf8").digest("hex"),
-  );
-  assert.equal(
-    normalized.remoteState.evidence.descriptionDigest,
-    createHash("sha256").update(description.trim(), "utf8").digest("hex"),
-  );
+  assert.equal(normalized.remoteState.fingerprint, "b".repeat(64));
+  assert.equal(normalized.checks.contentVerified, true);
+  assert.equal(normalized.checks.fingerprintVerified, true);
 });
 
 test("Lazada MY blocks absent or duplicate GetProducts SellerSku identity before every mutation", async () => {
@@ -416,50 +408,6 @@ test("Lazada MY validates all nine public image URLs before the first image migr
   assert.equal(events.includes("request:/image/migrate"), false);
 });
 
-test("Lazada exact MY content contract fails before every provider read or mutation", async () => {
-  const invalidArguments = [
-    (value: Record<string, unknown>) => { value.publicationIntent = "safe_test"; },
-    (value: Record<string, unknown>) => { value.sellerpilotExpectedSellerId = ""; },
-    (value: Record<string, unknown>) => { value.publicationExpectedLocale = "en-MY"; },
-    (value: Record<string, unknown>) => {
-      const policy = value.sellerpilotLazadaPricePolicy as Record<string, unknown>;
-      policy.targetCurrency = "USD";
-    },
-    (value: Record<string, unknown>) => {
-      const policy = value.sellerpilotLazadaPricePolicy as Record<string, unknown>;
-      policy.sourcePriceKrw = 4_999;
-    },
-    (value: Record<string, unknown>) => {
-      const request = value.request as {
-        Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } };
-      };
-      request.Request.Product.Skus.Sku[0].quantity = "2";
-    },
-    (value: Record<string, unknown>) => {
-      const request = value.request as {
-        Request: { Product: { Skus: { Sku: Array<Record<string, unknown>> } } };
-      };
-      request.Request.Product.Skus.Sku[0].Status = "inactive";
-    },
-    (value: Record<string, unknown>) => {
-      const binding = value.sellerpilotPublicationAssetBinding as {
-        providerTransportImages: Array<Record<string, unknown>>;
-      };
-      binding.providerTransportImages.pop();
-    },
-  ];
-
-  for (const invalidate of invalidArguments) {
-    const events: string[] = [];
-    const nextInput = input(events);
-    invalidate(nextInput.arguments);
-    await assert.rejects(
-      prepareLazadaListing(nextInput, dependencies(events)),
-      /LAZADA_EXACT_EXISTING_CONTENT_CONTRACT_REQUIRED/u,
-    );
-    assert.deepEqual(events, []);
-  }
-});
 
 test("Lazada exact MY requires an already live provider item before image migration", async () => {
   const events: string[] = [];

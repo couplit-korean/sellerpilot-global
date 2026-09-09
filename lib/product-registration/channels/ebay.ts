@@ -1,43 +1,14 @@
 import { ebayInventorySkuAbsent, ebayExactReconciliationOffer } from "../../channels/ebay-create-preflight";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
-import {
-  objectValue,
-  stringArgument,
-  integerArgument,
-  pathSegment,
-} from "../../channels/operation-values";
-import {
-  ebayRequest,
-  textValue,
-  type RemoteResponse,
-} from "../../channels/protocols";
+import { objectValue, stringArgument, integerArgument, pathSegment } from "../../channels/operation-values";
+import { ebayRequest, textValue, type RemoteResponse } from "../../channels/protocols";
 import { ebayAsqMarketplaceId } from "../../channels/ebay-asq";
 import { assertEbayListingCreateConfiguration } from "../../channels/ebay-listing-configuration";
-import {
-  assertEbayExactExistingQaUpdateArguments,
-  assertEbayExactExistingQaProviderCopyRequest,
-  ebayExactExistingQaRecoveryBinding,
-  ebayExactV101EnglishAspects,
-} from "../../channels/ebay-exact-existing-qa-recovery";
-import { upsertMarketplaceDetailImages } from "../../channels/marketplace-images";
-import { parseListingPublicationAssetBinding } from "../../channels/listing-publication-content";
-import {
-  mergeListingUpdatePatch,
-  verifyListingUpdateReadback,
-} from "../../channels/listing-update";
+
+import { mergeListingUpdatePatch, verifyListingUpdateReadback } from "../../channels/listing-update";
 import { listingPublicationIntentFromArguments } from "../../channels/listing-publication-state";
-import {
-  listingPublicationReadbackExpectation,
-  readEbayListingPublicationState,
-} from "../../channels/listing-publication-readback";
-import {
-  type ExecuteInput,
-  listingPublicationReadbackRequested,
-  result,
-  publicationStateVerificationStep,
-  booleanArgument,
-  inventoryQuantityVerificationStep,
-} from "../execution-shared";
+import { listingPublicationReadbackExpectation, readEbayListingPublicationState } from "../../channels/listing-publication-readback";
+import { type ExecuteInput, listingPublicationReadbackRequested, result, publicationStateVerificationStep, booleanArgument, inventoryQuantityVerificationStep } from "../execution-shared";
 
 export async function ebayListingResultWithPublicationReadback(
   input: ExecuteInput,
@@ -184,97 +155,6 @@ export function ebayCompactInventoryDescription(...providerValues: unknown[]) {
   throw new Error("EBAY_EXACT_EXISTING_QA_PROVIDER_DESCRIPTION_REQUIRED");
 }
 
-export function ebayExactProviderCopyArguments(input: {
-  sourceArguments: Record<string, unknown>;
-  currentOffer: Record<string, unknown>;
-  currentInventoryItem: Record<string, unknown>;
-  requestedOffer: Record<string, unknown>;
-  requestedInventoryItem: Record<string, unknown>;
-}) {
-  const publicationBinding = parseListingPublicationAssetBinding(
-    input.sourceArguments.sellerpilotPublicationAssetBinding,
-  );
-  if (
-    !publicationBinding ||
-    publicationBinding.providerImageSurface !== "gallery" ||
-    publicationBinding.providerTransportImages.length !== 9 ||
-    publicationBinding.providerTransportImages[0]?.role !==
-      "gallery-representative"
-  ) {
-    throw new Error("EBAY_EXACT_EXISTING_QA_APPROVED_DETAIL_BINDING_REQUIRED");
-  }
-  const detailUrls = publicationBinding.providerTransportImages
-    .slice(1)
-    .map((image) => image.publicUrl);
-  const detailRoles = publicationBinding.providerTransportImages
-    .slice(1)
-    .map((image) => image.role);
-  const detailAltTexts = detailRoles.map(
-    (_, index) => `Cable organizer product detail image ${index + 1}`,
-  );
-  const currentProduct = objectValue(input.currentInventoryItem, "product");
-  const requestedProduct = objectValue(input.requestedInventoryItem, "product");
-  const requestedImageUrls = Array.isArray(requestedProduct.imageUrls)
-    ? requestedProduct.imageUrls
-    : [];
-  const representativeImageUrl = String(requestedImageUrls[0] ?? "").trim();
-  const inventoryImageUrls = [representativeImageUrl, ...detailUrls];
-  if (
-    !representativeImageUrl ||
-    inventoryImageUrls.length !== 9 ||
-    new Set(inventoryImageUrls).size !== 9 ||
-    requestedImageUrls.length !== inventoryImageUrls.length ||
-    !requestedImageUrls.every(
-      (value, index) => String(value).trim() === inventoryImageUrls[index],
-    )
-  ) {
-    throw new Error("EBAY_EXACT_V101_NINE_IMAGES_REQUIRED");
-  }
-  const aspects = ebayExactV101EnglishAspects(currentProduct.aspects);
-  // The Inventory API limits product.description to 1-4000 characters. Detail
-  // image HTML belongs to the offer surface. Keep a conservative 1000-character
-  // inventory copy derived only from immutable provider GET values.
-  const description = ebayCompactInventoryDescription(
-    currentProduct.description,
-    input.currentOffer.listingDescription,
-    currentProduct.title,
-  );
-  const listingDescription = upsertMarketplaceDetailImages(
-    ebayProviderDescriptionWithoutImages(input.currentOffer.listingDescription),
-    detailUrls,
-    detailAltTexts,
-    detailRoles,
-  );
-  const inventoryBody = mergeListingUpdatePatch(input.currentInventoryItem, {
-    condition: input.requestedInventoryItem.condition,
-    availability: input.requestedInventoryItem.availability,
-    product: {
-      imageUrls: inventoryImageUrls,
-      description,
-      aspects,
-    },
-  }) as Record<string, unknown>;
-  const offerBody = mergeListingUpdatePatch(input.currentOffer, {
-    availableQuantity: input.requestedOffer.availableQuantity,
-    pricingSummary: input.requestedOffer.pricingSummary,
-    listingDescription,
-  }) as Record<string, unknown>;
-  const readbackArguments = {
-    ...input.sourceArguments,
-    // Both eBay endpoints use full-replacement semantics. Carry every
-    // allowlisted provider GET field into the final subset readback so a 204
-    // response cannot hide a dropped policy, location, schedule, package, or
-    // inventory field.
-    inventoryItem: structuredClone(inventoryBody),
-    offer: structuredClone(offerBody),
-  };
-  assertEbayExactExistingQaUpdateArguments(readbackArguments, {
-    expectedDetailImageUrls: detailUrls,
-    inventoryDescriptionMode: "compact_text",
-  });
-  return { inventoryBody, offerBody, readbackArguments };
-}
-
 export async function executeEbay(input: ExecuteInput) {
   if (input.channel !== "ebay")
     throw new Error("PRODUCT_CHANNEL_MISMATCH:ebay");
@@ -363,19 +243,19 @@ export async function executeEbay(input: ExecuteInput) {
     const steps: ChannelOperationStep[] = [];
     const inventoryProduct =
       inventoryItem.product &&
-      typeof inventoryItem.product === "object" &&
-      !Array.isArray(inventoryItem.product)
+        typeof inventoryItem.product === "object" &&
+        !Array.isArray(inventoryItem.product)
         ? (inventoryItem.product as Record<string, unknown>)
         : {};
     const expectedImageUrls = Array.isArray(inventoryProduct.imageUrls)
       ? [
-          ...new Set(
-            inventoryProduct.imageUrls
-              .map(String)
-              .map((value) => value.trim())
-              .filter(Boolean),
-          ),
-        ]
+        ...new Set(
+          inventoryProduct.imageUrls
+            .map(String)
+            .map((value) => value.trim())
+            .filter(Boolean),
+        ),
+      ]
       : [];
     if (!expectedImageUrls.length) throw new Error("EBAY_IMAGE_REQUIRED");
     const expectedDescriptionImages = (
@@ -407,7 +287,8 @@ export async function executeEbay(input: ExecuteInput) {
       path: `/sell/inventory/v1/inventory_item/${sku}`,
     });
     if (!ebayInventorySkuAbsent(existingInventory)) {
-      return result(input, [{ name: "inventory-duplicate-preflight", ok: false,
+      return result(input, [{
+        name: "inventory-duplicate-preflight", ok: false,
         status: existingInventory.response.ok ? 409 : existingInventory.response.status,
         data: { error: existingInventory.response.ok ? "EBAY_EXISTING_INVENTORY_REQUIRES_UPDATE" : "EBAY_INVENTORY_ABSENCE_UNVERIFIED" },
       }]);
@@ -429,17 +310,17 @@ export async function executeEbay(input: ExecuteInput) {
     });
     const readbackProduct =
       itemReadback.data.product &&
-      typeof itemReadback.data.product === "object" &&
-      !Array.isArray(itemReadback.data.product)
+        typeof itemReadback.data.product === "object" &&
+        !Array.isArray(itemReadback.data.product)
         ? (itemReadback.data.product as Record<string, unknown>)
         : {};
     const actualImageCount = Array.isArray(readbackProduct.imageUrls)
       ? new Set(
-          readbackProduct.imageUrls
-            .map(String)
-            .map((value) => value.trim())
-            .filter(Boolean),
-        ).size
+        readbackProduct.imageUrls
+          .map(String)
+          .map((value) => value.trim())
+          .filter(Boolean),
+      ).size
       : 0;
     const inventoryImageStep = verifiedReadbackStep(
       "inventory-image-readback",
@@ -461,8 +342,10 @@ export async function executeEbay(input: ExecuteInput) {
     } catch {
       // A dropped response may still have created an offer. Read once by exact
       // identity; never repeat the offer POST or overwrite another offer.
-      offerRemote = { response: new Response(null, { status: 503 }), text: "",
-        data: { error: "EBAY_OFFER_CREATE_OUTCOME_UNCERTAIN" } };
+      offerRemote = {
+        response: new Response(null, { status: 503 }), text: "",
+        data: { error: "EBAY_OFFER_CREATE_OUTCOME_UNCERTAIN" }
+      };
     }
     let offerId =
       offerRemote.data.offerId === undefined
@@ -523,11 +406,11 @@ export async function executeEbay(input: ExecuteInput) {
       const offerReadbackStep =
         expectedDescriptionImages > 0
           ? verifiedReadbackStep(
-              "offer-detail-image-readback",
-              offerReadback,
-              expectedDescriptionImages,
-              actualDescriptionImages,
-            )
+            "offer-detail-image-readback",
+            offerReadback,
+            expectedDescriptionImages,
+            actualDescriptionImages,
+          )
           : step("offer-readback", offerReadback);
       const identityMatches = offerReadback.data.offerId === offerId
         && offerReadback.data.sku === rawSku
@@ -546,8 +429,8 @@ export async function executeEbay(input: ExecuteInput) {
       if (!offerReadbackStep.ok) return result(input, steps, offerId);
       const listing =
         offerReadback.data.listing &&
-        typeof offerReadback.data.listing === "object" &&
-        !Array.isArray(offerReadback.data.listing)
+          typeof offerReadback.data.listing === "object" &&
+          !Array.isArray(offerReadback.data.listing)
           ? (offerReadback.data.listing as Record<string, unknown>)
           : {};
       if (
@@ -580,17 +463,16 @@ export async function executeEbay(input: ExecuteInput) {
     const finalRemoteId = publishedListingId || offerId || rawSku;
     return offerId
       ? ebayListingResultWithPublicationReadback(
-          input,
-          steps,
-          finalRemoteId,
-          offerId,
-        )
+        input,
+        steps,
+        finalRemoteId,
+        offerId,
+      )
       : result(input, steps, finalRemoteId);
   }
   if (input.operation === "listing.update") {
-    const exactRecovery = ebayExactExistingQaRecoveryBinding(input.arguments);
-    if (exactRecovery)
-      assertEbayExactExistingQaProviderCopyRequest(input.arguments);
+
+
     const listingId = stringArgument(input.arguments, "listingId");
     const sku = pathSegment(stringArgument(input.arguments, "sku"));
     const decodedSku = decodeURIComponent(sku);
@@ -611,75 +493,8 @@ export async function executeEbay(input: ExecuteInput) {
     }
 
     const steps: ChannelOperationStep[] = [];
-    let decodedOfferId = exactRecovery
-      ? ""
-      : stringArgument(input.arguments, "offerId");
-    if (exactRecovery) {
-      const discoveryRead = await ebayRequest({
-        payload: input.payload,
-        environment: input.environment,
-        method: "GET",
-        path: "/sell/inventory/v1/offer",
-        query: new URLSearchParams({
-          sku: decodedSku,
-          marketplace_id: marketplaceId,
-          limit: "25",
-        }),
-      });
-      const offers = Array.isArray(discoveryRead.data.offers)
-        ? discoveryRead.data.offers.filter(
-            (value): value is Record<string, unknown> =>
-              Boolean(value) &&
-              typeof value === "object" &&
-              !Array.isArray(value),
-          )
-        : [];
-      const publicIdentityOffers = offers.filter((candidate) => {
-        const candidateListing =
-          candidate.listing &&
-          typeof candidate.listing === "object" &&
-          !Array.isArray(candidate.listing)
-            ? (candidate.listing as Record<string, unknown>)
-            : {};
-        return (
-          String(candidate.sku ?? "").trim() === decodedSku &&
-          String(candidate.marketplaceId ?? "")
-            .trim()
-            .toUpperCase() === marketplaceId &&
-          String(candidate.status ?? "")
-            .trim()
-            .toUpperCase() === "PUBLISHED" &&
-          String(candidateListing.listingId ?? "").trim() === listingId &&
-          String(candidateListing.listingStatus ?? "")
-            .trim()
-            .toUpperCase() === "ACTIVE" &&
-          Boolean(String(candidate.offerId ?? "").trim())
-        );
-      });
-      const exactOffers = publicIdentityOffers.filter(
-        (candidate) =>
-          String(candidate.offerId ?? "").trim() === exactRecovery.offerId,
-      );
-      const discoveryStep = step(
-        "offer-update-discovery-readback",
-        discoveryRead,
-      );
-      discoveryStep.ok =
-        discoveryStep.ok &&
-        publicIdentityOffers.length === 1 &&
-        exactOffers.length === 1;
-      discoveryStep.data = {
-        ...discoveryStep.data,
-        sellerpilotVerification: discoveryStep.ok
-          ? "EBAY_EXACT_OFFER_DISCOVERED"
-          : "EBAY_EXACT_OFFER_DISCOVERY_MISMATCH",
-        exactOfferCount: exactOffers.length,
-        publicIdentityOfferCount: publicIdentityOffers.length,
-      };
-      steps.push(discoveryStep);
-      if (!discoveryStep.ok) return result(input, steps, listingId);
-      decodedOfferId = exactRecovery.offerId;
-    }
+    const decodedOfferId = stringArgument(input.arguments, "offerId");
+
     const offerId = pathSegment(decodedOfferId);
 
     const offerRead = await ebayRequest({
@@ -696,8 +511,8 @@ export async function executeEbay(input: ExecuteInput) {
     });
     const listing =
       offerRead.data.listing &&
-      typeof offerRead.data.listing === "object" &&
-      !Array.isArray(offerRead.data.listing)
+        typeof offerRead.data.listing === "object" &&
+        !Array.isArray(offerRead.data.listing)
         ? (offerRead.data.listing as Record<string, unknown>)
         : {};
     const identityVerified =
@@ -774,17 +589,8 @@ export async function executeEbay(input: ExecuteInput) {
           : [[key, structuredClone(inventoryRead.data[key])]],
       ),
     );
-    const exactPrepared = exactRecovery
-      ? ebayExactProviderCopyArguments({
-          sourceArguments: input.arguments,
-          currentOffer,
-          currentInventoryItem,
-          requestedOffer,
-          requestedInventoryItem,
-        })
-      : null;
+
     const offerBody =
-      exactPrepared?.offerBody ??
       (mergeListingUpdatePatch(currentOffer, requestedOffer) as Record<
         string,
         unknown
@@ -792,7 +598,6 @@ export async function executeEbay(input: ExecuteInput) {
     offerBody.sku = decodedSku;
     offerBody.marketplaceId = marketplaceId;
     const inventoryBody =
-      exactPrepared?.inventoryBody ??
       (mergeListingUpdatePatch(
         currentInventoryItem,
         requestedInventoryItem,
@@ -801,16 +606,7 @@ export async function executeEbay(input: ExecuteInput) {
     if (Object.keys(requestedOffer).length) {
       assertEbayListingCreateConfiguration({ offer: offerBody });
     }
-    if (exactRecovery) {
-      if (!input.providerMutationHooks) {
-        throw new Error(
-          "EBAY_EXACT_EXISTING_QA_PROVIDER_MUTATION_HOOKS_REQUIRED",
-        );
-      }
-      await input.providerMutationHooks.assertLeaseHealthy();
-      await input.providerMutationHooks.begin();
-      await input.providerMutationHooks.assertLeaseHealthy();
-    }
+
 
     if (Object.keys(requestedInventoryItem).length) {
       const inventoryRemote = await ebayRequest({
@@ -837,9 +633,7 @@ export async function executeEbay(input: ExecuteInput) {
       if (!offerStep.ok) return result(input, steps, listingId);
     }
     return ebayListingResultWithPublicationReadback(
-      exactPrepared
-        ? { ...input, arguments: exactPrepared.readbackArguments }
-        : input,
+      input,
       steps,
       listingId,
       decodedOfferId,
@@ -881,13 +675,13 @@ export async function executeEbay(input: ExecuteInput) {
     const bulkBody = input.arguments.body
       ? objectValue(input.arguments, "body")
       : {
-          requests: [
-            {
-              sku: decodedSku,
-              shipToLocationAvailability: { quantity },
-            },
-          ],
-        };
+        requests: [
+          {
+            sku: decodedSku,
+            shipToLocationAvailability: { quantity },
+          },
+        ],
+      };
     const writeRemote = await ebayRequest({
       payload: input.payload,
       environment: input.environment,

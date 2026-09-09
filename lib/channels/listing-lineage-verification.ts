@@ -1,41 +1,16 @@
 import { assertShopeeShopProfileTarget } from "./provider-account-identity";
 import { assertLazadaActiveSellerLineage } from "./lazada-seller-lineage";
-import {
-  shopeeSgExistingAdoptionBinding,
-  verifyShopeeSgExistingAdoptionReadback,
-  type ShopeeSgExistingAdoptionEvidence,
-} from "./shopee-sg-existing-adoption";
 import { ebayAsqMarketplaceIdFromSiteCode } from "./ebay-asq";
-import {
-  ebayRequest,
-  ebayTradingRequest,
-  ebayTradingXmlEscape,
-  ensureEbayAccessToken,
-  ensureLazadaAccessToken,
-  ensureShopeeAccessToken,
-  lazadaRequest,
-  qoo10Request,
-  readStoredShopeeShopAccessToken,
-  shopeeRequest,
-  textValue,
-  type CredentialRefreshSnapshot,
-  type RemoteResponse,
-  type SecretPayload,
-} from "./protocols";
-
+import { ebayRequest, ebayTradingRequest, ebayTradingXmlEscape, ensureEbayAccessToken, ensureLazadaAccessToken, ensureShopeeAccessToken, lazadaRequest, qoo10Request, shopeeRequest, textValue, type CredentialRefreshSnapshot, type RemoteResponse, type SecretPayload } from "./protocols";
 export const providerListingReadbackEvidenceVersion = "provider_listing_readback_rebind_v1" as const;
-
 export type ProviderListingLineageChannel = "qoo10" | "shopee" | "lazada" | "ebay";
-
 type VerificationStatus = "verified" | "manual_required";
-
 type SafeVerificationStep = {
   name: string;
   ok: boolean;
   status: number;
   data: Record<string, string | boolean | null>;
 };
-
 export type ProviderListingLineageEvidence = {
   expectedRemoteId: string;
   verifiedRemoteId: string | null;
@@ -44,10 +19,9 @@ export type ProviderListingLineageEvidence = {
   evidenceVersion: typeof providerListingReadbackEvidenceVersion;
   marketplaceSku?: string;
   providerResourceId?: string;
-  shopeeAdoption?: ShopeeSgExistingAdoptionEvidence;
+
   reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
 };
-
 export type ProviderListingLineageVerificationResult = {
   ok: true;
   channel: ProviderListingLineageChannel;
@@ -57,7 +31,6 @@ export type ProviderListingLineageVerificationResult = {
   steps: SafeVerificationStep[];
   safeMessage: string;
 };
-
 type VerificationInput = {
   channel: ProviderListingLineageChannel;
   payload: SecretPayload;
@@ -66,7 +39,6 @@ type VerificationInput = {
   onExternalMutationStart?: () => void | Promise<void>;
   onCredentialRefresh?: (refresh: CredentialRefreshSnapshot) => void | Promise<void>;
 };
-
 export type VerificationDependencies = {
   ensureShopeeAccessToken: typeof ensureShopeeAccessToken;
   ensureLazadaAccessToken: typeof ensureLazadaAccessToken;
@@ -77,7 +49,6 @@ export type VerificationDependencies = {
   ebayTradingRequest: typeof ebayTradingRequest;
   qoo10Request: typeof qoo10Request;
 };
-
 const defaultDependencies: VerificationDependencies = {
   ensureShopeeAccessToken,
   ensureLazadaAccessToken,
@@ -88,9 +59,7 @@ const defaultDependencies: VerificationDependencies = {
   ebayTradingRequest,
   qoo10Request,
 };
-
 const safeIdentifierPattern = /^[^\p{Cc}\p{Cf}]{1,240}$/u;
-
 function requiredIdentifier(source: Record<string, unknown>, key: string, maxLength = 240) {
   const value = typeof source[key] === "string" || typeof source[key] === "number"
     ? String(source[key]).trim()
@@ -100,7 +69,6 @@ function requiredIdentifier(source: Record<string, unknown>, key: string, maxLen
   }
   return value;
 }
-
 function optionalIdentifier(source: Record<string, unknown>, key: string, maxLength = 240) {
   const value = source[key] === undefined || source[key] === null
     ? ""
@@ -111,7 +79,6 @@ function optionalIdentifier(source: Record<string, unknown>, key: string, maxLen
   }
   return value;
 }
-
 function parseArguments(channel: ProviderListingLineageChannel, source: Record<string, unknown>) {
   const expectedRemoteId = requiredIdentifier(source, "expectedRemoteId");
   // The legacy Qoo10 ledger predates market normalization and can contain an
@@ -150,36 +117,28 @@ function parseArguments(channel: ProviderListingLineageChannel, source: Record<s
     providerResourceId,
   };
 }
-
 function objectValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
-
 function objectArray(value: unknown) {
   return Array.isArray(value)
     ? value.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
     : [];
 }
-
 function successfulRemote(remote: RemoteResponse) {
   const error = textValue(remote.data, "error");
   const code = String(remote.data.code ?? "").trim().toUpperCase();
   return remote.response.ok && !error && (!code || ["0", "SUCCESS", "OK"].includes(code));
 }
-
 function throwIfTransientProviderReadback(remote: RemoteResponse, step: string) {
   const status = remote.response.status;
   if (status === 408 || status === 425 || status === 429 || status >= 500) {
     throw new Error(`LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR:${step}:${status}`);
   }
 }
-
-function baseEvidence(
-  argumentsValue: ReturnType<typeof parseArguments>,
-  includeEbayResources = false,
-): ProviderListingLineageEvidence {
+function baseEvidence(argumentsValue: ReturnType<typeof parseArguments>, includeEbayResources = false): ProviderListingLineageEvidence {
   return {
     expectedRemoteId: argumentsValue.expectedRemoteId,
     verifiedRemoteId: null,
@@ -194,14 +153,7 @@ function baseEvidence(
       : {}),
   };
 }
-
-function safeStep(
-  name: string,
-  remote: RemoteResponse,
-  ok: boolean,
-  verification: string,
-  data: Record<string, string | boolean | null> = {},
-): SafeVerificationStep {
+function safeStep(name: string, remote: RemoteResponse, ok: boolean, verification: string, data: Record<string, string | boolean | null> = {}): SafeVerificationStep {
   return {
     name,
     ok,
@@ -209,13 +161,7 @@ function safeStep(
     data: { sellerpilotVerification: verification, ...data },
   };
 }
-
-function manualResult(
-  input: VerificationInput,
-  argumentsValue: ReturnType<typeof parseArguments>,
-  reasonCode: ProviderListingLineageEvidence["reasonCode"],
-  steps: SafeVerificationStep[] = [],
-): ProviderListingLineageVerificationResult {
+function manualResult(input: VerificationInput, argumentsValue: ReturnType<typeof parseArguments>, reasonCode: ProviderListingLineageEvidence["reasonCode"], steps: SafeVerificationStep[] = []): ProviderListingLineageVerificationResult {
   return {
     ok: true,
     channel: input.channel,
@@ -226,30 +172,8 @@ function manualResult(
     safeMessage: "원격 상품 계정을 자동으로 확정할 증거가 부족해 기존 상품 쓰기를 계속 차단했습니다.",
   };
 }
-
-async function verifyShopee(
-  input: VerificationInput,
-  argumentsValue: ReturnType<typeof parseArguments>,
-  dependencies: VerificationDependencies,
-): Promise<ProviderListingLineageVerificationResult> {
-  const adoptionBinding = shopeeSgExistingAdoptionBinding(input.arguments);
-  const adoptionPayload = adoptionBinding
-    ? readStoredShopeeShopAccessToken(input.payload, argumentsValue.targetId)
-    : null;
-  if (adoptionBinding && !adoptionPayload) {
-    throw new Error("SHOPEE_SG_EXISTING_ADOPTION_FRESH_OAUTH_REQUIRED");
-  }
-  const ensured = adoptionPayload
-    ? { payload: adoptionPayload, refreshed: false as const, credentialExpiresAt: textValue(input.payload, "authorization_expires_at") || null }
-    : await dependencies.ensureShopeeAccessToken(
-        input.payload,
-        input.environment,
-        10 * 60 * 1000,
-        argumentsValue.targetId,
-        input.onExternalMutationStart,
-        input.onCredentialRefresh,
-        true,
-      );
+async function verifyShopee(input: VerificationInput, argumentsValue: ReturnType<typeof parseArguments>, dependencies: VerificationDependencies): Promise<ProviderListingLineageVerificationResult> {
+  const ensured = await dependencies.ensureShopeeAccessToken(input.payload, input.environment, 10 * 60 * 1000, argumentsValue.targetId, input.onExternalMutationStart, input.onCredentialRefresh, true);
   const shopRemote = await dependencies.shopeeRequest({
     payload: ensured.payload,
     environment: input.environment,
@@ -259,7 +183,6 @@ async function verifyShopee(
   throwIfTransientProviderReadback(shopRemote, "shopeeShop");
   if (!successfulRemote(shopRemote)) throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:shopeeShop");
   assertShopeeShopProfileTarget(shopRemote.data, argumentsValue.targetId, { acceptSignedRequestBinding: true });
-
   const itemRemote = await dependencies.shopeeRequest({
     payload: ensured.payload,
     environment: input.environment,
@@ -276,24 +199,11 @@ async function verifyShopee(
   const matchingItems = itemList
     .filter((item) => String(item.item_id ?? "").trim() === argumentsValue.expectedRemoteId);
   if (!successfulRemote(itemRemote)
-      || matchingItems.length !== 1
-      || itemIdentities.size !== 1
-      || !itemIdentities.has(argumentsValue.expectedRemoteId)) {
+    || matchingItems.length !== 1
+    || itemIdentities.size !== 1
+    || !itemIdentities.has(argumentsValue.expectedRemoteId)) {
     throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:shopee");
   }
-
-  const adoptionEvidence = adoptionBinding
-    ? verifyShopeeSgExistingAdoptionReadback({
-        argumentsValue: input.arguments,
-        credentialPayload: input.payload,
-        shopRemoteData: shopRemote.data,
-        itemRemoteData: itemRemote.data,
-      })
-    : null;
-  if (adoptionBinding && !adoptionEvidence) {
-    throw new Error("SHOPEE_SG_EXISTING_ADOPTION_READBACK_MISMATCH");
-  }
-
   return {
     ok: true,
     channel: "shopee",
@@ -302,7 +212,6 @@ async function verifyShopee(
     evidence: {
       ...baseEvidence(argumentsValue),
       verifiedRemoteId: argumentsValue.expectedRemoteId,
-      ...(adoptionEvidence ? { shopeeAdoption: adoptionEvidence } : {}),
     },
     steps: [
       safeStep("seller-account-readback", shopRemote, true, "SHOPEE_SHOP_ID_VERIFIED", { targetId: argumentsValue.targetId }),
@@ -311,7 +220,6 @@ async function verifyShopee(
     safeMessage: "Shopee 판매점과 원격 상품 식별값을 정확히 재확인했습니다.",
   };
 }
-
 function qoo10ItemIdentities(value: unknown, depth = 0, found = new Set<string>()) {
   if (depth > 8 || value === null || value === undefined) return found;
   if (Array.isArray(value)) {
@@ -321,7 +229,7 @@ function qoo10ItemIdentities(value: unknown, depth = 0, found = new Set<string>(
   if (typeof value !== "object") return found;
   for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
     if (["itemcode", "gdno"].includes(key.toLowerCase())
-        && (typeof item === "string" || typeof item === "number")) {
+      && (typeof item === "string" || typeof item === "number")) {
       const normalized = String(item).trim();
       if (normalized) found.add(normalized);
     }
@@ -329,12 +237,7 @@ function qoo10ItemIdentities(value: unknown, depth = 0, found = new Set<string>(
   }
   return found;
 }
-
-async function verifyQoo10(
-  input: VerificationInput,
-  argumentsValue: ReturnType<typeof parseArguments>,
-  dependencies: VerificationDependencies,
-): Promise<ProviderListingLineageVerificationResult> {
+async function verifyQoo10(input: VerificationInput, argumentsValue: ReturnType<typeof parseArguments>, dependencies: VerificationDependencies): Promise<ProviderListingLineageVerificationResult> {
   const itemRemote = await dependencies.qoo10Request({
     payload: input.payload,
     service: "ItemsLookup",
@@ -363,7 +266,6 @@ async function verifyQoo10(
     safeMessage: "Qoo10 현재 판매자 API에서 원격 상품 식별값을 정확히 재확인했습니다.",
   };
 }
-
 function lazadaItemIds(data: Record<string, unknown>) {
   const found = new Set<string>();
   const topData = objectValue(data.data);
@@ -377,19 +279,8 @@ function lazadaItemIds(data: Record<string, unknown>) {
   }
   return found;
 }
-
-async function verifyLazada(
-  input: VerificationInput,
-  argumentsValue: ReturnType<typeof parseArguments>,
-  dependencies: VerificationDependencies,
-): Promise<ProviderListingLineageVerificationResult> {
-  const ensured = await dependencies.ensureLazadaAccessToken(
-    { ...input.payload, country: argumentsValue.market.toLowerCase() },
-    72 * 60 * 60 * 1000,
-    input.onExternalMutationStart,
-    input.onCredentialRefresh,
-    true,
-  );
+async function verifyLazada(input: VerificationInput, argumentsValue: ReturnType<typeof parseArguments>, dependencies: VerificationDependencies): Promise<ProviderListingLineageVerificationResult> {
+  const ensured = await dependencies.ensureLazadaAccessToken({ ...input.payload, country: argumentsValue.market.toLowerCase() }, 72 * 60 * 60 * 1000, input.onExternalMutationStart, input.onCredentialRefresh, true);
   if ((textValue(ensured.payload, "country") || "my").toLowerCase() !== argumentsValue.market.toLowerCase()) {
     throw new Error("LISTING_LINEAGE_MARKET_MISMATCH:lazada");
   }
@@ -415,12 +306,11 @@ async function verifyLazada(
   const itemIdentities = lazadaItemIds(itemRemote.data);
   throwIfTransientProviderReadback(itemRemote, "lazadaItem");
   if (!successfulRemote(itemRemote)
-      || itemIdentities.size !== 1
-      || !itemIdentities.has(argumentsValue.expectedRemoteId)) {
+    || itemIdentities.size !== 1
+    || !itemIdentities.has(argumentsValue.expectedRemoteId)) {
     throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:lazada");
   }
   const verifiedRemoteId = argumentsValue.expectedRemoteId;
-
   if (argumentsValue.marketplaceSku) {
     const data = objectValue(itemRemote.data.data);
     const nested = objectValue(data.item);
@@ -434,12 +324,11 @@ async function verifyLazada(
         .trim()
         .toUpperCase());
     if (skus.length !== 1
-        || exactSkus.length !== 1
-        || activeStatuses.some((status) => !["ACTIVE", "LIVE", "ONLINE"].includes(status))) {
+      || exactSkus.length !== 1
+      || activeStatuses.some((status) => !["ACTIVE", "LIVE", "ONLINE"].includes(status))) {
       throw new Error("LISTING_LINEAGE_REMOTE_LIVE_SKU_MISMATCH:lazada");
     }
   }
-
   return {
     ok: true,
     channel: "lazada",
@@ -459,12 +348,7 @@ async function verifyLazada(
     safeMessage: "Lazada 국가와 원격 상품 식별값을 정확히 재확인했습니다.",
   };
 }
-
-async function verifyEbay(
-  input: VerificationInput,
-  argumentsValue: ReturnType<typeof parseArguments>,
-  dependencies: VerificationDependencies,
-): Promise<ProviderListingLineageVerificationResult> {
+async function verifyEbay(input: VerificationInput, argumentsValue: ReturnType<typeof parseArguments>, dependencies: VerificationDependencies): Promise<ProviderListingLineageVerificationResult> {
   const configuredMarketplaceId = textValue(input.payload, "marketplace_id").trim().toUpperCase();
   const targetMarketplaceId = argumentsValue.targetId.trim().toUpperCase();
   const marketplaceId = targetMarketplaceId.startsWith("EBAY_")
@@ -472,17 +356,10 @@ async function verifyEbay(
     : configuredMarketplaceId;
   const ledgerMarket = argumentsValue.market.replace(/^EBAY_/, "");
   if (!/^EBAY_[A-Z0-9_]+$/.test(marketplaceId)
-      || marketplaceId.replace(/^EBAY_/, "") !== ledgerMarket) {
+    || marketplaceId.replace(/^EBAY_/, "") !== ledgerMarket) {
     throw new Error("LISTING_LINEAGE_MARKET_MISMATCH:ebay");
   }
-  const ensured = await dependencies.ensureEbayAccessToken(
-    { ...input.payload, marketplace_id: marketplaceId },
-    input.environment,
-    5 * 60 * 1000,
-    input.onExternalMutationStart,
-    input.onCredentialRefresh,
-    true,
-  );
+  const ensured = await dependencies.ensureEbayAccessToken({ ...input.payload, marketplace_id: marketplaceId }, input.environment, 5 * 60 * 1000, input.onExternalMutationStart, input.onCredentialRefresh, true);
   const getItemXml = `<?xml version="1.0" encoding="utf-8"?><GetItemRequest xmlns="urn:ebay:apis:eBLBaseComponents"><ItemID>${ebayTradingXmlEscape(argumentsValue.expectedRemoteId)}</ItemID><OutputSelector>ItemID</OutputSelector><OutputSelector>SKU</OutputSelector><OutputSelector>Site</OutputSelector></GetItemRequest>`;
   const listingRemote = await dependencies.ebayTradingRequest({
     payload: ensured.payload,
@@ -505,19 +382,13 @@ async function verifyEbay(
     && ["Success", "Warning"].includes(String(listingRemote.data.Ack ?? ""))
     && String(listingItem.itemId ?? "").trim() === argumentsValue.expectedRemoteId
     && listingMarketplaceId === marketplaceId;
-  const listingStep = safeStep(
-    "listing-id-sku-readback",
-    listingRemote,
-    listingIdentityVerified && Boolean(discoveredSku),
-    listingIdentityVerified && discoveredSku
-      ? "EBAY_LISTING_ID_SKU_VERIFIED"
-      : "EBAY_LISTING_ID_SKU_UNVERIFIED",
-    {
-      listingId: argumentsValue.expectedRemoteId,
-      marketplaceId,
-      marketplaceSkuPresent: Boolean(discoveredSku),
-    },
-  );
+  const listingStep = safeStep("listing-id-sku-readback", listingRemote, listingIdentityVerified && Boolean(discoveredSku), listingIdentityVerified && discoveredSku
+    ? "EBAY_LISTING_ID_SKU_VERIFIED"
+    : "EBAY_LISTING_ID_SKU_UNVERIFIED", {
+    listingId: argumentsValue.expectedRemoteId,
+    marketplaceId,
+    marketplaceSkuPresent: Boolean(discoveredSku),
+  });
   if (!listingIdentityVerified) {
     throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebayTrading");
   }
@@ -539,8 +410,7 @@ async function verifyEbay(
   if (!successfulRemote(searchRemote)) throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:ebaySearch");
   const exactOffers = objectArray(searchRemote.data.offers).filter((offer) =>
     String(offer.sku ?? "").trim() === marketplaceSku
-    && String(offer.marketplaceId ?? "").trim().toUpperCase() === marketplaceId,
-  );
+    && String(offer.marketplaceId ?? "").trim().toUpperCase() === marketplaceId);
   const selected = argumentsValue.providerResourceId
     ? exactOffers.filter((offer) => String(offer.offerId ?? "").trim() === argumentsValue.providerResourceId)
     : exactOffers;
@@ -571,7 +441,6 @@ async function verifyEbay(
     && String(detailRemote.data.status ?? "").trim().toUpperCase() === "PUBLISHED"
     && String(detailListing.listingStatus ?? "").trim().toUpperCase() === "ACTIVE";
   if (!detailMatches) throw new Error("LISTING_LINEAGE_REMOTE_ID_MISMATCH:ebay");
-
   const inventoryRemote = await dependencies.ebayRequest({
     payload: ensured.payload,
     environment: input.environment,
@@ -582,7 +451,6 @@ async function verifyEbay(
   if (!successfulRemote(inventoryRemote)) {
     throw new Error("LISTING_LINEAGE_PROVIDER_READBACK_FAILED:ebayInventory");
   }
-
   return {
     ok: true,
     channel: "ebay",
@@ -611,11 +479,7 @@ async function verifyEbay(
     safeMessage: "eBay SKU·offer·공개 상품 식별값을 정확히 교차 확인했습니다.",
   };
 }
-
-export async function executeProviderListingLineageVerification(
-  input: VerificationInput,
-  dependencies: VerificationDependencies = defaultDependencies,
-): Promise<ProviderListingLineageVerificationResult> {
+export async function executeProviderListingLineageVerification(input: VerificationInput, dependencies: VerificationDependencies = defaultDependencies): Promise<ProviderListingLineageVerificationResult> {
   const argumentsValue = parseArguments(input.channel, input.arguments);
   if (input.channel === "qoo10") return verifyQoo10(input, argumentsValue, dependencies);
   if (input.channel === "shopee") return verifyShopee(input, argumentsValue, dependencies);

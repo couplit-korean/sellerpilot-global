@@ -5,7 +5,6 @@ import {
   type SecretPayload,
 } from "./protocols";
 
-export const elevenstCookieSellerProductCode = "AUTO-780720401E2D4E4EA45F";
 
 const SELLERPRODCODE_PREFIX = "/rest/prodmarketservice/sellerprodcode/";
 const PRODMARKET_PREFIX = "/rest/prodmarketservice/prodmarket/";

@@ -42,8 +42,7 @@ const PREPARE_SHOPEE_TARGET_REFRESH_RPC = "sellerpilot_service_prepare_cs_shopee
 const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
   "sellerpilot_service_mark_lazada_oauth_provider_call_started";
 const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
-const BIND_COUPANG_REP_PREWRITE_RPC =
-  "sellerpilot_service_bind_coupang_rep_prewrite";
+
 const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
 const PUBLICATION_VERIFICATION_SOURCE_RPC =
@@ -210,20 +209,20 @@ function recordValue(value: unknown): Record<string, unknown> | null {
 
 function safeExecutionError(error: unknown, signal: AbortSignal) {
   if (signal.aborted
-      || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
+    || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
     return "serverless_cs_runtime_timeout";
   }
   if (error instanceof LazadaOAuthProviderFailureError) {
     const safeMessage =
       `LAZADA_OAUTH_PROVIDER_FAILURE:${error.category}:${error.providerCode}`;
     if (error.message === safeMessage
-        && /^LAZADA_OAUTH_PROVIDER_FAILURE:(?:SYSTEM|ISV|ISP|HTTP_4XX|HTTP_5XX|INVALID_RESPONSE):(?:INCOMPLETE_SIGNATURE|INVALID_SIGNATURE|INVALID_TIMESTAMP|INVALID_APP_KEY|INVALID_CODE|INVALID_AUTHORIZATION_CODE|ILLEGAL_ACCESS_TOKEN|MISSING_PARAMETER|INVALID_PARAMETER|API_CALL_LIMIT|MISSING_TOKEN_FIELDS|UNRECOGNIZED|5|6|30|500|501|901|1000)$/u.test(safeMessage)) {
+      && /^LAZADA_OAUTH_PROVIDER_FAILURE:(?:SYSTEM|ISV|ISP|HTTP_4XX|HTTP_5XX|INVALID_RESPONSE):(?:INCOMPLETE_SIGNATURE|INVALID_SIGNATURE|INVALID_TIMESTAMP|INVALID_APP_KEY|INVALID_CODE|INVALID_AUTHORIZATION_CODE|ILLEGAL_ACCESS_TOKEN|MISSING_PARAMETER|INVALID_PARAMETER|API_CALL_LIMIT|MISSING_TOKEN_FIELDS|UNRECOGNIZED|5|6|30|500|501|901|1000)$/u.test(safeMessage)) {
       return safeMessage;
     }
   }
   if (error instanceof Error) {
     if (error instanceof GatewayProviderMutationDeniedError
-        || error instanceof GatewayProviderMutationStateUncertainError) {
+      || error instanceof GatewayProviderMutationStateUncertainError) {
       return error.message;
     }
     if (error.message === "LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED") {
@@ -265,7 +264,7 @@ export function serverlessGatewayExecutionTimeoutMs(
     ? SERVERLESS_GATEWAY_RETRY_SAFE_READ_TIMEOUT_MS
     : SERVERLESS_CS_EXECUTION_TIMEOUT_MS;
   const requestedTimeout = typeof configuredTimeoutMs === "number"
-      && Number.isFinite(configuredTimeoutMs)
+    && Number.isFinite(configuredTimeoutMs)
     ? Math.max(1_000, Math.floor(configuredTimeoutMs))
     : operationMaximum;
   return Math.min(operationMaximum, requestedTimeout);
@@ -457,9 +456,9 @@ async function beginProviderMutation(
     if (contextResult.error) throw new GatewayProviderMutationStateUncertainError();
     const context = recordValue(contextResult.data);
     if (!context
-        || context.status !== "running"
-        || context.channel !== job.channel
-        || context.operation !== job.operation) {
+      || context.status !== "running"
+      || context.channel !== job.channel
+      || context.operation !== job.operation) {
       throw new GatewayOwnershipLostError();
     }
     if (context.publication_verification_boundary != null) {
@@ -467,35 +466,6 @@ async function beginProviderMutation(
     }
     throw new GatewayProviderMutationDeniedError();
   }
-}
-
-async function bindCoupangRepresentativePrewrite(
-  dependencies: ServerlessCsGatewayDependencies,
-  gatewayTokenHash: string,
-  job: ServerlessGatewayClaim,
-  images: Array<{
-    imageOrder: number;
-    imageType: "REPRESENTATION" | "DETAIL";
-    cdnPath: string;
-    vendorPath: string;
-  }>,
-) {
-  const bound = await callRpc(dependencies, BIND_COUPANG_REP_PREWRITE_RPC, {
-    p_token_hash: gatewayTokenHash,
-    p_job_id: job.id,
-    p_claim_token: job.claim_token,
-    p_images: images,
-  });
-  if (bound.error) throw new Error("gateway_coupang_prewrite_fence_unavailable");
-  const value = recordValue(bound.data);
-  const digest = typeof value?.prewriteSnapshotSha256 === "string"
-    ? value.prewriteSnapshotSha256
-    : "";
-  if (value?.contract !== "coupang_exact_rep_prewrite_v1"
-      || !/^[a-f0-9]{64}$/u.test(digest)) {
-    throw new GatewayOwnershipLostError();
-  }
-  return { prewriteSnapshotSha256: digest };
 }
 
 async function beginLazadaOAuthProviderCall(
@@ -528,8 +498,8 @@ async function hydrateListingPublicationVerificationJob(
   });
   const source = listingPublicationVerificationSourceSchema.safeParse(sourceResult.data);
   if (sourceResult.error
-      || !source.success
-      || source.data.verificationJobId !== job.id) {
+    || !source.success
+    || source.data.verificationJobId !== job.id) {
     throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_CONTEXT_UNAVAILABLE");
   }
   const argumentsValue = recordValue(job.request.arguments);
@@ -652,8 +622,8 @@ export async function runOneServerlessCsGatewayJob(
   });
   const rateReceipt = recordValue(rateReservation.data);
   if (rateReservation.error
-      || rateReceipt?.contract !== providerRateBudgetContract
-      || !["reserved", "deferred"].includes(String(rateReceipt.status))) {
+    || rateReceipt?.contract !== providerRateBudgetContract
+    || !["reserved", "deferred"].includes(String(rateReceipt.status))) {
     logError("rate_budget", { status: 503, channel: job.channel, operation: job.operation });
     return jsonResponse({ message: "채널 호출 예산을 확인하지 못했습니다." }, 503);
   }
@@ -693,7 +663,7 @@ export async function runOneServerlessCsGatewayJob(
         initialProviderRequestReservationAvailable = false;
         return;
       }
-      for (;;) {
+      for (; ;) {
         const reservation = await callRpc(dependencies, RESERVE_PROVIDER_REQUEST_RATE_BUDGET_RPC, {
           p_token_hash: gatewayTokenHash,
           p_job_id: job.id,
@@ -701,9 +671,9 @@ export async function runOneServerlessCsGatewayJob(
         });
         const receipt = recordValue(reservation.data);
         if (reservation.error
-            || !receipt
-            || receipt.contract !== "sellerpilot-provider-request-rate-budget/1"
-            || !["reserved", "waiting"].includes(String(receipt.status))) {
+          || !receipt
+          || receipt.contract !== "sellerpilot-provider-request-rate-budget/1"
+          || !["reserved", "waiting"].includes(String(receipt.status))) {
           throw new Error("PROVIDER_REQUEST_RATE_BUDGET_FAILED");
         }
         if (receipt.status === "reserved") return;
@@ -748,17 +718,6 @@ export async function runOneServerlessCsGatewayJob(
       await assertLeaseHealthy();
       externalMutationStarted = true;
     },
-    bindCoupangRepresentativePrewrite: async (images) => {
-      await assertLeaseHealthy();
-      const result = await bindCoupangRepresentativePrewrite(
-        dependencies,
-        gatewayTokenHash,
-        job,
-        images,
-      );
-      await assertLeaseHealthy();
-      return result;
-    },
   };
 
   const stopHeartbeat = async () => {
@@ -794,8 +753,8 @@ export async function runOneServerlessCsGatewayJob(
       });
       const reportReceipt = recordValue(reported.data);
       if (reported.error
-          || reportReceipt?.contract !== providerRateBudgetContract
-          || !["deferred", "recorded"].includes(String(reportReceipt.status))) {
+        || reportReceipt?.contract !== providerRateBudgetContract
+        || !["deferred", "recorded"].includes(String(reportReceipt.status))) {
         throw new Error("PROVIDER_RATE_LIMIT_RECORDING_FAILED");
       }
       if (reportReceipt.status === "deferred") {
@@ -817,8 +776,8 @@ export async function runOneServerlessCsGatewayJob(
       : undefined;
     if (retryContinuation) {
       if (result.ok
-          || result.channel !== "temu"
-          || result.operation !== "inquiries.list") {
+        || result.channel !== "temu"
+        || result.operation !== "inquiries.list") {
         throw new Error("TEMU_AFTER_SALES_DETAIL_RETRY_RESULT_INVALID");
       }
       await assertLeaseHealthy();
@@ -881,7 +840,7 @@ export async function runOneServerlessCsGatewayJob(
         status: "failed",
         error: result.safeMessage,
         ...((job.channel === "elevenst" && result.channel === "elevenst"
-            || job.channel === "ebay" && result.channel === "ebay" && "steps" in result && result.steps.length === 1 && result.steps[0]?.name === "ebay-case-dispute-history-page")
+          || job.channel === "ebay" && result.channel === "ebay" && "steps" in result && result.steps.length === 1 && result.steps[0]?.name === "ebay-case-dispute-history-page")
           && result.operation === "inquiries.list"
           ? { result: result as ChannelOperationResult }
           : {}),
@@ -930,19 +889,19 @@ export async function runOneServerlessCsGatewayJob(
       && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(effectiveError.message);
     const completion: GatewayWorkerCompletion =
       externalMutationStarted || providerMutationStateUncertain || retryableLineageReadback
-      ? {
-        jobId: job.id,
-        claimToken: job.claim_token,
-        status: "reconciliation_required",
-        error: errorReason,
-        ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
-      }
-      : {
-        jobId: job.id,
-        claimToken: job.claim_token,
-        status: "failed",
-        error: errorReason,
-      };
+        ? {
+          jobId: job.id,
+          claimToken: job.claim_token,
+          status: "reconciliation_required",
+          error: errorReason,
+          ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
+        }
+        : {
+          jobId: job.id,
+          claimToken: job.claim_token,
+          status: "failed",
+          error: errorReason,
+        };
     logError("execute", {
       status: externalMutationStarted ? 409 : 503,
       channel: job.channel,
@@ -1097,10 +1056,10 @@ export async function runServerlessCsGatewayDrain(
       {},
     );
     if (runtimeStatus.error
-        || !runtimeStatusMatchesCurrentRelease(runtimeStatus.data, {
-          sellerpilotReleaseSha: dependencies.releaseId,
-          vercelGitCommitSha: dependencies.vercelGitCommitSha,
-        })) {
+      || !runtimeStatusMatchesCurrentRelease(runtimeStatus.data, {
+        sellerpilotReleaseSha: dependencies.releaseId,
+        vercelGitCommitSha: dependencies.vercelGitCommitSha,
+      })) {
       return jsonResponse({ message: "서버 일정이 활성화되지 않았습니다." }, 503);
     }
   }

@@ -8,25 +8,10 @@ import {
 } from "../../channels/operation-values";
 import { coupangRequest, textValue } from "../../channels/protocols";
 import {
-  assertCoupangExactQaCurrentProduct,
-  assertCoupangExactQaInventoryReadback,
-  assertCoupangExactQaUpdateReadback,
   coupangListingUpdateWrite,
 } from "../../channels/coupang-listing-update";
-import {
-  assertCoupangExactQaProviderContract,
-  coupangExactQaRepresentativeBinding,
-  coupangExactQaRecoveryArgument,
-  coupangExactQaRecoveryBinding,
-  coupangExactQaRecoveryIdentity,
-  type CoupangExactQaRecoveryBinding,
-} from "../../channels/coupang-exact-qa-recovery";
-import {
-  coupangExactRepresentativePrewriteSnapshot,
-  coupangProviderImageSnapshotSha256,
-  verifyCoupangExactRepresentativeReadback,
-  type CoupangProviderImageIdentity,
-} from "../../channels/coupang-representative-readback";
+
+
 import { listingPublicationIntentFromArguments } from "../../channels/listing-publication-state";
 import {
   coupangStatusFamily,
@@ -48,7 +33,6 @@ export async function coupangListingResultWithPublicationReadback(
   steps: ChannelOperationStep[],
   remoteId: string,
   expectedStopVendorItemIds?: string[],
-  exactRecovery?: CoupangExactQaRecoveryBinding | null,
 ) {
   if (
     !listingPublicationReadbackRequested(input) ||
@@ -113,48 +97,7 @@ export async function coupangListingResultWithPublicationReadback(
     };
     readbackSteps.push(vendorStep);
   });
-  if (exactRecovery?.phase === "listing.update") {
-    const commerceReadback = readback.vendorItemReadbacks.find(
-      ({ vendorItemId }) => vendorItemId === exactRecovery.vendorItemId,
-    );
-    const commerceStep: ChannelOperationStep = commerceReadback
-      ? step("coupang-exact-commerce-readback", commerceReadback.remote)
-      : {
-          name: "coupang-exact-commerce-readback",
-          ok: false,
-          status: 422,
-          data: {},
-        };
-    if (commerceStep.ok && commerceReadback) {
-      try {
-        const sellerProduct = readback.sellerProductReadback
-          ? assertCoupangExactQaCurrentProduct(
-              objectValue(readback.sellerProductReadback.data, "data", false),
-              exactRecovery,
-            )
-          : null;
-        assertCoupangExactQaInventoryReadback(
-          objectValue(commerceReadback.remote.data, "data", false),
-          exactRecovery,
-          {
-            requestedVendorItemId: commerceReadback.vendorItemId,
-            authoritativeVendorItemId: String(
-              sellerProduct?.item.vendorItemId ?? "",
-            ),
-          },
-        );
-      } catch {
-        commerceStep.ok = false;
-      }
-    }
-    commerceStep.data = {
-      ...commerceStep.data,
-      sellerpilotVerification: commerceStep.ok
-        ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
-        : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
-    };
-    readbackSteps.push(commerceStep);
-  }
+
   readbackSteps.push(
     publicationStateVerificationStep(
       input.channel,
@@ -241,21 +184,7 @@ export async function executeCoupang(input: ExecuteInput) {
     return result(input, [statusStep], categoryId);
   }
   if (input.operation === "listing.update") {
-    const exactRecovery = coupangExactQaRecoveryBinding(
-      input.arguments,
-      "listing.update",
-    );
-    if (
-      Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) &&
-      !exactRecovery
-    ) {
-      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
-    }
-    if (exactRecovery) {
-      assertCoupangExactQaProviderContract(input.arguments, "listing.update", {
-        sanitizedUpdate: true,
-      });
-    }
+
     const patchBody = objectValue(input.arguments, "body");
     const remoteId = String(patchBody.sellerProductId ?? "").trim();
     if (!remoteId) throw new Error("CHANNEL_ARGUMENT_REQUIRED:sellerProductId");
@@ -271,19 +200,8 @@ export async function executeCoupang(input: ExecuteInput) {
     preflightStep.ok =
       preflightStep.ok &&
       String(currentBody.sellerProductId ?? "") === remoteId;
-    let exactCurrentProduct: ReturnType<
-      typeof assertCoupangExactQaCurrentProduct
-    > | null = null;
-    if (preflightStep.ok && exactRecovery) {
-      try {
-        exactCurrentProduct = assertCoupangExactQaCurrentProduct(
-          currentBody,
-          exactRecovery,
-        );
-      } catch {
-        preflightStep.ok = false;
-      }
-    }
+
+
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok
@@ -293,41 +211,7 @@ export async function executeCoupang(input: ExecuteInput) {
     if (!preflightStep.ok) return result(input, [preflightStep], remoteId);
 
     const preflightSteps = [preflightStep];
-    if (exactRecovery) {
-      const commerceRemote = await coupangRequest({
-        payload: input.payload,
-        method: "GET",
-        path: `/v2/providers/seller_api/apis/api/v1/marketplace/vendor-items/${pathSegment(exactRecovery.vendorItemId)}/inventories`,
-      });
-      const commerceStep = step(
-        "listing-update-commerce-preflight",
-        commerceRemote,
-      );
-      if (commerceStep.ok) {
-        try {
-          assertCoupangExactQaInventoryReadback(
-            objectValue(commerceRemote.data, "data", false),
-            exactRecovery,
-            {
-              requestedVendorItemId: exactRecovery.vendorItemId,
-              authoritativeVendorItemId: String(
-                exactCurrentProduct?.item.vendorItemId ?? "",
-              ),
-            },
-          );
-        } catch {
-          commerceStep.ok = false;
-        }
-      }
-      commerceStep.data = {
-        ...commerceStep.data,
-        sellerpilotVerification: commerceStep.ok
-          ? "COUPANG_EXACT_QA_COMMERCE_VERIFIED"
-          : "COUPANG_EXACT_QA_COMMERCE_READBACK_MISMATCH",
-      };
-      preflightSteps.push(commerceStep);
-      if (!commerceStep.ok) return result(input, preflightSteps, remoteId);
-    }
+
 
     const coupangUpdate = coupangListingUpdateWrite(currentBody, patchBody);
     const mergedBody = coupangUpdate.body;
@@ -337,50 +221,7 @@ export async function executeCoupang(input: ExecuteInput) {
       mergedBody.requested =
         listingPublicationIntentFromArguments(input.arguments) === "live";
     }
-    if (exactRecovery) {
-      const documentStep: ChannelOperationStep = {
-        name: "listing-update-document-preflight",
-        ok: true,
-        status: 200,
-        data: {},
-      };
-      try {
-        assertCoupangExactQaUpdateReadback(mergedBody, exactRecovery);
-      } catch {
-        documentStep.ok = false;
-        documentStep.status = 422;
-      }
-      documentStep.data = {
-        sellerpilotVerification: documentStep.ok
-          ? "COUPANG_EXACT_QA_UPDATE_DOCUMENT_VERIFIED"
-          : "COUPANG_EXACT_QA_UPDATE_DOCUMENT_MISMATCH",
-      };
-      preflightSteps.push(documentStep);
-      if (!documentStep.ok) return result(input, preflightSteps, remoteId);
-    }
-    let exactPrewriteImages: CoupangProviderImageIdentity[] | null = null;
-    let exactPrewriteSnapshotSha256 = "";
-    if (exactRecovery) {
-      const hooks = input.providerMutationHooks;
-      if (!hooks?.bindCoupangRepresentativePrewrite) {
-        throw new Error("COUPANG_EXACT_QA_PROVIDER_BOUNDARY_REQUIRED");
-      }
-      exactPrewriteImages =
-        coupangExactRepresentativePrewriteSnapshot(currentBody);
-      await hooks.assertLeaseHealthy();
-      const boundPrewrite =
-        await hooks.bindCoupangRepresentativePrewrite(exactPrewriteImages);
-      exactPrewriteSnapshotSha256 = boundPrewrite.prewriteSnapshotSha256;
-      if (
-        exactPrewriteSnapshotSha256 !==
-        coupangProviderImageSnapshotSha256(exactPrewriteImages)
-      ) {
-        throw new Error("COUPANG_EXACT_QA_PREWRITE_BINDING_FAILED");
-      }
-      await hooks.assertLeaseHealthy();
-      await hooks.begin();
-      await hooks.assertLeaseHealthy();
-    }
+
     const writeRemote = await coupangRequest({
       payload: input.payload,
       method: "PUT",
@@ -404,55 +245,11 @@ export async function executeCoupang(input: ExecuteInput) {
     readbackStep.ok =
       readbackStep.ok &&
       String(readbackBody.sellerProductId ?? "") === remoteId;
-    if (readbackStep.ok && exactRecovery) {
-      try {
-        assertCoupangExactQaUpdateReadback(readbackBody, exactRecovery, {
-          providerReadback: true,
-        });
-        const representative = coupangExactQaRepresentativeBinding(
-          input.arguments,
-        );
-        if (!representative || !exactPrewriteImages) {
-          throw new Error("COUPANG_EXACT_QA_REPRESENTATIVE_INVALID");
-        }
-        const providerIdentity = verifyCoupangExactRepresentativeReadback({
-          currentValue: readbackBody,
-          prewriteImages: exactPrewriteImages,
-          argumentsValue: input.arguments,
-        });
-        readbackStep.data = {
-          ...readbackStep.data,
-          sellerpilotCoupangExactRepresentativeReadback: {
-            contract: "coupang_exact_qa_representative_readback_v1",
-            sellerProductId: exactRecovery.sellerProductId,
-            vendorItemId: exactRecovery.vendorItemId,
-            role: representative.role,
-            sourceBucket: representative.sourceBucket,
-            sourceObjectPath: representative.sourceObjectPath,
-            sourceSha256: representative.sourceSha256,
-            normalizedObjectPath: representative.normalizedObjectPath,
-            contentSha256: representative.contentSha256,
-            representativeImageCount: 1,
-            detailImageCount: 8,
-            remoteGalleryVerified: true,
-            providerPrewriteSnapshotSha256: exactPrewriteSnapshotSha256,
-            ...providerIdentity,
-          },
-        };
-      } catch {
-        readbackStep.ok = false;
-        readbackStep.data = {
-          ...readbackStep.data,
-          sellerpilotVerification: "COUPANG_EXACT_QA_UPDATE_READBACK_MISMATCH",
-        };
-      }
-    }
+
     return coupangListingResultWithPublicationReadback(
       input,
       [...preflightSteps, writeStep, readbackStep],
       remoteId,
-      undefined,
-      exactRecovery,
     );
   }
   if (input.operation === "listing.create") {
@@ -472,15 +269,15 @@ export async function executeCoupang(input: ExecuteInput) {
     const writeRemote = resumeRemoteId
       ? null
       : await coupangRequest({
-          payload: input.payload,
-          method: "POST",
-          path: sellerProductsPath,
-          body,
-        });
+        payload: input.payload,
+        method: "POST",
+        path: sellerProductsPath,
+        body,
+      });
     const responseId =
       writeRemote &&
-      (typeof writeRemote.data.data === "number" ||
-        typeof writeRemote.data.data === "string")
+        (typeof writeRemote.data.data === "number" ||
+          typeof writeRemote.data.data === "string")
         ? String(writeRemote.data.data)
         : undefined;
     // Only a provider response or the explicit persisted resume target identifies
@@ -489,11 +286,11 @@ export async function executeCoupang(input: ExecuteInput) {
     const writeStep: ChannelOperationStep = writeRemote
       ? step(input.operation, writeRemote)
       : {
-          name: "listing.resume",
-          ok: Boolean(remoteId),
-          status: 200,
-          data: { sellerProductId: remoteId, resumed: true },
-        };
+        name: "listing.resume",
+        ok: Boolean(remoteId),
+        status: 200,
+        data: { sellerProductId: remoteId, resumed: true },
+      };
     if (!writeStep.ok || !remoteId) return result(input, [writeStep], remoteId);
     let readbackRemote = await coupangRequest({
       payload: input.payload,
@@ -511,9 +308,9 @@ export async function executeCoupang(input: ExecuteInput) {
       const requested = sellerProduct.requested;
       const state = coupangStatusFamily(
         sellerProduct.statusName ??
-          sellerProduct.approvalStatus ??
-          sellerProduct.status ??
-          sellerProduct.mdId,
+        sellerProduct.approvalStatus ??
+        sellerProduct.status ??
+        sellerProduct.mdId,
       );
       const identityMatches =
         readbackId !== undefined && String(readbackId) === remoteId;
@@ -612,19 +409,7 @@ export async function executeCoupang(input: ExecuteInput) {
     );
   }
   if (input.operation === "listing.stop") {
-    const exactRecovery = coupangExactQaRecoveryBinding(
-      input.arguments,
-      "listing.stop",
-    );
-    if (
-      Object.hasOwn(input.arguments, coupangExactQaRecoveryArgument) &&
-      !exactRecovery
-    ) {
-      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
-    }
-    if (exactRecovery) {
-      assertCoupangExactQaProviderContract(input.arguments, "listing.stop");
-    }
+
     const sellerProductId = stringArgument(input.arguments, "sellerProductId");
     const suppliedVendorItemId = stringArgument(
       input.arguments,
@@ -650,21 +435,7 @@ export async function executeCoupang(input: ExecuteInput) {
       rawVendorItemIds.every(Boolean) &&
       vendorItemIds.length === items.length &&
       (!suppliedVendorItemId || vendorItemIds.includes(suppliedVendorItemId));
-    if (preflightStep.ok && exactRecovery) {
-      try {
-        assertCoupangExactQaCurrentProduct(sellerProduct, exactRecovery);
-        preflightStep.ok =
-          sellerProductId === coupangExactQaRecoveryIdentity.sellerProductId &&
-          suppliedVendorItemId ===
-            coupangExactQaRecoveryIdentity.vendorItemId &&
-          stringArgument(input.arguments, "sellerSku") ===
-            coupangExactQaRecoveryIdentity.sellerSku &&
-          vendorItemIds.length === 1 &&
-          vendorItemIds[0] === coupangExactQaRecoveryIdentity.vendorItemId;
-      } catch {
-        preflightStep.ok = false;
-      }
-    }
+
     preflightStep.data = {
       ...preflightStep.data,
       sellerpilotVerification: preflightStep.ok
@@ -718,8 +489,8 @@ export async function executeCoupang(input: ExecuteInput) {
     const readbackStep = step("price-readback", readback);
     const root =
       readback.data.data &&
-      typeof readback.data.data === "object" &&
-      !Array.isArray(readback.data.data)
+        typeof readback.data.data === "object" &&
+        !Array.isArray(readback.data.data)
         ? (readback.data.data as Record<string, unknown>)
         : {};
     const observedItemId = String(
@@ -774,15 +545,15 @@ export async function executeCoupang(input: ExecuteInput) {
       if (!readbackStep.ok) return result(input, steps, sellerProductId);
       const data =
         readback.data.data &&
-        typeof readback.data.data === "object" &&
-        !Array.isArray(readback.data.data)
+          typeof readback.data.data === "object" &&
+          !Array.isArray(readback.data.data)
           ? (readback.data.data as Record<string, unknown>)
           : readback.data;
       const items = Array.isArray(data.items)
         ? data.items.filter(
-            (item): item is Record<string, unknown> =>
-              Boolean(item) && typeof item === "object" && !Array.isArray(item),
-          )
+          (item): item is Record<string, unknown> =>
+            Boolean(item) && typeof item === "object" && !Array.isArray(item),
+        )
         : [];
       vendorItemIds = items
         .map((item) => String(item.vendorItemId ?? "").trim())
@@ -806,8 +577,8 @@ export async function executeCoupang(input: ExecuteInput) {
       });
       const verificationData =
         verificationRemote.data.data &&
-        typeof verificationRemote.data.data === "object" &&
-        !Array.isArray(verificationRemote.data.data)
+          typeof verificationRemote.data.data === "object" &&
+          !Array.isArray(verificationRemote.data.data)
           ? (verificationRemote.data.data as Record<string, unknown>)
           : verificationRemote.data;
       steps.push(

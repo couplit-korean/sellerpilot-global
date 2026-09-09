@@ -1,6 +1,7 @@
 import type { ActiveChannelKey } from "./catalog";
 import type { ListingRequirement } from "./listing-preflight";
 import { resolveCoupangShippingLeadTime } from "./coupang-shipping-lead-time";
+import { assertElevenstListingShippingSource } from "./elevenst-listing";
 
 type RecordValue = Record<string, unknown>;
 export type ListingShippingSource = {
@@ -83,12 +84,12 @@ export function validatedCoupangShippingFees(body: RecordValue) {
   const fee = listingShippingAmount(body.deliveryCharge);
   const threshold = listingShippingAmount(body.freeShipOverAmount);
   if (!["FREE", "NOT_FREE", "CONDITIONAL_FREE"].includes(type)
-      || fee === null || threshold === null
-      || (type === "FREE" && (fee !== 0 || threshold !== 0))
-      || (type === "NOT_FREE" && (fee <= 0 || threshold !== 0))
-      || (type === "CONDITIONAL_FREE" && (fee <= 0 || threshold < 100 || threshold % 100 !== 0))
-      || (body.remoteAreaDeliverable !== undefined && !["Y", "N"].includes(text(body.remoteAreaDeliverable)))
-      || (body.unionDeliveryType !== undefined && !["UNION_DELIVERY", "NOT_UNION_DELIVERY"].includes(text(body.unionDeliveryType)))) {
+    || fee === null || threshold === null
+    || (type === "FREE" && (fee !== 0 || threshold !== 0))
+    || (type === "NOT_FREE" && (fee <= 0 || threshold !== 0))
+    || (type === "CONDITIONAL_FREE" && (fee <= 0 || threshold < 100 || threshold % 100 !== 0))
+    || (body.remoteAreaDeliverable !== undefined && !["Y", "N"].includes(text(body.remoteAreaDeliverable)))
+    || (body.unionDeliveryType !== undefined && !["UNION_DELIVERY", "NOT_UNION_DELIVERY"].includes(text(body.unionDeliveryType)))) {
     throw new Error("COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED");
   }
   return { deliveryChargeType: type, deliveryCharge: fee, freeShipOverAmount: threshold };
@@ -106,15 +107,15 @@ export function validatedSmartstoreShippingInfo(value: unknown) {
   const shippingAddressId = listingShippingAmount(claims.shippingAddressId);
   const returnAddressId = listingShippingAmount(claims.returnAddressId);
   if (delivery.deliveryType !== "DELIVERY" || !text(delivery.deliveryCompany)
-      || !["FREE", "PAID", "CONDITIONAL_FREE"].includes(type)
-      || baseFee === null || baseFee > 100_000
-      || (type === "FREE" && baseFee !== 0)
-      || (type !== "FREE" && baseFee <= 0)
-      || (type === "CONDITIONAL_FREE" && (threshold === null || threshold <= 0 || threshold > 999_999_990))
-      || !["PREPAID", "COLLECT", "COLLECT_OR_PREPAID"].includes(text(fee.deliveryFeePayType))
-      || !/^(PRIMARY|SECONDARY_[1-9])$/.test(text(claims.returnDeliveryCompanyPriorityType))
-      || returnFee === null || returnFee > 1_000_000 || exchangeFee === null || exchangeFee > 1_000_000
-      || !shippingAddressId || !returnAddressId) {
+    || !["FREE", "PAID", "CONDITIONAL_FREE"].includes(type)
+    || baseFee === null || baseFee > 100_000
+    || (type === "FREE" && baseFee !== 0)
+    || (type !== "FREE" && baseFee <= 0)
+    || (type === "CONDITIONAL_FREE" && (threshold === null || threshold <= 0 || threshold > 999_999_990))
+    || !["PREPAID", "COLLECT", "COLLECT_OR_PREPAID"].includes(text(fee.deliveryFeePayType))
+    || !/^(PRIMARY|SECONDARY_[1-9])$/.test(text(claims.returnDeliveryCompanyPriorityType))
+    || returnFee === null || returnFee > 1_000_000 || exchangeFee === null || exchangeFee > 1_000_000
+    || !shippingAddressId || !returnAddressId) {
     throw new Error("SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED");
   }
   return {
@@ -142,7 +143,7 @@ function coupangLeadTimeConfirmation(value: unknown): RecordValue | null {
   const confirmation = parsed as RecordValue;
   const keys = Object.keys(confirmation);
   if (keys.length !== coupangLeadTimeConfirmationKeys.length
-      || !coupangLeadTimeConfirmationKeys.every((key) => Object.hasOwn(confirmation, key))) return null;
+    || !coupangLeadTimeConfirmationKeys.every((key) => Object.hasOwn(confirmation, key))) return null;
   return confirmation;
 }
 
@@ -189,7 +190,7 @@ export function listingShippingRequirements(
           && !Array.isArray(item.sameDayShipping) && record(item.sameDayShipping).active === false);
       add(`lead-time-${index}`, `쿠팡 상품 ${index + 1} 출고소요일`,
         leadTime.status === "resolved" && actual.status === "resolved"
-          && actual.outboundShippingTimeDay === leadTime.outboundShippingTimeDay && normalShipping,
+        && actual.outboundShippingTimeDay === leadTime.outboundShippingTimeDay && normalShipping,
         ["body", "items", String(index), "outboundShippingTimeDay"],
         "WING에서 확인한 실제 출고 소요일을 1일 이상의 정수로 입력하세요. 주문 기준·배송달력과 승인된 출고 약속이 일치하는지도 아래에서 확인하세요. 당일출고는 별도 계약 확인이 필요합니다.");
     }
@@ -226,8 +227,12 @@ export function listingShippingRequirements(
       "현재 판매자 계정의 배송 정책을 확인하세요. Qoo10 무료배송 0도 직접 확인해 입력해야 합니다.");
     if (channel === "qoo10" && policy === "0") add("free-fee-match", "Qoo10 무료배송과 입력 배송비 일치", sourceFee === 0, undefined,
       "입력 배송비가 유료이면 무료배송 코드 0을 사용할 수 없습니다. 실제 배송그룹 번호를 확인하세요.");
-    if (channel === "elevenst") add("supported-fee", "11번가 검증된 배송비 계약", sourceFee === 0, undefined,
-      "현재 11번가 신규등록 어댑터는 무료배송 계약만 검증됐습니다. 유료배송은 공식 필드·권한 확인 후 별도 구현하거나 판매자센터에서 처리해야 합니다.");
+    if (channel === "elevenst") {
+      let verified = false;
+      try { assertElevenstListingShippingSource(shipping, draft.product); verified = true; } catch { /* Display the unmet contract below. */ }
+      add("supported-fee", "11번가 검증된 배송비 계약", verified, undefined,
+        "무료배송(01) 또는 고정 배송비(02, dlvCst1)의 선결제(03) 설정이 입력 배송비와 일치해야 합니다. 반품·교환 비용과 실제 출고/반품 주소도 확인하세요.");
+    }
     add("policy-review", "채널 배송비·배송 정책 대조", text(shipping.policyReview) === "확인", ["sellerpilotAssets", "shipping", "policyReview"],
       `입력 배송비 ${sourceFee ?? "미확인"} KRW와 ${channel === "elevenst" ? "공식 payload의 배송·반품 설정" : "판매 국가의 계정 배송 정책·물류 설정"}을 대조한 뒤 '확인'을 입력하세요. 원화 배송비를 임의로 현지 통화로 바꾸거나 무료로 처리하지 않습니다.`);
   }

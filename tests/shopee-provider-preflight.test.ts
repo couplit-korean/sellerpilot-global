@@ -631,9 +631,9 @@ test("Shopee SG exact create fails closed on incomplete, duplicate, or failed in
   }
 });
 
-test("Shopee SG exact create binds the provider-selected merchant and shop before every provider read", async () => {
+test("Shopee SG create binds a valid provider-selected merchant and matching shop before every provider read", async () => {
   for (const [name, mutate] of [
-    ["merchant", (value: PrepareProviderListingInput) => { value.credential.merchant_id = "5511565"; }],
+    ["merchant", (value: PrepareProviderListingInput) => { value.credential.merchant_id = "invalid-merchant"; }],
     ["shop", (value: PrepareProviderListingInput) => {
       if (value.shopeeShopCredential) value.shopeeShopCredential.shop_id = "1719148845";
     }],
@@ -643,7 +643,7 @@ test("Shopee SG exact create binds the provider-selected merchant and shop befor
     const events: string[] = [];
     await assert.rejects(
       prepareShopeeGlobalListing(candidate, dependencies({ events })),
-      /SHOPEE_SG_EXACT_CREATE_PROVIDER_BINDING_MISMATCH/,
+      /SHOPEE_SG_CREATE_PROVIDER_BINDING_MISMATCH/,
       name,
     );
     assert.deepEqual(events, [], name);

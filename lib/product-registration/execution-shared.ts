@@ -4,7 +4,7 @@ import { stringArgument, integerArgument } from "../channels/operation-values";
 import { type RemoteResponse, type SecretPayload } from "../channels/protocols";
 import { channelCatalog, type ActiveChannelKey } from "../channels/catalog";
 import { qoo10ResultMessage } from "../channels/qoo10";
-import { type CoupangProviderImageIdentity } from "../channels/coupang-representative-readback";
+
 import { verifyListingUpdateReadback } from "../channels/listing-update";
 import {
   listingOperationRequiresVerifiedRemoteState,
@@ -84,9 +84,7 @@ export type ExecuteInput = {
   providerMutationHooks?: {
     begin: () => Promise<void>;
     assertLeaseHealthy: () => Promise<void>;
-    bindCoupangRepresentativePrewrite?: (
-      images: CoupangProviderImageIdentity[],
-    ) => Promise<{ prewriteSnapshotSha256: string }>;
+
   };
 };
 
@@ -179,7 +177,7 @@ export function result(
     Object.hasOwn(input.arguments, "publicationStateContract");
   const publicationStateContract =
     publicationVerificationRequested &&
-    input.arguments.publicationStateContract ===
+      input.arguments.publicationStateContract ===
       listingRemoteStateContractVersion
       ? listingRemoteStateContractVersion
       : undefined;
@@ -211,20 +209,20 @@ export function result(
     !remoteState;
   const publicationStateMismatch = Boolean(
     publicationStateContract &&
-      remoteState &&
-      !listingRemoteStateMatchesOperation(
-        input.operation,
-        remoteState,
-        publicationIntent,
-      ),
+    remoteState &&
+    !listingRemoteStateMatchesOperation(
+      input.operation,
+      remoteState,
+      publicationIntent,
+    ),
   );
   const publicationFulfilled =
     publicationStateContract && remoteState
       ? listingRemoteStateFulfillsOperation(
-          input.operation,
-          remoteState,
-          publicationIntent,
-        )
+        input.operation,
+        remoteState,
+        publicationIntent,
+      )
       : undefined;
   const ok =
     providerStepsSucceeded &&
@@ -341,7 +339,7 @@ export function ensureProviderSupport(
 ) {
   const capability =
     channelCatalog[channel].capabilities[
-      channelOperationCapabilities[operation]
+    channelOperationCapabilities[operation]
     ];
   if (capability.mode === "unsupported")
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
@@ -392,7 +390,7 @@ export function listingPublicationReadbackRequested(input: ExecuteInput) {
   return (
     listingOperationRequiresVerifiedRemoteState(input.operation) &&
     input.arguments.publicationStateContract ===
-      listingRemoteStateContractVersion
+    listingRemoteStateContractVersion
   );
 }
 
@@ -407,16 +405,16 @@ export function publicationStateVerificationStep(
     status: state ? 200 : 422,
     data: state
       ? {
-          sellerpilotVerification: "VERIFIED_REMOTE_PUBLICATION_STATE",
-          visibility: state.visibility,
-          providerStatus: state.providerStatus,
-          imageCount: state.imageCount,
-        }
+        sellerpilotVerification: "VERIFIED_REMOTE_PUBLICATION_STATE",
+        visibility: state.visibility,
+        providerStatus: state.providerStatus,
+        imageCount: state.imageCount,
+      }
       : {
-          sellerpilotVerification: "REMOTE_PUBLICATION_STATE_UNVERIFIED",
-          code:
-            failureCode ??
-            `${channel.toUpperCase()}_PUBLICATION_READBACK_UNVERIFIED`,
-        },
+        sellerpilotVerification: "REMOTE_PUBLICATION_STATE_UNVERIFIED",
+        code:
+          failureCode ??
+          `${channel.toUpperCase()}_PUBLICATION_READBACK_UNVERIFIED`,
+      },
   };
 }

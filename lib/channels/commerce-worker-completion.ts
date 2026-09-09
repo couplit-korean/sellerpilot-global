@@ -5,8 +5,6 @@ import { gatewayJobCompletionStatusAtJobBoundary, smartstoreContentRepairWorkerR
 import { smartstoreContentRepairCompletionSchema } from "../server-smartstore-content-repair";
 import { workerRpcErrorMessage, workerRpcErrorStatus } from "../worker-rpc";
 
-
-
 const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
 const smartstoreManualAdoptionCompletionBase = z.object({
   contract: z.literal("smartstore_manual_adoption_readback_completion_v1"),
@@ -60,25 +58,7 @@ type ListingLineageWorkerResult = {
     evidenceVersion: "provider_listing_readback_rebind_v1";
     marketplaceSku?: string;
     providerResourceId?: string;
-    shopeeAdoption?: {
-      contract: "sellerpilot_shopee_sg_existing_adoption_readback_v1";
-      itemId: "53717126190";
-      sku: "QA-20260823-CC-001";
-      merchantId: "5511564";
-      shopId: "1719148844";
-      market: "SG";
-      locale: "en-SG";
-      currency: "SGD";
-      price: number;
-      providerStatus: "UNLIST";
-      galleryImageCount: number;
-      detailImageCount: 8;
-      representativeImageVerified: true;
-      titleLanguageVerified: true;
-      descriptionLanguageVerified: true;
-      titleDigest: string;
-      descriptionDigest: string;
-    };
+
     reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
   };
 };
@@ -124,9 +104,6 @@ function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
         providerResourceId: evidence.providerResourceId,
       }
       : {}),
-    ...(result.channel === "shopee" && evidence.shopeeAdoption
-      ? { shopeeAdoption: evidence.shopeeAdoption }
-      : {}),
   };
 }
 
@@ -139,8 +116,8 @@ function completionNormalizationTimestamp(value: unknown) {
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { GatewayWorkerCompletion } from "./gateway-contract";
 export async function completeCommerceWorker({ serviceClient, tokenHash, job, completion: completionInput }: { serviceClient: SupabaseClient; tokenHash: string; job: Record<string, unknown>; completion: GatewayWorkerCompletion }) {
- if (/^(orders|shipment)\./.test(String(job.operation)) || job.operation === "inquiries.list" || job.operation === "inquiries.reply") return NextResponse.json({ message: "상품 작업 계보가 일치하지 않습니다." }, { status: 409 });
- const parsed = { data: completionInput };
+  if (/^(orders|shipment)\./.test(String(job.operation)) || job.operation === "inquiries.list" || job.operation === "inquiries.reply") return NextResponse.json({ message: "상품 작업 계보가 일치하지 않습니다." }, { status: 409 });
+  const parsed = { data: completionInput };
   const publicationVerificationBoundary = completionNormalizationTimestamp(
     job.publication_verification_boundary,
   );
@@ -161,7 +138,7 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
       ? parsed.data.result
       : parsed.data.result;
   if (completionResult
-      && (job.channel !== completionResult.channel || job.operation !== completionResult.operation)) {
+    && (job.channel !== completionResult.channel || job.operation !== completionResult.operation)) {
     return NextResponse.json({ message: "채널 작업 결과가 요청과 일치하지 않습니다." }, { status: 409 });
   }
   const oauthResult = parsed.data.status === "succeeded" && parsed.data.result.operation === "oauth.exchange"
@@ -169,9 +146,9 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     : null;
   const credentialRefresh = parsed.data.credentialRefresh;
   if (credentialRefresh
-      && job.channel !== "shopee"
-      && job.channel !== "lazada"
-      && job.channel !== "ebay") {
+    && job.channel !== "shopee"
+    && job.channel !== "lazada"
+    && job.channel !== "ebay") {
     return NextResponse.json({ message: "이 채널에는 OAuth 인증값 갱신을 적용할 수 없습니다." }, { status: 409 });
   }
 
@@ -202,7 +179,7 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     );
     const adoptionCompletion = smartstoreManualAdoptionCompletionSchema.safeParse(adoptionData);
     if (adoptionCompletionError || !adoptionCompletion.success
-        || adoptionCompletion.data.jobId !== parsed.data.jobId) {
+      || adoptionCompletion.data.jobId !== parsed.data.jobId) {
       const status = adoptionCompletionError
         ? workerRpcErrorStatus(adoptionCompletionError)
         : 503;
@@ -220,17 +197,17 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
         ? "스마트스토어 기존 상품을 공식 조회하고 SellerPilot 원장에 안전하게 연결했습니다."
         : adoptionCompletion.data.status === "repair_required"
           ? "스마트스토어 기존 상품 신원을 확인했으며 승인 내용 복구 확인이 필요한 상태로 보존했습니다."
-        : adoptionCompletion.data.status === "queued"
-          ? "스마트스토어 기존 상품 읽기 검증을 동일 작업으로 다시 대기시켰습니다."
-        : adoptionCompletion.data.status === "reconciliation_required"
-          ? "스마트스토어 읽기 결과를 재전송하지 않고 확인 필요 상태로 보존했습니다."
-          : "스마트스토어 기존 상품을 연결하지 않고 조회 실패 상태를 저장했습니다.",
+          : adoptionCompletion.data.status === "queued"
+            ? "스마트스토어 기존 상품 읽기 검증을 동일 작업으로 다시 대기시켰습니다."
+            : adoptionCompletion.data.status === "reconciliation_required"
+              ? "스마트스토어 읽기 결과를 재전송하지 않고 확인 필요 상태로 보존했습니다."
+              : "스마트스토어 기존 상품을 연결하지 않고 조회 실패 상태를 저장했습니다.",
     });
   }
 
   if (job.channel === "smartstore"
-      && job.operation === "listing.update"
-      && job.smartstoreContentRepairContract === "smartstore_existing_content_repair_job_v1") {
+    && job.operation === "listing.update"
+    && job.smartstoreContentRepairContract === "smartstore_existing_content_repair_job_v1") {
     const repairResult = parsed.data.status === "succeeded"
       ? smartstoreContentRepairWorkerResultSchema.safeParse(parsed.data.result)
       : null;
@@ -255,7 +232,7 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     );
     const repairCompletion = smartstoreContentRepairCompletionSchema.safeParse(repairData);
     if (repairCompletionError || !repairCompletion.success
-        || repairCompletion.data.jobId !== parsed.data.jobId) {
+      || repairCompletion.data.jobId !== parsed.data.jobId) {
       const status = repairCompletionError
         ? workerRpcErrorStatus(repairCompletionError)
         : 503;
@@ -296,7 +273,7 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     if (parsed.data.status === "succeeded") {
       const lineageResult = parsed.data.result as ListingLineageWorkerResult;
       if (lineageResult.operation !== "listing.lineage.verify"
-          || lineageResult.channel !== job.channel) {
+        || lineageResult.channel !== job.channel) {
         return NextResponse.json({ message: "상품 계보 검증 결과가 현재 작업과 일치하지 않습니다." }, { status: 409 });
       }
       if (lineageResult.verificationStatus === "verified") {
@@ -334,7 +311,7 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     );
     const lineageCompletion = listingLineageCompletionSchema.safeParse(lineageData);
     if (lineageCompletionError || !lineageCompletion.success
-        || lineageCompletion.data.job_id !== parsed.data.jobId) {
+      || lineageCompletion.data.job_id !== parsed.data.jobId) {
       const status = lineageCompletionError ? workerRpcErrorStatus(lineageCompletionError) : 503;
       console.error("listing lineage verification completion RPC failed", {
         code: lineageCompletionError?.code ?? "invalid_contract",

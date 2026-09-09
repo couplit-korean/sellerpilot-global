@@ -2,14 +2,18 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { inspectListingDraft, setSmartstoreCapacityDraftValue, preserveSmartstoreCapacityDraft, editSmartstoreCapacityDraftValue } from "../lib/channels/listing-preflight";
 import { assertSmartstoreUnitCapacity } from "../lib/channels/smartstore-unit-capacity";
-import { smartstoreExactQaRecoveryIdentity } from "../lib/channels/smartstore-exact-qa-recovery";
+
 import { buildChannelArguments, buildSynchronizedDraftMap, inspectWorkbenchListingDraft } from "../app/product-publish-workbench";
 
 const path = ["body", "originProduct", "detailAttribute", "unitCapacity"];
 const exact = { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" };
-const draft = (value: unknown = exact): Record<string, unknown> => ({ body: { originProduct: {
-  leafCategoryId: "50000001", salePrice: 3190, detailAttribute: { unitCapacity: value, sellerCodeInfo: { sellerManagementCode: "TEST-ONLY" } },
-} }, sellerpilotAssets: { approvedManifest: "unchanged" } });
+const draft = (value: unknown = exact): Record<string, unknown> => ({
+  body: {
+    originProduct: {
+      leafCategoryId: "50000001", salePrice: 3190, detailAttribute: { unitCapacity: value, sellerCodeInfo: { sellerManagementCode: "TEST-ONLY" } },
+    }
+  }, sellerpilotAssets: { approvedManifest: "unchanged" }
+});
 const blockingCapacity = (value: Record<string, unknown>) => inspectListingDraft("smartstore", value)
   .filter((field) => field.key.startsWith("unit-") && field.status === "manual").map((field) => field.key);
 const capacity = (value: Record<string, unknown>) => (value.body as { originProduct: { detailAttribute: { unitCapacity: unknown } } }).originProduct.detailAttribute.unitCapacity;
@@ -22,8 +26,10 @@ test("explicit UI fields serialize boolean and numeric provider values without c
   assert.deepEqual(capacity(original), {});
   assert.deepEqual(entered, draft(exact));
   assert.deepEqual(blockingCapacity(entered), []);
-  assert.doesNotThrow(() => assertSmartstoreUnitCapacity({ originProduct: (entered.body as Record<string, unknown>).originProduct,
-    category: { id: "50000001", last: true, exceptionalCategories: ["UNIT_PRICE"] } }));
+  assert.doesNotThrow(() => assertSmartstoreUnitCapacity({
+    originProduct: (entered.body as Record<string, unknown>).originProduct,
+    category: { id: "50000001", last: true, exceptionalCategories: ["UNIT_PRICE"] }
+  }));
 });
 
 test("missing capacity and hand-edited string booleans/numbers cannot appear ready", () => {
@@ -70,8 +76,10 @@ test("explicit non-target does not discard contradictory amounts and remains sub
   for (const key of ["totalCapacityValue", "unitCapacity", "indicationUnit"]) cleared = setSmartstoreCapacityDraftValue(cleared, [...path, key], "");
   assert.deepEqual(capacity(cleared), { unitPriceYn: false });
   assert.deepEqual(blockingCapacity(cleared), []);
-  assert.throws(() => assertSmartstoreUnitCapacity({ originProduct: (cleared.body as Record<string, unknown>).originProduct,
-    category: { id: "50000001", last: true, exceptionalCategories: ["UNIT_PRICE"] } }), /CANNOT_DISABLE/);
+  assert.throws(() => assertSmartstoreUnitCapacity({
+    originProduct: (cleared.body as Record<string, unknown>).originProduct,
+    category: { id: "50000001", last: true, exceptionalCategories: ["UNIT_PRICE"] }
+  }), /CANNOT_DISABLE/);
 });
 
 test("raw JSON preservation keeps invalid types and unknown keys unchanged without mutating either input", () => {
@@ -126,36 +134,6 @@ test("normal existing-product content draft excludes price, stock and create shi
   assert.equal(Object.hasOwn(originProduct, "deliveryInfo"), false);
   const preserved = preserveSmartstoreCapacityDraft(draft(), initial);
   assert.deepEqual(capacity(preserved), exact);
-});
-
-test("the exact QA recovery draft keeps its fixed commerce values for the legacy recovery guard", () => {
-  const input = context();
-  input.product.id = smartstoreExactQaRecoveryIdentity.productId;
-  input.listings = [{
-    id: smartstoreExactQaRecoveryIdentity.listingId,
-    channel: "smartstore",
-    market: "KR",
-    targetId: "",
-    remoteId: smartstoreExactQaRecoveryIdentity.originProductNo,
-    status: "failed",
-    lastError: "exact recovery fixture",
-    failureClass: "external_action",
-    publishedAt: null,
-    requestedPublicationIntent: "live",
-    remoteVisibility: "unknown",
-  }];
-  const draftValue = buildChannelArguments(
-    "smartstore",
-    input,
-    smartstoreExactQaRecoveryIdentity.priceKrw,
-    smartstoreExactQaRecoveryIdentity.stock,
-    undefined,
-    packageFields,
-    10,
-  ) as Record<string, unknown>;
-  const originProduct = (draftValue.body as { originProduct: Record<string, unknown> }).originProduct;
-  assert.equal(originProduct.salePrice, smartstoreExactQaRecoveryIdentity.priceKrw);
-  assert.equal(originProduct.stockQuantity, smartstoreExactQaRecoveryIdentity.stock);
 });
 
 test("actual common synchronization neither invents absent capacity nor repairs raw invalid capacity", () => {

@@ -1,7 +1,7 @@
+import { assertNoRetiredProductRecovery } from "./retired-product-recovery";
 import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnostics";
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
-import { assertEbayExactExistingQaProviderCopyRequest, ebayExactExistingQaCreateForbidden, ebayExactExistingQaRecoveryArgument, ebayExactExistingQaRecoveryBinding } from "./ebay-exact-existing-qa-recovery";
 import type { GatewayClaim } from "./gateway-contract";
 import { executeProviderListingLineageVerification, type ProviderListingLineageVerificationResult } from "./listing-lineage-verification";
 import { assertListingPublicationSourceLocalized, listingPublicationProviderAssetEvidence, parseListingPublicationAssetBinding } from "./listing-publication-content";
@@ -9,21 +9,13 @@ import { verifiedListingRemoteStateSchema } from "./listing-publication-state";
 import { executeChannelOperation, writeChannelOperations, type ChannelOperationName, type ChannelOperationResult } from "./commerce-operations";
 import { listingPublicationVerificationSourceSchema } from "./listing-publication-verification";
 import { assertShopeeShopProfileTarget, readProviderAccountIdentity } from "./provider-account-identity";
-import { ensureEbayAccessToken, ensureLazadaAccessToken, ensureShopeeAccessToken, ensureShopeeMerchantAccessToken, fetchNaverAccessToken, lazadaRequest, readStoredNaverAccessToken, readStoredShopeeShopAccessToken, runWithProviderReadOnlyTransport, runWithProviderTransportContext, runWithChannelRequestSignal, shopeeRequest, textValue, type SecretPayload } from "./protocols";
-import { assertShopeeSgExistingContentSource, assertShopeeSgExistingInventorySource, shopeeSgExistingUpdateArgument, shopeeSgExistingUpdateBinding } from "./shopee-sg-existing-update";
+import { ensureEbayAccessToken, ensureLazadaAccessToken, ensureShopeeAccessToken, ensureShopeeMerchantAccessToken, fetchNaverAccessToken, lazadaRequest, readStoredNaverAccessToken, runWithProviderReadOnlyTransport, runWithProviderTransportContext, runWithChannelRequestSignal, shopeeRequest, textValue, type SecretPayload } from "./protocols";
 import { executeProviderOAuthExchange, type ProviderOAuthClaim, type ProviderOAuthResult } from "./provider-oauth-runtime";
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
-import { coupangExactQaCreateForbidden, coupangExactQaRecoveryArgument, coupangExactQaRecoveryBinding } from "./coupang-exact-qa-recovery";
 import { channelPriceUpdateRelease } from "./price-update-release";
 import { qoo10S1ActivationArgument, qoo10S1ActivationArgumentsValid } from "./qoo10-listing-activation";
-import { qoo10ExactAdoptedLocalizationArgument, qoo10ExactAdoptedLocalizationBinding, qoo10ExactLocalizationRecoveryIdentity, qoo10ExactLocalizationUpdateArgument, qoo10ExactLocalizationUpdateBinding, qoo10ExactTargetCreateForbidden } from "./qoo10-exact-localization-recovery";
 import { temuActivationBinding, temuContainmentDiscoveryBinding } from "./provider-temu-publication-readback";
-import { temuCredentialCertificationBinding, temuExistingAdoptionBinding } from "./temu-existing-adoption";
-import { temuExactExistingUpdateRequest } from "./temu-existing-update";
-import { assertElevenstExactExistingUpdate, elevenstExactExistingCreateForbidden, elevenstExactExistingPublicationArgument, elevenstExactExistingPublicationBinding, elevenstExactExistingUpdateTarget } from "./elevenst-exact-existing-publication";
-import { assertLazadaExactExistingUpdateArguments, lazadaExactExistingCreateForbidden, lazadaExactExistingUpdateArgument, lazadaExactExistingUpdateRequest, lazadaExactExistingUpdateTarget } from "./lazada-exact-existing-identity";
-
 const serverlessWriteMatrix = {
   "listing.create": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
@@ -39,12 +31,9 @@ const serverlessWriteMatrix = {
     "qoo10", "shopee", "lazada", "coupang", "temu", "smartstore", "ebay",
   ]),
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
-
-
 const allServerlessChannels = new Set<GatewayClaim["channel"]>([
   "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
 ]);
-
 const serverlessReadMatrix = {
   "categories.list": allServerlessChannels,
   "categories.suggest": allServerlessChannels,
@@ -54,17 +43,13 @@ const serverlessReadMatrix = {
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu",
   ]),
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
-
 const serverlessOAuthChannels = new Set<GatewayClaim["channel"]>(["shopee", "lazada", "ebay"]);
 const serverlessShopDiscoveryChannels = new Set<GatewayClaim["channel"]>(["shopee", "lazada"]);
 const serverlessLineageChannels = new Set<GatewayClaim["channel"]>(["qoo10", "shopee", "lazada", "ebay"]);
-
 export const SERVERLESS_GATEWAY_WRITE_MATRIX = serverlessWriteMatrix;
 export const SERVERLESS_GATEWAY_READ_MATRIX = serverlessReadMatrix;
-
 export type { ServerlessGatewayExecutionHooks } from "./provider-execution-contract";
 import type { ServerlessGatewayExecutionHooks } from "./provider-execution-contract";
-
 type ServerlessDiagnosticResult = {
   ok: boolean;
   channel: GatewayClaim["channel"];
@@ -72,7 +57,6 @@ type ServerlessDiagnosticResult = {
   diagnostic: ChannelDiagnostic;
   safeMessage: string;
 };
-
 type ServerlessShopDiscoveryResult = {
   ok: boolean;
   channel: "shopee" | "lazada";
@@ -80,7 +64,6 @@ type ServerlessShopDiscoveryResult = {
   steps: ChannelOperationResult["steps"];
   safeMessage: string;
 };
-
 type ServerlessCompetitorSearchResult = {
   ok: true;
   channel: "elevenst";
@@ -88,40 +71,30 @@ type ServerlessCompetitorSearchResult = {
   items: CompetitorPriceCandidate[];
   safeMessage: string;
 };
-
 export type ServerlessGatewayProviderResult = ChannelOperationResult
   | ProviderOAuthResult
   | ServerlessDiagnosticResult
   | ServerlessShopDiscoveryResult
   | ServerlessCompetitorSearchResult
   | ProviderListingLineageVerificationResult;
-
 export type ServerlessGatewayProviderExecutionInput = {
   job: GatewayClaim;
   signal: AbortSignal;
   hooks: ServerlessGatewayExecutionHooks;
 };
-
 type ProviderExecutor = typeof executeChannelOperation;
-
-
 function requestArguments(job: GatewayClaim) {
   const value = job.request.arguments;
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
-
 function recordValue(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : {};
 }
-
-export function serverlessGatewayOperationAllowed(
-  channel: GatewayClaim["channel"],
-  operation: GatewayClaim["operation"],
-) {
+export function serverlessGatewayOperationAllowed(channel: GatewayClaim["channel"], operation: GatewayClaim["operation"]) {
   if (operation === "inquiries.list" || operation === "inquiries.reply") return false;
   if (operation === "oauth.exchange") return serverlessOAuthChannels.has(channel);
   if (operation === "price.update") return channelPriceUpdateRelease(channel).available;
@@ -141,21 +114,14 @@ export function serverlessGatewayOperationAllowed(
   }
   return false;
 }
-
-function channelOperation(
-  operation: GatewayClaim["operation"],
-): operation is ChannelOperationName {
+function channelOperation(operation: GatewayClaim["operation"]): operation is ChannelOperationName {
   return operation !== "inquiries.list" && operation !== "inquiries.reply" && operation !== "oauth.exchange"
     && operation !== "shops.get"
     && operation !== "diagnostic.test"
     && operation !== "competitor.search"
     && operation !== "listing.lineage.verify";
 }
-
-async function prepareCredential(
-  input: ServerlessGatewayProviderExecutionInput,
-  operationArguments: Record<string, unknown>,
-) {
+async function prepareCredential(input: ServerlessGatewayProviderExecutionInput, operationArguments: Record<string, unknown>) {
   let credential: SecretPayload = input.job.credential;
   let shopeeShopCredential: SecretPayload | undefined;
   const arguments_ = operationArguments;
@@ -167,11 +133,9 @@ async function prepareCredential(
       || input.job.operation === "categories.attributes"
       || input.job.operation === "categories.validate"
     );
-  const shopeeAccessBufferMs = shopeeCategoryRead ? 0 : 10 * 60 * 1_000;
+  const shopeeAccessBufferMs = shopeeCategoryRead ? 0 : 10 * 60 * 1000;
   const publicationSource = publicationReadOnly
-    ? listingPublicationVerificationSourceSchema.safeParse(
-        operationArguments.sellerpilotPublicationSource,
-      )
+    ? listingPublicationVerificationSourceSchema.safeParse(operationArguments.sellerpilotPublicationSource)
     : null;
   const publicationSourceArguments = publicationSource?.success
     ? publicationSource.data.sourceArguments
@@ -184,35 +148,21 @@ async function prepareCredential(
   };
   const refreshHooks = publicationReadOnly
     ? {
-        onExternalMutationStart: readOnlyCredentialRefreshBlocked,
-        onCredentialRefresh: readOnlyCredentialRefreshBlocked,
-      }
+      onExternalMutationStart: readOnlyCredentialRefreshBlocked,
+      onCredentialRefresh: readOnlyCredentialRefreshBlocked,
+    }
     : shopeeCategoryRead
       ? {
-          onExternalMutationStart: shopeeCategoryReadRefreshBlocked,
-          onCredentialRefresh: shopeeCategoryReadRefreshBlocked,
-        }
-    : {
+        onExternalMutationStart: shopeeCategoryReadRefreshBlocked,
+        onCredentialRefresh: shopeeCategoryReadRefreshBlocked,
+      }
+      : {
         onExternalMutationStart: input.hooks.beginCredentialMutation,
         onCredentialRefresh: input.hooks.stageCredentialRefresh,
       };
-
   if (input.job.channel === "shopee") {
     if (publicationReadOnly && !readProviderAccountIdentity(credential, "shopee")) {
       throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
-    }
-    const exactExistingUpdate = shopeeSgExistingUpdateBinding(arguments_);
-    if (exactExistingUpdate) {
-      const stored = readStoredShopeeShopAccessToken(
-        credential,
-        exactExistingUpdate.shopId,
-        10 * 60 * 1_000,
-      );
-      if (!stored) {
-        throw new Error("SHOPEE_SG_EXISTING_UPDATE_FRESH_OAUTH_REQUIRED");
-      }
-      credential = stored;
-      return { credential, arguments_, shopeeShopCredential: stored };
     }
     const sourceRemoteState = publicationSource?.success
       ? recordValue(publicationSource.data.sourceResponsePayload.remoteState)
@@ -232,66 +182,40 @@ async function prepareCredential(
           && !Array.isArray(arguments_.publish)
           ? arguments_.publish as Record<string, unknown>
           : sourcePublish;
-        const shopId = String(
-          (sourceResources.shopId
-            ?? publish.shop_id
-            ?? arguments_.shopId
-            ?? arguments_.shop_id) ?? "",
-        ).trim();
+        const shopId = String((sourceResources.shopId
+          ?? publish.shop_id
+          ?? arguments_.shopId
+          ?? arguments_.shop_id) ?? "").trim();
         await input.hooks.assertLeaseHealthy();
-        const shopEnsured = await ensureShopeeAccessToken(
-          credential,
-          input.job.environment,
-          shopeeAccessBufferMs,
-          shopId,
-          refreshHooks.onExternalMutationStart,
-          refreshHooks.onCredentialRefresh,
-          !publicationReadOnly && !shopeeCategoryRead,
-        );
+        const shopEnsured = await ensureShopeeAccessToken(credential, input.job.environment, shopeeAccessBufferMs, shopId, refreshHooks.onExternalMutationStart, refreshHooks.onCredentialRefresh, !publicationReadOnly && !shopeeCategoryRead);
         shopeeShopCredential = shopEnsured.payload;
         if (!publicationReadOnly) credential = shopEnsured.payload;
       }
-      const merchantId = String(
-        publicationSourceArguments.merchantId
-          ?? publicationSourceArguments.merchant_id
-          ?? arguments_.merchantId
-          ?? arguments_.merchant_id
-          ?? "",
-      ).trim();
+      const merchantId = String(publicationSourceArguments.merchantId
+        ?? publicationSourceArguments.merchant_id
+        ?? arguments_.merchantId
+        ?? arguments_.merchant_id
+        ?? "").trim();
       await input.hooks.assertLeaseHealthy();
-      const merchantEnsured = await ensureShopeeMerchantAccessToken(
-        credential,
-        input.job.environment,
-        shopeeAccessBufferMs,
-        merchantId,
-        refreshHooks.onExternalMutationStart,
-        refreshHooks.onCredentialRefresh,
-        !publicationReadOnly && !shopeeCategoryRead,
-      );
+      const merchantEnsured = await ensureShopeeMerchantAccessToken(credential, input.job.environment, shopeeAccessBufferMs, merchantId, refreshHooks.onExternalMutationStart, refreshHooks.onCredentialRefresh, !publicationReadOnly && !shopeeCategoryRead);
       credential = merchantEnsured.payload;
-    } else {
+    }
+    else {
       const shopId = String(arguments_.shopId ?? arguments_.shop_id ?? "").trim();
       await input.hooks.assertLeaseHealthy();
-      const ensured = await ensureShopeeAccessToken(
-        credential,
-        input.job.environment,
-        shopeeAccessBufferMs,
-        shopId,
-        refreshHooks.onExternalMutationStart,
-        refreshHooks.onCredentialRefresh,
-        !publicationReadOnly && !shopeeCategoryRead,
-      );
+      const ensured = await ensureShopeeAccessToken(credential, input.job.environment, shopeeAccessBufferMs, shopId, refreshHooks.onExternalMutationStart, refreshHooks.onCredentialRefresh, !publicationReadOnly && !shopeeCategoryRead);
       credential = ensured.payload;
     }
-  } else if (input.job.channel === "smartstore") {
-    const storedAccessToken = readStoredNaverAccessToken(credential, 10 * 60 * 1_000);
+  }
+  else if (input.job.channel === "smartstore") {
+    const storedAccessToken = readStoredNaverAccessToken(credential, 10 * 60 * 1000);
     if (publicationReadOnly) {
       if (!storedAccessToken) {
         throw new Error("LISTING_PUBLICATION_VERIFY_CREDENTIAL_REFRESH_REQUIRED");
       }
     } else if ((input.job.operation === "listing.create"
-        || input.job.operation === "listing.update")
-        && !storedAccessToken) {
+      || input.job.operation === "listing.update")
+      && !storedAccessToken) {
       await input.hooks.assertLeaseHealthy();
       await input.hooks.beginCredentialMutation();
       const token = await fetchNaverAccessToken(credential);
@@ -305,51 +229,33 @@ async function prepareCredential(
         expiresAt: null,
       });
     }
-  } else if (input.job.channel === "lazada") {
+  }
+  else if (input.job.channel === "lazada") {
     const country = String(arguments_.country || textValue(credential, "country") || "my")
       .toLowerCase();
     credential = { ...credential, country };
     await input.hooks.assertLeaseHealthy();
-    const ensured = await ensureLazadaAccessToken(
-      credential,
-      undefined,
-      refreshHooks.onExternalMutationStart,
-      refreshHooks.onCredentialRefresh,
-      true,
-    );
+    const ensured = await ensureLazadaAccessToken(credential, undefined, refreshHooks.onExternalMutationStart, refreshHooks.onCredentialRefresh, true);
     credential = ensured.payload;
-  } else if (input.job.channel === "ebay") {
+  }
+  else if (input.job.channel === "ebay") {
     if (publicationReadOnly && !readProviderAccountIdentity(credential, "ebay")) {
       throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
     }
     await input.hooks.assertLeaseHealthy();
-    const ensured = await ensureEbayAccessToken(
-      credential,
-      input.job.environment,
-      undefined,
-      refreshHooks.onExternalMutationStart,
-      refreshHooks.onCredentialRefresh,
-      !publicationReadOnly,
-    );
+    const ensured = await ensureEbayAccessToken(credential, input.job.environment, undefined, refreshHooks.onExternalMutationStart, refreshHooks.onCredentialRefresh, !publicationReadOnly);
     credential = ensured.payload;
-
   }
-
   return { credential, arguments_, shopeeShopCredential };
 }
-
 async function executeDiagnostic(input: ServerlessGatewayProviderExecutionInput) {
   const prepared = await prepareCredential(input, requestArguments(input.job));
   if (input.job.channel === "ebay"
-      && !readProviderAccountIdentity(prepared.credential, "ebay")) {
+    && !readProviderAccountIdentity(prepared.credential, "ebay")) {
     throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISSING");
   }
   await input.hooks.assertLeaseHealthy();
-  const diagnostic = await runChannelDiagnostic(
-    input.job.channel,
-    prepared.credential,
-    input.job.environment,
-  );
+  const diagnostic = await runChannelDiagnostic(input.job.channel, prepared.credential, input.job.environment);
   await input.hooks.assertLeaseHealthy();
   return {
     ok: diagnostic.status !== "failed",
@@ -359,20 +265,11 @@ async function executeDiagnostic(input: ServerlessGatewayProviderExecutionInput)
     safeMessage: diagnostic.message,
   };
 }
-
 async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInput) {
   if (input.job.channel === "shopee") {
     const shopId = String(input.job.request.shopId ?? "").trim();
     await input.hooks.assertLeaseHealthy();
-    const ensured = await ensureShopeeAccessToken(
-      input.job.credential,
-      input.job.environment,
-      10 * 60 * 1_000,
-      shopId,
-      input.hooks.beginCredentialMutation,
-      input.hooks.stageCredentialRefresh,
-      true,
-    );
+    const ensured = await ensureShopeeAccessToken(input.job.credential, input.job.environment, 10 * 60 * 1000, shopId, input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
     await input.hooks.assertLeaseHealthy();
     const remote = await shopeeRequest({
       payload: ensured.payload,
@@ -401,16 +298,8 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
   }
   if (input.job.channel === "lazada") {
     await input.hooks.assertLeaseHealthy();
-    const ensured = await ensureLazadaAccessToken(
-      input.job.credential,
-      undefined,
-      input.hooks.beginCredentialMutation,
-      input.hooks.stageCredentialRefresh,
-      true,
-    );
-    const country = String(
-      input.job.request.country || textValue(ensured.payload, "country") || "my",
-    ).toLowerCase();
+    const ensured = await ensureLazadaAccessToken(input.job.credential, undefined, input.hooks.beginCredentialMutation, input.hooks.stageCredentialRefresh, true);
+    const country = String(input.job.request.country || textValue(ensured.payload, "country") || "my").toLowerCase();
     await input.hooks.assertLeaseHealthy();
     const remote = await lazadaRequest({
       payload: { ...ensured.payload, country },
@@ -437,7 +326,6 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
   }
   throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
 }
-
 async function executeCompetitorSearch(input: ServerlessGatewayProviderExecutionInput) {
   if (input.job.channel !== "elevenst") {
     throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
@@ -453,21 +341,13 @@ async function executeCompetitorSearch(input: ServerlessGatewayProviderExecution
       .filter((alias) => alias.length >= 2)
       .slice(0, 12)
     : [];
-  const displayPerQuery = Math.max(
-    1,
-    Math.min(30, Number(input.job.request.displayPerQuery ?? 30) || 30),
-  );
+  const displayPerQuery = Math.max(1, Math.min(30, Number(input.job.request.displayPerQuery ?? 30) || 30));
   if (primary.length < 2) throw new Error("COMPETITOR_SEARCH_ARGUMENT_INVALID");
   await input.hooks.assertLeaseHealthy();
-  const items = await searchElevenstProductVariants(
-    primary,
-    aliases,
-    { apiKey: textValue(input.job.credential, "api_key") },
-    displayPerQuery,
-  );
+  const items = await searchElevenstProductVariants(primary, aliases, { apiKey: textValue(input.job.credential, "api_key") }, displayPerQuery);
   if (items.some((item) => item.provider !== "elevenst_product_search"
-      || item.marketplace !== "elevenst"
-      || item.currency !== "KRW")) {
+    || item.marketplace !== "elevenst"
+    || item.currency !== "KRW")) {
     throw new Error("COMPETITOR_SEARCH_RESULT_INVALID");
   }
   await input.hooks.assertLeaseHealthy();
@@ -479,10 +359,9 @@ async function executeCompetitorSearch(input: ServerlessGatewayProviderExecution
     safeMessage: `11번가 공식 상품검색에서 후보 ${items.length}건을 확인했습니다.`,
   };
 }
-
 async function executeListingLineage(input: ServerlessGatewayProviderExecutionInput) {
   if (!serverlessLineageChannels.has(input.job.channel)
-      || input.job.request.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
+    || input.job.request.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
     throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:version");
   }
   const arguments_ = input.job.request.arguments;
@@ -501,15 +380,10 @@ async function executeListingLineage(input: ServerlessGatewayProviderExecutionIn
   await input.hooks.assertLeaseHealthy();
   return result;
 }
-
-export async function executeServerlessGatewayProviderJob(
-  input: ServerlessGatewayProviderExecutionInput,
-  operationExecutor: ProviderExecutor = executeChannelOperation,
-): Promise<ServerlessGatewayProviderResult> {
+export async function executeServerlessGatewayProviderJob(input: ServerlessGatewayProviderExecutionInput, operationExecutor: ProviderExecutor = executeChannelOperation): Promise<ServerlessGatewayProviderResult> {
   if (!serverlessGatewayOperationAllowed(input.job.channel, input.job.operation)) {
     throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
   }
-
   const execute = () => runWithChannelRequestSignal(input.signal, async () => {
     if (input.job.operation === "oauth.exchange") {
       return executeProviderOAuthExchange(input.job as ProviderOAuthClaim, input.hooks);
@@ -523,145 +397,8 @@ export async function executeServerlessGatewayProviderJob(
     if (!channelOperation(input.job.operation)) {
       throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
     }
-
     const rawArguments = requestArguments(input.job);
-    if (input.job.channel === "coupang"
-        && input.job.operation === "listing.create"
-        && coupangExactQaCreateForbidden({ argumentsValue: rawArguments })) {
-      throw new Error("COUPANG_EXACT_QA_DUPLICATE_CREATE_FORBIDDEN");
-    }
-    if (input.job.channel === "elevenst"
-        && input.job.operation === "listing.create"
-        && elevenstExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
-      throw new Error("ELEVENST_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
-    }
-    if (input.job.channel === "lazada"
-        && input.job.operation === "listing.create"
-        && lazadaExactExistingCreateForbidden({ argumentsValue: rawArguments })) {
-      throw new Error("LAZADA_EXACT_EXISTING_DUPLICATE_CREATE_FORBIDDEN");
-    }
-    const lazadaExactUpdateMarkerSupplied = Object.hasOwn(
-      rawArguments,
-      lazadaExactExistingUpdateArgument,
-    );
-    const lazadaExactUpdateTarget = input.job.channel === "lazada"
-      && input.job.operation === "listing.update"
-      && lazadaExactExistingUpdateTarget(rawArguments);
-    if (lazadaExactUpdateMarkerSupplied || lazadaExactUpdateTarget) {
-      const exactBinding = lazadaExactExistingUpdateRequest(rawArguments);
-      if (!lazadaExactUpdateTarget || !exactBinding) {
-        throw new Error("LAZADA_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
-      }
-      if (input.job.credential_id !== exactBinding.credentialId) {
-        throw new Error("LAZADA_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
-      }
-      assertLazadaExactExistingUpdateArguments(rawArguments);
-    }
-    if (input.job.channel === "ebay"
-        && input.job.operation === "listing.create"
-        && ebayExactExistingQaCreateForbidden({ argumentsValue: rawArguments })) {
-      throw new Error("EBAY_EXACT_EXISTING_QA_DUPLICATE_CREATE_FORBIDDEN");
-    }
-    const ebayExactRecovery = ebayExactExistingQaRecoveryBinding(rawArguments);
-    if (Object.hasOwn(rawArguments, ebayExactExistingQaRecoveryArgument)
-        && (input.job.channel !== "ebay"
-          || input.job.operation !== "listing.update"
-          || !ebayExactRecovery)) {
-      throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
-    }
-    if (input.job.channel === "ebay" && input.job.operation === "listing.update") {
-      if (!ebayExactRecovery) {
-        throw new Error("EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED");
-      }
-      if (input.job.credential_id !== ebayExactRecovery.credentialId) {
-        throw new Error("EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH");
-      }
-      assertEbayExactExistingQaProviderCopyRequest(rawArguments);
-    }
-    const elevenstExactPublication = elevenstExactExistingPublicationBinding(rawArguments);
-    if (Object.hasOwn(rawArguments, elevenstExactExistingPublicationArgument)
-        && (input.job.channel !== "elevenst"
-          || input.job.operation !== "listing.update"
-          || !elevenstExactPublication)) {
-      throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
-    }
-    if (input.job.channel === "elevenst"
-        && input.job.operation === "listing.update"
-        && elevenstExactExistingUpdateTarget(rawArguments)) {
-      if (!elevenstExactPublication) {
-        throw new Error("ELEVENST_EXACT_EXISTING_SERVER_CONTEXT_REQUIRED");
-      }
-      if (input.job.credential_id !== elevenstExactPublication.credentialId) {
-        throw new Error("ELEVENST_EXACT_EXISTING_CREDENTIAL_LINEAGE_MISMATCH");
-      }
-      assertElevenstExactExistingUpdate(rawArguments);
-    }
-    const coupangRecoveryPhase = input.job.operation === "listing.update"
-      || input.job.operation === "listing.stop"
-      ? input.job.operation
-      : undefined;
-    if (Object.hasOwn(rawArguments, coupangExactQaRecoveryArgument)
-        && (input.job.channel !== "coupang"
-          || !coupangRecoveryPhase
-          || !coupangExactQaRecoveryBinding(rawArguments, coupangRecoveryPhase))) {
-      throw new Error("COUPANG_EXACT_QA_RECOVERY_SERVER_CONTEXT_REQUIRED");
-    }
-    if (input.job.channel === "qoo10"
-        && input.job.operation === "listing.create"
-        && qoo10ExactTargetCreateForbidden(rawArguments)) {
-      // This QA SKU already owns remote item 1217336970. Reject the stale
-      // create before credential refresh, media preparation, or the worker's
-      // provider-mutation fence; only the exact bound update is recoverable.
-      throw new Error("QOO10_EXACT_DUPLICATE_CREATE_FORBIDDEN");
-    }
-    const qoo10ExactLocalizationMarkerSupplied = Object.hasOwn(
-      rawArguments,
-      qoo10ExactLocalizationUpdateArgument,
-    );
-    const qoo10ExactLocalizationTarget = input.job.channel === "qoo10"
-      && input.job.operation === "listing.update"
-      && String((rawArguments.params as Record<string, unknown> | undefined)?.ItemCode ?? "")
-        === qoo10ExactLocalizationRecoveryIdentity.remoteId;
-    if ((qoo10ExactLocalizationMarkerSupplied || qoo10ExactLocalizationTarget)
-        && (!qoo10ExactLocalizationTarget
-          || !qoo10ExactLocalizationUpdateBinding(rawArguments))) {
-      throw new Error("QOO10_EXACT_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
-    }
-    const qoo10ExactAdoptedMarkerSupplied = Object.hasOwn(
-      rawArguments,
-      qoo10ExactAdoptedLocalizationArgument,
-    );
-    if (qoo10ExactAdoptedMarkerSupplied
-        && (!qoo10ExactLocalizationTarget
-          || !qoo10ExactAdoptedLocalizationBinding(rawArguments))) {
-      throw new Error("QOO10_EXACT_ADOPTED_LOCALIZATION_SERVER_CONTEXT_REQUIRED");
-    }
-    const shopeeExactUpdateMarkerSupplied = Object.hasOwn(
-      rawArguments,
-      shopeeSgExistingUpdateArgument,
-    );
-    const shopeeExactUpdatePhase = input.job.operation === "listing.update"
-      ? "content" as const
-      : input.job.operation === "inventory.update"
-        ? "inventory" as const
-        : null;
-    const shopeeExactUpdate = shopeeExactUpdatePhase
-      ? shopeeSgExistingUpdateBinding(rawArguments, shopeeExactUpdatePhase)
-      : null;
-    if (shopeeExactUpdateMarkerSupplied && (!shopeeExactUpdatePhase || !shopeeExactUpdate)) {
-      throw new Error("SHOPEE_SG_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
-    }
-    if (shopeeExactUpdatePhase && shopeeExactUpdate) {
-      if (input.job.channel !== "shopee"
-          || input.job.credential_id !== shopeeExactUpdate.credentialId) {
-        throw new Error("SHOPEE_SG_EXISTING_UPDATE_LINEAGE_MISMATCH");
-      }
-      if (shopeeExactUpdatePhase === "content") {
-        assertShopeeSgExistingContentSource(rawArguments);
-      } else {
-        assertShopeeSgExistingInventorySource(rawArguments);
-      }
-    }
+    assertNoRetiredProductRecovery(rawArguments);
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"
       || input.job.operation === "listing.update"
@@ -669,42 +406,32 @@ export async function executeServerlessGatewayProviderJob(
     )
       && rawArguments.publicationStateContract === "verified_remote_state_v1"
       && (rawArguments.publicationIntent === "live"
-        || ((input.job.channel === "temu" || Boolean(shopeeExactUpdate))
+        || ((input.job.channel === "temu" || Boolean(false))
           && rawArguments.publicationIntent === "safe_test"));
     const qoo10ActivationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
     const temuActivationMarkerSupplied = Object.hasOwn(rawArguments, "sellerpilotTemuActivation");
     const exactActivationContext = input.job.operation === "listing.activate"
       ? input.job.channel === "qoo10"
         ? qoo10ActivationMarkerSupplied
-          && !temuActivationMarkerSupplied
-          && qoo10S1ActivationArgumentsValid(rawArguments)
+        && !temuActivationMarkerSupplied
+        && qoo10S1ActivationArgumentsValid(rawArguments)
         : input.job.channel === "temu"
           ? !qoo10ActivationMarkerSupplied
-            && temuActivationMarkerSupplied
-            && Boolean(temuActivationBinding(rawArguments))
+          && temuActivationMarkerSupplied
+          && Boolean(temuActivationBinding(rawArguments))
           : false
       : !qoo10ActivationMarkerSupplied && !temuActivationMarkerSupplied;
     if (!exactActivationContext) {
       throw new Error("LISTING_ACTIVATION_SERVER_CONTEXT_REQUIRED");
     }
     if (input.job.operation === "listing.publication.verify") {
-      const source = listingPublicationVerificationSourceSchema.safeParse(
-        rawArguments.sellerpilotPublicationSource,
-      );
+      const source = listingPublicationVerificationSourceSchema.safeParse(rawArguments.sellerpilotPublicationSource);
       const containmentDiscovery = input.job.channel === "temu"
         ? temuContainmentDiscoveryBinding(rawArguments)
         : null;
-      const existingAdoption = input.job.channel === "temu"
-        ? temuExistingAdoptionBinding(rawArguments)
-        : null;
-      const credentialCertification = input.job.channel === "temu"
-        ? temuCredentialCertificationBinding(rawArguments)
-        : null;
       if (rawArguments.sellerpilotReadOnly !== true
-          || (!containmentDiscovery
-            && !existingAdoption
-            && !credentialCertification
-            && (!source.success || source.data.verificationJobId !== input.job.id))) {
+        || (!containmentDiscovery
+          && (!source.success || source.data.verificationJobId !== input.job.id))) {
         throw new Error("LISTING_PUBLICATION_VERIFY_READ_ONLY_CONTEXT_REQUIRED");
       }
     }
@@ -718,7 +445,7 @@ export async function executeServerlessGatewayProviderJob(
       if (!parseListingPublicationAssetBinding(rawArguments.sellerpilotPublicationAssetBinding)) {
         throw new Error("LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED");
       }
-      if (!ebayExactRecovery) {
+      {
         assertListingPublicationSourceLocalized({
           channel: input.job.channel,
           expectedLocale: String(rawArguments.publicationExpectedLocale ?? ""),
@@ -726,7 +453,6 @@ export async function executeServerlessGatewayProviderJob(
         });
       }
     }
-
     const preparedCredential = await prepareCredential(input, rawArguments);
     let operationArguments = preparedCredential.arguments_;
     let mediaMutationObserved = false;
@@ -746,33 +472,15 @@ export async function executeServerlessGatewayProviderJob(
       operationArguments = preparedListing.arguments;
       mediaMutationObserved = preparedListing.mediaMutationObserved;
     }
-
     await input.hooks.assertLeaseHealthy();
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
-    const delayedTemuExactUpdateBoundary = input.job.channel === "temu"
-      && input.job.operation === "listing.update"
-      && Boolean(temuExactExistingUpdateRequest(operationArguments));
     if (input.job.channel === "temu"
-        && input.job.operation === "listing.update"
-        && !delayedTemuExactUpdateBoundary) {
+      && input.job.operation === "listing.update") {
       throw new Error("TEMU_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
     }
-    const delayedEbayExactUpdateBoundary = input.job.channel === "ebay"
-      && input.job.operation === "listing.update"
-      && Boolean(ebayExactRecovery);
-    const delayedShopeeExactInventoryBoundary = input.job.channel === "shopee"
-      && input.job.operation === "inventory.update"
-      && shopeeExactUpdate?.phase === "inventory";
-    const delayedCoupangExactUpdateBoundary = input.job.channel === "coupang"
-      && input.job.operation === "listing.update"
-      && Boolean(coupangExactQaRecoveryBinding(operationArguments, "listing.update"));
     if (writeChannelOperations.has(input.job.operation)
-        && !delayedTemuActivationBoundary
-        && !delayedTemuExactUpdateBoundary
-        && !delayedEbayExactUpdateBoundary
-        && !delayedShopeeExactInventoryBoundary
-        && !delayedCoupangExactUpdateBoundary) {
+      && !delayedTemuActivationBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -783,24 +491,6 @@ export async function executeServerlessGatewayProviderJob(
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedTemuActivationBoundary
-          || delayedTemuExactUpdateBoundary
-          || delayedEbayExactUpdateBoundary
-          || delayedShopeeExactInventoryBoundary
-          || delayedCoupangExactUpdateBoundary
-        ? {
-            providerMutationHooks: {
-              begin: input.hooks.beginProviderMutation,
-              assertLeaseHealthy: input.hooks.assertLeaseHealthy,
-              ...(input.hooks.bindCoupangRepresentativePrewrite
-                ? {
-                    bindCoupangRepresentativePrewrite:
-                      input.hooks.bindCoupangRepresentativePrewrite,
-                  }
-                : {}),
-            },
-          }
-        : {}),
       ...(preparedCredential.shopeeShopCredential
         ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
         : {}),
@@ -817,12 +507,12 @@ export async function executeServerlessGatewayProviderJob(
       });
       const boundState = verifiedListingRemoteStateSchema.safeParse(publicationAssetBinding
         ? {
-            ...result.remoteState,
-            evidence: {
-              ...result.remoteState.evidence,
-              publicationAssetBinding,
-            },
-          }
+          ...result.remoteState,
+          evidence: {
+            ...result.remoteState.evidence,
+            publicationAssetBinding,
+          },
+        }
         : null);
       if (!boundState.success) {
         throw new Error("LISTING_PUBLICATION_PROVIDER_ASSET_BINDING_FAILED");
@@ -838,9 +528,9 @@ export async function executeServerlessGatewayProviderJob(
       });
     }
     if (input.job.channel === "shopee"
-        && input.job.operation === "listing.create"
-        && operationArguments.globalProduct === true
-        && preparedCredential.shopeeShopCredential) {
+      && input.job.operation === "listing.create"
+      && operationArguments.globalProduct === true
+      && preparedCredential.shopeeShopCredential) {
       result = await verifyShopeeGlobalListingPostPublish({
         result,
         merchantCredential: preparedCredential.credential,

@@ -49,6 +49,9 @@ const supportedProductFields = new Set([
   "dlvCnAreaCd",
   "dlvWyCd",
   "dlvCstInstBasiCd",
+  "dlvCst1",
+  "addrSeqOut",
+  "addrSeqIn",
   "bndlDlvCnYn",
   "dlvCstPayTypCd",
   "rtngdDlvCst",
@@ -221,8 +224,8 @@ function validateProductNotification(product: Record<string, unknown>, categoryI
  * remain blocked until their exact provider metadata is supplied.
  */
 export function validateElevenstListingProduct(value: unknown, shippingSource?: unknown): Record<string, unknown> {
-  if (shippingSource !== undefined) assertElevenstListingShippingSource(shippingSource);
   const product = object(value, "product");
+  if (shippingSource !== undefined) assertElevenstListingShippingSource(shippingSource, product);
   const unknownField = Object.keys(product).find((field) => !supportedProductFields.has(field));
   if (unknownField) throw new Error(`ELEVENST_PRODUCT_FIELD_UNVERIFIED:${unknownField}`);
 
@@ -261,7 +264,15 @@ export function validateElevenstListingProduct(value: unknown, shippingSource?: 
 
   exactCode(product, "dlvCnAreaCd", ["01"]);
   exactCode(product, "dlvWyCd", ["01"]);
-  exactCode(product, "dlvCstInstBasiCd", ["01"]);
+  const shippingMode = exactCode(product, "dlvCstInstBasiCd", ["01", "02"]);
+  if (shippingMode === "02") {
+    integerText(product, "dlvCst1", { min: 10, max: 9_999_990, multipleOf: 10 });
+  } else if (Object.hasOwn(product, "dlvCst1") && product.dlvCst1 !== "0") {
+    throw new Error("ELEVENST_FREE_SHIPPING_AMOUNT_INVALID");
+  }
+  for (const field of ["addrSeqOut", "addrSeqIn"]) {
+    if (Object.hasOwn(product, field)) integerText(product, field, { min: 1, max: Number.MAX_SAFE_INTEGER });
+  }
   exactCode(product, "bndlDlvCnYn", ["Y"]);
   exactCode(product, "dlvCstPayTypCd", ["03"]);
   integerText(product, "rtngdDlvCst", { min: 0, max: 9_999_990, multipleOf: 10 });
@@ -275,20 +286,55 @@ export function validateElevenstListingProduct(value: unknown, shippingSource?: 
 
 /**
  * Source facts are internal metadata, never new 11st XML fields. Only the
- * existing zero-fee contract is verified. Do not erase a paid/unknown fee to
- * make that contract pass, or infer a paid contract from the provider codes.
+ * free or fixed prepaid fee must agree with the official native XML fields.
+ * An unbound paid source remains rejected; never silently turn it into free shipping.
  */
-export function assertElevenstListingShippingSource(value: unknown): void {
+export function assertElevenstListingShippingSource(value: unknown, nativeProduct?: unknown): void {
   const source = object(value, "sellerpilotAssets.shipping");
   const raw = source.shippingFeeKrw;
   const fee = (typeof raw === "number" || typeof raw === "string")
     && String(raw).trim() !== "" ? Number(raw) : NaN;
-  if (!Number.isSafeInteger(fee) || fee < 0) {
+  if (!Number.isSafeInteger(fee) || fee < 0 || fee > 9_999_990 || fee % 10 !== 0) {
     throw new Error("ELEVENST_SHIPPING_SOURCE_FEE_REQUIRED");
   }
   if (fee !== 0) {
-    throw new Error(`ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:${fee}`);
+    const product = nativeProduct && typeof nativeProduct === "object" && !Array.isArray(nativeProduct)
+      ? nativeProduct as Record<string, unknown> : {};
+    if (product.dlvCstInstBasiCd !== "02" || product.dlvCst1 !== String(fee) || product.dlvCstPayTypCd !== "03") {
+      throw new Error(`ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:${fee}`);
+    }
+  } else if (nativeProduct && typeof nativeProduct === "object" && !Array.isArray(nativeProduct)) {
+    const product = nativeProduct as Record<string, unknown>;
+    if ((Object.hasOwn(product, "dlvCstInstBasiCd") && product.dlvCstInstBasiCd !== "01") || (Object.hasOwn(product, "dlvCst1") && product.dlvCst1 !== "0")) {
+      throw new Error("ELEVENST_FREE_SHIPPING_AMOUNT_INVALID");
+    }
   }
+}
+
+/** Official product-management guide: 01 free, 02 fixed amount, 03 prepaid. */
+export function elevenstListingShippingFields(value: unknown, options: { draft?: boolean } = {}): Record<string, string> {
+  const source = object(value, "sellerpilotAssets.shipping");
+  const fee = Number(source.shippingFeeKrw);
+  const fields: Record<string, string> = {
+    dlvCstInstBasiCd: fee > 0 ? "02" : "01",
+    dlvCstPayTypCd: "03",
+    ...(fee > 0 ? { dlvCst1: String(fee) } : {}),
+  };
+  try {
+    assertElevenstListingShippingSource(source, fields);
+  } catch (error) {
+    if (!options.draft) throw error;
+    // Keep incomplete forms editable. An unknown amount is not a free fee.
+    return { dlvCstInstBasiCd: "", dlvCstPayTypCd: "03" };
+  }
+  return fields;
+}
+
+export function elevenstFixedShippingReadbackMatches(expected: Record<string, unknown>, actual: Record<string, unknown>): boolean {
+  if (expected.dlvCstInstBasiCd !== "02") return true;
+  const fields = ["dlvCstInstBasiCd", "dlvCst1", "dlvCstPayTypCd", "bndlDlvCnYn", "rtngdDlvCst", "exchDlvCst", "addrSeqOut", "addrSeqIn"];
+  return fields.every(field => !Object.hasOwn(expected, field)
+    || String(actual[field] ?? "").trim() === String(expected[field]).trim());
 }
 
 export function elevenstShippingContractErrorMessage(code: string): string | undefined {
@@ -297,7 +343,7 @@ export function elevenstShippingContractErrorMessage(code: string): string | und
   }
   const paid = /^ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED:SHIPPING_FEE_KRW:(\d{1,16})$/u.exec(code);
   if (paid) {
-    return `입력 배송비 ${paid[1]} KRW는 현재 검증된 무료배송 계약과 일치하지 않습니다. 입력값을 보존하고 공식 유료배송 필드·권한 확인 전 등록·수정을 중단하세요.`;
+    return `입력 배송비 ${paid[1]} KRW는 11번가 유료배송 필드와 일치하지 않습니다. 배송비 종류·결제 방식·금액을 확인해 주세요.`;
   }
   return undefined;
 }
@@ -320,7 +366,7 @@ export function bindElevenstAuthoritativeShippingSource(
     packagingRule: manual.packagingRule,
   };
   // Validate before returning anything that could be fingerprinted or enqueued.
-  assertElevenstListingShippingSource(source);
+  assertElevenstListingShippingSource(source, argumentsValue.product ?? argumentsValue.productPatch);
   const next = structuredClone(argumentsValue);
   const assets = next.sellerpilotAssets && typeof next.sellerpilotAssets === "object" && !Array.isArray(next.sellerpilotAssets)
     ? next.sellerpilotAssets as Record<string, unknown> : {};
@@ -333,14 +379,18 @@ export function bindElevenstAuthoritativeShippingSource(
 /** Use at both create/update execution boundaries, before any provider read/write. */
 export function validateElevenstListingArguments(value: unknown): Record<string, unknown> {
   const args = object(value, "arguments");
+  let shipping: unknown;
   // Legacy immutable requests contain only the native product. Keep their
   // verified contract unchanged; absence is NOT evidence that a fee was zero.
   // Callers with stored source facts must bind those facts before this check.
   if (Object.hasOwn(args, "sellerpilotAssets")) {
     const assets = object(args.sellerpilotAssets, "sellerpilotAssets");
-    if (Object.hasOwn(assets, "shipping")) assertElevenstListingShippingSource(assets.shipping);
+    if (Object.hasOwn(assets, "shipping")) {
+      shipping = assets.shipping;
+      assertElevenstListingShippingSource(shipping, args.product);
+    }
   }
-  return validateElevenstListingProduct(args.product);
+  return validateElevenstListingProduct(args.product, shipping);
 }
 
 export function elevenstListingUpdatePatchFromProduct(value: unknown) {

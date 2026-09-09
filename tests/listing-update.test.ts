@@ -18,10 +18,7 @@ import {
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
-import {
-  bindSmartstoreExactQaRecoveryArguments,
-  smartstoreExactQaRecoveryIdentity,
-} from "../lib/channels/smartstore-exact-qa-recovery";
+
 
 const listing = {
   status: "published",
@@ -383,29 +380,6 @@ test("published listing update drafts bind the immutable remote product identity
   );
 });
 
-test("normal Smartstore content update strips commerce values but the exact QA recovery keeps its fixed 5000/1 contract", () => {
-  const exactListing = {
-    listingId: smartstoreExactQaRecoveryIdentity.listingId,
-    status: "failed",
-    remoteId: smartstoreExactQaRecoveryIdentity.originProductNo,
-    publishedAt: null,
-    requestedPublicationIntent: "live",
-    remoteVisibility: "unknown",
-    failureClass: "external_action" as const,
-  };
-  const exactArguments = bindSmartstoreExactQaRecoveryArguments({
-    body: { originProduct: {
-      salePrice: smartstoreExactQaRecoveryIdentity.priceKrw,
-      stockQuantity: smartstoreExactQaRecoveryIdentity.stock,
-    } },
-  });
-  const prepared = prepareListingUpdateArguments("smartstore", exactArguments, exactListing);
-  assert.deepEqual((prepared.body as { originProduct: Record<string, unknown> }).originProduct, {
-    salePrice: smartstoreExactQaRecoveryIdentity.priceKrw,
-    stockQuantity: smartstoreExactQaRecoveryIdentity.stock,
-  });
-});
-
 test("Smartstore content patch keeps current provider capacity, price and stock in the final full document", () => {
   const current = {
     originProduct: {
@@ -628,13 +602,15 @@ test("Lazada MY QA update retains the exact category and requested single-SKU pr
             description: "Penerangan produk dalam Bahasa Melayu.",
           },
           Images: { Image: ["https://cdn.example.com/representative.jpg"] },
-          Skus: { Sku: [{
-            SellerSku: "QA-20260823-CC-001-MY",
-            price: "14.29",
-            quantity: "1",
-            package_weight: "0.1",
-            Status: "active",
-          }] },
+          Skus: {
+            Sku: [{
+              SellerSku: "QA-20260823-CC-001-MY",
+              price: "14.29",
+              quantity: "1",
+              package_weight: "0.1",
+              Status: "active",
+            }]
+          },
         },
       },
     },
@@ -664,11 +640,13 @@ test("Lazada MY QA update retains the exact category and requested single-SKU pr
           description: "Penerangan produk dalam Bahasa Melayu.",
         },
         Images: { Image: ["https://cdn.example.com/representative.jpg"] },
-        Skus: { Sku: [{
-          SellerSku: "QA-20260823-CC-001-MY",
-          price: "14.29",
-          quantity: "1",
-        }] },
+        Skus: {
+          Sku: [{
+            SellerSku: "QA-20260823-CC-001-MY",
+            price: "14.29",
+            quantity: "1",
+          }]
+        },
       },
     },
   });

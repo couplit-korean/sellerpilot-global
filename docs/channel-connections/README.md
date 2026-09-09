@@ -15,6 +15,8 @@
 
 최신 상품 등록 보완·실운영 잔여 조건은 [8채널 검증 기록](remaining-product-verification-20260909.md)을 따른다. 3,000개 로컬 회귀 통과와 실제 계정/상품 연결 완료는 구분한다.
 
+과거 상품 전용 복구 분기는 [제거 기록](product-recovery-retirement-20260909.md)에 따라 삭제했다. 이전 문서의 exact permit·고정 상품 복구 경로를 다시 연결하지 않는다. 일반 등록/수정과 중복·계정 검증은 유지한다.
+
 ## 공통 연결 위치
 
 | 영역 | registry | API·화면 | 완료/worker |

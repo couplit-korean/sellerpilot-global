@@ -99,6 +99,12 @@ export function buildInventoryUpdateArguments(input: {
   if (channel === "coupang") {
     return { sellerProductId: remoteId, quantity };
   }
+  if (channel === "elevenst") {
+    numericId(remoteId, "elevenst.productNo");
+    if (!productSku.trim()) throw new Error("INVENTORY_SYNC_SELLER_SKU_REQUIRED:elevenst");
+    if (quantity > 999_999) throw new Error("INVENTORY_SYNC_QUANTITY_INVALID");
+    return { productNo: remoteId, sellerSku: productSku, quantity };
+  }
   if (channel === "smartstore") {
     return {
       originProductNo: remoteId,

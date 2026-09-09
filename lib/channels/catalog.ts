@@ -224,7 +224,7 @@ export const channelCatalog: Record<ActiveChannelKey, ChannelDefinition> = {
       listingUpdate: api("PUT /rest/prodservices/product/{prdNo} → 동일 prdNo 사전·사후 조회 검증"),
       listingStop: api("PUT /rest/prodstatservice/stat/stopdisplay/{prdNo}"),
       price: vendorDocsRequired("판매자 가격 API 문서·서비스 권한 확인 필요"),
-      inventory: vendorDocsRequired("판매자 재고 API 문서·서비스 권한 확인 필요"),
+      inventory: vendorDocsRequired("재고 동기화 API·DB 원장 통합 및 운영 검증 필요"),
       orders: polling("등록 고정 IP에서 결제완료 주문을 최대 7일 단위로 주기 조회"),
       shipment: vendorDocsRequired("발주·송장 API 서비스 권한과 공식 엔드포인트 확인 필요"),
       claims: vendorDocsRequired("취소·반품 API 서비스 권한과 공식 엔드포인트 확인 필요"),
