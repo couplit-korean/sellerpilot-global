@@ -22,7 +22,10 @@
       "dispatchAccepted": true,
       "startupConfirmed": true,
       "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
-      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-shopee-20260909/docs/product-channel-parallel/reports/shopee/status.json"
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-shopee-20260909/docs/product-channel-parallel/reports/shopee/status.json",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     },
     {
       "number": 2,
@@ -38,7 +41,12 @@
       "lastCursor": "5acfbd6c-14be-4844-a3f6-2f7ce1768771:5",
       "turnId": "01a0845c-a2ab-7922-9e9a-705ae2fe9651",
       "startedAt": 1788927058,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true,
+      "startupConfirmed": true,
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-lazada-20260909/docs/product-channel-parallel/reports/lazada/status.json"
     },
     {
       "number": 3,
@@ -57,7 +65,10 @@
       "dispatchAccepted": true,
       "startupConfirmed": true,
       "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
-      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-temu-20260909/docs/product-channel-parallel/reports/temu/status.json"
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-temu-20260909/docs/product-channel-parallel/reports/temu/status.json",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     },
     {
       "number": 4,
@@ -76,7 +87,10 @@
       "dispatchAccepted": true,
       "startupConfirmed": true,
       "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
-      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-smartstore-20260909/docs/product-channel-parallel/reports/smartstore/status.json"
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-smartstore-20260909/docs/product-channel-parallel/reports/smartstore/status.json",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     },
     {
       "number": 5,
@@ -92,7 +106,10 @@
       "lastCursor": "85cc6473-a085-4caf-89e9-a778e0fa9904:12",
       "turnId": "01a0845d-844d-7f93-bfff-00830b5b91de",
       "startedAt": 1788927116,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     },
     {
       "number": 6,
@@ -111,7 +128,10 @@
       "dispatchAccepted": true,
       "startupConfirmed": true,
       "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
-      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-elevenst-20260909/docs/product-channel-parallel/reports/elevenst/status.json"
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-elevenst-20260909/docs/product-channel-parallel/reports/elevenst/status.json",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     },
     {
       "number": 7,
@@ -127,7 +147,12 @@
       "lastCursor": "31cf2f08-25ed-4dea-a2d8-ca07df7c1b32:5",
       "turnId": "01a0845c-d1db-7ab1-9ee9-8e95f1a09591",
       "startedAt": 1788927070,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true,
+      "startupConfirmed": true,
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-qoo10-20260909/docs/product-channel-parallel/reports/qoo10/status.json"
     },
     {
       "number": 8,
@@ -146,7 +171,12 @@
       "dispatchAccepted": true,
       "startupConfirmed": true,
       "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
-      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-ebay-20260909/docs/product-channel-parallel/reports/ebay/status.json"
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-ebay-20260909/docs/product-channel-parallel/reports/ebay/status.json",
+      "model": "gpt-5.6-sol",
+      "reasoningEffort": "high",
+      "modelOverrideAccepted": true
     }
-  ]
+  ],
+  "sidebarSectionId": "7d8955fd-e468-4cfa-afda-95da579960a3",
+  "sidebarSectionName": "상품등록 · 0~8번"
 }
