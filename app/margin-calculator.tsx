@@ -55,10 +55,10 @@ const defaultMarginForm: MarginForm = {
   sellingPrice: 0,
   marketReferencePrice: 0,
   purchaseCost: 0,
-  taxRate: 0,
+  taxRate: 10,
   adRate: 0,
   reserveRate: 0,
-  targetMargin: 25,
+  targetMargin: 30,
 };
 
 const wonFormatter = new Intl.NumberFormat("ko-KR", { maximumFractionDigits: 0 });
@@ -265,6 +265,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 }) {
   const [selectedProductId, setSelectedProductId] = useState("");
   const [form, setForm] = useState<MarginForm>(() => ({ ...defaultMarginForm }));
+  const [automaticPrice, setAutomaticPrice] = useState(true);
   const [feeOverrides, setFeeOverrides] = useState<Record<ChannelKey, number | null>>(() => createPlatformFeeOverrides());
   const [paymentFeeOverrides, setPaymentFeeOverrides] = useState<Record<ChannelKey, number>>(() => createPaymentFeeOverrides());
   const [channelCosts, setChannelCosts] = useState<Record<ChannelKey, ChannelMarginCosts>>(() => createChannelCostOverrides());
@@ -341,7 +342,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
     ...profile,
     rateToKrw: profile.currency === "KRW" ? 1 : ratesFresh ? referenceRates[profile.currency] ?? null : null,
   })), [referenceRates, ratesFresh]);
-  const calculatedResults = useMemo(() => calculateChannelMargins(form, feeOverrides, paymentFeeOverrides, channelCosts, calculationProfiles), [calculationProfiles, channelCosts, form, feeOverrides, paymentFeeOverrides]);
+  const calculatedResults = useMemo(() => calculateChannelMargins(form, feeOverrides, paymentFeeOverrides, channelCosts, calculationProfiles, automaticPrice ? "target" : "manual"), [calculationProfiles, channelCosts, form, feeOverrides, paymentFeeOverrides, automaticPrice]);
   const results = useMemo(() => calculatedResults.map((result) => {
     const missingCostBasis = !purchaseCostConfirmed || !channelCostConfirmations[result.key];
     if (!missingCostBasis) return result;
@@ -404,6 +405,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
   };
 
   const resetInputs = () => {
+    setAutomaticPrice(true);
     setSelectedProductId("");
     setForm({ ...defaultMarginForm });
     setFeeOverrides(createPlatformFeeOverrides());
@@ -417,6 +419,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
 
   const selectProduct = (productId: string) => {
     if (productId === selectedProductId) return;
+    setAutomaticPrice(true);
     setSelectedProductId(productId);
     setForm({ ...defaultMarginForm });
     setFeeOverrides(createPlatformFeeOverrides());
@@ -566,7 +569,11 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
           <div className="margin-field-section">
             <div className="margin-section-title"><span className="metric-icon violet"><CircleDollarSign size={17} /></span><div><b>판매가 기준</b><small>현재 계획가와 시장 참고가를 원화로 입력하세요.</small></div></div>
             <div className="margin-field-grid">
-              <MarginNumberField id="selling-price" label="계획 판매가" value={form.sellingPrice} suffix="원" hint={`${selectedChannelInfo.name} ${formatLocalPrice(form.sellingPrice, selectedResult)}`} onChange={(value) => changeFormValue("sellingPrice", value)} />
+              <label className="margin-field"><span><input type="checkbox" checked={automaticPrice} onChange={(event) => {
+                if (!event.target.checked && selectedResult.calculationReady) changeFormValue("sellingPrice", selectedResult.plannedSellingPriceKrw);
+                setAutomaticPrice(event.target.checked);
+              }} />목표 마진 판매가 자동 적용</span><small>채널별 비용·수수료·세금·환율 변경 시 자동 재계산</small></label>
+              {automaticPrice ? <label className="margin-field" htmlFor="selling-price"><span>자동 판매가</span><div><input id="selling-price" readOnly value={selectedResult.calculationReady ? selectedResult.plannedSellingPriceKrw : ""} placeholder="비용 확인 후 자동 계산" /><b>원</b></div><small>{selectedResult.calculationReady ? formatLocalPrice(selectedResult.plannedSellingPriceKrw, selectedResult) : "확인된 원가·배송·통관 비용과 환율이 필요합니다."}</small></label> : <MarginNumberField id="selling-price" label="계획 판매가" value={form.sellingPrice} suffix="원" hint={`${selectedChannelInfo.name} ${formatLocalPrice(form.sellingPrice, selectedResult)}`} onChange={(value) => changeFormValue("sellingPrice", value)} />}
               <MarginNumberField id="market-price" label="시장 참고가" value={form.marketReferencePrice} suffix="원" hint="경쟁가 또는 채널 평균가" onChange={(value) => changeFormValue("marketReferencePrice", value)} />
             </div>
           </div>
@@ -576,9 +583,9 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
             <div className="margin-field-grid compact">
               <MarginNumberField id="purchase-cost" label="매입 원가" value={form.purchaseCost} suffix="원" onChange={(value) => { setPurchaseCostConfirmed(false); changeFormValue("purchaseCost", value); }} />
               <MarginNumberField id="international-shipping" label="국제 배송" value={selectedCosts.internationalShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("internationalShipping", value)} />
-              <MarginNumberField id="local-shipping" label="현지 배송" value={selectedCosts.localShipping} suffix="원" hint="판매자 부담 실비" onChange={(value) => changeCostValue("localShipping", value)} />
+              <MarginNumberField id="local-shipping" label="국내 · 현지 배송" value={selectedCosts.localShipping} suffix="원" hint="한국 내 운송비 + 도착국 배송비 · 국제 배송에 포함된 금액 제외" onChange={(value) => changeCostValue("localShipping", value)} />
               <MarginNumberField id="fulfillment-cost" label="포장 · 3PL" value={selectedCosts.fulfillmentCost} suffix="원" onChange={(value) => changeCostValue("fulfillmentCost", value)} />
-              <MarginNumberField id="fixed-cost" label="통관 · 기타 고정비" value={selectedCosts.fixedCost} suffix="원" onChange={(value) => changeCostValue("fixedCost", value)} />
+              <MarginNumberField id="fixed-cost" label="관세 · 통관 · 기타 고정비" value={selectedCosts.fixedCost} suffix="원" hint="판매자 부담 관세 포함 · 확인된 주문 1건 비용" onChange={(value) => changeCostValue("fixedCost", value)} />
             </div>
             <button
               type="button"
@@ -601,7 +608,7 @@ export function MarginCalculatorPage({ notify, scenarios, scenarioState, scenari
             <div className="margin-field-grid compact">
               <MarginOptionalNumberField id="platform-fee" label={`${selectedChannelInfo.name} 수수료`} value={feeOverrides[selectedChannel]} suffix="%" hint={marginChannelProfiles.find((channel) => channel.key === selectedChannel)?.requiresManualFee ? "카테고리·계약 요율 입력 · 확인된 0%는 0 입력" : "기본값을 실제 계약 요율과 대조"} onChange={(value) => setFeeOverrides((current) => ({ ...current, [selectedChannel]: value }))} />
               <MarginNumberField id="payment-fee" label="결제 수수료" value={paymentFeeOverrides[selectedChannel]} suffix="%" step={0.1} hint="선택 채널에만 적용" onChange={(value) => setPaymentFeeOverrides((current) => ({ ...current, [selectedChannel]: value }))} />
-              <MarginNumberField id="tax-rate" label="매출 연동 세금" value={form.taxRate} suffix="%" step={0.1} onChange={(value) => changeFormValue("taxRate", value)} />
+              <MarginNumberField id="tax-rate" label="매출 연동 세금" value={form.taxRate} suffix="%" step={0.1} hint="설정 기준: 판매가의 10% 비용 반영 · 실제 납부세액 자동 산정 아님" onChange={(value) => changeFormValue("taxRate", value)} />
               <MarginNumberField id="ad-rate" label="광고 · 쿠폰 부담" value={form.adRate} suffix="%" step={0.1} onChange={(value) => changeFormValue("adRate", value)} />
               <MarginNumberField id="reserve-rate" label="반품 · 분실 충당" value={form.reserveRate} suffix="%" step={0.1} onChange={(value) => changeFormValue("reserveRate", value)} />
               <MarginNumberField id="target-margin" label="목표 마진율" value={form.targetMargin} suffix="%" step={0.5} onChange={(value) => changeFormValue("targetMargin", value)} />

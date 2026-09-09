@@ -144,15 +144,22 @@ export function calculateChannelMargins(
   paymentFeeOverrides: Record<ActiveChannelKey, number>,
   costOverrides: Record<ActiveChannelKey, ChannelMarginCosts>,
   profiles: readonly ChannelMarginProfile[],
+  pricingMode: "manual" | "target" = "manual",
 ): ChannelMarginResult[] {
   return profiles.map((channel) => {
     const costs = costOverrides[channel.key] ?? emptyChannelMarginCosts;
-    const sellingQuote = Number.isFinite(form.sellingPrice) && form.sellingPrice >= 0
-      ? quoteKrwPrice(form.sellingPrice, channel)
+    const target = pricingMode === "target" ? calculateMargin({
+      ...form, ...costs, sellingPrice: 0,
+      marketReferencePrice: form.marketReferencePrice > 0 ? form.marketReferencePrice : null,
+      platformFee: feeOverrides[channel.key], paymentFee: paymentFeeOverrides[channel.key],
+    }) : null;
+    const plannedSellingPriceKrw = pricingMode === "target" ? target?.recommendedPrice ?? 0 : form.sellingPrice;
+    const sellingQuote = Number.isFinite(plannedSellingPriceKrw) && plannedSellingPriceKrw >= 0
+      ? quoteKrwPrice(plannedSellingPriceKrw, channel)
       : null;
     const engineInput: MarginEngineInput = {
       ...form,
-      sellingPrice: sellingQuote?.effectiveKrwAmount ?? form.sellingPrice,
+      sellingPrice: sellingQuote?.effectiveKrwAmount ?? plannedSellingPriceKrw,
       marketReferencePrice: form.marketReferencePrice > 0 ? form.marketReferencePrice : null,
       ...costs,
       platformFee: feeOverrides[channel.key],
@@ -192,7 +199,7 @@ export function calculateChannelMargins(
       feeReady,
       exchangeRateReady,
       calculationReady,
-      plannedSellingPriceKrw: form.sellingPrice,
+      plannedSellingPriceKrw,
       localSellingPrice: sellingQuote?.localAmount ?? null,
       effectiveSellingPriceKrw: sellingQuote?.effectiveKrwAmount ?? null,
       localBreakEvenPrice: breakEvenQuote?.localAmount ?? null,

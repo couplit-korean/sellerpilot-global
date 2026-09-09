@@ -49,6 +49,10 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     const errors=[]; page.on('pageerror',error=>{errors.push(error.message); console.error(error.message);});
     await page.goto('http://margin.local/');
     await page.locator('#margin-product-id').selectOption('a');
+    assert.equal(await page.locator('#target-margin').inputValue(),'30');
+    assert.equal(await page.locator('#tax-rate').inputValue(),'10');
+    assert.equal(await page.locator('#selling-price').getAttribute('readonly'),'');
+    await page.getByRole('checkbox',{name:'목표 마진 판매가 자동 적용'}).uncheck();
     assert.equal(await page.locator('.margin-profit-value strong').innerText(),'—');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),true);
     await page.getByRole('button',{name:/Qoo10 Japan 원가·배송비 확인/}).click();
@@ -58,6 +62,12 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     await page.locator('#international-shipping').fill('5000');
     await page.locator('#local-shipping').fill('2000');
     await page.getByRole('button',{name:/Qoo10 Japan 원가·배송비 확인/}).click();
+    await page.getByRole('checkbox',{name:'목표 마진 판매가 자동 적용'}).check();
+    const autoPrice=Number(await page.locator('#selling-price').inputValue());
+    assert.ok(autoPrice>50000);
+    await page.locator('#target-margin').fill('40');
+    assert.ok(Number(await page.locator('#selling-price').inputValue())>autoPrice);
+    assert.equal(await page.locator('.margin-result-head em').innerText(),'목표 마진 충족');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),false);
     await page.getByRole('tab',{name:/eBay/}).click();
     assert.equal(await page.locator('#international-shipping').inputValue(),'0');
@@ -65,11 +75,14 @@ test('margin UI resets product costs, expires FX and handles uncertain save/dele
     await page.getByRole('tab',{name:/Qoo10/}).click();
     assert.equal(await page.locator('#international-shipping').inputValue(),'5000');
     assert.equal(await page.getByRole('button',{name:'계산 결과 저장'}).isDisabled(),false);
+    await page.getByRole('checkbox',{name:'목표 마진 판매가 자동 적용'}).uncheck();
     await page.locator('#margin-product-id').selectOption('b');
+    await page.getByRole('checkbox',{name:'목표 마진 판매가 자동 적용'}).uncheck();
     assert.equal(await page.locator('#purchase-cost').inputValue(),'0');
     assert.equal(await page.locator('#international-shipping').inputValue(),'0');
     assert.equal(await page.locator('#selling-price').inputValue(),'90000');
     await page.locator('#margin-product-id').selectOption('c');
+    await page.getByRole('checkbox',{name:'목표 마진 판매가 자동 적용'}).uncheck();
     assert.equal(await page.locator('#selling-price').inputValue(),'0');
     await page.locator('#selling-price').fill('50000');
     await page.locator('#purchase-cost').fill('20000');
