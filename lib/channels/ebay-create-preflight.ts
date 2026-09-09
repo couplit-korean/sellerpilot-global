@@ -20,7 +20,19 @@ export function ebayInventorySkuAbsent(remote: RemoteResponse) {
   return [400, 404].includes(remote.response.status) && Array.isArray(errors) && errors.length > 0
     && errors.every(value => {
       const error = record(value);
-      return error.domain === "API_INVENTORY" && [25702, 25710].includes(Number(error.errorId));
+      return error.domain === "API_INVENTORY" && [25702, 25710, "25702", "25710"].includes(error.errorId as number | string);
+    });
+}
+
+/** Exact getOffers absence observed from the Inventory API. Other 404s fail closed. */
+export function ebayOffersAbsent(remote: RemoteResponse) {
+  const errors = remote.data.errors;
+  return remote.response.status === 404
+    && Array.isArray(errors)
+    && errors.length > 0
+    && errors.every((value) => {
+      const error = record(value);
+      return error.domain === "API_INVENTORY" && (error.errorId === 25713 || error.errorId === "25713");
     });
 }
 
@@ -70,8 +82,11 @@ export function ebayCreateLineageDecision(input: {
     };
   }
 
-  const data = input.offers.data;
-  if (!input.offers.response.ok
+  const offersAbsent = ebayOffersAbsent(input.offers);
+  const data = offersAbsent
+    ? { total: 0, offers: [] }
+    : input.offers.data;
+  if ((!input.offers.response.ok && !offersAbsent)
       || data.errors
       || !Array.isArray(data.offers)
       || !Number.isSafeInteger(data.total)

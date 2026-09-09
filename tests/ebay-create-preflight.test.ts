@@ -8,6 +8,7 @@ import {
   ebayExactReconciliationOffer,
   ebayInventoryLocationEvidence,
   ebayInventorySkuAbsent,
+  ebayOffersAbsent,
 } from "../lib/channels/ebay-create-preflight";
 import type { RemoteResponse } from "../lib/channels/protocols";
 
@@ -45,6 +46,21 @@ test("eBay inventory absence requires a documented Inventory error, not an HTTP 
   }
 });
 
+test("eBay offer absence requires the exact Inventory 25713 response", () => {
+  assert.equal(ebayOffersAbsent(remote({
+    errors: [{ errorId: 25713, domain: "API_INVENTORY" }],
+  }, 404)), true);
+  for (const value of [
+    remote({}, 404),
+    remote({ errors: [{ errorId: 25713, domain: "API_INVENTORY" }] }, 400),
+    remote({ errors: [{ errorId: 25713, domain: "ACCESS" }] }, 404),
+    remote({ errors: [
+      { errorId: 25713, domain: "API_INVENTORY" },
+      { errorId: 25001, domain: "API_INVENTORY" },
+    ] }, 404),
+  ]) assert.equal(ebayOffersAbsent(value), false);
+});
+
 for (const [name, data] of Object.entries({
   "wrong SKU": { total: 1, offers: [{ ...exactOffer, sku: "someone-else" }] },
   "wrong market": { total: 1, offers: [{ ...exactOffer, marketplaceId: "EBAY_DE" }] },
@@ -69,9 +85,18 @@ test("eBay create lineage branches only from complete exact Inventory and Offer 
   const inventory = remote({ sku });
   const none = remote({ total: 0, offers: [] });
   const one = remote({ total: 1, offers: [exactOffer] });
+  const noOffer404 = remote({ errors: [{ errorId: 25713, domain: "API_INVENTORY" }] }, 404);
   assert.equal(ebayCreateLineageDecision({
     inventory: absent, offers: none, sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE",
   }).action, "create_inventory");
+  assert.deepEqual(ebayCreateLineageDecision({
+    inventory: absent, offers: noOffer404, sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE",
+  }), {
+    action: "create_inventory",
+    code: "EBAY_INVENTORY_AND_OFFER_ABSENT",
+    inventoryPresent: false,
+    offerId: null,
+  });
   assert.equal(ebayCreateLineageDecision({
     inventory, offers: none, sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE",
   }).action, "create_offer");
@@ -600,5 +625,29 @@ test("eBay create blocks duplicate exact offers before every provider mutation",
     assert.equal(mutationFences, 0);
   } finally {
     globalThis.fetch = original;
+  }
+});
+
+
+test("eBay absence guards reject malformed error IDs before allowing a new create", () => {
+  for (const [check, code] of [
+    [ebayInventorySkuAbsent, 25710],
+    [ebayInventorySkuAbsent, 25702],
+    [ebayOffersAbsent, 25713],
+  ] as const) {
+    for (const errorId of [code, String(code)]) {
+      assert.equal(check(remote({ errors: [{ domain: "API_INVENTORY", errorId }] }, 404)), true);
+    }
+    for (const errorId of [[code], [[code]], { value: code }, ` ${code}`, `${code}.0`, null, true]) {
+      const malformed = remote({ errors: [{ domain: "API_INVENTORY", errorId }] }, 404);
+      assert.equal(check(malformed), false);
+      const absentInventory = remote({ errors: [{ domain: "API_INVENTORY", errorId: 25710 }] }, 404);
+      const absentOffers = remote({ errors: [{ domain: "API_INVENTORY", errorId: 25713 }] }, 404);
+      assert.equal(ebayCreateLineageDecision({
+        inventory: check === ebayInventorySkuAbsent ? malformed : absentInventory,
+        offers: check === ebayOffersAbsent ? malformed : absentOffers,
+        sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE",
+      }).action, "blocked");
+    }
   }
 });
