@@ -779,11 +779,11 @@ export async function executeQoo10(input: ExecuteInput) {
   let strictCreateExpectation: Qoo10ListingCreateExpectation | null = null;
   let sellerAccountIdentityDigest = "";
   let createPreflightSteps: ChannelOperationStep[] = exactPrewriteSteps;
-  if (
-    input.operation === "listing.create" &&
-    input.arguments.publicationStateContract ===
-    listingRemoteStateContractVersion
-  ) {
+  // Every Qoo10 create is a strict publication write. Do not retain a legacy
+  // direct-call lane that can skip account/category/shipping/SellerCode checks:
+  // a provider acknowledgement from that lane cannot be safely distinguished
+  // from a duplicate or a create issued against the wrong seller account.
+  if (input.operation === "listing.create") {
     const localPreflight = qoo10ListingCreateExpectation({
       arguments: input.arguments,
       payload: input.payload,
@@ -1016,6 +1016,52 @@ export async function executeQoo10(input: ExecuteInput) {
     (input.operation === "listing.update" || input.operation === "listing.stop"
       ? params.ItemCode
       : undefined);
+  if (input.operation === "listing.create" && strictCreateExpectation && createStep.ok) {
+    const createResponseIdentities = qoo10UpdateResponseIdentities(resultObject);
+    const resultRecord =
+      resultObject && typeof resultObject === "object" && !Array.isArray(resultObject)
+        ? resultObject as Record<string, unknown>
+        : null;
+    const responseGdNo = resultRecord &&
+      (typeof resultRecord.GdNo === "string" || typeof resultRecord.GdNo === "number")
+      ? String(resultRecord.GdNo).trim()
+      : "";
+    const createResponseIdentityVerified =
+      /^\d{9,10}$/u.test(responseGdNo) &&
+      responseRemoteId === responseGdNo &&
+      createResponseIdentities.length >= 1 &&
+      createResponseIdentities.every((identity) => identity.value === responseGdNo);
+    if (!createResponseIdentityVerified) {
+      return result(
+        input,
+        [
+          ...createPreflightSteps,
+          createStep,
+          {
+            name: "qoo10-create-response-identity",
+            ok: false,
+            status: remote.response.status,
+            requestId: createStep.requestId,
+            data: {
+              ResultCode: -9999,
+              ResultMsg: "QOO10_CREATE_RESPONSE_IDENTITY_UNVERIFIED",
+              sellerpilotVerification:
+                "QOO10_CREATE_RESPONSE_IDENTITY_UNVERIFIED",
+              sellerpilotOfficialIdentityField: "GdNo",
+              sellerpilotObservedIdentityAliases:
+                createResponseIdentities.map((identity) => identity.alias),
+              sellerpilotObservedRemoteIdFormatValid:
+                /^\d{9,10}$/u.test(responseGdNo),
+              sellerpilotMutation: "accepted",
+              sellerpilotReconciliationRequired: true,
+              sellerpilotAutomaticRetryAllowed: false,
+            },
+          },
+        ],
+        responseRemoteId,
+      );
+    }
+  }
   const expectedRepresentativeImageContentId =
     input.operation === "listing.create" && remoteId
       ? qoo10SetNewGoodsMainImageContentId(resultObject, remoteId)

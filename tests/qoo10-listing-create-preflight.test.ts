@@ -305,9 +305,35 @@ test("Qoo10 strict create rejects commerce, current field-name, active HTML, and
   }
 });
 
+test("Qoo10 listing.create without the strict publication contract is rejected before provider access", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return Response.json({ ResultCode: 0 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload,
+      arguments: { params: strictArguments().params },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(fetchCount, 0);
+    assert.equal(operation.steps[0]?.name, "qoo10-create-contract-preflight");
+    assert.equal(operation.steps[0]?.data.ResultMsg, "QOO10_CREATE_CONTEXT_INVALID");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Qoo10 verifies account-bound seller item, exact leaf category, and shipping setting before SetNewGoods, then verifies the exact live readback", async () => {
   const originalFetch = globalThis.fetch;
   const methods: string[] = [];
+  let createHeaders: Headers | null = null;
+  let createBody: Record<string, string> | null = null;
   globalThis.fetch = async (input, init) => {
     const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
     const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
@@ -338,6 +364,8 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
       return Response.json({ ResultCode: 0, ResultObject: [] });
     }
     if (method === "ItemsBasic.SetNewGoods") {
+      createHeaders = new Headers(init?.headers);
+      createBody = body;
       return Response.json({
         ResultCode: 0,
         ResultObject: { GdNo: ITEM_CODE, BIContentsNo: Number(BI_CONTENTS_NO) },
@@ -367,6 +395,11 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
     assert.equal(methods.slice(0, createIndex).includes("ItemsLookup.GetItemDetailInfo"), true);
     assert.equal(methods.slice(0, createIndex).includes("CommonInfoLookup.GetCatagoryListAll"), true);
     assert.equal(methods.slice(0, createIndex).includes("ItemsLookup.GetSellerDeliveryGroupInfo"), true);
+    assert.equal(createHeaders?.get("QAPIVersion"), "1.1");
+    assert.equal(createHeaders?.get("GiosisCertificationKey"), payload.api_key);
+    assert.equal(createBody?.SellerCode, SKU);
+    assert.equal(createBody?.ItemPrice, String(QAPI_PRICE_JPY));
+    assert.equal(createBody?.ItemQty, "1");
     assert.equal(result.ok, true);
     assert.equal(result.publicationFulfilled, true);
     assert.equal(result.remoteState?.visibility, "live");
@@ -380,6 +413,135 @@ test("Qoo10 verifies account-bound seller item, exact leaf category, and shippin
     assert.equal(result.remoteState?.evidence.detailImageDigestVerified, true);
     assert.equal(result.remoteState?.evidence.publicationAssetDigestVerified, true);
     assert.match(String(result.remoteState?.evidence.sellerAccountIdentityDigest), /^[a-f0-9]{64}$/u);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+for (const [name, createResultObject] of [
+  ["missing GdNo", { ItemCode: ITEM_CODE }],
+  ["malformed GdNo", { GdNo: "not-an-item-code" }],
+  ["contradictory aliases", { GdNo: ITEM_CODE, ItemCode: "1234567891" }],
+  ["scalar result", ITEM_CODE],
+] as const) {
+  test(`Qoo10 accepted create with ${name} requires reconciliation and performs no follow-up mutation`, async () => {
+    const originalFetch = globalThis.fetch;
+    const methods: string[] = [];
+    globalThis.fetch = async (input, init) => {
+      const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+      methods.push(method);
+      if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode === SKU) {
+        return Response.json({ ResultCode: 0, ResultObject: [] });
+      }
+      if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
+        return Response.json({
+          ResultCode: 0,
+          ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "ACCOUNT-BOUND-TEST-ITEM" },
+        });
+      }
+      if (method === "CommonInfoLookup.GetCatagoryListAll") {
+        return Response.json({
+          ResultCode: 0,
+          ResultObject: [{
+            CATE_L_CD: "100000019",
+            CATE_L_NM: "文具",
+            CATE_M_CD: "200000146",
+            CATE_M_NM: "文房具",
+            CATE_S_CD: "320000542",
+            CATE_S_NM: "クリップ・結束用品",
+          }],
+        });
+      }
+      if (method === "ItemsLookup.GetSellerDeliveryGroupInfo") {
+        return Response.json({ ResultCode: 0, ResultObject: [] });
+      }
+      if (method === "ItemsBasic.SetNewGoods") {
+        return Response.json({ ResultCode: 0, ResultObject: createResultObject });
+      }
+      throw new Error(`Unexpected follow-up call ${method}`);
+    };
+    try {
+      const operation = await executeChannelOperation({
+        channel: "qoo10",
+        operation: "listing.create",
+        payload,
+        arguments: strictArguments(),
+        environment: "production",
+      });
+      const identityStep = operation.steps.find(
+        (item) => item.name === "qoo10-create-response-identity",
+      );
+      assert.equal(operation.ok, false);
+      assert.equal(identityStep?.ok, false);
+      assert.equal(
+        identityStep?.data.sellerpilotVerification,
+        "QOO10_CREATE_RESPONSE_IDENTITY_UNVERIFIED",
+      );
+      assert.equal(identityStep?.data.sellerpilotReconciliationRequired, true);
+      assert.equal(identityStep?.data.sellerpilotAutomaticRetryAllowed, false);
+      assert.equal(methods.filter((method) => method === "ItemsBasic.SetNewGoods").length, 1);
+      assert.equal(methods.some((method) => method === "ItemsContents.EditGoodsContents"), false);
+      assert.equal(methods.at(-1), "ItemsBasic.SetNewGoods");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+}
+
+test("Qoo10 strict create exposes a sanitized provider rejection without follow-up mutation", async () => {
+  const originalFetch = globalThis.fetch;
+  const methods: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const method = decodeURIComponent(new URL(String(input)).pathname.split("/").at(-1) ?? "");
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
+    methods.push(method);
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === "" && body.SellerCode === SKU) {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
+    if (method === "ItemsLookup.GetItemDetailInfo" && body.ItemCode === TEST_ITEM_CODE) {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: { ItemNo: TEST_ITEM_CODE, SellerCode: "ACCOUNT-BOUND-TEST-ITEM" },
+      });
+    }
+    if (method === "CommonInfoLookup.GetCatagoryListAll") {
+      return Response.json({
+        ResultCode: 0,
+        ResultObject: [{
+          CATE_L_CD: "100000019",
+          CATE_L_NM: "文具",
+          CATE_M_CD: "200000146",
+          CATE_M_NM: "文房具",
+          CATE_S_CD: "320000542",
+          CATE_S_NM: "クリップ・結束用品",
+        }],
+      });
+    }
+    if (method === "ItemsLookup.GetSellerDeliveryGroupInfo") {
+      return Response.json({ ResultCode: 0, ResultObject: [] });
+    }
+    if (method === "ItemsBasic.SetNewGoods") {
+      return Response.json({
+        ResultCode: -9999,
+        ResultMsg: "ManufactureNo is invalid https://private.example/item?token=secret-value",
+      });
+    }
+    throw new Error(`Unexpected follow-up call ${method}`);
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "qoo10",
+      operation: "listing.create",
+      payload,
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.match(operation.safeMessage, /ManufactureNo is invalid/u);
+    assert.doesNotMatch(operation.safeMessage, /private\.example|secret-value/u);
+    assert.equal(methods.filter((method) => method === "ItemsBasic.SetNewGoods").length, 1);
+    assert.equal(methods.some((method) => method === "ItemsContents.EditGoodsContents"), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

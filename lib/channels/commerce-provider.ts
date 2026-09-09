@@ -408,6 +408,11 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       && (rawArguments.publicationIntent === "live"
         || ((input.job.channel === "temu" || Boolean(false))
           && rawArguments.publicationIntent === "safe_test"));
+    if (input.job.channel === "qoo10"
+      && input.job.operation === "listing.create"
+      && !contentBoundPublicationWrite) {
+      throw new Error("QOO10_CREATE_STRICT_PUBLICATION_CONTEXT_REQUIRED");
+    }
     const qoo10ActivationMarkerSupplied = Object.hasOwn(rawArguments, qoo10S1ActivationArgument);
     const temuActivationMarkerSupplied = Object.hasOwn(rawArguments, "sellerpilotTemuActivation");
     const exactActivationContext = input.job.operation === "listing.activate"

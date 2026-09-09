@@ -683,142 +683,6 @@ test("Qoo10 category inspection requires one exact Japanese leaf before DB confi
   }
 });
 
-test("Qoo10 product creation uses SetNewGoods v1.1 and records GdNo", async () => {
-  const originalFetch = globalThis.fetch;
-  let createUrl = "";
-  let createInit: RequestInit | undefined;
-  let detailUrl = "";
-  let detailInit: RequestInit | undefined;
-  let fetchCount = 0;
-  globalThis.fetch = async (input, init) => {
-    fetchCount += 1;
-    if (fetchCount === 1) {
-      createUrl = String(input);
-      createInit = init;
-    }
-    if (fetchCount === 2) {
-      detailUrl = String(input);
-      detailInit = init;
-      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-    }
-    if (fetchCount > 2) {
-      return new Response(JSON.stringify({
-        ResultCode: 0,
-        ResultObject: { ItemDetail: `<div>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}</div>` },
-      }), { status: 200, headers: { "content-type": "application/json" } });
-    }
-    return new Response(JSON.stringify({ ResultCode: 0, ResultMsg: "SUCCESS", ResultObject: { GdNo: "1234567890" } }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: `<p>Test</p>${Array.from({ length: 8 }, (_, index) => `<img src="${index + 1}.jpg">`).join("")}`, RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
-      environment: "production",
-    });
-    const url = new URL(createUrl);
-    assert.equal(result.ok, true);
-    assert.equal(result.remoteId, "1234567890");
-    assert.equal(url.pathname.endsWith("/ItemsBasic.SetNewGoods"), true);
-    assert.equal(createInit?.method, "POST");
-    assert.equal(new Headers(createInit?.headers).get("QAPIVersion"), "1.1");
-    assert.equal(new Headers(createInit?.headers).get("GiosisCertificationKey"), "test-key");
-    const body = JSON.parse(String(createInit?.body)) as Record<string, string>;
-    assert.equal((body.ItemDescription?.match(/<img /g) ?? []).length, 8);
-    const detailRequestUrl = new URL(detailUrl);
-    assert.equal(detailRequestUrl.pathname.endsWith("/ItemsContents.EditGoodsContents"), true);
-    assert.equal(detailInit?.method, "POST");
-    assert.equal(new Headers(detailInit?.headers).get("QAPIVersion"), "1.0");
-    const detailBody = JSON.parse(String(detailInit?.body)) as Record<string, string>;
-    assert.equal(detailBody.ItemCode, "1234567890");
-    assert.equal((detailBody.Contents?.match(/<img /g) ?? []).length, 8);
-    assert.equal(result.steps.at(-2)?.name, "EditGoodsContents");
-    assert.equal(result.steps.at(-2)?.ok, true);
-    assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
-    assert.equal(result.steps.at(-1)?.ok, true);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("listing create never succeeds when the provider omits the remote identity", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-  try {
-    const operation = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: {
-        params: {
-          SecondSubCat: "320002604",
-          ItemTitle: "Test",
-          StandardImage: "https://example.test/item.jpg",
-          ItemDescription: "<p>Test</p>",
-          RetailPrice: "0",
-          ItemPrice: "2500",
-          ItemQty: "1",
-          ExpireDate: "2027-12-31",
-          ShippingNo: "0",
-          AvailableDateType: "0",
-          AvailableDateValue: "3",
-          AudultYN: "N",
-        },
-      },
-      environment: "production",
-    });
-    assert.equal(operation.ok, false);
-    assert.equal(operation.remoteId, undefined);
-    assert.equal(operation.steps[0]?.name, "SetNewGoods");
-    assert.equal(operation.steps[0]?.ok, true);
-    assert.match(operation.safeMessage, /원격 상품 식별값/);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
-test("Qoo10 pauses a created item when detail-image readback is incomplete", async () => {
-  const originalFetch = globalThis.fetch;
-  const calls: Array<{ method: string; body: string; status: string | null }> = [];
-  globalThis.fetch = async (input, init) => {
-    const url = new URL(String(input));
-    const method = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
-    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, string>;
-    calls.push({ method, body: String(init?.body ?? ""), status: body.Status ?? null });
-    if (method === "ItemsBasic.SetNewGoods") {
-      return Response.json({ ResultCode: 0, ResultObject: { GdNo: "1234567890" } });
-    }
-    if (method === "ItemsContents.EditGoodsContents") {
-      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-    }
-    if (method === "ItemsBasic.EditGoodsStatus") {
-      return Response.json({ ResultCode: 0, ResultMsg: "SUCCESS" });
-    }
-    return Response.json({ ResultCode: 0, ResultObject: { ItemDetail: "<p>description only</p>" } });
-  };
-  try {
-    const result = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "320002604", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: '<img src="1"><img src="2"><img src="3"><img src="4">', RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-12-31", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
-      environment: "production",
-    });
-    assert.equal(result.ok, false);
-    assert.equal(result.remoteId, "1234567890");
-    assert.equal(calls.some((item) => item.method === "ItemsContents.EditGoodsContents"), true);
-    assert.equal(result.steps.find((item) => item.name === "detail-image-readback")?.ok, false);
-    assert.equal(calls.at(-1)?.method, "ItemsBasic.EditGoodsStatus");
-    assert.equal(calls.at(-1)?.status, "1");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-
 test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period", () => {
   assert.equal(qoo10CatalogCode("1234567890"), "1234567890");
   assert.equal(qoo10CatalogCode("No Brand"), "");
@@ -835,27 +699,12 @@ test("Qoo10 draft helpers keep internal catalog codes numeric and use a one-year
   assert.deepEqual(qoo10ProductionPlaceFields("Japan"), { ProductionPlaceType: "3", ProductionPlace: "JAPAN" });
 });
 
-test("Qoo10 provider errors are useful without exposing remote URLs or tokens", async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify({
-    ResultCode: -9999,
-    ResultMsg: "ManufactureNo is invalid https://private.example/item?token=secret-value",
-  }), { status: 200, headers: { "content-type": "application/json" } });
-  try {
-    const result = await executeChannelOperation({
-      channel: "qoo10",
-      operation: "listing.create",
-      payload: { api_key: "test-key" },
-      arguments: { params: { SecondSubCat: "300000503", ItemTitle: "Test", StandardImage: "https://example.test/item.jpg", ItemDescription: "<p>Test</p>", RetailPrice: "0", ItemPrice: "2500", ItemQty: "1", ExpireDate: "2027-08-17", ShippingNo: "0", AvailableDateType: "0", AvailableDateValue: "3", AudultYN: "N" } },
-      environment: "production",
-    });
-    assert.equal(result.ok, false);
-    assert.match(result.safeMessage, /ManufactureNo is invalid/);
-    assert.doesNotMatch(result.safeMessage, /private\.example|secret-value/);
-    assert.equal(qoo10ResultMessage({ ResultMsg: "  invalid   value  " }), "invalid value");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
+test("Qoo10 provider result messages remove remote URLs and token values", () => {
+  assert.equal(qoo10ResultMessage({ ResultMsg: "  invalid   value  " }), "invalid value");
+  assert.equal(
+    qoo10ResultMessage({ ResultMsg: "ManufactureNo is invalid https://private.example/item?token=secret-value" }),
+    "ManufactureNo is invalid [URL]",
+  );
 });
 
 test("eBay consent URL separates sandbox and production and includes CSRF state", () => {

@@ -304,6 +304,25 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
 });
 
+test("Qoo10 create requires strict publication context before any mutation fence", async () => {
+  const events: string[] = [];
+  const job = genericClaim("qoo10", "listing.create");
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }),
+    /QOO10_CREATE_STRICT_PUBLICATION_CONTEXT_REQUIRED/u,
+  );
+  assert.deepEqual(events, []);
+});
+
 test("Temu safe-test requires the approved localized asset binding before its mutation fence", async () => {
   const events: string[] = [];
   const job = genericClaim("temu", "listing.create");
