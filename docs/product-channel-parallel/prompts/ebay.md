@@ -25,7 +25,7 @@
 
 직접 수정 가능: lib/product-registration/channels/ebay.ts, ebay 전용 lib/channels/ebay-*.ts 중 상품등록 파일, 새 lib/product-registration/ebay/ 모듈, 자기 상품등록 전용 테스트, docs/product-channel-parallel/reports/ebay/ 문서와 제안. CS/OAuth 공용/배송 파일은 이 패턴에 맞더라도 자동 소유가 아니다.
 
-공통 파일은 0번만 통합한다: app/page.tsx, app/product-publish-workbench.tsx, app/channel-registration-fields.tsx, app/api/admin/channel-operations/route.ts, publish-context/remote-edit, lib/channels/protocols.ts, provider-listing-runtime.ts, commerce-provider.ts, listing-update.ts, listing-preflight.ts, marketplace-images.ts, catalog.ts, operation-availability.ts, gateway/worker, 공통 등록 draft/schema, DB migration 및 docs/현재상태.md. 필요한 공통 변경은 자기 reports 폴더에 대상 파일·현재 SHA256·최소 unified patch·필드 계약·회귀 증거를 적어 요청한다. 작은 제안이 준비되면 바로 중앙에 보내고 나머지 독립 작업을 계속한다.
+공통 파일은 0번만 통합한다: app/page.tsx, app/product-publish-workbench.tsx, app/channel-registration-fields.tsx, app/api/admin/channel-operations/route.ts, publish-context/remote-edit, lib/channels/protocols.ts, provider-listing-runtime.ts, commerce-provider.ts, listing-update.ts, listing-preflight.ts, marketplace-images.ts, catalog.ts, operation-availability.ts, gateway/worker, 공통 등록 draft/schema, DB migration 및 docs/현재상태.md. 필요한 공통 변경은 자기 reports 폴더에 대상 파일·현재 SHA256·최소 unified patch·필드 계약·회귀 증거를 적어 요청한다. 작은 제안이 준비되면 자기 reports 폴더에 고유 revision으로 동결 제출하고 나머지 독립 작업을 계속한다.
 
 다른 채널/CS/배송 담당을 재개하거나 새 작업·하위 에이전트·자동화를 만들지 않는다. 다른 작업 폴더와 중앙 폴더는 읽기만 한다. 로컬 커밋은 자기 소유 파일에 한해 가능하나 origin/integration-aside·Vercel remote push, 배포, 운영 SQL, gate 변경은 0번 소유다. 이 제출 규칙이 해당 폴더 AGENTS의 일괄 push closeout을 대신한다. 자기 docs/현재상태.md는 건드리지 말고 status.md로 제출한다.
 
@@ -39,5 +39,5 @@
 
 docs/product-channel-parallel/reports/ebay/status.md 와 status.json에 기준 SHA, 현재 상태, 변경 파일, 검사 명령/결과, 실제 연결 증거, 필요한 공통 패치와 다음 행동을 기록한다. 단계별 accountVerified, requiredFieldsVerified, localFlowPassed, integrated, providerCreated, remoteReadbackVerified 를 true/false/unknown 및 증거로 분리한다. 과거 상품 복구/기존상품 조회/HTTP202/fixture 통과를 새 상품 실제 등록으로 계산하지 않는다.
 
-시작 시 중앙에 실제 worktree/HEAD/소유파일/상태 경로를 한 번 알리고, 이후에는 통합 요청·필수 사용자 입력·완료 같은 의미 있는 변화만 보내라. send_message_to_thread 대상은 반드시 01a077b1-61db-7c20-a4a3-ae00dbbbef19 이다. 중앙 메시지 답장을 기다리는 동안 가능한 다음 독립 작업을 진행한다. 외부 심사/인증만 남으면 로컬 완료와 외부 대기를 정확히 나눠 기록한다.
+시작·진척·일반 통합 요청을 중앙 채팅에 반복 전송하지 않는다. 최신 정본 `/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/product-channel-parallel/REPORTING.md`의 파일 제출 규칙을 따른다. 상태·동결 patch를 자기 reports 폴더에 기록하면 중앙 수집기가 보관한다. 중앙 답장 없이 독립 구현·전용 검증을 계속한다. 전체 빌드/전체 회귀는 중앙 통합에서 수행하고 담당은 영향 범위 검사에 집중한다. 사용자만 가능한 인증/입력 또는 즉각 대응할 중요한 실패만 직접 전달한다. 실제 상품 쓰기 담당 배정 규칙은 유지한다.
 

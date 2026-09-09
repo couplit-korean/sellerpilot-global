@@ -35,7 +35,7 @@
 
 ## 0번 실행 순서
 
-1. ownership.json의 cursor로 8개 `wait_threads` compact snapshot을 조회하고 변경된 status/제안을 읽는다.
+1. [파일 제출·수집 규칙](REPORTING.md)에 따라 수집기를 실행하고 pending 스냅샷부터 검토한다. ownership.json의 cursor로 8개 `wait_threads` compact snapshot도 묶어서 조회한다. 채팅 보고 도착을 작업 발견 조건으로 삼지 않는다.
 2. idle이고 실행 가능한 미완료 구현이 있으면 다음 구체 작업을 보내 재개한다. 같은 심사/인증 차단은 반복 호출하지 않는다.
 3. 공통 의존 요청을 먼저 해결하고 준비된 채널 패치를 한 개씩 검토·통합한다. 관련 회귀와 영향 받는 경계 검사를 실행한다.
 4. provider 실등록을 실행할 채널은 판매자·market/shop·SKU·제품·가격·재고·승인 이미지와 중복 조회를 확인하고 담당을 하나로 확정한다. 같은 요청을 병렬 중복 발행하지 않는다.

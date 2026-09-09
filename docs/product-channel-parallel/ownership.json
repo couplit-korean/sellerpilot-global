@@ -109,7 +109,9 @@
       "dispatchAccepted": true,
       "model": "gpt-5.6-sol",
       "reasoningEffort": "high",
-      "modelOverrideAccepted": true
+      "modelOverrideAccepted": true,
+      "startupConfirmed": true,
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-coupang-20260909/docs/product-channel-parallel/reports/coupang/status.json"
     },
     {
       "number": 6,
@@ -178,5 +180,7 @@
     }
   ],
   "sidebarSectionId": "7d8955fd-e468-4cfa-afda-95da579960a3",
-  "sidebarSectionName": "상품등록 · 0~8번"
+  "sidebarSectionName": "상품등록 · 0~8번",
+  "reportingProtocol": "docs/product-channel-parallel/REPORTING.md",
+  "reportInbox": ".local/product-channel-inbox/inbox.json"
 }
