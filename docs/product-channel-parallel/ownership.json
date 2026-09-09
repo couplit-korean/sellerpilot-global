@@ -19,7 +19,10 @@
       "lastCursor": "28df907c-6c56-4683-a153-362281fe1ea0:5",
       "turnId": "01a0845c-8d13-70d3-8746-2ed5adf5e662",
       "startedAt": 1788927053,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "startupConfirmed": true,
+      "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-shopee-20260909/docs/product-channel-parallel/reports/shopee/status.json"
     },
     {
       "number": 2,
@@ -51,7 +54,10 @@
       "lastCursor": "4ddcb618-c3ec-4471-9b3a-450431033f88:5",
       "turnId": "01a0845c-b65a-73f1-a931-2933fe28e7a4",
       "startedAt": 1788927063,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "startupConfirmed": true,
+      "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-temu-20260909/docs/product-channel-parallel/reports/temu/status.json"
     },
     {
       "number": 4,
@@ -67,7 +73,10 @@
       "lastCursor": "2448c8ca-ab4b-44f1-a21a-8818cce942ff:5",
       "turnId": "01a0845c-bf4c-7970-b017-ebc3e940ec9b",
       "startedAt": 1788927065,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "startupConfirmed": true,
+      "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-smartstore-20260909/docs/product-channel-parallel/reports/smartstore/status.json"
     },
     {
       "number": 5,
@@ -99,7 +108,10 @@
       "lastCursor": "4224add3-5868-4bbf-a5cc-79f444fa8589:5",
       "turnId": "01a0845c-c84a-7f10-bc99-c19c915f9485",
       "startedAt": 1788927068,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "startupConfirmed": true,
+      "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-elevenst-20260909/docs/product-channel-parallel/reports/elevenst/status.json"
     },
     {
       "number": 7,
@@ -131,7 +143,10 @@
       "lastCursor": "0bb8f970-0d0b-4b0d-a541-ceb541df5967:5",
       "turnId": "01a0845c-db9d-7a41-a1a7-a91206cb679c",
       "startedAt": 1788927073,
-      "dispatchAccepted": true
+      "dispatchAccepted": true,
+      "startupConfirmed": true,
+      "startupEvidence": "담당 작업이 전용 worktree/branch 및 e8d8215 기준 확인 보고를 중앙에 전달함",
+      "statusReportPath": "/Users/kimchangheemac/dev/sellerpilot-product-ebay-20260909/docs/product-channel-parallel/reports/ebay/status.json"
     }
   ]
 }
