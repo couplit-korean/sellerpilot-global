@@ -22,6 +22,14 @@ python3 scripts/collect-product-channel-reports.py
 
 ownership.json이 지정한 8개 reports 폴더를 읽어 `.local/product-channel-inbox/inbox.json`과 snapshots에 수집한다. 채널·경로·내용 SHA256이 같은 항목은 중복 생성하지 않는다. 이미 수집한 수정본은 원본이 덮어써지거나 지워져도 보존한다. 수집되지 않은 중간 수정본까지 보장하는 것은 아니므로 동결 제출은 고유 revision 파일로 유지한다. 이 로컬 상태는 Git에서 제외하며 비밀을 넣지 않는다.
 
+별도 직접 배정된 기존상품 Qoo10 C02와 SmartStore C03는 위 8채널 신규등록 원장 밖에 있다. 같은 점검에서 다음 읽기 전용 수집도 실행한다. 별도 inbox의 제출을 신규 CREATE 실적으로 합산하거나 미검토 복구 코드를 자동 적용하지 않는다.
+
+```sh
+python3 scripts/collect-product-channel-reports.py --registry docs/product-channel-parallel/existing-lineage-report-sources.json --state-dir .local/product-existing-lineage-inbox
+```
+
+별도 제출의 ack에도 같은 registry/state-dir을 지정한다. 소유권이나 실행 승인 자체를 바꾸는 설정은 아니다.
+
 1. 기존 heartbeat는 먼저 수집기를 실행하고 pending 항목의 보존된 스냅샷을 읽는다. 단순 상태, 공통 의존 요청, 동결 제출을 구분한다. 메시지가 없어도 발견한다.
 2. 공통 의존 요청과 동결 제출을 순서대로 검토한다. 현재 파일 해시와 patch 적용 가능성을 검사한 후 한 건씩 적용한다. 오래된 before hash를 강제 덮어쓰지 않는다. 담당자가 편집 중인 파일을 임의 복사하지 않는다.
 3. 관련 회귀 및 업무/채널 경계 검사를 마친 뒤 근거를 기록한다. 검토만 한 보고는 reviewed, 실제 통합·검증한 제출만 integrated로 표시한다. 막힌 항목은 blocked와 재개 조건을 기록하고 다른 작업을 계속한다.

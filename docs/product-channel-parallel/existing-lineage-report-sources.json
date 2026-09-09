@@ -1,0 +1,15 @@
+{
+  "purpose": "Read-only intake of separately assigned existing-product proposals; never count as new CREATE",
+  "channels": [
+    {
+      "key": "qoo10-c02",
+      "worktree": "/Users/kimchangheemac/dev/sellerpilot-channel-qoo10",
+      "report": "docs/channel-handoffs"
+    },
+    {
+      "key": "smartstore-c03",
+      "worktree": "/Users/kimchangheemac/dev/sellerpilot-channel-smartstore",
+      "report": "docs/channel-handoffs"
+    }
+  ]
+}

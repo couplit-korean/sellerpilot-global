@@ -23,6 +23,8 @@
 
 ## 현재 증거
 
+21:14 현재 검증된 추가 통합은 private `integration-aside` commit `1a26c28e700e85ca56df129abed7e4b00021811b`로 전달·원격 확인됐다. review12~16의 Temu/Shopee/eBay/SmartStore 검증을 포함한다. 원본 iCloud Git metadata 지연 때문에 별도 전달 인덱스를 사용했으며 중앙 원본 HEAD는 바꾸지 않았다. 아래 과거 시점별 설명보다 `docs/현재상태.md` 상단과 `review17-delivery.json` 로컬 receipt를 우선한다. 기존상품 C02/C03 수집은 REPORTING.md의 별도 inbox 명령을 따른다.
+
 최신 추가 통합은 [후속 검토](integrations/20260909-review-11.md)와 `docs/현재상태.md` 상단을 우선한다. 아래8/8은 기존 기본 흐름의 통과 이력이며 이후 들어온 모든 추가 패치까지 완료됐다는 뜻은 아니다. 19:54 이후에는 Temu r8의 확대 회귀 보완, Shopee006의 실제 client 연결, eBay006의 실제 parent UI/server route 검증이 진행 중이다. Qoo10의 현재 C02 범위와 분리된 scratch 배정은 [대기 감사](integrations/20260909-idle-audit.md) 및 현재상태 기록을 따른다.
 
 최신 결과는 [여섯 번째 통합 검토](integrations/20260909-review-06.md)를 따른다. Shopee 최종 UI와 쿠팡 옵션 화면까지 적용해 기본 흐름 중앙 통합 검사8/8을 완료했다. 최종 영향341/341·로컬 Chrome2/2·타입·관련82파일 lint·로컬 빌드 통과. 실제 신규등록·원격/사이트 완료는0/8이다.
