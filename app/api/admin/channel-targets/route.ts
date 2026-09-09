@@ -21,8 +21,15 @@ import {
   activeProductionShopeeCredentialId,
   lineageBoundShopeeTargets,
 } from "../../../../lib/channels/shopee-target-lineage";
-import { isCompleteChannelTarget, shopeeShopTargetIds, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import { isCompleteChannelTarget, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import { readProviderAccountIdentity } from "../../../../lib/channels/provider-account-identity";
 import { lazadaMySellerModeEvidenceFromGatewayResult, lazadaSellerProfileFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
+import {
+  exactShopeeCachedTargetForActiveCredential,
+  exactShopeeTargetStoreBinding,
+  shopeeShopDiscoveryEvidenceFromGatewayResult,
+  type ShopeeCredentialSnapshot,
+} from "../../../../lib/product-registration/shopee/target-lineage-readiness";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -39,13 +46,44 @@ function textValue(value: unknown) {
   return typeof value === "string" || typeof value === "number" ? String(value).trim() : "";
 }
 
+function shopeeCredentialSnapshot(value: unknown): ShopeeCredentialSnapshot | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const envelope = activeProductionShopeeCredentialEnvelope(row);
+  const version = row.credential_version;
+  return envelope && Number.isSafeInteger(version) && Number(version) > 0
+    ? { ...envelope, version: Number(version) }
+    : null;
+}
+
+function numberValue(value: unknown) {
+  return typeof value === "number" && Number.isSafeInteger(value) ? value : 0;
+}
+
 export async function GET(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
   const secretKey = process.env.SUPABASE_SECRET_KEY?.trim() ?? "";
-  const channel = querySchema.safeParse(new URL(request.url).searchParams.get("channel"));
+  const searchParams = new URL(request.url).searchParams;
+  const channel = querySchema.safeParse(searchParams.get("channel"));
+  const exactShopeeTarget = z.object({
+    targetId: z.string().regex(/^[1-9][0-9]{0,31}$/u),
+    marketCode: z.literal("SG"),
+  }).safeParse({
+    targetId: searchParams.get("targetId"),
+    marketCode: searchParams.get("marketCode")?.toUpperCase(),
+  });
+  const exactShopeeTargetRequested = searchParams.has("targetId") || searchParams.has("marketCode");
   if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
   if (!channel.success) return NextResponse.json({ message: "지원하지 않는 채널입니다." }, { status: 400 });
+  if (channel.data === "shopee" && exactShopeeTargetRequested && !exactShopeeTarget.success) {
+    return NextResponse.json({
+      code: "SHOPEE_EXACT_TARGET_INPUT_INVALID",
+      message: "Shopee 대상 숍 ID와 SG 시장 코드를 정확히 지정해 주세요.",
+      channel: "shopee",
+      targets: [],
+    }, { status: 400, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (!supabaseUrl || !supabasePublishableKey || !secretKey) return NextResponse.json({ message: "서버 보안 연결이 완료되지 않았습니다." }, { status: 503 });
 
   const userClient = createClient(supabaseUrl, supabasePublishableKey, {
@@ -56,7 +94,12 @@ export async function GET(request: Request) {
     userClient.auth.getUser(token),
     userClient.rpc("sellerpilot_is_admin"),
     userClient.rpc("sellerpilot_list_credentials"),
-    userClient.rpc("sellerpilot_list_channel_market_targets", { p_channel: channel.data }),
+    userClient.rpc(
+      channel.data === "shopee"
+        ? "sellerpilot_list_channel_market_targets_v2"
+        : "sellerpilot_list_channel_market_targets",
+      { p_channel: channel.data },
+    ),
   ]);
   if (userError || !userData.user || adminError || credentialError || targetError || isAdmin !== true) return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
   const productionCredentialId = channel.data === "shopee"
@@ -70,7 +113,7 @@ export async function GET(request: Request) {
     : null;
   if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 운영 채널 키가 없습니다." }, { status: 404 });
 
-  const normalizedCachedTargets: ChannelTargetRecord[] = Array.isArray(cachedTargets)
+  let normalizedCachedTargets: Array<ChannelTargetRecord & { credentialId?: string; credentialVersion?: number }> = Array.isArray(cachedTargets)
     ? cachedTargets.map((target) => ({
       targetId: textValue(target.target_id),
       displayName: textValue(target.display_name),
@@ -80,6 +123,8 @@ export async function GET(request: Request) {
       currency: textValue(target.currency),
       status: textValue(target.remote_status),
       verifiedAt: textValue(target.verified_at),
+      credentialId: textValue(target.credential_id),
+      credentialVersion: numberValue(target.credential_version),
     }))
     : [];
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -87,10 +132,10 @@ export async function GET(request: Request) {
   let activeLazadaSecret: Record<string, unknown> | null = null;
   if (channel.data === "shopee") {
     const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
-      "sellerpilot_get_active_credential_secret",
+      "sellerpilot_get_active_credential_secret_v2",
       { p_channel: "shopee", p_environment: "production" },
     );
-    const envelope = activeProductionShopeeCredentialEnvelope(activeCredential);
+    const envelope = shopeeCredentialSnapshot(activeCredential);
     if (activeCredentialError) {
       return NextResponse.json({
         message: "현재 운영 Shopee 키의 계보를 확인하지 못했습니다.",
@@ -99,7 +144,8 @@ export async function GET(request: Request) {
         targets: [],
       }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    if (!envelope || envelope.credentialId !== credential.id) {
+    const listedVersion = "version" in credential ? numberValue(credential.version) : 0;
+    if (!envelope || envelope.credentialId !== credential.id || envelope.version !== listedVersion) {
       return NextResponse.json({
         message: "선택된 운영 Shopee 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 숍을 다시 동기화해 주세요.",
         channel: "shopee",
@@ -108,11 +154,43 @@ export async function GET(request: Request) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
     activeShopeeSecret = envelope.secretPayload;
+    if (exactShopeeTarget.success) {
+      const exactTarget = exactShopeeCachedTargetForActiveCredential({
+        cachedTargets: normalizedCachedTargets,
+        activeCredentialId: envelope.credentialId,
+        activeCredentialVersion: envelope.version,
+        activeCredentialSecret: envelope.secretPayload,
+        targetId: exactShopeeTarget.data.targetId,
+        marketCode: exactShopeeTarget.data.marketCode,
+      });
+      if (exactTarget.status === "ready") {
+        return NextResponse.json({
+          contractVersion: 2,
+          channel: "shopee",
+          credentialId: envelope.credentialId,
+          credentialVersion: envelope.version,
+          targets: [exactTarget.target],
+        }, { headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      return NextResponse.json({
+        code: exactTarget.reason,
+        message: "현재 운영 키에 결속된 정확한 SG 숍 대상을 한 번 동기화해야 합니다.",
+        channel: "shopee",
+        credentialId: envelope.credentialId,
+        credentialVersion: envelope.version,
+        targets: [],
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    normalizedCachedTargets = normalizedCachedTargets.filter(
+      (target) => target.credentialId === envelope.credentialId,
+    );
     const lineageBoundTargets = lineageBoundShopeeTargets(normalizedCachedTargets, activeShopeeSecret);
     if (lineageBoundTargets.length === shopeeMarkets.length) {
       return NextResponse.json({
+        contractVersion: 2,
         channel: channel.data,
         credentialId: envelope.credentialId,
+        credentialVersion: envelope.version,
         targets: lineageBoundTargets,
       }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
@@ -254,20 +332,6 @@ export async function GET(request: Request) {
   return NextResponse.json({ channel: channel.data, credentialId: credential.id, targets }, { headers: { "cache-control": "no-store, max-age=0" } });
 }
 
-function remoteProfile(result: unknown) {
-  if (!result || typeof result !== "object" || Array.isArray(result)) return {};
-  const row = result as Record<string, unknown>;
-  const steps = Array.isArray(row.steps) ? row.steps : [];
-  const first = steps[0] && typeof steps[0] === "object" && !Array.isArray(steps[0]) ? steps[0] as Record<string, unknown> : {};
-  const data = first.data && typeof first.data === "object" && !Array.isArray(first.data) ? first.data as Record<string, unknown> : {};
-  const nested = data.response && typeof data.response === "object" && !Array.isArray(data.response)
-    ? data.response as Record<string, unknown>
-    : data.data && typeof data.data === "object" && !Array.isArray(data.data)
-      ? data.data as Record<string, unknown>
-      : data;
-  return nested;
-}
-
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const token = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -275,6 +339,8 @@ export async function POST(request: Request) {
   const parsed = z.object({
     channel: z.enum(["shopee", "lazada"]),
     credentialId: z.string().uuid().optional(),
+    targetId: z.string().regex(/^[1-9][0-9]{0,31}$/u).optional(),
+    marketCode: z.string().transform((value) => value.trim().toUpperCase()).optional(),
   }).safeParse(await request.json().catch(() => null));
   if (!token) return NextResponse.json({ message: "로그인이 필요합니다." }, { status: 401 });
   if (!parsed.success) return NextResponse.json({ message: "지원하지 않는 채널입니다." }, { status: 400 });
@@ -300,6 +366,19 @@ export async function POST(request: Request) {
       && "id" in row && row.id === productionCredentialId)
     : null;
   if (!credential || !("id" in credential) || typeof credential.id !== "string") return NextResponse.json({ message: "활성 운영 채널 키가 없습니다." }, { status: 404 });
+  if (parsed.data.channel === "shopee"
+      && (parsed.data.credentialId !== credential.id
+        || !parsed.data.targetId
+        || parsed.data.marketCode !== "SG")) {
+    return NextResponse.json({
+      code: "SHOPEE_EXACT_TARGET_SELECTION_REQUIRED",
+      message: "현재 운영 credential과 정확한 SG 숍 ID를 지정한 요청만 동기화할 수 있습니다.",
+      channel: "shopee",
+      credentialId: credential.id,
+      credentialVersion: "version" in credential ? numberValue(credential.version) : 0,
+      targets: [],
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   if (parsed.data.channel === "lazada" && parsed.data.credentialId !== credential.id) {
     return NextResponse.json({
       code: lazadaTargetCredentialChangedCode,
@@ -322,13 +401,17 @@ export async function POST(request: Request) {
     return id;
   };
   let secret: Record<string, unknown>;
+  let initialShopeeSnapshot: ShopeeCredentialSnapshot | null = null;
   if (parsed.data.channel === "shopee") {
     const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
-      "sellerpilot_get_active_credential_secret",
+      "sellerpilot_get_active_credential_secret_v2",
       { p_channel: "shopee", p_environment: "production" },
     );
-    const envelope = activeProductionShopeeCredentialEnvelope(activeCredential);
-    if (activeCredentialError || !envelope || envelope.credentialId !== credential.id) {
+    initialShopeeSnapshot = shopeeCredentialSnapshot(activeCredential);
+    const listedVersion = "version" in credential ? numberValue(credential.version) : 0;
+    if (activeCredentialError || !initialShopeeSnapshot
+        || initialShopeeSnapshot.credentialId !== credential.id
+        || initialShopeeSnapshot.version !== listedVersion) {
       return NextResponse.json({
         message: "선택된 운영 Shopee 키와 서버의 현재 활성 계보가 일치하지 않습니다. OAuth 재승인 후 숍을 다시 동기화해 주세요.",
         channel: "shopee",
@@ -336,7 +419,7 @@ export async function POST(request: Request) {
         targets: [],
       }, { status: activeCredentialError ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
-    secret = envelope.secretPayload;
+    secret = initialShopeeSnapshot.secretPayload;
   } else {
     const { data: activeCredential, error: activeCredentialError } = await serviceClient.rpc(
       "sellerpilot_get_active_credential_secret",
@@ -366,41 +449,87 @@ export async function POST(request: Request) {
 
   try {
     if (parsed.data.channel === "shopee") {
-      const targetIds = shopeeShopTargetIds(secret);
-      const profiles = [];
-      for (const targetId of targetIds) {
-        const currentCredentialId = await activeCredentialId();
-        const result = await executeChannelTargetDiscovery({ serviceClient, credentialId: currentCredentialId, channel: "shopee", request: { shopId: targetId } });
-        const profile = remoteProfile(result);
-        const marketCode = textValue(profile.region || profile.country || profile.market).toUpperCase();
-        const market = channelMarket("shopee", marketCode);
-        if (!market) continue;
-        profiles.push({
-          targetId,
-          displayName: textValue(profile.shop_name || profile.shopName || profile.name),
-          marketCode,
-          locale: market.locale,
-          language: market.language,
-          currency: market.currency,
-          status: textValue(profile.status || profile.shop_status),
-        });
-        const latestCredentialId = await activeCredentialId();
-        const { data: storedTargetId, error: storeTargetError } = await serviceClient.rpc("sellerpilot_service_upsert_channel_market_target", {
-          p_owner_id: userData.user.id,
-          p_credential_id: latestCredentialId,
-          p_channel: "shopee",
-          p_target_id: targetId,
-          p_display_name: textValue(profile.shop_name || profile.shopName || profile.name),
-          p_market_code: marketCode,
-          p_locale: market.locale,
-          p_language: market.language,
-          p_currency: market.currency,
-          p_remote_status: textValue(profile.status || profile.shop_status),
-        });
-        if (storeTargetError || typeof storedTargetId !== "string") throw new Error("CHANNEL_TARGET_CACHE_STORE_FAILED");
+      if (!initialShopeeSnapshot || !parsed.data.targetId || parsed.data.marketCode !== "SG") {
+        throw new Error("SHOPEE_EXACT_TARGET_SELECTION_REQUIRED");
       }
-      if (!profiles.length) return NextResponse.json({ message: "Shopee 승인 숍에서 지원 국가 정보를 확인하지 못했습니다.", channel: "shopee", credentialId: credential.id, targets: [] }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
-      return NextResponse.json({ channel: "shopee", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
+      const result = await executeChannelTargetDiscovery({
+        serviceClient,
+        credentialId: initialShopeeSnapshot.credentialId,
+        channel: "shopee",
+        request: { shopId: parsed.data.targetId },
+      });
+      const discoveryEvidence = shopeeShopDiscoveryEvidenceFromGatewayResult({
+        result,
+        requestedTargetId: parsed.data.targetId,
+      });
+      const observedAt = new Date().toISOString();
+      const { data: activeCredentialAfter, error: activeCredentialAfterError } = await serviceClient.rpc(
+        "sellerpilot_get_active_credential_secret_v2",
+        { p_channel: "shopee", p_environment: "production" },
+      );
+      const after = shopeeCredentialSnapshot(activeCredentialAfter);
+      if (activeCredentialAfterError || !after) throw new Error("SHOPEE_TARGET_STORE_ACTIVE_CREDENTIAL_MISSING");
+      const binding = exactShopeeTargetStoreBinding({
+        requestedCredentialId: parsed.data.credentialId ?? "",
+        requestedTargetId: parsed.data.targetId,
+        requestedMarketCode: parsed.data.marketCode,
+        before: initialShopeeSnapshot,
+        after,
+        providerProfile: discoveryEvidence.providerProfile,
+        providerReadSucceeded: discoveryEvidence.providerReadSucceeded,
+        signedRequestBoundToTarget: discoveryEvidence.signedRequestBoundToTarget,
+        observedAt,
+      });
+      const providerIdentity = readProviderAccountIdentity(after.secretPayload, "shopee");
+      if (!providerIdentity) throw new Error("SHOPEE_TARGET_STORE_IDENTITY_MISSING");
+      const { data: storeReceipt, error: storeTargetError } = await serviceClient.rpc(
+        "sellerpilot_service_upsert_shopee_market_target_v2",
+        {
+          p_owner_id: userData.user.id,
+          p_expected_credential_id: binding.credentialId,
+          p_expected_credential_version: after.version,
+          p_target_id: binding.target.targetId,
+          p_display_name: binding.target.displayName,
+          p_market_code: binding.target.marketCode,
+          p_locale: binding.target.locale,
+          p_language: binding.target.language,
+          p_currency: binding.target.currency,
+          p_remote_status: binding.target.status ?? "",
+          p_provider_subject: providerIdentity.subject,
+          p_observed_at: binding.target.verifiedAt,
+        },
+      );
+      const receipt = storeReceipt && typeof storeReceipt === "object" && !Array.isArray(storeReceipt)
+        ? storeReceipt as Record<string, unknown>
+        : null;
+      if (storeTargetError) {
+        const storeErrorMessage = textValue(storeTargetError.message);
+        for (const code of [
+          "SHOPEE_EXACT_TARGET_ACCESS_NOT_FRESH",
+          "SHOPEE_EXACT_TARGET_CREDENTIAL_CHANGED",
+          "SHOPEE_EXACT_TARGET_IDENTITY_MISMATCH",
+          "SHOPEE_EXACT_TARGET_METADATA_INVALID",
+          "SHOPEE_EXACT_TARGET_NOT_AUTHORIZED",
+        ]) {
+          if (storeErrorMessage.includes(code)) throw new Error(code);
+        }
+      }
+      if (storeTargetError
+          || textValue(receipt?.credentialId) !== binding.credentialId
+          || numberValue(receipt?.credentialVersion) !== after.version
+          || textValue(receipt?.targetId) !== binding.target.targetId
+          || textValue(receipt?.marketCode) !== binding.target.marketCode) {
+        throw new Error("SHOPEE_TARGET_CACHE_STORE_FAILED");
+      }
+      return NextResponse.json({
+        contractVersion: 2,
+        channel: "shopee",
+        credentialId: binding.credentialId,
+        credentialVersion: after.version,
+        rotatedDuringDiscovery: binding.rotated,
+        targets: [binding.target],
+        storeReceipt: receipt,
+      }, { headers: { "cache-control": "no-store, max-age=0" } });
     }
 
     const activeLazadaCredentialId = credential.id;
@@ -457,7 +586,44 @@ export async function POST(request: Request) {
     }
     if (!profiles[0]?.targetId) return NextResponse.json({ message: "Lazada 판매자 응답에서 실제 Seller ID를 확인하지 못했습니다.", channel: "lazada", credentialId: credential.id, targets: [] }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     return NextResponse.json({ channel: "lazada", credentialId: credential.id, targets: profiles }, { headers: { "cache-control": "no-store, max-age=0" } });
-  } catch {
+  } catch (error) {
+    if (parsed.data.channel === "shopee") {
+      const unsafeCode = error instanceof Error ? error.message : "";
+      const safeCodes = new Set([
+        "SHOPEE_EXACT_TARGET_SELECTION_REQUIRED",
+        "SHOPEE_EXACT_TARGET_ACCESS_NOT_FRESH",
+        "SHOPEE_EXACT_TARGET_CREDENTIAL_CHANGED",
+        "SHOPEE_EXACT_TARGET_IDENTITY_MISMATCH",
+        "SHOPEE_EXACT_TARGET_METADATA_INVALID",
+        "SHOPEE_EXACT_TARGET_NOT_AUTHORIZED",
+        "SHOPEE_SHOP_IDENTITY_INVALID",
+        "SHOPEE_SHOP_IDENTITY_MISSING",
+        "SHOPEE_SHOP_IDENTITY_MISMATCH",
+        "SHOPEE_TARGET_STORE_ACCESS_NOT_FRESH",
+        "SHOPEE_TARGET_STORE_ACTIVE_CREDENTIAL_MISSING",
+        "SHOPEE_TARGET_STORE_CLOCK_INVALID",
+        "SHOPEE_TARGET_STORE_CREDENTIAL_CHANGED_BEFORE_DISCOVERY",
+        "SHOPEE_TARGET_STORE_CREDENTIAL_ROTATION_INVALID",
+        "SHOPEE_TARGET_STORE_IDENTITY_CHANGED",
+        "SHOPEE_TARGET_STORE_IDENTITY_MISSING",
+        "SHOPEE_TARGET_STORE_INPUT_INVALID",
+        "SHOPEE_TARGET_STORE_MARKET_MISMATCH",
+        "SHOPEE_TARGET_STORE_PROFILE_INCOMPLETE",
+        "SHOPEE_TARGET_STORE_PROVIDER_READ_FAILED",
+        "SHOPEE_TARGET_STORE_TARGET_NOT_AUTHORIZED",
+        "SHOPEE_TARGET_CACHE_STORE_FAILED",
+      ]);
+      const code = safeCodes.has(unsafeCode) ? unsafeCode : "SHOPEE_EXACT_TARGET_DISCOVERY_FAILED";
+      const conflict = code.includes("CREDENTIAL") || code.includes("IDENTITY") || code.includes("NOT_AUTHORIZED");
+      return NextResponse.json({
+        code,
+        message: "정확한 SG 숍의 현재 운영 키 계보와 공식 조회 결과를 함께 검증하지 못했습니다.",
+        channel: "shopee",
+        credentialId: credential.id,
+        credentialVersion: "version" in credential ? numberValue(credential.version) : 0,
+        targets: [],
+      }, { status: conflict ? 409 : 422, headers: { "cache-control": "no-store, max-age=0" } });
+    }
     return NextResponse.json({ message: "허용 IP 채널 작업자에서 판매자 대상을 확인하지 못했습니다." }, { status: 422 });
   }
 }

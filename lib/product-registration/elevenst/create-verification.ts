@@ -58,6 +58,10 @@ function hasControlCharacter(value: string) {
   });
 }
 
+function isKnownSellerIdPlaceholder(value: string) {
+  return value.toLocaleLowerCase("en-US") === "sample";
+}
+
 /**
  * A Seller Office password is never accepted here. The general product-create
  * path requires the stored OPEN API key and its separately stored seller ID.
@@ -78,6 +82,12 @@ export function assertElevenstCreateCredentialBinding(
     hasControlCharacter(sellerId)
   ) {
     throw new Error("ELEVENST_CREATE_SELLER_ID_REQUIRED");
+  }
+  // The seller ID is metadata only: 11st authenticates these requests with
+  // openapikey and does not echo an account identity. A known placeholder
+  // therefore cannot be accepted as evidence of the selected seller.
+  if (isKnownSellerIdPlaceholder(sellerId)) {
+    throw new Error("ELEVENST_CREATE_SELLER_ID_PLACEHOLDER");
   }
   return { apiKeyConfigured: true, sellerIdConfigured: true };
 }

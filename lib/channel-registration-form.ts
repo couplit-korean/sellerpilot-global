@@ -7,6 +7,7 @@ export type RegistrationField = { path: string[]; label: string; value: Registra
 const blocked = new Set(["__proto__", "prototype", "constructor"]);
 const hidden = new Set(["sellerpilotAssets", "sellerpilotCoupangBaseSku", "sellerpilotLazadaPricePolicy", "sellerpilotLazadaPricePolicyRequired", "sellerpilotDraftError", "resumeRemoteId", "shopId", "country", "sku"]);
 const editableInternalPaths = [
+  ["sellerpilotAssets", "shipping", "policyReview"],
   ["sellerpilotAssets", "shipping", "shippingRuleReview"],
   ["sellerpilotAssets", "shipping", "packagingRuleReview"],
   ["sellerpilotAssets", "shipping", "coupangLeadTimeConfirmation"],

@@ -16,6 +16,14 @@ const EXTERNAL_GOODS_ID = "TEMU-KR-STRICT-001";
 const SKU_ID = "91000001";
 const BASE_PRICE = { amount: "5000", currency: "KRW" };
 const QUANTITY = 1;
+const TEMU_IDENTITY_SCOPES = [
+  "temu.local.goods.list.retrieve",
+  "temu.local.goods.v3.add",
+  "bg.local.goods.publish.status.get",
+  "bg.local.goods.detail.query",
+  "temu.local.goods.sku.stock.query",
+  "bg.local.goods.sale.status.set",
+];
 const SOURCE_SKU = {
   images: REPRESENTATIVE_IMAGES,
   packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
@@ -38,6 +46,32 @@ const GOODS_BASIC = {
   goodsCarouselImage: REPRESENTATIVE_IMAGES,
   detailImage: DETAIL_IMAGES,
 };
+
+function temuCredentialPayload() {
+  return {
+    app_key: "app",
+    app_secret: "secret",
+    access_token: "token",
+    temu_account_identity_contract: "temu_access_token_identity_v1",
+    temu_account_identity_endpoint_host: "openapi-b-global.temu.com",
+    temu_account_identity_mall_id: "608573962731830",
+    temu_account_identity_region_id: "211",
+    temu_account_identity_mall_type: "100",
+  };
+}
+
+function temuIdentityData() {
+  return {
+    success: true,
+    result: {
+      mallId: "608573962731830",
+      regionId: "211",
+      mallType: 100,
+      expiredTime: "4102444800",
+      apiScopeList: TEMU_IDENTITY_SCOPES,
+    },
+  };
+}
 
 function listData(overrides: Record<string, unknown> = {}) {
   return {
@@ -444,6 +478,9 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.list.retrieve") {
       listReadCount += 1;
       return Response.json(listReadCount <= 2 ? emptyListData() : listData({ goodsStatus: "ACTIVE" }));
@@ -458,7 +495,7 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: argumentsValue,
       environment: "production",
     });
@@ -466,8 +503,8 @@ test("Temu create timeout reconciles once by externalGoodsId and never sends a s
     assert.equal(result.remoteId, GOODS_ID);
     assert.equal(result.remoteState?.visibility, "live");
     assert.equal(calls.filter((call) => call.type === "temu.local.goods.v3.add").length, 1);
-    assert.equal(result.steps[1].data.createTransportUncertain, true);
-    assert.equal(result.steps[1].data.sellerpilotVerification, "EXISTING_GOODS_RECOVERED");
+    assert.equal(result.steps[2].data.createTransportUncertain, true);
+    assert.equal(result.steps[2].data.sellerpilotVerification, "EXISTING_GOODS_RECOVERED");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -478,6 +515,9 @@ test("Temu strict create returns pending-review without claiming publication suc
   let listReadCount = 0;
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.v3.add") {
       return Response.json({ success: true, result: { goodsId: Number(GOODS_ID), externalGoodsId: EXTERNAL_GOODS_ID } });
     }
@@ -493,15 +533,15 @@ test("Temu strict create returns pending-review without claiming publication suc
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: strictArguments(),
       environment: "production",
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteState?.visibility, "pending_review");
     assert.equal(result.publicationFulfilled, false);
-    assert.equal(result.steps[1].data.sellerpilotPublicationConfirmed, false);
-    assert.equal((result.steps[2].data.sellerpilotTemuCreateProcessingState as Record<string, unknown>).reviewState, "pending_review");
+    assert.equal(result.steps[2].data.sellerpilotPublicationConfirmed, false);
+    assert.equal((result.steps[3].data.sellerpilotTemuCreateProcessingState as Record<string, unknown>).reviewState, "pending_review");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -514,6 +554,9 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.v3.add") {
       return Response.json({ success: true, result: { goodsId: Number(GOODS_ID), externalGoodsId: EXTERNAL_GOODS_ID } });
     }
@@ -532,7 +575,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: strictArguments("safe_test"),
       environment: "production",
     });
@@ -541,6 +584,7 @@ test("Temu strict safe-test immediately goes off-shelf and binds the same eight 
     assert.equal(result.remoteState?.imageCount, 8);
     assert.equal(result.publicationFulfilled, true);
     assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
@@ -564,6 +608,9 @@ test("Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf a
     const rawBody = String(init?.body ?? "");
     requestBodies.push(rawBody);
     const body = JSON.parse(rawBody) as Record<string, unknown>;
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.v3.add") {
       return new Response(`{"success":true,"result":{"goodsId":${longGoodsId},"externalGoodsId":"${EXTERNAL_GOODS_ID}"}}`, {
         status: 200,
@@ -602,7 +649,7 @@ test("Temu preserves a LONG goodsId above MAX_SAFE_INTEGER for exact off-shelf a
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: strictArguments("safe_test"),
       environment: "production",
     });
@@ -635,6 +682,9 @@ test("Temu safe-test off-shelves before a missing first readback and never repor
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.v3.add") {
       return Response.json({ success: true, result: { goodsId: Number(GOODS_ID), externalGoodsId: EXTERNAL_GOODS_ID } });
     }
@@ -650,13 +700,14 @@ test("Temu safe-test off-shelves before a missing first readback and never repor
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: strictArguments("safe_test"),
       environment: "production",
     });
     assert.equal(result.ok, false);
     assert.notEqual(result.publicationFulfilled, true);
     assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
@@ -678,6 +729,9 @@ test("Temu definite create rejection never looks up or off-shelves an existing e
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(temuIdentityData());
+    }
     if (body.type === "temu.local.goods.list.retrieve") return Response.json(emptyListData());
     return Response.json({
       success: false,
@@ -689,17 +743,18 @@ test("Temu definite create rejection never looks up or off-shelves an existing e
     const result = await executeChannelOperation({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+      payload: temuCredentialPayload(),
       arguments: strictArguments("safe_test"),
       environment: "production",
     });
     assert.equal(result.ok, false);
     assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.v3.add",
     ]);
-    assert.equal(result.steps[1]?.data.sellerpilotVerification, "TEMU_EXTERNAL_ID_COLLISION_MANUAL_RECONCILIATION");
+    assert.equal(result.steps[2]?.data.sellerpilotVerification, "TEMU_EXTERNAL_ID_COLLISION_MANUAL_RECONCILIATION");
     assert.equal(
       gatewayJobCompletionStatus(result.operation, result.ok, result.steps),
       "reconciliation_required",
@@ -811,6 +866,9 @@ test("Temu quarantines a provider-accepted create when price or stock readback d
     let listReadCount = 0;
     globalThis.fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      if (body.type === "bg.open.accesstoken.info.get") {
+        return Response.json(temuIdentityData());
+      }
       if (body.type === "temu.local.goods.v3.add") {
         return Response.json({ success: true, result: { goodsId: Number(GOODS_ID), externalGoodsId: EXTERNAL_GOODS_ID } });
       }
@@ -838,7 +896,7 @@ test("Temu quarantines a provider-accepted create when price or stock readback d
       const result = await executeChannelOperation({
         channel: "temu",
         operation: "listing.create",
-        payload: { app_key: "app", app_secret: "secret", access_token: "token" },
+        payload: temuCredentialPayload(),
         arguments: strictArguments(),
         environment: "production",
       });

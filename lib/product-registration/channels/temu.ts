@@ -37,6 +37,12 @@ import {
   temuGeneralCreateIdentityQueries,
   type TemuIdentityQuery,
 } from "../temu/create-contract";
+import {
+  readTemuAccountIdentityBinding,
+  temuCreateRequiredApiScopes,
+  temuSafeTestRequiredApiScopes,
+  verifyTemuAccountIdentity,
+} from "../temu/account-identity";
 export function temuResultObject(data: Record<string, unknown>) {
   const value = data.result;
   return value && typeof value === "object" && !Array.isArray(value)
@@ -429,6 +435,84 @@ export async function executeTemu(input: ExecuteInput) {
       }
     }
     const steps: ChannelOperationStep[] = [];
+    if (!readTemuAccountIdentityBinding(input.payload)) {
+      return result(input, [{
+        name: "temu-account-identity-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification:
+            "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    let accountIdentityRemote: RemoteResponse;
+    try {
+      accountIdentityRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.open.accesstoken.info.get",
+      });
+    } catch {
+      return result(input, [{
+        name: "temu-account-identity-read",
+        ok: false,
+        status: 408,
+        data: {
+          sellerpilotVerification:
+            "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    const accountIdentityTransportStep = step(
+      "temu-account-identity-read",
+      accountIdentityRemote,
+    );
+    const accountIdentityVerification = verifyTemuAccountIdentity({
+      payload: input.payload,
+      response: accountIdentityRemote.data,
+      responseText: accountIdentityRemote.text,
+      requiredScopes: publicationIntent === "safe_test"
+        ? temuSafeTestRequiredApiScopes
+        : temuCreateRequiredApiScopes,
+    });
+    const accountIdentityStep: ChannelOperationStep = {
+      name: "temu-account-identity-read",
+      ok: accountIdentityTransportStep.ok && accountIdentityVerification.ok,
+      status: accountIdentityTransportStep.ok
+        ? accountIdentityVerification.ok ? 200 : 422
+        : accountIdentityTransportStep.status,
+      requestId: accountIdentityTransportStep.requestId,
+      data: {
+        sellerpilotVerification: accountIdentityTransportStep.ok
+          ? accountIdentityVerification.verification
+          : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+        ...(!(accountIdentityTransportStep.ok && accountIdentityVerification.ok)
+          ? { sellerpilotNoWriteConfirmed: true }
+          : {}),
+        ...(accountIdentityVerification.identity ? {
+          sellerpilotTemuAccountSubject:
+            accountIdentityVerification.identity.subject,
+          sellerpilotTemuTargetId:
+            accountIdentityVerification.identity.mallId,
+          sellerpilotTemuRegionId:
+            accountIdentityVerification.identity.regionId,
+          sellerpilotTemuEndpointHost:
+            accountIdentityVerification.identity.endpointHost,
+          sellerpilotTemuMallType:
+            accountIdentityVerification.identity.mallType,
+          sellerpilotTemuScopeCount:
+            accountIdentityVerification.identity.apiScopes.length,
+        } : {}),
+        ...(accountIdentityVerification.missingScopes ? {
+          sellerpilotTemuMissingScopes:
+            accountIdentityVerification.missingScopes,
+        } : {}),
+      },
+    };
+    steps.push(accountIdentityStep);
+    if (!accountIdentityStep.ok) return result(input, steps);
     const identityQueries: TemuIdentityQuery[] = strictPublication
       ? temuGeneralCreateIdentityQueries(body)
       : [{

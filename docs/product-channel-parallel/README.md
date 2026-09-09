@@ -23,6 +23,8 @@
 
 ## 현재 증거
 
+최신 추가 통합은 [후속 검토](integrations/20260909-review-11.md)와 `docs/현재상태.md` 상단을 우선한다. 아래8/8은 기존 기본 흐름의 통과 이력이며 이후 들어온 모든 추가 패치까지 완료됐다는 뜻은 아니다. 19:54 이후에는 Temu r8의 확대 회귀 보완, Shopee006의 실제 client 연결, eBay006의 실제 parent UI/server route 검증이 진행 중이다. Qoo10의 현재 C02 범위와 분리된 scratch 배정은 [대기 감사](integrations/20260909-idle-audit.md) 및 현재상태 기록을 따른다.
+
 최신 결과는 [여섯 번째 통합 검토](integrations/20260909-review-06.md)를 따른다. Shopee 최종 UI와 쿠팡 옵션 화면까지 적용해 기본 흐름 중앙 통합 검사8/8을 완료했다. 최종 영향341/341·로컬 Chrome2/2·타입·관련82파일 lint·로컬 빌드 통과. 실제 신규등록·원격/사이트 완료는0/8이다.
 
 2026-09-09 현재 상태 확인 당시8개 담당 모두 마지막 턴 completed/error null이었다. idle/notLoaded를 상품 완료로 취급하지 않는다. 중앙 통합 대기를 해결한 뒤 스마트스토어 현재 Commerce API 연결 읽기 검증을 재배정했고 active/inProgress를 확인했다. 다른 채널은 위 원장의 구체 계정/심사/실제 입력 조건에 따라 이어간다.

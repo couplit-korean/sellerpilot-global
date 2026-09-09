@@ -161,6 +161,10 @@ test("11st general create credential requires a 32-character OPEN API key and se
     () => assertElevenstCreateCredentialBinding({ api_key: "A".repeat(32) }),
     /ELEVENST_CREATE_SELLER_ID_REQUIRED/u,
   );
+  assert.throws(
+    () => assertElevenstCreateCredentialBinding({ api_key: "A".repeat(32), seller_id: " sample " }),
+    /ELEVENST_CREATE_SELLER_ID_PLACEHOLDER/u,
+  );
 });
 
 test("11st general create rejects a missing seller ID before category, lookup, or product calls", async () => {
@@ -181,6 +185,33 @@ test("11st general create rejects a missing seller ID before category, lookup, o
     assert.equal(operation.ok, false);
     assert.equal(operation.steps[0]?.name, "seller-account-contract");
     assert.equal(operation.steps[0]?.data.error, "ELEVENST_CREATE_SELLER_ID_REQUIRED");
+    assert.equal(calls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st general create rejects the observed seller ID placeholder before provider calls", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("provider must not be called");
+  };
+  try {
+    const operation = await executeElevenst({
+      channel: "elevenst",
+      operation: "listing.create",
+      environment: "production",
+      payload: { api_key: "A".repeat(32), seller_id: "sample" },
+      arguments: { product: product() },
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.steps[0]?.name, "seller-account-contract");
+    assert.equal(
+      operation.steps[0]?.data.error,
+      "ELEVENST_CREATE_SELLER_ID_PLACEHOLDER",
+    );
     assert.equal(calls, 0);
   } finally {
     globalThis.fetch = originalFetch;

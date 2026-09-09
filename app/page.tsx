@@ -5713,12 +5713,13 @@ function readShopeeExactBrowserSession(ownerId: string): ShopeeExactBrowserSessi
 }
 
 const lazadaExactBrowserKey = "sellerpilot.lazada-exact-session.v1";
-type LazadaExactBrowserSession = { sessionId: string; credentialId: string; actorId: string; expiresAt: number };
+type LazadaExactBrowserSession = { sessionId: string; credentialId: string; actorId: string; expiresAt: number; state?: string };
 function readLazadaExactBrowserSession(actorId: string): LazadaExactBrowserSession | null {
   try {
     const value = JSON.parse(window.sessionStorage.getItem(lazadaExactBrowserKey) ?? "null") as LazadaExactBrowserSession | null;
     const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.actorId !== actorId
+      || (value.state !== undefined && !/^sellerpilot-lazada-my-[A-Za-z0-9_-]{32}$/u.test(value.state))
       || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
     return value;
   } catch { return null; }
@@ -5818,7 +5819,9 @@ export default function Home() {
           return;
         }
         const url = new URL(result.authorizationUrl);
-        if (url.origin !== "https://auth.lazada.com" || !url.searchParams.get("state")?.startsWith("sellerpilot-lazada-my-")) throw new Error("invalid_authorization_url");
+        const exactState = url.searchParams.get("state") ?? "";
+        if (url.origin !== "https://auth.lazada.com" || !/^sellerpilot-lazada-my-[A-Za-z0-9_-]{32}$/u.test(exactState)) throw new Error("invalid_authorization_url");
+        window.sessionStorage.setItem(lazadaExactBrowserKey, JSON.stringify({ ...prepared, state: exactState }));
         window.location.assign(url.toString());
       } catch {
         setOAuthToastMessage("Lazada exact 시작을 완료하지 못했습니다. 전용 실행기·인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
@@ -5974,19 +5977,19 @@ export default function Home() {
         }
         if (pendingChannelOAuth.channel === "lazada") {
           const exact = readLazadaExactBrowserSession(userId);
-          if (!pendingChannelOAuth.state.startsWith("sellerpilot-lazada-my-") || !exact) {
-            throw new Error("Lazada exact 세션·state가 없어 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          if (exact?.state === pendingChannelOAuth.state) {
+            const { response, payload } = await requestChannelConnection("/api/admin/channel-credentials/lazada/exact", {
+              method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
+              body: JSON.stringify({ action: "bind", sessionId: exact.sessionId, credentialId: exact.credentialId,
+                code: pendingChannelOAuth.code, state: pendingChannelOAuth.state }),
+            });
+            const bound = payload as { status?: string };
+            if (!response.ok || bound.status !== "bound") throw new Error("Lazada exact 결속을 확인하지 못했습니다. 코드 재교환 없이 해당 세션을 확인해 주세요.");
+            setOAuthToastMessage("Lazada 승인을 전용 실행기에 결속했습니다. 연결 완료 전입니다. 토큰 교환·Vault 저장·안전한 읽기 검증 결과를 확인해야 합니다.");
+            window.sessionStorage.removeItem(lazadaExactBrowserKey);
+            return;
           }
-          const { response, payload } = await requestChannelConnection("/api/admin/channel-credentials/lazada/exact", {
-            method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },
-            body: JSON.stringify({ action: "bind", sessionId: exact.sessionId, credentialId: exact.credentialId,
-              code: pendingChannelOAuth.code, state: pendingChannelOAuth.state }),
-          });
-          const bound = payload as { status?: string };
-          if (!response.ok || bound.status !== "bound") throw new Error("Lazada exact 결속을 확인하지 못했습니다. 코드 재교환 없이 해당 세션을 확인해 주세요.");
-          setOAuthToastMessage("Lazada 승인을 전용 실행기에 결속했습니다. 연결 완료 전입니다. 토큰 교환·Vault 저장·안전한 읽기 검증 결과를 확인해야 합니다.");
-          window.sessionStorage.removeItem(lazadaExactBrowserKey);
-          return;
+          if (exact) window.sessionStorage.removeItem(lazadaExactBrowserKey);
         }
         const { response, payload: connectionPayload } = await requestChannelConnection(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {
           method: "POST", redirect: "error", headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session.access_token}` },

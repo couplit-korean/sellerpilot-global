@@ -9,9 +9,48 @@ import {
   normalizeTemuIdentityRead,
   temuGeneralCreateIdentityQueries,
 } from "../lib/product-registration/temu/create-contract";
+import {
+  attestTemuCredentialIdentityForSave,
+  hasTemuAccountIdentityFields,
+  normalizeTemuAccessTokenIdentity,
+  temuAccountIdentityContract,
+  temuAccountIdentityEndpointHost,
+  temuCreateRequiredApiScopes,
+  temuSafeTestRequiredApiScopes,
+  verifyTemuAccountIdentity,
+  withoutTemuAccountIdentityFields,
+} from "../lib/product-registration/temu/account-identity";
 
 const hero = "https://cdn.example.test/temu/hero.jpg";
 const details = Array.from({ length: 8 }, (_, index) => `https://cdn.example.test/temu/detail-${index + 1}.jpg`);
+
+function identityPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    app_key: "fixture-app",
+    app_secret: "fixture-secret",
+    access_token: "fixture-token",
+    temu_account_identity_contract: temuAccountIdentityContract,
+    temu_account_identity_endpoint_host: temuAccountIdentityEndpointHost,
+    temu_account_identity_mall_id: "608573962731830",
+    temu_account_identity_region_id: "211",
+    temu_account_identity_mall_type: "100",
+    ...overrides,
+  };
+}
+
+function identityResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    success: true,
+    result: {
+      mallId: "608573962731830",
+      regionId: "211",
+      mallType: 100,
+      expiredTime: "4102444800",
+      apiScopeList: [...temuCreateRequiredApiScopes],
+      ...overrides,
+    },
+  };
+}
 
 function validBody() {
   return {
@@ -202,12 +241,209 @@ test("Temu official list states keep Draft, review, Active, Inactive, and Delete
   }
 });
 
+test("Temu token identity preserves official LONG values and binds the credential to mall and region", () => {
+  const responseText = JSON.stringify(identityResponse({
+    mallId: "9007199254740993",
+  })).replace('"9007199254740993"', "9007199254740993")
+    .replace('"4102444800"', "4102444800");
+  const identity = normalizeTemuAccessTokenIdentity({
+    response: JSON.parse(responseText) as Record<string, unknown>,
+    responseText,
+  });
+  assert.equal(identity?.mallId, "9007199254740993");
+  assert.equal(identity?.regionId, "211");
+  assert.equal(identity?.mallType, 100);
+  assert.match(identity?.subject ?? "", /^temu:sha256:[a-f0-9]{64}$/u);
+  assert.equal(verifyTemuAccountIdentity({
+    payload: identityPayload({
+      temu_account_identity_mall_id: "9007199254740993",
+    }),
+    response: JSON.parse(responseText) as Record<string, unknown>,
+    responseText,
+    requiredScopes: temuCreateRequiredApiScopes,
+    nowSeconds: 1_800_000_000,
+  }).verification, "TEMU_ACCOUNT_IDENTITY_VERIFIED");
+});
+
+test("Temu token identity requires the semi-managed store identity and every CREATE scope", () => {
+  assert.equal(verifyTemuAccountIdentity({
+    payload: identityPayload({
+      temu_account_identity_mall_type: "1",
+    }),
+    response: identityResponse({
+      mallType: 1,
+      semiUniqueId: "semi-store-1",
+    }),
+    requiredScopes: temuCreateRequiredApiScopes,
+    nowSeconds: 1_800_000_000,
+  }).verification, "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED");
+
+  const missingScope = verifyTemuAccountIdentity({
+    payload: identityPayload(),
+    response: identityResponse({
+      apiScopeList: temuCreateRequiredApiScopes.filter((scope) =>
+        scope !== "temu.local.goods.v3.add"),
+    }),
+    requiredScopes: temuCreateRequiredApiScopes,
+    nowSeconds: 1_800_000_000,
+  });
+  assert.equal(missingScope.verification, "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING");
+  assert.deepEqual(missingScope.missingScopes, ["temu.local.goods.v3.add"]);
+
+  const safeTestScope = verifyTemuAccountIdentity({
+    payload: identityPayload(),
+    response: identityResponse(),
+    requiredScopes: temuSafeTestRequiredApiScopes,
+    nowSeconds: 1_800_000_000,
+  });
+  assert.equal(safeTestScope.verification, "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING");
+  assert.deepEqual(safeTestScope.missingScopes,
+    ["bg.local.goods.sale.status.set"]);
+});
+
+test("Temu token identity rejects malformed optional fields and invalid clocks", () => {
+  for (const malformed of [{}, [], " "]) {
+    assert.equal(verifyTemuAccountIdentity({
+      payload: identityPayload({
+        temu_account_identity_semi_unique_id: malformed,
+      }),
+      response: identityResponse(),
+      requiredScopes: temuCreateRequiredApiScopes,
+      nowSeconds: 1_800_000_000,
+    }).verification, "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED");
+
+    assert.equal(verifyTemuAccountIdentity({
+      payload: identityPayload(),
+      response: identityResponse({ semiUniqueId: malformed }),
+      requiredScopes: temuCreateRequiredApiScopes,
+      nowSeconds: 1_800_000_000,
+    }).verification, "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED");
+  }
+
+  for (const nowSeconds of [Number.NaN, Number.POSITIVE_INFINITY, -1]) {
+    assert.equal(verifyTemuAccountIdentity({
+      payload: identityPayload(),
+      response: identityResponse(),
+      requiredScopes: temuCreateRequiredApiScopes,
+      nowSeconds,
+    }).verification, "TEMU_ACCOUNT_IDENTITY_CLOCK_INVALID");
+  }
+});
+
+test("Temu credential save strips every stale binding and rebuilds it only from a fresh signed read", async () => {
+  const submitted = identityPayload({
+    access_token: "new-fixture-token",
+    temu_account_identity_mall_id: "stale-mall",
+    temu_account_identity_region_id: "stale-region",
+    unrelated_server_value: "preserved",
+  });
+  assert.equal(hasTemuAccountIdentityFields(submitted), true);
+  assert.equal(hasTemuAccountIdentityFields(
+    withoutTemuAccountIdentityFields(submitted),
+  ), false);
+  let requestPayload: Record<string, unknown> | null = null;
+  const attested = await attestTemuCredentialIdentityForSave({
+    payload: submitted,
+    nowSeconds: 1_800_000_000,
+    request: async (request) => {
+      requestPayload = request.payload;
+      return {
+        response: Response.json(identityResponse()),
+        data: identityResponse(),
+        text: JSON.stringify(identityResponse()),
+      };
+    },
+  });
+  assert.equal(hasTemuAccountIdentityFields(requestPayload ?? {}), false);
+  assert.equal(requestPayload?.access_token, "new-fixture-token");
+  assert.equal(attested.payload.temu_account_identity_mall_id,
+    "608573962731830");
+  assert.equal(attested.payload.temu_account_identity_region_id, "211");
+  assert.equal(attested.payload.unrelated_server_value, "preserved");
+});
+
+test("Temu credential save never returns a payload when the fresh signed read is invalid", async () => {
+  await assert.rejects(attestTemuCredentialIdentityForSave({
+    payload: identityPayload(),
+    nowSeconds: 1_800_000_000,
+    request: async () => ({
+      response: Response.json(identityResponse()),
+      data: identityResponse({ mallId: [] }),
+      text: JSON.stringify(identityResponse({ mallId: [] })),
+    }),
+  }), /TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED/u);
+});
+
+test("Temu runtime blocks CREATE with no server credential identity before any provider call", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider transport must remain unused");
+  };
+  try {
+    const result = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: {
+        app_key: "fixture-app",
+        app_secret: "fixture-secret",
+        access_token: "fixture-token",
+      },
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(providerCalls, 0);
+    assert.equal(result.steps[0].name, "temu-account-identity-prewrite");
+    assert.equal(result.steps[0].data.sellerpilotVerification,
+      "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED");
+    assert.equal(result.steps[0].data.sellerpilotNoWriteConfirmed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu runtime blocks CREATE when the signed token belongs to another mall", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    return Response.json(identityResponse({ mallId: "608573962731831" }));
+  };
+  try {
+    const result = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: identityPayload(),
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
+    ]);
+    assert.equal(result.steps[0].data.sellerpilotVerification,
+      "TEMU_ACCOUNT_IDENTITY_MISMATCH");
+    assert.equal(result.steps[0].data.sellerpilotTemuTargetId,
+      "608573962731831");
+    assert.equal(result.steps[0].data.sellerpilotNoWriteConfirmed, true);
+    assert.equal(calls.some((call) => call.type === "temu.local.goods.v3.add"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Temu runtime blocks an external SKU collision before provider create", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<Record<string, unknown>> = [];
   globalThis.fetch = async (_input, init) => {
     const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
     calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(identityResponse());
+    }
     if (Array.isArray(body.outGoodsSnList)) {
       return Response.json({ success: true, result: { goodsList: [], total: 0 } });
     }
@@ -223,16 +459,17 @@ test("Temu runtime blocks an external SKU collision before provider create", asy
     const result = await executeTemu({
       channel: "temu",
       operation: "listing.create",
-      payload: { app_key: "fixture-app", app_secret: "fixture-secret", access_token: "fixture-token" },
+      payload: identityPayload(),
       arguments: strictArguments(),
       environment: "production",
     });
     assert.equal(result.ok, false);
     assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
       "temu.local.goods.list.retrieve",
       "temu.local.goods.list.retrieve",
     ]);
-    assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_GOODS_OR_SKU_ID_ALREADY_EXISTS");
+    assert.equal(result.steps[1].data.sellerpilotVerification, "TEMU_EXTERNAL_GOODS_OR_SKU_ID_ALREADY_EXISTS");
     assert.equal(calls.some((call) => call.type === "temu.local.goods.v3.add"), false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -246,18 +483,21 @@ test("Temu runtime treats malformed continuation metadata as incomplete and perf
     globalThis.fetch = async (_input, init) => {
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       calls.push(body);
+      if (body.type === "bg.open.accesstoken.info.get") {
+        return Response.json(identityResponse());
+      }
       return Response.json({ success: true, result: { goodsList: [], total: 0, nextToken } });
     };
     try {
       const result = await executeTemu({
         channel: "temu",
         operation: "listing.create",
-        payload: { app_key: "fixture-app", app_secret: "fixture-secret", access_token: "fixture-token" },
+        payload: identityPayload(),
         arguments: strictArguments(),
         environment: "production",
       });
       assert.equal(result.ok, false);
-      assert.equal(result.steps[0].data.sellerpilotVerification, "TEMU_EXTERNAL_ID_PREFLIGHT_INCOMPLETE");
+      assert.equal(result.steps[1].data.sellerpilotVerification, "TEMU_EXTERNAL_ID_PREFLIGHT_INCOMPLETE");
       assert.equal(calls.some((call) => call.type === "temu.local.goods.v3.add"), false);
     } finally {
       globalThis.fetch = originalFetch;

@@ -25,7 +25,8 @@ import {
   type CategoryOfficialMetadata,
 } from "./category-attribute-model";
 import { CategoryAttributeField } from "./category-attribute-field";
-import { fetchChannelTargets } from "./channel-target-client";
+import { exactShopeeTargetFromPayload, fetchChannelTargets } from "./channel-target-client";
+import { CategoryTargetSelectionCoordinator } from "./category-target-selection-coordinator";
 import { createBoundedRequestSignal, waitForAbortablePromise } from "./operations-snapshot-request-coordinator";
 
 export type CredentialRow = {
@@ -1071,6 +1072,9 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
   const [loadingCredentials, setLoadingCredentials] = useState(true);
   const [bootstrapVersion, setBootstrapVersion] = useState(0);
   const bootstrapGenerationRef = useRef(0);
+  const targetSelectionCoordinatorRef = useRef(new CategoryTargetSelectionCoordinator());
+
+  useEffect(() => () => targetSelectionCoordinatorRef.current.dispose(), []);
 
   useEffect(() => setQuery(productName), [productName]);
   useEffect(() => {
@@ -1083,6 +1087,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     window.sessionStorage.setItem(categoryStateStorageKey(productId), JSON.stringify(states));
   }, [productId, restoredProductId, states]);
   useEffect(() => {
+    targetSelectionCoordinatorRef.current.supersede();
     let active = true;
     const generation = bootstrapGenerationRef.current + 1;
     bootstrapGenerationRef.current = generation;
@@ -1150,10 +1155,42 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
             error: result.value.ok ? "" : payload.message ?? `${label} 등록 대상 정보를 불러오지 못했습니다.`,
           };
         };
-        const [shopee, lazada] = await Promise.all([
+        const [initialShopee, lazada] = await Promise.all([
           readTargets(shopeeResult, "Shopee"),
           readTargets(lazadaResult, "Lazada"),
         ]);
+        let shopee = initialShopee;
+        const selectedShopeeTarget = shopee.targets[0];
+        if (selectedShopeeTarget?.marketCode === "SG") {
+          try {
+            const exactResponse = await fetchChannelTargets("shopee", accessToken, {
+              signal: bounded.signal,
+              selectedTarget: selectedShopeeTarget,
+            });
+            const exactPayload = await exactResponse.clone().json().catch(() => null) as unknown;
+            const exactTarget = exactResponse.ok
+              ? exactShopeeTargetFromPayload(exactPayload, selectedShopeeTarget)
+              : null;
+            shopee = exactTarget
+              ? {
+                targets: shopee.targets.map((target) => target.targetId === selectedShopeeTarget.targetId
+                  && target.marketCode === selectedShopeeTarget.marketCode ? exactTarget : target),
+                error: "",
+              }
+              : {
+                targets: shopee.targets.filter((target) => target.targetId !== selectedShopeeTarget.targetId
+                  || target.marketCode !== selectedShopeeTarget.marketCode),
+                error: "선택한 Shopee SG 숍의 현재 credential 결속을 확인하지 못했습니다.",
+              };
+          } catch (error) {
+            if (bounded.signal.aborted) throw error;
+            shopee = {
+              targets: shopee.targets.filter((target) => target.targetId !== selectedShopeeTarget.targetId
+                || target.marketCode !== selectedShopeeTarget.marketCode),
+              error: error instanceof Error ? error.message : "Shopee SG 숍을 확인하지 못했습니다.",
+            };
+          }
+        }
         let contextPayload: {
           localizedListings?: LocalizedListing[];
           sourceImages?: Array<{ url?: string | null }>;
@@ -1221,6 +1258,43 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
     const rows = targets[channel] ?? [];
     return rows.find((target) => target.marketCode === selectedMarkets[channel]) ?? rows[0];
   }, [selectedMarkets, targets]);
+
+  const changeSelectedMarket = useCallback(async (channel: "shopee" | "lazada" | "ebay", nextTarget: ChannelTarget) => {
+    if (channel !== "shopee" || nextTarget.marketCode !== "SG") {
+      targetSelectionCoordinatorRef.current.supersede();
+      setSelectedMarkets((current) => ({ ...current, [channel]: nextTarget.marketCode }));
+      return;
+    }
+    const request = targetSelectionCoordinatorRef.current.begin();
+    try {
+      const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+      if (!request.isCurrent()) return;
+      if (!accessToken) throw new Error("Shopee 숍을 확인하려면 로그인 상태를 확인해 주세요.");
+      const response = await fetchChannelTargets("shopee", accessToken, {
+        signal: request.signal,
+        selectedTarget: nextTarget,
+      });
+      const payload = await response.clone().json().catch(() => null) as unknown;
+      if (!request.isCurrent()) return;
+      const exactTarget = response.ok ? exactShopeeTargetFromPayload(payload, nextTarget) : null;
+      if (!exactTarget) throw new Error("선택한 Shopee SG 숍의 현재 credential 결속을 확인하지 못했습니다.");
+      setTargets((current) => ({
+        ...current,
+        shopee: current.shopee?.map((target) => target.targetId === exactTarget.targetId
+          && target.marketCode === exactTarget.marketCode ? exactTarget : target),
+      }));
+      setTargetErrors((current) => ({ ...current, shopee: "" }));
+      setSelectedMarkets((current) => ({ ...current, shopee: exactTarget.marketCode }));
+    } catch (error) {
+      if (!request.isCurrent()) return;
+      setTargetErrors((current) => ({
+        ...current,
+        shopee: error instanceof Error ? error.message : "Shopee SG 숍을 확인하지 못했습니다.",
+      }));
+    } finally {
+      request.complete();
+    }
+  }, []);
 
   const stateKey = useCallback((channel: ActiveChannelKey) => {
     const target = selectedTarget(channel);
@@ -1548,7 +1622,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         </header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select">
           <span>등록 국가·언어</span>
-          <select value={target?.marketCode ?? ""} onChange={(event) => setSelectedMarkets((current) => ({ ...current, [channel]: event.target.value }))}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>
+          <select value={target?.marketCode ?? ""} onChange={(event) => { const nextTarget = targets[channel]?.find((item) => item.marketCode === event.target.value); if (nextTarget) void changeSelectedMarket(channel, nextTarget); }}>{targets[channel]?.map((item) => <option value={item.marketCode} key={`${item.marketCode}-${item.targetId}`}>{item.marketCode} · {item.displayName || item.language} · {item.locale}</option>)}</select>
           <small>{channel === "shopee" ? "각 국가·숍을 따로 검증하고 저장합니다." : channel === "ebay" ? "선택 국가의 공식 category tree를 조회합니다." : "선택 국가의 공식 카테고리 메타를 조회합니다."}</small>
         </label>}
         {requiresTarget && targetErrors[channel] && <p className="category-error"><AlertTriangle size={14} /><span>{targetErrors[channel]}</span><button type="button" disabled={loadingCredentials} onClick={() => setBootstrapVersion((current) => current + 1)}><RefreshCw className={loadingCredentials ? "spin" : undefined} size={13} />다시 확인</button></p>}

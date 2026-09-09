@@ -2,6 +2,11 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { requiredCredentialKeys, type ActiveChannelKey } from "../../../../../lib/channels/catalog";
+import {
+  attestTemuCredentialIdentityForSave,
+  hasTemuAccountIdentityFields,
+  withoutTemuAccountIdentityFields,
+} from "../../../../../lib/product-registration/temu/account-identity";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -47,6 +52,13 @@ export async function POST(request: NextRequest) {
   if (userError || !userData.user || adminError || credentialError || isAdmin !== true) {
     return NextResponse.json({ message: "관리자 권한이 필요합니다." }, { status: 403 });
   }
+  if (parsed.data.channel === "temu"
+    && hasTemuAccountIdentityFields(parsed.data.secretPayload)) {
+    return NextResponse.json({
+      code: "TEMU_ACCOUNT_IDENTITY_FIELDS_SERVER_ONLY",
+      message: "Temu 판매자 identity 값은 서버의 공식 서명 조회로만 저장할 수 있습니다.",
+    }, { status: 400 });
+  }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -63,7 +75,9 @@ export async function POST(request: NextRequest) {
     if (error || !data || typeof data !== "object" || Array.isArray(data)) {
       return NextResponse.json({ message: "기존 키를 안전하게 불러오지 못했습니다." }, { status: 404 });
     }
-    nextSecret = data as SecretPayload;
+    nextSecret = parsed.data.channel === "temu"
+      ? withoutTemuAccountIdentityFields(data as SecretPayload)
+      : data as SecretPayload;
   }
   nextSecret = { ...nextSecret, ...parsed.data.secretPayload };
 
@@ -81,6 +95,27 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "내 스토어 앱은 SELF, 솔루션 판매자 연동은 SELLER + account_id가 필요합니다." }, { status: 400 });
     }
     nextSecret.token_type = tokenType;
+  }
+  if (parsed.data.channel === "temu") {
+    try {
+      nextSecret = (await attestTemuCredentialIdentityForSave({
+        payload: nextSecret,
+      })).payload;
+    } catch (error) {
+      const errorMessage = error
+        && typeof error === "object"
+        && "message" in error
+        && typeof error.message === "string"
+        ? error.message
+        : "";
+      const verification = /^TEMU_ACCOUNT_IDENTITY_[A-Z_]+$/u.test(errorMessage)
+        ? errorMessage
+        : "TEMU_ACCOUNT_IDENTITY_ATTESTATION_FAILED";
+      return NextResponse.json({
+        code: verification,
+        message: "Temu 운영 토큰의 판매자·지역·권한 identity를 공식 조회로 확인하지 못했습니다.",
+      }, { status: 422 });
+    }
   }
 
   const { error: rotateError } = await userClient.rpc("sellerpilot_rotate_credential", {

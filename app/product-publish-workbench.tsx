@@ -23,7 +23,7 @@ import { channelOperationAvailable, channelOperationRelease } from "../lib/chann
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLocalizedRichDetail, buildLocalizedSectionBulletPoints, detailAssetOrderForChannel, galleryAssetOrderForChannel, localizedImageSeo, localizedSeoKeywords, normalizedLocalizedDetailSections, type LocalizedCreativeListing, type LocalizedDetailSection, type LocalizedProductClassification } from "../lib/marketplace-localized-content";
 import { createClient } from "../lib/supabase/client";
-import { fetchChannelTargets } from "./channel-target-client";
+import { exactShopeeTargetFromPayload, fetchChannelTargets } from "./channel-target-client";
 import { evaluateShopeeSgRequirementSelection, serializeShopeeSgChannelPatches, shopeeSgChannelExecutionAllowed, ShopeeSgRequirementCandidateFields, type ShopeeSgRequirementLoadState, type ShopeeSgRequirementSelectionState } from "./_publishing/shopee/requirement-candidate-fields";
 import { channels } from "./channel-config";
 import { fetchProductDetailData, productDetailDataToHtml } from "./_publishing/product-detail-html";
@@ -1335,8 +1335,30 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             targets?: ChannelTarget[];
           },
           Record<string, unknown>
-        ];
-      const shopeeTargets = shopeeTargetsResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
+      ];
+      let shopeeTargets = shopeeTargetsResponse.ok && Array.isArray(shopeePayload.targets) ? shopeePayload.targets : [];
+      const selectedShopeeTarget = shopeeTargets[0];
+      if (selectedShopeeTarget?.marketCode === "SG") {
+        try {
+          const exactResponse = await fetchChannelTargets("shopee", accessToken, {
+            signal: bounded.signal,
+            selectedTarget: selectedShopeeTarget,
+          });
+          const exactPayload = await exactResponse.clone().json().catch(() => null) as unknown;
+          const exactTarget = exactResponse.ok
+            ? exactShopeeTargetFromPayload(exactPayload, selectedShopeeTarget)
+            : null;
+          shopeeTargets = exactTarget
+            ? shopeeTargets.map((target) => target.targetId === selectedShopeeTarget.targetId
+              && target.marketCode === selectedShopeeTarget.marketCode ? exactTarget : target)
+            : shopeeTargets.filter((target) => target.targetId !== selectedShopeeTarget.targetId
+              || target.marketCode !== selectedShopeeTarget.marketCode);
+        } catch (error) {
+          if (bounded.signal.aborted) throw error;
+          shopeeTargets = shopeeTargets.filter((target) => target.targetId !== selectedShopeeTarget.targetId
+            || target.marketCode !== selectedShopeeTarget.marketCode);
+        }
+      }
       const lazadaTargets = lazadaTargetsResponse.ok && Array.isArray(lazadaPayload.targets) ? lazadaPayload.targets : [];
       const nextLazadaMyrRate = exchangeRatesResponse.ok
         ? lazadaMyrRateFromSnapshot(exchangeRatesPayload)
@@ -1735,7 +1757,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         ? serializeShopeeSgChannelPatches(previousBase, previousDraft)
         : registrationPatches(previousBase, previousDraft),
     };
-    const nextTargets = { ...selectedTargets, [channel]: nextTarget };
+    let resolvedTarget = nextTarget;
+    let nextTargets = { ...selectedTargets, [channel]: resolvedTarget };
     registrationTargetBusyRef.current = true;
     setRegistrationTargetLoading(true);
     void (async () => {
@@ -1744,15 +1767,36 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       writeRequestControllersRef.current.add(controller);
       let handoff = listingHandoffRef.current;
       try {
+        if (channel === "shopee" && resolvedTarget.marketCode === "SG") {
+          const token = (await waitForAbortablePromise(createClient().auth.getSession(), bounded.signal)).data.session?.access_token;
+          if (!token) throw new Error("Shopee 숍을 확인하려면 로그인 상태를 확인해 주세요.");
+          const exactResponse = await fetchChannelTargets("shopee", token, {
+            signal: bounded.signal,
+            selectedTarget: resolvedTarget,
+          });
+          const exactPayload = await exactResponse.clone().json().catch(() => null) as unknown;
+          const exactTarget = exactResponse.ok
+            ? exactShopeeTargetFromPayload(exactPayload, resolvedTarget)
+            : null;
+          if (!exactTarget) throw new Error("선택한 Shopee SG 숍의 현재 credential 결속을 확인하지 못했습니다.");
+          resolvedTarget = exactTarget;
+          nextTargets = { ...selectedTargets, [channel]: resolvedTarget };
+          const exactSgTarget = exactTarget;
+          setAvailableTargets((current) => ({
+            ...current,
+            shopee: current.shopee?.map((target) => target.targetId === exactSgTarget.targetId
+              && target.marketCode === exactSgTarget.marketCode ? exactSgTarget : target),
+          }));
+        }
         if (channel === "ebay") {
           const token = (await waitForAbortablePromise(createClient().auth.getSession(), bounded.signal)).data.session?.access_token;
           if (!token) throw new Error("판매 정책을 보려면 로그인 상태를 확인해 주세요.");
-          handoff = await fetchStoredListingHandoff({ productId, channel: "ebay", environment: "production", market: nextTarget.marketCode }, token, bounded.signal);
+          handoff = await fetchStoredListingHandoff({ productId, channel: "ebay", environment: "production", market: resolvedTarget.marketCode }, token, bounded.signal);
         }
         if (!mountedRef.current || generation !== registrationTargetGenerationRef.current) return;
-        const base = buildChannelArguments(channel, context, priceRef.current, quantityRef.current, nextTarget, packageFieldsRef.current, globalBaseUsdPriceRef.current, lazadaMyrRateRef.current, channel === "ebay" ? handoff : undefined);
-        const assignment = context.assignments.find(item => item.channel === channel && item.market === nextTarget.marketCode);
-        const key = publishRegistrationIdentity(channel, nextTarget.marketCode, nextTarget.targetId, credential?.id ?? "");
+        const base = buildChannelArguments(channel, context, priceRef.current, quantityRef.current, resolvedTarget, packageFieldsRef.current, globalBaseUsdPriceRef.current, lazadaMyrRateRef.current, channel === "ebay" ? handoff : undefined);
+        const assignment = context.assignments.find(item => item.channel === channel && item.market === resolvedTarget.marketCode);
+        const key = publishRegistrationIdentity(channel, resolvedTarget.marketCode, resolvedTarget.targetId, credential?.id ?? "");
         const stored = registrationChannelBankRef.current[key];
         const restored = stored && stored.categoryId === (assignment?.categoryId ?? "") ? restoreChannelRegistrationPatches(base, stored.patches) : base;
         if (channel === "ebay") { listingHandoffRef.current = handoff; setEbayListingHandoff(handoff); setEbayHandoffError(null); }
