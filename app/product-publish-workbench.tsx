@@ -22,7 +22,6 @@ import { resolveCoupangShippingLeadTime } from "../lib/channels/coupang-shipping
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLocalizedRichDetail, buildLocalizedSectionBulletPoints, detailAssetOrderForChannel, galleryAssetOrderForChannel, localizedImageSeo, localizedSeoKeywords, normalizedLocalizedDetailSections, type LocalizedCreativeListing, type LocalizedDetailSection, type LocalizedProductClassification } from "../lib/marketplace-localized-content";
-import { normalizeProductSaleConfiguration } from "../lib/product-sale-configuration";
 import { createClient } from "../lib/supabase/client";
 import { fetchChannelTargets } from "./channel-target-client";
 import { evaluateShopeeSgRequirementSelection, serializeShopeeSgChannelPatches, shopeeSgChannelExecutionAllowed, ShopeeSgRequirementCandidateFields, type ShopeeSgRequirementLoadState, type ShopeeSgRequirementSelectionState } from "./_publishing/shopee/requirement-candidate-fields";
@@ -340,7 +339,9 @@ export function normalizeManualFields(context: PublishContext): ManualFields {
     manufacturer: value.manufacturer || "",
     countryOfOrigin: value.countryOfOrigin || "",
     material: value.material || "",
-    packageContents: normalizeProductSaleConfiguration(value.packageContents),
+    // This field is seller-confirmed sales configuration. Preserve the exact
+    // text so an inner-pack count cannot be normalized into a sale quantity.
+    packageContents: value.packageContents?.trim() ?? "",
     condition: value.condition || "NEW",
     gtinStatus: value.gtinStatus || "NO_GTIN",
     gtin: value.gtin || "",
@@ -772,7 +773,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
           price: { basePrice: { amount: String(channelPrice), currency: manual.currency || "KRW" } },
           quantity,
           packageInfo: { weight: String(Math.round(packageFields.weight * 1000)), length: String(packageFields.length), width: String(packageFields.width), height: String(packageFields.height) },
-          variations: [{ name: "Type", value: "Standard" }],
+          variations: [{ name: "판매 구성", value: manual.packageContents }],
           ...(manual.gtinStatus === "HAS_GTIN" && manual.gtin ? { barCode: { barCodeType: "GTIN-14", barCodeId: [manual.gtin] } } : {}),
         }],
       },

@@ -8,6 +8,7 @@ import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { elevenstListingUpdateProjectionDigestInput } from "../lib/channels/listing-update";
 import { executeChannelOperation } from "../lib/channels/operations";
 import { elevenstCategoryRequest, elevenstSellerXmlRequest } from "../lib/channels/protocols";
+import { executeElevenst } from "../lib/product-registration/channels/elevenst";
 import {
   assertElevenstListingShippingSource,
   bindElevenstAuthoritativeShippingSource,
@@ -1304,6 +1305,75 @@ test("11st fixed prepaid shipping binds authoritative fee without changing free 
     assert.throws(() => validateElevenstListingArguments({ product: { ...product, ...invalid }, sellerpilotAssets: { shipping: source } }), /ELEVENST_PAID_SHIPPING_CONTRACT_UNVERIFIED/);
   }
   assert.throws(() => validateElevenstListingArguments({ product, sellerpilotAssets: { shipping: { shippingFeeKrw: 0 } } }), /ELEVENST_FREE_SHIPPING_AMOUNT_INVALID/);
+});
+
+test("11st fixed shipping preserves the small-price exception and enforces the documented limits", () => {
+  const validateFixed = (salePrice: number, shippingFeeKrw: number) => {
+    const product = completeProduct({
+      selPrc: String(salePrice),
+      ...elevenstListingShippingFields({ shippingFeeKrw }),
+    });
+    const before = structuredClone(product);
+    const validated = validateElevenstListingArguments({
+      product,
+      sellerpilotAssets: { shipping: { shippingFeeKrw } },
+    });
+    assert.deepEqual(product, before);
+    assert.equal(validated.dlvCst1, String(shippingFeeKrw));
+  };
+
+  assert.doesNotThrow(() => validateFixed(3190, 3000));
+  assert.doesNotThrow(() => validateFixed(10_000, 5_000));
+  assert.doesNotThrow(() => validateFixed(10_010, 5_000));
+  assert.doesNotThrow(() => validateFixed(100_000, 50_000));
+
+  for (const [salePrice, shippingFeeKrw] of [[10_000, 5_010], [10_010, 5_010], [100_010, 50_010]]) {
+    assert.throws(
+      () => validateFixed(salePrice, shippingFeeKrw),
+      /ELEVENST_FIXED_SHIPPING_FEE_EXCEEDS_POLICY_LIMIT/,
+    );
+  }
+});
+
+test("11st create asks the user to correct a truly over-limit fixed fee without rewriting it", async () => {
+  const impossible = completeProduct({
+    selPrc: "3190",
+    ...elevenstListingShippingFields({ shippingFeeKrw: 5010 }),
+  });
+  const before = structuredClone(impossible);
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    throw new Error("provider access must not run");
+  };
+  try {
+    const result = await executeElevenst({
+      channel: "elevenst",
+      operation: "listing.create",
+      payload: elevenstCredential,
+      environment: "production",
+      arguments: {
+        product: impossible,
+        sellerpilotAssets: { shipping: { shippingFeeKrw: 5010 } },
+      },
+    });
+    assert.equal(result.ok, false);
+    assert.equal(calls, 0);
+    assert.equal(
+      result.steps[0]?.data.error,
+      "ELEVENST_FIXED_SHIPPING_FEE_EXCEEDS_POLICY_LIMIT",
+    );
+    assert.match(
+      result.safeMessage,
+      /판매가 1만원 이하 국내 택배 상품은 최대 5천원/u,
+    );
+    assert.doesNotMatch(result.safeMessage, /1,?590/u);
+    assert.deepEqual(impossible, before);
+    assert.equal(impossible.dlvCst1, "5010");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 for (const wrongFee of [false, true]) {

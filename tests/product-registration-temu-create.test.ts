@@ -36,7 +36,7 @@ function validBody() {
       price: { basePrice: { amount: "5000", currency: "KRW" } },
       quantity: 2,
       packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
-      variations: [{ name: "Type", value: "Standard" }],
+      variations: [{ name: "판매 구성", value: "상품 6개" }],
     }],
   };
 }
@@ -77,6 +77,14 @@ test("Temu general CREATE accepts an optional external category name and forbids
     const rejected = inspectTemuGeneralCreateBody({ ...validBody(), goodsBasic });
     assert.equal(rejected.ok, false);
   }
+});
+
+test("Temu general CREATE does not reject a seller-supplied Type Standard specification", () => {
+  const body = validBody();
+  body.skuList[0].variations = [{ name: "Type", value: "Standard" }];
+  const inspection = inspectTemuGeneralCreateBody(body);
+  assert.equal(inspection.ok, true);
+  assert.equal(inspection.skuChecks.variations, true);
 });
 
 test("Temu general CREATE rejects any invalid image element without filtering it away", () => {

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActiveChannelKey } from "../lib/channels/catalog";
-import { buildChannelArguments, buildDraftMap, missingNativeValues } from "../app/product-publish-workbench";
+import { buildChannelArguments, buildDraftMap, missingNativeValues, normalizeManualFields } from "../app/product-publish-workbench";
 import { manualProductRequestFingerprint, normalizePendingManualProductRequest } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
 import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
@@ -414,8 +414,11 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
-test("Temu draft sends the external category path and omits unsupported costTemplate", () => {
+test("Temu draft uses the seller-confirmed sale unit and never derives it from inner packs", () => {
   const context = manualContext();
+  context.product.name = "롯데 롯샌 파스퇴르 순우유맛 315g (6봉입)";
+  context.manualFields.productName = context.product.name;
+  context.manualFields.packageContents = "상품 1개";
   context.assignments = [{
     ...context.assignments[0],
     channel: "temu",
@@ -432,10 +435,21 @@ test("Temu draft sends the external category path and omits unsupported costTemp
     { weight: 0.1, length: 10, width: 8, height: 2 },
     5,
   ) as Record<string, unknown>;
-  const body = draft.body as { goodsBasic: Record<string, unknown> };
+  const body = draft.body as {
+    goodsBasic: Record<string, unknown>;
+    skuList: Array<{ variations: Array<{ name: string; value: string }> }>;
+  };
   assert.equal(body.goodsBasic.extCatName, "Electronics / Cable organizers");
   assert.equal(Object.hasOwn(body.goodsBasic, "costTemplate"), false);
   assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), false);
+  assert.deepEqual(body.skuList[0].variations, [{ name: "판매 구성", value: "상품 1개" }]);
+  assert.equal(JSON.stringify(body.skuList).includes("상품 6개"), false);
+});
+
+test("publish context preserves an explicit box and inner-pack description without changing sale quantity", () => {
+  const context = manualContext();
+  context.manualFields.packageContents = "1박스 · 박스당 6봉 · 총 315g";
+  assert.equal(normalizeManualFields(context).packageContents, "1박스 · 박스당 6봉 · 총 315g");
 });
 
 test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
