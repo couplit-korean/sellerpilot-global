@@ -1201,3 +1201,32 @@ for (const body of ["<html><body>not found</body></html>", "", "<ClientMessage><
     } finally { globalThis.fetch = originalFetch; }
   });
 }
+
+for (const field of ["rtngdDlvCst", "exchDlvCst"] as const) {
+  test(`11st official ${field} accepts only whole ten-won amounts before any provider call`, async () => {
+    for (const value of ["0", "10", "3000", "6000", "9999990"]) {
+      assert.doesNotThrow(() => validateElevenstListingProduct(completeProduct({ [field]: value })));
+    }
+    const original = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async () => { calls += 1; throw new Error("No provider call expected"); };
+    try {
+      for (const value of ["1", "2999", "3001", "3,000", "3000.5"]) {
+        assert.throws(() => validateElevenstListingProduct(completeProduct({ [field]: value })),
+          new RegExp(`ELEVENST_CONTRACT_FIELD_INVALID:${field}`));
+        const result = await executeChannelOperation({ channel: "elevenst", operation: "listing.create",
+          payload: { api_key: apiKey }, arguments: { product: completeProduct({ [field]: value }) }, environment: "production" });
+        assert.equal(result.ok, false);
+        assert.match(JSON.stringify(result.steps), /ELEVENST_PREWRITE_VALIDATION_FAILED/);
+      }
+      assert.equal(calls, 0);
+    } finally { globalThis.fetch = original; }
+  });
+  test(`11st update rejects an invalid ${field} snapshot without changing the original`, () => {
+    const snapshot = completeProduct({ [field]: "2999" });
+    const before = structuredClone(snapshot);
+    assert.throws(() => mergeElevenstListingUpdateProduct(snapshot, { prdNm: "Corrected name" }),
+      new RegExp(`ELEVENST_CONTRACT_FIELD_INVALID:${field}`));
+    assert.deepEqual(snapshot, before);
+  });
+}

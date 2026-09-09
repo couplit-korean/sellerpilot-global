@@ -264,8 +264,8 @@ export function validateElevenstListingProduct(value: unknown, shippingSource?: 
   exactCode(product, "dlvCstInstBasiCd", ["01"]);
   exactCode(product, "bndlDlvCnYn", ["Y"]);
   exactCode(product, "dlvCstPayTypCd", ["03"]);
-  integerText(product, "rtngdDlvCst", { min: 0, max: 9_999_990 });
-  integerText(product, "exchDlvCst", { min: 0, max: 9_999_990 });
+  integerText(product, "rtngdDlvCst", { min: 0, max: 9_999_990, multipleOf: 10 });
+  integerText(product, "exchDlvCst", { min: 0, max: 9_999_990, multipleOf: 10 });
   knownText(product, "asDetail", 1_000);
   knownText(product, "rtngExchDetail", 1_000);
   validateProductNotification(product, categoryId);

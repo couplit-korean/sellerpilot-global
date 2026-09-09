@@ -45,3 +45,7 @@ npm run build:vercel
 ## 2026-09-09 상품 등록 재검증
 
 [세 채널 공식 계약 대조와 현재 운영 상태](three-channel-product-verification-20260909.md)를 따른다. 해당 채널의 필수값 검증은 `lib/channels/temu-create-preflight.ts`와 상품 전용 실행기에 연결돼 있다. 고유 로컬 회귀 299/299와 실제 신규 등록 완료 0/3은 다른 상태다. 운영 인증·상품 승인·공식 재조회 조건이 충족돼야 실제 완료 처리한다.
+
+## 2026-09-09 실조회 후속
+
+실제 앱 Inactive·compliance Rejected·security Approved·활성 자격 없음 재확인. 현재 egress/등록 IP 일치와 APNIC Korea Telecom 소유망을 확인해 Q4 초안에 Korea Telecom 추가. 정확성/책임 체크와 제출은 하지 않았다. 전체 답변의 사용자 검토와 승인 이후 실제 자격 연결이 필요하다. [현재 실조회·후속 경로](live-product-followup-20260909.md)가 위의 이전 접근/테스트 상태보다 우선한다.
