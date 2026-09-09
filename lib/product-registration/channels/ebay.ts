@@ -1,4 +1,11 @@
-import { ebayInventorySkuAbsent, ebayExactReconciliationOffer } from "../../channels/ebay-create-preflight";
+import {
+  assertEbayCreateRequiredFields,
+  assertEbayCreatePublicationContract,
+  ebayCreateConfigurationEvidence,
+  ebayCreateLineageDecision,
+  ebayExactReconciliationOffer,
+} from "../../channels/ebay-create-preflight";
+import { readEbayTaxonomyPolicyGetOnly } from "../../channels/ebay-taxonomy-policy-get-only";
 import { step, type ChannelOperationStep } from "../../channels/operation-step";
 import { objectValue, stringArgument, integerArgument, pathSegment } from "../../channels/operation-values";
 import { ebayRequest, textValue, type RemoteResponse } from "../../channels/protocols";
@@ -17,7 +24,7 @@ export async function ebayListingResultWithPublicationReadback(
   offerId: string,
 ) {
   if (
-    !listingPublicationReadbackRequested(input) ||
+    (input.operation !== "listing.create" && !listingPublicationReadbackRequested(input)) ||
     steps.some((item) => !item.ok)
   ) {
     return result(input, steps, remoteId);
@@ -82,7 +89,8 @@ export async function ebayListingResultWithPublicationReadback(
       ),
     );
   }
-  if (input.operation === "listing.update" && readback.inventoryItemReadback) {
+  if ((input.operation === "listing.create" || input.operation === "listing.update")
+      && readback.inventoryItemReadback) {
     const mutableReadback = verifyListingUpdateReadback(
       "ebay",
       input.arguments,
@@ -95,7 +103,9 @@ export async function ebayListingResultWithPublicationReadback(
       readback.offerReadback.response.ok &&
       readback.inventoryItemReadback.response.ok;
     readbackSteps.push({
-      name: "listing-update-content-readback",
+      name: input.operation === "listing.update"
+        ? "listing-update-content-readback"
+        : "listing-create-content-readback",
       ok: httpVerified && mutableReadback.ok,
       status: readback.offerReadback.response.ok
         ? readback.inventoryItemReadback.response.status
@@ -225,6 +235,7 @@ export async function executeEbay(input: ExecuteInput) {
     return result(input, [step("category-aspects", remote)], categoryId);
   }
   if (input.operation === "listing.create") {
+    assertEbayCreatePublicationContract(input.arguments);
     assertEbayListingCreateConfiguration(input.arguments);
     const rawSku = stringArgument(input.arguments, "sku");
     const sku = pathSegment(rawSku);
@@ -240,27 +251,44 @@ export async function executeEbay(input: ExecuteInput) {
     // even if both values are otherwise valid. Enforce this invariant at the
     // channel boundary as a final guard for manually edited or legacy drafts.
     offer.sku = rawSku;
+    const createReadbackInput: ExecuteInput = {
+      ...input,
+      arguments: {
+        ...input.arguments,
+        marketplaceId,
+        inventoryItem,
+        offer,
+      },
+    };
+    assertEbayCreateRequiredFields(createReadbackInput.arguments);
     const steps: ChannelOperationStep[] = [];
+    let providerMutationStarted = false;
+    const beginProviderMutation = async () => {
+      if (providerMutationStarted || !input.providerMutationHooks) return;
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+      providerMutationStarted = true;
+    };
     const inventoryProduct =
       inventoryItem.product &&
         typeof inventoryItem.product === "object" &&
         !Array.isArray(inventoryItem.product)
         ? (inventoryItem.product as Record<string, unknown>)
         : {};
-    const expectedImageUrls = Array.isArray(inventoryProduct.imageUrls)
-      ? [
-        ...new Set(
-          inventoryProduct.imageUrls
-            .map(String)
-            .map((value) => value.trim())
-            .filter(Boolean),
-        ),
-      ]
-      : [];
+    const expectedImageUrls = inventoryProduct.imageUrls as string[];
     if (!expectedImageUrls.length) throw new Error("EBAY_IMAGE_REQUIRED");
     const expectedDescriptionImages = (
       String(offer.listingDescription ?? "").match(/<img\b/gi) ?? []
     ).length;
+    const productAspects = inventoryProduct.aspects
+      && typeof inventoryProduct.aspects === "object"
+      && !Array.isArray(inventoryProduct.aspects)
+      ? inventoryProduct.aspects as Record<string, unknown>
+      : {};
+    const aspectProbes = Object.fromEntries(Object.entries(productAspects).map(
+      ([name, values]) => [name, values as string[]],
+    ));
     const verifiedReadbackStep = (
       name: string,
       remote: RemoteResponse,
@@ -282,32 +310,119 @@ export async function executeEbay(input: ExecuteInput) {
         },
       };
     };
-    const existingInventory = await ebayRequest({
-      payload: input.payload, environment: input.environment, method: "GET",
-      path: `/sell/inventory/v1/inventory_item/${sku}`,
+    const [taxonomy, locationRemote, existingInventory, existingOffers] = await Promise.all([
+      readEbayTaxonomyPolicyGetOnly({
+        payload: input.payload,
+        categoryId: String(offer.categoryId ?? ""),
+        marketplaceId,
+        environment: input.environment,
+        aspectProbes,
+      }),
+      ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/sell/inventory/v1/location",
+        query: new URLSearchParams({ limit: "200" }),
+      }),
+      ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: `/sell/inventory/v1/inventory_item/${sku}`,
+      }),
+      ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: "/sell/inventory/v1/offer",
+        query: new URLSearchParams({
+          sku: rawSku,
+          marketplace_id: marketplaceId,
+          limit: "200",
+        }),
+      }),
+    ]);
+    const configuration = ebayCreateConfigurationEvidence({
+      arguments: { ...input.arguments, offer, inventoryItem },
+      taxonomy,
+      locationRemote,
     });
-    if (!ebayInventorySkuAbsent(existingInventory)) {
-      return result(input, [{
-        name: "inventory-duplicate-preflight", ok: false,
-        status: existingInventory.response.ok ? 409 : existingInventory.response.status,
-        data: { error: existingInventory.response.ok ? "EBAY_EXISTING_INVENTORY_REQUIRES_UPDATE" : "EBAY_INVENTORY_ABSENCE_UNVERIFIED" },
-      }]);
+    const configurationStep: ChannelOperationStep = {
+      name: "listing-create-configuration-preflight",
+      ok: configuration.ok,
+      status: configuration.ok ? 200 : 409,
+      data: configuration,
+    };
+    steps.push(configurationStep);
+    if (!configurationStep.ok) return result(input, steps, rawSku);
+
+    const lineage = ebayCreateLineageDecision({
+      inventory: existingInventory,
+      offers: existingOffers,
+      sku: rawSku,
+      marketplaceId,
+      format: String(offer.format ?? "FIXED_PRICE"),
+    });
+    const inventoryPreflight: ChannelOperationStep = {
+      name: "inventory-create-lineage-preflight",
+      ok: lineage.action !== "blocked",
+      status: lineage.action === "blocked" ? 409 : existingInventory.response.status,
+      data: {
+        code: lineage.code,
+        inventoryPresent: lineage.inventoryPresent,
+      },
+    };
+    const offerPreflight: ChannelOperationStep = {
+      name: "offer-create-lineage-preflight",
+      ok: lineage.action !== "blocked",
+      status: lineage.action === "blocked" ? 409 : existingOffers.response.status,
+      data: {
+        code: lineage.code,
+        exactOfferId: lineage.offerId,
+      },
+    };
+    steps.push(inventoryPreflight, offerPreflight);
+    if (lineage.action === "blocked") return result(input, steps, rawSku);
+
+    let itemReadback = existingInventory;
+    if (lineage.inventoryPresent) {
+      const content = verifyListingUpdateReadback(
+        "ebay",
+        { inventoryItem },
+        { inventoryItem: existingInventory.data },
+      );
+      const existingContentStep: ChannelOperationStep = {
+        name: "inventory-existing-content-readback",
+        ok: existingInventory.response.ok && content.ok,
+        status: existingInventory.response.status,
+        data: {
+          sellerpilotVerification: content.ok
+            ? "EBAY_EXISTING_INVENTORY_CONTENT_VERIFIED"
+            : "EBAY_EXISTING_INVENTORY_CONTENT_MISMATCH",
+          sellerpilotMismatchPaths: content.mismatches.slice(0, 40),
+        },
+      };
+      steps.push(existingContentStep);
+      if (!existingContentStep.ok) return result(input, steps, rawSku);
+    } else {
+      await beginProviderMutation();
+      const itemRemote = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "PUT",
+        path: `/sell/inventory/v1/inventory_item/${sku}`,
+        body: inventoryItem,
+      });
+      steps.push(step("inventory-item", itemRemote));
+      if (!itemRemote.response.ok) return result(input, steps, rawSku);
+      itemReadback = await ebayRequest({
+        payload: input.payload,
+        environment: input.environment,
+        method: "GET",
+        path: `/sell/inventory/v1/inventory_item/${sku}`,
+      });
     }
-    const itemRemote = await ebayRequest({
-      payload: input.payload,
-      environment: input.environment,
-      method: "PUT",
-      path: `/sell/inventory/v1/inventory_item/${sku}`,
-      body: inventoryItem,
-    });
-    steps.push(step("inventory-item", itemRemote));
-    if (!itemRemote.response.ok) return result(input, steps, rawSku);
-    const itemReadback = await ebayRequest({
-      payload: input.payload,
-      environment: input.environment,
-      method: "GET",
-      path: `/sell/inventory/v1/inventory_item/${sku}`,
-    });
     const readbackProduct =
       itemReadback.data.product &&
         typeof itemReadback.data.product === "object" &&
@@ -330,65 +445,78 @@ export async function executeEbay(input: ExecuteInput) {
     );
     steps.push(inventoryImageStep);
     if (!inventoryImageStep.ok) return result(input, steps, rawSku);
-    let offerRemote: RemoteResponse;
-    try {
-      offerRemote = await ebayRequest({
-        payload: input.payload,
-        environment: input.environment,
-        method: "POST",
-        path: "/sell/inventory/v1/offer",
-        body: offer,
-      });
-    } catch {
-      // A dropped response may still have created an offer. Read once by exact
-      // identity; never repeat the offer POST or overwrite another offer.
-      offerRemote = {
-        response: new Response(null, { status: 503 }), text: "",
-        data: { error: "EBAY_OFFER_CREATE_OUTCOME_UNCERTAIN" }
-      };
-    }
-    let offerId =
-      offerRemote.data.offerId === undefined
+    let offerId = lineage.offerId ?? undefined;
+    if (!offerId) {
+      await beginProviderMutation();
+      let offerRemote: RemoteResponse;
+      try {
+        offerRemote = await ebayRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "POST",
+          path: "/sell/inventory/v1/offer",
+          body: offer,
+        });
+      } catch {
+        // A dropped response may still have created an offer. Read once by exact
+        // identity; never repeat the offer POST or overwrite another offer.
+        offerRemote = {
+          response: new Response(null, { status: 503 }), text: "",
+          data: { error: "EBAY_OFFER_CREATE_OUTCOME_UNCERTAIN" },
+        };
+      }
+      offerId = offerRemote.data.offerId === undefined
         ? undefined
         : String(offerRemote.data.offerId);
-    const offerStep = step("offer", offerRemote);
-    if (offerStep.ok) steps.push(offerStep);
-    if (offerStep.ok && offerId) {
-      // The accepted provider step was recorded above together with its durable
-      // offer identity.
-    } else {
-      // A timed-out create call may still have persisted the offer remotely. eBay
-      // also rejects a second offer for the same SKU, so reconcile by SKU before
-      // deciding that the retry failed.
-      const reconcileRemote = await ebayRequest({
-        payload: input.payload,
-        environment: input.environment,
-        method: "GET",
-        path: "/sell/inventory/v1/offer",
-        query: new URLSearchParams({
-          sku: decodeURIComponent(sku),
-          limit: "25",
-        }),
-      });
-      const existing = ebayExactReconciliationOffer(reconcileRemote, rawSku, marketplaceId, String(offer.format ?? "FIXED_PRICE"));
-      offerId =
-        existing?.offerId === undefined ? undefined : String(existing.offerId);
-      const reconcileStep = step("offer-reconcile", reconcileRemote);
-      reconcileStep.ok = reconcileStep.ok && Boolean(offerId);
-      reconcileStep.data = {
-        ...reconcileStep.data,
-        recoveredOfferId: offerId,
-        createStatus: offerRemote.response.status,
-        sellerpilotVerification: offerId
-          ? "EXISTING_OFFER_RECOVERED"
-          : "EBAY_OFFER_RECONCILE_MISSING",
-      };
-      steps.push(reconcileStep);
-      if (!reconcileStep.ok || !offerId) {
-        // A locally known SKU is not an eBay offer/listing identity. In the
-        // accepted-without-offerId case, leave remoteId empty so completion
-        // records an unresolved external action rather than a false identity.
-        return result(input, steps, offerStep.ok ? undefined : rawSku);
+      const offerStep = step("offer", offerRemote);
+      steps.push(offerStep);
+      if (!offerStep.ok || !offerId) {
+        // A timed-out create call may still have persisted the offer remotely.
+        // Reconcile one complete exact page; never repeat POST or PUT an
+        // arbitrary candidate.
+        const reconcileRemote = await ebayRequest({
+          payload: input.payload,
+          environment: input.environment,
+          method: "GET",
+          path: "/sell/inventory/v1/offer",
+          query: new URLSearchParams({
+            sku: rawSku,
+            marketplace_id: marketplaceId,
+            limit: "200",
+          }),
+        });
+        const existing = ebayExactReconciliationOffer(
+          reconcileRemote,
+          rawSku,
+          marketplaceId,
+          String(offer.format ?? "FIXED_PRICE"),
+        );
+        offerId = existing?.offerId === undefined
+          ? undefined
+          : String(existing.offerId);
+        const reconcileStep = step("offer-reconcile", reconcileRemote);
+        reconcileStep.ok = reconcileStep.ok && Boolean(offerId);
+        reconcileStep.data = {
+          ...reconcileStep.data,
+          recoveredOfferId: offerId,
+          createStatus: offerRemote.response.status,
+          sellerpilotVerification: offerId
+            ? "EXISTING_OFFER_RECOVERED"
+            : "EBAY_OFFER_RECONCILE_MISSING",
+        };
+        steps.push(reconcileStep);
+        if (!reconcileStep.ok || !offerId) {
+          // A locally known SKU is not an eBay offer/listing identity. In the
+          // accepted-without-offerId case, leave remoteId empty so completion
+          // records an unresolved external action rather than a false identity.
+          return result(input, steps, offerStep.ok ? undefined : rawSku);
+        }
+        offerStep.ok = true;
+        offerStep.data = {
+          ...offerStep.data,
+          sellerpilotVerification: "EBAY_OFFER_CREATE_RECOVERED_BY_EXACT_GET",
+          recoveredOfferId: offerId,
+        };
       }
     }
     let publishedListingId = "";
@@ -440,6 +568,7 @@ export async function executeEbay(input: ExecuteInput) {
       }
     }
     if (offerId && shouldPublish && !publishedListingId) {
+      await beginProviderMutation();
       const publishRemote = await ebayRequest({
         payload: input.payload,
         environment: input.environment,
@@ -454,7 +583,7 @@ export async function executeEbay(input: ExecuteInput) {
           : String(publishRemote.data.listingId);
       if (!publishStep.ok) return result(input, steps, listingId ?? offerId);
       return ebayListingResultWithPublicationReadback(
-        input,
+        createReadbackInput,
         steps,
         listingId ?? offerId,
         offerId,
@@ -463,7 +592,7 @@ export async function executeEbay(input: ExecuteInput) {
     const finalRemoteId = publishedListingId || offerId || rawSku;
     return offerId
       ? ebayListingResultWithPublicationReadback(
-        input,
+        createReadbackInput,
         steps,
         finalRemoteId,
         offerId,

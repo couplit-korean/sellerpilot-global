@@ -4,9 +4,10 @@ import { blockingListingRequirements, inspectListingDraft, setListingDraftValue 
 
 test("eBay preflight blocks server-managed policy and location placeholders", () => {
   const draft = {
-    inventoryItem: { product: { title: "Test item", description: "A real test item", imageUrls: ["https://example.com/item.jpg"] } },
+    inventoryItem: { condition: "NEW", availability: { shipToLocationAvailability: { quantity: 1 } }, product: { title: "Test item", description: "A real test item", imageUrls: ["https://example.com/item.jpg"] } },
     offer: {
       categoryId: "123",
+      listingDescription: "A real test listing",
       availableQuantity: 1,
       pricingSummary: { price: { value: "10", currency: "USD" } },
       listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
@@ -18,7 +19,7 @@ test("eBay preflight blocks server-managed policy and location placeholders", ()
     blockingListingRequirements("ebay", draft).map((item) => item.key),
     ["fulfillment-policy", "payment-policy", "return-policy", "location"],
   );
-  const accountFields = inspectListingDraft("ebay", draft).filter((item) => item.manualPath);
+  const accountFields = inspectListingDraft("ebay", draft).filter((item) => item.manualPath && item.source === "판매자 계정");
   assert.equal(accountFields.length, 4);
   assert.equal(accountFields.every((item) => item.status === "manual"), true);
   assert.equal(accountFields.every((item) => item.placeholder?.startsWith("Seller Hub")), true);

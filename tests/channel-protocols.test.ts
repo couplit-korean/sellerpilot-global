@@ -1925,6 +1925,54 @@ test("Naver unmarked direct creation cannot reach an existing seller code lookup
   }
 });
 
+function ebayProtocolCreateMetadataResponse(input: {
+  url: URL;
+  categoryId: string;
+  merchantLocationKey: string;
+  fulfillmentPolicyId: string;
+  paymentPolicyId: string;
+  returnPolicyId: string;
+}) {
+  const { url } = input;
+  if (url.pathname.endsWith("/get_default_category_tree_id")) {
+    return Response.json({ categoryTreeId: "0" });
+  }
+  if (url.pathname.includes("get_item_aspects_for_category")) {
+    return Response.json({ aspects: [] });
+  }
+  if (url.pathname.includes("get_item_condition_policies")) {
+    return Response.json({ itemConditionPolicies: [{
+      categoryId: input.categoryId,
+      categoryTreeId: "0",
+      itemConditionRequired: true,
+      itemConditions: [{ conditionId: "1000" }],
+    }] });
+  }
+  if (url.pathname.endsWith("/fulfillment_policy")) {
+    return Response.json({ total: 1, fulfillmentPolicies: [{
+      fulfillmentPolicyId: input.fulfillmentPolicyId, marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/payment_policy")) {
+    return Response.json({ total: 1, paymentPolicies: [{
+      paymentPolicyId: input.paymentPolicyId, marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/return_policy")) {
+    return Response.json({ total: 1, returnPolicies: [{
+      returnPolicyId: input.returnPolicyId, marketplaceId: "EBAY_US", returnsAccepted: false,
+    }] });
+  }
+  if (url.pathname.endsWith("/location")) {
+    return Response.json({ total: 1, locations: [{
+      merchantLocationKey: input.merchantLocationKey,
+      merchantLocationStatus: "ENABLED",
+      location: { address: { country: "KR" } },
+    }] });
+  }
+  return null;
+}
+
 test("eBay listing workflow creates inventory, creates an offer, then publishes", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
@@ -1939,8 +1987,10 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
   let inventoryWritten = false;
   let inventoryBody: Record<string, unknown> = {};
   let offerBody: Record<string, unknown> = {};
+  let published = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     if (url.includes("/inventory_item/") && method === "PUT") {
       inventoryWritten = true;
@@ -1948,13 +1998,35 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
     }
     if (url.endsWith("/offer") && method === "POST") offerBody = JSON.parse(String(init?.body));
     calls.push({ url, method });
+    if (method === "GET") {
+      const metadata = ebayProtocolCreateMetadataResponse({
+        url: parsedUrl,
+        categoryId: "1234",
+        merchantLocationKey: "seoul-warehouse",
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      });
+      if (metadata) return metadata;
+    }
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
     }
     if (url.includes("/inventory_item/") && method === "GET") return Response.json(inventoryBody);
+    if (parsedUrl.pathname.endsWith("/offer") && method === "GET") {
+      return Response.json({ total: 0, offers: [] });
+    }
     if (url.endsWith("/offer") && method === "POST") return new Response(JSON.stringify({ offerId: "36445435465" }), { status: 201, headers: { "content-type": "application/json" } });
-    if (url.endsWith("/offer/36445435465") && method === "GET") return Response.json({ ...offerBody, offerId: "36445435465" });
-    if (url.endsWith("/publish")) return new Response(JSON.stringify({ listingId: "110000000001" }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.endsWith("/offer/36445435465") && method === "GET") return Response.json({
+      ...offerBody,
+      offerId: "36445435465",
+      status: published ? "PUBLISHED" : "UNPUBLISHED",
+      ...(published ? { listing: { listingId: "110000000001", listingStatus: "ACTIVE" } } : {}),
+    });
+    if (url.endsWith("/publish")) {
+      published = true;
+      return new Response(JSON.stringify({ listingId: "110000000001" }), { status: 200, headers: { "content-type": "application/json" } });
+    }
     return new Response(null, { status: 204 });
   };
   try {
@@ -1963,13 +2035,21 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
       operation: "listing.create",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
+        publicationIntent: "live",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "en-US",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 4,
         sku: "SELLERPILOT-001",
-        inventoryItem: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: "NEW", product: { title: "Test", imageUrls } },
+        inventoryItem: { availability: { shipToLocationAvailability: { quantity: 1 } }, condition: "NEW", product: { title: "Test", description: "Test description", imageUrls } },
         offer: {
           sku: "SELLERPILOT-001",
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
+          categoryId: "1234",
           listingDescription,
+          availableQuantity: 1,
+          pricingSummary: { price: { value: "29.50", currency: "USD" } },
           listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
           merchantLocationKey: "seoul-warehouse",
         },
@@ -1979,15 +2059,17 @@ test("eBay listing workflow creates inventory, creates an offer, then publishes"
     });
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "110000000001");
-    assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+    assert.deepEqual(calls.filter((call) => call.method !== "GET")
+      .map((call) => `${call.method} ${new URL(call.url).pathname}`), [
       "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "POST /sell/inventory/v1/offer",
-      "GET /sell/inventory/v1/offer/36445435465",
       "POST /sell/inventory/v1/offer/36445435465/publish",
     ]);
-    assert.deepEqual(result.steps.map((item) => item.name), ["inventory-item", "inventory-image-readback", "offer", "offer-detail-image-readback", "publish"]);
+    for (const name of ["listing-create-configuration-preflight", "inventory-create-lineage-preflight",
+      "offer-create-lineage-preflight", "inventory-item", "inventory-image-readback", "offer",
+      "offer-detail-image-readback", "publish", "listing-create-content-readback"]) {
+      assert.equal(result.steps.some((item) => item.name === name && item.ok), true, name);
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2007,6 +2089,11 @@ test("eBay listing rejects server-managed policies before any provider request",
         operation: "listing.create",
         payload: { access_token: "token", marketplace_id: "EBAY_US" },
         arguments: {
+          publicationIntent: "safe_test",
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "en-US",
+          publicationExpectedFingerprint: "a".repeat(64),
+          publicationExpectedImageCount: 0,
           sku: "SELLERPILOT-AUTO",
           inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
           offer: {
@@ -2041,6 +2128,11 @@ test("eBay listing rejects a server-managed inventory location instead of creati
         operation: "listing.create",
         payload: { access_token: "token", marketplace_id: "EBAY_US" },
         arguments: {
+          publicationIntent: "safe_test",
+          publicationStateContract: "verified_remote_state_v1",
+          publicationExpectedLocale: "en-US",
+          publicationExpectedFingerprint: "a".repeat(64),
+          publicationExpectedImageCount: 0,
           sku: "SELLERPILOT-LOCATION",
           inventoryItem: { product: { title: "Test", imageUrls: ["https://cdn.example.com/item.jpg"] } },
           offer: {
@@ -2066,12 +2158,25 @@ test("eBay preserves an accepted offer marker when create omits offerId and reco
   const imageUrls = ["https://cdn.example.com/item.jpg"];
   let inventoryWritten = false;
   let inventoryBody: Record<string, unknown> = {};
+  let offerCollectionReads = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     if (url.includes("/inventory_item/") && method === "PUT") {
       inventoryWritten = true;
       inventoryBody = JSON.parse(String(init?.body));
+    }
+    if (method === "GET") {
+      const metadata = ebayProtocolCreateMetadataResponse({
+        url: parsedUrl,
+        categoryId: "1234",
+        merchantLocationKey: "warehouse-1",
+        fulfillmentPolicyId: "f-1",
+        paymentPolicyId: "p-1",
+        returnPolicyId: "r-1",
+      });
+      if (metadata) return metadata;
     }
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
@@ -2083,7 +2188,8 @@ test("eBay preserves an accepted offer marker when create omits offerId and reco
       return Response.json({}, { status: 201 });
     }
     if (url.includes("/offer?sku=") && method === "GET") {
-      return Response.json({ offers: [] });
+      offerCollectionReads += 1;
+      return Response.json({ total: 0, offers: [] });
     }
     return new Response(null, { status: 204 });
   };
@@ -2093,12 +2199,21 @@ test("eBay preserves an accepted offer marker when create omits offerId and reco
       operation: "listing.create",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
+        publicationIntent: "safe_test",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "en-US",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 0,
         sku: "SELLERPILOT-NO-OFFER-ID",
-        inventoryItem: { product: { title: "Test", imageUrls } },
+        inventoryItem: { condition: "NEW", availability: { shipToLocationAvailability: { quantity: 1 } }, product: { title: "Test", description: "Test description", imageUrls } },
         offer: {
           sku: "SELLERPILOT-NO-OFFER-ID",
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
+          categoryId: "1234",
+          listingDescription: "Test listing description",
+          availableQuantity: 1,
+          pricingSummary: { price: { value: "29.50", currency: "USD" } },
           listingPolicies: { fulfillmentPolicyId: "f-1", paymentPolicyId: "p-1", returnPolicyId: "r-1" },
           merchantLocationKey: "warehouse-1",
         },
@@ -2110,6 +2225,7 @@ test("eBay preserves an accepted offer marker when create omits offerId and reco
     assert.equal(operation.remoteId, undefined);
     assert.equal(operation.steps.find((item) => item.name === "offer")?.ok, true);
     assert.equal(operation.steps.find((item) => item.name === "offer-reconcile")?.ok, false);
+    assert.equal(offerCollectionReads, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -2151,8 +2267,10 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
   let inventoryWritten = false;
   let inventoryBody: Record<string, unknown> = {};
   let offerBody: Record<string, unknown> = {};
+  let offerCollectionReads = 0;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     if (url.includes("/inventory_item/") && method === "PUT") {
       inventoryWritten = true;
@@ -2160,6 +2278,17 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
     }
     if (url.endsWith("/offer") && method === "POST") offerBody = JSON.parse(String(init?.body));
     calls.push({ url, method });
+    if (method === "GET") {
+      const metadata = ebayProtocolCreateMetadataResponse({
+        url: parsedUrl,
+        categoryId: "1234",
+        merchantLocationKey: "seoul-warehouse",
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      });
+      if (metadata) return metadata;
+    }
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
     }
@@ -2168,6 +2297,8 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
       return Response.json({ errors: [{ errorId: 25002, message: "Offer already exists" }] }, { status: 409 });
     }
     if (url.includes("/offer?sku=") && method === "GET") {
+      offerCollectionReads += 1;
+      if (offerCollectionReads === 1) return Response.json({ total: 0, offers: [] });
       return Response.json({ total: 1, offers: [{ sku: "SELLERPILOT-RETRY", offerId: "existing-offer", marketplaceId: "EBAY_US", format: "FIXED_PRICE", status: "PUBLISHED" }] });
     }
     if (url.endsWith("/offer/existing-offer") && method === "GET") {
@@ -2177,7 +2308,7 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
         marketplaceId: "EBAY_US",
         format: "FIXED_PRICE",
         status: "PUBLISHED",
-        listing: { listingId: "110000000777" },
+        listing: { listingId: "110000000777", listingStatus: "ACTIVE" },
         listingDescription,
       });
     }
@@ -2189,13 +2320,21 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
       operation: "listing.create",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
+        publicationIntent: "live",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "en-US",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 4,
         sku: "SELLERPILOT-RETRY",
-        inventoryItem: { product: { title: "Retry", imageUrls } },
+        inventoryItem: { condition: "NEW", availability: { shipToLocationAvailability: { quantity: 1 } }, product: { title: "Retry", description: "Retry description", imageUrls } },
         offer: {
           sku: "SELLERPILOT-RETRY",
           marketplaceId: "EBAY_US",
           format: "FIXED_PRICE",
+          categoryId: "1234",
           listingDescription,
+          availableQuantity: 1,
+          pricingSummary: { price: { value: "29.50", currency: "USD" } },
           listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
           merchantLocationKey: "seoul-warehouse",
         },
@@ -2206,13 +2345,8 @@ test("eBay listing retry reconciles an existing SKU offer and returns its publis
 
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "110000000777");
-    assert.deepEqual(result.steps.map((item) => item.name), [
-      "inventory-item",
-      "inventory-image-readback",
-      "offer-reconcile",
-      "offer-detail-image-readback",
-    ]);
-    assert.equal(result.steps[2].data.sellerpilotVerification, "EXISTING_OFFER_RECOVERED");
+    assert.equal(result.steps.find((item) => item.name === "offer-reconcile")?.data.sellerpilotVerification, "EXISTING_OFFER_RECOVERED");
+    assert.equal(result.steps.some((item) => item.name === "listing-create-content-readback" && item.ok), true);
     assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
   } finally {
     globalThis.fetch = originalFetch;
@@ -2225,16 +2359,31 @@ test("eBay stops before offer creation when the inventory image readback loses d
   let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     if (url.includes("/inventory_item/") && method === "PUT") {
       inventoryWritten = true;
     }
     calls.push({ url, method });
+    if (method === "GET") {
+      const metadata = ebayProtocolCreateMetadataResponse({
+        url: parsedUrl,
+        categoryId: "1234",
+        merchantLocationKey: "seoul-warehouse",
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      });
+      if (metadata) return metadata;
+    }
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
     }
     if (url.includes("/inventory_item/") && method === "GET") {
       return Response.json({ product: { imageUrls: ["https://cdn.example.com/hero.jpg"] } });
+    }
+    if (parsedUrl.pathname.endsWith("/offer") && method === "GET") {
+      return Response.json({ total: 0, offers: [] });
     }
     return new Response(null, { status: 204 });
   };
@@ -2244,10 +2393,18 @@ test("eBay stops before offer creation when the inventory image readback loses d
       operation: "listing.create",
       payload: { access_token: "token", marketplace_id: "EBAY_US" },
       arguments: {
+        publicationIntent: "live",
+        publicationStateContract: "verified_remote_state_v1",
+        publicationExpectedLocale: "en-US",
+        publicationExpectedFingerprint: "a".repeat(64),
+        publicationExpectedImageCount: 0,
         sku: "SELLERPILOT-IMAGE-FAIL",
         inventoryItem: {
+          condition: "NEW",
+          availability: { shipToLocationAvailability: { quantity: 1 } },
           product: {
             title: "Image readback test",
+            description: "Image readback description",
             imageUrls: [
               "https://cdn.example.com/hero.jpg",
               "https://cdn.example.com/detail-1.jpg",
@@ -2260,6 +2417,10 @@ test("eBay stops before offer creation when the inventory image readback loses d
         offer: {
           sku: "SELLERPILOT-IMAGE-FAIL",
           marketplaceId: "EBAY_US",
+          categoryId: "1234",
+          listingDescription: "Image readback listing description",
+          availableQuantity: 1,
+          pricingSummary: { price: { value: "29.50", currency: "USD" } },
           listingPolicies: { fulfillmentPolicyId: "fulfillment-1", paymentPolicyId: "payment-1", returnPolicyId: "return-1" },
           merchantLocationKey: "seoul-warehouse",
         },
@@ -2269,10 +2430,11 @@ test("eBay stops before offer creation when the inventory image readback loses d
     });
 
     assert.equal(result.ok, false);
-    assert.deepEqual(result.steps.map((item) => item.name), ["inventory-item", "inventory-image-readback"]);
-    assert.equal(result.steps[1].data.expectedImageCount, 5);
-    assert.equal(result.steps[1].data.actualImageCount, 1);
-    assert.equal(calls.some((call) => call.url.endsWith("/offer")), false);
+    const imageStep = result.steps.find((item) => item.name === "inventory-image-readback");
+    assert.ok(imageStep, JSON.stringify(result));
+    assert.equal(imageStep?.data.expectedImageCount, 5);
+    assert.equal(imageStep?.data.actualImageCount, 1);
+    assert.equal(calls.some((call) => call.method === "POST" && call.url.endsWith("/offer")), false);
   } finally {
     globalThis.fetch = originalFetch;
   }

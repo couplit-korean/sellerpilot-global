@@ -2,6 +2,7 @@ import { assertNoRetiredProductRecovery } from "./retired-product-recovery";
 import { runChannelDiagnostic, type ChannelDiagnostic } from "../channel-diagnostics";
 import { searchElevenstProductVariants, type CompetitorPriceCandidate } from "../competitor-prices";
 import { assertEbayListingCreateConfiguration } from "./ebay-listing-configuration";
+import { assertEbayCreatePublicationContract } from "./ebay-create-preflight";
 import type { GatewayClaim } from "./gateway-contract";
 import { executeProviderListingLineageVerification, type ProviderListingLineageVerificationResult } from "./listing-lineage-verification";
 import { assertListingPublicationSourceLocalized, listingPublicationProviderAssetEvidence, parseListingPublicationAssetBinding } from "./listing-publication-content";
@@ -450,6 +451,7 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       // Reject legacy/directly queued drafts before OAuth refresh, media writes,
       // or the provider-mutation fence. Policy/location selection is an
       // operator decision and cannot be inferred safely by the worker.
+      assertEbayCreatePublicationContract(rawArguments);
       assertEbayListingCreateConfiguration(rawArguments);
     }
     if (contentBoundPublicationWrite) {
@@ -465,6 +467,20 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       }
     }
     const preparedCredential = await prepareCredential(input, rawArguments);
+    const delayedEbayCreateBoundary = input.job.channel === "ebay"
+      && input.job.operation === "listing.create";
+    if (delayedEbayCreateBoundary) {
+      if (!readProviderAccountIdentity(preparedCredential.credential, "ebay")) {
+        throw new Error("EBAY_CREATE_SELLER_IDENTITY_REQUIRED");
+      }
+      const recordedScopes = typeof preparedCredential.credential.scopes === "string"
+        ? new Set(preparedCredential.credential.scopes.split(/\s+/u).filter(Boolean))
+        : new Set<string>();
+      if (!["https://api.ebay.com/oauth/api_scope/sell.account",
+        "https://api.ebay.com/oauth/api_scope/sell.inventory"].every((scope) => recordedScopes.has(scope))) {
+        throw new Error("EBAY_CREATE_SELL_SCOPES_REQUIRED");
+      }
+    }
     let operationArguments = preparedCredential.arguments_;
     let mediaMutationObserved = false;
     if (input.job.operation === "listing.create" || input.job.operation === "listing.update") {
@@ -475,7 +491,14 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
         arguments: operationArguments,
         environment: input.job.environment,
         signal: input.signal,
-        hooks: input.hooks,
+        hooks: delayedEbayCreateBoundary
+          ? {
+              assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+              beginProviderMutation: async () => {
+                throw new Error("EBAY_CREATE_MEDIA_MUTATION_BEFORE_PREFLIGHT");
+              },
+            }
+          : input.hooks,
         ...(preparedCredential.shopeeShopCredential
           ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
           : {}),
@@ -491,7 +514,8 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       throw new Error("TEMU_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
     }
     if (writeChannelOperations.has(input.job.operation)
-      && !delayedTemuActivationBoundary) {
+      && !delayedTemuActivationBoundary
+      && !delayedEbayCreateBoundary) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -502,6 +526,14 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
+      ...(delayedEbayCreateBoundary
+        ? {
+            providerMutationHooks: {
+              begin: () => input.hooks.beginProviderMutation(),
+              assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+            },
+          }
+        : {}),
       ...(preparedCredential.shopeeShopCredential
         ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
         : {}),

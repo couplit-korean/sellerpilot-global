@@ -439,6 +439,211 @@ test("legacy eBay diagnostic stages immutable GetUser identity before privilege 
   }
 });
 
+test("eBay create keeps credential refresh, media preparation, read preflight and provider fence distinct", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  const eiasToken = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=";
+  const job = genericClaim("ebay", "listing.create");
+  job.request = { arguments: {
+    sku: "SELLERPILOT-FENCE",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "safe_test",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 0,
+    inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+    offer: {
+      marketplaceId: "EBAY_US",
+      listingPolicies: {
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      },
+      merchantLocationKey: "warehouse-1",
+    },
+  } };
+  job.credential = {
+    client_id: "sandbox-client",
+    client_secret: "sandbox-secret",
+    ru_name: "sandbox-runame",
+    access_token: "expired-access-token",
+    access_token_expires_at: "2000-01-01T00:00:00.000Z",
+    refresh_token: "sandbox-refresh-token",
+    refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+    scopes: [
+      "https://api.ebay.com/oauth/api_scope/sell.account",
+      "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    ].join(" "),
+    provider_account_identity_version: "v1",
+    provider_account_subject: `ebay:eias:${eiasToken}`,
+  };
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const callName = new Headers(init?.headers).get("x-ebay-api-call-name") ?? "";
+    if (url.endsWith("/identity/v1/oauth2/token")) {
+      events.push("oauth-token");
+      return Response.json({ access_token: "fresh-access-token", expires_in: 7200 });
+    }
+    if (callName === "GetUser") {
+      events.push("get-user");
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><GetUserResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><User><UserID>seller</UserID><EIASToken>${eiasToken}</EIASToken></User></GetUserResponse>`,
+        { status: 200, headers: { "content-type": "text/xml" } },
+      );
+    }
+    throw new Error(`unexpected eBay request: ${url}`);
+  };
+  try {
+    const result = await executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("provider-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async (input) => {
+      events.push("adapter-read-preflight");
+      assert.ok(input.providerMutationHooks);
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+      events.push("provider-write");
+      return {
+        ok: true,
+        channel: "ebay",
+        operation: "listing.create",
+        steps: [],
+        safeMessage: "ok",
+      };
+    });
+    assert.equal(result.ok, true);
+    assert.ok(events.indexOf("credential-fence") < events.indexOf("oauth-token"));
+    assert.ok(events.indexOf("oauth-token") < events.indexOf("get-user"));
+    assert.ok(events.indexOf("get-user") < events.indexOf("credential-stage"));
+    assert.ok(events.indexOf("credential-stage") < events.indexOf("adapter-read-preflight"));
+    assert.ok(events.indexOf("adapter-read-preflight") < events.indexOf("provider-fence"));
+    assert.ok(events.indexOf("provider-fence") < events.indexOf("provider-write"));
+    assert.equal(events.filter((event) => event === "provider-fence").length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay create rejects an incomplete recorded Sell scope before provider fence", async () => {
+  const job = genericClaim("ebay", "listing.create");
+  job.request = { arguments: {
+    sku: "SELLERPILOT-SCOPE",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "safe_test",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 0,
+    inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+    offer: {
+      marketplaceId: "EBAY_US",
+      listingPolicies: {
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      },
+      merchantLocationKey: "warehouse-1",
+    },
+  } };
+  job.credential = {
+    access_token: "valid-access-token",
+    access_token_expires_at: "2099-01-01T00:00:00.000Z",
+    scopes: "https://api.ebay.com/oauth/api_scope/sell.account",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "ebay:eias:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",
+  };
+  const events: string[] = [];
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("provider-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async () => {
+      events.push("provider-executor");
+      throw new Error("provider executor must not run");
+    }),
+    /EBAY_CREATE_SELL_SCOPES_REQUIRED/u,
+  );
+  assert.equal(events.includes("provider-fence"), false);
+  assert.equal(events.includes("provider-executor"), false);
+  assert.equal(events.includes("credential-fence"), false);
+  assert.equal(events.includes("credential-stage"), false);
+});
+
+test("eBay create rejects missing or tampered publication contract before credential, media, or provider execution", async () => {
+  for (const mutation of [
+    { publicationStateContract: undefined },
+    { publicationStateContract: "verified_remote_state_v0" },
+    { publicationIntent: "preview" },
+    { publicationExpectedFingerprint: "invalid" },
+    { publicationExpectedLocale: "ko-KR" },
+  ]) {
+    const job = genericClaim("ebay", "listing.create");
+    job.request = { arguments: {
+      sku: "SELLERPILOT-CONTRACT",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "safe_test",
+      publicationExpectedLocale: "en-US",
+      publicationExpectedFingerprint: "a".repeat(64),
+      publicationExpectedImageCount: 0,
+      inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+      offer: {
+        marketplaceId: "EBAY_US",
+        listingPolicies: {
+          fulfillmentPolicyId: "fulfillment-1",
+          paymentPolicyId: "payment-1",
+          returnPolicyId: "return-1",
+        },
+        merchantLocationKey: "warehouse-1",
+      },
+      ...mutation,
+    } };
+    job.credential = {
+      access_token: "expired-access-token",
+      access_token_expires_at: "2000-01-01T00:00:00.000Z",
+      refresh_token: "refresh-token",
+    };
+    const events: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      events.push("provider-http");
+      throw new Error("provider HTTP must not run");
+    };
+    try {
+      await assert.rejects(
+        executeServerlessGatewayProviderJob({
+          job,
+          signal: new AbortController().signal,
+          hooks: {
+            assertLeaseHealthy: async () => { events.push("lease"); },
+            beginProviderMutation: async () => { events.push("provider-fence"); },
+            beginCredentialMutation: async () => { events.push("credential-fence"); },
+            stageCredentialRefresh: async () => { events.push("credential-stage"); },
+          },
+        }, async () => {
+          events.push("provider-executor");
+          throw new Error("provider executor must not run");
+        }),
+        /EBAY_CREATE_PUBLICATION_CONTRACT_INVALID/u,
+      );
+      assert.deepEqual(events, []);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
 test("Coupang publication reverification never opens the provider mutation fence", async () => {
   const events: string[] = [];
   const job = {

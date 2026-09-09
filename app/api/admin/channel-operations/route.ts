@@ -271,6 +271,15 @@ export async function POST(request: NextRequest) {
       mode: "listing_commerce_values_required",
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
+  if (channel === "ebay" && operation === "listing.create"
+    && (parsed.data.currency !== "USD"
+      || typeof parsed.data.price !== "number"
+      || parsed.data.price <= 0)) {
+    return NextResponse.json({
+      message: "eBay US 등록에는 승인된 양수 USD 가격이 필요합니다.",
+      mode: "ebay_usd_price_required",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
   const listingBoundOperation = ["listing.update", "listing.stop", "listing.activate", "price.update", "inventory.update"].includes(operation);
   if (listingBoundOperation && (!parsed.data.productId || !parsed.data.resourceListingId)) {
     return NextResponse.json({

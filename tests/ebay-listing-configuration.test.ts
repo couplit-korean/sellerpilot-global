@@ -24,6 +24,11 @@ const {
 
 function explicitArguments() {
   return {
+    publicationIntent: "safe_test",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 0,
     sku: "SELLERPILOT-EXPLICIT",
     inventoryItem: {
       product: { imageUrls: ["https://cdn.example.com/item.jpg"] },
@@ -100,5 +105,6 @@ test("eBay executor contains no policy auto-selection or hard-coded location pro
   );
   assert.doesNotMatch(source, /sellerpilot-seoul|Teheran-ro/);
   assert.doesNotMatch(source, /sell\/account\/v1\/(?:fulfillment|payment|return)_policy/);
-  assert.doesNotMatch(source, /sell\/inventory\/v1\/location/);
+  assert.match(source, /method: "GET",[\s\S]*?path: "\/sell\/inventory\/v1\/location"/u);
+  assert.doesNotMatch(source, /method: "(?:POST|PUT|PATCH|DELETE)",[\s\S]{0,200}?path: "\/sell\/inventory\/v1\/location"/u);
 });

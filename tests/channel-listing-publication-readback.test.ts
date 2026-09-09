@@ -233,6 +233,9 @@ function ebayOffer(input: {
     format: "FIXED_PRICE",
     sku: "SELLERPILOT-001",
     marketplaceId: input.marketplaceId ?? "EBAY_US",
+    categoryId: "1234",
+    availableQuantity: 1,
+    pricingSummary: { price: { value: "29.50", currency: "USD" } },
     status: input.status,
     listingDescription: detailHtml(input.imageCount ?? 8),
     listingPolicies: {
@@ -259,12 +262,19 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
     inventoryItem: {
       availability: { shipToLocationAvailability: { quantity: 1 } },
       condition: "NEW",
-      product: { title: "Verified item", imageUrls: ebayInventoryImages() },
+      product: {
+        title: "Verified item",
+        description: "Verified description",
+        imageUrls: ebayInventoryImages(),
+      },
     },
     offer: {
       sku: "SELLERPILOT-001",
       marketplaceId: "EBAY_US",
       format: "FIXED_PRICE",
+      categoryId: "1234",
+      availableQuantity: 1,
+      pricingSummary: { price: { value: "29.50", currency: "USD" } },
       listingDescription: detailHtml(),
       listingPolicies: {
         fulfillmentPolicyId: "fulfillment-1",
@@ -274,6 +284,47 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
       merchantLocationKey: "seoul-warehouse",
     },
   };
+}
+
+function ebayCreateMetadataResponse(url: URL) {
+  if (url.pathname.endsWith("/get_default_category_tree_id")) {
+    return Response.json({ categoryTreeId: "0" });
+  }
+  if (url.pathname.includes("get_item_aspects_for_category")) {
+    return Response.json({ aspects: [] });
+  }
+  if (url.pathname.includes("get_item_condition_policies")) {
+    return Response.json({ itemConditionPolicies: [{
+      categoryId: "1234",
+      categoryTreeId: "0",
+      itemConditionRequired: true,
+      itemConditions: [{ conditionId: "1000" }],
+    }] });
+  }
+  if (url.pathname.endsWith("/fulfillment_policy")) {
+    return Response.json({ total: 1, fulfillmentPolicies: [{
+      fulfillmentPolicyId: "fulfillment-1", marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/payment_policy")) {
+    return Response.json({ total: 1, paymentPolicies: [{
+      paymentPolicyId: "payment-1", marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/return_policy")) {
+    return Response.json({ total: 1, returnPolicies: [{
+      returnPolicyId: "return-1", marketplaceId: "EBAY_US", returnsAccepted: false,
+    }] });
+  }
+  if (url.pathname.endsWith("/location")) {
+    return Response.json({ total: 1, locations: [{
+      merchantLocationKey: "seoul-warehouse",
+      merchantLocationStatus: "ENABLED",
+      location: { address: { country: "KR" } },
+    }] });
+  }
+  if (url.pathname.endsWith("/offer")) return Response.json({ total: 0, offers: [] });
+  return null;
 }
 
 test("Coupang read-only publication boundary combines seller-product and vendor-item state", async () => {
@@ -861,8 +912,13 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
   let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     calls.push({ url, method });
+    if (method === "GET") {
+      const metadata = ebayCreateMetadataResponse(parsedUrl);
+      if (metadata) return metadata;
+    }
     if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
@@ -885,15 +941,16 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
       environment: "production",
     });
     assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
-    assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
+    assert.deepEqual(calls.filter((call) => call.method !== "GET")
+      .map((call) => `${call.method} ${new URL(call.url).pathname}`), [
       "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "POST /sell/inventory/v1/offer",
-      "GET /sell/inventory/v1/offer/offer-123",
-      "GET /sell/inventory/v1/offer/offer-123",
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
     ]);
+    for (const path of ["get_default_category_tree_id", "get_item_aspects_for_category",
+      "get_item_condition_policies", "/fulfillment_policy", "/payment_policy",
+      "/return_policy", "/location", "/inventory_item/", "/offer"]) {
+      assert.equal(calls.some((call) => call.method === "GET" && call.url.includes(path)), true, path);
+    }
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteId, "offer-123");
@@ -909,7 +966,12 @@ test("eBay live create requires final PUBLISHED ACTIVE readback after publishOff
   let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
+    if (method === "GET") {
+      const metadata = ebayCreateMetadataResponse(parsedUrl);
+      if (metadata) return metadata;
+    }
     if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
     if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
       return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
