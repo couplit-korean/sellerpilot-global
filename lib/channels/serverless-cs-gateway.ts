@@ -57,6 +57,7 @@ export const SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS = [
   "smartstore",
   "ebay",
   "temu",
+  "shopee",
 ] as const;
 
 const WAKE_HMAC_LABEL = "sellerpilot:channel-gateway-drain:wake:v1";
@@ -209,13 +210,8 @@ function isEligibleClaim(
   staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
 ) {
   if (!serverlessGatewayOperationAllowed(claim.channel, claim.operation)) return false;
-  // Shopee only actually rejected the OAuth token exchange itself from the
-  // Vercel serverless source address (2026-08-30, job
-  // 177eaf2e-3e28-4757-9521-16a517ee3b93). Every other Shopee operation
-  // reuses the already-active, unexpired credential and is not IP-gated the
-  // same way, so only oauth.exchange keeps requiring the static-egress
-  // attestation; the rest of the fixed-egress channel list is unchanged.
-  if (claim.channel === "shopee" && claim.operation !== "oauth.exchange") return true;
+  // Shopee, Coupang, Smartstore, Temu, and 11st run on the Mac allowlisted IP.
+  // Vercel must not steal those jobs.
   return !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(claim.channel)
     || staticEgressChannels.includes(claim.channel as ServerlessStaticEgressChannel);
 }
@@ -296,10 +292,7 @@ export function serverlessCsCurrentInquiryEnqueues(
   now = new Date(),
   staticEgressChannels: readonly ServerlessStaticEgressChannel[] = [],
 ) {
-  const enabledStaticEgress = new Set(staticEgressChannels);
   return SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS
-    .filter((channel) => !(SERVERLESS_STATIC_EGRESS_CHANNELS as readonly string[]).includes(channel)
-      || enabledStaticEgress.has(channel as ServerlessStaticEgressChannel))
     .flatMap((channel) =>
     inquirySyncRequests(channel, now).map((payload) => ({
       channel,

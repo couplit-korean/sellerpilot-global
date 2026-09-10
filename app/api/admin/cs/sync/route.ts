@@ -383,17 +383,6 @@ export async function POST(request: Request) {
       });
       return { channel, status: "unsupported" as const };
     }
-    if ((channel === "temu" && !hasServerlessStaticEgressFor(staticEgressChannels, ["temu"]))
-        || (channel === "smartstore" && !smartstoreFixedEgressReady)) {
-      return {
-        channel,
-        status: "fixed_egress_required" as const,
-        queuedJobs: 0,
-        pendingJobs: 0,
-        blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED,
-      };
-    }
-
     try {
         const queued = await Promise.all(requests.map((payload) => runPeriodicEnqueueRpc(() => channel === "lazada"
           ? admin.serviceClient.rpc("sellerpilot_service_enqueue_lazada_periodic_sync", {
