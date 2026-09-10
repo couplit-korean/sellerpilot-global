@@ -86,3 +86,29 @@ macOS Gatekeeper가 Next.js 네이티브 바이너리를 차단한다. 실제로
 2. `rate budget`은 게이트웨이 claim 함수 체인과 함께 적용.
 3. 위 1~2가 끝나면 `main`에 병합 커밋을 반영해 Production을 통합 빌드로 교체하고 CS·상품을 다시 검증한다.
 4. 원장 표기는 그대로 **18/48**, 실제 CREATE+공식 조회 **0/8**이다. 로컬·Preview 통과를 실등록으로 올리지 않는다.
+
+## 2026-09-10 추가 진행 (Production 반영)
+
+- 운영 DB 추가 적용 (추가형만, 가드 통과분)
+  - `20260910020500_coupang_durable_create_reconciliation` → `sellerpilot_service_enqueue_coupang_create_reconciliation`, receipts 테이블
+  - `20260910021500_fence_coupang_create_source_revision`
+  - `20260910025500_fence_coupang_create_official_sources`
+  - `20260910031500_fence_coupang_create_official_sources_r7`
+  - `20260910032500_fence_coupang_create_official_sources_r8`
+  - `20260910041500_coupang_create_exact_provider_body_r12` → `sellerpilot_service_record_coupang_create_transmission`
+  - `20260910042000_complete_coupang_durable_create_reconciliation_r12`
+  - 미적용: `20260910042500_..._backoff_r12` (가드 `COUPANG_CREATE_RECONCILIATION_BACKOFF_DEPENDENCY_MISSING`).
+    `sellerpilot_private.channel_gateway_jobs.rate_not_before`가 선행 필요하고, 그 컬럼은
+    `20260907233000_add_provider_rate_budgets`가 만든다. 그 마이그레이션은 게이트웨이 claim 함수 선행 가드
+    (`SERVERLESS_GATEWAY_RATE_BUDGET_CLAIM_SOURCE_DRIFT`)로 거부됐다. 게이트웨이 체인과 함께 처리한다.
+  - 공유 함수 변경은 `rename + wrapper` 패턴(예: `serverless_gateway_job_allowed`)이라 기존 채널 규칙을 위임 유지한다.
+- `main` 통합 반영
+  - `origin/main`에 있던 `8ee8d9e4 fix(lazada): restore exact OAuth reauthorization path (#1)`을 병합(충돌 3건 해소).
+    Lazada 헬퍼는 `providerFetch`(읽기 전용 컨텍스트) 유지, 자격증명 센터는 Shopee·Lazada 정확 OAuth 진입점을 모두 유지.
+  - `main` = `0948614` (origin·vercel 동일). Vercel **Production Ready** (2m대). 로컬 `tsc` 0 errors.
+- Production 실서비스 검증
+  - https://sellerpilot-global.vercel.app
+  - 통합 대시보드: `판매 데이터 원장 연결`, DB 오류 없음
+  - 상품 등록 센터: 3단계 워크플로 렌더
+  - CS 통합함: 정상 렌더
+  - 즉 CS와 상품이 **한 앱**에서 함께 동작한다. 별도 프로젝트로 분리하지 않았다.
