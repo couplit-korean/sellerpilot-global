@@ -5696,6 +5696,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   }, [inquiryHistoryBackfill, notify, reloadOperations]);
 
   const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
+    if (next === "cs") {
+      window.location.assign("/cs");
+      return;
+    }
     const nextRegistrationStatus = next === "registration-activity"
       ? registrationActivityFilterFromValue(requestedRegistrationStatus)
       : "all";

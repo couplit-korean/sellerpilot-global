@@ -1,7 +1,17 @@
 import assert from "node:assert/strict";
 import { readdir, readFile } from "node:fs/promises";
+import { registerHooks } from "node:module";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
+
+registerHooks({
+  resolve(specifier, context, nextResolve) {
+    if (specifier === "server-only") {
+      return { shortCircuit: true, url: "data:text/javascript,export default {}" };
+    }
+    return nextResolve(specifier, context);
+  },
+});
 
 const ADMIN_ID = "40404b44-f364-4c52-98ca-9d6f7371d3a1";
 const TOKEN_HASH = "9".repeat(64);
@@ -9,6 +19,10 @@ const LINEAGE_MIGRATION = "20260825111810_harden_inquiry_reply_account_lineage.s
 const PRE_LINEAGE_MIGRATION = "20260825111800_bind_listing_seller_accounts.sql";
 const EBAY_ASQ_MIGRATION = "20260828141000_enable_ebay_asq_inquiry_reply_lineage.sql";
 const EBAY_ASQ_SITE_MIGRATION = "20260828144000_bind_ebay_asq_marketplace_and_rate_limit.sql";
+// This reduced CS fixture last passed on dda5386 and intentionally omits
+// the serverless claimant chain. Pin its exact schema horizon; production
+// overlay replay remains covered by the separate full migration suite.
+const CS_FIXTURE_SCHEMA_THROUGH = "20260901174000_require_exact_smartstore_stock_one.sql";
 const FIXTURE_EXCLUDED_MIGRATIONS = new Set([
   "20260828145600_serverless_cs_claim_and_runtime_bootstrap.sql",
   "20260828145700_schedule_serverless_cs_wakeup.sql",
@@ -34,6 +48,38 @@ const FIXTURE_EXCLUDED_MIGRATIONS = new Set([
   "20260831131500_retire_pre_v3_competitor_search_queue.sql",
   "20260831132000_competitor_identity_lineage_fence.sql",
 ]);
+const smartstoreRevisionSql = await readFile(new URL(
+  "../supabase/migrations/20260909113830_cs_smartstore_buyer_content_revision.sql",
+  import.meta.url,
+), "utf8");
+const csCommerceBoundarySql = await readFile(new URL(
+  "../supabase/migrations/20260908001000_harden_cs_commerce_boundaries.sql",
+  import.meta.url,
+), "utf8");
+const smartstoreOrderBindingV2Sql = await readFile(new URL(
+  "../supabase/migrations/20260908140403_cs_smartstore_order_binding_v2.sql",
+  import.meta.url,
+), "utf8");
+const smartstoreAccountScopeSql = await readFile(new URL(
+  "../supabase/migrations/20260909152143_cs_smartstore_account_scope.sql",
+  import.meta.url,
+), "utf8");
+const replyObservationSql = await readFile(new URL(
+  "../supabase/migrations/20260907232000_add_cs_reply_remote_observation.sql",
+  import.meta.url,
+), "utf8");
+const elevenstExactObservationSql = await readFile(new URL(
+  "../supabase/migrations/20260909112157_cs_elevenst_exact_reply_observation.sql",
+  import.meta.url,
+), "utf8");
+const smartstoreExactReadbackSql = await readFile(new URL(
+  "../supabase/migrations/20260909152145_cs_smartstore_exact_reply_readback.sql",
+  import.meta.url,
+), "utf8");
+const smartstorePeriodicAccountFanoutSql = await readFile(new URL(
+  "../supabase/migrations/20260909152147_cs_smartstore_periodic_account_fanout.sql",
+  import.meta.url,
+), "utf8");
 
 const supabaseCompatibilityLayer = String.raw`
 do $$ begin create role anon noinherit; exception when duplicate_object then null; end $$;
@@ -264,31 +310,14 @@ async function migrationEntries() {
   return { migrationUrl, names };
 }
 
-async function applyMigrations(db, { through } = {}) {
+async function applyMigrations(db, { through = CS_FIXTURE_SCHEMA_THROUGH } = {}) {
   const { migrationUrl, names } = await migrationEntries();
+  assert.ok(names.includes(through), "the exact historical CS fixture schema must exist");
   for (const name of names) {
-    if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) {
-      if (name === "20260831057100_prioritize_exact_qoo10_s1_activation_claim.sql") {
-        // This reduced CS fixture omits the production-specific Qoo10 claim
-        // priority migration. Later generic claimant definitions still call
-        // its predicate, so provide the inert result that an absent exact S1
-        // production tuple represents.
-        await db.exec(`
-          create or replace function
-            sellerpilot_private.qoo10_exact_s1_activation_claim_priority(uuid)
-          returns boolean language sql stable set search_path = ''
-          as $$ select false $$
-        `);
-      }
-      continue;
-    }
+    if (name > through) break;
+    if (FIXTURE_EXCLUDED_MIGRATIONS.has(name)) continue;
     const sql = await readFile(new URL(name, migrationUrl), "utf8");
-    try {
-      await db.exec(withoutUnavailableExtensions(sql));
-    } catch (error) {
-      error.message = `${name}: ${error.message}`;
-      throw error;
-    }
+    await db.exec(withoutUnavailableExtensions(sql));
     if (name === through) break;
   }
 }
@@ -298,6 +327,13 @@ async function createDatabase({ through } = {}) {
   await db.exec(supabaseCompatibilityLayer);
   await applyMigrations(db, { through });
   return db;
+}
+
+async function applyReviewedCs140(db) {
+  for (const file of ['fixtures/cs140-reviewed-live-dependencies.sql', 'fixtures/cs140-reviewed-live-preimages.sql']) {
+    await db.exec(await readFile(new URL(file, import.meta.url), 'utf8'));
+  }
+  await db.exec(await readFile(new URL('../supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql', import.meta.url), 'utf8'));
 }
 
 async function seedAdminAndCredential(db) {
@@ -597,6 +633,809 @@ test("Smartstore product and customer inquiry replies keep disjoint exact ticket
     await db.close();
   }
 });
+
+test("Smartstore edited buyer text advances the SQL ledger and cancels a stale reply generation", async () => {
+  const { normalizeChannelInquiries } = await import("../lib/channels/inquiry-sync.ts");
+  const db = await createDatabase();
+  try {
+    await db.exec(smartstoreRevisionSql);
+    await db.query(
+      "insert into auth.users (id, email) values ($1, 'smartstore-revision@example.test')",
+      [ADMIN_ID],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users (user_id, display_name) values ($1, 'Smartstore Revision Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    const credentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'smartstore', 'production',
+        '{"client_id":"smartstore-revision-client","client_secret":"smartstore-revision-secret"}'::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+    );
+    const operation = (message) => ({
+      ok: true,
+      channel: "smartstore",
+      operation: "inquiries.list",
+      steps: [{
+        name: "inquiries",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotInquiryKind: "product",
+          contents: [{
+            questionId: 778899,
+            question: message,
+            productName: "동일 상품",
+            maskedWriterId: "same***",
+            answered: false,
+            createDate: "2026-08-28T05:00:00.000Z",
+          }],
+        },
+      }],
+      safeMessage: "test fixture",
+    });
+    const normalize = (message) => normalizeChannelInquiries(
+      "smartstore",
+      operation(message),
+      "2026-08-28T05:00:00.000Z",
+    );
+    const before = normalize("배송은 언제 시작되나요?");
+    const replay = normalize("배송은 언제 시작되나요?");
+    const edited = normalize("배송지를 변경한 뒤 언제 시작되나요?");
+    assert.equal(before[0].inboundKey, replay[0].inboundKey);
+    assert.notEqual(before[0].inboundKey, edited[0].inboundKey);
+
+    await setClaims(db, "service_role");
+    const ingest = (rows) => scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'smartstore', $2::jsonb)",
+      [credentialId, JSON.stringify(rows)],
+    );
+    assert.equal(await ingest(before), 1);
+    assert.equal(await ingest(replay), 1);
+    const ticketId = await scalar(
+      db,
+      `select id from sellerpilot_private.support_tickets
+        where channel_key = 'smartstore'
+          and external_ticket_id = 'smartstore:product-qna:778899'`,
+    );
+    assert.equal(await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.support_inbound_messages where ticket_id = $1",
+      [ticketId],
+    ), 1);
+    await db.query(
+      "update sellerpilot_private.serverless_static_egress_policy set enabled = true where channel = 'smartstore'",
+    );
+    const jobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'smartstore', '수정 전 문의에 대한 답변',
+        jsonb_build_object(
+          'sellerpilotExpectedInboundKey', $2::text,
+          'arguments', jsonb_build_object(
+            'questionId', '778899', 'reply', '수정 전 문의에 대한 답변'
+          )
+        )
+      )`,
+      [ticketId, before[0].inboundKey],
+    );
+    await issueWorkerToken(db);
+    const claim = { id: jobId, claim_token: crypto.randomUUID() };
+    const workerTokenId = await scalar(
+      db,
+      "select id from sellerpilot_private.ai_cli_worker_tokens where token_hash = $1",
+      [TOKEN_HASH],
+    );
+    await db.query(`update sellerpilot_private.channel_gateway_jobs set
+      status = 'running', worker_token_id = $2, claim_token = $3,
+      attempt_count = attempt_count + 1, started_at = now(),
+      lease_expires_at = now() + interval '5 minutes'
+      where id = $1`, [jobId, workerTokenId, claim.claim_token]);
+
+    assert.equal(await ingest(edited), 1);
+    assert.deepEqual((await db.query(
+      `select latest_inbound_key, message,
+              (select count(*)::integer
+                 from sellerpilot_private.support_inbound_messages message
+                where message.ticket_id = ticket.id) as message_count
+         from sellerpilot_private.support_tickets ticket where id = $1`,
+      [ticketId],
+    )).rows, [{
+      latest_inbound_key: edited[0].inboundKey,
+      message: "배송지를 변경한 뒤 언제 시작되나요?",
+      message_count: 2,
+    }]);
+    const editedProjection = (await db.query(
+      `select latest_inbound_key,message,received_at::text as received_at
+         from sellerpilot_private.support_tickets where id=$1`,
+      [ticketId],
+    )).rows[0];
+    assert.equal(await ingest(edited), 1);
+    assert.equal(await ingest(before), 1);
+    assert.deepEqual((await db.query(
+      `select latest_inbound_key,message,received_at::text as received_at
+         from sellerpilot_private.support_tickets where id=$1`,
+      [ticketId],
+    )).rows[0], editedProjection);
+    assert.equal(await scalar(
+      db,
+      "select count(*)::integer from sellerpilot_private.support_inbound_messages where ticket_id=$1",
+      [ticketId],
+    ), 2);
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)",
+      [TOKEN_HASH, claim.id, claim.claim_token],
+    ), false);
+    assert.equal(await scalar(
+      db,
+      "select status from sellerpilot_private.channel_gateway_jobs where id = $1",
+      [jobId],
+    ), "cancelled");
+    assert.equal(await scalar(
+      db,
+      "select provider_mutation_started_at is null from sellerpilot_private.channel_gateway_jobs where id = $1",
+      [jobId],
+    ), true);
+  } finally {
+    await db.close();
+  }
+});
+
+
+test("two active SmartStore accounts keep identical provider IDs, history, and orders independently scoped", async () => {
+  const { normalizeChannelInquiries } = await import("../lib/channels/inquiry-sync.ts");
+  const db = await createDatabase();
+  const otherOwner = "50505b55-f364-4c52-98ca-9d6f7371d3a2";
+  try {
+    await db.exec(csCommerceBoundarySql);
+    await db.exec(smartstoreOrderBindingV2Sql);
+    await db.exec(`
+      drop index if exists sellerpilot_private.channel_credentials_one_active_idx;
+      create unique index channel_credentials_one_active_non_lazada_idx
+        on sellerpilot_private.channel_credentials(channel,environment)
+        where status='active' and channel<>'lazada';
+      create unique index channel_credentials_one_active_lazada_account_idx
+        on sellerpilot_private.channel_credentials(environment,seller_account_key)
+        where status='active' and channel='lazada' and seller_account_key is not null;
+      create unique index channel_credentials_one_active_lazada_pending_owner_idx
+        on sellerpilot_private.channel_credentials(created_by,environment)
+        where status='active' and channel='lazada' and seller_account_key is null;
+    `);
+    await db.exec(smartstoreAccountScopeSql);
+    assert.ok(await scalar(db, `select to_regclass(
+      'sellerpilot_private.channel_credentials_one_active_lazada_account_idx'
+    ) is not null`));
+    assert.ok(await scalar(db, `select to_regclass(
+      'sellerpilot_private.channel_credentials_one_active_lazada_pending_owner_idx'
+    ) is not null`));
+    assert.match(await scalar(db, `select indexdef from pg_indexes
+      where schemaname='sellerpilot_private'
+        and indexname='channel_credentials_one_active_non_lazada_elevenst_smartstore_idx'`),
+    /channel <> ALL \(ARRAY\['lazada'::text, 'elevenst'::text, 'smartstore'::text\]\)/u);
+    await db.exec(smartstoreRevisionSql);
+    await db.query(
+      "insert into auth.users(id,email) values($1,'account-a@example.test'),($2,'account-b@example.test')",
+      [ADMIN_ID, otherOwner],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users(user_id,display_name) values($1,'Account A'),($2,'Account B')",
+      [ADMIN_ID, otherOwner],
+    );
+
+    const rotate = async (ownerId, accountId) => {
+      await setClaims(db, "authenticated", ownerId);
+      return scalar(db, `select public.sellerpilot_rotate_credential(
+        'smartstore','production',
+        jsonb_build_object(
+          'client_id',$1::text,'client_secret',$2::text,
+          'token_type','SELLER','account_id',$3::text
+        ),
+        now()+interval '30 days',90,30,7
+      )`, [`client-${accountId}`, `secret-${accountId}`, accountId]);
+    };
+    const credentialA = await rotate(ADMIN_ID, "seller-a");
+    const credentialB = await rotate(otherOwner, "seller-b");
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='active' where id in($1,$2)",
+      [credentialA, credentialB],
+    );
+    const credentials = (await db.query(`select id,created_by,seller_account_key,status
+      from sellerpilot_private.channel_credentials where id in($1,$2) order by id`,
+    [credentialA, credentialB])).rows;
+    assert.equal(credentials.length, 2);
+    assert.ok(credentials.every(row => row.status === "active"));
+    assert.notEqual(credentials[0].seller_account_key, credentials[1].seller_account_key);
+
+    const operation = (kind, buyerText) => ({
+      ok: true,
+      channel: "smartstore",
+      operation: "inquiries.list",
+      steps: [{
+        name: "inquiries",
+        ok: true,
+        status: 200,
+        data: kind === "product" ? {
+          sellerpilotInquiryKind: "product",
+          contents: [{
+            questionId: 4242,
+            question: buyerText,
+            productName: "동일 상품",
+            maskedWriterId: "same***",
+            answered: false,
+            createDate: "2026-09-09T01:00:00.000Z",
+          }],
+        } : {
+          sellerpilotInquiryKind: "customer",
+          content: [{
+            inquiryNo: 4242,
+            inquiryContent: buyerText,
+            title: "동일 주문 문의",
+            customerName: "same***",
+            productOrderIdList: ["10001"],
+            inquiryRegistrationDateTime: "2026-09-09T01:01:00.000Z",
+          }],
+        },
+      }],
+      safeMessage: "test fixture",
+    });
+    const normalize = (kind, body) => normalizeChannelInquiries(
+      "smartstore",
+      operation(kind, body),
+      "2026-09-09T01:02:00.000Z",
+    );
+
+    await setClaims(db, "service_role");
+    for (const [credentialId, label] of [[credentialA, "A"], [credentialB, "B"]]) {
+      assert.equal(await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+        [credentialId, JSON.stringify(normalize("product", `상품 문의 ${label}`))],
+      ), 1);
+      assert.equal(await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+        [credentialId, JSON.stringify(normalize("customer", `주문 문의 ${label}`))],
+      ), 1);
+      assert.equal(await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_orders($1,'smartstore',$2::jsonb)",
+        [credentialId, JSON.stringify([{
+          externalOrderId: "10001",
+          customerName: `구매자 ${label}`,
+          productName: `상품 ${label}`,
+          quantity: 1,
+          amount: 10000,
+          currency: "KRW",
+          amountKrw: 10000,
+          status: "paid",
+          orderedAt: "2026-09-09T00:30:00.000Z",
+        }])],
+      ), 1);
+    }
+
+    const tickets = (await db.query(`select id,owner_id,source_credential_id,
+        seller_account_key,external_ticket_id,message
+      from sellerpilot_private.support_tickets
+      where channel_key='smartstore' order by owner_id,external_ticket_id`)).rows;
+    assert.equal(tickets.length, 4);
+    assert.equal(tickets.filter(row => row.external_ticket_id === "smartstore:product-qna:4242").length, 2);
+    assert.equal(tickets.filter(row => row.external_ticket_id === "customer:4242").length, 2);
+    assert.equal((await db.query(
+      "select count(*)::integer count from sellerpilot_private.smartstore_cs_ticket_identities_v1",
+    )).rows[0].count, 4);
+
+    const customerA = tickets.find(row => row.owner_id === ADMIN_ID
+      && row.external_ticket_id === "customer:4242");
+    const customerB = tickets.find(row => row.owner_id === otherOwner
+      && row.external_ticket_id === "customer:4242");
+    await setClaims(db, "authenticated", ADMIN_ID);
+    const healthA = await scalar(
+      db,
+      "select public.sellerpilot_read_smartstore_cs_order_binding_health_v3($1)",
+      [credentialA],
+    );
+    assert.equal(healthA.contract, "sellerpilot-cs-smartstore-order-binding-health/3");
+    assert.equal(healthA.credentialId, credentialA);
+    assert.deepEqual(Object.fromEntries(
+      healthA.groups.map(group => [group.status, group.count]),
+    ), { exact: 1, not_applicable: 1 });
+
+    const readA = await scalar(
+      db,
+      "select public.sellerpilot_read_smartstore_cs_account_ticket_v1($1,$2)",
+      [credentialA, customerA.id],
+    );
+    assert.equal(readA.identity.legacyExternalTicketId, "customer:4242");
+    assert.equal(readA.identity.providerTicketId, "4242");
+    assert.equal(readA.ticket.message, "주문 문의 A");
+    assert.equal(readA.history.length, 1);
+    assert.equal(readA.orderBinding.status, "exact");
+    assert.equal(readA.orderBinding.credentialId, credentialA);
+    assert.equal(readA.csCommerceMutationAllowed, false);
+
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_read_smartstore_cs_account_ticket_v1($1,$2)",
+        [credentialA, customerB.id],
+      ),
+      /SMARTSTORE_CS_ACCOUNT_SCOPE_MISMATCH/,
+    );
+    const healthBFromSharedAdmin = await scalar(
+      db,
+      "select public.sellerpilot_read_smartstore_cs_order_binding_health_v3($1)",
+      [credentialB],
+    );
+    assert.deepEqual(Object.fromEntries(
+      healthBFromSharedAdmin.groups.map(group => [group.status, group.count]),
+    ), { exact: 1, not_applicable: 1 });
+
+    await setClaims(db, "authenticated", otherOwner);
+    const readB = await scalar(
+      db,
+      "select public.sellerpilot_read_smartstore_cs_account_ticket_v1($1,$2)",
+      [credentialB, customerB.id],
+    );
+    assert.equal(readB.ticket.message, "주문 문의 B");
+    assert.equal(readB.orderBinding.status, "exact");
+    assert.notEqual(readA.accountScope, readB.accountScope);
+
+    await db.query(
+      "delete from sellerpilot_private.admin_users where user_id=$1",
+      [otherOwner],
+    );
+    await assert.rejects(
+      db.query(
+        "select public.sellerpilot_read_smartstore_cs_account_ticket_v1($1,$2)",
+        [credentialB, customerB.id],
+      ),
+      /administrator access required/,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+test("SmartStore ACK stays unresolved until the actual exact readback completion reaches the canonical observation ledger", async () => {
+  const { normalizeChannelInquiries } = await import("../lib/channels/inquiry-sync.ts");
+  const { executeSmartstoreInquiry } = await import("../lib/channels/smartstore-inquiries.ts");
+  const { inquiryReplyObservations, replyAcceptanceMarker } = await import("../lib/channels/reply-verification.ts");
+  const { completeCsWorker } = await import("../lib/cs/operations/worker-completion.ts");
+  const db = await createDatabase();
+  try {
+    await db.exec(csCommerceBoundarySql);
+    await db.exec(smartstoreOrderBindingV2Sql);
+    await db.exec(smartstoreAccountScopeSql);
+    await db.exec(smartstoreRevisionSql);
+    await db.exec(replyObservationSql);
+    await db.exec(elevenstExactObservationSql);
+    const observerBefore = await scalar(db,
+      "select pg_get_functiondef('public.sellerpilot_service_observe_inquiry_replies_v1(uuid,text,jsonb)'::regprocedure)");
+    assert.match(observerBefore, /when 'elevenst' then/u);
+    await db.exec(smartstoreExactReadbackSql);
+    const observerAfter = await scalar(db,
+      "select pg_get_functiondef('public.sellerpilot_service_observe_inquiry_replies_v1(uuid,text,jsonb)'::regprocedure)");
+    assert.match(observerAfter, /when 'elevenst' then/u);
+
+    await db.query("insert into auth.users(id,email) values($1,'readback@example.test')", [ADMIN_ID]);
+    await db.query(
+      "insert into sellerpilot_private.admin_users(user_id,display_name) values($1,'Readback Admin')",
+      [ADMIN_ID],
+    );
+    await setClaims(db);
+    const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential(
+      'smartstore','production',jsonb_build_object(
+        'client_id','readback-client','client_secret','readback-secret',
+        'token_type','SELLER','account_id','readback-account'
+      ),now()+interval '30 days',90,30,7
+    )`);
+    await db.query(
+      "update sellerpilot_private.channel_credentials set status='active' where id=$1",
+      [credentialId],
+    );
+    const questionId = "424242";
+    const reply = "정확한 재조회 답변입니다.";
+    const answerObservedAt = new Date(Date.now() + 1_000).toISOString();
+    const providerPage = (answer, targetQuestionId = questionId, buyerText = "재조회가 필요한 상품 문의") => ({
+      ok: true,
+      channel: "smartstore",
+      operation: "inquiries.list",
+      steps: [{
+        name: "inquiries",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotInquiryKind: "product",
+          contents: [{
+            questionId: Number(targetQuestionId),
+            question: buyerText,
+            productName: "계정 결속 상품",
+            maskedWriterId: "buyer***",
+            answered: Boolean(answer),
+            answers: answer ? [{
+              answer,
+              answerId: 7001,
+              createDate: answerObservedAt,
+            }] : [],
+            createDate: "2026-09-09T10:00:00+09:00",
+          }],
+          totalPages: 1,
+        },
+      }],
+      safeMessage: "SmartStore bounded readback fixture",
+    });
+    const initialRows = normalizeChannelInquiries(
+      "smartstore",
+      providerPage(null),
+      "2026-09-09T01:00:01.000Z",
+    );
+    await setClaims(db, "service_role");
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+      [credentialId, JSON.stringify(initialRows)]), 1);
+    const ticketId = await scalar(db, `select id from sellerpilot_private.support_tickets
+      where source_credential_id=$1 and external_ticket_id='smartstore:product-qna:${questionId}'`,
+    [credentialId]);
+    await db.query(
+      "update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='smartstore'",
+    );
+    const sourceJobId = await scalar(db, `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+      $1,'smartstore',$2::text,jsonb_build_object(
+        'sellerpilotExpectedInboundKey',$3::text,
+        'arguments',jsonb_build_object('kind','product','questionId',$4::text,'reply',$2::text)
+      ))`, [ticketId, reply, initialRows[0].inboundKey, questionId]);
+
+    await issueWorkerToken(db);
+    const claimExactJob = async (jobId, claimToken) => scalar(db, `with token as(
+      select id from sellerpilot_private.ai_cli_worker_tokens where token_hash=$1
+    ),claimed as(
+      update sellerpilot_private.channel_gateway_jobs job set
+        status='running',worker_token_id=token.id,claim_token=$3::uuid,
+        attempt_count=job.attempt_count+1,lease_expires_at=now()+interval '3 minutes',
+        started_at=coalesce(job.started_at,now()),updated_at=now()
+      from token where job.id=$2 and job.status='queued'
+      returning job.*
+    ) select jsonb_build_object(
+      'id',id,'claim_token',claim_token,'credential_id',credential_id,
+      'channel',channel,'operation',operation,'environment',environment,
+      'request',request_payload,'attempt_count',attempt_count
+    ) from claimed`, [TOKEN_HASH, jobId, claimToken]);
+    const sourceClaim = await claimExactJob(
+      sourceJobId, "61000000-0000-4000-8000-000000000001",
+    );
+    assert.equal(sourceClaim.id, sourceJobId);
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+      [TOKEN_HASH, sourceClaim.id, sourceClaim.claim_token]), true);
+    assert.equal(await completeReply(db, sourceClaim, {
+      ok: true,
+      channel: "smartstore",
+      operation: "inquiries.reply",
+      steps: [{
+        name: "inquiry-reply", ok: true, status: 200,
+        data: { sellerpilotReplyAcceptance: replyAcceptanceMarker(
+          "smartstore", "product", { questionId },
+        ) },
+      }],
+      remoteId: questionId,
+      safeMessage: "provider accepted",
+    }), true);
+
+    const pending = (await db.query(`select ticket.status,ticket.provider_status,
+        ticket.reply_delivery_status,delivery.verification_status,
+        delivery.smartstore_readback_state,delivery.smartstore_automatic_resend_allowed,
+        link.readback_job_id
+      from sellerpilot_private.support_tickets ticket
+      join sellerpilot_private.support_reply_deliveries delivery
+        on delivery.gateway_job_id=$2
+      join sellerpilot_private.smartstore_reply_readback_links_v1 link
+        on link.delivery_id=delivery.id
+      where ticket.id=$1`, [ticketId, sourceJobId])).rows[0];
+    assert.deepEqual({
+      status: pending.status,
+      providerStatus: pending.provider_status,
+      replyDeliveryStatus: pending.reply_delivery_status,
+      verificationStatus: pending.verification_status,
+      readbackState: pending.smartstore_readback_state,
+      automaticResendAllowed: pending.smartstore_automatic_resend_allowed,
+    }, {
+      status: "in_progress",
+      providerStatus: "answered",
+      replyDeliveryStatus: "sending",
+      verificationStatus: "provider_accepted",
+      readbackState: "pending",
+      automaticResendAllowed: false,
+    });
+    await assert.rejects(
+      db.query(`select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1,'smartstore',$2::text,jsonb_build_object(
+          'sellerpilotExpectedInboundKey',$3::text,
+          'arguments',jsonb_build_object('kind','product','questionId',$4::text,'reply',$2::text)
+        ))`, [ticketId, reply, initialRows[0].inboundKey, questionId]),
+      /PROVIDER_INQUIRY_NOT_WAITING/u,
+    );
+    assert.equal(await scalar(db, `select count(*)::integer
+      from sellerpilot_private.channel_gateway_jobs
+      where channel='smartstore' and operation='inquiries.reply'
+        and request_payload->>'sellerpilotTicketId'=$1`, [ticketId]), 1);
+
+    const readbackClaim = await claimExactJob(
+      pending.readback_job_id, "61000000-0000-4000-8000-000000000002",
+    );
+    assert.equal(readbackClaim.id, pending.readback_job_id);
+    const requestCalls = [];
+    const providerResult = await executeSmartstoreInquiry({
+      operation: "inquiries.list",
+      payload: {},
+      arguments: readbackClaim.request.arguments,
+    }, async (request) => {
+      requestCalls.push(request);
+      const page = providerPage(reply).steps[0].data;
+      return {
+        response: new Response(JSON.stringify(page), { status: 200 }),
+        data: page,
+      };
+    });
+    assert.equal(requestCalls.length, 1);
+    assert.equal(requestCalls[0].method, "GET");
+    assert.equal(requestCalls[0].path, "/v1/contents/qnas");
+    assert.equal(requestCalls[0].query.get("answered"), "true");
+    assert.equal(requestCalls[0].query.get("size"), "100");
+    const normalized = normalizeChannelInquiries(
+      "smartstore",
+      { ...providerResult, ok: true, channel: "smartstore", operation: "inquiries.list" },
+      "2026-09-09T01:02:01.000Z",
+    );
+    const observations = inquiryReplyObservations("smartstore", normalized);
+    assert.equal(observations.length, 1);
+    const actualSqlRpc = async (name, arguments_) => {
+      try {
+        const json = (value) => value === null || value === undefined
+          ? null
+          : JSON.stringify(value);
+        if (name === "sellerpilot_service_complete_gateway_transaction") {
+          return { data: await scalar(db, `select public.sellerpilot_service_complete_gateway_transaction(
+            $1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb
+          )`, [arguments_.p_token_hash, arguments_.p_job_id, arguments_.p_claim_token,
+            arguments_.p_status, json(arguments_.p_response_payload),
+            arguments_.p_error_message, json(arguments_.p_credential_refresh),
+            json(arguments_.p_normalized_orders), json(arguments_.p_normalized_inquiries),
+            json(arguments_.p_diagnostic)]), error: null };
+        }
+        if (name === "sellerpilot_service_observe_inquiry_replies_v1") {
+          return { data: await scalar(db,
+            "select public.sellerpilot_service_observe_inquiry_replies_v1($1,$2,$3::jsonb)",
+            [arguments_.p_credential_id, arguments_.p_channel,
+              JSON.stringify(arguments_.p_observations)]), error: null };
+        }
+        if (name === "sellerpilot_service_record_smartstore_reply_readback_v1") {
+          return { data: await scalar(db,
+            "select public.sellerpilot_service_record_smartstore_reply_readback_v1($1,$2,$3)",
+            [arguments_.p_token_hash, arguments_.p_job_id, arguments_.p_claim_token]), error: null };
+        }
+        if (name === "sellerpilot_service_record_cs_history_page_v1") {
+          return { data: await scalar(db, `select public.sellerpilot_service_record_cs_history_page_v1(
+            $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10
+          )`, [arguments_.p_token_hash, arguments_.p_job_id, arguments_.p_claim_token,
+            arguments_.p_provider_contract_version, arguments_.p_provider_row_count,
+            arguments_.p_projected_event_count, JSON.stringify(arguments_.p_observation_digests),
+            arguments_.p_excluded_count, arguments_.p_event_row_comparable,
+            arguments_.p_has_continuation]), error: null };
+        }
+        throw new Error(`unexpected worker RPC ${name}`);
+      } catch (error) {
+        return { data: null, error: { code: "PGLITE_RPC_FAILED", message: String(error) } };
+      }
+    };
+    const workerResponse = await completeCsWorker({
+      serviceClient: { rpc: actualSqlRpc },
+      tokenHash: TOKEN_HASH,
+      job: { ...readbackClaim, normalization_timestamp: "2026-09-09T01:02:01.000Z" },
+      completion: {
+        jobId: readbackClaim.id,
+        claimToken: readbackClaim.claim_token,
+        status: "succeeded",
+        result: { ...providerResult, ok: true, channel: "smartstore", operation: "inquiries.list" },
+      },
+    });
+    assert.equal(workerResponse.status, 200);
+    const receipt = (await db.query(`select link.state,link.reason,
+        delivery.smartstore_automatic_resend_allowed,
+        (select count(*)::integer from sellerpilot_private.support_inbound_messages message
+          where message.ticket_id=link.ticket_id and message.sender_role='seller'
+            and encode(extensions.digest(trim(message.body),'sha256'),'hex')=link.expected_reply_fingerprint)
+          exact_observations
+      from sellerpilot_private.smartstore_reply_readback_links_v1 link
+      join sellerpilot_private.support_reply_deliveries delivery on delivery.id=link.delivery_id
+      where link.readback_job_id=$1`, [readbackClaim.id])).rows[0];
+    assert.deepEqual({
+      state: receipt.state,
+      reason: receipt.reason,
+      exactObservations: receipt.exact_observations,
+      automaticResendAllowed: receipt.smartstore_automatic_resend_allowed,
+    }, {
+      state: "verified",
+      reason: "exact_reply_observed",
+      exactObservations: 1,
+      automaticResendAllowed: false,
+    });
+    const replayReceipt = await scalar(db,
+      "select public.sellerpilot_service_record_smartstore_reply_readback_v1($1,$2,$3)",
+      [TOKEN_HASH, readbackClaim.id, readbackClaim.claim_token]);
+    assert.deepEqual({ state: replayReceipt.state, reason: replayReceipt.reason }, {
+      state: "verified", reason: "exact_reply_observed",
+    });
+    assert.deepEqual((await db.query(`select ticket.status,ticket.provider_status,
+        ticket.reply_delivery_status,delivery.verification_status,
+        delivery.smartstore_readback_state
+      from sellerpilot_private.support_tickets ticket
+      join sellerpilot_private.support_reply_deliveries delivery
+        on delivery.gateway_job_id=$2 where ticket.id=$1`, [ticketId, sourceJobId])).rows, [{
+      status: "resolved",
+      provider_status: "answered",
+      reply_delivery_status: "succeeded",
+      verification_status: "remote_observed",
+      smartstore_readback_state: "verified",
+    }]);
+
+    let claimOrdinal = 10;
+    const openAcceptedReply = async (targetQuestionId, expectedReply, buyerText) => {
+      const rows = normalizeChannelInquiries(
+        "smartstore", providerPage(null, targetQuestionId, buyerText),
+        new Date().toISOString(),
+      );
+      assert.equal(await scalar(db,
+        "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+        [credentialId, JSON.stringify(rows)]), 1);
+      const targetTicketId = await scalar(db, `select id from sellerpilot_private.support_tickets
+        where source_credential_id=$1 and external_ticket_id=$2`,
+      [credentialId, `smartstore:product-qna:${targetQuestionId}`]);
+      const targetSourceJobId = await scalar(db, `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1,'smartstore',$2::text,jsonb_build_object(
+          'sellerpilotExpectedInboundKey',$3::text,
+          'arguments',jsonb_build_object('kind','product','questionId',$4::text,'reply',$2::text)
+        ))`, [targetTicketId, expectedReply, rows[0].inboundKey, targetQuestionId]);
+      claimOrdinal += 1;
+      const source = await claimExactJob(targetSourceJobId,
+        `61000000-0000-4000-8000-${String(claimOrdinal).padStart(12, "0")}`);
+      assert.equal(await scalar(db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [TOKEN_HASH, source.id, source.claim_token]), true);
+      assert.equal(await completeReply(db, source, {
+        ok: true, channel: "smartstore", operation: "inquiries.reply",
+        steps: [{ name: "inquiry-reply", ok: true, status: 200, data: {
+          sellerpilotReplyAcceptance: replyAcceptanceMarker(
+            "smartstore", "product", { questionId: targetQuestionId },
+          ),
+        } }],
+        remoteId: targetQuestionId, safeMessage: "provider accepted",
+      }), true);
+      const link = (await db.query(`select link.*,delivery.verification_status
+        from sellerpilot_private.smartstore_reply_readback_links_v1 link
+        join sellerpilot_private.support_reply_deliveries delivery on delivery.id=link.delivery_id
+        where link.source_job_id=$1`, [targetSourceJobId])).rows[0];
+      assert.equal(link.owner_id, ADMIN_ID);
+      assert.equal(link.credential_id, credentialId);
+      assert.equal(link.provider_ticket_id, targetQuestionId);
+      return { targetQuestionId, expectedReply, rows, ticketId: targetTicketId,
+        sourceJobId: targetSourceJobId, link };
+    };
+    const finishReadback = async (flow, observedAnswer, observedTarget = flow.targetQuestionId, failed = false) => {
+      claimOrdinal += 1;
+      const readClaim = await claimExactJob(flow.link.readback_job_id,
+        `61000000-0000-4000-8000-${String(claimOrdinal).padStart(12, "0")}`);
+      if (failed) {
+        const failedResponse = await completeCsWorker({
+          serviceClient: { rpc: actualSqlRpc },
+          tokenHash: TOKEN_HASH,
+          job: { ...readClaim, normalization_timestamp: new Date().toISOString() },
+          completion: {
+            jobId: readClaim.id,
+            claimToken: readClaim.claim_token,
+            status: "failed",
+            error: "simulated provider read failure",
+          },
+        });
+        assert.equal(failedResponse.status, 200);
+      } else {
+        const executed = await executeSmartstoreInquiry({
+          operation: "inquiries.list", payload: {}, arguments: readClaim.request.arguments,
+        }, async () => {
+          const page = providerPage(observedAnswer, observedTarget).steps[0].data;
+          return { response: new Response(JSON.stringify(page), { status: 200 }), data: page };
+        });
+        const result = { ...executed, ok: true, channel: "smartstore", operation: "inquiries.list" };
+        const response = await completeCsWorker({
+          serviceClient: { rpc: actualSqlRpc },
+          tokenHash: TOKEN_HASH,
+          job: { ...readClaim, normalization_timestamp: new Date().toISOString() },
+          completion: {
+            jobId: readClaim.id,
+            claimToken: readClaim.claim_token,
+            status: "succeeded",
+            result,
+          },
+        });
+        assert.equal(response.status, 200);
+      }
+      return scalar(db,
+        "select public.sellerpilot_service_record_smartstore_reply_readback_v1($1,$2,$3)",
+        [TOKEN_HASH, readClaim.id, readClaim.claim_token]);
+    };
+
+    const generationFlow = await openAcceptedReply("434343", "세대 결속 답변", "수정 전 문의");
+    const revisedRows = normalizeChannelInquiries(
+      "smartstore", providerPage(null, "434343", "수정 후 새 문의 세대"),
+      new Date().toISOString(),
+    );
+    assert.notEqual(revisedRows[0].inboundKey, generationFlow.rows[0].inboundKey);
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+      [credentialId, JSON.stringify(revisedRows)]), 1);
+    const generationReceipt = await finishReadback(generationFlow, generationFlow.expectedReply);
+    assert.equal(generationReceipt.state, "verified");
+    assert.deepEqual((await db.query(`select status,provider_status,latest_inbound_key
+      from sellerpilot_private.support_tickets where id=$1`, [generationFlow.ticketId])).rows, [{
+      status: "in_progress", provider_status: "waiting", latest_inbound_key: revisedRows[0].inboundKey,
+    }]);
+
+    const bodyFlow = await openAcceptedReply("444444", "본문 결속 답변", "본문 불일치 문의");
+    const bodyReceipt = await finishReadback(bodyFlow, "다른 판매자 답변");
+    assert.deepEqual({ state: bodyReceipt.state, reason: bodyReceipt.reason,
+      automaticResendAllowed: bodyReceipt.automaticResendAllowed }, {
+      state: "unverified", reason: "reply_body_mismatch", automaticResendAllowed: false,
+    });
+    assert.equal(await scalar(db, `select count(*)::integer from sellerpilot_private.channel_gateway_jobs
+      where operation='inquiries.reply' and request_payload->>'sellerpilotTicketId'=$1`,
+    [bodyFlow.ticketId]), 1);
+
+    const targetFlow = await openAcceptedReply("454545", "표적 결속 답변", "표적 불일치 문의");
+    const targetReceipt = await finishReadback(targetFlow, targetFlow.expectedReply, "454546");
+    assert.deepEqual({ state: targetReceipt.state, reason: targetReceipt.reason }, {
+      state: "unverified", reason: "exact_reply_not_observed",
+    });
+
+    const failureFlow = await openAcceptedReply("464646", "조회 실패 답변", "조회 실패 문의");
+    const failureReceipt = await finishReadback(failureFlow, null, failureFlow.targetQuestionId, true);
+    assert.deepEqual({ state: failureReceipt.state, reason: failureReceipt.reason,
+      automaticResendAllowed: failureReceipt.automaticResendAllowed }, {
+      state: "failed", reason: "provider_read_failed", automaticResendAllowed: false,
+    });
+
+    const staleFlow = await openAcceptedReply("474747", "지연 답변", "지연 문의");
+    await db.query(`update sellerpilot_private.support_reply_deliveries
+      set provider_accepted_at=now()-interval '16 minutes' where id=$1`, [staleFlow.link.delivery_id]);
+    await setClaims(db, "authenticated", ADMIN_ID);
+    const staleView = await scalar(db,
+      "select public.sellerpilot_get_inquiry_reply_delivery($1,$2)",
+      [staleFlow.ticketId, staleFlow.sourceJobId]);
+    assert.equal(staleView.verificationAttention, "stale_provider_accepted");
+    assert.equal(staleView.automaticResendAllowed, false);
+    await setClaims(db, "service_role");
+    const escalation = await scalar(db,
+      "select public.sellerpilot_service_escalate_stale_smartstore_reply_acceptance_v1(100)");
+    assert.equal(escalation.escalated, 1);
+    assert.equal(escalation.automaticResendAllowed, false);
+    assert.deepEqual((await db.query(`select delivery.verification_status,
+        delivery.smartstore_readback_state,ticket.status,ticket.reply_delivery_status
+      from sellerpilot_private.support_reply_deliveries delivery
+      join sellerpilot_private.support_tickets ticket on ticket.id=delivery.ticket_id
+      where delivery.id=$1`, [staleFlow.link.delivery_id])).rows, [{
+      verification_status: "reconciliation_required",
+      smartstore_readback_state: "unverified",
+      status: "in_progress",
+      reply_delivery_status: "reconciliation_required",
+    }]);
+  } finally {
+    await db.close();
+  }
+});
+
 
 test("inquiry reply gateway deduplicates, conflicts, and atomically resolves a successful ticket", async () => {
   const db = await createDatabase();
@@ -1317,6 +2156,31 @@ test("an AI support draft is generation-bound and a stale completion is discarde
 test("a Temu after-sales revision reopens a manually resolved ticket and fences the stale tab", async () => {
   const db = await createDatabase();
   try {
+    await applyReviewedCs140(db);
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907200000_enable_shopee_comment_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908045000_enable_shopee_return_refund_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908046000_enable_temu_after_sales_detail_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908047000_enable_coupang_after_sales_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908048000_enable_qoo10_claim_cs.sql', import.meta.url),
+      'utf8',
+    ));
     await seedAdminAndCredential(db);
     await setClaims(db, "authenticated");
     const credentialId = await scalar(
@@ -1327,8 +2191,24 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
         now() + interval '365 days', 180, 30, 0
       )`,
     );
+    await setClaims(db, "service_role");
+    // This fixture verifies the CS wrapper and ledger. Temu's separate provider
+    // certification workflow is covered by its own migration suite, so install
+    // the already-certified fixture identity without exercising that workflow.
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key = $2,
+              seller_account_key_source = 'provider_certified_v1',
+              seller_account_verified_at = clock_timestamp()
+        where id = $1`,
+      [credentialId, "c".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
     const externalTicketId = "aftersales:AFTER-SALES-REVISION";
-    const payload = ({ inboundKey, remoteMessageId, group, receivedAt }) => JSON.stringify([{
+    const { createHash } = await import("node:crypto");
+    const digest = (value) => createHash("sha256").update(value).digest("hex");
+    const payload = ({ inboundKey, revision, group, receivedAt }) => JSON.stringify([{
       externalTicketId,
       customerName: "Temu 구매자",
       subject: "반품·환불 요청",
@@ -1337,14 +2217,31 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       providerStatus: "waiting",
       priority: 2,
       receivedAt,
-      remoteMessageId,
+      remoteMessageId: `AFTER-SALES-REVISION:${digest(revision)}`,
       inboundKey,
       ticketKind: "after_sales",
       providerContext: {
         afterSalesSn: "AFTER-SALES-REVISION",
+        orderSn: "ORDER-REVISION",
         statusGroup: group,
         availableOperations: group === "1" ? ["return"] : ["approve"],
+        providerRevision: digest(revision),
+        providerRevisionSource: "updateAt",
+        replySupported: false,
+        afterSalesCases: [{
+          afterSalesSn: "AFTER-SALES-REVISION-CHILD",
+          orderSn: "ORDER-REVISION",
+          reasonCode: "7",
+          reason: "damaged",
+          buyerComment: `Temu 상태 ${group}`,
+          status: group,
+          requestedQuantity: 1,
+          requestedRefund: { currency: "KRW", amount: "3190" },
+        }],
+        refundSummary: { buyerTotalRefund: { currency: "KRW", amount: "3190" } },
+        detailContract: "temu.aftersales.parentaftersales.detail.get",
       },
+      replyContext: {},
     }]);
     const inboundOne = "temu:test:revision-one";
     const inboundTwo = "temu:test:revision-two";
@@ -1354,7 +2251,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundOne,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-one",
+        revision: "revision-one",
         group: "1",
         receivedAt: "2026-08-25T09:00:00.000Z",
       })],
@@ -1378,7 +2275,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundTwo,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-two",
+        revision: "revision-two",
         group: "2",
         receivedAt: "2026-08-25T10:00:00.000Z",
       })],
@@ -1409,7 +2306,7 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       "select public.sellerpilot_service_ingest_inquiries($1, 'temu', $2::jsonb)",
       [credentialId, payload({
         inboundKey: inboundTwo,
-        remoteMessageId: "AFTER-SALES-REVISION:revision-two",
+        revision: "revision-two",
         group: "2",
         receivedAt: "2026-08-25T11:00:00.000Z",
       })],
@@ -1425,6 +2322,168 @@ test("a Temu after-sales revision reopens a manually resolved ticket and fences 
       latest_inbound_key: inboundTwo,
       inbound_count: 2,
     }]);
+
+    await setClaims(db, "authenticated");
+    const coupangCredentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'coupang', 'production',
+        '{"access_key":"coupang-cs-access","secret_key":"coupang-cs-secret","vendor_id":"A00012345"}'::jsonb,
+        now() + interval '365 days', 180, 30, 0
+      )`,
+    );
+    await setClaims(db, "service_role");
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp()
+        where id=$1`,
+      [coupangCredentialId, "d".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
+    const coupangRevision = digest("coupang-return-revision");
+    const coupangInbound = "coupang:test:return-revision";
+    const coupangPayload = [{
+      externalTicketId: "coupang:return:50229613",
+      customerName: "구*숙",
+      subject: "쿠팡 반품 요청 · 주문 28000008707838",
+      message: "사이즈가 맞지 않습니다.",
+      status: "waiting",
+      providerStatus: "waiting",
+      priority: 2,
+      receivedAt: "2026-09-08T01:01:00.000Z",
+      remoteMessageId: `return:50229613:${coupangRevision}`,
+      inboundKey: coupangInbound,
+      externalOrderReference: "28000008707838",
+      ticketKind: "after_sales",
+      providerContext: {
+        kind: "return_request",
+        receiptId: "50229613",
+        receiptType: "RETURN",
+        receiptStatus: "RETURNS_UNCHECKED",
+        faultType: "CUSTOMER",
+        reasonCode: "CHANGEMIND",
+        reasonCodeText: "필요 없어짐",
+        cancelReasonCategory1: "고객변심",
+        cancelReasonCategory2: "단순변심",
+        releaseStopStatus: "처리(이미출고)",
+        preRefund: false,
+        completeConfirmType: "UNDEFINED",
+        returnItems: [{ vendorItemId: "3187044096", vendorItemName: "옵션", sellerProductId: "57623797", cancelCount: 1, purchaseCount: 1, shipmentBoxId: "123456789", releaseStatus: "S" }],
+        returnDeliveries: [{ deliveryCompanyCode: "CJGLS", deliveryInvoiceNo: "1234" }],
+        replySupported: false,
+        providerRevision: coupangRevision,
+      },
+      replyContext: {},
+    }];
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'coupang',$2::jsonb)",
+      [coupangCredentialId, JSON.stringify(coupangPayload)],
+    ), 1);
+    assert.deepEqual((await db.query(
+      `select ticket_kind,external_order_reference,reply_context,
+              provider_context->>'kind' kind,provider_context ? 'requesterPhoneNumber' has_phone
+         from sellerpilot_private.support_tickets
+        where channel_key='coupang' and external_ticket_id='coupang:return:50229613'`,
+    )).rows, [{
+      ticket_kind: "after_sales",
+      external_order_reference: "28000008707838",
+      reply_context: {},
+      kind: "return_request",
+      has_phone: false,
+    }]);
+    const forbidden = structuredClone(coupangPayload);
+    forbidden[0].providerContext.requesterPhoneNumber = "010-0000-0000";
+    await assert.rejects(db.query(
+      "select public.sellerpilot_service_ingest_inquiries($1,'coupang',$2::jsonb)",
+      [coupangCredentialId, JSON.stringify(forbidden)],
+    ), /COUPANG_AFTER_SALES_CONTEXT_INVALID/);
+
+    const qoo10CredentialId = await scalar(
+      db,
+      "select id from sellerpilot_private.channel_credentials where channel='qoo10' and status='active' limit 1",
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials disable trigger guard_credential_seller_lineage");
+    await db.query(
+      `update sellerpilot_private.channel_credentials
+          set seller_account_key=$2,seller_account_key_source='provider_certified_v1',
+              seller_account_verified_at=clock_timestamp()
+        where id=$1`,
+      [qoo10CredentialId, "e".repeat(64)],
+    );
+    await db.exec("alter table sellerpilot_private.channel_credentials enable trigger guard_credential_seller_lineage");
+    const qoo10Revision = digest("qoo10-claim-revision");
+    const qoo10Payload = [{
+      externalTicketId: "qoo10:claim:901234567890:20260908010000",
+      customerName: "Qoo10 주문 고객",
+      subject: "Qoo10 반품 요청 · 테스트 상품",
+      message: "상품이 손상되어 도착했습니다.",
+      status: "waiting",
+      providerStatus: "waiting",
+      priority: 2,
+      receivedAt: "2026-09-08T01:00:00.000Z",
+      remoteMessageId: `claim:901234567890:20260908010000:${qoo10Revision}`,
+      inboundKey: "qoo10:test:claim-revision",
+      senderRole: "customer",
+      externalOrderReference: "901234567890",
+      ticketKind: "after_sales",
+      providerContext: {
+        kind: "claim",
+        orderNo: "901234567890",
+        claimStatus: "4",
+        requestDate: "2026-09-08T01:00:00.000Z",
+        cancelRefundDate: "",
+        orderDate: "2026-09-07T01:00:00.000Z",
+        paymentDate: "",
+        shippingDate: "",
+        deliveredDate: "",
+        reason: "상품이 손상되어 도착했습니다.",
+        itemCode: "1234567890",
+        sellerItemCode: "SELLER-SKU-1",
+        itemTitle: "테스트 상품",
+        orderQty: "1",
+        paymentNation: "JP",
+        currency: "JPY",
+        paymentAmount: "1871",
+        deliveryCompany: "Sagawa",
+        trackingNo: "TRACK-OUT",
+        deliveryCompanyReturn: "Yamato",
+        trackingNoReturn: "TRACK-RETURN",
+        itemCondition: "",
+        nrDutyTarget: "",
+        nrSolType: "",
+        nrPartRefundCnt: "",
+        nrPartRefundBalance: "",
+        replySupported: false,
+        providerRevision: qoo10Revision,
+      },
+      replyContext: {},
+    }];
+    assert.equal(await scalar(
+      db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",
+      [qoo10CredentialId, JSON.stringify(qoo10Payload)],
+    ), 1);
+    assert.deepEqual((await db.query(
+      `select ticket_kind,external_order_reference,reply_context,
+              provider_context->>'kind' kind,provider_context ? 'buyerMobile' has_buyer_mobile
+         from sellerpilot_private.support_tickets
+        where channel_key='qoo10' and external_ticket_id='qoo10:claim:901234567890:20260908010000'`,
+    )).rows, [{
+      ticket_kind: "after_sales",
+      external_order_reference: "901234567890",
+      reply_context: {},
+      kind: "claim",
+      has_buyer_mobile: false,
+    }]);
+    const qoo10Forbidden = structuredClone(qoo10Payload);
+    qoo10Forbidden[0].providerContext.buyerMobile = "090-0000-0000";
+    await assert.rejects(db.query(
+      "select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",
+      [qoo10CredentialId, JSON.stringify(qoo10Forbidden)],
+    ), /QOO10_CLAIM_CONTEXT_INVALID/);
   } finally {
     await db.close();
   }
@@ -2210,6 +3269,988 @@ test("eBay ASQ reply lineage is provider-certified, exact, idempotent, and atomi
     assert.doesNotMatch(siteSource, /EBAY_ASQ_SANDBOX_REPLY_UNSUPPORTED/);
     assert.match(siteSource, /c\.environment = v_source_credential\.environment/);
     assert.match(siteSource, /EBAY_ASQ_RATE_LIMITED_75_PER_60_SECONDS/);
+  } finally {
+    await db.close();
+  }
+});
+
+
+test("Lazada normalized full history persists both roles without replacing the latest buyer", async () => {
+  const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
+  const db = await createDatabase();
+  try {
+    await applyReviewedCs140(db);
+    await seedAdminAndCredential(db);
+    await setClaims(db, "service_role");
+    const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential(
+      'lazada', 'production', $1::jsonb, now() + interval '180 days', 90, 30, 0
+    )`, [JSON.stringify({
+      app_key: "lazada-cs-app", app_secret: "test-only", country: "my", access_token: "test-only",
+      provider_account_subject: `lazada:v1:${"A".repeat(60)}`, provider_account_identity_version: "v1",
+    })]);
+    const session = { session_id: "full-history", title: "test buyer", unread_count: 0 };
+    const event = (id, sender, minute) => ({
+      message_id: id, from_account_type: sender, send_time: `2026-08-25T09:0${minute}:00.000Z`,
+      content: { txt: id }, status: 0, type: 1, template_id: 1,
+    });
+    const buyer1 = event("buyer-1", 1, 0);
+    const seller1 = event("seller-1", 2, 1);
+    const buyer2 = event("buyer-2", 1, 2);
+    const seller2 = event("seller-2", 2, 3);
+    const normalize = (pages) => normalizeLazadaImHistory(pages.map((messages, index) => ({
+      name: `inquiries-message:full-history:${index + 1}`,
+      data: { sellerpilotSession: session, data: { message_list: messages } },
+    })), "2026-08-25T10:00:00.000Z");
+    const ingest = (rows) => scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1, 'lazada', $2::jsonb)",
+      [credentialId, JSON.stringify(rows)]);
+    const state = async () => (await db.query(`
+      select t.provider_status, t.message, latest.remote_message_id as latest_buyer,
+             count(*)::integer as messages,
+             count(*) filter (where m.sender_role = 'seller')::integer as seller_messages,
+             count(*) filter (where m.sender_role = 'customer')::integer as customer_messages
+        from sellerpilot_private.support_tickets t
+        join sellerpilot_private.support_inbound_messages m on m.ticket_id = t.id
+        join sellerpilot_private.support_inbound_messages latest
+          on latest.ticket_id = t.id and latest.inbound_key = t.latest_inbound_key
+       where t.source_credential_id = $1
+       group by t.id, latest.remote_message_id`, [credentialId])).rows;
+    const history = normalize([[buyer2, seller1], [seller1, buyer1]]);
+    assert.equal(history.length, 3);
+    await ingest(history);
+    assert.deepEqual(await state(), [{ provider_status: "waiting", message: "buyer-2", latest_buyer: "buyer-2", messages: 3, seller_messages: 1, customer_messages: 2 }]);
+    await ingest(history);
+    assert.equal((await state())[0].messages, 3);
+    // Quarantine the unordered seller text while ingesting confirmed buyers.
+    // The observation clock is not a seller send time.
+    const missingTimePages = [[buyer2, { ...seller1, send_time: undefined }]];
+    const originalMissingTimePages = structuredClone(missingTimePages);
+    await ingest(normalize(missingTimePages));
+    const quarantineBefore = (await db.query("select * from sellerpilot_private.lazada_unordered_messages")).rows;
+    assert.equal(quarantineBefore.length, 1);
+    assert.equal(quarantineBefore[0].body, "seller-1");
+    assert.equal(Object.hasOwn(quarantineBefore[0], "customer_name"), false);
+    assert.equal(Object.hasOwn(quarantineBefore[0], "received_at"), false);
+    await ingest(normalize(missingTimePages));
+    assert.deepEqual((await db.query("select * from sellerpilot_private.lazada_unordered_messages")).rows, quarantineBefore);
+    const ticketBeforeQuarantineOnly = await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]);
+    await ingest(normalize([[{ ...seller1, send_time: undefined }]]));
+    assert.deepEqual(await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]), ticketBeforeQuarantineOnly, "quarantine-only writes must not change any ticket, draft, approval, or latest buyer field");
+    const conflict = normalize([[{ ...seller1, send_time: undefined, content: { txt: "different original" } }]]);
+    await assert.rejects(ingest(conflict), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    for (const role of ["anon", "authenticated", "service_role"]) {
+      assert.equal(await scalar(db, "select has_table_privilege($1, 'sellerpilot_private.lazada_unordered_messages', 'SELECT')", [role]), false);
+      assert.equal(await scalar(db, "select has_function_privilege($1, 'public.sellerpilot_202609051400_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')", [role]), false);
+    }
+    for (const role of ["anon", "authenticated"]) {
+      assert.equal(await scalar(db, "select has_function_privilege($1, 'public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')", [role]), false);
+    }
+    assert.equal(await scalar(db, "select has_function_privilege('service_role', 'public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)', 'EXECUTE')"), true);
+    assert.equal((await state())[0].provider_status, "waiting");
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    assert.equal((await state())[0].messages, 3);
+    assert.equal(normalize(missingTimePages).find(row => row.senderRole === "seller").receivedAt, "");
+    assert.deepEqual(missingTimePages, originalMissingTimePages);
+    assert.deepEqual((await db.query(`select body from sellerpilot_private.support_inbound_messages
+      where remote_message_id = 'seller-1'`)).rows, [{ body: "seller-1" }]);
+    await ingest(normalize([[seller2, buyer2], [seller1, buyer1]]));
+    assert.deepEqual(await state(), [{ provider_status: "answered", message: "buyer-2", latest_buyer: "buyer-2", messages: 4, seller_messages: 2, customer_messages: 2 }]);
+    const answeredBeforeQuarantine = await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]);
+    await ingest(normalize([[{ ...seller1, send_time: undefined }]]));
+    assert.deepEqual(await scalar(db, "select to_jsonb(t) from sellerpilot_private.support_tickets t where source_credential_id=$1", [credentialId]), answeredBeforeQuarantine);
+    await ingest(normalize([[seller1, buyer1]]));
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    assert.equal((await state())[0].provider_status, "answered");
+    assert.deepEqual((await db.query(`select remote_message_id, sender_role, body
+      from sellerpilot_private.support_inbound_messages order by received_at`)).rows, [
+      { remote_message_id: "buyer-1", sender_role: "customer", body: "buyer-1" },
+      { remote_message_id: "seller-1", sender_role: "seller", body: "seller-1" },
+      { remote_message_id: "buyer-2", sender_role: "customer", body: "buyer-2" },
+      { remote_message_id: "seller-2", sender_role: "seller", body: "seller-2" },
+    ]);
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.support_reply_deliveries"), 0);
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation = 'inquiries.reply'"), 0);
+    const tooLarge = normalize([[{ ...seller1, message_id: "oversized", send_time: undefined, content: { txt: "x".repeat(20001) } }]]);
+    await assert.rejects(ingest(tooLarge), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    const forged = normalize([[{ ...seller1, message_id: "forged-time", send_time: undefined }]]);
+    forged[0].receivedAt = "2026-08-25T11:00:00Z";
+    await assert.rejects(ingest(forged), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    const wrongSender = normalize([[{ ...seller1, message_id: "forged-role", send_time: undefined }]]);
+    wrongSender[0].senderRole = "customer";
+    await assert.rejects(ingest(wrongSender), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select owner_id,seller_account_key,external_ticket_id,'capacity-'||n,body_digest,sender_role,'minimal'
+      from sellerpilot_private.lazada_unordered_messages cross join generate_series(1,999) n`);
+    await assert.rejects(ingest(normalize([[{ ...seller1, message_id: "over-capacity", send_time: undefined }]])), /LAZADA_PARTIAL_REQUIRES_JSON_INGEST_V2/);
+    await ingest(normalize([[buyer2]])); // Ordinary messages do not need a free quarantine slot.
+    assert.equal((await state())[0].latest_buyer, "buyer-2");
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id like 'capacity-%'");
+    await db.query("update sellerpilot_private.lazada_unordered_dedup set first_observed_at=now()-interval '8 days'");
+    await db.query("update sellerpilot_private.lazada_unordered_messages set observed_at=now()-interval '8 days', expires_at=now()-interval '1 day'");
+    await scalar(db, "select public.sellerpilot_prune_personal_data(now()-interval '7 days')");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_messages"), 0);
+    await ingest(normalize(missingTimePages));
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_messages"), 0, "expired replay must not resurrect original body");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_dedup"), 1);
+    await db.query("update sellerpilot_private.lazada_unordered_dedup set first_observed_at=now()-interval '91 days'");
+    await scalar(db, "select public.sellerpilot_prune_personal_data(now()-interval '7 days')");
+    assert.equal(await scalar(db, "select count(*)::integer from sellerpilot_private.lazada_unordered_dedup"), 0);
+  } finally {
+    await db.close();
+  }
+});
+
+
+test("Lazada V2 commits buyers on quarantine overflow and isolates conflicting bodies and roles", async () => {
+  const { normalizeLazadaImHistory } = await import("../lib/channels/lazada-im.ts");
+  const db = await createDatabase();
+  try {
+    await applyReviewedCs140(db);
+    await seedAdminAndCredential(db);
+    await setClaims(db, "service_role");
+    const credentialId = await scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:"test",app_secret:"test",country:"my",access_token:"test",provider_account_subject:`lazada:v1:${"A".repeat(60)}`,provider_account_identity_version:"v1"})]);
+    const account = await scalar(db, "select seller_account_key from sellerpilot_private.channel_credentials where id=$1", [credentialId]);
+    const normalize = (session, messages) => normalizeLazadaImHistory([{name:`inquiries-message:${session}:1`,data:{sellerpilotSession:{session_id:session},data:{message_list:messages}}}], "2026-09-05T10:00:00Z");
+    const message = (id, body, sender=1, time="2026-09-05T09:01:00Z") => ({message_id:id,content:{txt:body},from_account_type:sender,status:0,type:1,template_id:1,send_time:time});
+    const ingest = rows => scalar(db,"select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)",[credentialId,JSON.stringify(rows)]);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select $1,$2,'lazada-im:cap','cap-'||n,repeat('a',64),'seller','minimal' from generate_series(1,1000)n`,[ADMIN_ID,account]);
+    const mixed=normalize("overflow",[message("buyer-1","buyer"),message("seller-1"," ORIGINAL \n",2,null)]);
+    const partial=await ingest(mixed);
+    assert.equal(partial.status,"partial"); assert.equal(partial.normalCount,1); assert.equal(partial.pendingCount,1);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages"),1);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets"),"waiting");
+    assert.equal(await scalar(db,"select storage_status from sellerpilot_private.lazada_unordered_dedup"),"pending");
+    const observed=await scalar(db,"select first_observed_at from sellerpilot_private.lazada_unordered_dedup");
+    await ingest(mixed);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages"),1);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id='cap-1'");
+    const retried=await ingest(mixed); assert.equal(retried.status,"complete"); assert.equal(retried.pendingCount,0);
+    assert.equal(await scalar(db,"select body from sellerpilot_private.lazada_unordered_messages where remote_message_id='seller-1'")," ORIGINAL \n");
+    assert.deepEqual(await scalar(db,"select first_observed_at from sellerpilot_private.lazada_unordered_dedup"),observed);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:cap'");
+    const conflicting=normalize("conflict",[message("buyer","buyer"),message("same-id","ORIGINAL",2,null),message("same-id","CONFLICTING",2,"2026-09-05T09:02:00Z")]);
+    assert.equal(conflicting.length,3);
+    assert.equal(conflicting.filter(e=>e.orderingStatus==='conflict').length,2);
+    const conflict=await ingest(conflicting); assert.equal(conflict.status,"partial"); assert.equal(conflict.normalCount,1); assert.equal(conflict.conflictCount,2); assert.equal(conflict.quarantinedCount,2);
+    assert.deepEqual((await db.query("select body,sender_role from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:conflict' order by body")).rows,[{body:"CONFLICTING",sender_role:"seller"},{body:"ORIGINAL",sender_role:"seller"}]);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id='lazada-im:conflict'"),"waiting");
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_inbound_messages where sender_role='seller'"),0);
+    // A later verified event cannot bypass the earlier durable original.
+    await ingest(normalize("durable",[message("seller","DURABLE ORIGINAL",2,null)]));
+    const bypass=await ingest(normalize("durable",[message("buyer","new buyer"),message("seller","CHANGED",2,"2026-09-05T09:02:00Z")]));
+    assert.equal(bypass.status,"partial"); assert.equal(bypass.normalCount,1); assert.equal(bypass.conflictCount,1);
+    assert.deepEqual((await db.query("select body from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:durable' order by body")).rows,[{body:"CHANGED"},{body:"DURABLE ORIGINAL"}]);
+    assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id='lazada-im:durable'"),"waiting");
+    const roles=normalize("roles",[message("unrelated","normal buyer"),message("same","same body",1),message("same","same body",2,"2026-09-05T09:02:00Z")]);
+    const roleConflict=await ingest(roles); assert.equal(roleConflict.normalCount,1); assert.equal(roleConflict.conflictCount,2);
+    assert.deepEqual((await db.query("select sender_role from sellerpilot_private.lazada_unordered_messages where external_ticket_id='lazada-im:roles' order by sender_role")).rows,[{sender_role:"customer"},{sender_role:"seller"}]);
+    for(const fn of ['public.sellerpilot_service_ingest_lazada_inquiries_v2(uuid,jsonb)','public.sellerpilot_service_ingest_lazada_gateway_v2(text,uuid,uuid,jsonb)']) {
+      for(const role of ['anon','authenticated']) assert.equal(await scalar(db,"select has_function_privilege($1,$2,'EXECUTE')",[role,fn]),false);
+    }
+    await assert.rejects(scalar(db,"select public.sellerpilot_service_ingest_lazada_gateway_v2($1,$2,$3,$4::jsonb)",['bad','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002',JSON.stringify(mixed)]),/LAZADA_INGEST_CLAIM_REQUIRED/);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.support_reply_deliveries"),0);
+    assert.equal(await scalar(db,"select count(*)::integer from sellerpilot_private.channel_gateway_jobs where operation='inquiries.reply'"),0);
+    // Exercise persisted retry obligations in isolation after the real bad-token
+    // rejection above. Stub only ownership lookup for this fixture job.
+    const readJob=await scalar(db,`insert into sellerpilot_private.channel_gateway_jobs(credential_id,channel,operation,environment,created_by,status,claim_token)
+      values($1,'lazada','inquiries.list','production',$2,'running','00000000-0000-4000-8000-000000000002') returning id`,[credentialId,ADMIN_ID]);
+    await db.exec(`create or replace function public.sellerpilot_service_gateway_completion_context(p_token_hash text,p_job_id uuid,p_claim_token uuid)
+      returns jsonb language sql security definer set search_path='' as $$
+      select jsonb_build_object('status',status,'channel',channel,'operation',operation,'credential_id',credential_id)
+      from sellerpilot_private.channel_gateway_jobs where id=p_job_id and status='running' $$`);
+    await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)
+      select $1,$2,'lazada-im:cap2','cap2-'||n,repeat('a',64),'seller','minimal'
+      from generate_series(1,1000-(select count(*)::integer from sellerpilot_private.lazada_unordered_messages))n`,[ADMIN_ID,account]);
+    const originalBatch=normalize('job-retry',[message('buyer','new buyer'),message('seller','UNSTORED ORIGINAL',2,null)]);
+    const gatewayIngest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_gateway_v2($1,$2,$3,$4::jsonb)', ['fixture',readJob,'00000000-0000-4000-8000-000000000002',JSON.stringify(rows)]);
+    assert.equal((await gatewayIngest(originalBatch)).status,'partial');
+    const retryReceipt=await scalar(db,"select response_payload from sellerpilot_private.channel_gateway_jobs where id=$1",[readJob]);
+    assert.match(retryReceipt.lazadaIngestionPending.fingerprint,/^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(retryReceipt).includes('UNSTORED ORIGINAL'),false);
+    const omitted=await gatewayIngest([]);
+    assert.equal(omitted.status,'partial'); assert.equal(omitted.originalBatchRequired,true);
+    await db.query("delete from sellerpilot_private.lazada_unordered_messages where remote_message_id='cap2-1'");
+    assert.equal((await gatewayIngest(originalBatch)).status,'complete');
+    assert.equal(await scalar(db,"select status from sellerpilot_private.channel_gateway_jobs where id=$1",[readJob]),'running','ingestion must not complete the job itself');
+  } finally { await db.close(); }
+});
+
+// Current parent-captured wrapper/deletion/ledger composition, not legacy
+// marker substitution. All records below are synthetic; no operating access.
+async function seedCs140Lazada(db) {
+  await seedAdminAndCredential(db);
+  await setClaims(db, 'service_role');
+  return scalar(db, `select public.sellerpilot_rotate_credential('lazada','production',$1::jsonb,now()+interval '180 days',90,30,0)`, [JSON.stringify({app_key:'synthetic',app_secret:'test-only',country:'my',access_token:'test-only',provider_account_subject:`lazada:v1:${'A'.repeat(60)}`,provider_account_identity_version:'v1'})]);
+}
+function cs140Event(id, role='customer', time='2026-09-05T10:00:00Z', ticket='lazada-im:synthetic') {
+  return {externalTicketId:ticket,customerName:'Synthetic',subject:'Synthetic',message:`  ORIGINAL ${role} ${id}\n`,senderRole:role,status:'waiting',providerStatus:'waiting',priority:3,receivedAt:time,remoteMessageId:id,inboundKey:`synthetic:${id}`,providerContext:{sessionId:ticket},replyContext:{sessionId:ticket}};
+}
+test('CS140 actual deletion chain suppresses old/identity-deleted events and quarantine without cross-owner/channel loss',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedCs140Lazada(db);
+  const ingest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[credential,JSON.stringify(rows)]);
+  const deletion=await scalar(db,`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at) values($1,'lazada',sellerpilot_private.support_deletion_fingerprint($1,'lazada','lazada-im:synthetic'),'2026-09-05T09:00:00Z') returning id`,[ADMIN_ID]);
+  await db.query(`insert into sellerpilot_private.support_message_deletions(deletion_id,inbound_key_fingerprint,remote_message_fingerprint)values($1,sellerpilot_private.support_deletion_fingerprint($2,'lazada','synthetic:deleted-key'),sellerpilot_private.support_deletion_fingerprint($2,'lazada','deleted-mid'))`,[deletion,ADMIN_ID]);
+  const rows=[cs140Event('old','customer','2026-09-05T08:00:00Z'),cs140Event('deleted-key'),cs140Event('deleted-mid'),{...cs140Event('deleted-mid','seller'),orderingStatus:'conflict'},{...cs140Event('unknown','seller',''),orderingStatus:'unverified'}, {...cs140Event('malformed','seller','not-time'),orderingStatus:'conflict'}];
+  assert.equal((await ingest(rows)).normalCount,0);
+  for(const table of ['support_inbound_messages','lazada_unordered_messages','lazada_unordered_dedup'])assert.equal(await scalar(db,`select count(*)::integer from sellerpilot_private.${table}`),0);
+  const future=cs140Event('future');assert.equal((await ingest([future])).normalCount,1);
+  assert.equal(await scalar(db,"select body from sellerpilot_private.support_inbound_messages where remote_message_id='future'"),future.message);
+  const unrelated={...cs140Event('unrelated','seller','','lazada-im:other'),orderingStatus:'unverified'};
+  assert.equal((await ingest([unrelated])).quarantinedCount,1);
+  // Same deletion hash under another channel must not suppress Lazada.
+  await db.query(`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at)values($1,'qoo10',sellerpilot_private.support_deletion_fingerprint($1,'qoo10','lazada-im:other-channel'),'2026-09-06')`,[ADMIN_ID]);
+  assert.equal((await ingest([{...unrelated,externalTicketId:'lazada-im:other-channel',remoteMessageId:'channel-isolated'}])).quarantinedCount,1);
+  const otherOwner='00000000-0000-4000-8000-000000000088';
+  await db.query("insert into auth.users(id,email)values($1,'synthetic-other@example.test')",[otherOwner]);
+  await db.query(`insert into sellerpilot_private.support_ticket_deletions(owner_id,channel_key,external_ticket_fingerprint,deleted_through_at)values($1,'lazada',sellerpilot_private.support_deletion_fingerprint($1,'lazada','lazada-im:other-owner'),'2026-09-06')`,[otherOwner]);
+  assert.equal((await ingest([{...unrelated,externalTicketId:'lazada-im:other-owner',remoteMessageId:'owner-isolated'}])).quarantinedCount,1);
+ }finally{await db.close();}
+});
+test('CS140 actual non-Lazada seller/system history and originals survive Lazada partial unchanged',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const lazada=await seedCs140Lazada(db);
+  const qoo=await scalar(db,"select id from sellerpilot_private.channel_credentials where channel='qoo10' and status='active' limit 1");
+  const events=[cs140Event('q-customer','customer',undefined,'qoo10:synthetic'),cs140Event('q-seller','seller','2026-09-05T10:01:00Z','qoo10:synthetic'),cs140Event('q-system','system','2026-09-05T10:02:00Z','qoo10:synthetic')];
+  assert.equal(await scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",[qoo,JSON.stringify(events)]),1);
+  assert.deepEqual((await db.query("select sender_role,body from sellerpilot_private.support_inbound_messages where channel_key='qoo10' order by received_at")).rows,events.map(e=>({sender_role:e.senderRole,body:e.message})));
+  assert.equal(await scalar(db,"select latest_inbound_key from sellerpilot_private.support_tickets where channel_key='qoo10'"),'synthetic:q-customer');
+  const before=(await db.query("select to_jsonb(t) row from sellerpilot_private.support_tickets t where channel_key='qoo10'")).rows;
+  const account=await scalar(db,'select seller_account_key from sellerpilot_private.channel_credentials where id=$1',[lazada]);
+  await db.query(`insert into sellerpilot_private.lazada_unordered_messages(owner_id,seller_account_key,external_ticket_id,remote_message_id,body_digest,sender_role,body)select $1,$2,'lazada-im:capacity','cap-'||n,repeat('a',64),'seller','synthetic' from generate_series(1,1000)n`,[ADMIN_ID,account]);
+  const result=await scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[lazada,JSON.stringify([cs140Event('normal'),{...cs140Event('pending','seller',''),orderingStatus:'unverified'}])]);
+  assert.equal(result.status,'partial');assert.equal(result.normalCount,1);assert.equal(result.pendingCount,1);
+  assert.deepEqual((await db.query("select to_jsonb(t) row from sellerpilot_private.support_tickets t where channel_key='qoo10'")).rows,before);
+  assert.equal(await scalar(db,"select body from sellerpilot_private.support_inbound_messages where channel_key='lazada' and remote_message_id='normal'"),cs140Event('normal').message);
+ }finally{await db.close();}
+});
+test('CS140 native 500-row and exact 1MB caps reject before writes while accepted normal batches commit',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedCs140Lazada(db);
+  const ingest=rows=>scalar(db,'select public.sellerpilot_service_ingest_lazada_inquiries_v2($1,$2::jsonb)',[credential,JSON.stringify(rows)]);
+  const rows=Array.from({length:500},(_,i)=>cs140Event('cap-'+i));
+  assert.equal((await ingest(rows)).normalCount,500);
+  const baseline=await scalar(db,'select count(*)::int from sellerpilot_private.support_inbound_messages');
+  await assert.rejects(ingest([...rows,{...cs140Event('over-count','seller',''),orderingStatus:'unverified'}]),/LAZADA_INGEST_BATCH_INVALID/);
+  // Exact native byte ceiling, using bounded bodies and actual JSONB byte size.
+  const exact=Array.from({length:50},(_,i)=>({...cs140Event('byte-'+i),message:'x'.repeat(19000)}));
+  let bytes=await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]);
+  for(let i=0;bytes<1000000;i++){const n=Math.min(20000-exact[i].message.length,1000000-bytes);exact[i].message+='x'.repeat(n);bytes+=n;}
+  assert.equal(await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]),1000000);
+  assert.equal((await ingest(exact)).normalCount,50);
+  exact[49].message+='x';
+  assert.equal(await scalar(db,'select octet_length($1::jsonb::text)',[JSON.stringify(exact)]),1000001);
+  await assert.rejects(ingest(exact),/LAZADA_INGEST_BATCH_INVALID/);
+  assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.support_inbound_messages'),baseline+50);
+  assert.equal(await scalar(db,'select count(*)::int from sellerpilot_private.lazada_unordered_messages'),0);
+ }finally{await db.close();}
+});
+
+// New read model exercised over the existing migrations and reviewed live
+// ingestion/deletion chain, not only the small pagination fixture.
+test('CS conversation read model runs on the reviewed production ledger schema', async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);
+  const credential=await seedAdminAndCredential(db);
+  const ticketId=await ingestTicket(db,credential,'timeline-1');
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907101000_read_cs_conversation_timeline.sql',import.meta.url),'utf8'));
+  const page=await scalar(db,'select public.sellerpilot_get_cs_conversation($1)',[ticketId]);
+  assert.equal(page.ticketId,ticketId);
+  assert.equal(page.messages.length,1);
+  assert.equal(page.messages[0].body,'문의 내용 timeline-1');
+  assert.equal(page.messages[0].role,'customer');
+  assert.equal(page.messages[0].source,'channel');
+ }finally{await db.close();}
+});
+
+test('Smartstore answer history persists on the actual ledger without replacing the latest buyer',async()=>{
+ const { normalizeSmartstoreInquiries }=await import('../lib/channels/smartstore-inquiry-history.ts');
+ const { createTimestampNormalizer }=await import('../lib/channels/normalization-time.ts');
+ const { createHash }=await import('node:crypto');
+ const normalize=data=>normalizeSmartstoreInquiries(data,createTimestampNormalizer('2026-09-07T00:00:00Z')).map(row=>({
+  ...row,inboundKey:`smartstore:${createHash('sha256').update(['v2','smartstore',row.externalTicketId,row.remoteMessageId].join('\u001f')).digest('hex')}`,
+  providerStatus:row.status==='resolved'?'answered':'waiting',ticketKind:'conversation'
+ }));
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);await seedAdminAndCredential(db);await setClaims(db,'service_role');
+  const credential=await scalar(db,`select public.sellerpilot_rotate_credential('smartstore','production',$1::jsonb,now()+interval '180 days',90,30,0)`,[JSON.stringify({client_id:'synthetic',client_secret:'test-only'})]);
+  const page={contents:[{questionId:987654,question:'  buyer original\n',createDate:'2026-09-01T00:00:00Z',answered:true,answers:[
+    {answer:'  seller first\n',createDate:'2026-09-01T00:01:00Z'},
+    {answer:'seller second',createDate:'2026-09-01T00:02:00Z'},
+    {answer:'  undated original\n'}
+  ]}]};
+  const rows=normalize(page);
+  const ingest=()=>scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",[credential,JSON.stringify(rows)]);
+  await ingest();await ingest();
+  assert.equal(await scalar(db,"select count(*)::int from sellerpilot_private.support_inbound_messages where channel_key='smartstore'"),3);
+  const ticket=await scalar(db,"select id from sellerpilot_private.support_tickets where channel_key='smartstore'");
+  assert.equal(await scalar(db,'select latest_inbound_key from sellerpilot_private.support_tickets where id=$1',[ticket]),rows[0].inboundKey);
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907101000_read_cs_conversation_timeline.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907102000_project_unsequenced_cs_answers.sql',import.meta.url),'utf8'));
+  await setClaims(db);
+  const result=await scalar(db,'select public.sellerpilot_get_cs_conversation($1)',[ticket]);
+  assert.deepEqual(result.messages.map(row=>row.body),['seller second','  seller first\n','  buyer original\n']);
+  assert.deepEqual(result.messages[2].unsequencedAnswers,[{body:'  undated original\n',reason:'provider_timestamp_unavailable'}]);
+ }finally{await db.close();}
+});
+
+test('CS archive search runs over the reviewed production ledger schema',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedAdminAndCredential(db);
+  const ticket=await ingestTicket(db,credential,'archive-original');
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907103000_search_cs_archive.sql',import.meta.url),'utf8'));
+  const page=await scalar(db,"select public.sellerpilot_search_cs_archive('archive-original')");
+  assert.equal(page.tickets.length,1);assert.equal(page.tickets[0].id,ticket);
+  assert.equal(page.tickets[0].preview,'문의 내용 archive-original');
+ }finally{await db.close();}
+});
+
+test('historical seller snapshots never resolve a newer unanswered request and ordinary observations still work',async()=>{
+ const db=await createDatabase();try{
+  await applyReviewedCs140(db);const credential=await seedAdminAndCredential(db);
+  await db.exec(await readFile(new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql',import.meta.url),'utf8'));
+  const ticket='qoo10:history-only';
+  const buyer=cs140Event('question','customer','2026-09-01T00:00:00Z',ticket);
+  const history={...cs140Event('history','seller','2026-09-01T00:01:00Z',ticket),providerContext:{historyOnly:true}};
+  const ingest=rows=>scalar(db,"select public.sellerpilot_service_ingest_inquiries($1,'qoo10',$2::jsonb)",[credential,JSON.stringify(rows)]);
+  await ingest([buyer,history]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'waiting');
+  assert.equal(await scalar(db,"select count(*)::int from sellerpilot_private.support_inbound_messages where channel_key='qoo10'"),2);
+  const ordinary=cs140Event('delivered','seller','2026-09-01T00:02:00Z',ticket);await ingest([ordinary]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'answered');
+  const newer={...buyer,inboundKey:'synthetic:new-question',remoteMessageId:'new-question',receivedAt:'2026-09-01T00:03:00Z'};
+  await ingest([newer,history]);
+  assert.equal(await scalar(db,"select provider_status from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'waiting');
+  assert.equal(await scalar(db,"select latest_inbound_key from sellerpilot_private.support_tickets where external_ticket_id=$1",[ticket]),'synthetic:new-question');
+ }finally{await db.close();}
+});
+
+test('Shopee product-comment replies keep exact shop, item, comment, credential and inbound lineage', async () => {
+  const { normalizeChannelInquiries } = await import('../lib/channels/inquiry-sync.ts');
+  const db = await createDatabase();
+  try {
+    await applyReviewedCs140(db);
+    await seedAdminAndCredential(db);
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907104000_keep_cs_history_from_resolving_new_requests.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260907200000_enable_shopee_comment_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await db.exec(await readFile(
+      new URL('../supabase/migrations/20260908045000_enable_shopee_return_refund_cs.sql', import.meta.url),
+      'utf8',
+    ));
+    await setClaims(db, 'service_role');
+    const credentialId = await scalar(
+      db,
+      `select public.sellerpilot_rotate_credential(
+        'shopee', 'production', $1::jsonb,
+        now() + interval '30 days', 90, 30, 7
+      )`,
+      [JSON.stringify({
+        partner_id: '2031489',
+        partner_key: 'test-partner-secret',
+        main_account_id: '9001',
+        shop_id: '1719148844',
+        shop_ids: ['1719148844'],
+        access_token: 'test-access-token',
+        refresh_token: 'test-refresh-token',
+        provider_account_identity_version: 'v1',
+        provider_account_subject: 'shopee:main:9001',
+      })],
+    );
+    const operation = {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.list',
+      safeMessage: 'ok',
+      steps: [{
+        name: 'inquiries',
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotProviderContext: { shopId: '1719148844' },
+          response: {
+            item_comment_list: [{
+              comment_id: 901,
+              item_id: 8001,
+              buyer_username: 'buyer-1',
+              comment: '배송이 빨랐어요',
+              rating_star: 5,
+              create_time: 1_788_000_000,
+            }],
+            more: false,
+            next_cursor: '',
+          },
+        },
+      }],
+    };
+    const rows = normalizeChannelInquiries('shopee', operation, '2026-09-07T00:00:00.000Z');
+    assert.equal(rows.length, 1);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(rows)],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select sender_role, body
+           from sellerpilot_private.support_inbound_messages
+          where channel_key = 'shopee'
+          order by received_at, sender_role`,
+      )).rows,
+      [
+        { sender_role: 'customer', body: '배송이 빨랐어요' },
+      ],
+    );
+    const ticket = (await db.query(
+      `select id::text as id, latest_inbound_key, seller_account_key, reply_context
+         from sellerpilot_private.support_tickets
+        where owner_id = $1 and channel_key = 'shopee'`,
+      [ADMIN_ID],
+    )).rows[0];
+    assert.deepEqual(ticket.reply_context, {
+      shopId: '1719148844',
+      commentId: '901',
+      itemId: '8001',
+    });
+    const request = JSON.stringify({
+      sellerpilotExpectedInboundKey: ticket.latest_inbound_key,
+      arguments: {
+        shopId: '1719148844',
+        commentId: '901',
+        itemId: '8001',
+        reply: '감사합니다.',
+        unrelatedProductWrite: 'must-not-enter-job',
+      },
+      unrelatedRootField: 'must-not-enter-job',
+    });
+    const jobId = await scalar(
+      db,
+      `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1, 'shopee', '감사합니다.', $2::jsonb
+      )`,
+      [ticket.id, request],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '감사합니다.', $2::jsonb
+        )`,
+        [ticket.id, request],
+      ),
+      jobId,
+    );
+    const job = (await db.query(
+      `select channel, operation, seller_account_key, request_payload
+         from sellerpilot_private.channel_gateway_jobs where id = $1`,
+      [jobId],
+    )).rows[0];
+    assert.equal(job.channel, 'shopee');
+    assert.equal(job.operation, 'inquiries.reply');
+    assert.equal(job.seller_account_key, ticket.seller_account_key);
+    assert.deepEqual(job.request_payload.arguments, {
+      shopId: '1719148844',
+      commentId: '901',
+      itemId: '8001',
+      reply: '감사합니다.',
+    });
+    assert.equal('unrelatedRootField' in job.request_payload, false);
+
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '감사합니다.', $2::jsonb
+        )`,
+        [ticket.id, JSON.stringify({
+          sellerpilotExpectedInboundKey: ticket.latest_inbound_key,
+          arguments: { shopId: '1719148844', commentId: '901', itemId: '8002', reply: '감사합니다.' },
+        })],
+      ),
+      /Shopee comment context mismatch/,
+    );
+    assert.equal(
+      await scalar(db, "select sellerpilot_private.serverless_gateway_job_allowed('shopee', 'inquiries.list')"),
+      true,
+    );
+    assert.equal(
+      await scalar(db, "select sellerpilot_private.serverless_gateway_job_allowed('shopee', 'inquiries.reply')"),
+      true,
+    );
+    await issueWorkerToken(db);
+    const claim = {
+      id: jobId,
+      channel: 'shopee',
+      claim_token: '55555555-5555-4555-8555-555555555555',
+    };
+    await db.query(
+      `update sellerpilot_private.channel_gateway_jobs
+          set status = 'running',
+              worker_token_id = (
+                select id from sellerpilot_private.ai_cli_worker_tokens where token_hash = $1
+              ),
+              claim_token = $2,
+              lease_expires_at = now() + interval '15 minutes',
+              started_at = now(),
+              updated_at = now()
+        where id = $3`,
+      [TOKEN_HASH, claim.claim_token, jobId],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        'select public.sellerpilot_service_begin_gateway_provider_mutation($1, $2, $3)',
+        [TOKEN_HASH, claim.id, claim.claim_token],
+      ),
+      true,
+    );
+    assert.equal(await completeReply(db, claim, {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.reply',
+      safeMessage: 'Shopee comment reply accepted',
+    }), true);
+    assert.deepEqual(
+      (await db.query(
+        `select status, provider_status, reply_delivery_status, reply_draft,
+                resolved_at is not null as has_resolved_at
+           from sellerpilot_private.support_tickets where id = $1`,
+        [ticket.id],
+      )).rows,
+      [{
+        status: 'resolved',
+        provider_status: 'answered',
+        reply_delivery_status: 'succeeded',
+        reply_draft: '감사합니다.',
+        has_resolved_at: true,
+      }],
+    );
+    operation.steps[0].data.response.item_comment_list[0].comment_reply = {
+      reply: '감사합니다.', create_time: 1_788_000_100,
+    };
+    const observedRows = normalizeChannelInquiries('shopee', operation, '2026-09-07T00:00:00.000Z');
+    assert.equal(observedRows.length, 2);
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(observedRows)],
+      ),
+      1,
+    );
+    assert.deepEqual(
+      (await db.query(
+        `select sender_role, body
+           from sellerpilot_private.support_inbound_messages
+          where channel_key = 'shopee'
+          order by received_at, sender_role`,
+      )).rows,
+      [
+        { sender_role: 'customer', body: '배송이 빨랐어요' },
+        { sender_role: 'seller', body: '감사합니다.' },
+      ],
+    );
+    assert.equal(
+      await scalar(
+        db,
+        'select reply_delivery_status from sellerpilot_private.support_tickets where id = $1',
+        [ticket.id],
+      ),
+      'succeeded',
+    );
+
+    const returnOperation = {
+      ok: true,
+      channel: 'shopee',
+      operation: 'inquiries.list',
+      safeMessage: 'ok',
+      steps: [{
+        name: 'inquiries',
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotProviderContext: {
+            shopId: '1719148844', kind: 'return_refund', returnSn: 'RETURN1',
+          },
+          response: {
+            return_sn: 'RETURN1', reason: 'PHYSICAL_DMG', text_reason: '포장이 파손됐어요',
+            image: [], buyer_videos: [], create_time: 1_788_000_200, update_time: 1_788_000_300,
+            status: 'REQUESTED', due_date: 1_788_050_000, order_sn: 'ORDER-RETURN-1',
+            user: { username: 'buyer-2' }, negotiation: { negotiation_status: 'PENDING_RESPOND' },
+          },
+        },
+      }],
+    };
+    const returnRows = normalizeChannelInquiries('shopee', returnOperation, '2026-09-07T00:00:00.000Z');
+    assert.equal(
+      await scalar(
+        db,
+        "select public.sellerpilot_service_ingest_inquiries($1, 'shopee', $2::jsonb)",
+        [credentialId, JSON.stringify(returnRows)],
+      ),
+      1,
+    );
+    const returnTicket = (await db.query(
+      `select id::text as id, ticket_kind, reply_context, external_order_reference
+         from sellerpilot_private.support_tickets
+        where channel_key='shopee' and external_ticket_id='shopee:return:1719148844:RETURN1'`,
+    )).rows[0];
+    assert.equal(returnTicket.ticket_kind, 'after_sales');
+    assert.deepEqual(returnTicket.reply_context, {});
+    assert.equal(returnTicket.external_order_reference, 'ORDER-RETURN-1');
+    await assert.rejects(
+      scalar(
+        db,
+        `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+          $1, 'shopee', '반품 답변', $2::jsonb
+        )`,
+        [returnTicket.id, JSON.stringify({
+          sellerpilotExpectedInboundKey: returnRows[0].inboundKey,
+          arguments: { kind: 'return_refund', returnSn: 'RETURN1', reply: '반품 답변' },
+        })],
+      ),
+      /Shopee comment context mismatch/,
+    );
+  } finally {
+    await db.close();
+  }
+});
+
+
+test("SmartStore periodic polling fans out current, history, and reply readback to exact active accounts", async () => {
+  const { normalizeChannelInquiries } = await import("../lib/channels/inquiry-sync.ts");
+  const { replyAcceptanceMarker } = await import("../lib/channels/reply-verification.ts");
+  const db = await createDatabase();
+  const ownerB = "50505b55-f364-4c52-98ca-9d6f7371d3a2";
+  const ownerExpired = "60606b66-f364-4c52-98ca-9d6f7371d3a3";
+  try {
+    await db.exec(csCommerceBoundarySql);
+    await db.exec(smartstoreOrderBindingV2Sql);
+    await db.exec(smartstoreAccountScopeSql);
+    await db.exec(smartstoreRevisionSql);
+    await db.exec(replyObservationSql);
+    await db.exec(elevenstExactObservationSql);
+    await db.exec(smartstoreExactReadbackSql);
+    await db.exec(smartstorePeriodicAccountFanoutSql);
+    assert.match(await scalar(db, `select indexdef from pg_indexes
+      where schemaname='sellerpilot_private'
+        and indexname='channel_gateway_jobs_smartstore_periodic_credential_idx'`),
+    /credential_id/u);
+    await db.query(
+      "insert into auth.users(id,email) values($1,'fanout-a@example.test'),($2,'fanout-b@example.test'),($3,'fanout-expired@example.test')",
+      [ADMIN_ID, ownerB, ownerExpired],
+    );
+    await db.query(
+      "insert into sellerpilot_private.admin_users(user_id,display_name) values($1,'Fanout A'),($2,'Fanout B'),($3,'Fanout Expired')",
+      [ADMIN_ID, ownerB, ownerExpired],
+    );
+
+    const rotate = async (ownerId, accountId) => {
+      await setClaims(db, "authenticated", ownerId);
+      return scalar(db, `select public.sellerpilot_rotate_credential(
+        'smartstore','production',jsonb_build_object(
+          'client_id',$1::text,'client_secret',$2::text,
+          'token_type','SELLER','account_id',$3::text
+        ),now()+interval '30 days',90,30,7
+      )`, [`client-${accountId}`, `secret-${accountId}`, accountId]);
+    };
+    const credentialA = await rotate(ADMIN_ID, "fanout-a");
+    const credentialB = await rotate(ownerB, "fanout-b");
+    const credentialExpired = await rotate(ownerExpired, "fanout-expired");
+    await db.query(`update sellerpilot_private.channel_credentials
+      set status='active',
+          expires_at=case when id=$3 then now()-interval '1 minute'
+            else now()+interval '30 days' end
+      where id in($1,$2,$3)`, [credentialA, credentialB, credentialExpired]);
+    await setClaims(db, "service_role");
+    const fixedEgressBlocked = await scalar(db, `select public.sellerpilot_service_enqueue_periodic_sync(
+      'smartstore','inquiries.list',$1::jsonb,5
+    )`, [JSON.stringify({
+      periodicKey: "inquiries:blocked-before-static-egress",
+      arguments: { kind: "product", query: { page: 1, size: 100 } },
+    })]);
+    assert.deepEqual({
+      contract: fixedEgressBlocked.contract,
+      status: fixedEgressBlocked.status,
+      credentialCount: fixedEgressBlocked.credentialCount,
+    }, {
+      contract: "sellerpilot-smartstore-periodic-fanout/1",
+      status: "fixed_egress_required",
+      credentialCount: 0,
+    });
+    await db.query(
+      "update sellerpilot_private.serverless_static_egress_policy set enabled=true where channel='smartstore'",
+    );
+
+    const currentPayload = {
+      periodicKey: "inquiries:product",
+      arguments: {
+        kind: "product",
+        query: {
+          fromDate: "2026-09-09T00:00:00.000Z",
+          toDate: "2026-09-09T01:00:00.000Z",
+          page: 1,
+          size: 100,
+        },
+      },
+    };
+    const current = await scalar(db, `select public.sellerpilot_service_enqueue_periodic_sync(
+      'smartstore','inquiries.list',$1::jsonb,5
+    )`, [JSON.stringify(currentPayload)]);
+    assert.deepEqual({
+      contract: current.contract,
+      status: current.status,
+      credentialCount: current.credentialCount,
+      eligibleCount: current.eligibleCount,
+      queuedCount: current.queuedCount,
+      pendingCount: current.pendingCount,
+      expiredCount: current.expiredCount,
+      failedCount: current.failedCount,
+    }, {
+      contract: "sellerpilot-smartstore-periodic-fanout/1",
+      status: "queued",
+      credentialCount: 3,
+      eligibleCount: 2,
+      queuedCount: 2,
+      pendingCount: 0,
+      expiredCount: 1,
+      failedCount: 0,
+    });
+    assert.deepEqual(current.results.map((item) => item.status).sort(),
+      ["not_connected", "queued", "queued"]);
+    const currentJobs = (await db.query(`select credential_id,seller_account_key,
+        request_payload->>'periodicKey' periodic_key,status
+      from sellerpilot_private.channel_gateway_jobs
+      where channel='smartstore' and operation='inquiries.list'
+        and request_payload->>'periodicKey'='inquiries:product'
+      order by credential_id`)).rows;
+    assert.equal(currentJobs.length, 2);
+    assert.deepEqual(new Set(currentJobs.map((row) => row.credential_id)),
+      new Set([credentialA, credentialB]));
+    assert.ok(currentJobs.every((row) => row.seller_account_key && row.status === "queued"));
+
+    const replay = await scalar(db, `select public.sellerpilot_service_enqueue_periodic_sync(
+      'smartstore','inquiries.list',$1::jsonb,5
+    )`, [JSON.stringify(currentPayload)]);
+    assert.deepEqual({
+      queuedCount: replay.queuedCount,
+      pendingCount: replay.pendingCount,
+      expiredCount: replay.expiredCount,
+    }, { queuedCount: 0, pendingCount: 2, expiredCount: 1 });
+    assert.equal((await db.query(`select count(*)::integer count
+      from sellerpilot_private.channel_gateway_jobs
+      where channel='smartstore' and operation='inquiries.list'
+        and request_payload->>'periodicKey'='inquiries:product'`)).rows[0].count, 2);
+
+    const historyPayload = {
+      periodicKey: "inquiries:history:2026-08-11:2026-09-09:product",
+      arguments: {
+        kind: "product",
+        query: {
+          fromDate: "2026-08-11T00:00:00.000Z",
+          toDate: "2026-09-09T23:59:59.999Z",
+          page: 1,
+          size: 100,
+        },
+      },
+    };
+    const history = await scalar(db, `select public.sellerpilot_service_enqueue_periodic_sync(
+      'smartstore','inquiries.list',$1::jsonb,1440
+    )`, [JSON.stringify(historyPayload)]);
+    assert.deepEqual({
+      queuedCount: history.queuedCount,
+      pendingCount: history.pendingCount,
+      expiredCount: history.expiredCount,
+    }, { queuedCount: 2, pendingCount: 0, expiredCount: 1 });
+    assert.equal((await db.query(`select count(*)::integer count
+      from sellerpilot_private.channel_gateway_jobs
+      where channel='smartstore' and operation='inquiries.list'
+        and request_payload->>'periodicKey'=$1`,
+    [historyPayload.periodicKey])).rows[0].count, 2);
+
+    await db.exec(`
+      create function sellerpilot_private.test_reject_one_smartstore_periodic_account()
+      returns trigger language plpgsql set search_path='' as $$
+      begin
+        if new.credential_id='${credentialB}'::uuid
+           and new.request_payload->>'periodicKey'='inquiries:forced-failure' then
+          raise exception 'forced account-local enqueue failure' using errcode='23514';
+        end if;
+        return new;
+      end $$;
+      create trigger aaa_test_reject_one_smartstore_periodic_account
+      before insert on sellerpilot_private.channel_gateway_jobs
+      for each row execute function
+        sellerpilot_private.test_reject_one_smartstore_periodic_account();
+    `);
+    const partial = await scalar(db, `select public.sellerpilot_service_enqueue_periodic_sync(
+      'smartstore','inquiries.list',$1::jsonb,5
+    )`, [JSON.stringify({
+      periodicKey: "inquiries:forced-failure",
+      arguments: currentPayload.arguments,
+    })]);
+    assert.deepEqual({
+      status: partial.status,
+      queuedCount: partial.queuedCount,
+      failedCount: partial.failedCount,
+      expiredCount: partial.expiredCount,
+    }, { status: "failed", queuedCount: 1, failedCount: 1, expiredCount: 1 });
+    assert.deepEqual(partial.results.map((item) => [item.credentialId, item.status]).sort(),
+      [[credentialA, "queued"], [credentialB, "failed"], [credentialExpired, "not_connected"]].sort());
+    assert.equal((await db.query(`select count(*)::integer count
+      from sellerpilot_private.channel_gateway_jobs
+      where request_payload->>'periodicKey'='inquiries:forced-failure'`)).rows[0].count, 1);
+    await db.exec(`
+      drop trigger aaa_test_reject_one_smartstore_periodic_account
+        on sellerpilot_private.channel_gateway_jobs;
+      drop function sellerpilot_private.test_reject_one_smartstore_periodic_account();
+    `);
+
+    const providerPage = (buyerText) => ({
+      ok: true,
+      channel: "smartstore",
+      operation: "inquiries.list",
+      steps: [{
+        name: "inquiries",
+        ok: true,
+        status: 200,
+        data: {
+          sellerpilotInquiryKind: "product",
+          contents: [{
+            questionId: 919191,
+            question: buyerText,
+            productName: "다계정 답변 상품",
+            maskedWriterId: "buyer***",
+            answered: false,
+            createDate: "2026-09-09T10:00:00+09:00",
+          }],
+        },
+      }],
+      safeMessage: "two-account readback source",
+    });
+    const rowsA = normalizeChannelInquiries("smartstore", providerPage("계정 A 문의"),
+      "2026-09-09T01:00:01.000Z");
+    const rowsB = normalizeChannelInquiries("smartstore", providerPage("계정 B 문의"),
+      "2026-09-09T01:00:02.000Z");
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+      [credentialA, JSON.stringify(rowsA)]), 1);
+    assert.equal(await scalar(db,
+      "select public.sellerpilot_service_ingest_inquiries($1,'smartstore',$2::jsonb)",
+      [credentialB, JSON.stringify(rowsB)]), 1);
+    const tickets = (await db.query(`select id,source_credential_id
+      from sellerpilot_private.support_tickets
+      where channel_key='smartstore'
+        and external_ticket_id='smartstore:product-qna:919191'
+      order by source_credential_id`)).rows;
+    assert.equal(tickets.length, 2);
+
+    await issueWorkerToken(db);
+    let claimOrdinal = 20;
+    for (const ticket of tickets) {
+      const expectedRows = ticket.source_credential_id === credentialA ? rowsA : rowsB;
+      const reply = ticket.source_credential_id === credentialA
+        ? "계정 A 정확 답변"
+        : "계정 B 정확 답변";
+      const sourceJobId = await scalar(db, `select public.sellerpilot_enqueue_inquiry_reply_gateway_job(
+        $1,'smartstore',$2::text,jsonb_build_object(
+          'sellerpilotExpectedInboundKey',$3::text,
+          'arguments',jsonb_build_object(
+            'kind','product','questionId','919191','reply',$2::text
+          )
+        )
+      )`, [ticket.id, reply, expectedRows[0].inboundKey]);
+      claimOrdinal += 1;
+      const claimToken = `62000000-0000-4000-8000-${String(claimOrdinal).padStart(12, "0")}`;
+      const sourceClaim = await scalar(db, `with token as(
+        select id from sellerpilot_private.ai_cli_worker_tokens where token_hash=$1
+      ),claimed as(
+        update sellerpilot_private.channel_gateway_jobs job set
+          status='running',worker_token_id=token.id,claim_token=$3::uuid,
+          attempt_count=job.attempt_count+1,
+          lease_expires_at=now()+interval '3 minutes',
+          started_at=coalesce(job.started_at,now()),updated_at=now()
+        from token where job.id=$2 and job.status='queued'
+        returning job.*
+      ) select jsonb_build_object(
+        'id',id,'claim_token',claim_token,'credential_id',credential_id,
+        'channel',channel,'operation',operation,'environment',environment,
+        'request',request_payload,'attempt_count',attempt_count
+      ) from claimed`, [TOKEN_HASH, sourceJobId, claimToken]);
+      assert.equal(await scalar(db,
+        "select public.sellerpilot_service_begin_gateway_provider_mutation($1,$2,$3)",
+        [TOKEN_HASH, sourceClaim.id, sourceClaim.claim_token]), true);
+      assert.equal(await completeReply(db, sourceClaim, {
+        ok: true,
+        channel: "smartstore",
+        operation: "inquiries.reply",
+        steps: [{
+          name: "inquiry-reply",
+          ok: true,
+          status: 200,
+          data: {
+            sellerpilotReplyAcceptance: replyAcceptanceMarker(
+              "smartstore", "product", { questionId: "919191" },
+            ),
+          },
+        }],
+        remoteId: "919191",
+        safeMessage: "provider accepted",
+      }), true);
+    }
+    const readbackLinks = (await db.query(`select link.credential_id source_credential_id,
+        read_job.credential_id read_credential_id,link.seller_account_key,
+        read_job.seller_account_key read_account_key,
+        read_job.request_payload#>>'{sellerpilotSmartstoreReplyReadback,providerTicketId}'
+          provider_ticket_id
+      from sellerpilot_private.smartstore_reply_readback_links_v1 link
+      join sellerpilot_private.channel_gateway_jobs read_job
+        on read_job.id=link.readback_job_id
+      where link.provider_ticket_id='919191'
+      order by link.credential_id`)).rows;
+    assert.equal(readbackLinks.length, 2);
+    assert.deepEqual(new Set(readbackLinks.map((row) => row.source_credential_id)),
+      new Set([credentialA, credentialB]));
+    assert.ok(readbackLinks.every((row) =>
+      row.source_credential_id === row.read_credential_id
+      && row.seller_account_key === row.read_account_key
+      && row.provider_ticket_id === "919191"));
+
+    await setClaims(db, "authenticated", ADMIN_ID);
+    const sharedRead = await scalar(db,
+      "select public.sellerpilot_read_smartstore_cs_account_ticket_v1($1,$2)",
+      [credentialB, tickets.find((ticket) => ticket.source_credential_id === credentialB).id]);
+    assert.equal(sharedRead.ticket.message, "계정 B 문의");
+    assert.equal(sharedRead.credentialId, credentialB);
+
+    await setClaims(db, "authenticated", ADMIN_ID);
+    const qooCredentialA = await scalar(db, `select public.sellerpilot_rotate_credential(
+      'qoo10','production',jsonb_build_object('api_key','qoo-a'),
+      now()+interval '30 days',90,30,7
+    )`);
+    await setClaims(db, "authenticated", ownerB);
+    const qooCredentialB = await scalar(db, `select public.sellerpilot_rotate_credential(
+      'qoo10','production',jsonb_build_object('api_key','qoo-b'),
+      now()+interval '30 days',90,30,7
+    )`);
+    assert.notEqual(qooCredentialA, qooCredentialB);
+    await setClaims(db, "service_role");
+    await assert.rejects(
+      db.query(
+        "update sellerpilot_private.channel_credentials set status='active' where id=$1",
+        [qooCredentialA],
+      ),
+      /channel_credentials_one_active_non_lazada_elevenst_smartstore_idx|duplicate key/u,
+    );
   } finally {
     await db.close();
   }

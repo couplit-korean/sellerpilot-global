@@ -21,9 +21,9 @@ registerHooks({
   },
 });
 
-const [{ normalizeChannelInquiries }, { executeInquiryReplyViaChannelGateway }] = await Promise.all([
+const [{ normalizeChannelInquiries }, { enqueueInquiryReplyViaChannelGateway }] = await Promise.all([
   import("../lib/channels/inquiry-sync"),
-  import("../lib/channels/gateway"),
+  import("../lib/cs/operations/enqueue-reply"),
 ]);
 
 test("eBay readiness reports ASQ implementation without claiming live remote CS", () => {
@@ -31,10 +31,10 @@ test("eBay readiness reports ASQ implementation without claiming live remote CS"
   assert.ok(readiness);
   assert.equal(readiness.overall, "partial");
   assert.equal(readiness.checks.some((check) => check.label === "상품 문의 ASQ" && check.state === "partial"), true);
-  assert.match(readiness.summary, /ASQ 조회·답변과 계보 검증까지 구현/);
+  assert.match(readiness.summary, /Trading ASQ·Inbox와 Commerce 일반 대화의 수신·1년 복구·대화 답변 계보를 구현/);
   assert.match(readiness.summary, /원격 CS 연결 완료로 표시하지 않습니다/);
   assert.doesNotMatch(readiness.summary, /공통 문의함 미지원/);
-  assert.match(readiness.nextAction, /상시 작업자 연결/);
+  assert.match(readiness.nextAction, /commerce\.message 권한 재동의/);
 });
 
 function memberMessagesXml(options: {
@@ -42,8 +42,11 @@ function memberMessagesXml(options: {
   page?: number;
   totalPages?: number;
   body?: string;
+  responses?: string[];
   status?: "Answered" | "Unanswered";
   itemId?: string;
+  messageId?: string;
+  senderId?: string;
 } = {}) {
   const page = options.page ?? 1;
   const totalPages = options.totalPages ?? 1;
@@ -53,12 +56,13 @@ function memberMessagesXml(options: {
       <e:MemberMessage><e:MemberMessageExchange>
         <e:Item><e:ItemID>${options.itemId ?? "1234567890123456789"}</e:ItemID><e:Title>Coffee &amp; Tea</e:Title></e:Item>
         <e:Question>
-          <e:SenderID>buyer-${page}</e:SenderID>
+          <e:SenderID>${options.senderId ?? `buyer-${page}`}</e:SenderID>
           <e:SenderEmail>private@example.com</e:SenderEmail>
           <e:Subject>Question &lt;${page}&gt;</e:Subject>
           <e:Body>${options.body ?? "Is this &amp; sealed?"}</e:Body>
-          <e:MessageID>message-${page}</e:MessageID>
+          <e:MessageID>${options.messageId ?? `message-${page}`}</e:MessageID>
         </e:Question>
+        ${(options.responses ?? []).map((body) => `<e:Response>${body}</e:Response>`).join("")}
         <e:MessageStatus>${options.status ?? "Unanswered"}</e:MessageStatus>
         <e:CreationDate>2026-08-27T01:02:03.000Z</e:CreationDate>
         <e:LastModifiedDate>2026-08-27T01:02:04.000Z</e:LastModifiedDate>
@@ -106,6 +110,7 @@ test("eBay Trading XML parser keeps only the ASQ fields needed by the support le
     senderId: "buyer-1",
     subject: "Question <1>",
     body: "Is this & sealed?",
+    responses: [],
     messageStatus: "Unanswered",
     creationDate: "2026-08-27T01:02:03.000Z",
     lastModifiedDate: "2026-08-27T01:02:04.000Z",
@@ -144,6 +149,7 @@ test("eBay Trading XML parser treats buyer CDATA as text, not exchange metadata"
     senderId: "buyer-1",
     subject: "Question <1>",
     body: "hello <MessageStatus>Answered</MessageStatus><CreationDate>2099-01-01T00:00:00.000Z</CreationDate>",
+    responses: [],
     messageStatus: "Unanswered",
     creationDate: "2026-08-27T01:02:03.000Z",
     lastModifiedDate: "2026-08-27T01:02:04.000Z",
@@ -210,6 +216,7 @@ test("eBay ASQ sandbox sync uses OAuth IAF headers and normalizes exact reply li
       receivedAt: "2026-08-27T01:02:03.000Z",
       remoteMessageId: "message-1",
       providerContext: {
+        unsequencedAnswers: [],
         itemId: "1234567890123456789",
         parentMessageId: "message-1",
         recipientId: "buyer-1",
@@ -277,6 +284,30 @@ test("eBay ASQ processes one Trading API page per job and persists the next page
     assert.deepEqual(pages, [1, 2]);
     assert.equal(second.continuation?.arguments.pageNumber, 3);
     assert.equal(second.continuation?.arguments.sellerpilotPaginationDepth, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay ASQ continues an empty provider page when pagination says data remains", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(`<?xml version="1.0"?>
+    <GetMemberMessagesResponse xmlns="urn:ebay:apis:eBLBaseComponents">
+      <Ack>Success</Ack><MemberMessage/>
+      <PaginationResult><TotalNumberOfPages>2</TotalNumberOfPages><TotalNumberOfEntries>25</TotalNumberOfEntries></PaginationResult>
+      <HasMoreItems>true</HasMoreItems>
+    </GetMemberMessagesResponse>`, { status: 200 });
+  try {
+    const result = await executeChannelOperation({
+      channel: "ebay",
+      operation: "inquiries.list",
+      payload: { access_token: "token", marketplace_id: "EBAY_US" },
+      arguments: ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_US"),
+      environment: "sandbox",
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.steps.find(step => step.name === "inquiries")?.data.memberMessages, []);
+    assert.equal(result.continuation?.arguments.pageNumber, 2);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -379,9 +410,21 @@ test("eBay ASQ reply XML is context-bound, escaped, and respects provider acknow
   const originalFetch = globalThis.fetch;
   let requestBody = "";
   let replyRequest: Request | null = null;
+  const requests: Request[] = [];
+  let readCount = 0;
   globalThis.fetch = async (input, init) => {
-    replyRequest = new Request(input, init);
-    requestBody = await replyRequest.text();
+    const request = new Request(input, init);
+    requests.push(request);
+    if (request.headers.get("x-ebay-api-call-name") === "GetMemberMessages") {
+      const response = memberMessagesXml({
+        status: readCount === 0 ? "Unanswered" : "Answered",
+        responses: readCount === 0 ? [] : ["Use 2 &lt; 3 &amp; enjoy"],
+      });
+      readCount += 1;
+      return new Response(response, { status: 200 });
+    }
+    replyRequest = request;
+    requestBody = await request.text();
     return new Response("<AddMemberMessageRTQResponse><Ack>Success</Ack></AddMemberMessageRTQResponse>", { status: 200 });
   };
   try {
@@ -398,6 +441,136 @@ test("eBay ASQ reply XML is context-bound, escaped, and respects provider acknow
     assert.match(requestBody, /<ParentMessageID>message-1<\/ParentMessageID>/);
     assert.match(requestBody, /<RecipientID>buyer-1<\/RecipientID>/);
     assert.equal(replyRequest?.headers.get("x-ebay-api-siteid"), "77");
+    assert.deepEqual(requests.map((request) => request.headers.get("x-ebay-api-call-name")), [
+      "GetMemberMessages",
+      "AddMemberMessageRTQ",
+      "GetMemberMessages",
+    ]);
+    const readbackRequest = await requests[0]?.text();
+    assert.match(readbackRequest ?? "", /<ItemID>1234567890123456789<\/ItemID>/);
+    assert.match(readbackRequest ?? "", /<MemberMessageID>message-1<\/MemberMessageID>/);
+    assert.match(readbackRequest ?? "", /<SenderID>buyer-1<\/SenderID>/);
+    assert.deepEqual(result.steps[0]?.data.sellerpilotReplyReadback, {
+      contract: "sellerpilot-ebay-asq-reply-readback/1",
+      level: "provider_observed",
+      bindingDigest: result.steps[0]?.data.sellerpilotReplyReadback.bindingDigest,
+      replyBodyDigest: result.steps[0]?.data.sellerpilotReplyReadback.replyBodyDigest,
+      baselineResponseCount: 0,
+      observedResponseCount: 1,
+      observedAt: result.steps[0]?.data.sellerpilotReplyReadback.observedAt,
+      providerAnswerId: null,
+      providerAnswerOccurredAt: null,
+      providerLimitations: [
+        "GetMemberMessages.Response has no per-answer ID",
+        "GetMemberMessages.Response has no per-answer timestamp",
+      ],
+    });
+    assert.match(String(result.steps[0]?.data.sellerpilotReplyReadback.bindingDigest), /^[a-f0-9]{64}$/);
+    assert.match(String(result.steps[0]?.data.sellerpilotReplyReadback.replyBodyDigest), /^[a-f0-9]{64}$/);
+    assert.equal(Number.isFinite(Date.parse(String(result.steps[0]?.data.sellerpilotReplyReadback.observedAt))), true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay ASQ does not promote an acknowledgement when exact response readback is unchanged", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const call = request.headers.get("x-ebay-api-call-name") ?? "";
+    calls.push(call);
+    return call === "AddMemberMessageRTQ"
+      ? new Response("<AddMemberMessageRTQResponse><Ack>Success</Ack></AddMemberMessageRTQResponse>", { status: 200 })
+      : new Response(memberMessagesXml({ status: "Answered", responses: [] }), { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "ebay",
+        operation: "inquiries.reply",
+        payload: { access_token: "token", marketplace_id: "EBAY_US" },
+        arguments: {
+          itemId: "1234567890123456789",
+          parentMessageId: "message-1",
+          recipientId: "buyer-1",
+          marketplaceId: "EBAY_US",
+          reply: "Provider must expose this exact body",
+        },
+        environment: "production",
+      }),
+      /EBAY_ASQ_REPLY_READBACK_NOT_OBSERVED/,
+    );
+    assert.deepEqual(calls, ["GetMemberMessages", "AddMemberMessageRTQ", "GetMemberMessages"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay ASQ exact target mismatch blocks before AddMemberMessageRTQ", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    calls.push(request.headers.get("x-ebay-api-call-name") ?? "");
+    return new Response(memberMessagesXml(), { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "ebay",
+        operation: "inquiries.reply",
+        payload: { access_token: "token", marketplace_id: "EBAY_US" },
+        arguments: {
+          itemId: "1234567890123456789",
+          parentMessageId: "different-message",
+          recipientId: "buyer-1",
+          marketplaceId: "EBAY_US",
+          reply: "No mutation",
+        },
+        environment: "production",
+      }),
+      /EBAY_ASQ_REPLY_READBACK_TARGET_MISMATCH/,
+    );
+    assert.deepEqual(calls, ["GetMemberMessages"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay ASQ refuses an ambiguous concurrent increase of the identical reply body", async () => {
+  const originalFetch = globalThis.fetch;
+  let readCount = 0;
+  const calls: string[] = [];
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    const call = request.headers.get("x-ebay-api-call-name") ?? "";
+    calls.push(call);
+    if (call === "AddMemberMessageRTQ") {
+      return new Response("<AddMemberMessageRTQResponse><Ack>Success</Ack></AddMemberMessageRTQResponse>", { status: 200 });
+    }
+    const responses = readCount === 0 ? ["Same body"] : ["Same body", "Same body", "Same body"];
+    readCount += 1;
+    return new Response(memberMessagesXml({ status: "Answered", responses }), { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      executeChannelOperation({
+        channel: "ebay",
+        operation: "inquiries.reply",
+        payload: { access_token: "token", marketplace_id: "EBAY_US" },
+        arguments: {
+          itemId: "1234567890123456789",
+          parentMessageId: "message-1",
+          recipientId: "buyer-1",
+          marketplaceId: "EBAY_US",
+          reply: "Same body",
+        },
+        environment: "production",
+      }),
+      /EBAY_ASQ_REPLY_READBACK_NOT_OBSERVED/,
+    );
+    assert.deepEqual(calls, ["GetMemberMessages", "AddMemberMessageRTQ", "GetMemberMessages"]);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -405,10 +578,18 @@ test("eBay ASQ reply XML is context-bound, escaped, and respects provider acknow
 
 test("eBay ASQ preserves a safe result for a non-XML HTTP 429", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response("<html>edge rate limit</html>", {
-    status: 429,
-    headers: { "content-type": "text/html" },
-  });
+  globalThis.fetch = async (input, init) => {
+    const request = new Request(input, init);
+    return request.headers.get("x-ebay-api-call-name") === "GetMemberMessages"
+      ? new Response(memberMessagesXml({
+        messageId: "message-429",
+        senderId: "buyer-429",
+      }), { status: 200 })
+      : new Response("<html>edge rate limit</html>", {
+        status: 429,
+        headers: { "content-type": "text/html" },
+      });
+  };
   try {
     const result = await executeChannelOperation({
       channel: "ebay",
@@ -463,7 +644,7 @@ test("eBay operator API derives release availability from the selected credentia
   assert.ok(environmentOffset > 0);
   assert.ok(releaseOffset > environmentOffset);
   assert.match(consoleSource, /channelOperationAvailable\(target\.channel\.key, item\.value, target\.credential\.environment\)/);
-  assert.match(consoleSource, /startCreationTime:[\s\S]*endCreationTime:[\s\S]*marketplaceId: "EBAY_US"/);
+  assert.match(consoleSource, /href="\/cs">CS 전용 화면/);
 });
 
 test("periodic eBay ASQ sync uses the credential marketplace while manual reads stay explicit", () => {
@@ -491,7 +672,7 @@ test("periodic eBay ASQ sync uses the credential marketplace while manual reads 
 
 test("eBay provider rate fence reaches the CS route as a retryable rate error", async () => {
   await assert.rejects(
-    executeInquiryReplyViaChannelGateway({
+    enqueueInquiryReplyViaChannelGateway({
       serviceClient: {
         rpc: async () => ({
           data: null,
@@ -509,16 +690,42 @@ test("eBay provider rate fence reaches the CS route as a retryable rate error", 
 });
 
 test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official environments", () => {
+  const now = new Date("2026-08-28T00:00:00.000Z");
+  const mailbox = {
+    kind: "mailbox",
+    startTime: "2026-08-22T00:00:00.000Z",
+    endTime: now.toISOString(),
+    folderId: 0,
+    pageNumber: 1,
+    entriesPerPage: 25,
+  };
+  const memberConversations = {
+    kind: "conversation",
+    conversationType: "FROM_MEMBERS",
+    startTime: "2026-08-22T00:00:00.000Z",
+    endTime: now.toISOString(),
+    conversationOffset: 0,
+  };
+  const systemConversations = {
+    kind: "conversation",
+    conversationType: "FROM_EBAY",
+    conversationOffset: 0,
+  };
   assert.deepEqual(
-    inquirySyncArguments("ebay", new Date("2026-08-28T00:00:00.000Z")),
-    [ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"))],
+    inquirySyncArguments("ebay", now),
+    [ebayAsqInquirySyncArguments(now), mailbox, memberConversations, systemConversations],
   );
   assert.deepEqual(
-    inquirySyncArguments("ebay", new Date("2026-08-28T00:00:00.000Z"), {
+    inquirySyncArguments("ebay", now, {
       environment: "sandbox",
       marketplaceId: "EBAY_DE",
     }),
-    [ebayAsqInquirySyncArguments(new Date("2026-08-28T00:00:00.000Z"), "EBAY_DE")],
+    [
+      ebayAsqInquirySyncArguments(now, "EBAY_DE"),
+      { ...mailbox, marketplaceId: "EBAY_DE" },
+      memberConversations,
+      systemConversations,
+    ],
   );
   assert.equal(channelOperationAvailable("ebay", "inquiries.list"), true);
   assert.equal(channelOperationAvailable("ebay", "inquiries.list", "sandbox"), true);
@@ -536,10 +743,40 @@ test("eBay ASQ exposes reads and lineage-gated RTQ replies in both official envi
     marketplaceBound: true,
   }), true);
   assert.equal(csReplySavePlan("ticket", "ebay", "reply", "ebay:test:message").remote, true);
-  assert.deepEqual(csChannelVerification("ebay", "passed", 3), {
-    readLabel: "eBay 상품 문의(ASQ) 최근 조회 작업 통과 · 누적 원장 3건",
-    replyLabel: "답변: 검증된 계정·사이트·문의 계보만 보안 게이트웨이 전송",
+  assert.deepEqual(csChannelVerification("ebay", "passed", 3, null, "2026-09-07T06:55:00.000Z", new Date("2026-09-07T07:00:00.000Z")), {
+    readLabel: "eBay ASQ·Trading·Commerce 메시지 최근 조회 작업 통과 · 누적 원장 3건",
+    replyLabel: "답변: ASQ 또는 Commerce 중 검증된 계정·문의 계보만 보안 게이트웨이 전송",
     badge: "최근 조회 통과",
     tone: "passed",
   });
+});
+
+
+test("eBay preserves original XML answer bodies as undated notes without forging seller events", () => {
+  const parsed = parseEbayTradingResponse("GetMemberMessages", memberMessagesXml({
+    body: "  Original question&#10; ",
+    status: "Unanswered",
+    responses: ["  First &amp; answer&#10; ", "<![CDATA[Second <MessageStatus>Answered</MessageStatus>]]>"],
+  }));
+  const messages = parsed.memberMessages as Record<string, unknown>[];
+  assert.equal(messages[0].body, "  Original question\n ");
+  assert.deepEqual(messages[0].responses, ["  First & answer\n ", "Second <MessageStatus>Answered</MessageStatus>"]);
+  const result = {ok:true,channel:"ebay",operation:"inquiries.list",steps:[{name:"inquiries",ok:true,status:200,data:{...parsed,memberMessages:messages.map(row=>({...row,marketplaceId:"EBAY_US"}))}}]} as Parameters<typeof normalizeChannelInquiries>[1];
+  const rows=normalizeChannelInquiries("ebay",result,"2026-08-28T00:00:00.000Z");
+  assert.equal(rows.length,1);
+  assert.equal(rows[0].status,"waiting");
+  assert.equal(rows[0].senderRole,undefined);
+  assert.deepEqual(rows[0].providerContext?.unsequencedAnswers,[
+    {body:"  First & answer\n ",reason:"provider_timestamp_unavailable"},
+    {body:"Second <MessageStatus>Answered</MessageStatus>",reason:"provider_timestamp_unavailable"},
+  ]);
+  assert.deepEqual(rows[0].replyContext,{itemId:"1234567890123456789",parentMessageId:"message-1",recipientId:"buyer-1",marketplaceId:"EBAY_US"});
+  assert.deepEqual(normalizeChannelInquiries("ebay",result,"2026-08-28T00:00:00.000Z"),rows);
+});
+
+test("eBay refuses oversized originals and nested response markup instead of silently truncating", () => {
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({body:"a".repeat(4001)})),/EBAY_MESSAGE_BODY_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:["a".repeat(20001)]})),/EBAY_MESSAGE_BODY_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:Array.from({length:101},()=>"answer")})),/EBAY_ANSWER_CONTEXT_LIMIT/);
+  assert.throws(()=>parseEbayTradingResponse("GetMemberMessages",memberMessagesXml({responses:["<MessageID>forged</MessageID>"]})),/EBAY_TRADING_RESPONSE_INVALID/);
 });

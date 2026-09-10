@@ -1,0 +1,59 @@
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  margin: 14px 0;
+}
+
+.filters label {
+  display: grid;
+  gap: 6px;
+  min-width: 150px;
+  color: #526078;
+  font-size: 12px;
+}
+
+.filters input {
+  max-width: 100%;
+  padding: 10px;
+  border: 1px solid #c6cfda;
+  border-radius: 8px;
+  background: white;
+  color: #17243a;
+  font: inherit;
+}
+
+.recoveryList {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.recoveryList article {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #e3a15f;
+  border-radius: 10px;
+  background: #fff8ef;
+}
+
+.recoveryList article div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.recoveryList code {
+  overflow-wrap: anywhere;
+  color: #7b4515;
+  font-size: 11px;
+}
+
+@media (max-width: 600px) {
+  .filters label,
+  .filters button {
+    width: 100%;
+  }
+}

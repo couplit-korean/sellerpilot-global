@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
@@ -32,6 +33,29 @@ test("marketplace ticket identifiers become provider reply arguments", () => {
     inquiryNo: "987654321",
     reply: "확인했습니다.",
   });
+  assert.deepEqual(buildInquiryReplyArguments(
+    "shopee",
+    "shopee:1719148844:901",
+    "감사합니다.",
+    { shopId: "1719148844", commentId: "901", itemId: "902" },
+  ), {
+    shopId: "1719148844",
+    commentId: "901",
+    itemId: "902",
+    reply: "감사합니다.",
+  });
+  const conversationId = "conversation-native-1";
+  const conversationTicketId = `ebay:conversation:${createHash("sha256")
+    .update(`ebay-conversation-v1\u001f${conversationId}`).digest("hex")}`;
+  assert.deepEqual(buildInquiryReplyArguments("ebay", conversationTicketId, "eBay 답변", {
+    kind: "conversation", conversationId, conversationType: "FROM_MEMBERS",
+    messageId: "message-native-1", replySupported: true,
+  }), {
+    kind: "conversation", conversationId, conversationType: "FROM_MEMBERS", reply: "eBay 답변",
+  });
+  assert.equal(supportsInquiryReply("ebay", "production", {
+    providerCertified: true, sellerAccountVerified: true, marketplaceBound: false, conversationBound: true,
+  }), true);
   assert.equal(supportsInquiryReply("temu"), false);
   assert.throws(() => buildInquiryReplyArguments("qoo10", "123", "답변"), /qoo10InquiryId/);
   assert.throws(
@@ -46,6 +70,116 @@ test("marketplace ticket identifiers become provider reply arguments", () => {
     () => buildInquiryReplyArguments("smartstore", "customer:0", "확인했습니다."),
     /smartstoreInquiryNo/,
   );
+  assert.throws(
+    () => buildInquiryReplyArguments("shopee", "shopee:1719148844:901", "감사합니다.", {
+      shopId: "1719148844", commentId: "902", itemId: "902",
+    }),
+    /shopeeComment/,
+  );
+  assert.throws(
+    () => buildInquiryReplyArguments("shopee", "shopee:1719148844:9007199254740992", "감사합니다.", {
+      shopId: "1719148844", commentId: "9007199254740992", itemId: "902",
+    }),
+    /shopeeComment/,
+  );
+  for (const [ticketId, reply, context] of [
+    [conversationTicketId.replace(/.$/, "0"), "eBay 답변", { kind: "conversation", conversationId, conversationType: "FROM_MEMBERS", replySupported: true }],
+    [conversationTicketId, "<b>unsafe</b>", { kind: "conversation", conversationId, conversationType: "FROM_MEMBERS", replySupported: true }],
+    [conversationTicketId, "encoded &lt;b&gt;unsafe", { kind: "conversation", conversationId, conversationType: "FROM_MEMBERS", replySupported: true }],
+    [conversationTicketId, "eBay 답변", { kind: "conversation", conversationId, conversationType: "FROM_EBAY", replySupported: true }],
+    [conversationTicketId, "eBay 답변", { kind: "conversation", conversationId, conversationType: "FROM_MEMBERS", replySupported: false }],
+  ] as const) {
+    assert.throws(() => buildInquiryReplyArguments("ebay", ticketId, reply, context), /ebayConversationContext/);
+  }
+});
+
+test("Shopee product comments paginate with exact cursors and reply to the exact comment", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; body: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET"), body: String(init?.body ?? "") };
+    calls.push(call);
+    if (call.method === "GET") {
+      const cursor = new URL(call.url).searchParams.get("cursor");
+      return Response.json({
+        error: "",
+        request_id: `request-${calls.length}`,
+        response: cursor
+          ? { item_comment_list: [{ comment_id: 902, item_id: 8002, buyer_username: "buyer-2", comment: "두 번째" }], more: false, next_cursor: "" }
+          : { item_comment_list: [{ comment_id: 901, item_id: 8001, buyer_username: "buyer-1", comment: "첫 번째" }], more: true, next_cursor: "cursor-2" },
+      });
+    }
+    return Response.json({
+      error: "",
+      request_id: "reply-request",
+      response: { result_list: [{ comment_id: 901, fail_error: "", fail_message: "" }] },
+    });
+  };
+  const payload = { partner_id: "2031489", partner_key: "partner-secret", shop_id: "1719148844", access_token: "access-token" };
+  try {
+    const list = await executeChannelOperation({
+      channel: "shopee",
+      operation: "inquiries.list",
+      payload,
+      arguments: { cursor: "", pageSize: 100 },
+      environment: "production",
+    });
+    assert.equal(list.ok, true);
+    assert.equal(list.steps.length, 2);
+    assert.equal(new URL(calls[0].url).pathname, "/api/v2/product/get_comment");
+    assert.equal(new URL(calls[0].url).searchParams.get("cursor"), "");
+    assert.equal(new URL(calls[1].url).searchParams.get("cursor"), "cursor-2");
+    assert.ok(list.steps.every((item) => item.data.sellerpilotProviderContext.shopId === "1719148844"));
+
+    const reply = await executeChannelOperation({
+      channel: "shopee",
+      operation: "inquiries.reply",
+      payload,
+      arguments: buildInquiryReplyArguments(
+        "shopee",
+        "shopee:1719148844:901",
+        "감사합니다.",
+        { shopId: "1719148844", commentId: "901", itemId: "8001" },
+      ),
+      environment: "production",
+    });
+    assert.equal(reply.ok, true);
+    assert.equal(new URL(calls[2].url).pathname, "/api/v2/product/reply_comment");
+    assert.equal(calls[2].method, "POST");
+    assert.deepEqual(JSON.parse(calls[2].body), {
+      comment_list: [{ comment_id: 901, comment: "감사합니다." }],
+    });
+    assert.equal(reply.remoteId, "1719148844:901");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Shopee comment pages and per-comment reply failures fail closed", async () => {
+  const originalFetch = globalThis.fetch;
+  const payload = { partner_id: "2031489", partner_key: "partner-secret", shop_id: "1719148844", access_token: "access-token" };
+  try {
+    globalThis.fetch = async () => Response.json({
+      error: "", request_id: "bad-page", response: { item_comment_list: [], more: true, next_cursor: "cursor-2" },
+    });
+    await assert.rejects(executeChannelOperation({
+      channel: "shopee", operation: "inquiries.list", payload, arguments: {}, environment: "production",
+    }), /SHOPEE_COMMENT_CURSOR_INVALID/);
+
+    globalThis.fetch = async () => Response.json({
+      error: "", request_id: "failed-reply", response: { result_list: [{ comment_id: 901, fail_error: "error", fail_message: "failed" }] },
+    });
+    const result = await executeChannelOperation({
+      channel: "shopee",
+      operation: "inquiries.reply",
+      payload,
+      arguments: { shopId: "1719148844", commentId: "901", itemId: "8001", reply: "감사합니다." },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Coupang contact-center normalization preserves only an actionable parent answer", () => {
@@ -56,6 +190,18 @@ test("Coupang contact-center normalization preserves only an actionable parent a
   assert.equal(coupangContactCenterParentAnswerId([
     { answerId: 10, needAnswer: false, partnerTransferStatus: "answered" },
   ]), "");
+});
+
+test("Coupang does not guess among multiple actionable transfers or accept zero IDs", () => {
+  const first = { answerId: 11, needAnswer: true, partnerTransferStatus: "requestAnswer" };
+  const second = { answerId: 12, needAnswer: true, partnerTransferStatus: "requestAnswer" };
+  assert.equal(coupangContactCenterParentAnswerId([first, second]), "");
+  assert.equal(coupangContactCenterParentAnswerId([second, first]), "");
+  assert.equal(coupangContactCenterParentAnswerId([first, { ...first }]), "11");
+  assert.equal(coupangContactCenterParentAnswerId([{ answerId: 0, needAnswer: true }]), "");
+  assert.throws(() => buildInquiryReplyArguments("coupang", "call-center:98765", "확인했습니다.", {
+    parentAnswerId: coupangContactCenterParentAnswerId([first, second]),
+  }), /coupangParentAnswerId/);
 });
 
 test("Qoo10 reply calls CSCenter.SetInquiryMessage with the official fields", async () => {
