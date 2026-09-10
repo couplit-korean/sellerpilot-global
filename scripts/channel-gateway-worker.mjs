@@ -376,8 +376,16 @@ do {
                 }
                 const ebayRecoveryContractUnavailable = ebayRecoveryClaimAttempted
                     && [400, 404, 501, 503].includes(gatewayResponse.status);
+                // The local executor lane only covers routes that carry a per
+                // channel and operation approval (coupang, smartstore). A
+                // rejection there says nothing about the ordinary lane, so a
+                // rejected local claim must not stop the jobs that are supposed
+                // to run from this machine, such as fixed-IP channel read checks.
+                const localLaneRejected = Boolean(localChannelExecutorAttestation)
+                    && [401, 403, 409].includes(gatewayResponse.status);
                 if (!localRecoveryOnly
                     && (gatewayResponse.status === 204
+                        || localLaneRejected
                         || ebayRecoveryContractUnavailable)) {
                     gatewayResponse = await api("/api/channel-gateway/worker/claim", {
                         method: "POST",
