@@ -1,8 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { updateSession } from "./lib/supabase/proxy";
 
-const providerOAuthStatePrefix = /^sellerpilot-(?:lazada|shopee|ebay)-/;
-
 export async function proxy(request: NextRequest) {
   // Internal scheduler and worker routes authenticate their own bearer tokens.
   // Do not make those durable calls depend on the end-user Supabase session
@@ -10,21 +8,10 @@ export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname.startsWith("/api/internal/")) {
     return NextResponse.next();
   }
-  // Provider OAuth redirects land on the app root with a one-time code. Finish
-  // the exchange on the server so a client bundle that fails to hydrate cannot
-  // drop the authorization code.
-  // Only the app root receives the provider redirect. Handling other paths
-  // would intercept the callback route itself and loop.
-  const oauthCode = request.nextUrl.pathname === "/"
-    ? request.nextUrl.searchParams.get("code")
-    : null;
-  const oauthState = request.nextUrl.searchParams.get("state") ?? "";
-  if (oauthCode && providerOAuthStatePrefix.test(oauthState)) {
-    const callback = new URL("/api/oauth/callback", request.url);
-    callback.searchParams.set("code", oauthCode);
-    callback.searchParams.set("state", oauthState);
-    return NextResponse.redirect(callback);
-  }
+  // Provider OAuth callbacks must reach the app page. The page binds the
+  // Lazada exact-OAuth session from sessionStorage and completes the Shopee and
+  // eBay authorizations there, so redirecting the root callback to a server
+  // route strands every one of those flows.
   return updateSession(request);
 }
 
