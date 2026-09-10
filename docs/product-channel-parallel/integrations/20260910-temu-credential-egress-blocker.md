@@ -146,3 +146,10 @@ POST /api/admin/serverless-runtime-release {"action":"canary_activate"}
 ## 남은 한 조각
 
 lane이 수락은 하지만 큐에 있는 `temu diagnostic.test` 작업을 아직 넘기지 않는다(204). lane은 내부적으로 일반 claim 함수를 호출하고, 그 경로가 `serverless_gateway_job_allowed` 계열의 제외 목록을 그대로 적용하기 때문으로 보인다. 이 제외를 **lane 마커(`sellerpilot.local_channel_executor_lane = 'enabled'`)가 켜진 경우에만** 읽기 전용 작업에 대해 열어주는 변경이 필요하다(쿠팡 복구 패치가 이미 같은 방식).
+
+## lane 선택 목록의 위치 (2026-09-10 23:05 KST)
+
+- 고정 IP lane(`sellerpilot_claim_local_channel_executor_before_coupang_get`)은 마커만 세우고 `public.sellerpilot_claim_channel_gateway_job`을 호출한다.
+- 그 함수는 `worker_token_has_scope(p_token_hash,'gateway',true)`만 확인한 뒤 `sellerpilot_11820_claim_gateway_unsafe`(26,081자)로 넘긴다.
+- 실제 작업 선택은 그 큰 함수 안에 있고, lane별 마커 조건(`sellerpilot.local_gateway_recovery_lane`, `sellerpilot.local_channel_executor_lane`)별로 (채널, 작업) 튜플을 나열한다. 확인된 예: 복구 lane의 shopee `oauth.exchange`, smartstore `diagnostic.test`·`categories.*`.
+- 즉 남은 작업은 그 selector의 local channel executor 목록에 고정 IP 채널의 읽기 검사(`diagnostic.test`)를 추가하는 것이다. 26k자 함수라 통째로 다시 쓰지 않고, 해당 튜플 목록 구간만 정확히 복원해 패치해야 한다.
