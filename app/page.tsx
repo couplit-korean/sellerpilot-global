@@ -6292,6 +6292,28 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   );
 }
 
+const lazadaExactBrowserKey = "sellerpilot.lazada-exact-session.v1";
+type LazadaExactBrowserSession = {
+  sessionId: string;
+  credentialId: string;
+  actorId: string;
+  expiresAt: number;
+  state?: string;
+};
+
+function readLazadaExactBrowserSession(actorId: string): LazadaExactBrowserSession | null {
+  try {
+    const value = JSON.parse(window.sessionStorage.getItem(lazadaExactBrowserKey) ?? "null") as LazadaExactBrowserSession | null;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!value || !uuid.test(value.sessionId) || !uuid.test(value.credentialId) || value.actorId !== actorId
+      || (value.state !== undefined && !/^sellerpilot-lazada-my-[A-Za-z0-9_-]{32}$/u.test(value.state))
+      || !Number.isFinite(value.expiresAt) || value.expiresAt <= Date.now()) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
 export default function Home() {
   const [accessState, setAccessState] = useState<AdminAccessState>(isSupabaseConfigured ? "checking" : "signed_out");
   const [userId, setUserId] = useState("");
@@ -6304,8 +6326,77 @@ export default function Home() {
   const [pendingChannelOAuth, setPendingChannelOAuth] = useState<{ channel: "shopee" | "lazada" | "ebay"; code: string; state: string; shopId?: string; mainAccountId?: string } | null>(null);
   const [oauthToastMessage, setOAuthToastMessage] = useState("");
   const oauthHandled = useRef(false);
+  const lazadaExactStarting = useRef(false);
   const accountSwitchingRef = useRef(false);
   const clearOAuthToastMessage = useCallback(() => setOAuthToastMessage(""), []);
+
+  useEffect(() => {
+    if (accessState !== "admin" || !userId) return;
+    const startExact = async (event: Event) => {
+      const credentialId = (event as CustomEvent<{ credentialId?: string }>).detail?.credentialId;
+      if (!credentialId || !/^[0-9a-f-]{36}$/i.test(credentialId) || lazadaExactStarting.current) return;
+      lazadaExactStarting.current = true;
+      try {
+        const { data, error } = await createSupabaseClient().auth.getSession();
+        const session = data.session;
+        if (error || !session || session.user.id !== userId) throw new Error("session_unavailable");
+        const postExact = async (body: object) => {
+          const response = await fetch("/api/admin/channel-credentials/lazada/exact", {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${session.access_token}`,
+            },
+            body: JSON.stringify(body),
+          });
+          const payload = await response.json().catch(() => ({ status: "invalid_response" })) as {
+            status?: string;
+            sessionId?: string;
+            authorizationUrl?: string;
+          };
+          return { response, payload };
+        };
+        let prepared = readLazadaExactBrowserSession(userId);
+        if (!prepared || prepared.credentialId !== credentialId) {
+          const { response, payload } = await postExact({ action: "prepare", credentialId });
+          if (!response.ok || payload.status !== "executor_required" || !payload.sessionId) throw new Error("prepare_blocked");
+          prepared = {
+            sessionId: payload.sessionId,
+            credentialId,
+            actorId: userId,
+            expiresAt: Date.now() + 9 * 60_000,
+          };
+          window.sessionStorage.setItem(lazadaExactBrowserKey, JSON.stringify(prepared));
+          setOAuthToastMessage(`Lazada exact 세션: ${prepared.sessionId}. 전용 실행기를 시작한 뒤 OAuth 재연결을 다시 눌러 주세요. 아직 공식 승인·토큰 교환 전입니다.`);
+          return;
+        }
+        const { response, payload } = await postExact({
+          action: "start",
+          sessionId: prepared.sessionId,
+          credentialId,
+        });
+        if (!response.ok || payload.status !== "ready" || !payload.authorizationUrl) {
+          setOAuthToastMessage(`Lazada 전용 실행기 준비를 확인해 주세요. 세션: ${prepared.sessionId}. 공식 승인은 시작하지 않았습니다.`);
+          return;
+        }
+        const url = new URL(payload.authorizationUrl);
+        const exactState = url.searchParams.get("state") ?? "";
+        if (url.origin !== "https://auth.lazada.com" || !/^sellerpilot-lazada-my-[A-Za-z0-9_-]{32}$/u.test(exactState)) {
+          throw new Error("invalid_authorization_url");
+        }
+        window.sessionStorage.setItem(lazadaExactBrowserKey, JSON.stringify({ ...prepared, state: exactState }));
+        window.location.assign(url.toString());
+      } catch {
+        setOAuthToastMessage("Lazada exact 시작을 완료하지 못했습니다. 전용 실행기와 인증 서버를 확인해 주세요. 일반 authorize로 우회하지 않았습니다.");
+      } finally {
+        lazadaExactStarting.current = false;
+      }
+    };
+    const listener = (event: Event) => { void startExact(event); };
+    window.addEventListener("sellerpilot:lazada-exact-start", listener);
+    return () => window.removeEventListener("sellerpilot:lazada-exact-start", listener);
+  }, [accessState, userId]);
 
   useEffect(() => {
     const captureCallback = window.setTimeout(() => {
@@ -6433,6 +6524,36 @@ export default function Home() {
     const completeChannelOAuth = async () => {
       try {
         const { data: sessionData } = await createSupabaseClient().auth.getSession();
+        if (!sessionData.session || sessionData.session.user.id !== userId) throw new Error("OAuth 관리자 세션을 확인하지 못했습니다.");
+        if (pendingChannelOAuth.channel === "lazada" && pendingChannelOAuth.state.startsWith("sellerpilot-lazada-my-")) {
+          const exact = readLazadaExactBrowserSession(userId);
+          if (!exact || exact.state !== pendingChannelOAuth.state) {
+            if (exact) window.sessionStorage.removeItem(lazadaExactBrowserKey);
+            throw new Error("Lazada exact 세션과 승인 state가 일치하지 않아 교환을 차단했습니다. 일반 authorize로 우회하지 않습니다.");
+          }
+          const response = await fetch("/api/admin/channel-credentials/lazada/exact", {
+            method: "POST",
+            redirect: "error",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${sessionData.session.access_token}`,
+            },
+            body: JSON.stringify({
+              action: "bind",
+              sessionId: exact.sessionId,
+              credentialId: exact.credentialId,
+              code: pendingChannelOAuth.code,
+              state: pendingChannelOAuth.state,
+            }),
+          });
+          const payload = await response.json().catch(() => ({ status: "invalid_response" })) as { status?: string };
+          if (!response.ok || payload.status !== "bound") {
+            throw new Error("Lazada exact 결속을 확인하지 못했습니다. 승인 코드를 다시 교환하지 않고 해당 세션을 확인해 주세요.");
+          }
+          setOAuthToastMessage("Lazada 승인을 전용 실행기에 결속했습니다. 토큰 교환·Vault 저장·판매자 읽기 검증 결과를 확인하고 있습니다.");
+          window.sessionStorage.removeItem(lazadaExactBrowserKey);
+          return;
+        }
         const response = await fetch(`/api/admin/channel-credentials/${pendingChannelOAuth.channel}/authorize`, {
           method: "POST",
           headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
@@ -6455,7 +6576,7 @@ export default function Home() {
       }
     };
     void completeChannelOAuth();
-  }, [accessState, pendingChannelOAuth]);
+  }, [accessState, pendingChannelOAuth, userId]);
 
   const login = async (email: string, password: string) => {
     if (!isSupabaseConfigured) return "운영 인증 서버가 아직 연결되지 않았습니다.";
