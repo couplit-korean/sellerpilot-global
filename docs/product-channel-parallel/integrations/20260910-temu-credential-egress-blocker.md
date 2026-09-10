@@ -49,3 +49,25 @@
 - 유료 Static IP는 쓰지 않는다는 원칙이 있으므로, 해결책은 **허용된 IP에서 Temu 호출을 실행하는 것**이다.
   이미 있는 로컬 수집/서명 패턴(`temu-operator-attestation-once.mjs`, `app/api/admin/temu/operator-app-observation/route.ts`)을 자격증명 identity attestation에 적용한다.
 - 진단 로그(상태·키 목록·errorCode·errorMsg, 비밀값 없음)는 그대로 남겨 다음 채널 점검에 재사용한다.
+
+## 해결 (2026-09-10 21:51 KST): 로컬 서명 identity 경로 구현
+
+Temu가 IP 화이트리스트로 막으므로, **허용된 IP를 가진 이 머신이 공식 identity를 읽고 서명해 서버가 검증**하는 경로를 추가했다.
+
+- `lib/product-registration/temu/credential-identity-attestation.ts` (신규)
+  - 계약 `temu_credential_identity_attestation_v1`, P-256/Ed25519 서명 검증, 소유자·신선도(5분)·payload 지문·scope 형식 재검증
+- `app/api/admin/channel-credentials/rotate/route.ts`
+  - Temu 저장 시 서버 조회를 먼저 시도하고, IP 화이트리스트로 실패하면 `localIdentityAttestation`을 검증해 사용
+  - 서버 공개키는 `TEMU_CREDENTIAL_ATTESTATION_PUBLIC_KEY_PEM` / `TEMU_CREDENTIAL_ATTESTATION_KEY_ID` (Vercel Production 설정 완료)
+- `lib/product-registration/temu/temu-credential-identity-once.mjs` (신규)
+  - `init-key`: P-256 운영자 키를 `~/.sellerpilot/temu-credential-attestation.pem`(0600)에 생성, keyId·공개키 출력
+  - `attest --config <json>`: 로컬에서 Temu identity 호출 → 서명 → 저장까지 한 번에
+  - Secure Enclave는 이 셸에 엔타이틀먼트가 없어 `SECKEY_CREATE_FAILED`로 실패하므로 소프트웨어 키 파일 방식을 쓴다
+
+실행 결과: `{"ok":true,"status":200,"mallId":"635517741905839","regionId":"185","mallType":100,"scopes":130}` → 운영 DB `channel_credentials`에 `temu / active / production / v1 / 만료 2027-09-10` 저장 확인.
+
+## 남은 것: 읽기 진단
+
+- `연결 검사`는 고정 IP 워커가 실행한다. 지금 워커는 `sellerpilot-cs-apply-20260910`(CS 트리)에서 돌고 있고, 로그 메시지는 `Temu 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다`였다.
+- 이 세션에서는 통합 트리 워커를 띄울 수 없다. launchd 제어가 거부되고, `tsx`는 esbuild quarantine, Node 네이티브 변환은 `sharp` 네이티브 모듈 Gatekeeper 차단에 걸린다(우회하지 않음).
+- 따라서 **통합 트리 워커로 교체**하면 Temu·Lazada 읽기 진단이 함께 풀린다.
