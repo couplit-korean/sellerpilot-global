@@ -153,3 +153,21 @@ lane이 수락은 하지만 큐에 있는 `temu diagnostic.test` 작업을 아�
 - 그 함수는 `worker_token_has_scope(p_token_hash,'gateway',true)`만 확인한 뒤 `sellerpilot_11820_claim_gateway_unsafe`(26,081자)로 넘긴다.
 - 실제 작업 선택은 그 큰 함수 안에 있고, lane별 마커 조건(`sellerpilot.local_gateway_recovery_lane`, `sellerpilot.local_channel_executor_lane`)별로 (채널, 작업) 튜플을 나열한다. 확인된 예: 복구 lane의 shopee `oauth.exchange`, smartstore `diagnostic.test`·`categories.*`.
 - 즉 남은 작업은 그 selector의 local channel executor 목록에 고정 IP 채널의 읽기 검사(`diagnostic.test`)를 추가하는 것이다. 26k자 함수라 통째로 다시 쓰지 않고, 해당 튜플 목록 구간만 정확히 복원해 패치해야 한다.
+
+## lane 승인 게이트의 코어와 남은 순환 (2026-09-10 23:20 KST)
+
+체인을 끝까지 따라가 코어를 찾았다.
+
+- `sellerpilot_private.local_channel_executor_access(channel, operation)` — lane의 (채널, 작업) 튜플 목록. 기존에는 coupang/smartstore 목록 라우트만 있었다. 읽기 검사를 추가하는 마이그레이션 `20260910235500_lane_executor_read_access.sql`을 적용해 `access('temu','diagnostic.test') = 'read'`를 확인했다(쓰기 목록 불변).
+- `sellerpilot_private.local_channel_executor_route_is_current(owner, channel, operation, credential, token, release, egress, version)` — 실제 승인 판정. 통과 조건:
+  - 접근 목록에 존재, release 40hex·egress 64hex, worker_version = `sellerpilot-cli-worker/1.61+<release>.<egress11>`
+  - `active_serverless_runtime_release_sha() = release` (현재 DB 값 `b5d567f2`, 일치 확인)
+  - `access = 'read'` 또는 `listing_mutation_release_gate_is_effective(channel)`
+  - route 행 존재 + **`credential.last_check_status = 'passed'`** + `seller_account_key` 일치 등
+
+### 남은 순환
+
+테무 자격증명의 `last_check_status`가 현재 `failed`다. 그런데 그 값을 `passed`로 만들려면 검사가 성공해야 하고, 검사는 route 승인을 요구하며, 승인은 `passed`를 요구한다. 즉 **첫 성공 검사 이전 상태를 어떻게 취급할지**가 남은 결정이다.
+
+- 후보 1: `sellerpilot_service_local_channel_executor_readiness`의 정식 부트스트랩 경로를 사용한다(앱이 `local_channel_executor_required`를 반환한 뒤 readiness를 요청하는 흐름).
+- 후보 2: 최초 1회에 한해 `last_check_status`가 `passed`가 아니어도 읽기 전용 검사만 허용한다(쓰기 라우트는 그대로 `passed` 요구).
