@@ -481,13 +481,18 @@ async function exchangeLazadaOAuth(
 
   const accessExpiresAt = tokenExpiry(remote.data, 2_592_000);
   const refreshExpiresAt = futureExpiry(remote.data.refresh_expires_in, 15_552_000);
-  const providerCountry = textValue(remote.data, "country").toLowerCase();
-  if (providerCountry !== lazadaTargetCountry) {
-    throw new Error("LAZADA_OAUTH_PROVIDER_COUNTRY_MISMATCH");
-  }
   const providerAccount = withLazadaProviderAccountIdentity({}, remote.data);
   const mySeller = providerAccount.countryUserInfo.find((item) => item.country === lazadaTargetCountry);
-  if (!mySeller?.seller_id) throw new Error("LAZADA_MY_SELLER_IDENTITY_MISSING");
+  // Lazada answers the token exchange with the account's home country at the
+  // top level. A seller whose MY store is one of several countries can return a
+  // different value there, so the authoritative gate is the MY seller identity
+  // below. The top-level value is still reported when that identity is absent.
+  if (!mySeller?.seller_id) {
+    const providerCountry = textValue(remote.data, "country").toLowerCase();
+    throw new Error(providerCountry && providerCountry !== lazadaTargetCountry
+      ? "LAZADA_OAUTH_PROVIDER_COUNTRY_MISMATCH"
+      : "LAZADA_MY_SELLER_IDENTITY_MISSING");
+  }
 
   const credentialPayload = withProviderAccountIdentity({
     ...job.credential,
