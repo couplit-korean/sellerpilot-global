@@ -5704,7 +5704,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       ? registrationActivityFilterFromValue(requestedRegistrationStatus)
       : "all";
     setTargetedSearch(null);
-    if (next !== "cs") setCsRoute({ channel: "all", status: "open", ticketId: null });
+    setCsRoute({ channel: "all", status: "open", ticketId: null });
     if (next === "publishing") {
       setPublishingProduct(null);
       setPublishingSession((current) => current + 1);
@@ -5728,19 +5728,8 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const nextStatus = csStatusFilterFromValue(status);
     const nextTicketId = ticketId?.trim() || null;
     const params = csNavigationParams({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
-    setTargetedSearch(null);
-    setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
-    setView("cs");
-    const nextRoute = `${window.location.pathname}?${params.toString()}`;
-    window.history.pushState(
-      { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
-      "",
-      nextRoute,
-    );
-    rememberWorkspaceView("cs", nextRoute);
-    setSidebarOpen(false);
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }, [rememberWorkspaceView, workspaceRouteScope]);
+    window.location.assign(`/cs?${params.toString()}`);
+  }, []);
 
   const changeCsRoute = useCallback((channel: CsChannelFilter, status: CsStatusFilter, ticketId: string | null = null) => {
     const nextChannel = csChannelFilterFromValue(channel);
