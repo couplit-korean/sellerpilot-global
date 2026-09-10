@@ -157,7 +157,7 @@ export function useCsWorkspace({ authenticatedFetch, notify, active }: {
   useEffect(() => {
     const generationRef = snapshotGeneration;
     const timer = window.setTimeout(() => { void reload(); }, 0);
-    const poll = window.setInterval(() => { if (document.visibilityState === "visible") void reload(); }, active ? 30_000 : 300_000);
+    const poll = window.setInterval(() => { if (document.visibilityState === "visible") void reload(); }, active ? 60_000 : 300_000);
     return () => { window.clearTimeout(timer); window.clearInterval(poll); generationRef.current++; snapshotController.current?.abort(); };
   }, [active, reload]);
   useEffect(() => {

@@ -5695,6 +5695,20 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   }, [refreshInquiryHistoryBackfill, view]);
 
   useEffect(() => {
+    if (view !== "cs") return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") void refreshOperations();
+    };
+    refreshWhenVisible();
+    const interval = window.setInterval(refreshWhenVisible, 60_000);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [refreshOperations, view]);
+
+  useEffect(() => {
     if (view !== "cs" || !inquiryHistoryBackfill
         || !["queued", "running"].includes(inquiryHistoryBackfill.status)) return;
     activeInquiryHistoryRunsRef.current.add(inquiryHistoryBackfill.runId);
