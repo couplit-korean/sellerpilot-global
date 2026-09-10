@@ -111,3 +111,22 @@ plist의 `WorkingDirectory`는 이미 `/Users/kimchangheemac/dev/sellerpilot-mer
 2. 고정 IP lane이 gateway scope 토큰으로 읽기 전용 작업을 claim하도록 허용한다.
 
 두 방법 모두 앱 코드/DB 변경이므로, 다음 작업에서 1번(읽기 전용 한정)으로 좁혀 적용한다.
+
+## 고정 IP lane 401의 실제 원인 (2026-09-10 22:40 KST)
+
+lane의 base 함수 `sellerpilot_claim_local_executor_before_coupang_post_price` 첫 조건이 원인이다.
+
+```
+p_release_sha !~ '^[a-f0-9]{40}$'
+or p_worker_version != 'sellerpilot-cli-worker/1.61+' || p_release_sha || '.' || left(p_egress_ip_sha256, 11)
+or sellerpilot_private.active_serverless_runtime_release_sha() != p_release_sha
+  -> raise 'invalid local channel executor hydration attestation'
+```
+
+- 워커 릴리스는 `8fff9291…`인데, DB의 활성 릴리스는 `848073370fd2…`(오늘 21:01 KST 기록)에서 멈춰 있다 → 항상 불일치 → 401.
+- 활성 릴리스는 `sellerpilot_private.serverless_runtime_canary_receipts`의 최신 `consumed` 행에서 온다. 마지막 행이 21:01이라 그 뒤 배포가 반영되지 않았다.
+- 내부 런타임 동기화 경로가 실패 중이다: `/api/internal/product-research`가 22:20·22:30·22:40 모두 **503**, `/api/internal/channel-gateway-drain`도 503. 그래서 새 canary receipt가 생기지 않는다.
+
+### 다음 한 단계
+
+`/api/internal/*` 503을 해소해 앱이 현재 릴리스를 DB에 기록하게 만들면, 고정 IP lane이 워커를 받아들이고 테무·라자다 읽기 진단이 실행된다. 워커는 이미 그 lane으로 claim하고 폴백까지 갖췄다.
