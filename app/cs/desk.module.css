@@ -3,6 +3,13 @@
   background: #f3f5f8;
   color: #152033;
 }
+.inApp {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  min-height: calc(100vh - 120px);
+  margin: -8px -8px 0;
+}
+.embed { min-width: 0; padding: 8px 8px 24px; }
 .top {
   display: flex;
   align-items: center;

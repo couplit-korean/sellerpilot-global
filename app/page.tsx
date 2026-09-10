@@ -78,6 +78,7 @@ import { AiProductStudio, cleanupUnenqueuedStudioPhotos, optimizeAndUploadStudio
 import { AcceptanceChecklistPage } from "./acceptance-checklist";
 import { ChannelConnectionsPage } from "./channel-connections";
 import { CategoryClassificationWorkbench } from "./category-classification-workbench";
+import { CsInAppDesk } from "./cs/in-app-desk";
 import { ProductPublishWorkbench } from "./product-publish-workbench";
 import { resolveHydratedProductEditDraft } from "./product-edit-draft-fence";
 import { ProductRevisionImagePicker } from "./product-revision-image-picker";
@@ -586,6 +587,9 @@ type DisplayTicket = {
   providerStatus: "unknown" | "waiting" | "answered" | "closed";
   latestInboundKey: string | null;
   ticketKind: "conversation" | "after_sales";
+  latestMessageState: "normal" | "recalled" | "conflict_review_required";
+  replyAllowed: boolean;
+  remoteReplySupported: boolean;
   delivery: OperationTicketDelivery | null;
   blockingDelivery: OperationTicketDelivery | null;
   time: string;
@@ -5398,6 +5402,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     providerStatus: ticket.providerStatus ?? "unknown",
     latestInboundKey: ticket.latestInboundKey ?? null,
     ticketKind: ticket.ticketKind ?? "conversation",
+    latestMessageState: ticket.latestMessageState ?? "normal",
+    replyAllowed: ticket.replyAllowed !== false,
+    remoteReplySupported: ticket.providerContext?.replySupported !== false,
     delivery: ticket.delivery ?? null,
     blockingDelivery: ticket.blockingDelivery ?? null,
     time: relativeTime(ticket.receivedAt),
@@ -5696,15 +5703,11 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   }, [inquiryHistoryBackfill, notify, reloadOperations]);
 
   const navigate = useCallback((next: View, requestedRegistrationStatus?: RegistrationActivityFilter) => {
-    if (next === "cs") {
-      window.location.assign("/cs");
-      return;
-    }
     const nextRegistrationStatus = next === "registration-activity"
       ? registrationActivityFilterFromValue(requestedRegistrationStatus)
       : "all";
     setTargetedSearch(null);
-    setCsRoute({ channel: "all", status: "open", ticketId: null });
+    if (next !== "cs") setCsRoute({ channel: "all", status: "open", ticketId: null });
     if (next === "publishing") {
       setPublishingProduct(null);
       setPublishingSession((current) => current + 1);
@@ -5728,8 +5731,19 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const nextStatus = csStatusFilterFromValue(status);
     const nextTicketId = ticketId?.trim() || null;
     const params = csNavigationParams({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
-    window.location.assign(`/cs?${params.toString()}`);
-  }, []);
+    setTargetedSearch(null);
+    setCsRoute({ channel: nextChannel, status: nextStatus, ticketId: nextTicketId });
+    setView("cs");
+    const nextRoute = `${window.location.pathname}?${params.toString()}`;
+    window.history.pushState(
+      { view: "cs", workspaceScope: workspaceRouteScope, channel: nextChannel, status: nextStatus, ...(nextTicketId ? { ticketId: nextTicketId } : {}) },
+      "",
+      nextRoute,
+    );
+    rememberWorkspaceView("cs", nextRoute);
+    setSidebarOpen(false);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }, [rememberWorkspaceView, workspaceRouteScope]);
 
   const changeCsRoute = useCallback((channel: CsChannelFilter, status: CsStatusFilter, ticketId: string | null = null) => {
     const nextChannel = csChannelFilterFromValue(channel);
@@ -6158,7 +6172,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsPage notify={notify} displayTickets={displayTickets} displayOrders={displayOrders} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "cs") return <CsInAppDesk notify={notify} displayTickets={displayTickets} authenticatedFetch={operations.authenticatedFetch} snapshotGeneratedAt={operations.data?.generatedAt ?? null} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;

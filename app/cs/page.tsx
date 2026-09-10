@@ -1,10 +1,13 @@
-import { CsStandaloneWorkspace } from "./standalone-workspace";
-import { csChannelFilterFromValue, csStatusFilterFromValue } from "../cs-navigation";
+import { redirect } from "next/navigation";
 
 export default async function CsWorkspacePage({ searchParams }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  return <CsStandaloneWorkspace initialChannel={csChannelFilterFromValue(params.channel)}
-    initialStatus={csStatusFilterFromValue(params.status)} initialTicketId={typeof params.ticketId === "string" ? params.ticketId : null} />;
+  const next = new URLSearchParams({ view: "cs" });
+  for (const key of ["channel", "status", "ticketId"] as const) {
+    const value = params[key];
+    if (typeof value === "string" && value.trim()) next.set(key, value);
+  }
+  redirect(`/?${next.toString()}`);
 }

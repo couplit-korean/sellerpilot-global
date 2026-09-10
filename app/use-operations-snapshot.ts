@@ -161,6 +161,8 @@ export type OperationTicket = {
   providerContext?: Record<string, unknown>;
   latestInboundKey?: string | null;
   ticketKind?: "conversation" | "after_sales";
+  latestMessageState?: "normal" | "recalled" | "conflict_review_required";
+  replyAllowed?: boolean;
   delivery?: OperationTicketDelivery | null;
   blockingDelivery?: OperationTicketDelivery | null;
   status: "urgent" | "waiting" | "in_progress" | "resolved";
