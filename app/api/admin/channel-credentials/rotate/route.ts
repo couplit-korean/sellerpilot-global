@@ -5,8 +5,17 @@ import { requiredCredentialKeys, type ActiveChannelKey } from "../../../../../li
 import {
   attestTemuCredentialIdentityForSave,
   hasTemuAccountIdentityFields,
+  temuAccountIdentityContract,
+  temuAccountIdentityEndpointHost,
+  temuAccountIdentityPayloadKeys,
+  temuCredentialReadinessRequiredApiScopes,
   withoutTemuAccountIdentityFields,
 } from "../../../../../lib/product-registration/temu/account-identity";
+import {
+  temuCredentialIdentityEnvelopeSchema,
+  temuCredentialPayloadFingerprintSha256,
+  verifyTemuCredentialIdentityAttestation,
+} from "../../../../../lib/product-registration/temu/credential-identity-attestation";
 import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -21,7 +30,17 @@ const requestSchema = z.object({
   rotationDays: z.number().int().min(1).max(365),
   warningDays: z.number().int().min(1).max(180),
   graceDays: z.number().int().min(0).max(30),
+  // Temu only. Signed on the machine that owns the allowlisted address, because
+  // Temu answers NOT_IN_IP_WHITE_LIST to every other caller.
+  localIdentityAttestation: temuCredentialIdentityEnvelopeSchema.optional(),
 });
+
+function temuCredentialAttestationPublicKey() {
+  const publicKeyPem = process.env.TEMU_CREDENTIAL_ATTESTATION_PUBLIC_KEY_PEM
+    ?.replaceAll("\\n", "\n").trim();
+  const keyId = process.env.TEMU_CREDENTIAL_ATTESTATION_KEY_ID?.trim();
+  return publicKeyPem && keyId ? { publicKeyPem, keyId } : null;
+}
 
 type SecretPayload = Record<string, unknown>;
 
@@ -98,24 +117,60 @@ export async function POST(request: NextRequest) {
     nextSecret.token_type = tokenType;
   }
   if (parsed.data.channel === "temu") {
+    const localAttestation = parsed.data.localIdentityAttestation;
+    let attestedLocally = false;
     try {
       nextSecret = (await attestTemuCredentialIdentityForSave({
         payload: nextSecret,
       })).payload;
     } catch (error) {
-      const errorMessage = error
-        && typeof error === "object"
-        && "message" in error
-        && typeof error.message === "string"
-        ? error.message
-        : "";
-      const verification = /^TEMU_ACCOUNT_IDENTITY_[A-Z_]+$/u.test(errorMessage)
-        ? errorMessage
-        : "TEMU_ACCOUNT_IDENTITY_ATTESTATION_FAILED";
-      return NextResponse.json({
-        code: verification,
-        message: "Temu 운영 토큰의 판매자·지역·권한 identity를 공식 조회로 확인하지 못했습니다.",
-      }, { status: 422 });
+      const attestationKey = temuCredentialAttestationPublicKey();
+      if (localAttestation && attestationKey) {
+        const verified = verifyTemuCredentialIdentityAttestation({
+          attestation: localAttestation.attestation,
+          signature: localAttestation.signature,
+          publicKeyPem: attestationKey.publicKeyPem,
+          expectedKeyId: attestationKey.keyId,
+          ownerId: userData.user.id,
+          payloadFingerprintSha256: temuCredentialPayloadFingerprintSha256(nextSecret),
+          requiredScopes: temuCredentialReadinessRequiredApiScopes,
+        });
+        if (verified) {
+          const { attestation } = localAttestation;
+          nextSecret = {
+            ...nextSecret,
+            [temuAccountIdentityPayloadKeys.contract]: temuAccountIdentityContract,
+            [temuAccountIdentityPayloadKeys.endpointHost]: temuAccountIdentityEndpointHost,
+            [temuAccountIdentityPayloadKeys.mallId]: attestation.mallId,
+            [temuAccountIdentityPayloadKeys.regionId]: attestation.regionId,
+            [temuAccountIdentityPayloadKeys.mallType]: String(attestation.mallType),
+            ...(attestation.semiUniqueId ? {
+              [temuAccountIdentityPayloadKeys.semiUniqueId]: attestation.semiUniqueId,
+            } : {}),
+          };
+          attestedLocally = true;
+          console.error("[temu-credential] local identity attestation accepted",
+            attestation.keyId, attestation.egress.verificationMethod);
+        } else {
+          console.error("[temu-credential] local identity attestation rejected",
+            localAttestation.attestation.keyId);
+        }
+      }
+      if (!attestedLocally) {
+        const errorMessage = error
+          && typeof error === "object"
+          && "message" in error
+          && typeof error.message === "string"
+          ? error.message
+          : "";
+        const verification = /^TEMU_ACCOUNT_IDENTITY_[A-Z_]+$/u.test(errorMessage)
+          ? errorMessage
+          : "TEMU_ACCOUNT_IDENTITY_ATTESTATION_FAILED";
+        return NextResponse.json({
+          code: verification,
+          message: "Temu 운영 토큰의 판매자·지역·권한 identity를 공식 조회로 확인하지 못했습니다.",
+        }, { status: 422 });
+      }
     }
   }
 
