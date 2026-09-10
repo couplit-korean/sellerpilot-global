@@ -5649,7 +5649,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       const selected = csRoute.channel === "all" ? null : csRoute.channel;
       const response = await authenticatedOperationsFetch("/api/admin/cs/sync", {
         method: "POST",
-        body: JSON.stringify(selected ? { channels: [selected] } : {}),
+        body: JSON.stringify({ includeImBootstrap: true, ...(selected ? { channels: [selected] } : {}) }),
       });
       const payload = await response.json().catch(() => ({ message: "문의 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 문의 동기화를 시작하지 못했습니다.");
