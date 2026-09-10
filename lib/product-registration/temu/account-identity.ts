@@ -268,7 +268,7 @@ export function normalizeTemuAccessTokenIdentity(input: {
   const apiScopes = rawScopes.map((scope) =>
     typeof scope === "string" ? scope.trim() : "");
   if (apiScopes.some((scope) =>
-    !/^[a-z][a-z0-9]*(?:\.[a-z0-9]+)+$/u.test(scope))
+    !/^[A-Za-z][A-Za-z0-9]*(?:\.[A-Za-z0-9]+)+$/u.test(scope))
     || new Set(apiScopes).size !== apiScopes.length) {
     return null;
   }

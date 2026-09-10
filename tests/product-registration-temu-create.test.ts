@@ -834,3 +834,27 @@ test("Temu runtime rejects missing or legacy CREATE contracts before any provide
     globalThis.fetch = originalFetch;
   }
 });
+
+test("Temu identity normalization accepts versioned mixed-case scopes", () => {
+  const response = identityResponse({
+    apiScopeList: [
+      ...temuCredentialReadinessRequiredApiScopes,
+      "temu.local.goods.brand.trademark.V2.get",
+    ],
+  });
+  const identity = normalizeTemuAccessTokenIdentity({ response });
+  assert.ok(identity);
+  assert.equal(identity.mallId, "608573962731830");
+  assert.equal(identity.regionId, "211");
+  assert.equal(identity.mallType, 100);
+  assert.ok(
+    identity.apiScopes.includes("temu.local.goods.brand.trademark.V2.get"),
+  );
+});
+
+test("Temu identity normalization still rejects malformed scopes", () => {
+  const response = identityResponse({
+    apiScopeList: [...temuCredentialReadinessRequiredApiScopes, "bg.local goods"],
+  });
+  assert.equal(normalizeTemuAccessTokenIdentity({ response }), null);
+});
