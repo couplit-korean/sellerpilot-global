@@ -12,6 +12,7 @@ import { supabaseUrl } from "../../../../../lib/supabase/config";
 import { createBoundedSupabaseFetch, workerRpcErrorMessage, workerRpcErrorStatus } from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function completionPayloadBytes(value: unknown) {
   try {

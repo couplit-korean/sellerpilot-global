@@ -1,6 +1,6 @@
 const WORKER_AUTH_ERROR_CODE = "42501";
 
-export const WORKER_RPC_TIMEOUT_MS = 8_000;
+export const WORKER_RPC_TIMEOUT_MS = 30_000;
 
 type RpcErrorLike = {
   code?: string | null;

@@ -69,7 +69,9 @@ type CsWorkerContext = { serviceClient: SupabaseClient; tokenHash: string; job: 
 export async function completeCsWorker({ serviceClient, tokenHash, job, completion: completionInput }: CsWorkerContext) {
   if (!isCsOperation(String(job.operation))) return NextResponse.json({ message: "CS 작업 계보가 일치하지 않습니다." }, { status: 409 });
   const parsed = { data: completionInput };
-  const normalizationTimestamp = completionNormalizationTimestamp(job.normalization_timestamp);
+  const normalizationTimestamp = completionNormalizationTimestamp(job.normalization_timestamp)
+    ?? completionNormalizationTimestamp(job.started_at)
+    ?? new Date().toISOString();
   let effectiveCompletionStatus = parsed.data.status;
   const replyAcceptanceMissing = parsed.data.status === "succeeded"
     && parsed.data.result.operation === "inquiries.reply"
@@ -720,6 +722,13 @@ export async function completeCsWorkerRetry(serviceClient: SupabaseClient, token
       console.error(coupangReadbackRetry
         ? "Coupang product reply readback retry completion RPC failed"
         : "Temu detail retry completion RPC failed", { code });
+      return NextResponse.json({ message: workerRpcErrorMessage(503), code }, { status: 503 });
+    }
+  }
+
+ return null;
+}
+"Temu detail retry completion RPC failed", { code });
       return NextResponse.json({ message: workerRpcErrorMessage(503), code }, { status: 503 });
     }
   }
