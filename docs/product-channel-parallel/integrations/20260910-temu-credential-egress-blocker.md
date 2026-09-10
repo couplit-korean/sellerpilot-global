@@ -32,3 +32,20 @@
 ## 현재 키 상태 (운영 production 활성 기준)
 
 쿠팡·eBay·11번가·큐텐·쇼피·스마트스토어·TracX 통과(7/8), 라자다 실패(고정 IP 워커 미가동), 테무 미등록.
+
+## 원인 확정 (2026-09-10 21:23, 배포 로그 실측)
+
+저장 실패 지점에 진단 로그를 넣고 배포해 실제 응답을 읽었다.
+
+- 앱 서버(Vercel) → Temu `bg.open.accesstoken.info.get`: **HTTP 200 + `success:false`**
+- `errorCode: 5000003`, `errorMsg: "NOT_IN_IP_WHITE_LIST"`
+- 응답에 `result`가 없어 identity 정규화가 null → 라우트가 422 `TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED`
+
+즉 값·서명·scope 문제가 아니라 **Temu가 호출 IP를 화이트리스트로 제한**하며, 앱 서버 egress가 그 목록에 없다. 같은 서명 요청이 이 맥(회선 IP)에서는 200/success=true이므로 이 회선 IP는 이미 허용돼 있다.
+
+### 정리
+
+- scope 대소문자 수정(위 원인 1)은 실제 버그였다. 화이트리스트가 풀려도 그대로 두면 130개 중 `...trademark.V2.get` 1건 때문에 identity가 계속 무효가 된다.
+- 유료 Static IP는 쓰지 않는다는 원칙이 있으므로, 해결책은 **허용된 IP에서 Temu 호출을 실행하는 것**이다.
+  이미 있는 로컬 수집/서명 패턴(`temu-operator-attestation-once.mjs`, `app/api/admin/temu/operator-app-observation/route.ts`)을 자격증명 identity attestation에 적용한다.
+- 진단 로그(상태·키 목록·errorCode·errorMsg, 비밀값 없음)는 그대로 남겨 다음 채널 점검에 재사용한다.
