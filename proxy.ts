@@ -13,7 +13,11 @@ export async function proxy(request: NextRequest) {
   // Provider OAuth redirects land on the app root with a one-time code. Finish
   // the exchange on the server so a client bundle that fails to hydrate cannot
   // drop the authorization code.
-  const oauthCode = request.nextUrl.searchParams.get("code");
+  // Only the app root receives the provider redirect. Handling other paths
+  // would intercept the callback route itself and loop.
+  const oauthCode = request.nextUrl.pathname === "/"
+    ? request.nextUrl.searchParams.get("code")
+    : null;
   const oauthState = request.nextUrl.searchParams.get("state") ?? "";
   if (oauthCode && providerOAuthStatePrefix.test(oauthState)) {
     const callback = new URL("/api/oauth/callback", request.url);
