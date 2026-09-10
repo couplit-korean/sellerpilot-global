@@ -136,6 +136,13 @@ test("gateway mutation fence separates a live gate denial from lost ownership", 
   assert.match(source.slice(preconditionFailure - 220), /GATEWAY_PROVIDER_MUTATION_NOT_STARTED/);
 });
 
+test("local Coupang CREATE provider body selects the exact-body seal RPC", async () => {
+  const source = await readFile(beginMutationRouteUrl, "utf8");
+  assert.match(source, /providerBody: z\.record\(z\.string\(\), z\.unknown\(\)\)\.optional\(\)/);
+  assert.match(source, /exactCoupangCreate[\s\S]*sellerpilot_service_begin_coupang_create_provider_mutation[\s\S]*p_provider_body: parsed\.data\.providerBody/);
+  assert.match(source, /exactCoupangCreate[\s\S]*sellerpilot_service_begin_gateway_provider_mutation/);
+});
+
 test("gateway mutation context errors preserve uncertain state instead of failing pre-provider", async () => {
   const source = await readFile(beginMutationRouteUrl, "utf8");
   const helper = source.indexOf("function providerMutationStateUncertainResponse");

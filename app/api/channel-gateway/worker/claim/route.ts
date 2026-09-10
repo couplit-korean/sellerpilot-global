@@ -3,6 +3,10 @@ import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { gatewayClaimSchema } from "../../../../../lib/channels/gateway-contract";
 import {
+  EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE,
+  EBAY_PUBLICATION_RECONCILIATION_CLAIM_RPC,
+} from "../../../../../lib/channels/ebay-publication-reconciliation-contract";
+import {
   isLocalGatewayRecoveryAllowedTuple,
   LOCAL_GATEWAY_RECOVERY_RPC_NAME,
   parseChannelGatewayClaimMode,
@@ -48,7 +52,12 @@ export async function POST(request: Request) {
     egressIpSha256?: unknown;
   };
   const localExecutorMode = parseLocalChannelExecutorClaimMode(body.mode);
-  const claimMode = localExecutorMode ?? parseChannelGatewayClaimMode(body.mode);
+  const ebayReconciliationMode = body.mode === EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE
+    ? EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE
+    : null;
+  const claimMode = localExecutorMode
+    ?? ebayReconciliationMode
+    ?? parseChannelGatewayClaimMode(body.mode);
   if (claimMode === "invalid") {
     return NextResponse.json({ message: "채널 작업 수신 모드가 올바르지 않습니다." }, { status: 400 });
   }
@@ -78,6 +87,8 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   const claimRpcName = claimMode === "local_recovery"
     ? LOCAL_GATEWAY_RECOVERY_RPC_NAME
+    : claimMode === EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE
+      ? EBAY_PUBLICATION_RECONCILIATION_CLAIM_RPC
     : claimMode === LOCAL_CHANNEL_EXECUTOR_CLAIM_MODE
       ? LOCAL_CHANNEL_EXECUTOR_CLAIM_RPC
       : "sellerpilot_claim_channel_gateway_job";
@@ -109,6 +120,14 @@ export async function POST(request: Request) {
     && !isLocalChannelExecutorTuple(parsed.data.channel, parsed.data.operation)
   ) {
     return NextResponse.json({ message: "로컬 채널 작업 범위가 올바르지 않습니다." }, { status: 409 });
+  }
+  if ((claimMode === EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE)
+        !== Boolean(parsed.data.ebay_publication_reconciliation)
+      || (claimMode === EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE
+        && (parsed.data.channel !== "ebay"
+          || parsed.data.operation !== "listing.create"
+          || parsed.data.environment !== "production"))) {
+    return NextResponse.json({ message: "eBay 게시 복구 범위가 올바르지 않습니다." }, { status: 409 });
   }
   if (parsed.data.operation === "price.update") {
     const release = channelPriceUpdateRelease(parsed.data.channel);

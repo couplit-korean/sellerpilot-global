@@ -18,6 +18,8 @@ import {
   normalizeTemuListingPublicationReadback,
   temuActivationBinding,
   temuContainmentDiscoveryBinding,
+  temuCreateAccountLineageBinding,
+  temuCreateAccountLineageContract,
   temuCreateCorrelationMatches,
   temuExactLongGoodsId,
   temuExactGoodsListArguments,
@@ -39,10 +41,12 @@ import {
 } from "../temu/create-contract";
 import {
   readTemuAccountIdentityBinding,
+  temuCategoryRequiredApiScopes,
   temuCreateRequiredApiScopes,
   temuSafeTestRequiredApiScopes,
   verifyTemuAccountIdentity,
 } from "../temu/account-identity";
+import { inspectTemuReviewAndCreatePrewrite } from "../temu/create-readiness-adapter";
 export function temuResultObject(data: Record<string, unknown>) {
   const value = data.result;
   return value && typeof value === "object" && !Array.isArray(value)
@@ -135,6 +139,81 @@ export async function executeTemu(input: ExecuteInput) {
       stringArgument(input.arguments, "query", false) ||
       stringArgument(input.arguments, "categoryId", false);
     if (!goodsName) throw new Error("CHANNEL_ARGUMENT_REQUIRED:goodsName");
+    if (!readTemuAccountIdentityBinding(input.payload)) {
+      return result(input, [{
+        name: "temu-category-account-identity-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification:
+            "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    let identityRemote: RemoteResponse;
+    try {
+      identityRemote = await temuRequest({
+        payload: input.payload,
+        type: "bg.open.accesstoken.info.get",
+      });
+    } catch {
+      return result(input, [{
+        name: "temu-category-account-identity-read",
+        ok: false,
+        status: 408,
+        data: {
+          sellerpilotVerification:
+            "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
+    const identityTransportStep = step(
+      "temu-category-account-identity-read",
+      identityRemote,
+    );
+    const identityVerification = verifyTemuAccountIdentity({
+      payload: input.payload,
+      response: identityRemote.data,
+      responseText: identityRemote.text,
+      requiredScopes: temuCategoryRequiredApiScopes,
+    });
+    const identityStep: ChannelOperationStep = {
+      name: "temu-category-account-identity-read",
+      ok: identityTransportStep.ok && identityVerification.ok,
+      status: identityTransportStep.ok
+        ? identityVerification.ok ? 200 : 422
+        : identityTransportStep.status,
+      requestId: identityTransportStep.requestId,
+      data: {
+        sellerpilotVerification: identityTransportStep.ok
+          ? identityVerification.verification
+          : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+        ...(!(identityTransportStep.ok && identityVerification.ok)
+          ? { sellerpilotNoWriteConfirmed: true }
+          : {}),
+        ...(identityVerification.identity ? {
+          sellerpilotTemuAccountSubject:
+            identityVerification.identity.subject,
+          sellerpilotTemuTargetId:
+            identityVerification.identity.mallId,
+          sellerpilotTemuRegionId:
+            identityVerification.identity.regionId,
+          sellerpilotTemuEndpointHost:
+            identityVerification.identity.endpointHost,
+          sellerpilotTemuMallType:
+            identityVerification.identity.mallType,
+          sellerpilotTemuScopeCount:
+            identityVerification.identity.apiScopes.length,
+        } : {}),
+        ...(identityVerification.missingScopes ? {
+          sellerpilotTemuMissingScopes:
+            identityVerification.missingScopes,
+        } : {}),
+      },
+    };
+    if (!identityStep.ok) return result(input, [identityStep]);
     const remote = await temuRequest({
       payload: input.payload,
       type: "bg.local.goods.category.recommend",
@@ -151,7 +230,7 @@ export async function executeTemu(input: ExecuteInput) {
       },
     });
     const categoryId = temuResultObject(remote.data).catId;
-    return result(input, [step("category-recommend", remote)], categoryId === undefined ? undefined : String(categoryId));
+    return result(input, [identityStep, step("category-recommend", remote)], categoryId === undefined ? undefined : String(categoryId));
   }
   if (input.operation === "listing.activate") {
     const activation = temuActivationBinding(input.arguments);
@@ -434,6 +513,38 @@ export async function executeTemu(input: ExecuteInput) {
         ]);
       }
     }
+    const sourceBinding = input.arguments.sellerpilotTemuAuthoritativeSource;
+    const sourceRevisionFingerprint = sourceBinding
+      && typeof sourceBinding === "object" && !Array.isArray(sourceBinding)
+      && typeof (sourceBinding as Record<string, unknown>).productRevisionFingerprint === "string"
+      ? String((sourceBinding as Record<string, unknown>).productRevisionFingerprint)
+      : expectedFingerprint;
+    const reviewAndCreatePrewrite = inspectTemuReviewAndCreatePrewrite({
+      argumentsValue: input.arguments,
+      expectedPublicationFingerprint: sourceRevisionFingerprint,
+      externalGoodsId,
+    });
+    if (!reviewAndCreatePrewrite.ok) {
+      return result(input, [{
+        name: "temu-review-create-readiness-prewrite",
+        ok: false,
+        status: 422,
+        data: {
+          sellerpilotVerification: reviewAndCreatePrewrite.verification,
+          sellerpilotTemuAppSubmissionPrepared:
+            reviewAndCreatePrewrite.appSubmissionPrepared,
+          sellerpilotTemuCreatePrewriteReady:
+            reviewAndCreatePrewrite.createPrewriteReady,
+          sellerpilotTemuAppIssueCodes:
+            reviewAndCreatePrewrite.appIssues.map((issue) => issue.code),
+          sellerpilotTemuCreateIssueCodes:
+            reviewAndCreatePrewrite.createIssues.map((issue) => issue.code),
+          sellerpilotTemuMissingScopes:
+            reviewAndCreatePrewrite.missingScopes,
+          sellerpilotNoWriteConfirmed: true,
+        },
+      }]);
+    }
     const steps: ChannelOperationStep[] = [];
     if (!readTemuAccountIdentityBinding(input.payload)) {
       return result(input, [{
@@ -477,18 +588,37 @@ export async function executeTemu(input: ExecuteInput) {
         ? temuSafeTestRequiredApiScopes
         : temuCreateRequiredApiScopes,
     });
+    const createAccountLineage = temuCreateAccountLineageBinding(
+      input.arguments,
+    );
+    const accountIdentityLineageVerified = Boolean(
+      createAccountLineage
+      && accountIdentityVerification.identity
+      && createAccountLineage.mallId ===
+        accountIdentityVerification.identity.mallId,
+    );
     const accountIdentityStep: ChannelOperationStep = {
       name: "temu-account-identity-read",
-      ok: accountIdentityTransportStep.ok && accountIdentityVerification.ok,
+      ok: accountIdentityTransportStep.ok
+        && accountIdentityVerification.ok
+        && accountIdentityLineageVerified,
       status: accountIdentityTransportStep.ok
-        ? accountIdentityVerification.ok ? 200 : 422
+        ? accountIdentityVerification.ok && accountIdentityLineageVerified
+          ? 200
+          : 422
         : accountIdentityTransportStep.status,
       requestId: accountIdentityTransportStep.requestId,
       data: {
         sellerpilotVerification: accountIdentityTransportStep.ok
-          ? accountIdentityVerification.verification
+          ? accountIdentityVerification.ok && !accountIdentityLineageVerified
+            ? createAccountLineage
+              ? "TEMU_CREATE_TARGET_MALL_MISMATCH"
+              : "TEMU_CREATE_ACCOUNT_LINEAGE_BINDING_REQUIRED"
+            : accountIdentityVerification.verification
           : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
-        ...(!(accountIdentityTransportStep.ok && accountIdentityVerification.ok)
+        ...(!(accountIdentityTransportStep.ok
+          && accountIdentityVerification.ok
+          && accountIdentityLineageVerified)
           ? { sellerpilotNoWriteConfirmed: true }
           : {}),
         ...(accountIdentityVerification.identity ? {
@@ -509,6 +639,12 @@ export async function executeTemu(input: ExecuteInput) {
           sellerpilotTemuMissingScopes:
             accountIdentityVerification.missingScopes,
         } : {}),
+        ...(createAccountLineage ? {
+          sellerpilotTemuExpectedTargetId: createAccountLineage.mallId,
+          sellerpilotTemuExpectedMarket: createAccountLineage.market,
+        } : {}),
+        sellerpilotTemuReviewCreatePrewrite:
+          reviewAndCreatePrewrite.verification,
       },
     };
     steps.push(accountIdentityStep);
@@ -992,7 +1128,24 @@ export async function executeTemu(input: ExecuteInput) {
               : "TEMU_IMAGE_READBACK_MISSING",
     };
     steps.push(detailStep);
-    return result(input, steps, remoteId, undefined, publication?.remoteState);
+    const remoteState = publication?.remoteState
+      && accountIdentityVerification.identity
+      && createAccountLineage
+      ? {
+        ...publication.remoteState,
+        evidence: {
+          ...publication.remoteState.evidence,
+          temuAccountLineage: {
+            version: temuCreateAccountLineageContract,
+            subject: accountIdentityVerification.identity.subject,
+            mallId: accountIdentityVerification.identity.mallId,
+            regionId: accountIdentityVerification.identity.regionId,
+            market: createAccountLineage.market,
+          },
+        },
+      }
+      : publication?.remoteState;
+    return result(input, steps, remoteId, undefined, remoteState);
   }
   if (input.operation === "price.update") {
     const goodsId = integerArgument(input.arguments, "goodsId", { min: 1 });

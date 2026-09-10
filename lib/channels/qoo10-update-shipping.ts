@@ -1,7 +1,6 @@
 import { qoo10Request, type SecretPayload } from "./protocols";
 import { qoo10RollbackUpdateRecoveryArgument, qoo10RollbackUpdateRecoveryBinding } from "./listing-update";
 
-
 type RecordValue = Record<string, unknown>;
 function record(value: unknown): RecordValue {
   return value && typeof value === "object" && !Array.isArray(value) ? value as RecordValue : {};
@@ -49,8 +48,6 @@ export async function prepareQoo10ShippingPreservedUpdate(input: {
   const recoveryMarkers = [qoo10RollbackUpdateRecoveryArgument];
   if (recoveryMarkers.some((key) => Object.hasOwn(input.arguments, key))) {
     const rollback = qoo10RollbackUpdateRecoveryBinding(input.arguments);
-
-
     if (!rollback) throw new Error("QOO10_UPDATE_SHIPPING_UNVERIFIED");
     // These server-bound contracts already re-read and verify their exact
     // shipping group in operations.ts. Do not change their approved arguments.

@@ -118,16 +118,38 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { error: rotateError } = await userClient.rpc("sellerpilot_rotate_credential", {
-    p_channel: parsed.data.channel,
-    p_environment: parsed.data.environment,
-    p_secret_payload: nextSecret,
-    p_expires_at: parsed.data.expiresAt,
-    p_rotation_interval_days: parsed.data.rotationDays,
-    p_warning_days: parsed.data.warningDays,
-    p_grace_days: parsed.data.credentialId ? parsed.data.graceDays : 0,
-  });
-  if (rotateError) return NextResponse.json({ message: "키를 Vault에 저장하지 못했습니다." }, { status: 500 });
+  const isExactElevenstRotation = parsed.data.channel === "elevenst"
+    && Boolean(parsed.data.credentialId);
+  const rotation = isExactElevenstRotation
+    ? await userClient.rpc("sellerpilot_rotate_elevenst_credential_exact", {
+      p_expected_credential_id: parsed.data.credentialId,
+      p_expected_version: parsed.data.credentialVersion,
+      p_environment: parsed.data.environment,
+      p_secret_payload: nextSecret,
+      p_expires_at: parsed.data.expiresAt,
+      p_rotation_interval_days: parsed.data.rotationDays,
+      p_warning_days: parsed.data.warningDays,
+      p_grace_days: parsed.data.graceDays,
+    })
+    : await userClient.rpc("sellerpilot_rotate_credential", {
+      p_channel: parsed.data.channel,
+      p_environment: parsed.data.environment,
+      p_secret_payload: nextSecret,
+      p_expires_at: parsed.data.expiresAt,
+      p_rotation_interval_days: parsed.data.rotationDays,
+      p_warning_days: parsed.data.warningDays,
+      p_grace_days: parsed.data.credentialId ? parsed.data.graceDays : 0,
+    });
+  if (rotation.error) {
+    const staleElevenstSource = isExactElevenstRotation
+      && /ELEVENST_CREDENTIAL_SOURCE_STALE/u.test(rotation.error.message ?? "");
+    return NextResponse.json({
+      ...(staleElevenstSource ? { code: "ELEVENST_CREDENTIAL_SOURCE_STALE" } : {}),
+      message: staleElevenstSource
+        ? "11번가 활성 키가 변경되었습니다. 최신 버전을 다시 불러와 주세요."
+        : "키를 Vault에 저장하지 못했습니다.",
+    }, { status: staleElevenstSource ? 409 : 500 });
+  }
 
   return NextResponse.json({ message: "키 교체와 Vault 저장이 완료됐습니다." }, {
     headers: { "cache-control": "no-store, max-age=0" },

@@ -743,7 +743,6 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "qoo10") {
-
     const params: Record<string, unknown> = {
       ...nonEmptyEntries(recordValue(createArguments.params), [
         ...qoo10MutableFields,
@@ -1215,8 +1214,8 @@ export function verifyListingUpdateReadback(
   }
 
 
-  const mismatches = (subsetMismatches(expected, comparableActual))
-    .filter(Boolean);
+  const mutableMismatches = subsetMismatches(expected, comparableActual).filter(Boolean);
+  const mismatches = [...new Set(mutableMismatches)];
   return { ok: Object.keys(expected).length > 0 && mismatches.length === 0, mismatches };
 }
 

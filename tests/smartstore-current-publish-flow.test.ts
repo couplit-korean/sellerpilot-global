@@ -24,6 +24,19 @@ import {
 import * as draftContract from "../lib/product-registration-draft";
 import * as operationNames from "../lib/channels/operation-names";
 import * as channelCatalog from "../lib/channels/catalog";
+import {
+  smartstoreCategoryAttributeAssignmentContract,
+  smartstoreCategoryAttributeAssignmentDigest,
+  smartstoreCategoryAttributeOfficialReadbackContract,
+  smartstoreCategoryAttributeOfficialReadbackDigest,
+} from "../lib/channels/smartstore-category-attribute-mapping";
+import { smartstoreCreateCategorySourceContract } from "../lib/server-smartstore-category-attribute-binding";
+import {
+  buildSmartstoreCreateTransport,
+  smartstoreCreateTransportArgument,
+  smartstoreCreateTransportStageArgument,
+  smartstoreCreateTransportStageContract,
+} from "../lib/channels/smartstore-create-transport";
 
 const actualRequire = createRequire(import.meta.url);
 
@@ -42,6 +55,9 @@ registerHooks({
     return nextResolve(specifier, context);
   },
 });
+const { executeChannelOperation: executeCommerceOperation } = await import(
+  "../lib/channels/commerce-operations"
+);
 const { prepareMarketplaceListingArguments } = await import("../lib/channels/provider-listing-runtime");
 
 const ownerId = "10000000-0000-4000-8000-000000000001";
@@ -227,16 +243,71 @@ class GatewayError extends Error {
   additionalEvidenceRequired = false;
 }
 
-type ProviderAudit = { calls: string[]; mutations: number; error?: string };
+type ProviderAudit = {
+  calls: string[];
+  mutations: number;
+  creates: number;
+  puts: number;
+  error?: string;
+};
+type RouteAudit = {
+  claims: number;
+  snapshotMode: "exact" | "stale" | "missing" | "cross" | "error";
+};
 
-async function channelOperationRoute(gatewayArguments: Record<string, unknown>[], providerAudits: ProviderAudit[]) {
+function categoryAttributeSource(mode: RouteAudit["snapshotMode"]) {
+  if (mode === "missing") return undefined;
+  const assignmentSource = {
+    contract: smartstoreCategoryAttributeAssignmentContract,
+    channel: "smartstore" as const,
+    operation: "listing.create" as const,
+    environment: "production" as const,
+    market: "KR" as const,
+    status: "confirmed" as const,
+    categoryId,
+    revision: 7,
+    providedAttributes: [],
+  };
+  const assignment = {
+    ...assignmentSource,
+    digest: smartstoreCategoryAttributeAssignmentDigest(assignmentSource),
+  };
+  const officialCategoryId = mode === "cross" ? "50000000" : categoryId;
+  const officialSource = {
+    contract: smartstoreCategoryAttributeOfficialReadbackContract,
+    categoryId: officialCategoryId,
+    assignmentRevision: mode === "stale" ? assignment.revision - 1 : assignment.revision,
+    assignmentDigest: assignment.digest,
+    category: { id: officialCategoryId, name: "생활용품", last: true },
+    attributes: [],
+    attributeValues: [],
+    attributeValueUnits: [],
+  };
+  return {
+    contract: smartstoreCreateCategorySourceContract,
+    assignment,
+    officialReadback: {
+      ...officialSource,
+      digest: smartstoreCategoryAttributeOfficialReadbackDigest(officialSource),
+    },
+  };
+}
+
+async function channelOperationRoute(
+  gatewayArguments: Record<string, unknown>[],
+  providerAudits: ProviderAudit[],
+  routeAudit: RouteAudit,
+) {
   const routeUrl = new URL("../app/api/admin/channel-operations/route.ts", import.meta.url);
   const actualRouteRequire = createRequire(routeUrl);
   const source = await readFile(routeUrl, "utf8");
   const compiled = ts.transpileModule(source, {
     compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
   }).outputText;
-  const publishContext = context() as unknown as Record<string, unknown>;
+  const publishContext = {
+    ...context(),
+    ownerId,
+  } as unknown as Record<string, unknown>;
   const manifest = {
     version: 1,
     manifest: {
@@ -252,7 +323,10 @@ async function channelOperationRoute(gatewayArguments: Record<string, unknown>[]
       if (name === "sellerpilot_is_admin") return { data: true, error: null };
       if (name === "sellerpilot_list_credentials") return { data: [{ id: credentialId, channel: "smartstore", status: "active", environment: "production" }], error: null };
       if (name === "sellerpilot_get_product_publish_context") return { data: publishContext, error: null };
-      if (name === "sellerpilot_claim_channel_operation") return { data: { attempt_id: attemptId, duplicate: false }, error: null };
+      if (name === "sellerpilot_claim_channel_operation") {
+        routeAudit.claims += 1;
+        return { data: { attempt_id: attemptId, duplicate: false }, error: null };
+      }
       throw new Error(`unexpected user rpc: ${name}`);
     },
   };
@@ -262,6 +336,31 @@ async function channelOperationRoute(gatewayArguments: Record<string, unknown>[]
       createSignedUrls: async (paths: string[]) => ({ data: paths.map((_, index) => ({ signedUrl: `https://signed.invalid/${index}.jpg` })), error: null }),
     }) },
     async rpc(name: string) {
+      if (name === "sellerpilot_service_smartstore_create_source_snapshot") {
+        if (routeAudit.snapshotMode === "error") {
+          return { data: null, error: { message: "fixture source read failed" } };
+        }
+        return { data: {
+          contract: "smartstore_listing_create_source_snapshot_v1",
+          productId,
+          ownerId,
+          productUpdatedAt: "2026-09-10T00:00:00.123456+00:00",
+          detailPageVersion: 1,
+          approvedDetailPageVersion: 1,
+          approvedManifestDigest: fingerprint,
+          sellerManagementCode: "SMARTSTORE-FLOW-TEST",
+          credentialId,
+          credentialVersion: 1,
+          credentialFingerprint: "ABCDEF123456",
+          credentialVaultSecretId: "77777777-7777-4777-8777-777777777777",
+          credentialLastRotatedAt: "2026-09-10T00:00:00.123456+00:00",
+          productName: String((publishContext.manualFields as Record<string, unknown>).productName),
+          salePrice: Number((publishContext.manualFields as Record<string, unknown>).sellingPrice),
+          stockQuantity: Number((publishContext.manualFields as Record<string, unknown>).stock),
+          manualFieldsSha256: "e".repeat(64),
+          categoryAttributeSource: categoryAttributeSource(routeAudit.snapshotMode),
+        }, error: null };
+      }
       if (name === "sellerpilot_service_serverless_static_egress_status") return { data: { smartstore: true }, error: null };
       if (name === "sellerpilot_service_serverless_cs_wakeup_status") return { data: { configured: true, active: true, activeRelease: releaseSha }, error: null };
       if (name === "sellerpilot_service_listing_mutation_release_gate_status") return { data: {
@@ -335,18 +434,66 @@ async function channelOperationRoute(gatewayArguments: Record<string, unknown>[]
         gatewayArguments.push(input.arguments);
         const calls: string[] = [];
         let mediaMutations = 0;
-        const audit: ProviderAudit = { calls, mutations: 0 };
+        let created = false;
+        let preparedBody: Record<string, unknown> | null = null;
+        const originProductNo = "10000001";
+        const channelProductNo = "20000001";
+        const audit: ProviderAudit = { calls, mutations: 0, creates: 0, puts: 0 };
         providerAudits.push(audit);
         const originalFetch = globalThis.fetch;
-        globalThis.fetch = async (request) => {
+        globalThis.fetch = async (request, init) => {
           const url = String(request); calls.push(url);
+          const method = init?.method ?? "GET";
+          if (method === "PUT") audit.puts += 1;
           if (url.endsWith(`/v1/categories/${categoryId}`)) return Response.json({ id: categoryId, last: true, exceptionalCategories: [], wholeCategoryName: "생활용품" });
-          if (url.endsWith("/v1/products/search")) return Response.json({ page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [] });
+          if (url.endsWith("/v1/products/search") && !created) return Response.json({ page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [] });
+          if (url.endsWith("/v1/products/search")) return Response.json({
+            page: 1, size: 50, totalElements: 1, totalPages: 1,
+            first: true, last: true,
+            contents: [{
+              originProductNo,
+              channelProducts: [{
+                channelProductNo,
+                sellerManagementCode: "SMARTSTORE-FLOW-TEST",
+              }],
+            }],
+          });
           if (url.endsWith("/v1/product-images/upload")) return Response.json({
             images: Array.from({ length: 9 }, (_, index) => ({
               url: `https://shop-phinf.pstatic.net/20260909_sellerpilot/uploaded-${index}.jpg`,
             })),
           });
+          if (url.endsWith("/v2/products") && method === "POST") {
+            audit.creates += 1;
+            created = true;
+            return Response.json({ originProductNo, smartstoreChannelProductNo: channelProductNo });
+          }
+          if (url.endsWith(`/v2/products/origin-products/${originProductNo}`)) {
+            return Response.json({
+              originProductNo,
+              smartstoreChannelProductNo: channelProductNo,
+              originProduct: structuredClone(
+                (preparedBody?.originProduct ?? {}) as Record<string, unknown>,
+              ),
+            });
+          }
+          if (url.endsWith(`/v2/products/channel-products/${channelProductNo}`)) {
+            return Response.json({
+              originProductNo,
+              smartstoreChannelProductNo: channelProductNo,
+              originProduct: structuredClone(
+                (preparedBody?.originProduct ?? {}) as Record<string, unknown>,
+              ),
+              smartstoreChannelProduct: {
+                ...structuredClone(
+                  (preparedBody?.smartstoreChannelProduct ?? {}) as Record<string, unknown>,
+                ),
+                originProductNo,
+                channelProductNo,
+                sellerManagementCode: "SMARTSTORE-FLOW-TEST",
+              },
+            });
+          }
           throw new Error(`unexpected provider request: ${url}`);
         };
         try {
@@ -360,11 +507,53 @@ async function channelOperationRoute(gatewayArguments: Record<string, unknown>[]
           assert.equal(prepared.arguments.sellerpilotSmartstoreCreateContract, "smartstore_listing_create_v1");
           assert.deepEqual(calls.map((url) => new URL(url).pathname), [`/external/v1/categories/${categoryId}`, "/external/v1/products/search", "/external/v1/product-images/upload"]);
           assert.equal(mediaMutations, 1);
+          preparedBody = prepared.arguments.body as Record<string, unknown>;
+          mediaMutations += 1;
+          audit.mutations = mediaMutations;
+          const transport = buildSmartstoreCreateTransport(preparedBody);
+          prepared.arguments[smartstoreCreateTransportArgument] = transport;
+          prepared.arguments[smartstoreCreateTransportStageArgument] = {
+            contract: smartstoreCreateTransportStageContract,
+            jobId: "11111111-1111-4111-8111-111111111111",
+            bodySha256: transport.bodySha256,
+            bodyByteLength: transport.bodyByteLength,
+            staged: true,
+          };
+          const result = await executeCommerceOperation({
+            channel: "smartstore",
+            operation: "listing.create",
+            payload: {
+              access_token: "fixture-token",
+              access_token_expires_at: "2099-01-01T00:00:00.000Z",
+            },
+            arguments: prepared.arguments,
+            environment: "production",
+          });
+          assert.equal(result.remoteId, originProductNo);
+          assert.equal(result.publicationFulfilled, true);
+          assert.equal(
+            result.steps.find(({ name }) => name === "product-create-contract-readback")
+              ?.data.sellerpilotVerification,
+            "SMARTSTORE_CREATE_EXACT_READBACK_VERIFIED",
+          );
+          const receiptMapping = result.steps.find(
+            ({ name }) => name === "product-create-contract-readback",
+          )?.data.sellerpilotCategoryAttributeMapping as Record<string, unknown>;
+          const requestMapping = prepared.arguments
+            .sellerpilotSmartstoreCategoryAttributeMapping as Record<string, unknown>;
+          assert.deepEqual(receiptMapping, {
+            contract: requestMapping.contract,
+            categoryId: requestMapping.categoryId,
+            assignmentRevision: requestMapping.assignmentRevision,
+            assignmentDigest: requestMapping.assignmentDigest,
+            officialReadbackDigest: requestMapping.officialReadbackDigest,
+            productAttributesSha256: requestMapping.productAttributesSha256,
+          });
+          return { listingId, result };
         } catch (error) {
           audit.error = error instanceof Error ? error.message : String(error);
           throw error;
         } finally { globalThis.fetch = originalFetch; }
-        return { listingId, result: { ok: true, remoteId: "fixture-remote", publicationFulfilled: true, remoteState: { visibility: "live" }, safeMessage: "fixture verified" } };
       },
     };
     if (name.endsWith("/commerce-operations")) return { executeChannelOperation: noop };
@@ -410,10 +599,11 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   const firstRead = await getDraft(routes);
   const firstRestored = restoreChannelRegistrationPatches(baseDraft(), firstRead.data.channels[identity].patches);
   assert.equal(registrationValueAt(firstRestored, ["body", "originProduct", "detailAttribute", "certificationTargetExcludeContent", "childCertifiedProductExclusionYn"]), false);
-  assert.ok(inspectWorkbenchListingDraft("smartstore", firstRestored).some((item) => item.status === "manual"));
+  assert.equal(registrationValueAt(firstRestored, kcDecisionPath), "");
   const gatewayArguments: Record<string, unknown>[] = [];
   const providerAudits: ProviderAudit[] = [];
-  const route = await channelOperationRoute(gatewayArguments, providerAudits);
+  const routeAudit: RouteAudit = { claims: 0, snapshotMode: "exact" };
+  const route = await channelOperationRoute(gatewayArguments, providerAudits, routeAudit);
   const request = (argumentsValue: Record<string, unknown>) => new Request("https://fixture.invalid/api/admin/channel-operations", {
     method: "POST",
     headers: { "content-type": "application/json", authorization: "Bearer fixture-admin" },
@@ -429,6 +619,7 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   assert.equal(providerAudits[0]?.error, "NAVER_CREATE_CERTIFICATION_DECISION_REQUIRED");
   assert.deepEqual(providerAudits[0]?.calls, []);
   assert.equal(providerAudits[0]?.mutations, 0);
+  assert.equal(routeAudit.claims, 1);
 
   const complete = completeDraft(firstRestored);
   await putDraft(routes, registrationData(base, complete), 1);
@@ -440,16 +631,30 @@ test("SmartStore current UI draft survives save/reload and only complete input r
   assert.deepEqual(inspectWorkbenchListingDraft("smartstore", restored).filter((item) => item.status === "manual"), []);
   assert.deepEqual(missingNativeValues("smartstore", restored), []);
 
-  const response = await route.POST(request(restored));
-  const payload = await response.json() as Record<string, unknown>;
-  assert.equal(response.status, 200, JSON.stringify({ payload, gatewayArguments }));
-  assert.equal(payload.ok, true);
-  assert.equal(payload.gateway, "vercel-serverless-channel-gateway");
-  assert.equal(gatewayArguments.length, 2);
-  assert.deepEqual(providerAudits[1]?.calls.map((url) => new URL(url).pathname), [
-    `/external/v1/categories/${categoryId}`,
-    "/external/v1/products/search",
-    "/external/v1/product-images/upload",
-  ]);
-  assert.equal(providerAudits[1]?.mutations, 1);
+  routeAudit.snapshotMode = "error";
+  const unavailableResponse = await route.POST(request(restored));
+  const unavailablePayload = await unavailableResponse.json() as Record<string, unknown>;
+  assert.equal(unavailableResponse.status, 503);
+  assert.equal(unavailablePayload.mode, "smartstore_listing_create_source_unavailable");
+  assert.equal(unavailablePayload.providerWritePerformed, false);
+  assert.equal(unavailablePayload.jobCreated, false);
+  assert.equal(routeAudit.claims, 1, "source read failure must stop before claim");
+  assert.equal(providerAudits.length, 1, "source read failure must stop before gateway/provider");
+
+  routeAudit.snapshotMode = "exact";
+  const mismatched = structuredClone(restored);
+  const origin = (mismatched.body as Record<string, unknown>).originProduct as Record<string, unknown>;
+  origin.name = "다른 제목";
+  origin.salePrice = 990_000;
+  origin.stockQuantity = 99;
+  ((mismatched.body as Record<string, unknown>).smartstoreChannelProduct as Record<string, unknown>)
+    .channelProductName = "다른 제목";
+  const mismatchResponse = await route.POST(request(mismatched));
+  const mismatchPayload = await mismatchResponse.json() as Record<string, unknown>;
+  assert.equal(mismatchResponse.status, 409);
+  assert.equal(mismatchPayload.mode, "smartstore_listing_create_source_identity_invalid");
+  assert.equal(mismatchPayload.providerWritePerformed, false);
+  assert.equal(mismatchPayload.jobCreated, false);
+  assert.equal(routeAudit.claims, 1, "title/price/stock drift must stop before claim");
+  assert.equal(providerAudits.length, 1, "title/price/stock drift must stop before gateway/provider");
 });

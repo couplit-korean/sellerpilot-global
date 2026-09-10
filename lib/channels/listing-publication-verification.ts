@@ -845,6 +845,7 @@ export async function executeListingPublicationVerification(input: VerificationI
     remoteId,
     offerId,
     expected,
+    expectedArguments: sourceArguments,
     readOffer: (readbackOfferId) => ebayRequest({
       payload: input.payload,
       environment: input.environment,

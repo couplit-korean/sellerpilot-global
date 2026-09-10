@@ -1577,6 +1577,41 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
       p_confirm: true,
     })));
     if (results.some((result) => result.error)) return notify("카테고리 확정값을 저장하지 못했습니다. DB 마이그레이션과 관리자 권한을 확인해 주세요.");
+    if (channel === "smartstore") {
+      const supabase = createClient();
+      const [{ data: sessionData }, { data: credentialRows }] = await Promise.all([
+        supabase.auth.getSession(),
+        supabase.rpc("sellerpilot_list_credentials"),
+      ]);
+      const currentCredential = selectActiveProductionCredential(
+        credentialRows,
+        "smartstore",
+      );
+      if (!currentCredential || !sessionData.session?.access_token) {
+        notify("현재 스마트스토어 production credential과 관리자 세션을 확인하지 못했습니다.");
+        return;
+      }
+      const sourceResponse = await fetch(
+        `/api/admin/products/${encodeURIComponent(productId)}/smartstore-create-category-source`,
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${sessionData.session.access_token}`,
+          },
+          body: JSON.stringify({ credentialId: currentCredential.id }),
+        },
+      );
+      const sourcePayload = await sourceResponse.json().catch(() => null) as {
+        sourceReady?: boolean;
+        message?: string;
+      } | null;
+      if (!sourceResponse.ok || sourcePayload?.sourceReady !== true) {
+        notify(sourcePayload?.message
+          ?? "스마트스토어 공식 카테고리 속성 원본을 저장하지 못했습니다. 다시 확정해 주세요.");
+        return;
+      }
+    }
     setStates((current) => ({ ...current, [key]: { ...state, phase: "confirmed" } }));
     onConfirmed?.(channel);
     notify(`${channelCatalog[channel].name} ${categoryMarketCode(channel, assignmentTargets[0]?.marketCode)} 카테고리와 입력한 전체 속성을 확정했습니다.`);

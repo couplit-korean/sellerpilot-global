@@ -71,7 +71,31 @@ export type ChannelOperationResult = {
     prewriteOriginResponseSha256: string;
     prewriteChannelResponseSha256: string;
   };
+  shopeeSgCreateCompletionMap?: {
+    sameTransactionAsLocalPublish: true;
+    globalItemId: string;
+    localItemId: string;
+  };
   safeMessage: string;
+};
+
+export type ShopeeSgCreateStageName =
+  | "image-upload"
+  | "global-item-create"
+  | "local-publish";
+
+export type ShopeeSgCreateStageInput = {
+  sequence: number;
+  stage: ShopeeSgCreateStageName;
+  preparedPayloadSha256: string;
+  sourceUrl?: string;
+  sourceSha256?: string;
+  globalItemId?: string;
+};
+
+export type ShopeeSgCreateStageCompletion = ShopeeSgCreateStageInput & {
+  outputId: string;
+  result?: Record<string, unknown>;
 };
 
 export type ExecuteInput = {
@@ -82,10 +106,25 @@ export type ExecuteInput = {
   arguments: Record<string, unknown>;
   environment: "sandbox" | "production";
   providerMutationHooks?: {
-    begin: () => Promise<void>;
+    begin: (input?: { providerBody?: Record<string, unknown> }) => Promise<void>;
     assertLeaseHealthy: () => Promise<void>;
-
+    gatewayCredentialId?: string;
+    readShopeeSgCreateStageState?: () => Promise<unknown>;
+    beginShopeeSgCreateStage?: (stage: ShopeeSgCreateStageInput) => Promise<unknown>;
+    completeShopeeSgCreateStage?: (
+      completion: ShopeeSgCreateStageCompletion,
+    ) => Promise<unknown>;
+    readShopeeSgCreateResume?: () => Promise<unknown>;
+    recordShopeeSgGlobalCreateReadback?: (value: {
+      globalItemId: string;
+      createResponse: Record<string, unknown>;
+      readbackResponse?: Record<string, unknown>;
+      officialReadback?: Record<string, unknown>;
+      preparedArguments?: Record<string, unknown>;
+    }) => Promise<void>;
+    captureShopeeSgPreparedArguments?: (value: Record<string, unknown>) => void;
   };
+  signal?: AbortSignal;
 };
 
 export function booleanArgument(

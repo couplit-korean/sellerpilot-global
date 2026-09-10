@@ -14,6 +14,7 @@ test("Shopee SG resolves every official requirement before returning a create bo
       brand: { brand_id: 101, original_brand_name: "Lotte" },
       attribute_list: [{ attribute_id: 1, attribute_value_list: [{ value_id: 11 }] }],
       seller_stock: [{ location_id: "SG-LOC", stock: 3 }],
+      days_to_ship: 1,
       weight: 0.4,
       dimension: { package_length: 28, package_width: 20, package_height: 7 },
     },
@@ -22,6 +23,7 @@ test("Shopee SG resolves every official requirement before returning a create bo
       brand: { brand_id: 101, original_brand_name: "Lotte" },
       attribute_list: [{ attribute_id: 1, attribute_value_list: [{ value_id: 11 }] }],
       seller_stock: [{ location_id: "SG-LOC", stock: 3 }],
+      days_to_ship: 1,
       weight: 0.4,
       dimension: { package_length: 28, package_width: 20, package_height: 7 },
       logistic: [{ logistic_id: 10, enabled: true, size_id: "3" }],
@@ -87,6 +89,7 @@ test("Shopee SG resolves every official requirement before returning a create bo
     brandId: 101,
     warehouseId: "9001",
     shopId: "70000001",
+    daysToShip: 1,
     attributeIds: [1],
   });
 });
@@ -99,6 +102,7 @@ test("Shopee SG blocks before returning a body when the selected warehouse is no
       attribute_list: [{ attribute_id: 1, attribute_value_list: [{ value_id: 11 }] }],
       normal_stock: 1,
       seller_stock: [{ location_id: "SG-LOC", stock: 1 }],
+      days_to_ship: 4,
       weight: 0.4,
       dimension: { package_length: 28, package_width: 20, package_height: 7 },
     },
@@ -108,6 +112,7 @@ test("Shopee SG blocks before returning a body when the selected warehouse is no
       attribute_list: [{ attribute_id: 1, attribute_value_list: [{ value_id: 11 }] }],
       normal_stock: 1,
       seller_stock: [{ location_id: "SG-LOC", stock: 1 }],
+      days_to_ship: 4,
       weight: 0.4,
       dimension: { package_length: 28, package_width: 20, package_height: 7 },
       logistic: [{ logistic_id: 10, enabled: true }],
@@ -204,4 +209,33 @@ test("Shopee SG candidate loading rejects coercible non-integer category identif
       /SHOPEE_GLOBAL_CATEGORY_MISSING/u,
     );
   }
+});
+
+test("Shopee SG blocks missing, invalid, or divergent days to ship before provider reads", async () => {
+  const readers = {
+    merchantGet: async () => { throw new Error("unexpected provider read"); },
+    shopGet: async () => { throw new Error("unexpected provider read"); },
+    merchantPost: async () => { throw new Error("unexpected provider read"); },
+  };
+  const packageFields = {
+    category_id: 100787,
+    weight: 0.4,
+    dimension: { package_length: 28, package_width: 20, package_height: 7 },
+  };
+  for (const invalid of [undefined, 2, 3, 11, true]) {
+    await assert.rejects(prepareShopeeSgOfficialRequirements({
+      body: { ...packageFields, days_to_ship: invalid },
+      publishItem: { ...packageFields, days_to_ship: 1 },
+      targetShopId: "70000001",
+      globalAttributeResponse: {},
+      readers,
+    }), /SHOPEE_SG_DAYS_TO_SHIP_REQUIRED/u);
+  }
+  await assert.rejects(prepareShopeeSgOfficialRequirements({
+    body: { ...packageFields, days_to_ship: 1 },
+    publishItem: { ...packageFields, days_to_ship: 4 },
+    targetShopId: "70000001",
+    globalAttributeResponse: {},
+    readers,
+  }), /SHOPEE_SG_GLOBAL_LOCAL_DAYS_TO_SHIP_MISMATCH/u);
 });

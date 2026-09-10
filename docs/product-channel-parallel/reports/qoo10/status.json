@@ -1,0 +1,46 @@
+{
+  "channel": "qoo10",
+  "round": "r5",
+  "updatedAt": "2026-09-10T17:36:30+09:00",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-qoo10-local-20260910",
+  "baseSha": "0fb40d4",
+  "ledger": "2/6",
+  "actualProviderCreate": "0/8",
+  "commitPush": false,
+  "productionSql": false,
+  "liveQoo10Call": false,
+  "newCreate": false,
+  "accountVerified": "unknown",
+  "requiredFieldsVerified": "unknown",
+  "localFlowPassed": true,
+  "codeIntegrated": false,
+  "providerCreated": false,
+  "remoteReadbackVerified": false,
+  "internalCompletionVerified": false,
+  "buyerVisibleVerified": false,
+  "review69": {
+    "retiredLotteRuntimeReentered": "closed",
+    "postEnqueueProductStatusIgnored": "closed",
+    "responseLossPermanent409WithoutGet": "closed",
+    "existingItem1217536689UsedAsNewCreate": "closed"
+  },
+  "relatedTests": {
+    "command": "node --import tsx --test tests/qoo10-gateway-create-atomic-recovery.test.ts tests/listing-update.test.ts tests/qoo10-update-adultyn-carrier.test.ts tests/qoo10-retired-runtime-and-create-recovery-r5.test.ts tests/qoo10-listing-create-fulfillment-evidence.test.ts tests/qoo10-listing-create-fulfillment-official-get.test.ts tests/qoo10-listing-create-fulfillment-qsm-source.test.ts tests/qoo10-listing-create-preflight.test.ts tests/qoo10-listing-publication.test.ts tests/qoo10-update-shipping.test.ts tests/qoo10-lotte-existing-update.test.ts tests/qoo10-lotte-carrier-source-route.test.ts tests/qoo10-lotte-postwrite-reconciliation-r2.test.ts tests/qoo10-qsm-existing-carrier-collector.test.ts tests/qoo10-qsm-existing-carrier-cdp-collector.test.ts tests/qoo10-qsm-existing-postwrite-service-runner.test.ts tests/qoo10-content-preview.test.ts",
+    "passed": 145,
+    "failed": 0,
+    "failedName": null
+  },
+  "lotteRemainingInTargetCommonFiles": false,
+  "commerceWorkerCallsRecover": true,
+  "workerUsesCreateBoundaryCas": true,
+  "serverlessUsesCreateBoundaryCas": true,
+  "serverlessCallsRecover": true,
+  "migration": "20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql",
+  "shortFenceSuccessor": "sellerpilot_service_fence_qoo10_create_now_v3",
+  "getRecoveryRpc": "sellerpilot_service_qoo10_create_get_rec_v1",
+  "commonPatchProposal": "docs/product-channel-parallel/reports/qoo10/qoo10-r5-common-lotte-retirement.patch.md",
+  "blocks": [
+    "no production SQL, no live CREATE, ledger stays 2/6"
+  ],
+  "nextOneStep": "Central applies r5 files, common Lotte removal, commerce-worker recover wiring, and serverless-gateway atomic CREATE/CAS recover without raising the ledger or issuing SetNewGoods."
+}

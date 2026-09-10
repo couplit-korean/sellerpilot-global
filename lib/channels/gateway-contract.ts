@@ -1,6 +1,7 @@
 import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 export { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 import { z } from "zod";
+import { ebayPublicationReconciliationBindingSchema } from "./ebay-publication-reconciliation-contract";
 import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operation-names";
 import {
@@ -44,7 +45,23 @@ export const gatewayClaimSchema = z.object({
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
   attempt_count: z.number().int().min(1).max(6),
+  ebay_publication_reconciliation:
+    ebayPublicationReconciliationBindingSchema.optional(),
 }).superRefine((value, context) => {
+  const ebayRecovery = value.ebay_publication_reconciliation;
+  if (ebayRecovery && (
+    value.channel !== "ebay"
+    || value.operation !== "listing.create"
+    || value.environment !== "production"
+    || ebayRecovery.sourceJobId !== value.id
+    || ebayRecovery.credentialId !== value.credential_id
+  )) {
+    context.addIssue({
+      code: "custom",
+      path: ["ebay_publication_reconciliation"],
+      message: "invalid eBay publication reconciliation lineage",
+    });
+  }
   if (!listingOperationRequiresVerifiedRemoteState(value.operation)) return;
   const argumentsValue = value.request.arguments;
   if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) return;
@@ -596,6 +613,66 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
 
 });
 
+const coupangDurableCreateReconciliationResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("coupang"),
+  operation: z.literal("listing.lineage.verify"),
+  verificationStatus: z.literal("verified"),
+  publicationStateContract: z.literal("verified_remote_state_v1").optional(),
+  publicationIntent: listingPublicationIntentSchema.optional(),
+  publicationFulfilled: z.boolean().optional(),
+  remoteState: verifiedListingRemoteStateSchema.optional(),
+  evidence: z.object({
+    expectedRemoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+    verifiedRemoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+    market: z.literal("KR"),
+    targetId: z.string().min(1).max(160),
+    evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
+    sourceJobId: z.string().uuid(),
+    sourceAttemptId: z.string().uuid(),
+    listingId: z.string().uuid(),
+    sourceRequestSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    sellerSkus: z.array(z.string().trim().min(1).max(160)).min(1).max(100),
+    vendorId: z.string().min(1).max(160),
+    sellerProductItemIds: z.array(z.string().regex(/^[1-9]\d{0,19}$/u)).min(1).max(100),
+    reconciliationContract: z.literal("coupang_durable_create_reconciliation_v1"),
+  }).strict(),
+  steps: z.array(z.object({
+    name: z.string().min(1).max(160),
+    ok: z.literal(true),
+    status: z.number().int().min(100).max(599),
+    data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  }).strict()).min(2).max(201),
+  safeMessage: z.string().min(1).max(1_000),
+}).strict().superRefine((value, context) => {
+  if (value.evidence.expectedRemoteId !== value.evidence.verifiedRemoteId
+    || value.evidence.targetId !== value.evidence.vendorId
+    || value.evidence.sellerSkus.length !== value.evidence.sellerProductItemIds.length
+    || new Set(value.evidence.sellerSkus).size !== value.evidence.sellerSkus.length
+    || new Set(value.evidence.sellerProductItemIds).size !== value.evidence.sellerProductItemIds.length
+    || value.steps.length < value.evidence.sellerSkus.length + 1) {
+    context.addIssue({ code: "custom", message: "invalid Coupang durable CREATE reconciliation result" });
+  }
+  const publicationParts = [
+    value.publicationStateContract,
+    value.publicationIntent,
+    value.publicationFulfilled,
+    value.remoteState,
+  ];
+  const publicationPartCount = publicationParts.filter((item) => item !== undefined).length;
+  if (publicationPartCount !== 0 && publicationPartCount !== publicationParts.length) {
+    context.addIssue({ code: "custom", message: "partial Coupang publication evidence is forbidden" });
+  } else if (value.remoteState && value.publicationIntent
+      && (!listingRemoteStateMatchesOperation("listing.create", value.remoteState, value.publicationIntent)
+        || value.publicationFulfilled !== listingRemoteStateFulfillsOperation(
+          "listing.create",
+          value.remoteState,
+          value.publicationIntent,
+        ))) {
+    context.addIssue({ code: "custom", message: "Coupang publication evidence does not match its intent" });
+  }
+});
+
 const TEMU_AFTER_SALES_RETRYABLE_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
 const TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS = new Set([
   "parentAfterSalesSn",
@@ -696,6 +773,7 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       diagnosticResultSchema,
       competitorSearchResultSchema,
       smartstoreManualAdoptionLineageResultSchema,
+      coupangDurableCreateReconciliationResultSchema,
       listingLineageVerificationResultSchema,
       z.object({
         ok: z.literal(true),
@@ -833,11 +911,27 @@ export function gatewayResultHasObservedMutation(
   });
 }
 
+export function gatewayFreshCreateBlockedByExistingSellerCode(
+  operation: string,
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
+): boolean {
+  if (operation !== "listing.create") return false;
+  return steps.some((step) =>
+    step.name === "product-create-duplicate-detected"
+    && step.status === 409
+    && step.data?.sellerpilotDuplicateExistingProduct === true
+    && step.data?.sellerpilotFreshCreateCompleted === false
+    && step.data?.sellerpilotProviderMutationPerformed === false);
+}
+
 export function gatewayJobCompletionStatus(
   operation: string,
   ok: boolean,
   steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
 ): "succeeded" | "failed" | "reconciliation_required" {
+  if (gatewayFreshCreateBlockedByExistingSellerCode(operation, steps)) {
+    return "failed";
+  }
   if (listingOperationRequiresVerifiedRemoteState(operation)
     && gatewayResultRequiresAdditionalEvidence(steps)) {
     return "reconciliation_required";

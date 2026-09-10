@@ -36,6 +36,9 @@ import {
   verifyElevenstCreateProductReadback,
   verifyElevenstCreateStockReadback,
 } from "../elevenst/create-verification";
+import {
+  preflightElevenstNewProductInputExecution,
+} from "../elevenst/new-product-input-execution";
 
 export function elevenstXmlEscape(value: string) {
   return value.replace(
@@ -357,6 +360,26 @@ export async function executeElevenst(input: ExecuteInput) {
         elevenstPrewriteFailureStep("seller-account-contract", error),
       ]);
     }
+    const rawProduct = input.arguments.product && typeof input.arguments.product === "object"
+      && !Array.isArray(input.arguments.product)
+      ? input.arguments.product as Record<string, unknown>
+      : {};
+    if (String(rawProduct.dispCtgrNo ?? "").trim() === "1346631") {
+      const newProductInput = preflightElevenstNewProductInputExecution({
+        arguments: input.arguments,
+        payload: input.payload,
+        environment: input.environment,
+      });
+      if (!newProductInput.ok) {
+        const failed = elevenstPrewriteFailureStep(
+          "new-product-input-preflight",
+          new Error(newProductInput.errorCode),
+        );
+        failed.data.sellerpilotBlockers = newProductInput.blockers;
+        failed.data.sellerpilotProviderCalls = 0;
+        return result(input, [failed]);
+      }
+    }
     let product: Record<string, unknown>;
     try {
       product = validateElevenstListingArguments(input.arguments);
@@ -439,13 +462,23 @@ export async function executeElevenst(input: ExecuteInput) {
     let createStep: ChannelOperationStep | null = null;
     let providerCreateAcceptedStep: ChannelOperationStep | null = null;
     if (reconciled) {
-      createRemote = reconciled.remote;
-      productNo = reconciled.productNo;
-      createStep = elevenstVerifiedStep(
-        "product-create-reconcile",
-        createRemote,
-        true,
+      const duplicate = elevenstVerifiedStep(
+        "product-create-duplicate-detected",
+        reconciled.remote,
+        false,
       );
+      return result(input, [{
+        ...duplicate,
+        status: 409,
+        data: {
+          ...duplicate.data,
+          sellerpilotDuplicateExistingProduct: true,
+          sellerpilotRecoveryRequired: true,
+          sellerpilotProviderMutationPerformed: false,
+          sellerpilotFreshCreateCompleted: false,
+          remoteProductNo: reconciled.productNo,
+        },
+      }]);
     } else {
       try {
         createRemote = await elevenstSellerXmlRequest({

@@ -222,6 +222,10 @@ function smartstorePublicationRequest(input: {
   };
 }
 
+function ebayApprovedDescription(imageCount = 8) {
+  return `Verified description${detailHtml(imageCount)}`;
+}
+
 function ebayOffer(input: {
   status: "PUBLISHED" | "UNPUBLISHED";
   listingStatus?: string;
@@ -237,7 +241,7 @@ function ebayOffer(input: {
     availableQuantity: 1,
     pricingSummary: { price: { value: "29.50", currency: "USD" } },
     status: input.status,
-    listingDescription: detailHtml(input.imageCount ?? 8),
+    listingDescription: ebayApprovedDescription(input.imageCount ?? 8),
     listingPolicies: {
       fulfillmentPolicyId: "fulfillment-1",
       paymentPolicyId: "payment-1",
@@ -255,6 +259,7 @@ function ebayInventoryImages(count = 9) {
 }
 
 function ebayCreateArguments(intent: "safe_test" | "live") {
+  const description = ebayApprovedDescription();
   return {
     ...publicationArguments(intent),
     publicationExpectedLocale: "en-US",
@@ -264,7 +269,7 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
       condition: "NEW",
       product: {
         title: "Verified item",
-        description: "Verified description",
+        description,
         imageUrls: ebayInventoryImages(),
       },
     },
@@ -275,7 +280,7 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
       categoryId: "1234",
       availableQuantity: 1,
       pricingSummary: { price: { value: "29.50", currency: "USD" } },
-      listingDescription: detailHtml(),
+      listingDescription: description,
       listingPolicies: {
         fulfillmentPolicyId: "fulfillment-1",
         paymentPolicyId: "payment-1",
@@ -876,20 +881,23 @@ test("eBay read-only publication boundary binds getOffer to getInventoryItem", a
     imageCount: 8,
   };
   const calls: string[] = [];
+  const offer = ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", marketplaceId: "EBAY_DE" });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "110000000001",
     offerId: "offer-123",
     expected,
+    expectedArguments: { inventoryItem, offer },
     verifiedAt: "2026-08-29T22:00:00.000Z",
     readOffer: async (offerId) => {
       calls.push(`offer:${offerId}`);
-      return remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", marketplaceId: "EBAY_DE" }));
+      return remote(offer);
     },
     readInventoryItem: async (sku) => {
       calls.push(`inventory:${sku}`);
-      return remote({ product: { imageUrls: ebayInventoryImages() } });
+      return remote(inventoryItem);
     },
   });
   assert.deepEqual(calls, ["offer:offer-123", "inventory:SELLERPILOT-001"]);
@@ -1010,14 +1018,17 @@ test("eBay live create requires final PUBLISHED ACTIVE readback after publishOff
 });
 
 test("eBay published acceptance without ACTIVE listing readback remains pending review", async () => {
+  const offer = ebayOffer({ status: "PUBLISHED" });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "110000000001",
     offerId: "offer-123",
     expected: { locale: "en-US", fingerprint, imageCount: 8 },
-    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED" })),
-    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+    expectedArguments: { inventoryItem, offer },
+    readOffer: async () => remote(offer),
+    readInventoryItem: async () => remote(inventoryItem),
   });
   assert.equal(readback.state?.visibility, "pending_review");
   assert.equal(readback.state?.providerStatus, "PUBLISHED|NONE");
@@ -1048,9 +1059,10 @@ test("eBay listing update verifies the exact offer, SKU, locale, and live status
         listingId: "110000000001",
         sku: "SELLERPILOT-001",
         marketplaceId: "EBAY_US",
+        inventoryItem: { product: { imageUrls: ebayInventoryImages() } },
         offer: {
           format: "FIXED_PRICE",
-          listingDescription: detailHtml(),
+          listingDescription: ebayApprovedDescription(),
           listingPolicies: {
             fulfillmentPolicyId: "fulfillment-1",
             paymentPolicyId: "payment-1",
@@ -1094,6 +1106,8 @@ test("eBay withdraw is complete only after getOffer is UNPUBLISHED", async () =>
         publicationExpectedLocale: "en-US",
         publicationExpectedFingerprint: fingerprint,
         publicationExpectedImageCount: 0,
+        inventoryItem: { product: { imageUrls: ebayInventoryImages() } },
+        offer: ebayOffer({ status: "UNPUBLISHED" }),
       },
       environment: "production",
     });
@@ -1106,15 +1120,32 @@ test("eBay withdraw is complete only after getOffer is UNPUBLISHED", async () =>
   }
 });
 
+test("eBay hex publication fingerprint is not verified without official GET projections", async () => {
+  const readback = await readEbayListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "110000000001",
+    offerId: "offer-123",
+    expected: { locale: "en-US", fingerprint, imageCount: 8 },
+    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE" })),
+    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+  });
+  assert.equal(readback.state, undefined);
+  assert.equal(readback.failureCode, "EBAY_PUBLICATION_FINGERPRINT_UNVERIFIED");
+});
+
 test("eBay refuses verified success when getOffer returns only seven detail images", async () => {
+  const offer = ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", imageCount: 7 });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "offer-123",
     offerId: "offer-123",
     expected: { locale: "en-US", fingerprint, imageCount: 8 },
-    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", imageCount: 7 })),
-    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+    expectedArguments: { inventoryItem, offer },
+    readOffer: async () => remote(offer),
+    readInventoryItem: async () => remote(inventoryItem),
   });
   assert.equal(readback.state, undefined);
   assert.equal(readback.failureCode, "EBAY_PUBLICATION_IMAGE_COUNT_UNVERIFIED");

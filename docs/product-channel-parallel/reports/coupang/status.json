@@ -1,0 +1,105 @@
+{
+  "schemaVersion": 2,
+  "channel": "coupang",
+  "round": "r12",
+  "updatedAt": "2026-09-10T17:41:04+09:00",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-coupang-local-20260910",
+  "baseSha": "0fb40d4c608e3ea1778743c8e99377352c39054a",
+  "commitPush": false,
+  "progress": {
+    "completedEvidence": 3,
+    "totalEvidence": 6,
+    "percent": 50,
+    "denominator": "central_common_new_create_evidence_v1",
+    "ledgerUnchanged": true
+  },
+  "evidence": {
+    "accountVerified": true,
+    "requiredFieldsVerified": true,
+    "localFlowPassed": true,
+    "integrated": false,
+    "providerCreated": false,
+    "remoteReadbackVerified": false
+  },
+  "review69Counterexample": {
+    "status": "closed_reproduced",
+    "deliveryChargeDrift": "seal_0_post_0",
+    "secondCurrentCategory": "seal_0_marker_0",
+    "invalidFinalBody": "marker_0_post_0",
+    "fullStableBodyCas": true,
+    "exactOneCurrentCategory": true,
+    "privateBoundaryRls": true
+  },
+  "migrations": {
+    "used": [
+      "20260910041500_coupang_create_exact_provider_body_r12.sql",
+      "20260910042000_complete_coupang_durable_create_reconciliation_r12.sql",
+      "20260910042500_coupang_create_reconciliation_backoff_r12.sql"
+    ],
+    "invalidForbidden": [
+      "38000",
+      "38500",
+      "39500"
+    ],
+    "invalidPresent": false,
+    "versionCheck": {
+      "passed": 3,
+      "failed": 0
+    },
+    "identifierOver63": 0,
+    "hashes": {
+      "20260910041500_coupang_create_exact_provider_body_r12.sql": "f861b8c42d5e1e82c95dd7f8310f4b250625355a74ad42ef38604178e526ebe7",
+      "20260910042000_complete_coupang_durable_create_reconciliation_r12.sql": "f29a322457424af678de80184ecb02137a92d7a7d13ab94dab7a3b5f245e66a0",
+      "20260910042500_coupang_create_reconciliation_backoff_r12.sql": "6220b4dc2fbb3f30fb1d5a87c09c71251ccd37914dc24fbc0c51c7e45218c97a"
+    }
+  },
+  "verification": {
+    "fenceDb": {
+      "passed": 13,
+      "failed": 0
+    },
+    "durableDb": {
+      "passed": 15,
+      "failed": 0
+    },
+    "independentOwnedCombined": {
+      "passed": 53,
+      "failed": 0
+    },
+    "uniqueIndependentPassed": 53,
+    "commonPathDependent": {
+      "passed": 24,
+      "failed": 0,
+      "blockedByUnpatchedCommonFiles": false,
+      "previousFailGroup": {
+        "providerBodyBoundaryMjs": "3/3",
+        "providerBodyBoundaryTs": "4/4",
+        "localWorker": "2/2",
+        "durableGateway": "1/1"
+      }
+    },
+    "sourceRevisionRouteAndCompletenessUi": {
+      "passed": 7,
+      "failed": 0
+    },
+    "ownedAndCommonRegression": {
+      "passed": 114,
+      "failed": 0
+    },
+    "otherRoundCommonBinding": {
+      "passed": 7,
+      "failed": 0,
+      "note": "source-revision-route / completeness-route-ui / workbench now wired"
+    }
+  },
+  "commonPathConnected": true,
+  "sourceRevisionAndWorkbenchWired": true,
+  "gitApplyForced": false,
+  "blocked": [
+    "no production SQL",
+    "no provider CREATE",
+    "no commit/push",
+    "cells 5/6 not raised"
+  ],
+  "nextStep": "central review; do not raise cells 5/6"
+}

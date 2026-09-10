@@ -1,0 +1,75 @@
+{
+  "channel": "temu",
+  "round": "r24",
+  "updatedAt": "2026-09-10T17:35:26+09:00",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-temu-local-20260910",
+  "head": "0fb40d4",
+  "ledger": "2/6",
+  "realCreate": "0/8",
+  "r23Resubmitted": false,
+  "localFlowPassed": true,
+  "integrated": false,
+  "providerCreated": false,
+  "collectorHttpLocal": true,
+  "liveDeviceSignature": false,
+  "counterexamples": {
+    "arbitrary64ByteSignatureConsumed": "closed",
+    "missingRequiredFieldsConsumed": "closed",
+    "gateMissedCurrentCredentialVault": "closed",
+    "blockedConsumedBeforeDeterministicReadback": "closed",
+    "privateKeySecurityStdout": "closed"
+  },
+  "migration": "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql",
+  "migrationVersionCheck": "pass",
+  "identifierOver63": 0,
+  "tests": {
+    "r24Focused": {
+      "pass": 31,
+      "fail": 0,
+      "suites": [
+        "temu-verified-final-cas-db.test.mjs:21",
+        "temu-operator-attestation-once.test.mjs:7",
+        "temu-operator-app-observation.test.ts:3"
+      ]
+    },
+    "supportingOwned": {
+      "pass": 37,
+      "fail": 0,
+      "suites": [
+        "temu-create-authoritative-source-db.test.mjs:9",
+        "temu-authoritative-create-producer.test.ts:8",
+        "temu-authoritative-source-collector.test.ts:13",
+        "temu-create-authoritative-source-ledger.test.ts:5",
+        "temu-final-create-payload.test.ts:2"
+      ]
+    },
+    "preparationReadAdapterThisSession": {
+      "pass": 51,
+      "fail": 0,
+      "suites": [
+        "temu-authoritative-preparation-read-adapter.test.ts:20",
+        "temu-authoritative-provider-read-adapter.test.ts:10",
+        "temu-authoritative-source-collector.test.ts:13",
+        "temu-authoritative-create-producer.test.ts:8"
+      ]
+    }
+  },
+  "swiftTypecheck": "pass",
+  "commitPush": false,
+  "productionSql": false,
+  "connectedRoutes": [
+    "app/api/admin/channel-operations/route.ts",
+    "app/api/admin/temu/operator-app-observation/route.ts"
+  ],
+  "skippedSharedPatches": [
+    "docs/product-channel-parallel/reports/temu/temu-002-r24-package.json.patch",
+    "docs/product-channel-parallel/reports/temu/temu-002-r24-operator-attestation-once.script.patch",
+    "docs/product-channel-parallel/reports/temu/temu-002-r24-operator-seckey-helper.swift.patch"
+  ],
+  "blocked": [
+    "no active production credential",
+    "no verifier JWT or signing/receipt Vault policy",
+    "do not raise ledger 2/6"
+  ],
+  "nextStep": "do not start live collector signing or provider CREATE until Active+production credential and verifier JWT exist"
+}

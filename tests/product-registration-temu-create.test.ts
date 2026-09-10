@@ -13,13 +13,18 @@ import {
   attestTemuCredentialIdentityForSave,
   hasTemuAccountIdentityFields,
   normalizeTemuAccessTokenIdentity,
+  resolveTemuCreateAccountTarget,
   temuAccountIdentityContract,
   temuAccountIdentityEndpointHost,
+  temuCategoryRequiredApiScopes,
+  temuCredentialReadinessRequiredApiScopes,
   temuCreateRequiredApiScopes,
   temuSafeTestRequiredApiScopes,
   verifyTemuAccountIdentity,
   withoutTemuAccountIdentityFields,
 } from "../lib/product-registration/temu/account-identity";
+import { temuReviewAndCreatePrewriteContract } from "../lib/product-registration/temu/create-readiness-adapter";
+import { temuReviewAndCreateRequiredApiScopes } from "../lib/product-registration/temu/review-and-create-readiness";
 
 const hero = "https://cdn.example.test/temu/hero.jpg";
 const details = Array.from({ length: 8 }, (_, index) => `https://cdn.example.test/temu/detail-${index + 1}.jpg`);
@@ -46,7 +51,7 @@ function identityResponse(overrides: Record<string, unknown> = {}) {
       regionId: "211",
       mallType: 100,
       expiredTime: "4102444800",
-      apiScopeList: [...temuCreateRequiredApiScopes],
+      apiScopeList: [...temuCredentialReadinessRequiredApiScopes],
       ...overrides,
     },
   };
@@ -80,7 +85,7 @@ function validBody() {
   };
 }
 
-function strictArguments() {
+function strictArguments(mallId = "608573962731830") {
   return {
     body: validBody(),
     publicationIntent: "live" as const,
@@ -94,6 +99,72 @@ function strictArguments() {
       externalGoodsId: "SP-TEMU-GENERAL-001",
       scopeFingerprint: "b".repeat(64),
       skuCount: 1,
+    },
+    sellerpilotTemuCreateAccountLineage: {
+      version: "temu_create_account_lineage_v1",
+      market: "KR",
+      mallId,
+    },
+    sellerpilotTemuReviewAndCreatePrewrite: {
+      version: temuReviewAndCreatePrewriteContract,
+      publicationFingerprint: "a".repeat(64),
+      externalGoodsId: "SP-TEMU-GENERAL-001",
+      accountBinding: {
+        source: "temu_partner_token_account_mapping_v1" as const,
+        observedAtEpochMs: 1_800_000_000_000,
+        partnerAccountSubject: `temu-account:sha256:${"c".repeat(64)}`,
+        tokenIdentitySubject: `temu:sha256:${"d".repeat(64)}`,
+        mallId,
+        regionId: "211",
+        productRevisionFingerprint: "a".repeat(64),
+        evidenceSha256: "e".repeat(64),
+      },
+      app: {
+        currentAppState: "active" as const,
+        currentComplianceState: "approved" as const,
+        rejectionReason: null,
+        cloudProviders: ["Vercel", "Supabase"],
+        cloudDataFlowDocumented: true,
+        retentionAndDeletionDocumented: true,
+        incidentResponseDocumented: true,
+        authorizationMode: "manual_access_token" as const,
+        authorizationCallbackImplemented: false,
+        authorizationCallbackEvidence: null,
+        eventWebhookClaimed: false,
+        eventWebhookImplemented: false,
+      },
+      create: {
+        operatingCredentialPresent: true,
+        verifiedApiScopes: [...temuReviewAndCreateRequiredApiScopes],
+        networkEgress: "provider_confirmed_no_allowlist" as const,
+        productId: "11111111-1111-4111-8111-111111111111",
+        ledgerId: "SP-TEMU-READY-001",
+        sellerSku: "SP-TEMU-GENERAL-001",
+        locale: "ko-KR" as const,
+        language: "ko" as const,
+        localizedTitleVerified: true,
+        localizedDescriptionVerified: true,
+        localizedBulletPointsVerified: true,
+        categoryId: "601099",
+        categoryRecommendationVerified: true,
+        categoryAttributesVerified: true,
+        categoryComplianceVerified: true,
+        certificationDecisionVerified: true,
+        saleUnitCount: 1,
+        innerPackCount: 6,
+        inventoryQuantity: 1,
+        priceAmount: "5000",
+        priceCurrency: "KRW",
+        packageWeightGrams: 100,
+        packageLengthCm: 10,
+        packageWidthCm: 8,
+        packageHeightCm: 2,
+        approvedRepresentativeImageCount: 1,
+        approvedDetailImageCount: 8,
+        storeDefaultShippingVerified: true,
+        duplicateGoodsReadComplete: true,
+        duplicateSkuReadComplete: true,
+      },
     },
   };
 }
@@ -265,6 +336,23 @@ test("Temu token identity preserves official LONG values and binds the credentia
   }).verification, "TEMU_ACCOUNT_IDENTITY_VERIFIED");
 });
 
+test("Temu CREATE derives an omitted target from the server credential and rejects a different requested mall", () => {
+  assert.deepEqual(resolveTemuCreateAccountTarget({
+    payload: identityPayload(),
+    market: "KR",
+    requestedTargetId: "",
+  }), {
+    market: "KR",
+    targetId: "608573962731830",
+    regionId: "211",
+  });
+  assert.throws(() => resolveTemuCreateAccountTarget({
+    payload: identityPayload(),
+    market: "KR",
+    requestedTargetId: "608573962731831",
+  }), /TEMU_CREATE_TARGET_MALL_MISMATCH/u);
+});
+
 test("Temu token identity requires the semi-managed store identity and every CREATE scope", () => {
   assert.equal(verifyTemuAccountIdentity({
     payload: identityPayload({
@@ -372,6 +460,217 @@ test("Temu credential save never returns a payload when the fresh signed read is
       text: JSON.stringify(identityResponse({ mallId: [] })),
     }),
   }), /TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED/u);
+});
+
+test("Temu credential readiness requires the official category recommendation scope", async () => {
+  await assert.rejects(attestTemuCredentialIdentityForSave({
+    payload: {
+      app_key: "fixture-app",
+      app_secret: "fixture-secret",
+      access_token: "fixture-token",
+    },
+    nowSeconds: 1_800_000_000,
+    request: async () => ({
+      response: Response.json(identityResponse()),
+      data: identityResponse({ apiScopeList: [...temuCreateRequiredApiScopes] }),
+      text: JSON.stringify(identityResponse({ apiScopeList: [...temuCreateRequiredApiScopes] })),
+    }),
+  }), /TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING/u);
+});
+
+test("Temu carries a freshly attested account into the category readiness call", async () => {
+  const mallId = "731004298517642";
+  const regionId = "37";
+  const officialIdentity = identityResponse({ mallId, regionId });
+  const attested = await attestTemuCredentialIdentityForSave({
+    payload: {
+      app_key: "fixture-app",
+      app_secret: "fixture-secret",
+      access_token: "fresh-fixture-token",
+    },
+    nowSeconds: 1_800_000_000,
+    request: async () => ({
+      response: Response.json(officialIdentity),
+      data: officialIdentity,
+      text: JSON.stringify(officialIdentity),
+    }),
+  });
+  assert.equal(attested.payload.temu_account_identity_mall_id, mallId);
+  assert.equal(attested.payload.temu_account_identity_region_id, regionId);
+
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    if (body.type === "bg.open.accesstoken.info.get") {
+      return Response.json(officialIdentity);
+    }
+    if (body.type === "bg.local.goods.category.recommend") {
+      return Response.json({ success: true, result: { catId: "601099" } });
+    }
+    if (Array.isArray(body.outGoodsSnList)) {
+      return Response.json({ success: true, result: { goodsList: [], total: 0 } });
+    }
+    if (Array.isArray(body.outSkuSnList)) {
+      return Response.json({
+        success: true,
+        result: { goodsList: [{ goodsId: "981007331452806" }], total: 1 },
+      });
+    }
+    throw new Error("unexpected provider call");
+  };
+  try {
+    const result = await executeTemu({
+      channel: "temu",
+      operation: "categories.suggest",
+      payload: attested.payload,
+      arguments: { goodsName: "케이블 정리 클립 6개 구성" },
+      environment: "production",
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.remoteId, "601099");
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
+      "bg.local.goods.category.recommend",
+    ]);
+    assert.equal(result.steps[0].data.sellerpilotVerification,
+      "TEMU_ACCOUNT_IDENTITY_VERIFIED");
+    assert.equal(result.steps[0].data.sellerpilotTemuTargetId, mallId);
+    assert.equal(result.steps[0].data.sellerpilotTemuRegionId, regionId);
+
+    const createReadiness = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: attested.payload,
+      arguments: strictArguments(mallId),
+      environment: "production",
+    });
+    assert.equal(createReadiness.ok, false);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
+      "bg.local.goods.category.recommend",
+      "bg.open.accesstoken.info.get",
+      "temu.local.goods.list.retrieve",
+      "temu.local.goods.list.retrieve",
+    ]);
+    assert.equal(createReadiness.steps[0].data.sellerpilotTemuTargetId, mallId);
+    assert.equal(createReadiness.steps[0].data.sellerpilotTemuRegionId, regionId);
+    assert.equal(createReadiness.steps[1].data.sellerpilotVerification,
+      "TEMU_EXTERNAL_GOODS_OR_SKU_ID_ALREADY_EXISTS");
+    assert.equal(calls.some((call) => call.type === "temu.local.goods.v3.add"),
+      false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu blocks category recommendation before provider category access when scope is missing", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<Record<string, unknown>> = [];
+  globalThis.fetch = async (_input, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push(body);
+    return Response.json(identityResponse({
+      apiScopeList: temuCreateRequiredApiScopes,
+    }));
+  };
+  try {
+    const result = await executeTemu({
+      channel: "temu",
+      operation: "categories.suggest",
+      payload: identityPayload(),
+      arguments: { goodsName: "케이블 정리 클립 6개 구성" },
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.deepEqual(calls.map((call) => call.type), [
+      "bg.open.accesstoken.info.get",
+    ]);
+    assert.equal(result.steps[0].data.sellerpilotVerification,
+      "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING");
+    assert.deepEqual(result.steps[0].data.sellerpilotTemuMissingScopes,
+      temuCategoryRequiredApiScopes);
+    assert.equal(result.steps[0].data.sellerpilotNoWriteConfirmed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu runtime requires the r11 readiness binding before every CREATE provider read or write", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider transport must remain unused");
+  };
+  try {
+    const argumentsValue = strictArguments() as Record<string, unknown>;
+    delete argumentsValue.sellerpilotTemuReviewAndCreatePrewrite;
+    const result = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: identityPayload(),
+      arguments: argumentsValue,
+      environment: "production",
+    });
+    assert.equal(result.ok, false);
+    assert.equal(providerCalls, 0);
+    assert.equal(result.steps[0].name,
+      "temu-review-create-readiness-prewrite");
+    assert.equal(result.steps[0].data.sellerpilotVerification,
+      "TEMU_REVIEW_CREATE_PREWRITE_BINDING_REQUIRED");
+    assert.equal(result.steps[0].data.sellerpilotNoWriteConfirmed, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Temu runtime blocks Inactive app evidence and a stale product fingerprint before provider access", async () => {
+  const originalFetch = globalThis.fetch;
+  let providerCalls = 0;
+  globalThis.fetch = async () => {
+    providerCalls += 1;
+    throw new Error("provider transport must remain unused");
+  };
+  try {
+    const inactiveArguments = strictArguments() as Record<string, unknown>;
+    const inactiveBinding = inactiveArguments
+      .sellerpilotTemuReviewAndCreatePrewrite as {
+        app: { currentAppState: string };
+      };
+    inactiveBinding.app.currentAppState = "inactive";
+    const inactive = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: identityPayload(),
+      arguments: inactiveArguments,
+      environment: "production",
+    });
+    assert.equal(inactive.ok, false);
+    assert.equal(inactive.steps[0].data.sellerpilotVerification,
+      "TEMU_REVIEW_CREATE_PREWRITE_READINESS_REJECTED");
+
+    const staleArguments = strictArguments() as Record<string, unknown>;
+    const staleBinding = staleArguments
+      .sellerpilotTemuReviewAndCreatePrewrite as {
+        publicationFingerprint: string;
+      };
+    staleBinding.publicationFingerprint = "c".repeat(64);
+    const stale = await executeTemu({
+      channel: "temu",
+      operation: "listing.create",
+      payload: identityPayload(),
+      arguments: staleArguments,
+      environment: "production",
+    });
+    assert.equal(stale.ok, false);
+    assert.equal(stale.steps[0].data.sellerpilotVerification,
+      "TEMU_REVIEW_CREATE_PREWRITE_FINGERPRINT_MISMATCH");
+    assert.equal(providerCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("Temu runtime blocks CREATE with no server credential identity before any provider call", async () => {

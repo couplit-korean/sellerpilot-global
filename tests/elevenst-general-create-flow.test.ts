@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { gatewayJobCompletionStatus } from "../lib/channels/gateway-contract";
 import { executeElevenst } from "../lib/product-registration/channels/elevenst";
 import {
   assertElevenstCreateCredentialBinding,
@@ -7,6 +9,17 @@ import {
   verifyElevenstCreateProductReadback,
   verifyElevenstCreateStockReadback,
 } from "../lib/product-registration/elevenst/create-verification";
+import { prepareElevenstCredentialForSave } from "../lib/product-registration/elevenst/credential-save";
+import {
+  assertElevenstGatewayCredentialVersionReceipt,
+  elevenstGatewayCredentialVersionContract,
+} from "../lib/product-registration/elevenst/credential-version";
+import {
+  assertElevenstCreateCredentialRequestBinding,
+  buildElevenstCreateCredentialRequestBinding,
+  elevenstCreateCredentialBindingArgument,
+} from "../lib/product-registration/elevenst/credential-request-binding";
+import { prepareMarketplaceListingArguments } from "../lib/channels/provider-listing-runtime";
 import type { RemoteResponse } from "../lib/channels/protocols";
 
 const credential = {
@@ -165,6 +178,243 @@ test("11st general create credential requires a 32-character OPEN API key and se
     () => assertElevenstCreateCredentialBinding({ api_key: "A".repeat(32), seller_id: " sample " }),
     /ELEVENST_CREATE_SELLER_ID_PLACEHOLDER/u,
   );
+});
+
+test("11st credential save binds the exact active version and preserves the selected seller", () => {
+  const metadata = {
+    id: "00000000-0000-4000-8000-000000000011",
+    channel: "elevenst",
+    environment: "production",
+    status: "active",
+    version: 3,
+  };
+  const prepared = prepareElevenstCredentialForSave({
+    credentialId: metadata.id,
+    credentialVersion: 3,
+    environment: "production",
+    metadata,
+    secretPayload: { api_key: "A".repeat(32), seller_id: " another-seller " },
+  });
+  assert.equal(prepared.seller_id, "another-seller");
+  assert.equal(prepared.api_key, "A".repeat(32));
+
+  for (const candidate of [
+    { ...metadata, version: 2 },
+    { ...metadata, id: "00000000-0000-4000-8000-000000000012" },
+    { ...metadata, environment: "sandbox" },
+    { ...metadata, status: "grace" },
+  ]) {
+    assert.throws(
+      () => prepareElevenstCredentialForSave({
+        credentialId: metadata.id,
+        credentialVersion: 3,
+        environment: "production",
+        metadata: candidate,
+        secretPayload: credential,
+      }),
+      /ELEVENST_CREDENTIAL_SOURCE_STALE/u,
+    );
+  }
+});
+
+test("11st credential save rejects missing version, seller ID and placeholder", () => {
+  const metadata = {
+    id: "00000000-0000-4000-8000-000000000011",
+    channel: "elevenst",
+    environment: "production",
+    status: "active",
+    version: 3,
+  };
+  assert.throws(
+    () => prepareElevenstCredentialForSave({
+      credentialId: metadata.id,
+      environment: "production",
+      metadata,
+      secretPayload: credential,
+    }),
+    /ELEVENST_CREDENTIAL_SOURCE_VERSION_REQUIRED/u,
+  );
+  for (const [sellerId, code] of [
+    [undefined, "ELEVENST_CREATE_SELLER_ID_REQUIRED"],
+    ["sample", "ELEVENST_CREATE_SELLER_ID_PLACEHOLDER"],
+  ] as const) {
+    assert.throws(
+      () => prepareElevenstCredentialForSave({
+        environment: "production",
+        metadata: null,
+        secretPayload: {
+          api_key: "A".repeat(32),
+          ...(sellerId === undefined ? {} : { seller_id: sellerId }),
+        },
+      }),
+      new RegExp(code, "u"),
+    );
+  }
+});
+
+test("11st request binding isolates the credential ID, version, environment and seller digest", () => {
+  const credentialId = "00000000-0000-4000-8000-000000000011";
+  const selectedCredential = { api_key: "A".repeat(32), seller_id: "seller-alpha" };
+  const binding = buildElevenstCreateCredentialRequestBinding({
+    credentialId,
+    credentialVersion: 3,
+    environment: "production",
+    credential: selectedCredential,
+  });
+  assert.equal(JSON.stringify(binding).includes("seller-alpha"), false);
+  assert.deepEqual(assertElevenstCreateCredentialRequestBinding({
+    credentialId,
+    credentialVersion: 3,
+    environment: "production",
+    credential: selectedCredential,
+    binding,
+  }), { credentialId, credentialVersion: 3 });
+  assert.throws(
+    () => assertElevenstCreateCredentialRequestBinding({
+      credentialId,
+      credentialVersion: undefined,
+      environment: "production",
+      credential: selectedCredential,
+      binding,
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_VERSION_REQUIRED/u,
+  );
+  assert.throws(
+    () => assertElevenstCreateCredentialRequestBinding({
+      credentialId,
+      credentialVersion: 4,
+      environment: "production",
+      credential: selectedCredential,
+      binding,
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_VERSION_MISMATCH/u,
+  );
+  assert.throws(
+    () => assertElevenstCreateCredentialRequestBinding({
+      credentialId: "00000000-0000-4000-8000-000000000012",
+      credentialVersion: 3,
+      environment: "production",
+      credential: selectedCredential,
+      binding,
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_ID_MISMATCH/u,
+  );
+  assert.throws(
+    () => assertElevenstCreateCredentialRequestBinding({
+      credentialId,
+      credentialVersion: 3,
+      environment: "sandbox",
+      credential: selectedCredential,
+      binding,
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_ENVIRONMENT_MISMATCH/u,
+  );
+  assert.throws(
+    () => assertElevenstCreateCredentialRequestBinding({
+      credentialId,
+      credentialVersion: 3,
+      environment: "production",
+      credential: { ...selectedCredential, seller_id: "seller-beta" },
+      binding,
+    }),
+    /ELEVENST_CREATE_SELLER_ID_MISMATCH/u,
+  );
+});
+
+test("11st gateway credential-version receipt is exact and contains no secret material", () => {
+  const receipt = {
+    contract: elevenstGatewayCredentialVersionContract,
+    status: "verified",
+    jobId: "00000000-0000-4000-8000-000000000021",
+    credentialId: "00000000-0000-4000-8000-000000000011",
+    credentialVersion: 3,
+    environment: "production",
+  };
+  assert.equal(assertElevenstGatewayCredentialVersionReceipt({
+    receipt,
+    jobId: receipt.jobId,
+    credentialId: receipt.credentialId,
+    environment: "production",
+  }), 3);
+  assert.equal(JSON.stringify(receipt).includes("api_key"), false);
+  assert.equal(JSON.stringify(receipt).includes("seller_id"), false);
+  assert.throws(() => assertElevenstGatewayCredentialVersionReceipt({
+    receipt: { ...receipt, credentialVersion: 0 },
+    jobId: receipt.jobId,
+    credentialId: receipt.credentialId,
+    environment: "production",
+  }), /ELEVENST_GATEWAY_CREDENTIAL_VERSION_RECEIPT_INVALID/u);
+});
+
+test("11st worker prepare rejects an unbound seller and accepts another selected seller before mutation", async () => {
+  const credentialId = "00000000-0000-4000-8000-000000000011";
+  const input = (sellerId: string, boundSellerId = sellerId) => ({
+    channel: "elevenst" as const,
+    operation: "listing.create" as const,
+    environment: "production" as const,
+    credentialId,
+    credentialVersion: 3,
+    credential: { api_key: "A".repeat(32), seller_id: sellerId },
+    arguments: {
+      product: product(),
+      sellerpilotAssets: { shipping: { shippingFeeKrw: 3000, policyReview: "확인" } },
+      [elevenstCreateCredentialBindingArgument]:
+        buildElevenstCreateCredentialRequestBinding({
+          credentialId,
+          credentialVersion: 3,
+          environment: "production",
+          credential: { api_key: "A".repeat(32), seller_id: boundSellerId },
+        }),
+    },
+    signal: AbortSignal.timeout(1_000),
+    hooks: {
+      assertLeaseHealthy: async () => undefined,
+      beginProviderMutation: async () => { throw new Error("mutation must not begin"); },
+    },
+  });
+  await assert.rejects(
+    prepareMarketplaceListingArguments(input("seller-beta", "seller-alpha")),
+    /ELEVENST_CREATE_SELLER_ID_MISMATCH/u,
+  );
+  await assert.rejects(
+    prepareMarketplaceListingArguments({
+      ...input("seller-alpha"),
+      arguments: { product: product() },
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_BINDING_REQUIRED/u,
+  );
+  await assert.rejects(
+    prepareMarketplaceListingArguments({
+      ...input("seller-alpha"),
+      credentialVersion: 4,
+    }),
+    /ELEVENST_CREATE_CREDENTIAL_VERSION_MISMATCH/u,
+  );
+  const validInput = input("another-seller");
+  const prepared = await prepareMarketplaceListingArguments(validInput);
+  assert.equal(prepared.arguments, validInput.arguments);
+  assert.equal(prepared.mediaMutationObserved, false);
+});
+
+test("11st actual admin route and both gateway workers carry the exact current credential version", async () => {
+  const [route, rotateRoute, localWorker, serverlessGateway, serverlessWorker, versionRoute] = await Promise.all([
+    readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/channel-credentials/rotate/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/serverless-gateway.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/commerce-provider.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/channel-gateway/worker/elevenst-credential-version/route.ts", import.meta.url), "utf8"),
+  ]);
+  assert.match(route, /elevenst_credential_binding_server_owned/u);
+  assert.match(route, /buildElevenstCreateCredentialRequestBinding\(\{[\s\S]*credentialId: parsed\.data\.credentialId,[\s\S]*credentialVersion,[\s\S]*environment,[\s\S]*credential: elevenstCredential/u);
+  assert.match(localWorker, /credentialId: job\.credential_id/u);
+  assert.match(localWorker, /elevenst-credential-version[\s\S]*credentialVersion: elevenstCredentialVersion/u);
+  assert.match(serverlessGateway, /verifyElevenstGatewayCredentialVersion[\s\S]*elevenstCredentialVersion/u);
+  assert.match(serverlessWorker, /credentialId: input\.job\.credential_id/u);
+  assert.match(serverlessWorker, /credentialVersion: input\.elevenstCredentialVersion/u);
+  assert.match(versionRoute, /sellerpilot_service_elevenst_gateway_credential_version|elevenstGatewayCredentialVersionRpc/u);
+  assert.match(rotateRoute, /sellerpilot_rotate_elevenst_credential_exact/u);
+  assert.match(rotateRoute, /: await userClient\.rpc\("sellerpilot_rotate_credential"/u);
 });
 
 test("11st general create rejects a missing seller ID before category, lookup, or product calls", async () => {
@@ -339,6 +589,53 @@ test("11st general create stops before POST when seller product code lookup is a
     assert.equal(
       operation.steps[0]?.data.error,
       "ELEVENST_SELLER_CODE_LOOKUP_AMBIGUOUS",
+    );
+    assert.equal(calls.filter((call) => call.method === "POST").length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st fresh CREATE reports an existing seller code as duplicate recovery and never POSTs", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  globalThis.fetch = async (input, init) => {
+    const call = { url: String(input), method: String(init?.method ?? "GET") };
+    calls.push(call);
+    if (call.url.includes("/rest/cateservice/category")) {
+      return new Response(categoryXml, { status: 200 });
+    }
+    if (call.url.includes("/rest/prodmarketservice/sellerprodcode/")) {
+      return new Response(
+        `<products><product><prdNo>123456789</prdNo><sellerPrdCd>GENERAL-CREATE-001</sellerPrdCd></product></products>`,
+        { status: 200 },
+      );
+    }
+    if (call.url.endsWith("/rest/prodmarketservice/prodmarket/123456789")) {
+      return new Response(
+        `<Product><prdNo>123456789</prdNo><sellerPrdCd>GENERAL-CREATE-001</sellerPrdCd><selStatCd>103</selStatCd></Product>`,
+        { status: 200 },
+      );
+    }
+    throw new Error(`unexpected request ${call.url}`);
+  };
+  try {
+    const operation = await executeElevenst({
+      channel: "elevenst",
+      operation: "listing.create",
+      environment: "production",
+      payload: credential,
+      arguments: { product: product() },
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.steps[0]?.name, "product-create-duplicate-detected");
+    assert.equal(operation.steps[0]?.status, 409);
+    assert.equal(operation.steps[0]?.data.sellerpilotDuplicateExistingProduct, true);
+    assert.equal(operation.steps[0]?.data.sellerpilotFreshCreateCompleted, false);
+    assert.equal(operation.steps[0]?.data.sellerpilotProviderMutationPerformed, false);
+    assert.equal(
+      gatewayJobCompletionStatus(operation.operation, operation.ok, operation.steps),
+      "failed",
     );
     assert.equal(calls.filter((call) => call.method === "POST").length, 0);
   } finally {

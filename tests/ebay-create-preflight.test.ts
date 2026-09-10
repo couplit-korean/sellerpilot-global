@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { executeChannelOperation } from "../lib/channels/operations";
+import { createHash } from "node:crypto";
 import {
+  assertEbayCreatePublicationContract,
   assertEbayCreateRequiredFields,
+  buildEbayCreateApproval,
   ebayCreateConfigurationEvidence,
   ebayCreateLineageDecision,
+  ebayCreateProviderRequestBodies,
+  ebayCreateProviderRequestBodiesSha256,
   ebayExactReconciliationOffer,
   ebayInventoryLocationEvidence,
   ebayInventorySkuAbsent,
@@ -29,9 +34,82 @@ function args() {
       product: { title: "Verified item", description: "Product description", imageUrls: ["https://cdn.example.com/item.jpg"],
         aspects: { Color: ["Blue"] } } },
     offer: { sku: "stale-sku", marketplaceId: "EBAY_US", format: "FIXED_PRICE", categoryId: "1234",
-      listingDescription: "Description", availableQuantity: 2, pricingSummary: { price: { value: "29.50", currency: "USD" } },
+      listingDescription: "Product description", availableQuantity: 2, pricingSummary: { price: { value: "29.50", currency: "USD" } },
       merchantLocationKey: "warehouse", listingPolicies: { fulfillmentPolicyId: "f1", paymentPolicyId: "p1", returnPolicyId: "r1" } },
   };
+}
+
+function revisionBoundArgs() {
+  const input = args() as ReturnType<typeof args> & Record<string, unknown>;
+  const sourceDigests = ["a", "b", "c", "d", "e", "f", "1", "2"].map((value) => value.repeat(64));
+  const contentDigests = ["3", "4", "5", "6", "7", "8", "9", "0"].map((value) => value.repeat(64));
+  const detailUrls = contentDigests.map((digest) =>
+    `https://fixture.supabase.co/storage/v1/object/public/sellerpilot-marketplace/normalized/${digest.slice(0, 2)}/${digest}.jpg`);
+  const description = `<p>Approved English description.</p>${detailUrls.map((url) => `<img src="${url}">`).join("")}`;
+  input.publicationExpectedImageCount = 8;
+  input.inventoryItem.product.title = "Approved English title";
+  input.inventoryItem.product.description = description;
+  input.inventoryItem.product.imageUrls = ["https://cdn.example.com/representative.jpg", ...detailUrls];
+  input.offer.listingDescription = description;
+  input.sellerpilotExternalDetail = {
+    contract: "sellerpilot_external_detail_channel_v1",
+    productId: "1ed4acfc-7603-48ec-a638-241131e59358",
+    importId: "08acb37f-7ed0-40b0-8fb3-4a217a7ac912",
+    version: 3,
+    approvalRevision: 17,
+    contentSha256: "a".repeat(64),
+    requestSha256: "b".repeat(64),
+    documentSha256: "c".repeat(64),
+    imageSha256s: sourceDigests,
+    channel: "ebay",
+    market: "US",
+    locale: "en-US",
+    language: "en",
+    title: input.inventoryItem.product.title,
+    html: description,
+  };
+  input.sellerpilotEbayCreateLedgerSnapshot = {
+    contract: "sellerpilot_ebay_create_ledger_snapshot_v1",
+    productUpdatedAt: "2026-09-10T00:00:00.000Z",
+    productSku: sku,
+    availableQuantity: 2,
+    priceUsd: "29.50",
+    draftId: "1ed4acfc-7603-48ec-a638-241131e59358",
+    draftVersion: 7,
+    draftUpdatedAt: "2026-09-10T00:00:01.000Z",
+    draftDataSha256: "4".repeat(64),
+  };
+  input.sellerpilotEbayCategoryAssignment = {
+    contract: "sellerpilot_ebay_category_assignment_v1",
+    id: "00000000-0000-4000-8000-000000000140",
+    categoryId: input.offer.categoryId,
+    market: "US",
+    environment: "production",
+    confirmedAt: "2026-09-09T00:00:00.000Z",
+    updatedAt: "2026-09-09T00:00:01.000Z",
+  };
+  input.sellerpilotPublicationAssetBinding = {
+    contract: "sellerpilot_publication_asset_binding_v1",
+    approvedDetailPageVersion: 3,
+    approvedManifestDigest: "d".repeat(64),
+    providerImageSurface: "detail_content",
+    approvedDetailImages: detailUrls.map((publicUrl, index) => ({
+      role: `detail-${index + 1}`,
+      approvedObjectPath: `external-detail/00000000-0000-4000-8000-000000000001/00000000-0000-4000-8000-000000000002/00000000-0000-4000-8000-000000000003/00000000-0000-4000-8000-000000000004/${sourceDigests[index]}.png`,
+      approvedSourceSha256: sourceDigests[index],
+      publicUrl,
+      objectPath: `normalized/${contentDigests[index].slice(0, 2)}/${contentDigests[index]}.jpg`,
+      contentSha256: contentDigests[index],
+    })),
+    providerTransportImages: detailUrls.map((publicUrl, index) => ({
+      role: `detail-${index + 1}`,
+      publicUrl,
+      objectPath: `normalized/${contentDigests[index].slice(0, 2)}/${contentDigests[index]}.jpg`,
+      contentSha256: contentDigests[index],
+    })),
+  };
+  input.sellerpilotEbayCreateApproval = buildEbayCreateApproval(input);
+  return input;
 }
 const exactOffer = { offerId: "offer-1", sku, marketplaceId: "EBAY_US", format: "FIXED_PRICE" };
 
@@ -160,6 +238,32 @@ test("eBay required create fields reject partially malformed and duplicate image
   }
 });
 
+test("eBay required create fields reject Inventory and Offer description drift before provider access", async () => {
+  const input = args();
+  input.offer.listingDescription = "Different offer description";
+  let fetches = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    throw new Error("provider access must not occur");
+  };
+  try {
+    await assert.rejects(
+      () => executeChannelOperation({
+        channel: "ebay",
+        operation: "listing.create",
+        payload: { access_token: "fixture-token" },
+        arguments: input,
+        environment: "sandbox",
+      }),
+      /EBAY_CREATE_REQUIRED_FIELDS_INVALID:offer\.listingDescription/u,
+    );
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = original;
+  }
+});
+
 test("eBay CREATE rejects missing or tampered publication contracts before provider access", async () => {
   for (const mutation of [
     { publicationStateContract: undefined },
@@ -197,6 +301,109 @@ test("eBay CREATE rejects missing or tampered publication contracts before provi
     } finally {
       globalThis.fetch = original;
     }
+  }
+});
+
+test("eBay revision-backed CREATE binds approved English copy, images, USD and policies to one receipt", () => {
+  const input = revisionBoundArgs();
+  const approval = buildEbayCreateApproval(input);
+  assert.ok(approval);
+  assert.equal(approval.approvalRevision, 17);
+  assert.equal(approval.contentSha256, "a".repeat(64));
+  assert.equal(approval.publicationExpectedFingerprint, "a".repeat(64));
+  assert.equal(approval.inventoryQuantity, 2);
+  assert.equal(approval.priceUsd, "29.50");
+  assert.equal(approval.currency, "USD");
+  assert.match(approval.categoryAssignmentRevisionSha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(Object.keys(approval.providerRequestBodiesSha256), ["inventory", "offer", "publish"]);
+  assert.match(approval.revisionSha256, /^[a-f0-9]{64}$/u);
+  assert.doesNotThrow(() => assertEbayCreatePublicationContract(input));
+});
+
+test("eBay request digests seal exact JSON UTF-8 bytes including order, nulls, and empty publish body", () => {
+  const left = args() as ReturnType<typeof args> & Record<string, unknown>;
+  (left.inventoryItem as Record<string, unknown>).nullable = null;
+  const right = structuredClone(left);
+  right.inventoryItem = {
+    nullable: null,
+    ...(right.inventoryItem as Record<string, unknown>),
+  };
+  const leftBodies = ebayCreateProviderRequestBodies(left);
+  const rightBodies = ebayCreateProviderRequestBodies(right);
+  const leftDigests = ebayCreateProviderRequestBodiesSha256(left);
+  const rightDigests = ebayCreateProviderRequestBodiesSha256(right);
+  assert.match(leftBodies.inventory, /"nullable":null/u);
+  assert.notEqual(leftBodies.inventory, rightBodies.inventory);
+  assert.notEqual(leftDigests.inventory, rightDigests.inventory);
+  assert.equal(leftBodies.publish, "");
+  assert.equal(
+    leftDigests.publish,
+    createHash("sha256").update("", "utf8").digest("hex"),
+  );
+  const sealed = {
+    ...structuredClone(left),
+    sellerpilotEbayProviderRequestBodies: leftBodies,
+  };
+  assert.deepEqual(ebayCreateProviderRequestBodies(sealed), leftBodies);
+  ((sealed.offer as Record<string, unknown>).listingPolicies as Record<string, unknown>).returnPolicyId = "other";
+  assert.throws(
+    () => ebayCreateProviderRequestBodies(sealed),
+    /TRANSPORT_BODY_SEMANTICS_MISMATCH/u,
+  );
+});
+
+test("eBay revision-backed CREATE rejects content, image, USD, return policy and location drift", () => {
+  const mutations: Array<[string, (input: ReturnType<typeof revisionBoundArgs>) => void]> = [
+    ["title", (input) => { input.inventoryItem.product.title = "Unapproved title"; }],
+    ["body", (input) => { input.offer.listingDescription += "<p>Unapproved</p>"; }],
+    ["image", (input) => { input.inventoryItem.product.imageUrls.pop(); }],
+    ["USD", (input) => { input.offer.pricingSummary.price.value = "0"; }],
+    ["stock", (input) => {
+      (input.sellerpilotEbayCreateLedgerSnapshot as Record<string, unknown>).availableQuantity = 9;
+    }],
+    ["unapproved provider extra", (input) => {
+      (input.offer as Record<string, unknown>).unapprovedWritableExtra = "blocked";
+    }],
+    ["return policy", (input) => { input.offer.listingPolicies.returnPolicyId = "return-other"; }],
+    ["location", (input) => { input.offer.merchantLocationKey = "warehouse-other"; }],
+    ["approval revision", (input) => {
+      (input.sellerpilotExternalDetail as Record<string, unknown>).approvalRevision = 18;
+    }],
+  ];
+  for (const [name, mutate] of mutations) {
+    const input = revisionBoundArgs();
+    mutate(input);
+    assert.throws(
+      () => assertEbayCreatePublicationContract(input),
+      /EBAY_CREATE_APPROVAL_REVISION_INVALID/u,
+      name,
+    );
+  }
+});
+
+test("eBay revision-backed CREATE rejects a missing receipt before provider access", async () => {
+  const input = revisionBoundArgs();
+  delete input.sellerpilotEbayCreateApproval;
+  let fetches = 0;
+  const original = globalThis.fetch;
+  globalThis.fetch = async () => {
+    fetches += 1;
+    throw new Error("provider access must not occur");
+  };
+  try {
+    await assert.rejects(
+      () => executeChannelOperation({
+        channel: "ebay",
+        operation: "listing.create",
+        payload: { access_token: "fixture-token" },
+        arguments: input,
+        environment: "sandbox",
+      }),
+      /EBAY_CREATE_APPROVAL_REVISION_INVALID/u,
+    );
+    assert.equal(fetches, 0);
+  } finally {
+    globalThis.fetch = original;
   }
 });
 

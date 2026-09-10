@@ -146,7 +146,7 @@ function parseTemuIdentityResponseText(text: string | undefined) {
   }
 }
 
-function accountIdentitySubject(binding: TemuAccountIdentityBinding) {
+export function temuAccountIdentitySubject(binding: TemuAccountIdentityBinding) {
   const canonical = [
     binding.contract,
     binding.endpointHost,
@@ -255,7 +255,7 @@ export function normalizeTemuAccessTokenIdentity(input: {
     ...binding,
     expiresAtSeconds,
     apiScopes,
-    subject: accountIdentitySubject(binding),
+    subject: temuAccountIdentitySubject(binding),
   } satisfies TemuAccessTokenIdentity;
 }
 

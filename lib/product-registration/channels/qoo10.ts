@@ -822,6 +822,27 @@ export async function executeQoo10(input: ExecuteInput) {
           locale: strictCreateExpectation.context.locale,
           sourceCurrency: strictCreateExpectation.context.sourceCurrency,
           sourcePrice: strictCreateExpectation.context.sourcePrice,
+          approvalRevision: strictCreateExpectation.approval.approvalRevision,
+          approvalContentSha256:
+            strictCreateExpectation.approval.approvalContentSha256,
+          approvalPayloadDigest:
+            strictCreateExpectation.approval.approvalPayloadDigest,
+          fulfillmentEvidenceRevision:
+            strictCreateExpectation.approval.fulfillmentEvidenceRevision,
+          fulfillmentEvidenceObservedAt:
+            strictCreateExpectation.approval.fulfillmentEvidenceObservedAt,
+          fulfillmentEvidenceExpiresAt:
+            strictCreateExpectation.approval.fulfillmentEvidenceExpiresAt,
+          fulfillmentEvidenceDigest:
+            strictCreateExpectation.approval.fulfillmentEvidenceDigest,
+          dispatchPlaceId:
+            strictCreateExpectation.approval.dispatchPlaceId,
+          returnPolicyId:
+            strictCreateExpectation.approval.returnPolicyId,
+          dispatchPlaceDigest:
+            strictCreateExpectation.approval.dispatchPlaceDigest,
+          returnPolicyDigest:
+            strictCreateExpectation.approval.returnPolicyDigest,
           currency: strictCreateExpectation.context.currency,
           retailPrice: strictCreateExpectation.retailPrice,
           price: strictCreateExpectation.price,
@@ -944,6 +965,71 @@ export async function executeQoo10(input: ExecuteInput) {
   const definition = map[input.operation];
   if (!definition)
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${input.operation}`);
+  if (input.operation === "listing.create" && strictCreateExpectation) {
+    const finalApproval = qoo10ListingCreateExpectation({
+      arguments: input.arguments,
+      payload: input.payload,
+    });
+    const unchanged = finalApproval.ok
+      && finalApproval.expectation.approval.approvalPayloadDigest
+        === strictCreateExpectation.approval.approvalPayloadDigest;
+    createPreflightSteps.push({
+      name: "qoo10-create-final-approval-freshness-prewrite",
+      ok: unchanged,
+      status: unchanged ? 200 : 422,
+      data: {
+        ResultCode: unchanged ? 0 : -9999,
+        ResultMsg: unchanged
+          ? "QOO10_CREATE_FINAL_APPROVAL_FRESHNESS_VERIFIED"
+          : "QOO10_CREATE_FINAL_APPROVAL_FRESHNESS_UNVERIFIED",
+        sellerpilotVerification: unchanged
+          ? "QOO10_CREATE_FINAL_APPROVAL_FRESHNESS_VERIFIED"
+          : "QOO10_CREATE_FINAL_APPROVAL_FRESHNESS_UNVERIFIED",
+        fulfillmentEvidenceExpiresAt:
+          strictCreateExpectation.approval.fulfillmentEvidenceExpiresAt,
+        ...(!finalApproval.ok
+          ? { sellerpilotMismatchFields: finalApproval.mismatchFields }
+          : {}),
+      },
+    });
+    if (!unchanged) return result(input, createPreflightSteps);
+    strictCreateExpectation = finalApproval.expectation;
+    const durableFulfillmentSourceSupplied = Object.hasOwn(
+      input.arguments,
+      "sellerpilotQoo10CreateFulfillmentDurableSource",
+    );
+    if (durableFulfillmentSourceSupplied && !input.providerMutationHooks) {
+      return result(input, [
+        ...createPreflightSteps,
+        {
+          name: "qoo10-create-fulfillment-mutation-fence",
+          ok: false,
+          status: 422,
+          data: {
+            ResultCode: -9999,
+            ResultMsg: "QOO10_CREATE_FULFILLMENT_MUTATION_FENCE_REQUIRED",
+            sellerpilotVerification: "QOO10_PREWRITE_REJECTED",
+            sellerpilotNoWriteConfirmed: true,
+          },
+        },
+      ]);
+    }
+    if (durableFulfillmentSourceSupplied && input.providerMutationHooks) {
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+      createPreflightSteps.push({
+      name: "qoo10-create-fulfillment-mutation-fence",
+      ok: true,
+      status: 200,
+      data: {
+        ResultCode: 0,
+        ResultMsg: "QOO10_CREATE_FULFILLMENT_MUTATION_FENCE_VERIFIED",
+        sellerpilotVerification: "QOO10_CREATE_FULFILLMENT_MUTATION_FENCE_VERIFIED",
+      },
+      });
+    }
+  }
   const remote = await qoo10Request({
     payload: input.payload,
     ...definition,

@@ -1,7 +1,7 @@
 import { processShippingGatewayJob } from "./shipping-gateway-job.mjs";
 import { AI_HEARTBEAT_INTERVAL_MS, AI_HEARTBEAT_TRANSIENT_GRACE_MS, requestWithTransientRetry, WORKER_COMPLETION_TRANSIENT_GRACE_MS, WorkerRequestTerminalError } from "./worker-lifecycle-retry.mjs";
 import { processCsGatewayJob } from "./cs-gateway-job.mjs";
-import { processCommerceGatewayJob } from "./commerce-gateway-job.mjs";
+import { processCommerceGatewayJob, processElevenstCreateRecoveryDrain } from "./commerce-gateway-job.mjs";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.ts";
 import { canRunGatewayClaim, canRunPeriodicChannelSync, isWorkerTokenConfigured, workerClaimBackoffMs, workerFailureBackoffMs } from "./worker-claim-backoff.mjs";
 import { createGatewayWorkerHealth, resolveGatewayHealthPort, resolveGatewayPolling, resolveGatewayReadinessStaleMs, startGatewayWorkerHealthServer } from "./persistent-worker-health.mjs";
+import { attachEbayCreateClaimIncarnation } from "../lib/channels/ebay-create-claim.ts";
 import { isLocalGatewayRecoveryAllowedTuple, LOCAL_GATEWAY_RECOVERY_CLAIM_MODE } from "../lib/channels/local-gateway-recovery-lane.ts";
+import { EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE } from "../lib/channels/ebay-publication-reconciliation-contract.ts";
 import { runWithProviderTransportContext } from "../lib/channels/protocols.ts";
 const localRecoveryOnly = process.argv.includes("--local-recovery-only");
 const noScheduler = process.argv.includes("--no-scheduler");
@@ -52,19 +54,27 @@ const once = process.argv.includes("--once");
 let stopping = false;
 const workerRepositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const localChannelExecutorClaimMode = "local_channel_executor";
+const localReleaseGitTimeoutMs = 2_000;
 function readTrackedRuntimeRelease() {
     try {
         const releaseSha = execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
             cwd: workerRepositoryRoot,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
+            timeout: localReleaseGitTimeoutMs,
+            killSignal: "SIGKILL",
         }).trim().toLowerCase();
         if (!/^[a-f0-9]{40}$/u.test(releaseSha))
             return null;
         execFileSync("/usr/bin/git", [
             "diff", "--quiet", "HEAD", "--",
             "app", "lib", "scripts", "package.json", "pnpm-lock.yaml", "next.config.ts", "tsconfig.json",
-        ], { cwd: workerRepositoryRoot, stdio: "ignore" });
+        ], {
+            cwd: workerRepositoryRoot,
+            stdio: "ignore",
+            timeout: localReleaseGitTimeoutMs,
+            killSignal: "SIGKILL",
+        });
         const untrackedRuntime = execFileSync("/usr/bin/git", [
             "ls-files", "--others", "--exclude-standard", "--",
             "app", "lib", "scripts", "package.json", "pnpm-lock.yaml", "next.config.ts", "tsconfig.json",
@@ -72,6 +82,8 @@ function readTrackedRuntimeRelease() {
             cwd: workerRepositoryRoot,
             encoding: "utf8",
             stdio: ["ignore", "pipe", "ignore"],
+            timeout: localReleaseGitTimeoutMs,
+            killSignal: "SIGKILL",
         }).trim();
         return untrackedRuntime ? null : releaseSha;
     }
@@ -311,6 +323,30 @@ do {
             authBackoffUntil: authBackoffUntil.gateway,
         })) {
             try {
+                let skipRegularClaim = false;
+                if (!localRecoveryOnly) {
+                    const recoveryDrain = await processElevenstCreateRecoveryDrain({
+                        request: (path, body) => api(path, { method: "POST", body: JSON.stringify(body) }),
+                    });
+                    if (recoveryDrain.kind === "finished") {
+                        markWorkerBusy();
+                        gatewayQueueIdle = false;
+                        gatewayClaimBackoffStatus = 0;
+                        skipRegularClaim = true;
+                    } else if (recoveryDrain.kind !== "idle") {
+                        gatewayQueueIdle = false;
+                        gatewayClaimBackoffUntil = Date.now() + workerFailureBackoffMs(503);
+                        skipRegularClaim = true;
+                        if (once) {
+                            throw new Error("11번가 공식 GET-only 복구를 확인하지 못했습니다.");
+                        }
+                    }
+                }
+                if (skipRegularClaim) {
+                    // Recovery owned this tick. Do not also POST a fresh CREATE job.
+                } else {
+                let ebayRecoveryClaimAttempted = !localRecoveryOnly
+                    && !localChannelExecutorAttestation;
                 let gatewayResponse = await api("/api/channel-gateway/worker/claim", {
                     method: "POST",
                     body: JSON.stringify({
@@ -323,12 +359,26 @@ do {
                                     releaseSha: localChannelExecutorAttestation.releaseSha,
                                     egressIpSha256: localChannelExecutorAttestation.egressIpSha256,
                                 }
-                                : {}),
+                                : { mode: EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE }),
                     }),
                 });
                 if (!localRecoveryOnly
                     && localChannelExecutorAttestation
                     && gatewayResponse.status === 204) {
+                    ebayRecoveryClaimAttempted = true;
+                    gatewayResponse = await api("/api/channel-gateway/worker/claim", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            version: workerVersion,
+                            mode: EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE,
+                        }),
+                    });
+                }
+                const ebayRecoveryContractUnavailable = ebayRecoveryClaimAttempted
+                    && [400, 404, 501, 503].includes(gatewayResponse.status);
+                if (!localRecoveryOnly
+                    && (gatewayResponse.status === 204
+                        || ebayRecoveryContractUnavailable)) {
                     gatewayResponse = await api("/api/channel-gateway/worker/claim", {
                         method: "POST",
                         body: JSON.stringify({ version: workerVersion }),
@@ -342,7 +392,7 @@ do {
                     break;
                 }
                 if (gatewayResponse.ok && gatewayResponse.status !== 204) {
-                    const gatewayJob = await gatewayResponse.json();
+                    const gatewayJob = attachEbayCreateClaimIncarnation(await gatewayResponse.json());
                     if (localRecoveryOnly) {
                         const claimedChannel = typeof gatewayJob?.channel === "string" ? gatewayJob.channel : "";
                         const claimedOperation = typeof gatewayJob?.operation === "string" ? gatewayJob.operation : "";
@@ -391,6 +441,7 @@ do {
                 }
                 else if (gatewayResponse.status === 204) {
                     gatewayClaimBackoffStatus = 0;
+                }
                 }
             }
             catch (gatewayClaimError) {

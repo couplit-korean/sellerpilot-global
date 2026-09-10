@@ -17,7 +17,7 @@ import { buildLazadaKrwMyrPricePolicy, lazadaKrwMyrPricePolicyFromArguments, typ
 import { currentMarketListingHandoff, ebayListingHandoffFromDraft, fetchStoredListingHandoff, listingHandoffPersistenceStatus, listingHandoffStatusLabel, saveStoredListingHandoff, type StoredListingHandoff } from "../lib/channel-listing-handoff";
 import type { StudioResultQuality } from "../lib/studio-result-quality";
 import { inspectListingDraft, listingDraftValue, setListingDraftValue, isSmartstoreCapacityPath, editSmartstoreCapacityDraftValue, preserveSmartstoreCapacityDraft, isCoupangWeightPath, preserveCoupangWeightDraft } from "../lib/channels/listing-preflight";
-import { coupangShippingFeeDraft, listingShippingDraftSource, listingShippingRequirements, listingShippingSourceChanged, normalizeListingShippingSource, shippingRequirementDependsOnSource, smartstoreShippingDraft, type ListingShippingSource } from "../lib/channels/listing-shipping";
+import { coupangShippingFeeDraft, listingShippingDraftSource, listingShippingRequirements, listingShippingSourceChanged, shippingRequirementDependsOnSource, smartstoreShippingDraft, type ListingShippingSource } from "../lib/channels/listing-shipping";
 import { resolveCoupangShippingLeadTime } from "../lib/channels/coupang-shipping-lead-time";
 import { channelOperationAvailable, channelOperationRelease } from "../lib/channels/operation-availability";
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
@@ -25,6 +25,9 @@ import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLoca
 import { createClient } from "../lib/supabase/client";
 import { exactShopeeTargetFromPayload, fetchChannelTargets } from "./channel-target-client";
 import { evaluateShopeeSgRequirementSelection, serializeShopeeSgChannelPatches, shopeeSgChannelExecutionAllowed, ShopeeSgRequirementCandidateFields, type ShopeeSgRequirementLoadState, type ShopeeSgRequirementSelectionState } from "./_publishing/shopee/requirement-candidate-fields";
+import { CoupangCreateCompletenessFields, type CoupangCreateCompletenessValidation } from "./_publishing/coupang/create-completeness-fields";
+import { emptyCoupangCreateCompletenessValidation } from "../lib/product-registration/coupang/create-completeness-view";
+import { normalizedProductRegistrationManualFields, productRegistrationSourceFingerprint } from "../lib/product-registration/source-fingerprint";
 import { channels } from "./channel-config";
 import { fetchProductDetailData, productDetailDataToHtml } from "./_publishing/product-detail-html";
 import type { ProductDetailData } from "./product-detail-puck";
@@ -35,6 +38,7 @@ type CredentialRow = {
   channel: ActiveChannelKey;
   environment: "sandbox" | "production";
   status: string;
+  version?: number;
 };
 
 type Assignment = {
@@ -66,6 +70,8 @@ type Listing = {
 };
 type ChannelTarget = {
   targetId: string;
+  credentialId?: string;
+  credentialVersion?: number;
   displayName: string;
   marketCode: string;
   locale: string;
@@ -324,35 +330,7 @@ export function publishContextDesignedDetailData(payload: {
   return null;
 }
 export function normalizeManualFields(context: PublishContext): ManualFields {
-  const value = context.manualFields ?? {} as ManualFields;
-  const positiveOrZero = (candidate: unknown) => {
-    const number = Number(candidate);
-    return Number.isFinite(number) && number > 0 ? number : 0;
-  };
-  return {
-    ...normalizeListingShippingSource(value),
-    productName: value.productName || context.product.name,
-    description: value.description || context.product.description,
-    sellerSku: value.sellerSku || context.product.sku,
-    categoryHint: value.categoryHint || context.product.name,
-    brandName: value.brandName?.trim() ?? "",
-    manufacturer: value.manufacturer || "",
-    countryOfOrigin: value.countryOfOrigin || "",
-    material: value.material || "",
-    // This field is seller-confirmed sales configuration. Preserve the exact
-    // text so an inner-pack count cannot be normalized into a sale quantity.
-    packageContents: value.packageContents?.trim() ?? "",
-    condition: value.condition || "NEW",
-    gtinStatus: value.gtinStatus || "NO_GTIN",
-    gtin: value.gtin || "",
-    sellingPrice: positiveOrZero(value.sellingPrice),
-    currency: value.currency?.trim().toUpperCase() ?? "",
-    stock: Number.isInteger(Number(value.stock)) && Number(value.stock) >= 0 ? Number(value.stock) : 0,
-    weightKg: positiveOrZero(value.weightKg),
-    packageLengthCm: positiveOrZero(value.packageLengthCm),
-    packageWidthCm: positiveOrZero(value.packageWidthCm),
-    packageHeightCm: positiveOrZero(value.packageHeightCm),
-  };
+  return normalizedProductRegistrationManualFields(context) as ManualFields;
 }
 function uniqueUrls(values: Array<string | null | undefined>) {
   return [...new Set(values.map((value) => value?.trim() ?? "").filter((value) => value.startsWith("https://")))];
@@ -544,6 +522,7 @@ export function buildChannelArguments(channel: ActiveChannelKey, context: Publis
       weight: packageFields.weight,
       dimension: { package_length: packageFields.length, package_width: packageFields.width, package_height: packageFields.height },
       pre_order: { is_pre_order: false, days_to_ship: 1 },
+      days_to_ship: 1,
       attribute_list: attributeList,
     };
     const globalSku = `${manual.sellerSku || product.sku}-GLOBAL`.slice(0, 100);
@@ -1129,6 +1108,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [shopeeRequirementRemote, setShopeeRequirementRemote] = useState<{ key: string; source: ShopeeSgRequirementLoadState }>({ key: "", source: { state: "loading" } });
   const [shopeeRequirementSelection, setShopeeRequirementSelection] = useState<ShopeeSgRequirementSelectionState>({ saveAllowed: false, blockers: [], patches: [], evidence: null });
   const [shopeeRequirementRefreshRevision, setShopeeRequirementRefreshRevision] = useState(0);
+  const [coupangCreateValidation, setCoupangCreateValidation] = useState<CoupangCreateCompletenessValidation>(() => emptyCoupangCreateCompletenessValidation());
+  const [coupangValidatedDraft, setCoupangValidatedDraft] = useState("");
   const registrationBaseDraftsRef = useRef<Partial<Record<ActiveChannelKey, string>>>({});
   const registrationChannelBankRef = useRef<PublishRegistrationData["channels"]>({});
   const registrationSaveInFlightRef = useRef(false);
@@ -1373,7 +1354,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       let initialQuantity = manual.stock;
       let initialGlobalUsdPrice = manual.currency === "USD" ? manual.sellingPrice : globalBaseUsdPriceRef.current;
       let initialPackage = { weight: manual.weightKg, length: manual.packageLengthCm, width: manual.packageWidthCm, height: manual.packageHeightCm };
-      const sourceFingerprint = JSON.stringify({ sku: nextPayload.product.sku, manualFields: manual, detailVersion: nextPayload.detailPage?.version ?? null, assignments: nextPayload.assignments.map(item => ({ channel: item.channel, market: item.market, categoryId: item.categoryId, providedAttributes: item.providedAttributes })) });
+      const sourceFingerprint = productRegistrationSourceFingerprint(nextPayload);
       const savedRegistration = registrationDraftResult.draft ? publishRegistrationDataSchema.safeParse(registrationDraftResult.draft.data) : null;
       if (savedRegistration?.success) {
         Object.assign(nextPayload.manualFields, savedRegistration.data.common.fields);
@@ -1882,6 +1863,17 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify(`Shopee SG 등록 조건 확인: ${shopeeValidation.blockers[0]?.code ?? "SHOPEE_SG_REQUIREMENT_SAVE_BLOCKED"}`);
       return false;
     }
+    const coupangSnapshotCurrent = coupangCreateValidation.canBindCreateSourceRevision
+      && coupangValidatedDraft === (drafts.coupang ?? "")
+      && coupangCreateValidation.observedTuple?.productId === productId
+      && coupangCreateValidation.observedTuple.credentialId === credential?.id
+      && coupangCreateValidation.observedTuple.credentialVersion === credential?.version
+      && coupangCreateValidation.observedTuple.categoryId === assignment?.categoryId
+      && coupangCreateValidation.observedTuple.sourceFingerprint === registrationSourceFingerprint;
+    if (channel === "coupang" && operation === "listing.create" && !coupangSnapshotCurrent) {
+      notify(`쿠팡 상품 등록 조건 확인: ${coupangCreateValidation.blockingFieldKeys.length || 19}개 항목을 확인해 주세요.`);
+      return false;
+    }
     if (!(await saveRegistrationDraft())) { notify("입력 내용을 서버에 저장하고 변경 충돌을 확인한 뒤 등록해 주세요."); return false; }
     if (workbenchStudioPublicationBlocked(context)) {
       notify(context.studioQuality?.message ?? "대체 제작 결과는 다시 제작하고 검수한 뒤에만 채널에 전송할 수 있습니다.");
@@ -1908,6 +1900,27 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
     }
     if (!credential || !assignment) {
       notify(`${channelCatalog[channel].name} 활성 키와 확정 카테고리를 확인해 주세요.`);
+      return false;
+    }
+    const shopeeSgCredentialVersion = channel === "shopee"
+      && operation === "listing.create"
+      && target?.marketCode === "SG"
+      ? target.credentialVersion
+      : undefined;
+    const createCredentialVersion = channel === "coupang" && operation === "listing.create"
+      ? credential.version
+      : shopeeSgCredentialVersion;
+    if (channel === "coupang" && operation === "listing.create"
+      && (!Number.isSafeInteger(createCredentialVersion) || createCredentialVersion! < 1)) {
+      notify("쿠팡 활성 키의 현재 버전을 확인하지 못해 등록을 시작하지 않았습니다.");
+      return false;
+    }
+    if (channel === "shopee" && operation === "listing.create" && target?.marketCode === "SG"
+        && (target.credentialId !== credential.id
+          || !Number.isSafeInteger(shopeeSgCredentialVersion)
+          || shopeeSgCredentialVersion! < 1
+          || credential.version !== shopeeSgCredentialVersion)) {
+      notify("Shopee SG 숍을 확인한 키 버전이 현재 활성 키와 달라졌습니다. 등록 준비 정보를 다시 불러와 주세요.");
       return false;
     }
     if (!channelOperationAvailable(channel, operation)) {
@@ -1978,6 +1991,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const mutationContract = {
         operation,
         publicationIntent,
+        ...(createCredentialVersion ? { credentialVersion: createCredentialVersion } : {}),
         market: operationMarket || "default",
         targetId: target?.targetId ?? "",
         channelArguments,
@@ -2006,6 +2020,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           signal: boundedWrite.signal,
           body: JSON.stringify({
             credentialId: credential.id,
+            ...(createCredentialVersion ? { credentialVersion: createCredentialVersion } : {}),
             channel,
             operation,
             publicationIntent,
@@ -2152,6 +2167,15 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         || typeof parsedDraft.sellerpilotDraftError === "string"
         || blockingWorkbenchListingRequirements(channel, parsedDraft, operation).length > 0
         || missingNativeValues(channel, parsedDraft, operation).length > 0;
+      const coupangCreateReady = channel !== "coupang"
+        || operation !== "listing.create"
+        || (coupangCreateValidation.canBindCreateSourceRevision
+          && coupangValidatedDraft === (drafts.coupang ?? "")
+          && coupangCreateValidation.observedTuple?.productId === productId
+          && coupangCreateValidation.observedTuple.credentialId === credential?.id
+          && coupangCreateValidation.observedTuple.credentialVersion === credential?.version
+          && coupangCreateValidation.observedTuple.categoryId === assignment?.categoryId
+          && coupangCreateValidation.observedTuple.sourceFingerprint === registrationSourceFingerprint);
       const remoteIdentityReady = operation === "listing.create" || Boolean(listing?.remoteId);
       const shopeeValidation = currentShopeeRequirementValidation();
       return Boolean(shopeeSgChannelExecutionAllowed(channel, operation, shopeeValidation)
@@ -2160,6 +2184,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         && channelOperationAvailable(channel, operation)
         && credential
         && assignment
+        && coupangCreateReady
         && remoteIdentityReady
         && !hasMissingRequired
         && !["queued", "publishing"].includes(listing?.status ?? "")
@@ -2621,6 +2646,19 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         const blockingRequirements = requirements.filter((item) => item.status === "manual");
         const nativeMissing = draftObject && !invalidDraft ? missingNativeValues(channel, draftObject, operation) : [];
         const blockingCount = blockingRequirements.length + nativeMissing.length;
+        const coupangCompletenessBlocked = channel === "coupang"
+          && operation === "listing.create"
+          && !(coupangCreateValidation.canBindCreateSourceRevision
+            && coupangValidatedDraft === (drafts.coupang ?? "")
+            && coupangCreateValidation.observedTuple?.productId === productId
+            && coupangCreateValidation.observedTuple.credentialId === credential?.id
+            && coupangCreateValidation.observedTuple.credentialVersion === credential?.version
+            && coupangCreateValidation.observedTuple.categoryId === assignment?.categoryId
+            && coupangCreateValidation.observedTuple.sourceFingerprint === registrationSourceFingerprint);
+        const displayedBlockingCount = blockingCount
+          + (coupangCompletenessBlocked
+            ? Math.max(1, coupangCreateValidation.blockingFieldKeys.length)
+            : 0);
         const temuActivationLedgerEligible = channel === "temu"
           && Boolean(listing?.remoteId)
           && listing?.status === "paused"
@@ -2629,7 +2667,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         const temuActivationLocked = result.operation === "listing.activate"
           && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
         return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-          <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? studioBlocked ? "재제작 필요" : "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : blockingCount ? `필수 보완 ${blockingCount}` : studioBlocked ? "재제작 필요" : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+          <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? studioBlocked ? "재제작 필요" : "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : displayedBlockingCount ? `필수 보완 ${displayedBlockingCount}` : studioBlocked ? "재제작 필요" : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
           {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select disabled={registrationHasIssues || registrationSaveStatus === "saving" || ebayHandoffSaving} value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; changeChannelTarget(channel, nextTarget); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
           {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
           {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
@@ -2653,6 +2691,31 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
                 try { setDrafts(current => ({ ...current, shopee: JSON.stringify(setRegistrationValue(parseDraft(current.shopee) ?? {}, path, value), null, 2) })); }
                 catch { notify("Shopee SG 필수조건 입력 구조를 확인해 주세요. 기존 값은 유지했습니다."); }
               }} />}
+              {channel === "coupang" && operation === "listing.create" && <CoupangCreateCompletenessFields
+                productId={productId ?? ""}
+                credentialId={credential?.id ?? ""}
+                credentialVersion={credential?.version}
+                categoryId={assignment?.categoryId ?? ""}
+                sourceFingerprint={registrationSourceFingerprint}
+                draft={draftObject}
+                onValidationChange={(validation) => {
+                  setCoupangCreateValidation(validation);
+                  setCoupangValidatedDraft(validation.canBindCreateSourceRevision
+                    ? JSON.stringify(draftObject, null, 2)
+                    : "");
+                }}
+                onChange={(path, value) => {
+                  try {
+                    setDrafts((current) => ({
+                      ...current,
+                      coupang: JSON.stringify(setRegistrationValue(parseDraft(current.coupang) ?? {}, path, value), null, 2),
+                    }));
+                    setRegistrationSaveStatus("dirty");
+                  } catch {
+                    notify("쿠팡 공식 등록 조건 입력 구조를 확인해 주세요. 기존 값은 유지했습니다.");
+                  }
+                }}
+              />}
               <ChannelRegistrationFields channel={channel} draft={draftObject} requirements={requirements} editedPaths={registrationIssues[channel] ? [] : registrationPatches(parseDraft(registrationBaseDrafts[channel]) ?? {}, draftObject).map(patch => JSON.stringify(patch.path))} onChange={(path, value) => {
                 if (channel === "smartstore" && isSmartstoreCapacityPath(path)) { updateManualDraftField(channel, path, value == null ? "" : String(value)); return; }
                 try { setDrafts(current => ({ ...current, [channel]: JSON.stringify(setRegistrationValue(parseDraft(current[channel]) ?? {}, path, value), null, 2) })); }
@@ -2665,10 +2728,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
             <details><summary><Code2 size={14} />채널 공식 payload 최종 검토</summary><textarea value={drafts[channel] ?? "{}"} onChange={(event) => setDrafts((current) => ({ ...current, [channel]: event.target.value }))} spellCheck={false} /></details>
             {listing?.remoteId && <p className="publish-remote-id"><b>원격 ID</b>{listing.remoteId} · {listing.status}</p>}
             {result.message && <p className={`publish-result ${result.phase}`}>{result.message}{result.attemptId ? <small>작업 ID {result.attemptId}</small> : null}</p>}
-            {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || studioBlocked || !shopeeSgChannelExecutionAllowed(channel, operation, currentShopeeRequirementValidation())} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
+            {confirmingChannel === channel && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label={`${definition.name} 실제 상품 ${remoteUpdate ? "콘텐츠 수정" : "등록"} 최종 확인`}><AlertTriangle size={18} /><div><b>{definition.name} · {confirmation.market} 운영 계정의 실제 상품 1건을 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"}합니다.</b><small>{formattedMarketplacePrice(confirmation.price, confirmation.currency)} · 재고 {confirmation.stock}개 · SKU {confirmation.sku}</small>{remoteUpdate && <small>기존 원격 ID {listing?.remoteId ?? "확인 필요"} · {remoteCommerceUpdate ? lazadaFinalPricePolicy ? `${lazadaFinalPricePolicy.sourcePriceKrw.toLocaleString()} KRW 상당 ${lazadaFinalPricePolicy.targetPriceMyr.toFixed(2)} MYR · 환율 검증 · 단일 SKU 사전조회·수정 후 재조회` : "Lazada MYR 최신 환율과 단일 SKU를 확인하지 못하면 실행 전 차단" : "가격·재고·옵션·판매 구성은 변경하지 않음 · 표시값은 참고값이며 이번 원격 콘텐츠 수정에는 포함하지 않음"}</small>}</div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" disabled={!imagePackageReady || studioBlocked || coupangCompletenessBlocked || !shopeeSgChannelExecutionAllowed(channel, operation, currentShopeeRequirementValidation())} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel, { skipConfirm: true })}>{definition.name} 실제 {remoteUpdate ? "지원 항목만 원격 반영" : "등록"} 실행</button></div>}
             {channel === "qoo10" && qoo10StopConfirming && listing && qoo10StopConfirming.remoteId === listing.remoteId && <div ref={confirmationDialogRef} tabIndex={-1} className="publish-write-confirmation channel" role="alertdialog" aria-label="Qoo10 거래대기 전환 최종 확인"><AlertTriangle size={18} /><div><b>Qoo10 원격 상품 {listing.remoteId}를 거래대기로 전환합니다.</b><small>완전한 이미지 세트로 다시 등록할 수 있도록 현재 등록 상태를 해제합니다.</small></div><button type="button" className="credential-secondary" onClick={closeConfirmation}>취소</button><button type="button" className="publish-confirm-execute" onClick={() => void stopQoo10Listing(qoo10StopConfirming)}>Qoo10 거래대기 전환 실행</button></div>}
             {remoteUpdate && <p className="product-edit-action-scope" id={`${channel}-remote-action-scope`}><ShieldCheck size={14} /><span><b>{definition.name} {remoteCommerceUpdate ? "상품·단일 SKU 지원 항목" : "상품 콘텐츠만"} 별도 원격 반영</b><small>{remotelyWritableListingFieldLabels.length > 0 ? `완전 지원: ${remoteListingSupportedFieldLabels.join(" · ") || "없음"} · 일부 지원: ${remoteListingPartialFieldLabels.join(" · ") || "없음"}` : "검증된 상품 콘텐츠 수정 항목 없음"}. {remoteCommerceUpdate ? "검증된 단일 SKU의 가격·재고를 포함하고 옵션·판매 구성은 변경하지 않습니다." : "가격·재고·옵션·판매 구성은 이 버튼으로 변경하지 않습니다."}</small></span></p>}
-            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || (channel === "shopee" && shopeeRequirementBlocked) || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : channel === "shopee" && shopeeRequirementBlocked ? "Shopee 공식 필수조건 선택 후 등록" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
+            <button type="button" className={`publish-execute${remoteUpdate ? " product-edit-remote-action" : ""}`} aria-describedby={remoteUpdate ? `${channel}-remote-action-scope` : undefined} disabled={!imagePackageReady || studioBlocked || !credential || !assignment || invalidDraft || blockingCount > 0 || coupangCompletenessBlocked || (channel === "shopee" && shopeeRequirementBlocked) || ["queued", "publishing"].includes(listing?.status ?? "") || result.phase === "queued" || result.phase === "running" || result.phase === "pending_review" || result.phase === "blocked" || (remoteUpdate && !listing?.remoteId) || confirmingChannel === channel} title={studioBlocked ? studioBlockedMessage : !imagePackageReady ? imagePackageBlockedMessage : undefined} onClick={() => void executeChannel(channel)}>{result.phase === "running" ? <LoaderCircle className="spin" size={15} /> : remoteUpdate ? <RefreshCw size={15} /> : <Rocket size={15} />}{result.phase === "queued" ? "백그라운드 진행 중" : result.phase === "pending_review" ? "판매채널 심사 대기" : result.phase === "blocked" ? "수동 확인 후 조정 필요" : studioBlocked ? "재제작 필요" : !imagePackageReady ? `이미지 세트 완료 후 ${remoteUpdate ? "원격 반영" : "등록"}` : channel === "shopee" && shopeeRequirementBlocked ? "Shopee 공식 필수조건 선택 후 등록" : coupangCompletenessBlocked ? "쿠팡 공식 등록 조건 확인 후 등록" : blockingCount ? `필수 보완 ${blockingCount}개 후 ${remoteUpdate ? "원격 반영" : "등록"}` : confirmingChannel === channel ? "최종 확인 열림" : remoteUpdate ? `${definition.name} 지원 항목만 별도 원격 반영` : "검증 후 실제 1건 등록"}</button>
             {channel === "qoo10" && listing?.status === "published" && <button type="button" className="credential-secondary" disabled={["queued", "running", "blocked", "succeeded"].includes(result.phase) || qoo10StopConfirming?.remoteId === listing.remoteId} onClick={() => openConfirmation({ kind: "qoo10-stop", listing })}><CirclePause size={15} />거래대기 전환 후 재등록</button>}
           </>}
           {temuActivationLedgerEligible && listing && <>

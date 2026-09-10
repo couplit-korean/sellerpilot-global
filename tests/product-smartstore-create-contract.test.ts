@@ -8,6 +8,18 @@ import {
   smartstoreListingCreateContract,
   smartstoreStrictCreateRequested,
 } from "../lib/channels/smartstore-listing-create-contract";
+import {
+  smartstoreCategoryAttributeMappingContract,
+  smartstoreProductAttributesDigest,
+} from "../lib/channels/smartstore-category-attribute-mapping";
+import {
+  buildSmartstoreCreateTransport,
+  smartstoreCreateBodyBindingSha256,
+  smartstoreCreateTransportArgument,
+  smartstoreCreateTransportStageArgument,
+  smartstoreCreateTransportStageContract,
+} from "../lib/channels/smartstore-create-transport";
+import { assertSmartstoreCreateSourceMatchesBody } from "../lib/server-smartstore-listing-create-binding";
 
 const originProductNo = "10000001";
 const channelProductNo = "20000001";
@@ -83,6 +95,10 @@ function preparedBody() {
             customerServicePhoneNumber: "02-1234-5678",
           },
         },
+        productAttributes: [
+          { attributeSeq: 10020580, attributeValueSeq: 10832333 },
+          { attributeSeq: 10014442, attributeValueSeq: 10972472 },
+        ],
         optionInfo: {},
         unitCapacity: { unitPriceYn: false },
       },
@@ -95,15 +111,61 @@ function preparedBody() {
   };
 }
 
+function sourceBinding(body: ReturnType<typeof preparedBody>) {
+  return {
+    contract: "smartstore_listing_create_source_v1" as const,
+    productId: "11111111-1111-4111-8111-111111111111",
+    ownerId: "22222222-2222-4222-8222-222222222222",
+    productUpdatedAt: "2026-09-10T00:00:00.000Z",
+    detailPageVersion: 1,
+    approvedDetailPageVersion: 1,
+    approvedManifestDigest: "d".repeat(64),
+    sellerManagementCode: sellerSku,
+    credentialId: "33333333-3333-4333-8333-333333333333",
+    credentialVersion: 1,
+    credentialFingerprint: "ABCDEF123456",
+    credentialVaultSecretId: "44444444-4444-4444-8444-444444444444",
+    credentialLastRotatedAt: "2026-09-10T00:00:00.000Z",
+    productName: body.originProduct.name,
+    salePrice: body.originProduct.salePrice,
+    stockQuantity: body.originProduct.stockQuantity,
+    manualFieldsSha256: "e".repeat(64),
+    bodyBindingSha256: smartstoreCreateBodyBindingSha256(body),
+  };
+}
+
 function strictArguments(body = preparedBody()) {
+  const productAttributes = structuredClone(
+    body.originProduct.detailAttribute.productAttributes,
+  );
+  const transport = buildSmartstoreCreateTransport(body);
   return {
     sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+    sellerpilotSmartstoreCreateSource: sourceBinding(body),
+    sellerpilotSmartstoreCategoryAttributeMapping: {
+      ok: true,
+      contract: smartstoreCategoryAttributeMappingContract,
+      categoryId: body.originProduct.leafCategoryId,
+      assignmentRevision: 7,
+      assignmentDigest: "b".repeat(64),
+      officialReadbackDigest: "c".repeat(64),
+      productAttributes,
+      productAttributesSha256: smartstoreProductAttributesDigest(productAttributes),
+    },
     publicationIntent: "live",
     publicationStateContract: "verified_remote_state_v1",
     publicationExpectedLocale: "ko-KR",
     publicationExpectedFingerprint: fingerprint,
     publicationExpectedImageCount: 8,
     body,
+    [smartstoreCreateTransportArgument]: transport,
+    [smartstoreCreateTransportStageArgument]: {
+      contract: smartstoreCreateTransportStageContract,
+      jobId: "11111111-1111-4111-8111-111111111111",
+      bodySha256: transport.bodySha256,
+      bodyByteLength: transport.bodyByteLength,
+      staged: true,
+    },
   };
 }
 
@@ -216,6 +278,10 @@ test("prepared SmartStore create contract accepts only resolved channel-required
           price: 0,
         }],
       } as never;
+    }],
+    ["NAVER_CREATE_PRODUCT_ATTRIBUTES_INVALID", (body) => {
+      body.originProduct.detailAttribute.productAttributes[1]
+        .attributeValueSeq = 0;
     }],
     ["NAVER_CREATE_CHANNEL_PRODUCT_REQUIRED", (body) => {
       body.smartstoreChannelProduct.naverShoppingRegistration = "true" as never;
@@ -340,6 +406,63 @@ test("missing or altered create contracts stop before token, media, or provider 
   }
 });
 
+test("missing, altered, or body-divergent category mapping stops before token or provider transport", async () => {
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return Response.json({ code: "UNEXPECTED" }, { status: 500 });
+  };
+  const credentials = {
+    client_id: "test-only-client",
+    client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze",
+    token_type: "SELLER",
+    account_id: "test-only-account",
+  };
+  try {
+    for (const variant of ["missing", "tampered-digest", "category", "body"] as const) {
+      const argumentsValue = strictArguments();
+      const mapping = argumentsValue.sellerpilotSmartstoreCategoryAttributeMapping;
+      if (variant === "missing") {
+        delete argumentsValue.sellerpilotSmartstoreCategoryAttributeMapping;
+      } else if (variant === "tampered-digest") {
+        mapping.productAttributesSha256 = "d".repeat(64);
+      } else if (variant === "category") {
+        mapping.categoryId = "50000000";
+      } else {
+        argumentsValue.body.originProduct.detailAttribute.productAttributes[0]
+          .attributeValueSeq += 1;
+      }
+      const operation = await executeChannelOperation({
+        channel: "smartstore",
+        operation: "listing.create",
+        payload: credentials,
+        arguments: argumentsValue,
+        environment: "production",
+      });
+      assert.equal(operation.ok, false, variant);
+      const preflight = operation.steps.find(
+        ({ name }) => name === "category-attribute-mapping-preflight",
+      );
+      assert.equal(preflight?.ok, false, variant);
+      assert.equal(
+        preflight?.data.sellerpilotVerification,
+        "SMARTSTORE_CATEGORY_ATTRIBUTE_MAPPING_BLOCKED",
+        variant,
+      );
+      assert.equal(preflight?.data.providerMutationAllowed, false, variant);
+      assert.deepEqual(
+        preflight?.data.providerMutationCounts,
+        { create: 0, put: 0 },
+        variant,
+      );
+    }
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("strict contract rejects unresolved inputs before token, duplicate search, or create", async () => {
   const originalFetch = globalThis.fetch;
   let fetchCount = 0;
@@ -393,13 +516,15 @@ test("accepted create without both IDs stops without retry, readback, or PUT", a
     assert.equal(operation.remoteId, originProductNo);
     assert.deepEqual(operation.steps.map((item) => item.name), [
       "product-create",
+      "product-create-get-recovery-search",
       "product-create-identity",
     ]);
     assert.equal(
-      operation.steps[1]?.data.sellerpilotVerification,
+      operation.steps[2]?.data.sellerpilotVerification,
       "SMARTSTORE_CREATE_IDENTITIES_MISSING",
     );
     assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
+    assert.equal(calls.filter(({ url }) => url.endsWith("/v1/products/search")).length, 2);
     assert.equal(calls.some(({ method }) => method === "PUT"), false);
     assert.equal(calls.some(({ method }) => method === "GET"), false);
   } finally {
@@ -410,10 +535,13 @@ test("accepted create without both IDs stops without retry, readback, or PUT", a
 async function strictCreateWithOfficialReadback(input: {
   responseChannelProductNo: string;
   readbackChannelProductNo: string;
+  mutateReadbackBody?: (body: ReturnType<typeof preparedBody>) => void;
 }) {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
   let created = false;
+  const readbackBody = preparedBody();
+  input.mutateReadbackBody?.(readbackBody);
   globalThis.fetch = async (request, init) => {
     const url = String(request);
     const method = init?.method ?? "GET";
@@ -432,13 +560,13 @@ async function strictCreateWithOfficialReadback(input: {
       return Response.json(exactSearch(input.readbackChannelProductNo));
     }
     if (url.endsWith(`/v2/products/origin-products/${originProductNo}`)) {
-      return Response.json(providerOrigin());
+      return Response.json(providerOrigin(readbackBody));
     }
     if (url.endsWith(
       `/v2/products/channel-products/${input.readbackChannelProductNo}`,
     )) {
       return Response.json(providerChannel(
-        preparedBody(),
+        readbackBody,
         input.readbackChannelProductNo,
       ));
     }
@@ -475,6 +603,18 @@ test("one strict create binds both response IDs to exact official GET readback",
       ?.data.sellerpilotVerification,
     "SMARTSTORE_CREATE_IDENTITIES_VERIFIED",
   );
+  const exactReceipt = operation.steps.find(
+    ({ name }) => name === "product-create-contract-readback",
+  );
+  const mapping = strictArguments().sellerpilotSmartstoreCategoryAttributeMapping;
+  assert.deepEqual(exactReceipt?.data.sellerpilotCategoryAttributeMapping, {
+    contract: smartstoreCategoryAttributeMappingContract,
+    categoryId: mapping.categoryId,
+    assignmentRevision: mapping.assignmentRevision,
+    assignmentDigest: mapping.assignmentDigest,
+    officialReadbackDigest: mapping.officialReadbackDigest,
+    productAttributesSha256: mapping.productAttributesSha256,
+  });
   assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
   assert.equal(
     calls.filter(({ url, method }) => method === "GET"
@@ -509,4 +649,198 @@ test("official channel ID mismatch refuses completion without a second create or
   assert.equal(identity?.data.officialChannelProductNo, channelProductNo);
   assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
   assert.equal(calls.some(({ method }) => method === "PUT"), false);
+});
+
+test("exact official GET must preserve every SmartStore create contract group", async () => {
+  const cases: Array<[
+    string,
+    (body: ReturnType<typeof preparedBody>) => void,
+  ]> = [
+    ["productInput", (body) => {
+      body.originProduct.salePrice += 10;
+    }],
+    ["categoryAndAttributes", (body) => {
+      body.originProduct.detailAttribute.productAttributes[0]
+        .attributeValueSeq += 1;
+    }],
+    ["brandAndNotice", (body) => {
+      body.originProduct.detailAttribute.productInfoProvidedNotice
+        .etc.manufacturer = "다른 제조사";
+    }],
+    ["shippingAndReturns", (body) => {
+      body.originProduct.deliveryInfo.claimDeliveryInfo.returnDeliveryFee += 10;
+    }],
+    ["approvedImagesAndDetail", (body) => {
+      body.originProduct.detailContent += "<p>공급자에서 변경됨</p>";
+    }],
+    ["channelProduct", (body) => {
+      body.smartstoreChannelProduct.naverShoppingRegistration = false;
+    }],
+  ];
+  for (const [mismatchGroup, mutateReadbackBody] of cases) {
+    const { operation, calls } = await strictCreateWithOfficialReadback({
+      responseChannelProductNo: channelProductNo,
+      readbackChannelProductNo: channelProductNo,
+      mutateReadbackBody,
+    });
+    const receipt = operation.steps.find(
+      ({ name }) => name === "product-create-contract-readback",
+    );
+    assert.equal(operation.ok, false, mismatchGroup);
+    assert.equal(operation.remoteState, undefined, mismatchGroup);
+    assert.equal(
+      receipt?.data.sellerpilotVerification,
+      "SMARTSTORE_CREATE_EXACT_READBACK_MISMATCH",
+      mismatchGroup,
+    );
+    assert.deepEqual(receipt?.data.mismatchGroups, [mismatchGroup]);
+    assert.match(String(receipt?.data.expectedProjectionSha256), /^[a-f0-9]{64}$/u);
+    assert.match(String(receipt?.data.officialProjectionSha256), /^[a-f0-9]{64}$/u);
+    assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  }
+});
+
+test("one unchanged source snapshot cannot authorize two title/price/stock bodies", async () => {
+  const first = preparedBody();
+  const second = preparedBody();
+  second.originProduct.name = "다른 제목";
+  second.originProduct.salePrice = 990_000;
+  second.originProduct.stockQuantity = 99;
+  second.smartstoreChannelProduct.channelProductName = "다른 제목";
+  const firstSource = sourceBinding(first);
+  assert.doesNotThrow(() => assertSmartstoreCreateSourceMatchesBody({
+    source: firstSource,
+    body: first,
+  }));
+  assert.throws(() => assertSmartstoreCreateSourceMatchesBody({
+    source: firstSource,
+    body: second,
+  }), /SMARTSTORE_CREATE_COMMERCIAL_SOURCE_MISMATCH/u);
+  assert.notEqual(
+    smartstoreCreateBodyBindingSha256(first),
+    smartstoreCreateBodyBindingSha256(second),
+  );
+
+  const originalFetch = globalThis.fetch;
+  let fetchCount = 0;
+  globalThis.fetch = async () => {
+    fetchCount += 1;
+    return Response.json({ code: "UNEXPECTED" }, { status: 500 });
+  };
+  try {
+    const argumentsValue = strictArguments(second);
+    argumentsValue.sellerpilotSmartstoreCreateSource = firstSource;
+    await assert.rejects(executeChannelOperation({
+      channel: "smartstore",
+      operation: "listing.create",
+      payload: payload(),
+      arguments: argumentsValue,
+      environment: "production",
+    }), /SMARTSTORE_CREATE_COMMERCIAL_SOURCE_MISMATCH/u);
+    assert.equal(fetchCount, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET-only response-loss recovery accepts the staged body and never POSTs again", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  let created = false;
+  const body = preparedBody();
+  globalThis.fetch = async (request, init) => {
+    const url = String(request);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.endsWith("/v1/products/search") && !created) {
+      return Response.json(emptySearch());
+    }
+    if (url.endsWith("/v2/products") && method === "POST") {
+      created = true;
+      return Response.json({ originProductNo: Number(originProductNo) });
+    }
+    if (url.endsWith("/v1/products/search")) {
+      return Response.json(exactSearch());
+    }
+    if (url.endsWith(`/v2/products/origin-products/${originProductNo}`)) {
+      return Response.json(providerOrigin(body));
+    }
+    if (url.endsWith(`/v2/products/channel-products/${channelProductNo}`)) {
+      return Response.json(providerChannel(body));
+    }
+    return Response.json({ code: "UNEXPECTED" }, { status: 500 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "listing.create",
+      payload: payload(),
+      arguments: strictArguments(body),
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.remoteId, originProductNo);
+    assert.equal(
+      operation.steps.find(({ name }) => name === "product-create-get-recovery")
+        ?.data.sellerpilotVerification,
+      "SMARTSTORE_CREATE_GET_RECOVERY_VERIFIED",
+    );
+    assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("GET-only recovery refuses a different title/price/stock body without a second CREATE", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string }> = [];
+  let created = false;
+  const official = preparedBody();
+  official.originProduct.name = "다른 제목";
+  official.originProduct.salePrice = 990_000;
+  official.originProduct.stockQuantity = 99;
+  official.smartstoreChannelProduct.channelProductName = "다른 제목";
+  globalThis.fetch = async (request, init) => {
+    const url = String(request);
+    const method = init?.method ?? "GET";
+    calls.push({ url, method });
+    if (url.endsWith("/v1/products/search") && !created) {
+      return Response.json(emptySearch());
+    }
+    if (url.endsWith("/v2/products") && method === "POST") {
+      created = true;
+      return Response.json({ originProductNo: Number(originProductNo) });
+    }
+    if (url.endsWith("/v1/products/search")) {
+      return Response.json(exactSearch());
+    }
+    if (url.endsWith(`/v2/products/origin-products/${originProductNo}`)) {
+      return Response.json(providerOrigin(official));
+    }
+    if (url.endsWith(`/v2/products/channel-products/${channelProductNo}`)) {
+      return Response.json(providerChannel(official));
+    }
+    return Response.json({ code: "UNEXPECTED" }, { status: 500 });
+  };
+  try {
+    const operation = await executeChannelOperation({
+      channel: "smartstore",
+      operation: "listing.create",
+      payload: payload(),
+      arguments: strictArguments(),
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(
+      operation.steps.find(({ name }) => name === "product-create-get-recovery")
+        ?.data.sellerpilotVerification,
+      "SMARTSTORE_CREATE_GET_RECOVERY_MISMATCH",
+    );
+    assert.equal(calls.filter(({ url }) => url.endsWith("/v2/products")).length, 1);
+    assert.equal(calls.some(({ method }) => method === "PUT"), false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

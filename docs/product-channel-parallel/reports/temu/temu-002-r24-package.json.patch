@@ -1,0 +1,12 @@
+diff --git a/package.json b/package.json
+index 3fa5595..d0e43d0 100644
+--- a/package.json
++++ b/package.json
+@@ -17,6 +17,7 @@
+     "ai:worker:status": "node scripts/install-ai-worker-launch-agent.mjs --status",
+     "gateway:worker": "node --import tsx scripts/ai-cli-worker.mjs --gateway-only",
+     "gateway:worker:once": "node --import tsx scripts/ai-cli-worker.mjs --gateway-only --once",
++    "temu:collector": "node --import tsx scripts/temu-operator-attestation-once.mjs",
+     "gateway:serverless:configure": "node scripts/bootstrap-serverless-cs-runtime.mjs",
+     "deploy:vercel:candidate": "node scripts/deploy-vercel-release-candidate.mjs",
+     "build": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext build",

@@ -26,6 +26,12 @@ import {
 import { uploadChannelNativeImages } from "../../channels/native-image-upload";
 import { assertLazadaMyListingCreateContext } from "../lazada/listing-create-context";
 import {
+  attachLazadaGatewayReceiptToStep,
+  bindLazadaGatewayGetRecoveryReceipt,
+  bindLazadaGatewayPostCreateReceipt,
+  lazadaGatewayCreateReceiptKindFromArguments,
+} from "../lazada/my-create-gateway-receipt";
+import {
   type ExecuteInput,
   nativeImageSourceUrls,
   result,
@@ -368,6 +374,62 @@ export async function executeLazada(input: ExecuteInput) {
       return result(input, [{ name: "listing-create-sku-prewrite", ok: false, status: 422,
         data: { error: "LAZADA_CREATE_SKU_CONTRACT_INVALID", checks, sellerpilotNoWriteConfirmed: true } }]);
     }
+    if (lazadaGatewayCreateReceiptKindFromArguments(input.arguments) === "get_recovery") {
+      const recoveryItemId = lazadaListingRemoteIdFromArguments(input.arguments);
+      if (!/^\d+$/u.test(recoveryItemId)) {
+        return result(input, [{
+          name: "listing-readback-recovery",
+          ok: false,
+          status: 409,
+          data: {
+            error: "LAZADA_MY_CREATE_GET_RECOVERY_RECEIPT_REQUIRED",
+            sellerpilotReconciliationRequired: true,
+          },
+        }]);
+      }
+      const itemRemote = await lazadaRequest({
+        payload: input.payload,
+        path: "/product/item/get",
+        params: { item_id: recoveryItemId },
+      });
+      let recoveryStep = step("listing-readback", itemRemote);
+      try {
+        const recovered = bindLazadaGatewayGetRecoveryReceipt({
+          argumentsValue: input.arguments,
+          itemReadback: itemRemote,
+          itemId: recoveryItemId,
+        });
+        const verification = await readLazadaListingPublicationState({
+          payload: input.payload,
+          operation: input.operation,
+          remoteId: recoveryItemId,
+          mutationArguments: input.arguments,
+          ...verifiedPublicationArguments(input),
+        });
+        applyLazadaPublicationVerification(recoveryStep, verification);
+        recoveryStep = attachLazadaGatewayReceiptToStep(recoveryStep, {
+          kind: "get_recovery",
+          getRecoveryReceipt: recovered,
+        });
+        return result(
+          input,
+          [recoveryStep],
+          recovered.itemId,
+          undefined,
+          verification.remoteState,
+        );
+      } catch (error) {
+        recoveryStep.ok = false;
+        recoveryStep.data = {
+          ...recoveryStep.data,
+          error: error instanceof Error
+            ? error.message
+            : "LAZADA_MY_CREATE_GET_RECOVERY_RECEIPT_REQUIRED",
+          sellerpilotReconciliationRequired: true,
+        };
+        return result(input, [recoveryStep], recoveryItemId);
+      }
+    }
     {
       const country = String(input.payload.country ?? "").trim().toLowerCase();
       const expectedSellerId = createContext.sellerId;
@@ -529,7 +591,7 @@ export async function executeLazada(input: ExecuteInput) {
       mutationArguments: effectiveArguments,
       ...verifiedPublicationArguments(input),
     });
-    const readbackStep =
+    let readbackStep =
       input.operation === "listing.update"
         ? listingUpdateReadbackStep(
             "listing-readback",
@@ -539,6 +601,27 @@ export async function executeLazada(input: ExecuteInput) {
           )
         : step("listing-readback", verification.remote);
     applyLazadaPublicationVerification(readbackStep, verification);
+    if (input.operation === "listing.create") {
+      try {
+        const officialEvidence = bindLazadaGatewayPostCreateReceipt({
+          argumentsValue: effectiveArguments,
+          createResponse: remote,
+          itemReadback: verification.remote,
+          itemId: remoteId,
+        });
+        readbackStep = attachLazadaGatewayReceiptToStep(readbackStep, {
+          kind: "post_create",
+          officialEvidence,
+        });
+      } catch (error) {
+        readbackStep.data = {
+          ...readbackStep.data,
+          lazadaR7ReceiptError: error instanceof Error
+            ? error.message
+            : "LAZADA_MY_CREATE_OFFICIAL_EVIDENCE_REQUIRED",
+        };
+      }
+    }
     return result(
       input,
       [...prewriteSteps, writeStep, readbackStep],

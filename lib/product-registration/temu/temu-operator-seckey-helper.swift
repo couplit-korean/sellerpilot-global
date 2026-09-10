@@ -1,0 +1,215 @@
+#!/usr/bin/env swift
+import CryptoKit
+import Foundation
+import Security
+
+private let keyService = "SellerPilot.Temu.OperatorAttestation.SecKey"
+private let lineageService = "SellerPilot.Temu.OperatorAttestation.SecKey.active"
+private let account = "sellerpilot-temu-local-collector"
+
+private struct Lineage: Codable {
+  let contract: String
+  var currentKeyId: String
+  var currentTag: String
+  var previousKeyId: String?
+  var previousTag: String?
+  var graceUntil: String?
+}
+
+private enum HelperFailure: Error { case failed(String) }
+
+private func fail(_ code: String) throws -> Never { throw HelperFailure.failed(code) }
+
+private func genericPassword() -> Data? {
+  let query: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrService as String: lineageService,
+    kSecAttrAccount as String: account,
+    kSecReturnData as String: true,
+    kSecMatchLimit as String: kSecMatchLimitOne,
+  ]
+  var result: CFTypeRef?
+  return SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess
+    ? result as? Data : nil
+}
+
+private func readLineage() throws -> Lineage {
+  guard let data = genericPassword(),
+        let value = try? JSONDecoder().decode(Lineage.self, from: data),
+        value.contract == "temu_collector_seckey_lineage_v2" else {
+    try fail("SECKEY_LINEAGE_INVALID")
+  }
+  return value
+}
+
+private func writeLineage(_ lineage: Lineage) throws {
+  let data = try JSONEncoder().encode(lineage)
+  let identity: [String: Any] = [
+    kSecClass as String: kSecClassGenericPassword,
+    kSecAttrService as String: lineageService,
+    kSecAttrAccount as String: account,
+  ]
+  let update = SecItemUpdate(identity as CFDictionary,
+    [kSecValueData as String: data] as CFDictionary)
+  if update == errSecSuccess { return }
+  guard update == errSecItemNotFound else { try fail("SECKEY_LINEAGE_WRITE_FAILED") }
+  var add = identity
+  add[kSecValueData as String] = data
+  add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+  guard SecItemAdd(add as CFDictionary, nil) == errSecSuccess else {
+    try fail("SECKEY_LINEAGE_WRITE_FAILED")
+  }
+}
+
+private func privateKey(tag: String) throws -> SecKey {
+  let query: [String: Any] = [
+    kSecClass as String: kSecClassKey,
+    kSecAttrApplicationTag as String: Data(tag.utf8),
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+    kSecReturnRef as String: true,
+    kSecMatchLimit as String: kSecMatchLimitOne,
+  ]
+  var result: CFTypeRef?
+  guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+        let key = result as! SecKey? else { try fail("SECKEY_NOT_FOUND") }
+  return key
+}
+
+private func spki(_ publicKey: SecKey) throws -> Data {
+  var error: Unmanaged<CFError>?
+  guard let raw = SecKeyCopyExternalRepresentation(publicKey, &error) as Data?, raw.count == 65 else {
+    try fail("SECKEY_PUBLIC_EXPORT_FAILED")
+  }
+  return Data([0x30,0x59,0x30,0x13,0x06,0x07,0x2a,0x86,0x48,0xce,0x3d,0x02,0x01,
+    0x06,0x08,0x2a,0x86,0x48,0xce,0x3d,0x03,0x01,0x07,0x03,0x42,0x00]) + raw
+}
+
+private func identity(_ key: SecKey) throws -> (String, String) {
+  guard let publicKey = SecKeyCopyPublicKey(key) else { try fail("SECKEY_PUBLIC_KEY_FAILED") }
+  let der = try spki(publicKey)
+  let digest = SHA256.hash(data: der).map { String(format: "%02x", $0) }.joined()
+  let base64 = der.base64EncodedString(options: [.lineLength64Characters, .endLineWithLineFeed])
+  return ("temu-p256-" + digest.prefix(20),
+    "-----BEGIN PUBLIC KEY-----\n" + base64 + "-----END PUBLIC KEY-----\n")
+}
+
+private func createKey() throws -> (SecKey, String) {
+  let tag = keyService + "." + UUID().uuidString.lowercased()
+  let attributes: [String: Any] = [
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeySizeInBits as String: 256,
+    kSecPrivateKeyAttrs as String: [
+      kSecAttrIsPermanent as String: true,
+      kSecAttrIsExtractable as String: false,
+      kSecAttrApplicationTag as String: Data(tag.utf8),
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+    ],
+  ]
+  var error: Unmanaged<CFError>?
+  guard let key = SecKeyCreateRandomKey(attributes as CFDictionary, &error) else {
+    try fail("SECKEY_CREATE_FAILED")
+  }
+  return (key, tag)
+}
+
+private func initialize(rotate: Bool) throws -> [String: Any?] {
+  let old = try? readLineage()
+  if !rotate && old != nil { try fail("SECKEY_ALREADY_INITIALIZED") }
+  if rotate && old == nil { try fail("SECKEY_ROTATION_SOURCE_MISSING") }
+  let (key, tag) = try createKey()
+  let (keyId, publicKeyPem) = try identity(key)
+  let graceUntil = old == nil ? nil : ISO8601DateFormatter().string(
+    from: Date().addingTimeInterval(15 * 60))
+  try writeLineage(Lineage(contract: "temu_collector_seckey_lineage_v2",
+    currentKeyId: keyId, currentTag: tag,
+    previousKeyId: old?.currentKeyId, previousTag: old?.currentTag,
+    graceUntil: graceUntil))
+  return ["keyId": keyId, "publicKeyPem": publicKeyPem,
+    "previousKeyId": old?.currentKeyId, "graceUntil": graceUntil]
+}
+
+private func p1363(_ der: Data) throws -> Data {
+  let bytes = [UInt8](der)
+  guard bytes.count >= 8, bytes[0] == 0x30, Int(bytes[1]) + 2 == bytes.count,
+        bytes[2] == 0x02 else { try fail("SECKEY_SIGNATURE_ENCODING_INVALID") }
+  let rLength = Int(bytes[3]); let rStart = 4; let sMarker = rStart + rLength
+  guard rLength > 0, sMarker + 2 <= bytes.count, bytes[sMarker] == 0x02 else {
+    try fail("SECKEY_SIGNATURE_ENCODING_INVALID")
+  }
+  let sLength = Int(bytes[sMarker + 1]); let sStart = sMarker + 2
+  guard sLength > 0, sStart + sLength == bytes.count else {
+    try fail("SECKEY_SIGNATURE_ENCODING_INVALID")
+  }
+  func scalar(_ slice: ArraySlice<UInt8>) throws -> [UInt8] {
+    var value = Array(slice)
+    while value.count > 32 && value.first == 0 { value.removeFirst() }
+    guard value.count <= 32 else { try fail("SECKEY_SIGNATURE_ENCODING_INVALID") }
+    return Array(repeating: 0, count: 32 - value.count) + value
+  }
+  return Data(try scalar(bytes[rStart..<(rStart + rLength)])
+    + scalar(bytes[sStart..<(sStart + sLength)]))
+}
+
+private func signCurrent() throws -> [String: Any] {
+  let lineage = try readLineage()
+  let message = FileHandle.standardInput.readDataToEndOfFile()
+  guard !message.isEmpty && message.count <= 32_768 else { try fail("SECKEY_MESSAGE_INVALID") }
+  let key = try privateKey(tag: lineage.currentTag)
+  guard SecKeyIsAlgorithmSupported(key, .sign, .ecdsaSignatureMessageX962SHA256) else {
+    try fail("SECKEY_ALGORITHM_UNAVAILABLE")
+  }
+  var error: Unmanaged<CFError>?
+  guard let der = SecKeyCreateSignature(key,
+    .ecdsaSignatureMessageX962SHA256, message as CFData, &error) as Data? else {
+    try fail("SECKEY_SIGN_FAILED")
+  }
+  let signature = try p1363(der)
+  return ["keyId": lineage.currentKeyId, "signature": signature.base64EncodedString()]
+}
+
+private func revoke(_ keyId: String) throws -> [String: Any] {
+  var lineage = try readLineage()
+  let tag: String?
+  if lineage.currentKeyId == keyId { tag = lineage.currentTag }
+  else if lineage.previousKeyId == keyId { tag = lineage.previousTag }
+  else { tag = nil }
+  guard let exactTag = tag else { try fail("SECKEY_REVOKE_SCOPE_INVALID") }
+  let query: [String: Any] = [
+    kSecClass as String: kSecClassKey,
+    kSecAttrApplicationTag as String: Data(exactTag.utf8),
+    kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+    kSecAttrKeyClass as String: kSecAttrKeyClassPrivate,
+  ]
+  guard SecItemDelete(query as CFDictionary) == errSecSuccess else {
+    try fail("SECKEY_REVOKE_FAILED")
+  }
+  if lineage.previousKeyId == keyId {
+    lineage.previousKeyId = nil; lineage.previousTag = nil; lineage.graceUntil = nil
+    try writeLineage(lineage)
+  }
+  return ["ok": true, "revokedKeyId": keyId]
+}
+
+do {
+  let arguments = Array(CommandLine.arguments.dropFirst())
+  let value: [String: Any?]
+  if arguments == ["initialize"] { value = try initialize(rotate: false) }
+  else if arguments == ["rotate"] { value = try initialize(rotate: true) }
+  else if arguments.count == 2 && arguments[0] == "sign" {
+    let signed = try signCurrent()
+    guard signed["keyId"] as? String == arguments[1] else { try fail("SECKEY_KEY_ID_CHANGED") }
+    value = signed
+  } else if arguments.count == 2 && arguments[0] == "revoke" {
+    value = try revoke(arguments[1])
+  } else { try fail("SECKEY_ARGUMENT_INVALID") }
+  let data = try JSONSerialization.data(withJSONObject: value.compactMapValues { $0 })
+  FileHandle.standardOutput.write(data)
+  FileHandle.standardOutput.write(Data([0x0a]))
+} catch HelperFailure.failed(let code) {
+  FileHandle.standardError.write(Data(("{\"ok\":false,\"code\":\"" + code + "\"}\n").utf8))
+  exit(1)
+} catch {
+  FileHandle.standardError.write(Data("{\"ok\":false,\"code\":\"SECKEY_HELPER_FAILED\"}\n".utf8))
+  exit(1)
+}

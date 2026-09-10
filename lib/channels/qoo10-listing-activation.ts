@@ -489,7 +489,8 @@ export function verifyQoo10S1ActivationReadback(input: {
         providerStatus: "", imageCount: 0, checks: {
           identityVerified: false, statusVerified: false, sellerCodeVerified: false,
           localeVerified: false, fingerprintVerified: false, imageCountVerified: false,
-          sellerAccountIdentityVerified: false, categoryVerified: false, titleVerified: false,
+          sellerAccountIdentityVerified: false, categoryVerified: false, catalogVerified: false,
+          titleVerified: false,
           shippingVerified: false, priceQuantityVerified: false, representativeImageVerified: false,
           detailImageDigestVerified: false,
         }

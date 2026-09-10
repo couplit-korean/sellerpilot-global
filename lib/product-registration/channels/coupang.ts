@@ -31,6 +31,60 @@ import {
   inventoryQuantityVerificationStep,
 } from "../execution-shared";
 
+function coupangCreateLookupHasContinuation(data: Record<string, unknown>) {
+  const nextToken = data.nextToken;
+  const hasNext = data.hasNext;
+  return (hasNext !== undefined && hasNext !== false)
+    || (nextToken !== undefined && nextToken !== null && String(nextToken).trim() !== "");
+}
+
+async function recoverCoupangCreateRemoteId(
+  input: ExecuteInput,
+  body: Record<string, unknown>,
+  vendorId: string,
+) {
+  const sellerSkus = objectArray(body.items).map((item) =>
+    String(item.externalVendorSku ?? "").trim(),
+  );
+  if (!sellerSkus.length
+    || sellerSkus.some((sellerSku) => !sellerSku)
+    || new Set(sellerSkus).size !== sellerSkus.length) {
+    return "";
+  }
+
+  let recoveredRemoteId = "";
+  for (const sellerSku of sellerSkus) {
+    const remote = await coupangRequest({
+      payload: input.payload,
+      method: "GET",
+      path: `/v2/providers/seller_api/apis/api/v1/marketplace/seller-products/external-vendor-sku-codes/${pathSegment(sellerSku)}`,
+    });
+    if (!remote.response.ok
+      || remote.data.code !== "SUCCESS"
+      || !Array.isArray(remote.data.data)
+      || remote.data.data.length !== 1
+      || coupangCreateLookupHasContinuation(remote.data)) {
+      return "";
+    }
+    const match = remote.data.data[0];
+    if (!match || typeof match !== "object" || Array.isArray(match)) return "";
+    const sellerProduct = match as Record<string, unknown>;
+    const sellerProductIdText = String(sellerProduct.sellerProductId ?? "").trim();
+    const sellerProductId = Number(sellerProductIdText);
+    const returnedSellerSku = String(sellerProduct.externalVendorSku ?? "").trim();
+    if (String(sellerProduct.vendorId ?? "").trim() !== vendorId
+      || !/^\d+$/u.test(sellerProductIdText)
+      || !Number.isSafeInteger(sellerProductId)
+      || sellerProductId <= 0
+      || (returnedSellerSku && returnedSellerSku !== sellerSku)
+      || (recoveredRemoteId && recoveredRemoteId !== sellerProductIdText)) {
+      return "";
+    }
+    recoveredRemoteId = sellerProductIdText;
+  }
+  return recoveredRemoteId;
+}
+
 export async function coupangListingResultWithPublicationReadback(
   input: ExecuteInput,
   steps: ChannelOperationStep[],
@@ -276,24 +330,69 @@ export async function executeCoupang(input: ExecuteInput) {
       "resumeRemoteId",
       false,
     );
-    const writeRemote = resumeRemoteId
-      ? null
-      : await coupangRequest({
-        payload: input.payload,
-        method: "POST",
-        path: sellerProductsPath,
-        body,
-      });
+    let writeRemote: Awaited<ReturnType<typeof coupangRequest>> | null = null;
+    let writeError: unknown;
+    if (!resumeRemoteId) {
+      const exactBoundaryRequired = Object.hasOwn(
+        input.arguments,
+        "sellerpilotCoupangCreateTransmission",
+      );
+      if (exactBoundaryRequired && !input.providerMutationHooks) {
+        throw new Error("COUPANG_CREATE_PROVIDER_BODY_FENCE_REQUIRED");
+      }
+      try {
+        if (input.providerMutationHooks) {
+          await input.providerMutationHooks.assertLeaseHealthy();
+          await input.providerMutationHooks.begin({ providerBody: body });
+          await input.providerMutationHooks.assertLeaseHealthy();
+        }
+        writeRemote = await coupangRequest({
+          payload: input.payload,
+          method: "POST",
+          path: sellerProductsPath,
+          body,
+        });
+      } catch (error) {
+        writeError = error;
+      }
+    }
     const responseId =
       writeRemote &&
         (typeof writeRemote.data.data === "number" ||
           typeof writeRemote.data.data === "string")
         ? String(writeRemote.data.data)
         : undefined;
+    let recoveredRemoteId = "";
+    if (!resumeRemoteId && !responseId) {
+      try {
+        recoveredRemoteId = await recoverCoupangCreateRemoteId(
+          input,
+          body,
+          vendorId,
+        );
+      } catch {
+        // The provider result remains uncertain. Preserve the original write
+        // failure so the gateway records reconciliation_required and never
+        // retries CREATE blindly.
+      }
+      if (!recoveredRemoteId && writeError) throw writeError;
+    }
     // Only a provider response or the explicit persisted resume target identifies
-    // a created resource. A caller's body ID is never evidence of CREATE.
-    const remoteId = resumeRemoteId || responseId;
-    const writeStep: ChannelOperationStep = writeRemote
+    // a created resource. After an uncertain POST, every exact seller SKU must
+    // resolve to one authenticated-vendor seller product before GET-only resume.
+    // A caller's body ID is never evidence of CREATE.
+    const remoteId = resumeRemoteId || responseId || recoveredRemoteId;
+    const writeStep: ChannelOperationStep = recoveredRemoteId
+      ? {
+        name: "listing.create-reconciled",
+        ok: true,
+        status: 200,
+        data: {
+          sellerProductId: recoveredRemoteId,
+          sellerpilotReconciliation: "COUPANG_EXACT_EXTERNAL_VENDOR_SKU_BOUND",
+        },
+      }
+      : writeRemote
       ? step(input.operation, writeRemote)
       : {
         name: "listing.resume",

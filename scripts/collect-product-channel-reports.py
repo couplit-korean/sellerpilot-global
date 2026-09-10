@@ -23,6 +23,45 @@ def atomic_write(path, data):
             os.unlink(temporary)
 
 
+def compact_non_actionable_pending_items(state, now):
+    """Supersede old status revisions and legacy hidden scratch snapshots.
+
+    Frozen submissions remain pending until the coordinator explicitly reviews
+    them. Snapshots are never deleted.
+    """
+    superseded = 0
+    latest_status = {}
+    for identity, item in state["items"].items():
+        if item.get("kind") != "status":
+            continue
+        key = (item.get("channel"), item.get("relativePath"))
+        candidate = (item.get("observedAt", ""), identity)
+        if key not in latest_status or candidate > latest_status[key]:
+            latest_status[key] = candidate
+
+    for identity, item in state["items"].items():
+        if item.get("state") != "pending":
+            continue
+        relative = Path(item.get("relativePath", ""))
+        hidden_scratch = any(part.startswith(".") for part in relative.parts)
+        status_key = (item.get("channel"), item.get("relativePath"))
+        older_status = (
+            item.get("kind") == "status"
+            and latest_status.get(status_key, ("", identity))[1] != identity
+        )
+        if not hidden_scratch and not older_status:
+            continue
+        item["state"] = "superseded"
+        item["reviewedAt"] = now
+        item["note"] = (
+            "Legacy hidden scratch path; snapshot retained and excluded from the actionable inbox"
+            if hidden_scratch
+            else "Superseded by a newer status revision for the same channel and path"
+        )
+        superseded += 1
+    return superseded
+
+
 def update_inbox(registry_path, state_dir, acknowledgement=None):
     registry = json.loads(Path(registry_path).read_text())
     state_dir = Path(state_dir)
@@ -78,6 +117,7 @@ def update_inbox(registry_path, state_dir, acknowledgement=None):
                     "state": "pending", "kind": "status" if path.name in {"status.md", "status.json"} else "submission",
                 }
                 added.append(identity)
+        auto_superseded = compact_non_actionable_pending_items(state, now)
         if acknowledgement:
             identity, decision, note = acknowledgement
             if identity not in state["items"] or decision not in {"reviewed", "integrated", "blocked", "superseded"} or not note.strip():
@@ -86,7 +126,13 @@ def update_inbox(registry_path, state_dir, acknowledgement=None):
             item["state"], item["note"], item["reviewedAt"] = decision, note, now
         state["channels"], state["scannedAt"] = channels, now
         atomic_write(index, (json.dumps(state, ensure_ascii=False, indent=2) + "\n").encode())
-        return {"index": str(index), "added": len(added), "pending": sum(i["state"] == "pending" for i in state["items"].values()), "channels": channels}
+        return {
+            "index": str(index),
+            "added": len(added),
+            "autoSuperseded": auto_superseded,
+            "pending": sum(i["state"] == "pending" for i in state["items"].values()),
+            "channels": channels,
+        }
 
 
 if __name__ == "__main__":

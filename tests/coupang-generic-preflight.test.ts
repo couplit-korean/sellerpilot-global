@@ -170,7 +170,7 @@ async function prepareGeneric(options: {
       return Response.json({ code: "SUCCESS", data: [] });
     }
     if (pathname.endsWith("/shipping-place/outbound")) return Response.json(options.outbound ?? outboundResponse());
-    if (pathname.includes("/returnShippingCenters")) {
+    if (pathname.includes("/return/shipping-places/center-code")) {
       return Response.json(options.returnCenter ?? returnCenterResponse());
     }
     if (pathname.endsWith("/status")) {

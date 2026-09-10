@@ -1,0 +1,415 @@
+diff --git a/app/api/admin/channel-operations/route.ts b/app/api/admin/channel-operations/route.ts
+index 2f66da8..0b97c5e 100644
+--- a/app/api/admin/channel-operations/route.ts
++++ b/app/api/admin/channel-operations/route.ts
+@@ -8,7 +8,7 @@ import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/l
+ import { bindLazadaMyListingCreateContext, buildLazadaMyListingCreateContext, lazadaMySellerModeEvidenceFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
+ import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
+ import { bindCoupangCreateSourceIdentity } from "../../../../lib/channels/coupang-create-source-identity";
+-import { bindCoupangCreateSourceRevision, coupangCreateSourceRevisionArgument } from "../../../../lib/product-registration/coupang/create-source-revision";
++import { bindCoupangCreateSourceRevision, coupangCreateSourceRevisionArgument, coupangCreateTransmissionArgument, coupangCreateTransmissionContract } from "../../../../lib/product-registration/coupang/create-source-revision";
+ import { buildCoupangCreateReadinessSource, coupangCreatePublishContextWithApprovedManifest } from "../../../../lib/product-registration/coupang/create-readiness-source";
+ import { coupangRequest, runWithProviderReadOnlyTransport } from "../../../../lib/channels/protocols";
+ import { hasRetiredProductRecovery } from "../../../../lib/channels/retired-product-recovery";
+@@ -2442,6 +2442,35 @@ export async function POST(request: NextRequest) {
+           return prepared;
+         })
+         : effectiveArguments;
++      if (channel === "coupang" && operation === "listing.create") {
++        const { data: transmissionData, error: transmissionError } =
++          await serviceClient.rpc("sellerpilot_service_record_coupang_create_transmission", {
++            p_owner_id: userData.user.id,
++            p_product_id: parsed.data.productId!,
++            p_credential_id: parsed.data.credentialId,
++            p_attempt_id: attemptId,
++            p_arguments: gatewayArguments,
++          });
++        const transmission = isRecord(transmissionData) ? transmissionData : null;
++        const sourceRevision = isRecord(
++          gatewayArguments[coupangCreateSourceRevisionArgument],
++        ) ? gatewayArguments[coupangCreateSourceRevisionArgument] : null;
++        if (transmissionError
++          || transmission?.contract !== coupangCreateTransmissionContract
++          || typeof transmission?.transmissionId !== "string"
++          || transmission?.attemptId !== attemptId
++          || transmission?.sourceSnapshotId !== sourceRevision?.officialReadSnapshotId
++          || transmission?.sourceSnapshotDigestSha256
++            !== sourceRevision?.officialReadSnapshotDigestSha256
++          || typeof transmission?.transmissionBodySha256 !== "string"
++          || typeof transmission?.transmissionDigestSha256 !== "string") {
++          throw new Error("COUPANG_CREATE_TRANSMISSION_SNAPSHOT_UNAVAILABLE");
++        }
++        gatewayArguments = {
++          ...gatewayArguments,
++          [coupangCreateTransmissionArgument]: transmission,
++        };
++      }
+       if (channel === "ebay"
+         && operation === "listing.create"
+         && gatewayArguments.sellerpilotExternalDetail !== undefined) {
+diff --git a/app/api/channel-gateway/worker/begin-mutation/route.ts b/app/api/channel-gateway/worker/begin-mutation/route.ts
+index 74faa46..52280e0 100644
+--- a/app/api/channel-gateway/worker/begin-mutation/route.ts
++++ b/app/api/channel-gateway/worker/begin-mutation/route.ts
+@@ -14,6 +14,7 @@ export const runtime = "nodejs";
+ const mutationSchema = z.object({
+   jobId: z.string().uuid(),
+   claimToken: z.string().uuid(),
++  providerBody: z.record(z.string(), z.unknown()).optional(),
+ });
+ 
+ function providerMutationStateUncertainResponse() {
+@@ -48,12 +49,16 @@ export async function POST(request: Request) {
+     global: { fetch: createBoundedSupabaseFetch() },
+   });
+   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
++  const exactCoupangCreate = parsed.data.providerBody !== undefined;
+   const { data, error } = await serviceClient.rpc(
+-    "sellerpilot_service_begin_gateway_provider_mutation",
++    exactCoupangCreate
++      ? "sellerpilot_service_begin_coupang_create_provider_mutation"
++      : "sellerpilot_service_begin_gateway_provider_mutation",
+     {
+       p_token_hash: tokenHash,
+       p_job_id: parsed.data.jobId,
+       p_claim_token: parsed.data.claimToken,
++      ...(exactCoupangCreate ? { p_provider_body: parsed.data.providerBody } : {}),
+     },
+   );
+   if (error) {
+diff --git a/lib/channels/commerce-completion.ts b/lib/channels/commerce-completion.ts
+index 6fde439..809fdeb 100644
+--- a/lib/channels/commerce-completion.ts
++++ b/lib/channels/commerce-completion.ts
+@@ -52,6 +52,7 @@ function listingLineageSuccessPayload(result: ListingLineageResult) {
+       sellerSkus: evidence.sellerSkus,
+       vendorId: evidence.vendorId,
+       sellerProductItemIds: evidence.sellerProductItemIds,
++      itemBindings: evidence.itemBindings,
+       ...(result.publicationStateContract
+         && result.publicationIntent
+         && result.publicationFulfilled !== undefined
+diff --git a/lib/channels/commerce-provider.ts b/lib/channels/commerce-provider.ts
+index e20f63c..0fdcfde 100644
+--- a/lib/channels/commerce-provider.ts
++++ b/lib/channels/commerce-provider.ts
+@@ -500,6 +500,8 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
+     const preparedCredential = await prepareCredential(input, rawArguments);
+     const delayedEbayCreateBoundary = input.job.channel === "ebay"
+       && input.job.operation === "listing.create";
++    const delayedCoupangCreateBoundary = input.job.channel === "coupang"
++      && input.job.operation === "listing.create";
+     if (delayedEbayCreateBoundary) {
+       if (!readProviderAccountIdentity(preparedCredential.credential, "ebay")) {
+         throw new Error("EBAY_CREATE_SELLER_IDENTITY_REQUIRED");
+@@ -554,6 +556,7 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
+       && !delayedTemuActivationBoundary
+       && !delayedQoo10CreateBoundary
+       && !delayedEbayCreateBoundary
++      && !delayedCoupangCreateBoundary
+       && !strictShopeeSgCreate) {
+       await input.hooks.beginProviderMutation();
+       await input.hooks.assertLeaseHealthy();
+@@ -565,10 +568,11 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
+       payload: preparedCredential.credential,
+       arguments: operationArguments,
+       environment: input.job.environment,
+-      ...(delayedEbayCreateBoundary || delayedQoo10CreateBoundary
++      ...(delayedEbayCreateBoundary || delayedQoo10CreateBoundary || delayedCoupangCreateBoundary
+         ? {
+             providerMutationHooks: {
+-              begin: () => input.hooks.beginProviderMutation(),
++              begin: (boundary?: { providerBody?: Record<string, unknown> }) =>
++                input.hooks.beginProviderMutation(boundary),
+               assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+             },
+           }
+diff --git a/lib/channels/commerce-worker-completion.ts b/lib/channels/commerce-worker-completion.ts
+index cc58c7a..df1e6a3 100644
+--- a/lib/channels/commerce-worker-completion.ts
++++ b/lib/channels/commerce-worker-completion.ts
+@@ -73,6 +73,7 @@ type ListingLineageWorkerResult = {
+     sellerSkus?: string[];
+     vendorId?: string;
+     sellerProductItemIds?: string[];
++    itemBindings?: Array<{ sellerSku: string; sellerProductItemId: string }>;
+     reconciliationContract?: "coupang_durable_create_reconciliation_v1";
+ 
+     reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
+@@ -125,6 +126,7 @@ function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
+         sellerSkus: evidence.sellerSkus,
+         vendorId: evidence.vendorId,
+         sellerProductItemIds: evidence.sellerProductItemIds,
++        itemBindings: evidence.itemBindings,
+         ...(result.publicationStateContract
+           && result.publicationIntent
+           && result.publicationFulfilled !== undefined
+diff --git a/lib/channels/gateway-contract.ts b/lib/channels/gateway-contract.ts
+index 3185c75..80938d4 100644
+--- a/lib/channels/gateway-contract.ts
++++ b/lib/channels/gateway-contract.ts
+@@ -635,6 +635,10 @@ const coupangDurableCreateReconciliationResultSchema = z.object({
+     sellerSkus: z.array(z.string().trim().min(1).max(160)).min(1).max(100),
+     vendorId: z.string().min(1).max(160),
+     sellerProductItemIds: z.array(z.string().regex(/^[1-9]\d{0,19}$/u)).min(1).max(100),
++    itemBindings: z.array(z.object({
++      sellerSku: z.string().trim().min(1).max(160),
++      sellerProductItemId: z.string().regex(/^[1-9]\d{0,19}$/u),
++    }).strict()).min(1).max(100),
+     reconciliationContract: z.literal("coupang_durable_create_reconciliation_v1"),
+   }).strict(),
+   steps: z.array(z.object({
+@@ -648,8 +652,12 @@ const coupangDurableCreateReconciliationResultSchema = z.object({
+   if (value.evidence.expectedRemoteId !== value.evidence.verifiedRemoteId
+     || value.evidence.targetId !== value.evidence.vendorId
+     || value.evidence.sellerSkus.length !== value.evidence.sellerProductItemIds.length
++    || value.evidence.itemBindings.length !== value.evidence.sellerSkus.length
+     || new Set(value.evidence.sellerSkus).size !== value.evidence.sellerSkus.length
+     || new Set(value.evidence.sellerProductItemIds).size !== value.evidence.sellerProductItemIds.length
++    || value.evidence.itemBindings.some((binding, index) =>
++      binding.sellerSku !== value.evidence.sellerSkus[index]
++      || binding.sellerProductItemId !== value.evidence.sellerProductItemIds[index])
+     || value.steps.length < value.evidence.sellerSkus.length + 1) {
+     context.addIssue({ code: "custom", message: "invalid Coupang durable CREATE reconciliation result" });
+   }
+diff --git a/lib/channels/marketplace-images.ts b/lib/channels/marketplace-images.ts
+index ac592fb..44f7f57 100644
+--- a/lib/channels/marketplace-images.ts
++++ b/lib/channels/marketplace-images.ts
+@@ -699,12 +699,23 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
+     return next;
+   };
+   const assets = record(next.sellerpilotAssets);
+-  // Image metadata is consumed by this server-side stage and must not enter the
+-  // provider HTTP payload. The separately verified shipping contract is still needed
+-  // by the worker's final pre-provider guard, so preserve only that subdocument.
++  // Keep immutable approval identities in the gateway envelope so the worker can
++  // authenticate the image-prepared transmission. Only URL-bearing source fields
++  // are consumed here. Channel executors send their provider body, not this envelope.
+   const shipping = marketplaceShippingEvidence(assets?.shipping);
+   delete next.sellerpilotAssets;
+-  if (shipping) next.sellerpilotAssets = { shipping };
++  if (channel === "coupang" && assets) {
++    next.sellerpilotAssets = {
++      approvedDetailPageVersion: assets.approvedDetailPageVersion,
++      detailImageManifestDigest: assets.detailImageManifestDigest,
++      approvedDetailImagePaths: assets.approvedDetailImagePaths,
++      approvedDetailImageSha256s: assets.approvedDetailImageSha256s,
++      detailImageRoles: assets.detailImageRoles,
++      ...(shipping ? { shipping } : {}),
++    };
++  } else if (shipping) {
++    next.sellerpilotAssets = { shipping };
++  }
+   const manualSourceMode = assets?.contentMode === "manual_mvp"
+     && assets.detailAssetMode === "manual_source";
+   if (channel === "qoo10"
+diff --git a/lib/channels/provider-execution-contract.ts b/lib/channels/provider-execution-contract.ts
+index 883f432..632c7d2 100644
+--- a/lib/channels/provider-execution-contract.ts
++++ b/lib/channels/provider-execution-contract.ts
+@@ -4,7 +4,10 @@ export type ServerlessGatewayExecutionHooks = {
+   beginCredentialMutation: (target?: CredentialRefreshTarget) => Promise<void>;
+   beginOAuthProviderCall?: () => Promise<void>;
+   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
+-  beginProviderMutation: (options?: { fresh?: boolean }) => Promise<void>;
++  beginProviderMutation: (options?: {
++    fresh?: boolean;
++    providerBody?: Record<string, unknown>;
++  }) => Promise<void>;
+   readShopeeSgCreateStageState?: () => Promise<unknown>;
+   beginShopeeSgCreateStage?: (input: {
+     sequence: number;
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+index 5321a3e..0ae6dfd 100644
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -52,6 +52,8 @@ const PREPARE_SHOPEE_TARGET_REFRESH_RPC = "sellerpilot_service_prepare_cs_shopee
+ const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
+   "sellerpilot_service_mark_lazada_oauth_provider_call_started";
+ const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
++const BEGIN_COUPANG_CREATE_PROVIDER_MUTATION_RPC =
++  "sellerpilot_service_begin_coupang_create_provider_mutation";
+ const READ_SHOPEE_SG_CREATE_STAGE_STATE_RPC =
+   "sellerpilot_service_read_shopee_sg_create_stage_state_v1";
+ const BEGIN_SHOPEE_SG_CREATE_STAGE_RPC =
+@@ -898,6 +900,20 @@ export async function runOneServerlessCsGatewayJob(
+     },
+     beginProviderMutation: async (options) => {
+       await assertLeaseHealthy();
++      if (job.channel === "coupang" && job.operation === "listing.create") {
++        if (!options?.providerBody) {
++          throw new Error("COUPANG_CREATE_PROVIDER_BODY_FENCE_REQUIRED");
++        }
++        const begun = await callRpc(dependencies, BEGIN_COUPANG_CREATE_PROVIDER_MUTATION_RPC, {
++          p_token_hash: gatewayTokenHash,
++          p_job_id: job.id,
++          p_claim_token: job.claim_token,
++          p_provider_body: options.providerBody,
++        });
++        if (begun.error) throw new GatewayProviderMutationStateUncertainError();
++        if (begun.data !== true) throw new GatewayOwnershipLostError();
++        providerMutationFenced = true;
++      }
+       if (job.channel === "qoo10" && job.operation === "listing.create") {
+         const argumentsValue = recordValue(job.request.arguments);
+         const binding = argumentsValue
+@@ -923,6 +939,7 @@ export async function runOneServerlessCsGatewayJob(
+       }
+       // The owning provider can require a fresh durable fence for each write.
+       if ((options?.fresh || !providerMutationFenced)
++          && !(job.channel === "coupang" && job.operation === "listing.create")
+           && !(job.channel === "qoo10" && job.operation === "listing.create")) {
+         await beginProviderMutation(dependencies, gatewayTokenHash, job);
+         providerMutationFenced = true;
+diff --git a/lib/product-registration/channels/coupang.ts b/lib/product-registration/channels/coupang.ts
+index 5378da6..24d0162 100644
+--- a/lib/product-registration/channels/coupang.ts
++++ b/lib/product-registration/channels/coupang.ts
+@@ -333,7 +333,19 @@ export async function executeCoupang(input: ExecuteInput) {
+     let writeRemote: Awaited<ReturnType<typeof coupangRequest>> | null = null;
+     let writeError: unknown;
+     if (!resumeRemoteId) {
++      const exactBoundaryRequired = Object.hasOwn(
++        input.arguments,
++        "sellerpilotCoupangCreateTransmission",
++      );
++      if (exactBoundaryRequired && !input.providerMutationHooks) {
++        throw new Error("COUPANG_CREATE_PROVIDER_BODY_FENCE_REQUIRED");
++      }
+       try {
++        if (input.providerMutationHooks) {
++          await input.providerMutationHooks.assertLeaseHealthy();
++          await input.providerMutationHooks.begin({ providerBody: body });
++          await input.providerMutationHooks.assertLeaseHealthy();
++        }
+         writeRemote = await coupangRequest({
+           payload: input.payload,
+           method: "POST",
+diff --git a/lib/product-registration/execution-shared.ts b/lib/product-registration/execution-shared.ts
+index 971307d..de73e11 100644
+--- a/lib/product-registration/execution-shared.ts
++++ b/lib/product-registration/execution-shared.ts
+@@ -101,7 +101,7 @@ export type ExecuteInput = {
+   arguments: Record<string, unknown>;
+   environment: "sandbox" | "production";
+   providerMutationHooks?: {
+-    begin: () => Promise<void>;
++    begin: (input?: { providerBody?: Record<string, unknown> }) => Promise<void>;
+     assertLeaseHealthy: () => Promise<void>;
+     gatewayCredentialId?: string;
+     readShopeeSgCreateStageState?: () => Promise<unknown>;
+diff --git a/scripts/commerce-gateway-job.mjs b/scripts/commerce-gateway-job.mjs
+index 202c2cd..f5a0716 100644
+--- a/scripts/commerce-gateway-job.mjs
++++ b/scripts/commerce-gateway-job.mjs
+@@ -78,6 +78,21 @@ export async function processCommerceGatewayJob(job, {
+     },
+     onStarted: () => { externalWriteStarted = true; },
+   });
++  const markCoupangCreateStarted = async (boundary = {}) => {
++    const providerBody = boundary?.providerBody;
++    if (!providerBody || typeof providerBody !== "object" || Array.isArray(providerBody)) {
++      throw new Error("COUPANG_CREATE_PROVIDER_BODY_FENCE_REQUIRED");
++    }
++    await assertGatewayLeaseHealthy();
++    await persistWorkerCompletion(
++      "/api/channel-gateway/worker/begin-mutation",
++      { jobId: job.id, claimToken, providerBody },
++      "쿠팡 CREATE 최종 전송 본문 경계 저장 실패",
++      GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
++    );
++    externalWriteStarted = true;
++    await assertGatewayLeaseHealthy();
++  };
+   const markExternalMutationStarted = async () => {
+     externalWriteStarted = true;
+     credentialMutationInFlight = true;
+@@ -389,6 +404,8 @@ export async function processCommerceGatewayJob(job, {
+             assertLeaseHealthy: assertGatewayLeaseHealthy,
+             beginProviderMutation: qoo10CreateBinding
+               ? markQoo10CreateStarted
++              : job.channel === "coupang" && job.operation === "listing.create"
++                ? markCoupangCreateStarted
+               : markExternalWriteStarted,
+           },
+           ...(shopeeShopCredential ? { shopeeShopCredential } : {}),
+@@ -407,12 +424,15 @@ export async function processCommerceGatewayJob(job, {
+         && shopeeSgListingCreateRequested(operationArguments);
+       const strictQoo10Create = job.channel === "qoo10"
+         && job.operation === "listing.create";
++      const strictCoupangCreate = job.channel === "coupang"
++        && job.operation === "listing.create";
+       if (strictQoo10Create && !qoo10CreateBinding) {
+         throw new Error("QOO10_CREATE_FULFILLMENT_DURABLE_CONTEXT_REQUIRED");
+       }
+       if (writeChannelOperations.has(job.operation)
+           && !strictShopeeSgCreate
+-          && !strictQoo10Create) {
++          && !strictQoo10Create
++          && !strictCoupangCreate) {
+         await markExternalWriteStarted();
+       }
+       result = await executeCommerceOperation({
+@@ -422,12 +442,14 @@ export async function processCommerceGatewayJob(job, {
+         arguments: operationArguments,
+         environment: job.environment,
+         ...(shopeeShopCredential ? { shopeeShopCredential } : {}),
+-        ...(strictQoo10Create ? {
++        ...(strictQoo10Create || strictCoupangCreate ? {
+           signal: gatewayExecutionSignal,
+           providerMutationHooks: {
+             gatewayCredentialId: job.credential_id,
+             assertLeaseHealthy: assertGatewayLeaseHealthy,
+-            begin: markQoo10CreateStarted,
++            begin: strictCoupangCreate
++              ? markCoupangCreateStarted
++              : markQoo10CreateStarted,
+           },
+         } : strictShopeeSgCreate ? {
+           signal: gatewayExecutionSignal,
+diff --git a/tests/channel-gateway-worker-route-contract.test.mjs b/tests/channel-gateway-worker-route-contract.test.mjs
+index edcfb05..cb6b52d 100644
+--- a/tests/channel-gateway-worker-route-contract.test.mjs
++++ b/tests/channel-gateway-worker-route-contract.test.mjs
+@@ -136,6 +136,13 @@ test("gateway mutation fence separates a live gate denial from lost ownership",
+   assert.match(source.slice(preconditionFailure - 220), /GATEWAY_PROVIDER_MUTATION_NOT_STARTED/);
+ });
+ 
++test("local Coupang CREATE provider body selects the exact-body seal RPC", async () => {
++  const source = await readFile(beginMutationRouteUrl, "utf8");
++  assert.match(source, /providerBody: z\.record\(z\.string\(\), z\.unknown\(\)\)\.optional\(\)/);
++  assert.match(source, /exactCoupangCreate[\s\S]*sellerpilot_service_begin_coupang_create_provider_mutation[\s\S]*p_provider_body: parsed\.data\.providerBody/);
++  assert.match(source, /exactCoupangCreate[\s\S]*sellerpilot_service_begin_gateway_provider_mutation/);
++});
++
+ test("gateway mutation context errors preserve uncertain state instead of failing pre-provider", async () => {
+   const source = await readFile(beginMutationRouteUrl, "utf8");
+   const helper = source.indexOf("function providerMutationStateUncertainResponse");
+diff --git a/tests/worker-lifecycle-retry.test.mjs b/tests/worker-lifecycle-retry.test.mjs
+index 4eaccb7..0b76cd4 100644
+--- a/tests/worker-lifecycle-retry.test.mjs
++++ b/tests/worker-lifecycle-retry.test.mjs
+@@ -215,11 +215,11 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
+   assert.ok((gatewayProcess.match(/await assertGatewayLeaseHealthy\(\)/g) ?? []).length >= 10);
+   assert.match(
+     gatewayProcess,
+-    /prepareListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: qoo10CreateBinding[\s\S]*\? markQoo10CreateStarted[\s\S]*: markExternalWriteStarted/,
++    /prepareListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: qoo10CreateBinding[\s\S]*\? markQoo10CreateStarted[\s\S]*job\.channel === "coupang"[\s\S]*\? markCoupangCreateStarted[\s\S]*: markExternalWriteStarted/,
+   );
+   assert.match(
+     gatewayProcess,
+-    /strictQoo10Create[\s\S]*providerMutationHooks:\s*\{[\s\S]*gatewayCredentialId: job\.credential_id[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*begin: markQoo10CreateStarted/,
++    /strictQoo10Create \|\| strictCoupangCreate[\s\S]*providerMutationHooks:\s*\{[\s\S]*gatewayCredentialId: job\.credential_id[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*begin: strictCoupangCreate[\s\S]*\? markCoupangCreateStarted[\s\S]*: markQoo10CreateStarted/,
+   );
+   assert.match(listingRuntime, /prepareShopeeGlobalListing\(input\)[\s\S]*mediaMutationObserved: true/);
+   assert.match(listingRuntime, /await input\.hooks\.assertLeaseHealthy\(\);[\s\S]*await input\.hooks\.beginProviderMutation\(\);[\s\S]*await fetch/);
+@@ -241,7 +241,7 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
+   );
+   assert.match(
+     gatewayProcess,
+-    /if \(writeChannelOperations\.has\(job\.operation\)[\s\S]*&& !strictShopeeSgCreate[\s\S]*&& !strictQoo10Create\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeCommerceOperation/,
++    /if \(writeChannelOperations\.has\(job\.operation\)[\s\S]*&& !strictShopeeSgCreate[\s\S]*&& !strictQoo10Create[\s\S]*&& !strictCoupangCreate\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeCommerceOperation/,
+   );
+   assert.doesNotMatch(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
+   assert.match(gatewayProcess, /status: "reconciliation_required"/);

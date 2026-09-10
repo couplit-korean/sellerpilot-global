@@ -1,0 +1,84 @@
+{
+  "version": "product-channel-status-v1",
+  "channel": "lazada",
+  "round": "r7",
+  "updatedAt": "2026-09-10T17:37:00+09:00",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-lazada-local-20260910",
+  "baselineSha": "0fb40d4c608e3ea1778743c8e99377352c39054a",
+  "ledger": "2/6",
+  "actualCreate": "0/8",
+  "state": {
+    "accountVerified": "unknown",
+    "requiredFieldsVerified": "unknown",
+    "localFlowPassed": true,
+    "integrated": false,
+    "providerCreated": false,
+    "remoteReadbackVerified": false
+  },
+  "r6Resubmitted": false,
+  "migration": "20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql",
+  "rpcIdentifierBytes": {
+    "sellerpilot_lzd_store_post_rcpt_r7": 34,
+    "sellerpilot_lzd_store_get_rcpt_r7": 33,
+    "sellerpilot_lzd_cas_current_src_r7": 34
+  },
+  "review69Counterexamples": {
+    "missingOfficialEvidence": "closed",
+    "orderSensitiveSkuCompare": "closed",
+    "shapeOnlyReadbackFabricatedStatus": "closed",
+    "updatedAtOnlyCasMissesDrift": "closed",
+    "getRecoverySynthesizesCreateProduct": "closed"
+  },
+  "gatewayCallsR7": true,
+  "gatewayReceiptRpcs": {
+    "postCreate": "sellerpilot_lzd_store_post_rcpt_r7",
+    "getRecovery": "sellerpilot_lzd_store_get_rcpt_r7"
+  },
+  "tests": {
+    "ownedTypescript": { "passed": 66, "failed": 0 },
+    "ownedPglite": { "passed": 3, "failed": 0 },
+    "ownedTotal": { "passed": 69, "failed": 0 },
+    "publicPathTypescript": { "passed": 7, "failed": 0 },
+    "total": { "passed": 76, "failed": 0 },
+    "migrationVersionCheck": "passed"
+  },
+  "commands": [
+    "node scripts/check-migration-version.mjs 20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql",
+    "node --import tsx --test tests/lazada-create-raw-readback-r7.test.ts tests/lazada-my-create-readiness.test.ts tests/lazada-my-create-postwrite.test.ts tests/lazada-my-create-prewrite.test.ts tests/lazada-my-create-contract.test.ts tests/lazada-create-seller-sku-absence.test.ts tests/lazada-my-create-evidence-producer.test.ts tests/lazada-my-create-readiness-builder.test.ts tests/lazada-my-listing-create-context.test.ts",
+    "node --test tests/lazada-create-raw-readback-r7-migration.test.mjs",
+    "node --import tsx --test tests/lazada-create-gateway-r7.test.ts"
+  ],
+  "changedFiles": [
+    "lib/product-registration/lazada/my-create-gateway-receipt.ts",
+    "lib/product-registration/lazada/my-create-raw-readback.ts",
+    "lib/product-registration/lazada/my-create-readiness.ts",
+    "lib/product-registration/lazada/my-create-prewrite.ts",
+    "lib/product-registration/lazada/my-create-postwrite.ts",
+    "lib/product-registration/channels/lazada.ts",
+    "lib/channels/commerce-completion.ts",
+    "lib/channels/commerce-provider.ts",
+    "lib/channels/commerce-worker-completion.ts",
+    "scripts/commerce-gateway-job.mjs",
+    "supabase/migrations/20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql",
+    "tests/lazada-create-gateway-r7.test.ts",
+    "tests/lazada-create-raw-readback-r7.test.ts",
+    "tests/lazada-create-raw-readback-r7-migration.test.mjs",
+    "tests/lazada-my-create-readiness.test.ts",
+    "tests/lazada-my-create-prewrite.test.ts",
+    "tests/lazada-my-create-postwrite.test.ts",
+    "tests/lazada-my-create-readiness-builder.test.ts",
+    "docs/product-channel-parallel/reports/lazada/status.md",
+    "docs/product-channel-parallel/reports/lazada/status.json"
+  ],
+  "commonPatchProposal": null,
+  "providerWrites": 0,
+  "operationalWrites": 0,
+  "oauthWrites": 0,
+  "commitPush": false,
+  "blocked": [
+    "independent review not run",
+    "actual CreateProduct and official GetProductItem remain 0",
+    "no commit/push/production SQL"
+  ],
+  "nextAction": "Independent reviewer re-runs the review69 counterexample tests, 45000 PGlite CAS, and public-path r7 call tests in this worktree. Do not resubmit r6."
+}

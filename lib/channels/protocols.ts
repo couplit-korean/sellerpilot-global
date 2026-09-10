@@ -276,7 +276,22 @@ export async function naverRequest(input: {
   path: string;
   query?: URLSearchParams;
   body?: unknown;
+  rawJsonBody?: string;
 }) {
+  if (input.body !== undefined && input.rawJsonBody !== undefined) {
+    throw new Error("NAVER_REQUEST_BODY_AMBIGUOUS");
+  }
+  if (input.rawJsonBody !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input.rawJsonBody);
+    } catch {
+      throw new Error("NAVER_REQUEST_RAW_JSON_INVALID");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("NAVER_REQUEST_RAW_JSON_INVALID");
+    }
+  }
   assertProviderReadOnlyTransport(
     input.method,
     input.method === "POST" && input.path === "/v1/products/search"
@@ -294,7 +309,9 @@ export async function naverRequest(input: {
       authorization: `Bearer ${input.accessToken}`,
       "user-agent": "SellerPilot-Naver-Commerce-Connector/1.0",
     },
-    body: input.body === undefined ? undefined : JSON.stringify(input.body),
+    body: input.rawJsonBody ?? (
+      input.body === undefined ? undefined : JSON.stringify(input.body)
+    ),
   });
   return readRemoteResponse(response);
 }
@@ -362,6 +379,15 @@ export async function temuRequest(input: {
     "bg.local.goods.publish.status.get",
     "bg.local.goods.detail.query",
     "temu.local.goods.sku.stock.query",
+    "bg.local.goods.category.recommend",
+    "bg.local.goods.cats.get",
+    "bg.local.goods.property.get",
+    "bg.local.goods.size.element.get",
+    "bg.local.goods.template.get",
+    "bg.local.goods.compliance.rules.get",
+    "bg.local.goods.compliance.extra.template.get",
+    "bg.local.goods.compliance.property.check",
+    "bg.freight.template.list.query",
   ]).has(input.type);
   assertProviderReadOnlyTransport("POST", readOnlyRpc ? "temu_read_rpc" : undefined);
   const appKey = textValue(input.payload, "app_key");
@@ -2056,6 +2082,31 @@ export async function elevenstSellerXmlTransport(input: {
   return { response, xml, bytes };
 }
 
+export type ElevenstXmlTransportEvidence = {
+  method: "GET" | "POST" | "PUT";
+  requestBytesSha256: string;
+  responseBodySha256: string;
+  responseBodyBytes: number;
+};
+
+export function elevenstXmlTransportEvidence(input: {
+  method: "GET" | "POST" | "PUT";
+  path: string;
+  body?: string;
+  bytes: ArrayBuffer;
+}): ElevenstXmlTransportEvidence {
+  return {
+    method: input.method,
+    requestBytesSha256: createHash("sha256")
+      .update(`${input.method}\n${input.path}\n${input.body ?? ""}`, "utf8")
+      .digest("hex"),
+    responseBodySha256: createHash("sha256")
+      .update(Buffer.from(input.bytes))
+      .digest("hex"),
+    responseBodyBytes: input.bytes.byteLength,
+  };
+}
+
 export async function elevenstSellerXmlRequest(input: {
   payload: SecretPayload;
   method: "GET" | "POST" | "PUT";
@@ -2063,6 +2114,12 @@ export async function elevenstSellerXmlRequest(input: {
   body?: string;
 }) {
   const { response, xml, bytes } = await elevenstSellerXmlTransport(input);
+  const transportEvidence = elevenstXmlTransportEvidence({
+    method: input.method,
+    path: input.path,
+    body: input.body,
+    bytes,
+  });
   const documentRoot = /^(?:\s*<\?xml[^>]*>\s*)?<([A-Za-z_][\w.:-]*)\b/u.exec(xml)?.[1] ?? "";
   const resultCode = elevenstNamespacedXmlValue(xml, "resultCode")
     || elevenstNamespacedXmlValue(xml, "ResultCode")
@@ -2120,6 +2177,7 @@ export async function elevenstSellerXmlRequest(input: {
     text: "",
     data: {
       accepted: response.ok && acceptedCode,
+      transportEvidence,
       ...(resultCode ? { resultCode: resultCode.slice(0, 80) } : {}),
       ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
       ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),

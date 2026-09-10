@@ -23,6 +23,10 @@ import { downloadMarketplaceImage } from "./marketplace-images";
 import { buildShopeeSignature, coupangRequest, fetchNaverAccessToken, lazadaRequest, naverRequest, providerFetch, readStoredNaverAccessToken, shopeeEnvironment, shopeeMerchantRequest, shopeeRequest, textValue, type SecretPayload } from "./protocols";
 import { bindSmartstoreUploadedProductImages, finalizeSmartstoreListingBody, smartstoreImageUploadPlan } from "./smartstore-image-contract";
 import { assertSmartstoreCreateBodyReady, assertSmartstoreCreateDraftReady, smartstoreListingCreateContract } from "./smartstore-listing-create-contract";
+import {
+  buildSmartstoreCreateTransport,
+  smartstoreCreateTransportArgument,
+} from "./smartstore-create-transport";
 import { assertSmartstoreUnitCapacity, smartstoreUpdateOriginProductWithPreservedUnitCapacity } from "./smartstore-unit-capacity";
 import { assertShopeeSgCreateProviderBinding, assertShopeeSgCurrentPrice, buildShopeeSgPreparedCreateEvidence, loadAuthoritativeKrwSgdUsdRate, shopeeSgExpectedCategoryPathVerified, shopeeSgListingCreateRequested, shopeeSgListingCreateExpectation } from "./shopee-sg-listing-create";
 import { parseCoupangNoticeEnvelope } from "./listing-preflight";
@@ -30,11 +34,16 @@ import { assertListingShippingReady, validatedCoupangShippingFees, validatedSmar
 import { prepareQoo10ShippingPreservedUpdate } from "./qoo10-update-shipping";
 import { prepareShopeeSgOfficialRequirements } from "../product-registration/shopee/provider-requirements";
 import { compileCoupangOptionItems } from "../product-registration/coupang/option-items";
+import { assertCoupangCreateSourceRevision, coupangCreateSourceRevisionArgument } from "../product-registration/coupang/create-source-revision";
+import {
+  assertElevenstCreateCredentialRequestBinding,
+  elevenstCreateCredentialBindingArgument,
+} from "../product-registration/elevenst/credential-request-binding";
 type UnknownRecord = Record<string, unknown>;
 type ListingOperation = "listing.create" | "listing.update";
 export type ProviderListingRuntimeHooks = {
   assertLeaseHealthy: () => Promise<void>;
-  beginProviderMutation: () => Promise<void>;
+  beginProviderMutation: () => Promise<void | string>;
 };
 export type PrepareProviderListingInput = {
   channel: GatewayClaim["channel"];
@@ -45,6 +54,8 @@ export type PrepareProviderListingInput = {
   signal: AbortSignal;
   hooks: ProviderListingRuntimeHooks;
   shopeeShopCredential?: SecretPayload;
+  credentialId?: string;
+  credentialVersion?: number;
 };
 export type PreparedProviderListing = {
   arguments: UnknownRecord;
@@ -77,7 +88,7 @@ async function publicImage(urlValue: string, signal: AbortSignal) {
     throw new Error("MARKETPLACE_IMAGE_DOWNLOAD_FAILED", { cause: error });
   }
 }
-async function uploadShopeeImage(payload: SecretPayload, environment: GatewayClaim["environment"], imageUrl: string, signal: AbortSignal, hooks: ProviderListingRuntimeHooks, scene: "normal" | "desc" = "normal") {
+export async function uploadShopeeImage(payload: SecretPayload, environment: GatewayClaim["environment"], imageUrl: string, signal: AbortSignal, hooks: ProviderListingRuntimeHooks, scene: "normal" | "desc" = "normal") {
   const partnerId = textValue(payload, "partner_id");
   const partnerKey = textValue(payload, "partner_key");
   const shopId = textValue(payload, "shop_id");
@@ -123,7 +134,11 @@ async function uploadShopeeImage(payload: SecretPayload, environment: GatewayCla
     form.append("image", new Blob([new Uint8Array(image.bytes)], { type: image.contentType }), `sellerpilot.${extension}`);
     form.append("scene", scene);
     await hooks.assertLeaseHealthy();
-    await hooks.beginProviderMutation();
+    const completedImageId = await hooks.beginProviderMutation();
+    if (completedImageId) return {
+      response: new Response(null, { status: 200 }),
+      data: { error: "", response: { image_info: { image_id: completedImageId } } },
+    };
     const response = await providerFetch(`${shopeeEnvironment(environment)}${path}?${query}`, {
       method: "POST",
       body: form,
@@ -1271,7 +1286,10 @@ async function prepareSmartstoreListing(input: PrepareProviderListingInput): Pro
   return {
     ...input.arguments, imageUrls: uploadedUrls, body,
     ...(input.operation === "listing.create"
-      ? { sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract }
+      ? {
+          sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+          [smartstoreCreateTransportArgument]: buildSmartstoreCreateTransport(body),
+        }
       : {}),
     ...(contentRepair ? { [smartstoreContentRepairTransmissionArgument]: transmissionImages } : {}),
   };
@@ -1311,6 +1329,7 @@ function safeCoupangCenterSummary(centers: UnknownRecord[]) {
   ].join(",");
 }
 function positiveFee(center: UnknownRecord) {
+  const amounts = new Set<number>();
   for (const key of [
     "returnFee02kg",
     "returnFee05kg",
@@ -1322,9 +1341,26 @@ function positiveFee(center: UnknownRecord) {
     "vendorCashFee05kg",
   ]) {
     const value = Number(center[key]);
-    if (Number.isFinite(value) && value > 0) return value;
+    if (Number.isFinite(value) && value > 0) amounts.add(value);
   }
-  return null;
+  return amounts.size === 1 ? [...amounts][0]! : null;
+}
+function ambiguousPositiveFee(center: UnknownRecord) {
+  const amounts = new Set<number>();
+  for (const key of [
+    "returnFee02kg",
+    "returnFee05kg",
+    "returnFee10kg",
+    "returnFee20kg",
+    "vendorCreditFee02kg",
+    "vendorCreditFee05kg",
+    "vendorCashFee02kg",
+    "vendorCashFee05kg",
+  ]) {
+    const value = Number(center[key]);
+    if (Number.isFinite(value) && value > 0) amounts.add(value);
+  }
+  return amounts.size > 1;
 }
 const coupangPlaceholderContent = /^(?:상품\s*상세\s*참조|상세(?:페이지)?\s*참조|상품정보\s*참조)$/iu;
 const coupangUnknownFact = /^(?:server_managed|seller confirmation required|unknown|not provided|n\/a|tbd|알\s*수\s*없음|모름|미정|미기재|미확인|확인\s*필요|판매자\s*확인\s*필요)$/iu;
@@ -1696,18 +1732,20 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   const vendorId = textValue(input.credential, "vendor_id");
   await assertCoupangExternalVendorSkusAvailable(input, strictArguments, body, vendorId);
   await input.hooks.assertLeaseHealthy();
+  const requestedOutboundCode = String(body.outboundShippingPlaceCode ?? "").trim();
+  const requestedReturnCenterCode = String(body.returnCenterCode ?? "").trim();
   const [outboundRemote, returnRemote, metadataRemote, categoryStatusRemote] = await Promise.all([
     coupangRequest({
       payload: input.credential,
       method: "GET",
       path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound",
-      query: new URLSearchParams({ pageSize: "50", pageNum: "1" }),
+      query: new URLSearchParams({ placeCodes: requestedOutboundCode }),
     }),
     coupangRequest({
       payload: input.credential,
       method: "GET",
-      path: `/v2/providers/openapi/apis/api/v5/vendors/${encodeURIComponent(vendorId)}/returnShippingCenters`,
-      query: new URLSearchParams({ pageNum: "1", pageSize: "50" }),
+      path: "/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code",
+      query: new URLSearchParams({ returnCenterCodes: requestedReturnCenterCode }),
     }),
     coupangRequest({
       payload: input.credential,
@@ -1734,8 +1772,6 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
   const returnCenters = nestedContent(returnRemote.data)
     .map(recordValue)
     .filter((row): row is UnknownRecord => Boolean(row));
-  const requestedOutboundCode = String(body.outboundShippingPlaceCode ?? "").trim();
-  const requestedReturnCenterCode = String(body.returnCenterCode ?? "").trim();
   const operatorDeliveryCode = String(body.deliveryCompanyCode ?? "").trim().toUpperCase();
   const operatorReturnFee = operatorPositiveFee(body.returnCharge) ?? operatorPositiveFee(body.deliveryChargeOnReturn);
   if (operatorDeliveryCode && !/^[A-Z0-9_-]{2,32}$/.test(operatorDeliveryCode)) {
@@ -1775,6 +1811,9 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
       throw new Error("COUPANG_RETURN_CENTER_CODE_MISSING");
     }
     throw new Error("COUPANG_COMPLETE_RETURN_CENTER_MISSING");
+  }
+  if (ambiguousPositiveFee(returnCenter)) {
+    throw new Error("COUPANG_RETURN_FEE_WEIGHT_TIER_REQUIRED");
   }
   if (!outbound) {
     throw new Error(`COUPANG_USABLE_OUTBOUND_CENTER_MISSING:${safeCoupangCenterSummary(outboundCenters)}`);
@@ -1837,6 +1876,24 @@ async function prepareCoupangListing(input: PrepareProviderListingInput): Promis
 }
 export async function prepareMarketplaceListingArguments(input: PrepareProviderListingInput): Promise<PreparedProviderListing> {
   assertNoRetiredProductRecovery(input.arguments);
+  if (input.channel === "coupang" && input.operation === "listing.create"
+    && Object.hasOwn(input.arguments, coupangCreateSourceRevisionArgument)) {
+    assertCoupangCreateSourceRevision({
+      argumentsValue: input.arguments,
+      credentialId: input.credentialId,
+      environment: input.environment,
+      credential: input.credential,
+    });
+  }
+  if (input.channel === "elevenst" && input.operation === "listing.create") {
+    assertElevenstCreateCredentialRequestBinding({
+      credentialId: input.credentialId,
+      credentialVersion: input.credentialVersion,
+      environment: input.environment,
+      credential: input.credential,
+      binding: input.arguments[elevenstCreateCredentialBindingArgument],
+    });
+  }
   if (input.channel === "smartstore" && input.operation === "listing.create"
     && input.arguments.publicationStateContract !== "verified_remote_state_v1") {
     throw new Error("NAVER_CREATE_PUBLICATION_CONTRACT_REQUIRED");

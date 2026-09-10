@@ -46,7 +46,7 @@ async function prepare(facts: Record<string, unknown>, attributes: Attribute[] =
     const path = new URL(String(input)).pathname;
     if (path.includes("/external-vendor-sku-codes/")) return Response.json({ code: "SUCCESS", data: [] });
     if (path.endsWith("/shipping-place/outbound")) return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, outboundShippingPlaceCode: 11111111, placeAddresses: [address] }] } });
-    if (path.includes("/returnShippingCenters")) return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, returnCenterCode: "RET-TEST", deliverCode: "HANJIN", shippingPlaceName: "테스트 반품지", returnFee02kg: 3000, placeAddresses: [address] }] } });
+    if (path.includes("/return/shipping-places/center-code")) return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, returnCenterCode: "RET-TEST", deliverCode: "HANJIN", shippingPlaceName: "테스트 반품지", returnFee02kg: 3000, placeAddresses: [address] }] } });
     if (path.endsWith("/status")) return Response.json({ code: "SUCCESS", data: true });
     assert.match(path, /display-category-codes\/59631$/);
     return Response.json({ code: "SUCCESS", data: metadata });

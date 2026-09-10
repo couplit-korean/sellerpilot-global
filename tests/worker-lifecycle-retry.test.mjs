@@ -143,23 +143,32 @@ test("continuous transient failures stop inside the configured grace window", as
 });
 
 test("worker uses lifecycle retry for heartbeat and both completion endpoints", async () => {
-  const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const [entrySource, aiSource, gatewaySource, commerceSource] = await Promise.all([
+    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/channel-gateway-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
+  ]);
+  const source = `${aiSource}\n${gatewaySource}\n${commerceSource}`;
 
-  assert.match(source, /const workerVersion = localChannelExecutorAttestation[\s\S]*sellerpilot-cli-worker\/1\.61/);
+  assert.match(aiSource, /const workerVersion = "sellerpilot-cli-worker\/1\.61"/);
+  assert.match(gatewaySource, /const workerVersion = localChannelExecutorAttestation[\s\S]*sellerpilot-cli-worker\/1\.61/);
+  assert.match(entrySource, /await import\("\.\/channel-gateway-worker\.mjs"\)/);
+  assert.match(entrySource, /await import\("\.\/product-ai-worker\.mjs"\)/);
   assert.match(source, /runVisionCutoutWithTransientRetry\(\{[\s\S]*signal: leaseSignal/);
   assert.match(source, /\[원본 픽셀 보호 재시도\] mode=\$\{retryMode\} attempt=\$\{attempt\}/);
-  assert.match(source, /const aiOnly = process\.argv\.includes\("--ai-only"\)/);
-  assert.match(source, /const gatewayWorkerToken = aiOnly \? "" : loadWorkerToken/);
-  assert.match(source, /const schedulerWorkerToken = \(aiOnly \|\| localRecoveryOnly \|\| noScheduler\) \? "" : loadWorkerToken/);
-  assert.match(source, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_000/);
-  assert.match(source, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_000/);
+  assert.match(entrySource, /process\.argv\.includes\("--gateway-only"\)/);
+  assert.match(gatewaySource, /const gatewayWorkerToken = loadWorkerToken/);
+  assert.match(gatewaySource, /const schedulerWorkerToken = \(localRecoveryOnly \|\| noScheduler\) \? "" : loadWorkerToken/);
+  assert.match(aiSource, /SELLERPILOT_STUDIO_MASTER_TIMEOUT_MS \?\? 35 \* 60_?000/);
+  assert.match(aiSource, /SELLERPILOT_STUDIO_LOCALIZED_TIMEOUT_MS \?\? 12 \* 60_?000/);
   assert.match(source, /stage: "studio-master-repair"/);
   assert.match(source, /stage: `studio-localized\$\{repairSuffix\}:\$\{chunkIndex \+ 1\}`/);
   assert.match(source, /stage: "studio-master-repair-2"/);
-  assert.match(source, /if \(jobId\) await touchJob\(jobId, claimToken\)/);
+  assert.match(aiSource, /async start\(\) \{\s*await touchJob\(jobId, claimToken\);[\s\S]*setInterval\(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS\)/);
   assert.match(source, /graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS/);
   assert.match(source, /terminalStatuses: \[401, 404, 409\]/);
-  assert.match(source, /payload\.status !== "running"[^\n]+JobCancelledError/);
+  assert.match(aiSource, /payload\.status !== "running"\)\s*throw new JobCancelledError/);
   assert.match(source, /AI_HEARTBEAT_INTERVAL_MS/);
   assert.match(source, /const requestBody = JSON\.stringify\(payload\)/);
   assert.match(source, /request: \(\) => api\(path, \{ method: "POST", body: requestBody \}\)/);
@@ -167,9 +176,8 @@ test("worker uses lifecycle retry for heartbeat and both completion endpoints", 
   assert.ok((source.match(/persistWorkerCompletion\(\s*"\/api\/channel-gateway\/worker\/complete"/g) ?? []).length >= 2);
   assert.doesNotMatch(source, /api\("\/api\/(?:ai|channel-gateway)\/worker\/complete"/);
   assert.match(source, /leaseStateUncertain[\s\S]*effectiveError instanceof WorkerRequestTerminalError[\s\S]*effectiveError instanceof JobCancelledError/);
-  const aiProcessStart = source.indexOf("async function processJob(job)");
-  const gatewayProcessStart = source.indexOf("async function processGatewayJob(job)");
-  const aiProcess = source.slice(aiProcessStart, gatewayProcessStart);
+  const aiProcessStart = aiSource.indexOf("async function processJob(job)");
+  const aiProcess = aiSource.slice(aiProcessStart);
   assert.match(aiProcess, /await jobHeartbeat\.start\(\)/);
   assert.ok((aiProcess.match(/await assertJobLeaseHealthy\(\)/g) ?? []).length >= 7);
   assert.ok((aiProcess.match(/uploadAiResultAsset/g) ?? []).length >= 2);
@@ -182,20 +190,22 @@ test("worker uses lifecycle retry for heartbeat and both completion endpoints", 
 });
 
 test("gateway worker heartbeats for the full provider lifecycle and preserves state after ownership loss", async () => {
-  const [source, listingRuntime, oauthRuntime] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+  const [source, commerceSource, listingRuntime, oauthRuntime] = await Promise.all([
+    readFile(new URL("../scripts/channel-gateway-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/provider-listing-runtime.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/provider-oauth-runtime.ts", import.meta.url), "utf8"),
   ]);
-  const gatewayProcessStart = source.indexOf("async function processGatewayJob(job)");
-  const gatewayProcessEnd = source.indexOf("console.log(`SellerPilot ChatGPT CLI worker 시작", gatewayProcessStart);
-  const gatewayProcess = source.slice(gatewayProcessStart, gatewayProcessEnd);
+  const gatewayProcessStart = commerceSource.indexOf("export async function processCommerceGatewayJob(");
+  const gatewayProcess = commerceSource.slice(gatewayProcessStart);
   const finalCompletion = gatewayProcess.indexOf('"/api/channel-gateway/worker/complete"');
 
   assert.match(source, /api\("\/api\/channel-gateway\/worker\/heartbeat"/);
   assert.match(source, /graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS/);
   assert.match(source, /terminalStatuses: \[401, 404, 409\]/);
   assert.match(source, /setInterval\(scheduleTouch, AI_HEARTBEAT_INTERVAL_MS\)/);
+  assert.match(source, /const dependencies = \{ createGatewayHeartbeat, persistWorkerCompletion, reserveProviderRequest \}/);
+  assert.match(source, /processCommerceGatewayJob\(job, dependencies\)/);
   assert.match(gatewayProcess, /await gatewayHeartbeat\.start\(\)/);
   assert.match(gatewayProcess, /if \(job\.channel === "temu"\) \{\s*throw new Error\("TEMU_SERVERLESS_ONLY:/);
   assert.ok(gatewayProcess.indexOf("TEMU_SERVERLESS_ONLY") < gatewayProcess.indexOf("let result;"));
@@ -203,7 +213,14 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
   assert.match(source, /git[\s\S]*diff[\s\S]*--quiet[\s\S]*HEAD/);
   assert.doesNotMatch(source, /checkip\.amazonaws\.com|SELLERPILOT_TEMU_EGRESS_IPS|SellerPilot Temu Egress IPs/);
   assert.ok((gatewayProcess.match(/await assertGatewayLeaseHealthy\(\)/g) ?? []).length >= 10);
-  assert.match(gatewayProcess, /prepareMarketplaceListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: markExternalWriteStarted/);
+  assert.match(
+    gatewayProcess,
+    /prepareListingArguments\(\{[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*beginProviderMutation: qoo10CreateBinding[\s\S]*\? markQoo10CreateStarted[\s\S]*: markExternalWriteStarted/,
+  );
+  assert.match(
+    gatewayProcess,
+    /strictQoo10Create[\s\S]*providerMutationHooks:\s*\{[\s\S]*gatewayCredentialId: job\.credential_id[\s\S]*assertLeaseHealthy: assertGatewayLeaseHealthy[\s\S]*begin: markQoo10CreateStarted/,
+  );
   assert.match(listingRuntime, /prepareShopeeGlobalListing\(input\)[\s\S]*mediaMutationObserved: true/);
   assert.match(listingRuntime, /await input\.hooks\.assertLeaseHealthy\(\);[\s\S]*await input\.hooks\.beginProviderMutation\(\);[\s\S]*await fetch/);
   assert.match(listingRuntime, /assertPublicReferenceUrl\(imageUrl, \{ signal: input\.signal \}\)[\s\S]*await input\.hooks\.beginProviderMutation\(\)[\s\S]*lazadaRequest/);
@@ -222,7 +239,10 @@ test("gateway worker heartbeats for the full provider lifecycle and preserves st
     gatewayProcess.slice(activationContextFence, credentialPreparation),
     /activationMarkerSupplied !== \(job\.operation === "listing\.activate"\)[\s\S]*job\.channel !== "qoo10"[\s\S]*qoo10S1ActivationArgumentsValid\(operationArguments\)[\s\S]*QOO10_S1_ACTIVATION_SERVER_CONTEXT_REQUIRED/,
   );
-  assert.match(gatewayProcess, /if \(writeChannelOperations\.has\(job\.operation\)[^\n]*\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeChannelOperation/);
+  assert.match(
+    gatewayProcess,
+    /if \(writeChannelOperations\.has\(job\.operation\)[\s\S]*&& !strictShopeeSgCreate[\s\S]*&& !strictQoo10Create\) \{[\s\S]*await markExternalWriteStarted\(\);[\s\S]*executeCommerceOperation/,
+  );
   assert.doesNotMatch(gatewayProcess, /externalWriteStarted \|\|= writeChannelOperations\.has\(job\.operation\)/);
   assert.match(gatewayProcess, /status: "reconciliation_required"/);
   assert.match(gatewayProcess, /"\/api\/channel-gateway\/worker\/credential-refresh"/);

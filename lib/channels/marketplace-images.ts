@@ -699,12 +699,23 @@ export async function prepareMarketplaceImages(serviceClient: SupabaseClient, ch
     return next;
   };
   const assets = record(next.sellerpilotAssets);
-  // Image metadata is consumed by this server-side stage and must not enter the
-  // provider HTTP payload. The separately verified shipping contract is still needed
-  // by the worker's final pre-provider guard, so preserve only that subdocument.
+  // Keep immutable approval identities in the gateway envelope so the worker can
+  // authenticate the image-prepared transmission. Only URL-bearing source fields
+  // are consumed here. Channel executors send their provider body, not this envelope.
   const shipping = marketplaceShippingEvidence(assets?.shipping);
   delete next.sellerpilotAssets;
-  if (shipping) next.sellerpilotAssets = { shipping };
+  if (channel === "coupang" && assets) {
+    next.sellerpilotAssets = {
+      approvedDetailPageVersion: assets.approvedDetailPageVersion,
+      detailImageManifestDigest: assets.detailImageManifestDigest,
+      approvedDetailImagePaths: assets.approvedDetailImagePaths,
+      approvedDetailImageSha256s: assets.approvedDetailImageSha256s,
+      detailImageRoles: assets.detailImageRoles,
+      ...(shipping ? { shipping } : {}),
+    };
+  } else if (shipping) {
+    next.sellerpilotAssets = { shipping };
+  }
   const manualSourceMode = assets?.contentMode === "manual_mvp"
     && assets.detailAssetMode === "manual_source";
   if (channel === "qoo10"

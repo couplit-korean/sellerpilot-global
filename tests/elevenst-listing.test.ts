@@ -246,11 +246,14 @@ test("11st seller XML request keeps the key in the header and returns only safe 
     });
   };
   try {
+    const path = "/rest/prodservices/product";
+    const body = "<Product><prdNm>SellerPilot QA</prdNm></Product>";
+    const xml = "<?xml version=\"1.0\"?><ClientMessage><message>ok</message><productNo>123456789</productNo><resultCode>200</resultCode></ClientMessage>";
     const result = await elevenstSellerXmlRequest({
       payload: elevenstCredential,
       method: "POST",
-      path: "/rest/prodservices/product",
-      body: "<Product><prdNm>SellerPilot QA</prdNm></Product>",
+      path,
+      body,
     });
     assert.equal(calledUrl, "https://api.11st.co.kr/rest/prodservices/product");
     assert.equal(calledKey, apiKey);
@@ -258,6 +261,12 @@ test("11st seller XML request keeps the key in the header and returns only safe 
     assert.equal(result.text, "");
     assert.deepEqual(result.data, {
       accepted: true,
+      transportEvidence: {
+        method: "POST",
+        requestBytesSha256: createHash("sha256").update(`POST\n${path}\n${body}`, "utf8").digest("hex"),
+        responseBodySha256: createHash("sha256").update(Buffer.from(xml)).digest("hex"),
+        responseBodyBytes: Buffer.byteLength(xml),
+      },
       resultCode: "200",
       resultMessage: "ok",
       productNo: "123456789",

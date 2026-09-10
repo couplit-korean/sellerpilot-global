@@ -123,7 +123,7 @@ test("generic serverless operation matrix permits only the readback-verified Cou
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "listing.lineage.verify"),
-      ["qoo10", "shopee", "lazada", "ebay"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "ebay"].includes(channel),
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "inquiries.list"),

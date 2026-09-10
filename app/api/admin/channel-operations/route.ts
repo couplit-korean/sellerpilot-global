@@ -1,7 +1,21 @@
+import {
+  buildElevenstCreateCredentialRequestBinding,
+  elevenstCreateCredentialBindingArgument,
+} from "../../../../lib/product-registration/elevenst/credential-request-binding";
+import { prepareElevenstNewProductCreateBeforeClaimFromRpc } from "../../../../lib/product-registration/elevenst/new-product-input-source-rpc";
+import { bindShopeeSgCreateExecutionLineage, exactShopeeListingPrepareReadiness, shopeeCredentialSnapshot, shopeeSgCreateExecutionLineage, shopeeSgCreateExecutionLineageArgument, type ShopeeSgCreateExecutionLineage } from "../../../../lib/product-registration/shopee/target-lineage-readiness";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
 import { bindLazadaMyListingCreateContext, buildLazadaMyListingCreateContext, lazadaMySellerModeEvidenceFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
 import { bindCoupangCreateSourceIdentity } from "../../../../lib/channels/coupang-create-source-identity";
+import {
+  bindCoupangCreateSourceRevision,
+  coupangCreateSourceRevisionArgument,
+  coupangCreateTransmissionArgument,
+  coupangCreateTransmissionContract,
+} from "../../../../lib/product-registration/coupang/create-source-revision";
+import { buildCoupangCreateReadinessSource, coupangCreatePublishContextWithApprovedManifest } from "../../../../lib/product-registration/coupang/create-readiness-source";
+import { coupangRequest, runWithProviderReadOnlyTransport } from "../../../../lib/channels/protocols";
 import { hasRetiredProductRecovery } from "../../../../lib/channels/retired-product-recovery";
 import { readApprovedExternalDetailPublishContext } from "../../../../lib/server-external-detail-publish-context";
 import { readExternalDetailImportContext, externalDetailImportTarget, verifyExternalDetailOriginalSnapshot } from "../../../../lib/server-external-detail-import-api";
@@ -19,19 +33,36 @@ import { channelCatalog } from "../../../../lib/channels/catalog";
 import { ChannelGatewayInProgressError, ChannelGatewayCredentialUnattestedError, ChannelGatewayListingAlreadyPublishedError, ChannelGatewayListingBlockedError, ChannelGatewayReconciliationRequiredError, ChannelGatewayRemoteFailedError, executeChannelTargetDiscovery, executeViaChannelGateway } from "../../../../lib/channels/gateway";
 import { channelOperationRelease } from "../../../../lib/channels/operation-availability";
 import { missingEbayListingCreateConfiguration } from "../../../../lib/channels/ebay-listing-configuration";
+import {
+  buildEbayCreateApproval,
+  ebayCreateProviderRequestBodies,
+} from "../../../../lib/channels/ebay-create-preflight";
 
 import { buildQoo10ListingCreateContext } from "../../../../lib/channels/qoo10-listing-create-preflight";
+import { qoo10ListingCreateApprovalBindingArgument } from "../../../../lib/channels/qoo10-listing-create-approval";
+import { qoo10ListingCreateFulfillmentEvidenceArgument } from "../../../../lib/channels/qoo10-listing-create-fulfillment-evidence";
+import {
+  bindQoo10ListingCreateApprovalFromDurableSource,
+  qoo10DurableCreateFulfillmentBindingArgument,
+  Qoo10DurableCreateFulfillmentSourceError,
+} from "../../../../lib/server-qoo10-listing-create-fulfillment-source";
 
 import { bindShopeeSgListingCreateArguments, buildShopeeSgListingCreateContext, loadAuthoritativeKrwSgdUsdRate, shopeeSgArgumentsForFingerprint } from "../../../../lib/channels/shopee-sg-listing-create";
 import { PRODUCT_REGISTRATION_DRAFT_GET_RPC, productRegistrationDraftRpcResult } from "../../../../lib/product-registration-draft";
 import { shopeeSgStoredCreatePrices } from "../../../../lib/product-registration/shopee/stored-prices";
+import { shopeeSgCreatePrewriteEvidenceArgument } from "../../../../lib/product-registration/shopee/create-prewrite-adapter";
 
 import { bindElevenstAuthoritativeShippingSource, elevenstShippingContractErrorMessage, mergeElevenstListingUpdateProduct } from "../../../../lib/channels/elevenst-listing";
 
 import { bindSmartstoreManualAdoptionUpdateArguments, hasClientSmartstoreManualAdoptionUpdateMarker, isSmartstoreManualAdoptionListing, readSmartstoreManualAdoptionUpdateBinding, SmartstoreManualAdoptionUpdateBindingError, type SmartstoreManualAdoptionUpdateBinding } from "../../../../lib/server-smartstore-adoption-update-binding";
+import {
+  attachSmartstoreListingCreateExecuteTransport,
+  bindSmartstoreListingCreateSourceIdentity,
+} from "../../../../lib/server-smartstore-listing-create-binding";
+import { bindSmartstoreCreateCategoryAttributesFromServerSource, SmartstoreCreateCategorySourceError } from "../../../../lib/server-smartstore-category-attribute-binding";
 import { smartstoreContentRepairArgument, smartstoreContentRepairTransmissionArgument } from "../../../../lib/channels/smartstore-content-repair-contract";
 
-import { elevenstListingUpdateProjectionDigestInput, bindQoo10RollbackUpdateRecoveryArguments, listingUpdateRemoteIdentity, listingUpdateServerCandidate, qoo10RollbackListingUpdateCandidate, qoo10RollbackUpdateRecoveryArgument, type ListingUpdateReference, type Qoo10RollbackUpdateRecoveryBinding } from "../../../../lib/channels/listing-update";
+import { elevenstListingUpdateProjectionDigestInput, bindQoo10RollbackUpdateRecoveryArguments, listingUpdateRemoteIdentity, listingUpdateServerCandidate, prepareListingUpdateArguments, qoo10RollbackListingUpdateCandidate, qoo10RollbackUpdateRecoveryArgument, type ListingUpdateReference, type Qoo10RollbackUpdateRecoveryBinding } from "../../../../lib/channels/listing-update";
 
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { listingOperationRequiresVerifiedRemoteState, listingOperationUsesPublicationIntent, listingExpectedPublicationLocale, listingPublicationIntentSchema, listingRemoteStateContractVersion, persistedListingPublicationReplay, verifiedListingPublicationResult } from "../../../../lib/channels/listing-publication-state";
@@ -46,6 +77,10 @@ import { isSmartstoreLocalReadOperation, resolveLocalGatewayReadReady } from "..
 import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
 import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
 import { bindTemuCreateAttemptIdentity, temuImmutableListingIdentityFromPublishContext } from "../../../../lib/channels/provider-temu-publication-readback";
+import { TemuCreateSourceLedgerError } from "../../../../lib/product-registration/temu/create-authoritative-source-ledger";
+import { resolveTemuCreateAccountTarget } from "../../../../lib/product-registration/temu/account-identity";
+import { normalizeTemuCreateBodyFromServerContext, produceTemuCreateAuthoritativeSourceBeforeClaim } from "../../../../lib/product-registration/temu/authoritative-create-producer";
+import { bindTemuFinalCreatePayloadBeforeEnqueue } from "../../../../lib/product-registration/temu/final-create-payload";
 
 import { parseListingPublicationAssetBinding } from "../../../../lib/channels/listing-publication-content";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
@@ -88,11 +123,14 @@ function temuActivationAssetBindingMatchesApproved(
 
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
+  credentialVersion: z.number().int().positive().optional(),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
   operation: z.enum(channelOperationNames),
   publicationIntent: listingPublicationIntentSchema.optional(),
   idempotencyKey: z.string().trim().min(16).max(160),
   confirmWrite: z.boolean().default(false),
+  previewOnly: z.boolean().default(false),
+  expectedContentPreviewSha256: z.string().regex(/^[a-f0-9]{64}$/u).optional(),
   productId: z.string().uuid().optional(),
   resourceListingId: z.string().uuid().optional(),
   inventoryItemId: z.string().uuid().optional(),
@@ -141,6 +179,115 @@ type ProductContentMode = "ai_generated" | "manual_mvp" | "external_generated";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function usdPriceText(value: unknown) {
+  if (typeof value === "string" && /^(?:0|[1-9]\d*)(?:\.\d{1,2})?$/u.test(value) && Number(value) > 0) {
+    return value;
+  }
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+  }
+  return "";
+}
+
+function bindEbayCreateServerSnapshots(input: {
+  argumentsValue: Record<string, unknown>;
+  publishContext: Record<string, unknown> | null;
+  draft: {
+    draftId: string;
+    version: number;
+    updatedAt: string;
+    dataSha256: string;
+  } | null;
+  priceUsd: string;
+}) {
+  const next = { ...input.argumentsValue };
+  delete next.sellerpilotEbayCreateApproval;
+  delete next.sellerpilotEbayCreateLedgerSnapshot;
+  delete next.sellerpilotEbayCategoryAssignment;
+  const offer = isRecord(next.offer) ? next.offer : {};
+  const categoryId = typeof offer.categoryId === "string" ? offer.categoryId.trim() : "";
+  const assignments = Array.isArray(input.publishContext?.assignments)
+    ? input.publishContext.assignments.filter(isRecord)
+    : [];
+  const matches = assignments.filter((row) =>
+    row.channel === "ebay"
+    && String(row.market ?? "").toUpperCase() === "US"
+    && (row.environment === "production" || row.environment === undefined)
+    && row.status === "confirmed"
+    && String(row.categoryId ?? "") === categoryId);
+  if (matches.length === 1) {
+    const row = matches[0];
+    const id = typeof row.id === "string" ? row.id : "";
+    const confirmedAt = typeof row.confirmedAt === "string" ? row.confirmedAt : "";
+    const updatedAt = typeof row.updatedAt === "string"
+      ? row.updatedAt
+      : typeof row.updated_at === "string" ? row.updated_at : "";
+    if (id && confirmedAt && updatedAt && Number.isFinite(Date.parse(confirmedAt)) && Number.isFinite(Date.parse(updatedAt))) {
+      next.sellerpilotEbayCategoryAssignment = {
+        contract: "sellerpilot_ebay_category_assignment_v1",
+        id,
+        categoryId,
+        market: "US",
+        environment: "production",
+        confirmedAt,
+        updatedAt,
+      };
+    }
+  }
+  const product = isRecord(input.publishContext?.product) ? input.publishContext.product : {};
+  const snapshot = isRecord(input.publishContext?.externalDetailSnapshot)
+    ? input.publishContext.externalDetailSnapshot
+    : {};
+  const manualFields = isRecord(input.publishContext?.manualFields)
+    ? input.publishContext.manualFields
+    : {};
+  const productUpdatedAt = typeof product.updatedAt === "string"
+    ? product.updatedAt
+    : typeof snapshot.productUpdatedAt === "string"
+      ? snapshot.productUpdatedAt
+      : "";
+  const productSku = typeof product.sku === "string" && product.sku.trim()
+    ? product.sku.trim()
+    : typeof next.sku === "string" ? next.sku.trim() : "";
+  const availableQuantity = Number.isSafeInteger(product.onHand)
+    ? Number(product.onHand)
+    : Number.isSafeInteger(manualFields.stock)
+      ? Number(manualFields.stock)
+      : Number.NaN;
+  if (input.draft
+      && input.priceUsd
+      && productSku
+      && Number.isFinite(Date.parse(productUpdatedAt))
+      && Number.isSafeInteger(availableQuantity)
+      && availableQuantity > 0) {
+    next.sellerpilotEbayCreateLedgerSnapshot = {
+      contract: "sellerpilot_ebay_create_ledger_snapshot_v1",
+      productUpdatedAt: new Date(productUpdatedAt).toISOString(),
+      productSku,
+      availableQuantity,
+      priceUsd: input.priceUsd,
+      draftId: input.draft.draftId,
+      draftVersion: input.draft.version,
+      draftUpdatedAt: new Date(input.draft.updatedAt).toISOString(),
+      draftDataSha256: input.draft.dataSha256,
+    };
+  }
+  return next;
+}
+
+function sealEbayCreateApprovalArguments(argumentsValue: Record<string, unknown>) {
+  const approval = buildEbayCreateApproval(argumentsValue);
+  if (Object.hasOwn(argumentsValue, "sellerpilotExternalDetail") && !approval) {
+    throw new Error("EBAY_CREATE_APPROVAL_REVISION_INVALID");
+  }
+  if (!approval) return argumentsValue;
+  return {
+    ...argumentsValue,
+    sellerpilotEbayCreateApproval: approval,
+    sellerpilotEbayProviderRequestBodies: ebayCreateProviderRequestBodies(argumentsValue),
+  };
 }
 
 function listingUpdateReferenceFromLedger(listing: Record<string, unknown>): ListingUpdateReference {
@@ -224,6 +371,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ mode: "product_recovery_retired", message: "과거 상품 전용 복구 기능이 삭제되었습니다. 일반 상품등록·수정 화면에서 새 요청을 작성해 주세요." }, { status: 410 });
   }
   const { channel, operation } = parsed.data;
+  if (parsed.data.previewOnly) {
+    return NextResponse.json({
+      message: "이 요청은 승인 콘텐츠 미리보기 대상이 아닙니다.",
+      mode: "content_preview_scope_invalid",
+    }, { status: 400 });
+  }
   if (/^(orders|shipment)\./.test(operation)) return NextResponse.json({ message: "주문 조회와 발송은 배송 전용 API에서 처리합니다.", code: "SHIPPING_ENDPOINT_REQUIRED" }, { status: 400 });
   if (operation === "inquiries.list" || operation === "inquiries.reply") {
     return NextResponse.json({ message: "문의 조회와 답변은 CS 전용 API에서 처리합니다.", code: "CS_ENDPOINT_REQUIRED" }, { status: 400 });
@@ -234,6 +387,33 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       message: "스마트스토어 기존 상품 연결 증거는 서버 원장에서만 추가할 수 있습니다.",
       mode: "smartstore_manual_adoption_marker_server_owned",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (channel === "elevenst"
+    && operation === "listing.create"
+    && Object.hasOwn(parsed.data.arguments, elevenstCreateCredentialBindingArgument)) {
+    return NextResponse.json({
+      message: "11번가 판매자 자격증명 결속은 서버에서만 생성할 수 있습니다.",
+      mode: "elevenst_credential_binding_server_owned",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (channel === "coupang"
+    && operation === "listing.create"
+    && Object.hasOwn(parsed.data.arguments, coupangCreateSourceRevisionArgument)) {
+    return NextResponse.json({
+      message: "쿠팡 신규상품 입력 revision은 서버에서만 생성할 수 있습니다.",
+      mode: "coupang_create_revision_server_owned",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  if (channel === "qoo10" && operation === "listing.create"
+      && (Object.hasOwn(parsed.data.arguments, qoo10ListingCreateApprovalBindingArgument)
+        || Object.hasOwn(parsed.data.arguments, qoo10ListingCreateFulfillmentEvidenceArgument)
+        || Object.hasOwn(parsed.data.arguments, qoo10DurableCreateFulfillmentBindingArgument))) {
+    return NextResponse.json({
+      message: "Qoo10 배송지·반품정책 증거는 서버의 최신 QSM 원장에서만 추가할 수 있습니다.",
+      mode: "qoo10_create_fulfillment_marker_server_owned",
+      providerWritePerformed: false,
+      jobCreated: false,
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (channel === "smartstore"
@@ -259,7 +439,7 @@ export async function POST(request: NextRequest) {
   if (capability.mode === "vendor_docs_required") {
     return NextResponse.json({ message: capability.note, mode: "vendor_docs_required" }, { status: 409 });
   }
-  if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite) {
+  if (writeChannelOperations.has(operation) && !parsed.data.confirmWrite && !parsed.data.previewOnly) {
     return NextResponse.json({ message: "외부 판매채널을 변경하는 작업은 실행 확인이 필요합니다." }, { status: 428 });
   }
   if (["listing.create", "listing.update", "listing.stop", "listing.activate"].includes(operation) && !parsed.data.productId) {
@@ -344,6 +524,84 @@ export async function POST(request: NextRequest) {
   // ELEVENST_AUTHORITATIVE_SHIPPING_END
 
   const serviceClient = createClient(supabaseUrl, secretKey, { auth: { persistSession: false, autoRefreshToken: false } });
+
+  let boundShopeeSgCreateExecutionLineage: ShopeeSgCreateExecutionLineage | null = null;
+  const strictShopeeSgPrepare = channel === "shopee"
+    && operation === "listing.create"
+    && parsed.data.market.trim().toUpperCase() === "SG";
+  if (strictShopeeSgPrepare) {
+    const [{ data: activeCredentialData, error: activeCredentialError }, { data: cachedTargetData, error: cachedTargetError }] = await Promise.all([
+      serviceClient.rpc("sellerpilot_get_active_credential_secret_v2", {
+        p_channel: "shopee",
+        p_environment: "production",
+      }),
+      userClient.rpc("sellerpilot_list_channel_market_targets_v2", { p_channel: "shopee" }),
+    ]);
+    const cachedTargets = Array.isArray(cachedTargetData) ? cachedTargetData.map((target) => ({
+      targetId: typeof target.target_id === "string" ? target.target_id : "",
+      displayName: typeof target.display_name === "string" ? target.display_name : "",
+      marketCode: typeof target.market_code === "string" ? target.market_code : "",
+      locale: typeof target.locale === "string" ? target.locale : "",
+      language: typeof target.language === "string" ? target.language : "",
+      currency: typeof target.currency === "string" ? target.currency : "",
+      status: typeof target.remote_status === "string" ? target.remote_status : undefined,
+      verifiedAt: typeof target.verified_at === "string" ? target.verified_at : undefined,
+      credentialId: typeof target.credential_id === "string" ? target.credential_id : "",
+      credentialVersion: typeof target.credential_version === "number" ? target.credential_version : Number.NaN,
+    })) : [];
+    const readiness = exactShopeeListingPrepareReadiness({
+      requestedCredentialId: parsed.data.credentialId,
+      requestedCredentialVersion: parsed.data.credentialVersion ?? 0,
+      requestedTargetId: parsed.data.targetId,
+      requestedMarketCode: parsed.data.market,
+      activeCredential: credentialMetadata,
+      activeSnapshot: activeCredentialError ? null : shopeeCredentialSnapshot(activeCredentialData),
+      cachedTargets: cachedTargetError ? [] : cachedTargets,
+    });
+    if (activeCredentialError || cachedTargetError || readiness.status !== "ready") {
+      return NextResponse.json({
+        message: "Shopee SG 등록 준비 시점의 현재 키 버전과 정확한 숍 결속을 확인하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "shopee_sg_listing_prepare_lineage_unverified",
+        code: activeCredentialError || cachedTargetError
+          ? "SHOPEE_LISTING_PREPARE_LINEAGE_UNAVAILABLE"
+          : readiness.status === "blocked" ? readiness.reason : "SHOPEE_LISTING_PREPARE_LINEAGE_UNAVAILABLE",
+      }, { status: activeCredentialError || cachedTargetError ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    boundShopeeSgCreateExecutionLineage = shopeeSgCreateExecutionLineage(readiness);
+  }
+
+  if (channel === "temu" && operation === "listing.create") {
+    const { data: credentialSecret, error: credentialSecretError } =
+      await serviceClient.rpc("sellerpilot_decrypt_credential", {
+        p_credential_id: parsed.data.credentialId,
+      });
+    if (credentialSecretError
+      || !credentialSecret
+      || typeof credentialSecret !== "object"
+      || Array.isArray(credentialSecret)) {
+      return NextResponse.json({
+        message: "Temu 운영키의 판매자 계정 결속을 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: "temu_create_account_lineage_unavailable",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      const accountTarget = resolveTemuCreateAccountTarget({
+        payload: credentialSecret as Record<string, unknown>,
+        market: parsed.data.market,
+        requestedTargetId: parsed.data.targetId,
+      });
+      parsed.data.targetId = accountTarget.targetId;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "TEMU_CREATE_ACCOUNT_LINEAGE_UNAVAILABLE";
+      return NextResponse.json({
+        message: code === "TEMU_CREATE_TARGET_MALL_MISMATCH"
+          ? "요청한 Temu 판매자 대상과 현재 운영키의 공식 mall이 달라 등록을 시작하지 않았습니다."
+          : "Temu 운영키의 mall·region 결속이 없거나 현재 등록 지역과 일치하지 않습니다.",
+        mode: "temu_create_account_lineage_mismatch",
+        code,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
 
   // The adopted Qoo10 marker is server-owned and is not present in the browser
   // request. Bind its exact immutable request tuple before loading the approved
@@ -1052,7 +1310,16 @@ export async function POST(request: NextRequest) {
   let effectiveArguments = structuredClone(
     temuActivationSourceArguments ?? parsed.data.arguments,
   );
+  let elevenstCreateCredentialVersion: number | null = null;
+  delete effectiveArguments[shopeeSgCreateExecutionLineageArgument];
   delete effectiveArguments[qoo10RollbackUpdateRecoveryArgument];
+  delete effectiveArguments[qoo10ListingCreateApprovalBindingArgument];
+  delete effectiveArguments[shopeeSgCreatePrewriteEvidenceArgument];
+  delete effectiveArguments.sellerpilotTemuReviewAndCreatePrewrite;
+  delete effectiveArguments.sellerpilotEbayCreateApproval;
+  delete effectiveArguments.sellerpilotEbayCreateLedgerSnapshot;
+  delete effectiveArguments.sellerpilotEbayCategoryAssignment;
+  delete effectiveArguments.sellerpilotEbayProviderRequestBodies;
   if (boundQoo10RollbackUpdateRecovery) effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(effectiveArguments, boundQoo10RollbackUpdateRecovery);
 
   if (channel === "ebay" && operation === "listing.update") {
@@ -1158,6 +1425,56 @@ export async function POST(request: NextRequest) {
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
+  if (channel === "smartstore" && operation === "listing.create") {
+    const { data: sourceSnapshot, error: sourceSnapshotError } = await serviceClient.rpc(
+      "sellerpilot_service_smartstore_create_source_snapshot",
+      {
+        p_owner_id: userData.user.id,
+        p_product_id: parsed.data.productId!,
+        p_credential_id: parsed.data.credentialId,
+      },
+    );
+    if (sourceSnapshotError) {
+      return NextResponse.json({
+        message: "현재 스마트스토어 상품·승인·카테고리 속성 원문을 다시 읽지 못해 등록을 시작하지 않았습니다.",
+        mode: "smartstore_listing_create_source_unavailable",
+        providerWritePerformed: false,
+        jobCreated: false,
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    try {
+      effectiveArguments = bindSmartstoreCreateCategoryAttributesFromServerSource({
+        argumentsValue: effectiveArguments,
+        sourceSnapshot,
+      });
+      effectiveArguments = bindSmartstoreListingCreateSourceIdentity({
+        argumentsValue: effectiveArguments,
+        publishContext: verifiedPublishContext,
+        sourceSnapshot,
+        approvedDetail: approvedDetailBinding!,
+        productId: parsed.data.productId!,
+        credentialId: parsed.data.credentialId,
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+      });
+    } catch (error) {
+      if (error instanceof SmartstoreCreateCategorySourceError) {
+        return NextResponse.json({
+          message: "현재 확정 카테고리와 공식 속성 조회를 결속하지 못해 스마트스토어 등록을 시작하지 않았습니다.",
+          mode: "smartstore_category_attribute_source_invalid",
+          blocker: error.blocker,
+          providerWritePerformed: false,
+          jobCreated: false,
+        }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      return NextResponse.json({
+        message: "선택 상품의 준비 상태와 확정 판매자 SKU를 현재 상품 원장에 결속하지 못해 스마트스토어 등록을 시작하지 않았습니다.",
+        mode: "smartstore_listing_create_source_identity_invalid",
+        providerWritePerformed: false,
+        jobCreated: false,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   if (channel === "temu" && operation === "listing.create") {
     const product = isRecord(verifiedPublishContext?.product)
       ? verifiedPublishContext.product
@@ -1179,10 +1496,47 @@ export async function POST(request: NextRequest) {
         targetId: parsed.data.targetId,
         idempotencyKey: parsed.data.idempotencyKey,
       });
+      effectiveArguments = normalizeTemuCreateBodyFromServerContext({
+        argumentsValue: effectiveArguments,
+        publishContext: verifiedPublishContext!,
+      });
     } catch {
       return NextResponse.json({
         message: "Temu 외부 상품·SKU 식별자가 선택 상품의 확정 SKU 및 현재 작업 계보와 일치하지 않아 등록을 시작하지 않았습니다.",
         mode: "temu_create_identity_mismatch",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  if (channel === "elevenst" && operation === "listing.create") {
+    const credentialVersion = "version" in credentialMetadata
+      ? Number(credentialMetadata.version)
+      : Number.NaN;
+    const { data: elevenstCredential, error: elevenstCredentialError } =
+      await serviceClient.rpc("sellerpilot_decrypt_credential", {
+        p_credential_id: parsed.data.credentialId,
+      });
+    try {
+      if (elevenstCredentialError
+        || !isRecord(elevenstCredential)
+        || !Number.isSafeInteger(credentialVersion)
+        || credentialVersion < 1) {
+        throw new Error("ELEVENST_CREATE_CREDENTIAL_METADATA_INVALID");
+      }
+      elevenstCreateCredentialVersion = credentialVersion;
+      effectiveArguments = {
+        ...effectiveArguments,
+        [elevenstCreateCredentialBindingArgument]:
+          buildElevenstCreateCredentialRequestBinding({
+            credentialId: parsed.data.credentialId,
+            credentialVersion,
+            environment,
+            credential: elevenstCredential,
+          }),
+      };
+    } catch {
+      return NextResponse.json({
+        message: "선택한 11번가 자격증명의 판매자 ID와 버전을 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: "elevenst_credential_binding_unverified",
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
@@ -1362,6 +1716,16 @@ export async function POST(request: NextRequest) {
     effectiveCurrency = createContext.targetCurrency;
     effectivePrice = createContext.targetPriceSgd;
     effectiveArguments = bindShopeeSgListingCreateArguments(effectiveArguments, createContext);
+    if (!boundShopeeSgCreateExecutionLineage) {
+      return NextResponse.json({
+        message: "Shopee SG 등록 실행 계보를 서버 요청에 결속하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "shopee_sg_create_execution_lineage_unavailable",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = bindShopeeSgCreateExecutionLineage(
+      effectiveArguments,
+      boundShopeeSgCreateExecutionLineage,
+    );
   }
   if (channel === "qoo10" && operation === "listing.create") {
     const qoo10CreateContext = buildQoo10ListingCreateContext({
@@ -1382,6 +1746,31 @@ export async function POST(request: NextRequest) {
       ...effectiveArguments,
       sellerpilotQoo10CreateContext: qoo10CreateContext,
     };
+    try {
+      effectiveArguments = await bindQoo10ListingCreateApprovalFromDurableSource({
+        rpc: (name, parameters) => serviceClient.rpc(name, parameters),
+        ownerId: userData.user.id,
+        productId: parsed.data.productId!,
+        credentialId: parsed.data.credentialId,
+        credentialVersion: Number(credentialMetadata.version),
+        market: "JP",
+        targetId: parsed.data.targetId,
+        argumentsValue: effectiveArguments,
+      });
+    } catch (error) {
+      const unavailable = error instanceof Qoo10DurableCreateFulfillmentSourceError
+        && error.unavailable;
+      return NextResponse.json({
+        message: unavailable
+          ? "CHANGHEE QSM에서 수집한 최신 배송지·반품정책 원장이 없어 Qoo10 등록을 시작하지 않았습니다."
+          : "현재 키·판매자·배송지·반품정책과 QSM 원장이 일치하지 않아 Qoo10 등록을 시작하지 않았습니다.",
+        mode: unavailable
+          ? "qoo10_create_fulfillment_source_unavailable"
+          : "qoo10_create_fulfillment_source_invalid",
+        providerWritePerformed: false,
+        jobCreated: false,
+      }, { status: unavailable ? 503 : 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
   }
   if (boundSmartstoreManualAdoptionUpdate) {
     try {
@@ -1393,6 +1782,277 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         message: "스마트스토어 기존 상품 연결 증거를 서버 요청에 결속하지 못해 수정을 시작하지 않았습니다.",
         mode: "smartstore_manual_adoption_binding_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  if (channel === "coupang" && operation === "listing.create") {
+    const credentialVersion = Number(credentialMetadata.version);
+    const credentialFingerprint = typeof credentialMetadata.fingerprint === "string"
+      ? credentialMetadata.fingerprint : "";
+    const credentialExpiresAt = typeof credentialMetadata.expires_at === "string"
+      ? credentialMetadata.expires_at : null;
+    const { data: coupangCredential, error: coupangCredentialError } =
+      await serviceClient.rpc("sellerpilot_decrypt_credential", {
+        p_credential_id: parsed.data.credentialId,
+      });
+    try {
+      if (coupangCredentialError || !isRecord(coupangCredential)
+        || (parsed.data.credentialVersion !== undefined
+          && parsed.data.credentialVersion !== credentialVersion)) {
+        throw new Error("COUPANG_CREATE_REVISION_CREDENTIAL_INVALID");
+      }
+      const completenessPublishContext = coupangCreatePublishContextWithApprovedManifest(
+        verifiedPublishContext,
+        approvedDetailBinding!,
+      );
+      const readiness = await runWithProviderReadOnlyTransport(() =>
+        buildCoupangCreateReadinessSource({
+          source: effectiveArguments,
+          body: isRecord(effectiveArguments.body) ? effectiveArguments.body : {},
+          publishContext: completenessPublishContext,
+          environment,
+        }, {
+          readCategoryMetadata: ({ displayCategoryCode }) => coupangRequest({
+            payload: coupangCredential,
+            method: "GET",
+            path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/category-related-metas/display-category-codes/${displayCategoryCode}`,
+          }),
+          readCategoryStatus: ({ displayCategoryCode }) => coupangRequest({
+            payload: coupangCredential,
+            method: "GET",
+            path: `/v2/providers/seller_api/apis/api/v1/marketplace/meta/display-categories/${displayCategoryCode}/status`,
+          }),
+          readOutboundShippingPlaces: () => coupangRequest({
+            payload: coupangCredential,
+            method: "GET",
+            path: "/v2/providers/marketplace_openapi/apis/api/v2/vendor/shipping-place/outbound",
+            query: new URLSearchParams({
+              placeCodes: String(
+                isRecord(effectiveArguments.body)
+                  ? effectiveArguments.body.outboundShippingPlaceCode ?? ""
+                  : "",
+              ).trim(),
+            }),
+          }),
+          readReturnCenters: () => coupangRequest({
+            payload: coupangCredential,
+            method: "GET",
+            path: "/v2/providers/openapi/apis/api/v3/return/shipping-places/center-code",
+            query: new URLSearchParams({
+              returnCenterCodes: String(
+                isRecord(effectiveArguments.body)
+                  ? effectiveArguments.body.returnCenterCode ?? ""
+                  : "",
+              ).trim(),
+            }),
+          }),
+          readActiveCredentialRevision: () => ({
+            credentialId: parsed.data.credentialId,
+            credentialVersion,
+            credentialFingerprint,
+            environment,
+            expiresAt: credentialExpiresAt,
+            sellerIdentityReady: Boolean(
+              String(coupangCredential.vendor_id ?? "").trim()
+              && String(coupangCredential.requested_by ?? "").trim()
+            ),
+          }),
+        }));
+      if (readiness.status !== "ready") {
+        return NextResponse.json({
+          message: readiness.reason === "seller_input_required"
+            ? "쿠팡 상품 등록에 필요한 판매자 입력을 보완한 뒤 공식 조건을 다시 확인해 주세요."
+            : "현재 쿠팡 공식 조건과 입력값이 일치하지 않아 등록 작업을 만들지 않았습니다.",
+          mode: "coupang_create_completeness_required",
+          completeness: readiness.completeness,
+          stage: readiness.stage,
+          attemptedReads: readiness.attemptedReads,
+          providerWritePerformed: false,
+          jobCreated: false,
+        }, {
+          status: readiness.reason === "provider_read_failed" ? 503 : 409,
+          headers: { "cache-control": "no-store, max-age=0" },
+        });
+      }
+      const { data: officialSnapshotData, error: officialSnapshotError } =
+        await serviceClient.rpc(
+          "sellerpilot_service_record_coupang_create_official_snapshot",
+          {
+            p_owner_id: userData.user.id,
+            p_product_id: parsed.data.productId!,
+            p_credential_id: parsed.data.credentialId,
+            p_arguments: readiness.candidate.argumentsValue,
+            p_official_read_snapshot_payload: readiness.officialReadSnapshotPayload,
+          },
+        );
+      const officialSnapshot = isRecord(officialSnapshotData)
+        ? officialSnapshotData
+        : null;
+      const officialReadSnapshotId = typeof officialSnapshot?.snapshotId === "string"
+        ? officialSnapshot.snapshotId : "";
+      const officialReadSnapshotDigestSha256 =
+        typeof officialSnapshot?.snapshotDigestSha256 === "string"
+          ? officialSnapshot.snapshotDigestSha256 : "";
+      if (officialSnapshotError
+        || officialSnapshot?.contract !== "sellerpilot_coupang_create_official_source_snapshot_v1"
+        || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu
+          .test(officialReadSnapshotId)
+        || !/^[a-f0-9]{64}$/u.test(officialReadSnapshotDigestSha256)) {
+        return NextResponse.json({
+          message: "쿠팡 공식 조회값과 현재 상품 원본을 등록 직전 증거로 저장하지 못했습니다.",
+          mode: "coupang_create_official_source_snapshot_unavailable",
+          providerWritePerformed: false,
+          jobCreated: false,
+        }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+      }
+      effectiveArguments = bindCoupangCreateSourceRevision({
+        argumentsValue: readiness.candidate.argumentsValue,
+        publishContext: completenessPublishContext,
+        productId: parsed.data.productId!,
+        credentialId: parsed.data.credentialId,
+        credentialVersion,
+        credentialFingerprint,
+        credentialEnvironment: environment,
+        credentialExpiresAt,
+        credential: coupangCredential,
+        officialReadEvidence: readiness.candidate.officialReadEvidence,
+        officialReadSnapshotId,
+        officialReadSnapshotDigestSha256,
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+      });
+    } catch {
+      return NextResponse.json({
+        message: "쿠팡 카테고리·옵션·고시·가격·재고·배송·반품·승인 이미지와 현재 자격증명을 하나의 입력 revision으로 확정하지 못했습니다.",
+        mode: "coupang_create_source_revision_invalid",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
+  const elevenstCreateProduct = isRecord(effectiveArguments.product)
+    ? effectiveArguments.product
+    : null;
+  const elevenstCreateAssignments = Array.isArray(verifiedPublishContext?.assignments)
+    ? verifiedPublishContext.assignments.filter(isRecord)
+    : [];
+  const elevenstProcessedFoodAssignment = elevenstCreateAssignments.find((assignment) =>
+    assignment.channel === "elevenst"
+      && assignment.environment === "production"
+      && assignment.market === parsed.data.market
+      && assignment.categoryId === "1346631"
+      && assignment.status === "confirmed");
+  const elevenstServerOwnerId = typeof verifiedPublishContext?.ownerId === "string"
+    ? verifiedPublishContext.ownerId
+    : "";
+  const strictElevenstProcessedFoodCreate = channel === "elevenst"
+    && operation === "listing.create"
+    && (Boolean(elevenstProcessedFoodAssignment)
+      || elevenstCreateProduct?.dispCtgrNo === "1346631");
+  if (strictElevenstProcessedFoodCreate) {
+    if (environment !== "production"
+      || elevenstCreateCredentialVersion === null
+      || !parsed.data.productId
+      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(elevenstServerOwnerId)) {
+      return NextResponse.json({
+        message: "11번가 가공식품 등록의 운영 자격증명·상품 결속을 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: "elevenst_new_product_server_source_blocked",
+        code: "ELEVENST_NEW_PRODUCT_SERVER_SOURCE_IDENTITY_INVALID",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+
+    let prepared;
+    try {
+      prepared = await prepareElevenstNewProductCreateBeforeClaimFromRpc({
+        ownerId: elevenstServerOwnerId,
+        productId: parsed.data.productId,
+        categoryId: "1346631",
+        credentialId: parsed.data.credentialId,
+        credentialVersion: elevenstCreateCredentialVersion,
+        environment: "production",
+        arguments: effectiveArguments,
+      }, serviceClient);
+    } catch {
+      return NextResponse.json({
+        message: "11번가 가공식품 등록용 서버 승인 소스를 읽지 못해 등록을 시작하지 않았습니다.",
+        mode: "elevenst_new_product_server_source_blocked",
+        code: "ELEVENST_NEW_PRODUCT_SERVER_SOURCE_READ_FAILED",
+      }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    if (!prepared.ok) {
+      return NextResponse.json({
+        message: "11번가 가공식품 등록용 서버 승인 소스가 완전하지 않아 등록을 시작하지 않았습니다.",
+        mode: "elevenst_new_product_server_source_blocked",
+        code: prepared.errorCode,
+        blockers: prepared.blockers,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+
+    const serverProduct = isRecord(prepared.arguments.product)
+      ? prepared.arguments.product
+      : null;
+    const serverPrice = Number(serverProduct?.selPrc);
+    if (!Number.isSafeInteger(serverPrice) || serverPrice < 1) {
+      return NextResponse.json({
+        message: "11번가 가공식품의 서버 승인 가격을 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: "elevenst_new_product_server_source_blocked",
+        code: "ELEVENST_NEW_PRODUCT_SERVER_PRICE_INVALID",
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+    effectiveArguments = prepared.arguments;
+    effectiveCurrency = "KRW";
+    effectivePrice = serverPrice;
+  }
+  if (channel === "ebay" && operation === "listing.create") {
+    let ebayCreateDraft: {
+      draftId: string;
+      version: number;
+      updatedAt: string;
+      dataSha256: string;
+    } | null = null;
+    if (parsed.data.productId) {
+      try {
+        const { data: registrationDraftData, error: registrationDraftError } = await serviceClient.rpc(
+          PRODUCT_REGISTRATION_DRAFT_GET_RPC,
+          {
+            p_owner_id: userData.user.id,
+            p_draft_id: parsed.data.productId,
+            p_kind: "publish",
+          },
+        );
+        if (!registrationDraftError) {
+          const registrationDraft = productRegistrationDraftRpcResult(registrationDraftData);
+          if (registrationDraft
+              && registrationDraft.kind === "publish"
+              && registrationDraft.productId === parsed.data.productId) {
+            ebayCreateDraft = {
+              draftId: registrationDraft.draftId,
+              version: registrationDraft.version,
+              updatedAt: registrationDraft.updatedAt,
+              dataSha256: createHash("sha256").update(canonicalJson(registrationDraft.data)).digest("hex"),
+            };
+          }
+        }
+      } catch {
+        ebayCreateDraft = null;
+      }
+    }
+    const offer = isRecord(effectiveArguments.offer) ? effectiveArguments.offer : {};
+    const pricingSummary = isRecord(offer.pricingSummary) ? offer.pricingSummary : {};
+    const offerPrice = isRecord(pricingSummary.price) ? pricingSummary.price : {};
+    const priceUsd = usdPriceText(offerPrice.value) || usdPriceText(effectivePrice);
+    effectiveArguments = bindEbayCreateServerSnapshots({
+      argumentsValue: effectiveArguments,
+      publishContext: verifiedPublishContext,
+      draft: ebayCreateDraft,
+      priceUsd,
+    });
+    if (Object.hasOwn(effectiveArguments, "sellerpilotExternalDetail")
+        && (!isRecord(effectiveArguments.sellerpilotEbayCreateLedgerSnapshot)
+          || !isRecord(effectiveArguments.sellerpilotEbayCategoryAssignment))) {
+      return NextResponse.json({
+        message: "eBay 등록 승인 원장과 현재 카테고리 결속을 서버에서 확정하지 못해 원격 등록을 시작하지 않았습니다.",
+        mode: "ebay_create_approval_revision_invalid",
+        providerWritePerformed: false,
+        jobCreated: false,
       }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
     }
   }
@@ -1426,6 +2086,62 @@ export async function POST(request: NextRequest) {
     }))
     .digest("hex");
   const requestFingerprint = baseRequestFingerprint;
+
+  if (channel === "temu" && operation === "listing.create") {
+    try {
+      const produced = await produceTemuCreateAuthoritativeSourceBeforeClaim({
+        rpc: async (name, parameters) => {
+          const result = await serviceClient.rpc(name, parameters);
+          return { data: result.data, error: result.error };
+        },
+        ownerId: userData.user.id,
+        productId: parsed.data.productId!,
+        credentialId: parsed.data.credentialId,
+        requestFingerprint,
+        argumentsValue: effectiveArguments,
+        publishContext: verifiedPublishContext!,
+        credentialMetadata: credentialMetadata as Record<string, unknown>,
+        decryptCredential: async () => {
+          const result = await serviceClient.rpc("sellerpilot_decrypt_credential", {
+            p_credential_id: parsed.data.credentialId,
+          });
+          if (result.error || !isRecord(result.data)) {
+            throw new Error("TEMU_CREATE_CREDENTIAL_UNAVAILABLE");
+          }
+          return result.data as Record<string, unknown>;
+        },
+      });
+      effectiveArguments = {
+        ...effectiveArguments,
+        sellerpilotTemuAuthoritativeSource: produced.sourceBinding,
+        sellerpilotTemuReviewAndCreatePrewrite: produced.prewriteBinding,
+      };
+    } catch (error) {
+      const code = error instanceof TemuCreateSourceLedgerError
+        ? error.code
+        : "TEMU_CREATE_SOURCE_UNAVAILABLE";
+      const inactive = code === "TEMU_CREATE_APP_INACTIVE";
+      const compliance = code === "TEMU_CREATE_COMPLIANCE_NOT_APPROVED";
+      return NextResponse.json({
+        message: inactive
+          ? "Temu Partner 앱이 활성이 아니어서 등록을 시작하지 않았습니다."
+          : compliance
+            ? "Temu 컴플라이언스가 승인되지 않아 등록을 시작하지 않았습니다."
+            : "Temu 권위 소스와 앱 게이트를 확인하지 못해 등록을 시작하지 않았습니다.",
+        mode: inactive
+          ? "temu_create_app_inactive"
+          : compliance
+            ? "temu_create_compliance_not_approved"
+            : "temu_create_authoritative_source_unavailable",
+        code,
+        providerWritePerformed: false,
+        jobCreated: false,
+      }, {
+        status: inactive || compliance ? 409 : 503,
+        headers: { "cache-control": "no-store, max-age=0" },
+      });
+    }
+  }
 
   if (listingOperationRequiresVerifiedRemoteState(operation)) {
     // Bind the provider readback to the exact normalized request without
@@ -1519,6 +2235,91 @@ export async function POST(request: NextRequest) {
       if (!selected.ok || externalDetailDigest(selected.value.external) !== externalDetailDigest(approvedDetailBinding.external)) throw Error("EXTERNAL_DETAIL_VERSION_CONFLICT");
     } catch { return NextResponse.json({ mode: "external_detail_changed_before_claim" }, { status: 409 }); }
   }
+  if (channel === "coupang" && operation === "listing.create") {
+    try {
+      const freshPublishContext = approvedDetailBinding?.external
+        ? await readApprovedExternalDetailPublishContext(
+          { user: userData.user, userClient, serviceClient },
+          parsed.data.productId!,
+        )
+        : await (async () => {
+          const { data, error } = await userClient.rpc(
+            "sellerpilot_get_product_publish_context",
+            { p_product_id: parsed.data.productId! },
+          );
+          if (error || !isRecord(data)) throw new Error("COUPANG_CREATE_SOURCE_CHANGED");
+          return data;
+        })();
+      const freshApproved = approvedProductDetailManifestFromPublishContext(freshPublishContext);
+      if (!freshApproved.ok) throw new Error("COUPANG_CREATE_APPROVAL_CHANGED");
+      const freshCompletenessContext = coupangCreatePublishContextWithApprovedManifest(
+        freshPublishContext,
+        freshApproved.value,
+      );
+      const [{ data: freshCredentials, error: freshCredentialsError }, { data: freshSecret, error: freshSecretError }] = await Promise.all([
+        userClient.rpc("sellerpilot_list_credentials"),
+        serviceClient.rpc("sellerpilot_decrypt_credential", {
+          p_credential_id: parsed.data.credentialId,
+        }),
+      ]);
+      const freshMetadata = Array.isArray(freshCredentials)
+        ? freshCredentials.find((candidate) => isRecord(candidate)
+          && candidate.id === parsed.data.credentialId
+          && candidate.channel === "coupang"
+          && candidate.status === "active")
+        : null;
+      const freshVersion = Number(freshMetadata?.version);
+      const freshFingerprint = typeof freshMetadata?.fingerprint === "string"
+        ? freshMetadata.fingerprint : "";
+      const freshEnvironment = freshMetadata?.environment === "sandbox"
+        ? "sandbox" as const : "production" as const;
+      if (freshCredentialsError || freshSecretError || !freshMetadata || !isRecord(freshSecret)
+        || freshVersion !== parsed.data.credentialVersion
+        || freshEnvironment !== environment) {
+        throw new Error("COUPANG_CREATE_CREDENTIAL_CHANGED");
+      }
+      const unboundArguments = structuredClone(effectiveArguments);
+      delete unboundArguments[coupangCreateSourceRevisionArgument];
+      const currentCoupangBinding = isRecord(
+        effectiveArguments[coupangCreateSourceRevisionArgument],
+      ) ? effectiveArguments[coupangCreateSourceRevisionArgument] : null;
+      const rebound = bindCoupangCreateSourceRevision({
+        argumentsValue: unboundArguments,
+        publishContext: freshCompletenessContext,
+        productId: parsed.data.productId!,
+        credentialId: parsed.data.credentialId,
+        credentialVersion: freshVersion,
+        credentialFingerprint: freshFingerprint,
+        credentialEnvironment: freshEnvironment,
+        credentialExpiresAt: typeof freshMetadata.expires_at === "string"
+          ? freshMetadata.expires_at : null,
+        credential: freshSecret,
+        officialReadEvidence: isRecord(
+          effectiveArguments[coupangCreateSourceRevisionArgument],
+        )
+          ? effectiveArguments[coupangCreateSourceRevisionArgument].officialReadEvidence
+          : null,
+        officialReadSnapshotId: typeof currentCoupangBinding?.officialReadSnapshotId === "string"
+          ? currentCoupangBinding.officialReadSnapshotId : "",
+        officialReadSnapshotDigestSha256:
+          typeof currentCoupangBinding?.officialReadSnapshotDigestSha256 === "string"
+            ? currentCoupangBinding.officialReadSnapshotDigestSha256 : "",
+        market: parsed.data.market,
+        targetId: parsed.data.targetId,
+      });
+      if (canonicalJson(rebound[coupangCreateSourceRevisionArgument])
+        !== canonicalJson(effectiveArguments[coupangCreateSourceRevisionArgument])) {
+        throw new Error("COUPANG_CREATE_SOURCE_CHANGED");
+      }
+    } catch {
+      return NextResponse.json({
+        message: "쿠팡 등록 직전 상품·승인 이미지·인증 revision이 변경되어 작업을 만들지 않았습니다.",
+        mode: "coupang_create_source_changed_before_claim",
+        providerWritePerformed: false,
+        jobCreated: false,
+      }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+    }
+  }
   const { data: claimData, error: claimError } = await userClient.rpc("sellerpilot_claim_channel_operation", {
     p_credential_id: parsed.data.credentialId,
     p_channel: channel,
@@ -1538,7 +2339,12 @@ export async function POST(request: NextRequest) {
     const duplicateRemoteId = typeof claim.remote_id === "string" ? claim.remote_id : undefined;
     const duplicateMessage = typeof claim.safe_message === "string" ? claim.safe_message : "같은 작업이 이미 완료됐습니다.";
     if (claim.status === "succeeded") {
+      const claimListingId = typeof claim.listing_id === "string"
+        && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu.test(claim.listing_id)
+        ? claim.listing_id
+        : undefined;
       const duplicateListingId = parsed.data.resourceListingId
+        ?? claimListingId
         ?? await findProductListingId(duplicateRemoteId);
       const persistedPublicationReplay = listingOperationRequiresVerifiedRemoteState(operation)
         ? persistedListingPublicationReplay(
@@ -1690,7 +2496,7 @@ export async function POST(request: NextRequest) {
   if (usesChannelGateway) {
 
     try {
-      const gatewayArguments = operation === "listing.create"
+      let gatewayArguments = operation === "listing.create"
         || operation === "listing.update"
         || (channel === "temu" && operation === "listing.activate")
         ? await prepareMarketplaceImages(serviceClient, channel, effectiveArguments, {
@@ -1711,6 +2517,73 @@ export async function POST(request: NextRequest) {
           return prepared;
         })
         : effectiveArguments;
+      if (channel === "smartstore" && operation === "listing.create") {
+        try {
+          gatewayArguments = attachSmartstoreListingCreateExecuteTransport(gatewayArguments);
+        } catch {
+          return NextResponse.json({
+            message: "스마트스토어 등록 본문이 현재 소스 스냅샷과 달라 전송을 시작하지 않았습니다.",
+            mode: "smartstore_listing_create_source_identity_invalid",
+            providerWritePerformed: false,
+            jobCreated: false,
+          }, {
+            status: 409,
+            headers: { "cache-control": "no-store, max-age=0" },
+          });
+        }
+      }
+      if (channel === "coupang" && operation === "listing.create") {
+        const { data: transmissionData, error: transmissionError } =
+          await serviceClient.rpc("sellerpilot_service_record_coupang_create_transmission", {
+            p_owner_id: userData.user.id,
+            p_product_id: parsed.data.productId!,
+            p_credential_id: parsed.data.credentialId,
+            p_attempt_id: attemptId,
+            p_arguments: gatewayArguments,
+          });
+        const transmission = isRecord(transmissionData) ? transmissionData : null;
+        const sourceRevision = isRecord(
+          gatewayArguments[coupangCreateSourceRevisionArgument],
+        ) ? gatewayArguments[coupangCreateSourceRevisionArgument] : null;
+        if (transmissionError
+          || transmission?.contract !== coupangCreateTransmissionContract
+          || typeof transmission?.transmissionId !== "string"
+          || transmission?.attemptId !== attemptId
+          || transmission?.sourceSnapshotId !== sourceRevision?.officialReadSnapshotId
+          || transmission?.sourceSnapshotDigestSha256
+            !== sourceRevision?.officialReadSnapshotDigestSha256
+          || typeof transmission?.transmissionBodySha256 !== "string"
+          || typeof transmission?.transmissionDigestSha256 !== "string") {
+          throw new Error("COUPANG_CREATE_TRANSMISSION_SNAPSHOT_UNAVAILABLE");
+        }
+        gatewayArguments = {
+          ...gatewayArguments,
+          [coupangCreateTransmissionArgument]: transmission,
+        };
+      }
+      if (channel === "ebay" && operation === "listing.create") {
+        gatewayArguments = sealEbayCreateApprovalArguments(gatewayArguments);
+      }
+      if (channel === "temu" && operation === "listing.create") {
+        const source = isRecord(gatewayArguments.sellerpilotTemuAuthoritativeSource)
+          ? gatewayArguments.sellerpilotTemuAuthoritativeSource : null;
+        if (typeof source?.sourceId !== "string") {
+          throw new Error("TEMU_FINAL_CREATE_SOURCE_MISSING");
+        }
+        gatewayArguments = await bindTemuFinalCreatePayloadBeforeEnqueue({
+          rpc: async (name, parameters) => {
+            const result = await serviceClient.rpc(name, parameters);
+            return { data: result.data, error: result.error };
+          },
+          ownerId: userData.user.id,
+          productId: parsed.data.productId!,
+          credentialId: parsed.data.credentialId,
+          attemptId,
+          sourceId: source.sourceId,
+          requestFingerprint,
+          finalArguments: gatewayArguments,
+        });
+      }
       if (operation === "listing.create" || operation === "listing.update") {
         assertListingShippingReady(channel, gatewayArguments, operation);
       }

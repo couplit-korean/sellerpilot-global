@@ -1,0 +1,42 @@
+# Active migration reservations
+
+- `20260910020000_smartstore_get_successor_completion.sql`: SmartStore007 담당 전용. 로컬 번호/날짜 검사 통과. Migration 설치가 운영 job을 자동 생성하지 않도록 service action과 분리. 운영 적용 승인/완료 아님.
+- `20260910020500_coupang_durable_create_reconciliation.sql`: Coupang durable reconciliation r2 전용. 로컬 번호/날짜 검사 통과. r1의 과거 번호 20260910011500은 사용하지 않으며, 현재 중앙 마이그레이션 순서와 공유 코드에 재기반해야 한다. 운영 적용 승인/완료 아님.
+- `20260910021000_ebay_durable_publication_reconciliation.sql`: eBay009 GET 기반 게시 복구 전용. 최초 claim 뒤 프로세스가 종료된 경우에도 만료 lease를 같은 job·attempt·listing 계보로 다시 claim할 수 있어야 하며, 운영 적용 승인/완료 아님.
+- `20260910022500_elevenst_new_product_server_sources.sql`: Elevenst010 신규상품 server-owned source/RPC 전용. 009의 여섯 exact read를 같은 owner/product/category/credential revision에 결속하고 브라우저 제출 값을 source로 사용하지 않는다. 운영 적용 승인/완료 아님.
+- `20260910023000_shopee_create_resume_reconciliation.sql`: Shopee013 Global CREATE 후 local publish 실패 resume/reconciliation 전용. 신규 Global CREATE 중복 실행을 허용하지 않는다. 실제 DB 변경이 필요할 때만 사용하며 운영 적용 승인/완료 아님.
+- `20260910023500_qoo10_fulfillment_evidence.sql`: Qoo10012 dispatch/return 정책 증거 저장이 필요한 경우 전용. 같은 seller의 인증된 공식 GET 근거만 허용하며 운영 적용 승인/완료 아님.
+- `20260910024000_ebay_create_prewrite_reconciliation.sql`: eBay012 exact duplicate/prewrite 및 재개 계보 저장이 필요한 경우 전용. 실제 DB 변경이 필요할 때만 사용하며 운영 적용 승인/완료 아님.
+- `20260910024500_lazada_create_authoritative_sources.sql`: Lazada014~015 server-owned readiness source 저장/RPC 전용. Lazada015-r4 누적본은 이 아직 미적용인 전용 migration을 수정한다. 운영 적용 승인/완료 아님.
+- `20260910025000_temu_create_authoritative_sources.sql`: Temu015 concrete signed read source 저장/RPC가 필요한 경우 전용. 운영 적용 승인/완료 아님.
+- `20260910025500_fence_coupang_create_official_sources.sql`: Coupang006 공식 source fence 전용. 운영 적용 승인/완료 아님.
+- `20260910030000_elevenst_new_product_source_approval.sql`: Elevenst011 신규상품 server-owned source 승인 append/retire RPC 전용. 010 ledger 구조를 수정하지 않고, exact owner/product/category/credential/revision과 승인 입력을 service-only 경계에서 검증한다. 운영 적용 승인/완료 아님.
+- `20260910031000_smartstore_create_category_attribute_source.sql`: SmartStore011 신규 CREATE category attribute source snapshot과 local/serverless mutation begin fence 전용. 과거상품 C03와 무관하며 운영 적용 승인/완료 아님.
+- `20260910030500`: 폐기. Elevenst012 초안에 잠시 예약했으나 중앙 선행 순서 변경으로 사용하지 않는다.
+- `20260910031600_elevenst_new_product_source_readback.sql`: Elevenst r4 server-owned source readback 전용. 폐기된 `30500`을 대체하고 `30000` 뒤, `31700` 앞에 적용한다. 운영 적용 승인/완료 아님.
+- `20260910031500_fence_coupang_create_official_sources_r7.sql`: Coupang007 공식 source CAS 보강 전용. 운영 적용 승인/완료 아님.
+- `20260910031700_elevenst_new_product_execution_cas.sql`: Elevenst012-r3/013 신규상품 execution CAS 전용. `31000`, `31500`을 사용하지 않는다. 운영 적용 승인/완료 아님.
+- `20260910032000_smartstore_create_category_source_collector_context.sql`: SmartStore012-r2 서버 공식 GET 수집 context와 deep receipt 검증 전용. 운영 적용 승인/완료 아님.
+- `20260910032500_coupang_create_request_body_cas.sql`: Coupang008 전체 provider request body와 credential incarnation 결속 보강 전용. 운영 적용 승인/완료 아님.
+- `20260910033000_temu_create_authoritative_producer_execution.sql`: Temu019 앱 승인 이후 실제 CREATE producer/execution 결속 전용. 운영 적용 승인/완료 아님.
+- `20260910033500_qoo10_gateway_create_atomic_recovery.sql`: Qoo10 015-r4 실제 gateway 경로의 QSM source/job fence/listing completion 원자성 및 crash recovery 전용. 운영 적용 승인/완료 아님.
+- `20260910034000_shopee_create_current_source_body_cas.sql`: Shopee014-r3 current source·이미지 byte digest·최종 provider JSON 결속 전용. 운영 적용 승인/완료 아님.
+- `20260910034500_ebay_create_execution_fence.sql`: eBay 누적 r3 actual worker hook·credential incarnation·response-loss fence 전용. 운영 적용 승인/완료 아님.
+- `20260910035000_lazada_create_execution_followup.sql`: Lazada015-r4 이후 별도 schema 보강이 필요한 경우에만 사용한다. 015-r4가 `24500` 하나로 완결되면 만들지 않는다. 운영 적용 승인/완료 아님.
+- `20260910035500_smartstore_create_category_source_hardening.sql`: SmartStore012-r3 official category 응답 허용 필드, DB 저장 속성 결속, confirmed assignment 직렬화, source TTL 보강 전용. 운영 적용 승인/완료 아님.
+- `20260910036000`, `36500`, `37000`, `37500`, `38000`, `38500`, `39000`, `39500`: **폐기**. `HHMMSS`의 분 값이 60 이상이라 실제 달력 시각이 아니며 `scripts/check-migration-version.mjs`가 거부한다. 어떤 누적 patch에도 다시 넣지 않는다.
+- `20260910040000_ebay_create_execution_recovery_hardening.sql`: eBay r5 전용. `34500`의 후속이며 local claim의 eBay-only 범위, 실제 전송 bytes digest, current price/qty/category CAS, response-loss replay를 보강한다. 운영 적용 승인/완료 아님.
+- `20260910040500_temu_operator_app_observation_source.sql`: Temu r23 operator app observation source 전용. 이전 무효 `36500`을 대체한다. 운영 적용 승인/완료 아님.
+- `20260910040600_temu_official_app_attestation_and_final_body_cas.sql`: Temu r23 signed collector, expected App ID/key incarnation, attestation revoke, final provider CAS 전용. 이전 무효 `37500`을 대체하고 `33000`→`40500` 뒤 적용한다. 운영 적용 승인/완료 아님.
+- `20260910041000_shopee_create_execution_lineage_hardening.sql`: Shopee r5 strict leaf value schema, credential refresh lineage, current product/category/price/stock 최종 CAS 보강 전용. `34000`의 후속이며 운영 적용 승인/완료 아님.
+- `20260910041500_coupang_create_exact_provider_body_r12.sql`: Coupang r12 final image-prepared transmission, actual POST bytes, Vault credential incarnation, exact current-category count 및 full stable-body CAS 전용. 운영 적용 승인/완료 아님.
+- `20260910042000_complete_coupang_durable_create_reconciliation_r12.sql`: Coupang r12 response-loss automatic enqueue, exact SKU/item readback, credential secret digest 및 atomic terminal completion 전용. `41500` 뒤 적용하며 운영 적용 승인/완료 아님.
+- `20260910042500_coupang_create_reconciliation_backoff_r12.sql`: Coupang r12 pending official-readback 재시도의 durable next-eligible backoff 전용. `41500`→`42000` 뒤 적용하며 운영 적용 승인/완료 아님.
+- `20260910043000_elevenst_final_body_recovery_and_lock_order_r4.sql`: Elevenst r4 exact final XML/body seal, Vault secret incarnation, SellerPrdCd GET-only response-loss recovery, listing repair, advisory-first lock order 전용. `31700` 뒤 적용하며 운영 적용 승인/완료 아님.
+- `20260910043500_lazada_create_completion_hardening_r6.sql`: Lazada r6 short RPC names, worker-token-bound Vault source read, strict official completion evidence, atomic generic completion, credential expiry CAS 및 set-based recovery 전용. `24500`→`35000` 뒤 적용하며 운영 적용 승인/완료 아님.
+- `20260910044000_shopee_create_transport_and_successor_hardening_r6.sql`: Shopee r6 exact transport bytes, full current-draft cardinality, OAuth successor receipt/Vault incarnation, atomic internal completion 보강 전용. 실제 파일명은 migration checker 통과 후 확정하며 운영 적용 승인/완료 아님.
+- `20260910044500_elevenst_recovery_observation_and_identifier_hardening_r6.sql`: Elevenst r6 63-byte 이하 SQL 식별자, official GET raw evidence 결속, fresh CREATE와 existing-product recovery 분리 보강 전용. 실제 파일명은 migration checker 통과 후 확정하며 운영 적용 승인/완료 아님.
+- `20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql`: Lazada r7 raw official response receipt, order-insensitive exact SKU set, current product/listing/source CAS, normal POST response와 GET-only recovery 증거 분리 보강 전용. 실제 파일명은 migration checker 통과 후 확정하며 운영 적용 승인/완료 아님.
+- `20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql`: Temu r24 actual Ed25519 verification receipt, NULL-safe required fields, current credential/Vault gate recheck, deterministic blocked observation, non-extractable Keychain signing 보강 전용. 실제 파일명은 migration checker 통과 후 확정하며 운영 적용 승인/완료 아님.
+- `20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql`: Qoo10 r5 과거 Lotte/existing runtime 완전 폐기, 63-byte 초과 fulfillment 함수의 짧은 후속 이름, current product/listing/body CAS, GET-only response-loss 복구 전용. `46000`은 분 값 60으로 무효이므로 사용하지 않는다. 운영 적용 승인/완료 아님.
+- `20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql`: SmartStore r4 final transport bytes, current product/draft/category/assets/credential CAS, GET-only response-loss 복구와 atomic completion 전용. 운영 적용 승인/완료 아님.

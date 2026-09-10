@@ -16,6 +16,7 @@ import {
   type ShopeePublicationReadbackVerification,
 } from "../../channels/provider-shopee-publication-readback";
 import { shopeeExactGlobalCategoryPath } from "../../channels/shopee-category-tree";
+import { shopeeSgListingCreateRequested } from "../../channels/shopee-sg-listing-create";
 
 import { uploadChannelNativeImages } from "../../channels/native-image-upload";
 import {
@@ -28,6 +29,7 @@ import {
   listingUpdateReadbackStep,
   type ChannelOperationName,
 } from "../execution-shared";
+import { executeShopeeSgCreateRuntime } from "../shopee/execute-create-runtime";
 
 export function shopeeResponseId(data: Record<string, unknown>, key: string) {
   const response = data.response;
@@ -104,6 +106,10 @@ export async function executeShopee(input: ExecuteInput) {
     !globalProduct
   ) {
     throw new Error("SHOPEE_SAFE_TEST_REQUIRES_GLOBAL_PUBLISH");
+  }
+  if (globalProduct && input.operation === "listing.create"
+      && shopeeSgListingCreateRequested(input.arguments)) {
+    return executeShopeeSgCreateRuntime(input);
   }
   if (
     globalProduct &&

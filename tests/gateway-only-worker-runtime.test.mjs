@@ -15,6 +15,7 @@ import {
 
 const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workerPath = resolve(projectRoot, "scripts/ai-cli-worker.mjs");
+const gatewayWorkerPath = resolve(projectRoot, "scripts/channel-gateway-worker.mjs");
 
 async function listen(server) {
   await new Promise((resolveListen, reject) => {
@@ -153,17 +154,22 @@ test("gateway-only liveness stays safe while readiness follows queue connectivit
   }
 });
 
-test("gateway-only once claims the gateway without AI token or local Codex tools", async () => {
+test("gateway-only once falls through an unavailable eBay recovery contract without AI tools", async () => {
   const requests = [];
   const gatewayToken = `spw_${"g".repeat(43)}`;
   const server = createServer((request, response) => {
-    requests.push({
-      method: request.method,
-      url: request.url,
-      authorization: request.headers.authorization,
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        authorization: request.headers.authorization,
+        body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+      });
+      response.writeHead(requests.length === 1 ? 400 : 204);
+      response.end();
     });
-    response.writeHead(204);
-    response.end();
   });
   const address = await listen(server);
 
@@ -185,31 +191,41 @@ test("gateway-only once claims the gateway without AI token or local Codex tools
     assert.match(result.stdout, /mode=gateway-only/);
     assert.match(result.stdout, /channel gateway worker 종료/);
     assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /codex-image|CLI 작업자 토큰/);
-    assert.deepEqual(requests, [{
+    assert.equal(requests.length, 2);
+    assert.deepEqual(requests.map(({ method, url, authorization }) => ({
+      method,
+      url,
+      authorization,
+    })), [0, 1].map(() => ({
       method: "POST",
       url: "/api/channel-gateway/worker/claim",
       authorization: `Bearer ${gatewayToken}`,
-    }]);
+    })));
+    assert.equal(requests[0].body.mode, "ebay_publication_reconciliation");
+    assert.equal("mode" in requests[1].body, false);
   } finally {
     await closeServer(server);
   }
 });
 
-test("legacy gateway-only assets keep secrets external but production stays Vercel-only", async () => {
-  const [worker, packageJson, dockerfile, service, documentation] = await Promise.all([
+test("split gateway-only assets keep secrets external but production stays Vercel-only", async () => {
+  const [entrypoint, worker, packageJson, dockerfile, service, documentation] = await Promise.all([
     readFile(workerPath, "utf8"),
+    readFile(gatewayWorkerPath, "utf8"),
     readFile(resolve(projectRoot, "package.json"), "utf8"),
     readFile(resolve(projectRoot, "deploy/channel-gateway-worker.Dockerfile"), "utf8"),
     readFile(resolve(projectRoot, "deploy/sellerpilot-channel-gateway-worker.service.example"), "utf8"),
     readFile(resolve(projectRoot, "docs/channel-gateway-worker.md"), "utf8"),
   ]);
 
-  assert.match(worker, /const gatewayOnly = process\.argv\.includes\("--gateway-only"\)/);
-  assert.match(worker, /gatewayOnly && !process\.env\.SELLERPILOT_URL\?\.trim\(\)/);
-  assert.match(worker, /if \(gatewayOnly && !gatewayWorkerConfigured\)/);
-  assert.match(worker, /if \(!gatewayOnly\) \{\s*if \(!aiWorkerConfigured\)/);
-  assert.match(worker, /if \(!gatewayOnly\) \{\s*await access\(codexBin\)/);
-  assert.match(worker, /if \(gatewayOnly\) \{\s*if \(once\) break;\s*await waitForIdleWork\(\);\s*continue;/);
+  assert.match(entrypoint, /await import\("\.\/channel-gateway-worker\.mjs"\)/);
+  assert.match(entrypoint, /await import\("\.\/product-ai-worker\.mjs"\)/);
+  assert.match(worker, /if \(!process\.env\.SELLERPILOT_URL\?\.trim\(\)\)/);
+  assert.match(worker, /if \(!gatewayWorkerConfigured\)/);
+  assert.match(worker, /const aiWorkerToken = ""/);
+  assert.match(worker, /localReleaseGitTimeoutMs = 2_000/);
+  assert.match(worker, /killSignal: "SIGKILL"/);
+  assert.match(worker, /if \(once\)\s*break/);
   assert.match(packageJson, /"gateway:worker": "node --import tsx scripts\/ai-cli-worker\.mjs --gateway-only"/);
   assert.match(dockerfile, /FROM node:22-bookworm-slim/);
   assert.doesNotMatch(dockerfile, /SELLERPILOT_(?:GATEWAY|SCHEDULER)_WORKER_TOKEN=/);

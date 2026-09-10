@@ -45,6 +45,45 @@ class InboxTest(unittest.TestCase):
         self.assertEqual(self.collect()["pending"], 2)
         self.assertEqual(Path(first["snapshot"]).read_text(), "first patch")
 
+    def test_old_status_revision_is_superseded_but_frozen_submissions_stay_pending(self):
+        status = self.report / "status.md"
+        proposal = self.report / "proposal.patch"
+        status.write_text("working")
+        proposal.write_text("first patch")
+        self.collect()
+        status.write_text("ready")
+        result = self.collect()
+        items = self.items().values()
+        self.assertEqual(result["autoSuperseded"], 1)
+        self.assertEqual(result["pending"], 2)
+        self.assertEqual(
+            sorted(item["state"] for item in items if item["kind"] == "status"),
+            ["pending", "superseded"],
+        )
+        self.assertEqual(
+            [item["state"] for item in items if item["kind"] == "submission"],
+            ["pending"],
+        )
+
+    def test_legacy_hidden_scratch_snapshot_is_superseded_without_deletion(self):
+        (self.report / "status.md").write_text("working")
+        self.collect()
+        index = self.state / "inbox.json"
+        data = json.loads(index.read_text())
+        data["items"]["legacy-hidden"] = {
+            "channel": "test",
+            "relativePath": ".scratch/proposal.patch",
+            "sha256": "0" * 64,
+            "snapshot": str(self.state / "snapshots/legacy.patch"),
+            "observedAt": "2026-09-01T00:00:00+00:00",
+            "state": "pending",
+            "kind": "submission",
+        }
+        index.write_text(json.dumps(data))
+        result = self.collect()
+        self.assertEqual(result["autoSuperseded"], 1)
+        self.assertEqual(self.items()["legacy-hidden"]["state"], "superseded")
+
     def test_partial_json_and_temporary_files_wait_without_losing_items(self):
         (self.report / "status.json").write_text('{"unfinished":')
         (self.report / "status.json.tmp").write_text("pending")

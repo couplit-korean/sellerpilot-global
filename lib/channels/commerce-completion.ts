@@ -1,10 +1,33 @@
 import { gatewayWorkerCompletionSchema, gatewayJobCompletionStatusAtJobBoundary, gatewayResultRequiresAdditionalEvidence, type GatewayWorkerCompletion } from "./gateway-contract";
 import type { ProviderJob as ServerlessGatewayClaim } from "./provider-execution-contract";
 import { callRpc, completionContext, recordValue, type CompletionDependencies as ServerlessCsGatewayDependencies, type CompletionResult } from "./gateway-completion-runtime";
+import {
+  gateLazadaGatewayCreateCompletion,
+  lazadaGatewayCreateArgumentsFromJobRequest,
+} from "../product-registration/lazada/my-create-gateway-receipt";
 const COMPLETE_TRANSACTION_RPC = "sellerpilot_service_complete_serverless_cs_transaction";
 const COMPLETE_LISTING_LINEAGE_RPC = "sellerpilot_complete_listing_lineage_verification";
+const COMPLETE_COUPANG_CREATE_RECONCILIATION_RPC = "sellerpilot_complete_coupang_create_reconciliation";
 type SuccessfulGatewayResult = Extract<GatewayWorkerCompletion, { status: "succeeded" }>["result"];
 type ListingLineageResult = Extract<SuccessfulGatewayResult, { operation: "listing.lineage.verify" }>;
+
+function elevenstFreshCreateBlockedByExistingSellerPrdCd(
+  operation: string,
+  steps: ReadonlyArray<{
+    name: string;
+    ok: boolean;
+    status?: number;
+    data?: Record<string, unknown>;
+  }> = [],
+) {
+  if (operation !== "listing.create") return false;
+  return steps.some((step) =>
+    step.name === "product-create-duplicate-detected"
+    && step.status === 409
+    && step.data?.sellerpilotDuplicateExistingProduct === true
+    && step.data?.sellerpilotFreshCreateCompleted === false
+    && step.data?.sellerpilotProviderMutationPerformed === false);
+}
 
 function listingLineageFailureReason(message: string) {
   if (message.includes("PROVIDER_ACCOUNT_IDENTITY_MISSING")) return "legacy_main_reconnect_required";
@@ -39,6 +62,31 @@ function listingLineageSuccessPayload(result: ListingLineageResult) {
       || !("targetId" in evidence)) {
     return null;
   }
+  const coupangEvidence = result.channel === "coupang"
+    && "reconciliationContract" in evidence
+    && evidence.reconciliationContract === "coupang_durable_create_reconciliation_v1"
+    ? {
+      reconciliationContract: evidence.reconciliationContract,
+      sourceJobId: evidence.sourceJobId,
+      sourceAttemptId: evidence.sourceAttemptId,
+      listingId: evidence.listingId,
+      sourceRequestSha256: evidence.sourceRequestSha256,
+      sellerSkus: evidence.sellerSkus,
+      vendorId: evidence.vendorId,
+      sellerProductItemIds: evidence.sellerProductItemIds,
+      ...(result.publicationStateContract
+        && result.publicationIntent
+        && result.publicationFulfilled !== undefined
+        && result.remoteState
+        ? {
+          publicationStateContract: result.publicationStateContract,
+          publicationIntent: result.publicationIntent,
+          publicationFulfilled: result.publicationFulfilled,
+          remoteState: result.remoteState,
+        }
+        : {}),
+    }
+    : {};
   return {
     ok: true,
     channel: result.channel,
@@ -49,6 +97,7 @@ function listingLineageSuccessPayload(result: ListingLineageResult) {
     market: evidence.market,
     targetId: evidence.targetId,
     verification: "exact_provider_readback",
+    ...coupangEvidence,
     ...("marketplaceSku" in evidence
       && "providerResourceId" in evidence
       && evidence.marketplaceSku
@@ -115,15 +164,18 @@ async function completeListingLineageClaim(
     p_response_payload: responsePayload,
     p_error_message: errorMessage,
   };
-  let completed = await callRpc(dependencies, COMPLETE_LISTING_LINEAGE_RPC, arguments_);
+  const completionRpc = job.channel === "coupang"
+    ? COMPLETE_COUPANG_CREATE_RECONCILIATION_RPC
+    : COMPLETE_LISTING_LINEAGE_RPC;
+  let completed = await callRpc(dependencies, completionRpc, arguments_);
   if (completed.error) {
-    completed = await callRpc(dependencies, COMPLETE_LISTING_LINEAGE_RPC, arguments_);
+    completed = await callRpc(dependencies, completionRpc, arguments_);
   }
   if (completed.error) return "unavailable";
   const result = recordValue(completed.data);
   if (result?.job_id !== job.id) return "ownership_lost";
   if (result.status === "lease_lost") return "ownership_lost";
-  return ["bound", "queued", "manual_required"].includes(String(result.status))
+  return ["bound", "verified", "queued", "manual_required"].includes(String(result.status))
     ? "completed"
     : "unavailable";
 }
@@ -135,6 +187,18 @@ export async function completeCommerceClaim(
   completionInput: GatewayWorkerCompletion,
 ): Promise<CompletionResult> {
   if (/^(orders|shipment)\./.test(job.operation) || job.operation === "inquiries.list" || job.operation === "inquiries.reply") return "ownership_lost";
+  if (job.channel === "shopee" && job.operation === "listing.create") {
+    const rawCompletion = recordValue(completionInput);
+    if (rawCompletion?.status === "succeeded") {
+      const map = recordValue(recordValue(rawCompletion.result)?.shopeeSgCreateCompletionMap);
+      if (map?.sameTransactionAsLocalPublish !== true
+          || !String(map.globalItemId ?? "").trim()
+          || !String(map.localItemId ?? "").trim()) {
+        return "unavailable";
+      }
+      return "completed";
+    }
+  }
   const parsed = gatewayWorkerCompletionSchema.safeParse(completionInput);
   if (!parsed.success) return "unavailable";
 
@@ -158,13 +222,48 @@ export async function completeCommerceClaim(
         || completionProviderResult.operation !== job.operation)) {
     return "ownership_lost";
   }
-  const effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(parsed.data.status,
+  const completionSteps = completionProviderResult && "steps" in completionProviderResult
+    && Array.isArray(completionProviderResult.steps)
+    ? completionProviderResult.steps as Array<{
+      name: string;
+      ok: boolean;
+      status?: number;
+      data?: Record<string, unknown>;
+    }>
+    : [];
+  let effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(parsed.data.status,
     completionProviderResult as unknown as Record<string, unknown> | undefined, context.publication_verification_boundary);
-  const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required" && parsed.data.status === "succeeded"
+  let effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required" && parsed.data.status === "succeeded"
     ? (gatewayResultRequiresAdditionalEvidence("steps" in parsed.data.result ? parsed.data.result.steps : [])
       ? "LISTING_ADDITIONAL_EVIDENCE_REQUIRED"
       : "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH") : parsed.data.status === "succeeded" ? null : parsed.data.error;
+  if (job.channel === "elevenst"
+    && job.operation === "listing.create"
+    && elevenstFreshCreateBlockedByExistingSellerPrdCd(job.operation, completionSteps)) {
+    effectiveCompletionStatus = "failed";
+    effectiveCompletionError = "ELEVENST_EXISTING_SELLER_PRODUCT_CODE";
+  }
   if (job.operation === "listing.lineage.verify") return completeListingLineageClaim(dependencies, gatewayTokenHash, job, parsed.data);
+  if (job.channel === "lazada" && job.operation === "listing.create") {
+    const gated = gateLazadaGatewayCreateCompletion({
+      status: parsed.data.status,
+      result: parsed.data.result,
+      argumentsValue: lazadaGatewayCreateArgumentsFromJobRequest(job.request),
+      jobId: job.id,
+      listingId: typeof (job as { listing_id?: unknown }).listing_id === "string"
+        ? (job as { listing_id: string }).listing_id
+        : undefined,
+    });
+    if (!gated.ok) return "unavailable";
+    if (gated.store) {
+      const storedReceipt = await callRpc(dependencies, gated.store.rpc, gated.store.arguments);
+      if (storedReceipt.error) return "unavailable";
+    }
+    if (gated.cas) {
+      const storedCas = await callRpc(dependencies, gated.cas.rpc, gated.cas.arguments);
+      if (storedCas.error) return "unavailable";
+    }
+  }
   const storedResponse: unknown = parsed.data.result ?? null;
   const arguments_ = {
     p_token_hash: gatewayTokenHash, p_job_id: job.id, p_claim_token: job.claim_token,

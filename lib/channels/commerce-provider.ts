@@ -16,7 +16,20 @@ import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
 import { verifyShopeeGlobalListingPostPublish } from "./provider-shopee-post-publish-runtime";
 import { channelPriceUpdateRelease } from "./price-update-release";
 import { qoo10S1ActivationArgument, qoo10S1ActivationArgumentsValid } from "./qoo10-listing-activation";
+import { qoo10DurableCreateFulfillmentBinding } from "../server-qoo10-listing-create-fulfillment-source";
 import { temuActivationBinding, temuContainmentDiscoveryBinding } from "./provider-temu-publication-readback";
+import { executeCoupangDurableCreateReconciliation, type CoupangDurableCreateReconciliationArguments, type CoupangDurableCreateReconciliationResult } from "../product-registration/coupang/durable-create-reconciliation";
+import { shopeeSgListingCreateRequested } from "./shopee-sg-listing-create";
+import {
+  assertSmartstoreCreateTransport,
+  smartstoreCreateBodyBindingSha256,
+  smartstoreCreateTransportArgument,
+  smartstoreCreateTransportStageArgument,
+} from "./smartstore-create-transport";
+import {
+  applyLazadaGatewayCreateProviderResult,
+  lazadaGatewayCreateReceiptKindFromArguments,
+} from "../product-registration/lazada/my-create-gateway-receipt";
 const serverlessWriteMatrix = {
   "listing.create": new Set([
     "qoo10", "shopee", "lazada", "coupang", "elevenst", "temu", "smartstore", "ebay",
@@ -46,7 +59,7 @@ const serverlessReadMatrix = {
 } as const satisfies Record<string, ReadonlySet<GatewayClaim["channel"]>>;
 const serverlessOAuthChannels = new Set<GatewayClaim["channel"]>(["shopee", "lazada", "ebay"]);
 const serverlessShopDiscoveryChannels = new Set<GatewayClaim["channel"]>(["shopee", "lazada"]);
-const serverlessLineageChannels = new Set<GatewayClaim["channel"]>(["qoo10", "shopee", "lazada", "ebay"]);
+const serverlessLineageChannels = new Set<GatewayClaim["channel"]>(["qoo10", "shopee", "lazada", "coupang", "ebay"]);
 export const SERVERLESS_GATEWAY_WRITE_MATRIX = serverlessWriteMatrix;
 export const SERVERLESS_GATEWAY_READ_MATRIX = serverlessReadMatrix;
 export type { ServerlessGatewayExecutionHooks } from "./provider-execution-contract";
@@ -77,11 +90,13 @@ export type ServerlessGatewayProviderResult = ChannelOperationResult
   | ServerlessDiagnosticResult
   | ServerlessShopDiscoveryResult
   | ServerlessCompetitorSearchResult
+  | CoupangDurableCreateReconciliationResult
   | ProviderListingLineageVerificationResult;
 export type ServerlessGatewayProviderExecutionInput = {
   job: GatewayClaim;
   signal: AbortSignal;
   hooks: ServerlessGatewayExecutionHooks;
+  elevenstCredentialVersion?: number;
 };
 type ProviderExecutor = typeof executeChannelOperation;
 function requestArguments(job: GatewayClaim) {
@@ -361,8 +376,7 @@ async function executeCompetitorSearch(input: ServerlessGatewayProviderExecution
   };
 }
 async function executeListingLineage(input: ServerlessGatewayProviderExecutionInput) {
-  if (!serverlessLineageChannels.has(input.job.channel)
-    || input.job.request.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
+  if (!serverlessLineageChannels.has(input.job.channel)) {
     throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:version");
   }
   const arguments_ = input.job.request.arguments;
@@ -370,6 +384,20 @@ async function executeListingLineage(input: ServerlessGatewayProviderExecutionIn
     throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:arguments");
   }
   await input.hooks.assertLeaseHealthy();
+  if (input.job.channel === "coupang") {
+    if (input.job.request.sellerpilotLineageVersion !== "coupang_create_reconciliation_v1") {
+      throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:version");
+    }
+    const result = await executeCoupangDurableCreateReconciliation({
+      payload: input.job.credential,
+      arguments: arguments_ as CoupangDurableCreateReconciliationArguments,
+    });
+    await input.hooks.assertLeaseHealthy();
+    return result;
+  }
+  if (input.job.request.sellerpilotLineageVersion !== "provider_listing_readback_v1") {
+    throw new Error("LISTING_LINEAGE_ARGUMENT_INVALID:version");
+  }
   const result = await executeProviderListingLineageVerification({
     channel: input.job.channel as "qoo10" | "shopee" | "lazada" | "ebay",
     payload: input.job.credential,
@@ -399,6 +427,18 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       throw new Error("SERVERLESS_GATEWAY_OPERATION_NOT_ALLOWED");
     }
     const rawArguments = requestArguments(input.job);
+    const lazadaGetRecoveryCreate = input.job.channel === "lazada"
+      && input.job.operation === "listing.create"
+      && lazadaGatewayCreateReceiptKindFromArguments(rawArguments) === "get_recovery";
+    const qoo10DurableCreateBinding = input.job.channel === "qoo10"
+      && input.job.operation === "listing.create"
+      ? qoo10DurableCreateFulfillmentBinding(rawArguments)
+      : null;
+    if (input.job.channel === "qoo10" && input.job.operation === "listing.create"
+        && (!qoo10DurableCreateBinding
+          || qoo10DurableCreateBinding.credentialId !== input.job.credential_id)) {
+      throw new Error("QOO10_CREATE_FULFILLMENT_DURABLE_CONTEXT_REQUIRED");
+    }
     assertNoRetiredProductRecovery(rawArguments);
     if (input.job.channel === "temu"
       && input.job.operation === "listing.create"
@@ -406,6 +446,10 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
         || !["live", "safe_test"].includes(String(rawArguments.publicationIntent ?? "")))) {
       throw new Error("TEMU_CREATE_CONTRACT_REQUIRED");
     }
+    const strictShopeeSgCreate = input.job.channel === "shopee"
+      && input.job.operation === "listing.create"
+      && rawArguments.globalProduct === true
+      && shopeeSgListingCreateRequested(rawArguments);
     const contentBoundPublicationWrite = (
       input.job.operation === "listing.create"
       || input.job.operation === "listing.update"
@@ -469,6 +513,8 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
     const preparedCredential = await prepareCredential(input, rawArguments);
     const delayedEbayCreateBoundary = input.job.channel === "ebay"
       && input.job.operation === "listing.create";
+    const delayedCoupangCreateBoundary = input.job.channel === "coupang"
+      && input.job.operation === "listing.create";
     if (delayedEbayCreateBoundary) {
       if (!readProviderAccountIdentity(preparedCredential.credential, "ebay")) {
         throw new Error("EBAY_CREATE_SELLER_IDENTITY_REQUIRED");
@@ -483,11 +529,15 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
     }
     let operationArguments = preparedCredential.arguments_;
     let mediaMutationObserved = false;
-    if (input.job.operation === "listing.create" || input.job.operation === "listing.update") {
+    if ((input.job.operation === "listing.create" || input.job.operation === "listing.update")
+        && !strictShopeeSgCreate
+        && !lazadaGetRecoveryCreate) {
       const preparedListing = await prepareMarketplaceListingArguments({
         channel: input.job.channel,
         operation: input.job.operation,
         credential: preparedCredential.credential,
+        credentialId: input.job.credential_id,
+        credentialVersion: input.elevenstCredentialVersion,
         arguments: operationArguments,
         environment: input.job.environment,
         signal: input.signal,
@@ -505,17 +555,53 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       });
       operationArguments = preparedListing.arguments;
       mediaMutationObserved = preparedListing.mediaMutationObserved;
+      if (input.job.channel === "smartstore"
+          && input.job.operation === "listing.create") {
+        if (!input.hooks.stageSmartstoreCreateTransport) {
+          throw new Error("SMARTSTORE_CREATE_TRANSPORT_STAGE_UNAVAILABLE");
+        }
+        const body = recordValue(operationArguments.body);
+        const source = recordValue(operationArguments.sellerpilotSmartstoreCreateSource);
+        const transport = assertSmartstoreCreateTransport({
+          body,
+          transport: operationArguments[smartstoreCreateTransportArgument],
+        });
+        const bodyBindingSha256 = smartstoreCreateBodyBindingSha256(body);
+        if (source.bodyBindingSha256 !== bodyBindingSha256) {
+          throw new Error("SMARTSTORE_CREATE_BODY_BINDING_CHANGED");
+        }
+        const stage = await input.hooks.stageSmartstoreCreateTransport({
+          ...transport,
+          bodyBindingSha256,
+        });
+        assertSmartstoreCreateTransport({
+          body,
+          transport,
+          stage,
+          expectedJobId: input.job.id,
+        });
+        operationArguments = {
+          ...operationArguments,
+          [smartstoreCreateTransportStageArgument]: stage,
+        };
+      }
     }
     await input.hooks.assertLeaseHealthy();
     const delayedTemuActivationBoundary = input.job.channel === "temu"
       && input.job.operation === "listing.activate";
+    const delayedQoo10CreateBoundary = input.job.channel === "qoo10"
+      && input.job.operation === "listing.create"
+      && Boolean(qoo10DurableCreateBinding);
     if (input.job.channel === "temu"
       && input.job.operation === "listing.update") {
       throw new Error("TEMU_EXACT_EXISTING_UPDATE_SERVER_CONTEXT_REQUIRED");
     }
     if (writeChannelOperations.has(input.job.operation)
       && !delayedTemuActivationBoundary
-      && !delayedEbayCreateBoundary) {
+      && !delayedQoo10CreateBoundary
+      && !delayedEbayCreateBoundary
+      && !delayedCoupangCreateBoundary
+      && !strictShopeeSgCreate) {
       await input.hooks.beginProviderMutation();
       await input.hooks.assertLeaseHealthy();
     }
@@ -526,10 +612,15 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       payload: preparedCredential.credential,
       arguments: operationArguments,
       environment: input.job.environment,
-      ...(delayedEbayCreateBoundary
+      ...(delayedEbayCreateBoundary || delayedQoo10CreateBoundary || delayedCoupangCreateBoundary
         ? {
             providerMutationHooks: {
-              begin: () => input.hooks.beginProviderMutation(),
+              begin: delayedCoupangCreateBoundary
+                ? (boundary?: { providerBody?: Record<string, unknown> }) =>
+                  input.hooks.beginProviderMutation(
+                    boundary as { fresh?: boolean } | undefined,
+                  )
+                : () => input.hooks.beginProviderMutation(),
               assertLeaseHealthy: input.hooks.assertLeaseHealthy,
             },
           }
@@ -537,10 +628,62 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
       ...(preparedCredential.shopeeShopCredential
         ? { shopeeShopCredential: preparedCredential.shopeeShopCredential }
         : {}),
+      ...(strictShopeeSgCreate
+        ? {
+          signal: input.signal,
+          providerMutationHooks: {
+            gatewayCredentialId: input.job.credential_id,
+            assertLeaseHealthy: input.hooks.assertLeaseHealthy,
+            begin: () => input.hooks.beginProviderMutation(),
+            readShopeeSgCreateStageState:
+              input.hooks.readShopeeSgCreateStageState,
+            beginShopeeSgCreateStage:
+              input.hooks.beginShopeeSgCreateStage,
+            completeShopeeSgCreateStage:
+              input.hooks.completeShopeeSgCreateStage,
+            readShopeeSgCreateResume: input.hooks.readShopeeSgCreateResume,
+            recordShopeeSgGlobalCreateReadback:
+              input.hooks.recordShopeeSgGlobalCreateReadback,
+            captureShopeeSgPreparedArguments: (prepared: Record<string, unknown>) => {
+              operationArguments = prepared;
+            },
+          },
+        }
+        : {}),
     });
     let result = input.job.operation === "listing.publication.verify"
+      || lazadaGetRecoveryCreate
       ? await runWithProviderReadOnlyTransport(executeOperation)
       : await executeOperation();
+    if (input.job.channel === "lazada" && input.job.operation === "listing.create") {
+      result = applyLazadaGatewayCreateProviderResult(result, operationArguments);
+    }
+    if (mediaMutationObserved) {
+      result.steps.unshift({
+        name: "listing-image-upload",
+        ok: true,
+        status: 200,
+        data: { sellerpilotMutation: "accepted" },
+      });
+    }
+    if (input.job.channel === "shopee"
+      && input.job.operation === "listing.create"
+      && operationArguments.globalProduct === true
+      && preparedCredential.shopeeShopCredential
+      && !strictShopeeSgCreate) {
+      result = await verifyShopeeGlobalListingPostPublish({
+        result,
+        merchantCredential: preparedCredential.credential,
+        shopCredential: preparedCredential.shopeeShopCredential,
+        arguments: operationArguments,
+        environment: input.job.environment,
+        signal: input.signal,
+        hooks: input.hooks,
+      });
+    }
+    // Shopee global CREATE obtains its verified remote state in the dedicated
+    // post-publish readback above. Bind approved source assets only after that
+    // state exists so the final completion receipt carries both facts.
     if (contentBoundPublicationWrite && result.remoteState) {
       const publicationAssetBinding = listingPublicationProviderAssetEvidence({
         channel: input.job.channel,
@@ -561,28 +704,6 @@ export async function executeServerlessGatewayProviderJob(input: ServerlessGatew
         throw new Error("LISTING_PUBLICATION_PROVIDER_ASSET_BINDING_FAILED");
       }
       result = { ...result, remoteState: boundState.data };
-    }
-    if (mediaMutationObserved) {
-      result.steps.unshift({
-        name: "listing-image-upload",
-        ok: true,
-        status: 200,
-        data: { sellerpilotMutation: "accepted" },
-      });
-    }
-    if (input.job.channel === "shopee"
-      && input.job.operation === "listing.create"
-      && operationArguments.globalProduct === true
-      && preparedCredential.shopeeShopCredential) {
-      result = await verifyShopeeGlobalListingPostPublish({
-        result,
-        merchantCredential: preparedCredential.credential,
-        shopCredential: preparedCredential.shopeeShopCredential,
-        arguments: operationArguments,
-        environment: input.job.environment,
-        signal: input.signal,
-        hooks: input.hooks,
-      });
     }
     return result;
   });

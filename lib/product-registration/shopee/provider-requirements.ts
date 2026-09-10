@@ -2,6 +2,7 @@ import {
   assertShopeeSgWarehouseEligibleShop,
   bindShopeeSgWarehouseStock,
   normalizeShopeeSgWarehouses,
+  parseShopeeSgDaysToShip,
   parseShopeeSgPackage,
   resolveShopeeSgBrand,
   shopeeSgOfficialBrandPage,
@@ -14,6 +15,11 @@ import {
 } from "./sg-requirements";
 import { shopeeExactGlobalCategoryPath } from "../../channels/shopee-category-tree";
 import { shopeePositiveInteger } from "./strict-numbers";
+import {
+  bindShopeeSgWarehouseEligibleShopTransport,
+  bindShopeeSgWarehouseListTransport,
+  parseShopeeSgTransportBody,
+} from "./transport-json";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -90,10 +96,13 @@ async function loadOfficialPickupWarehouses(
   for (let pageNumber = 0; pageNumber < 500; pageNumber += 1) {
     if (seenNextIds.has(nextId)) throw new Error("SHOPEE_SG_WAREHOUSE_PAGINATION_INVALID");
     seenNextIds.add(nextId);
-    const remote = await merchantPost("/api/v2/merchant/get_merchant_warehouse_list", {
-      warehouse_type: 1,
+    const transport = bindShopeeSgWarehouseListTransport({
       cursor: { next_id: nextId, page_size: 30 },
     });
+    const remote = await merchantPost(
+      "/api/v2/merchant/get_merchant_warehouse_list",
+      parseShopeeSgTransportBody(transport),
+    );
     const page = shopeeSgOfficialWarehousePage(
       successfulData(remote, "SHOPEE_SG_WAREHOUSE_QUERY_FAILED"),
     );
@@ -119,11 +128,15 @@ async function loadOfficialEligibleShops(input: {
   for (let pageNumber = 0; pageNumber < 500; pageNumber += 1) {
     if (seenNextIds.has(nextId)) throw new Error("SHOPEE_SG_WAREHOUSE_ELIGIBILITY_PAGINATION_INVALID");
     seenNextIds.add(nextId);
-    const remote = await input.merchantPost("/api/v2/merchant/get_warehouse_eligible_shop_list", {
+    const transport = bindShopeeSgWarehouseEligibleShopTransport({
       warehouse_id: warehouseId,
       warehouse_type: 1,
       cursor: { next_id: nextId, page_size: 30 },
     });
+    const remote = await input.merchantPost(
+      "/api/v2/merchant/get_warehouse_eligible_shop_list",
+      parseShopeeSgTransportBody(transport),
+    );
     const page = shopeeSgOfficialEligibleShopPage(
       successfulData(remote, "SHOPEE_SG_WAREHOUSE_ELIGIBILITY_QUERY_FAILED"),
     );
@@ -200,6 +213,11 @@ export async function prepareShopeeSgOfficialRequirements(input: {
   const publishPackage = parseShopeeSgPackage(publishItem);
   if (JSON.stringify(packageValue) !== JSON.stringify(publishPackage)) {
     throw new Error("SHOPEE_SG_GLOBAL_LOCAL_PACKAGE_MISMATCH");
+  }
+  const daysToShip = parseShopeeSgDaysToShip(body.days_to_ship);
+  const publishDaysToShip = parseShopeeSgDaysToShip(publishItem.days_to_ship);
+  if (daysToShip !== publishDaysToShip) {
+    throw new Error("SHOPEE_SG_GLOBAL_LOCAL_DAYS_TO_SHIP_MISMATCH");
   }
 
   const logisticsRemote = await input.readers.shopGet(
@@ -283,12 +301,14 @@ export async function prepareShopeeSgOfficialRequirements(input: {
       ...body,
       brand,
       attribute_list: attributes,
+      days_to_ship: daysToShip,
       seller_stock: stock.sellerStock,
     },
     publishItem: {
       ...publishItem,
       brand: publishBrand,
       attribute_list: publishAttributes,
+      days_to_ship: publishDaysToShip,
       seller_stock: publishStock.sellerStock,
       logistic: logistics,
     },
@@ -297,6 +317,7 @@ export async function prepareShopeeSgOfficialRequirements(input: {
       brandId: brand.brand_id,
       warehouseId: eligibility.warehouseId,
       shopId: eligibility.shopId,
+      daysToShip,
       attributeIds: attributes.map((item) => item.attribute_id),
     },
   };

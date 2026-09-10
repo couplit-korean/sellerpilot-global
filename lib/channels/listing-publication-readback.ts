@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { ebayOfficialPublicationFingerprintVerified } from "./ebay-publication-fingerprint";
 import {
   listingExpectedPublicationLocale,
   verifiedListingRemoteStateSchema,
@@ -530,6 +531,7 @@ export async function readEbayListingPublicationState(input: {
   expectedMarketplaceId?: string;
   expectedListingId?: string;
   expected: ListingPublicationReadbackExpectation;
+  expectedArguments?: Record<string, unknown> | null;
   readOffer: (offerId: string) => Promise<RemoteResponse>;
   readInventoryItem: (sku: string) => Promise<RemoteResponse>;
   verifiedAt?: string;
@@ -564,7 +566,12 @@ export async function readEbayListingPublicationState(input: {
     && (!input.expectedListingId || listingId === input.expectedListingId)
     && Boolean(inventoryItemReadback && remoteAccepted(inventoryItemReadback));
   const localeVerified = Boolean(locale && locale === input.expected.locale);
-  const fingerprintVerified = /^[a-f0-9]{64}$/u.test(input.expected.fingerprint);
+  const fingerprintVerified = ebayOfficialPublicationFingerprintVerified({
+    expectedFingerprint: input.expected.fingerprint,
+    expectedArguments: input.expectedArguments,
+    offer,
+    inventoryItem,
+  });
   const imageCountVerified = input.operation === "listing.stop"
     ? input.expected.imageCount === 0
     : detailImageUrls.length === input.expected.imageCount && inventoryImageUrls.length > 0;

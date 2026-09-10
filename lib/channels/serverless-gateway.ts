@@ -18,6 +18,19 @@ import { providerRateBudgetContract, providerRateLimitEvidence } from "./provide
 import { recordTemuDetailRetryWithReplay } from "./cs/temu/retry-rpc";
 import { SERVERLESS_STATIC_EGRESS_CHANNELS, type ServerlessStaticEgressChannel } from "./serverless-static-egress";
 import { resolveRuntimeReleaseIdentity, runtimeStatusMatchesCurrentRelease } from "../internal-scheduler-auth";
+import {
+  assertElevenstGatewayCredentialVersionReceipt,
+  elevenstGatewayCredentialVersionRpc,
+} from "../product-registration/elevenst/credential-version";
+import {
+  beginQoo10GatewayCreateMutationBoundary,
+  qoo10GatewayCreateReconciliationResult,
+  qoo10DurableCreateFulfillmentBinding,
+  qoo10RetiredExistingItemCode,
+  readQoo10LocalCreateSellerCodeReconciliation,
+  recordQoo10CreateOfficialGetRecovery,
+} from "../server-qoo10-listing-create-fulfillment-source";
+import { drainElevenstCreateRecovery } from "./elevenst-create-recovery-drain";
 
 export const SERVERLESS_GATEWAY_VERSION = "sellerpilot-vercel-gateway/2.0";
 export const SERVERLESS_CS_GATEWAY_VERSION = SERVERLESS_GATEWAY_VERSION;
@@ -42,6 +55,22 @@ const PREPARE_SHOPEE_TARGET_REFRESH_RPC = "sellerpilot_service_prepare_cs_shopee
 const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
   "sellerpilot_service_mark_lazada_oauth_provider_call_started";
 const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
+const STAGE_SMARTSTORE_CREATE_TRANSPORT_RPC =
+  "sellerpilot_service_stage_smartstore_create_transport";
+const READ_SHOPEE_SG_CREATE_STAGE_STATE_RPC =
+  "sellerpilot_service_read_shopee_sg_create_stage_state_v1";
+const BEGIN_SHOPEE_SG_CREATE_STAGE_RPC =
+  "sellerpilot_service_begin_shopee_sg_create_stage_v1";
+const COMPLETE_SHOPEE_SG_CREATE_STAGE_RPC =
+  "sellerpilot_service_complete_shopee_sg_create_stage_v1";
+const READ_SHOPEE_SG_CREATE_RESUME_RPC =
+  "sellerpilot_service_read_shopee_sg_create_resume_v1";
+const RECORD_SHOPEE_SG_GLOBAL_CREATE_READBACK_RPC =
+  "sellerpilot_service_record_shopee_sg_global_create_readback_v1";
+const REBIND_SHOPEE_SG_SUCCESSOR_RPC =
+  "sellerpilot_service_rebind_shopee_sg_successor_v1";
+const BEGIN_COUPANG_CREATE_PROVIDER_MUTATION_RPC =
+  "sellerpilot_service_begin_coupang_create_provider_mutation";
 
 const LEGACY_BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_cs_provider_mutation";
 const COMPLETION_CONTEXT_RPC = "sellerpilot_service_serverless_cs_completion_context";
@@ -283,6 +312,30 @@ async function callRpc(
   }
 }
 
+async function verifyElevenstGatewayCredentialVersion(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  if (job.channel !== "elevenst" || job.operation !== "listing.create") {
+    return undefined;
+  }
+  const verified = await callRpc(dependencies, elevenstGatewayCredentialVersionRpc, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  if (verified.error) {
+    throw new Error("ELEVENST_GATEWAY_CREDENTIAL_VERSION_VERIFICATION_FAILED");
+  }
+  return assertElevenstGatewayCredentialVersionReceipt({
+    receipt: verified.data,
+    jobId: job.id,
+    credentialId: job.credential_id,
+    environment: job.environment,
+  });
+}
+
 async function enqueueDuePublicationReviews(
   dependencies: ServerlessCsGatewayDependencies,
 ) {
@@ -468,6 +521,275 @@ async function beginProviderMutation(
   }
 }
 
+function isQoo10ListingCreate(job: ServerlessGatewayClaim) {
+  return job.channel === "qoo10" && job.operation === "listing.create";
+}
+
+function isCoupangListingCreate(job: ServerlessGatewayClaim) {
+  return job.channel === "coupang" && job.operation === "listing.create";
+}
+
+function isShopeeListingCreate(job: ServerlessGatewayClaim) {
+  return job.channel === "shopee" && job.operation === "listing.create";
+}
+
+function qoo10CreateJobArguments(job: ServerlessGatewayClaim) {
+  return recordValue(job.request.arguments) ?? {};
+}
+
+function shopeeSgCreateCompletionMap(value: unknown) {
+  return recordValue(recordValue(recordValue(value)?.result)?.shopeeSgCreateCompletionMap);
+}
+
+function shopeeSgCreateSameTransactionMap(value: unknown) {
+  const map = shopeeSgCreateCompletionMap(value);
+  if (!map
+      || map.sameTransactionAsLocalPublish !== true
+      || !String(map.globalItemId ?? "").trim()
+      || !String(map.localItemId ?? "").trim()) {
+    return null;
+  }
+  return map;
+}
+
+async function recoverQoo10CreateAfterResponseLoss(input: {
+  dependencies: ServerlessCsGatewayDependencies;
+  gatewayTokenHash: string;
+  job: ServerlessGatewayClaim;
+  errorReason: string;
+}) {
+  const argumentsValue = qoo10CreateJobArguments(input.job);
+  let observation: Awaited<ReturnType<typeof readQoo10LocalCreateSellerCodeReconciliation>> | null = null;
+  try {
+    observation = await readQoo10LocalCreateSellerCodeReconciliation({
+      payload: input.job.credential,
+      argumentsValue,
+      now: input.dependencies.now?.(),
+    });
+  } catch {
+    observation = null;
+  }
+  if (!observation) return undefined;
+  const binding = qoo10DurableCreateFulfillmentBinding(argumentsValue);
+  const existingItemRejected = observation.uniqueRemoteId === qoo10RetiredExistingItemCode
+    || observation.exactRemoteIds.includes(qoo10RetiredExistingItemCode)
+    || observation.sellerCode === qoo10RetiredExistingItemCode;
+  if (observation.lookupStatus === "observed"
+      && typeof observation.httpStatus === "number"
+      && (observation.matchStatus === "unique"
+        || observation.matchStatus === "absent"
+        || observation.matchStatus === "ambiguous")
+      && binding
+      && !existingItemRejected) {
+    try {
+      const requestSha256 = createHash("sha256").update(JSON.stringify({
+        method: "ItemsLookup.GetItemDetailInfo",
+        sellerCode: observation.sellerCode,
+      })).digest("hex");
+      const responseSha256 = createHash("sha256")
+        .update(JSON.stringify(observation))
+        .digest("hex");
+      await recordQoo10CreateOfficialGetRecovery({
+        rpc: (name, parameters) => callRpc(input.dependencies, name, parameters),
+        gatewayTokenHash: input.gatewayTokenHash,
+        jobId: input.job.id,
+        claimToken: input.job.claim_token,
+        sourceId: binding.sourceId,
+        observation,
+        requestSha256,
+        responseSha256,
+      });
+    } catch {
+      // Keep reconciliation_required even if the durable GET receipt cannot be sealed.
+    }
+  }
+  return qoo10GatewayCreateReconciliationResult(observation, input.errorReason);
+}
+
+async function stageSmartstoreCreateTransport(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  input: {
+    bodyText: string;
+    bodySha256: string;
+    bodyByteLength: number;
+    bodyBindingSha256: string;
+  },
+) {
+  const staged = await callRpc(dependencies, STAGE_SMARTSTORE_CREATE_TRANSPORT_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_body_text: input.bodyText,
+    p_body_sha256: input.bodySha256,
+    p_body_byte_length: input.bodyByteLength,
+    p_body_binding_sha256: input.bodyBindingSha256,
+  });
+  if (staged.error) {
+    throw new Error("SMARTSTORE_CREATE_TRANSPORT_STAGE_UNAVAILABLE");
+  }
+  return staged.data;
+}
+
+async function readShopeeSgCreateResume(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  const read = await callRpc(dependencies, READ_SHOPEE_SG_CREATE_RESUME_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  if (read.error) throw new Error("SHOPEE_SG_RESUME_RECEIPT_UNAVAILABLE");
+  const value = recordValue(read.data);
+  if (value?.contract !== "sellerpilot-shopee-sg-create-resume/1") {
+    throw new Error("SHOPEE_SG_RESUME_RECEIPT_INVALID");
+  }
+  if (value.status === "absent") return null;
+  if (value.status !== "ready") {
+    throw new GatewayOwnershipLostError();
+  }
+  return value.receipt;
+}
+
+async function readShopeeSgCreateStageState(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  const read = await callRpc(dependencies, READ_SHOPEE_SG_CREATE_STAGE_STATE_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  if (read.error) throw new Error("SHOPEE_SG_STAGE_STATE_UNAVAILABLE");
+  const value = recordValue(read.data);
+  if (value?.contract !== "sellerpilot-shopee-sg-create-stage/1"
+      || value.status !== "ready") {
+    throw new Error("SHOPEE_SG_STAGE_STATE_INVALID");
+  }
+  return value;
+}
+
+async function beginShopeeSgCreateStage(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  input: {
+    sequence: number;
+    stage: "image-upload" | "global-item-create" | "local-publish";
+    preparedPayloadSha256: string;
+    sourceUrl?: string;
+    sourceSha256?: string;
+    globalItemId?: string;
+  },
+) {
+  const begun = await callRpc(dependencies, BEGIN_SHOPEE_SG_CREATE_STAGE_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_stage_sequence: input.sequence,
+    p_stage_name: input.stage,
+    p_prepared_payload_sha256: input.preparedPayloadSha256,
+    p_source_url: input.sourceUrl ?? null,
+    p_source_sha256: input.sourceSha256 ?? null,
+    p_global_item_id: input.globalItemId ?? null,
+  });
+  if (begun.error) throw new Error("SHOPEE_SG_STAGE_BEGIN_UNAVAILABLE");
+  const value = recordValue(begun.data);
+  if (value?.contract !== "sellerpilot-shopee-sg-create-stage/1"
+      || !["started", "completed"].includes(String(value.status))) {
+    throw new Error("SHOPEE_SG_STAGE_BEGIN_INVALID");
+  }
+  return value;
+}
+
+async function completeShopeeSgCreateStage(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  input: {
+    sequence: number;
+    stage: "image-upload" | "global-item-create" | "local-publish";
+    preparedPayloadSha256: string;
+    sourceUrl?: string;
+    sourceSha256?: string;
+    globalItemId?: string;
+    outputId: string;
+    result?: Record<string, unknown>;
+  },
+) {
+  const completed = await callRpc(dependencies, COMPLETE_SHOPEE_SG_CREATE_STAGE_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+    p_stage_sequence: input.sequence,
+    p_stage_name: input.stage,
+    p_prepared_payload_sha256: input.preparedPayloadSha256,
+    p_source_url: input.sourceUrl ?? null,
+    p_source_sha256: input.sourceSha256 ?? null,
+    p_global_item_id: input.globalItemId ?? null,
+    p_output_id: input.outputId,
+    p_result: input.result ?? {},
+  });
+  if (completed.error) throw new Error("SHOPEE_SG_STAGE_COMPLETE_UNAVAILABLE");
+  const value = recordValue(completed.data);
+  if (value?.contract !== "sellerpilot-shopee-sg-create-stage/1"
+      || value.status !== "completed") {
+    throw new Error("SHOPEE_SG_STAGE_COMPLETE_INVALID");
+  }
+  return value;
+}
+
+async function recordShopeeSgGlobalCreateReadback(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+  input: {
+    globalItemId: string;
+    createResponse: Record<string, unknown>;
+    readbackResponse?: Record<string, unknown>;
+    officialReadback?: Record<string, unknown>;
+    preparedArguments?: Record<string, unknown>;
+  },
+) {
+  const recorded = await callRpc(
+    dependencies,
+    RECORD_SHOPEE_SG_GLOBAL_CREATE_READBACK_RPC,
+    {
+      p_token_hash: gatewayTokenHash,
+      p_job_id: job.id,
+      p_claim_token: job.claim_token,
+      p_global_item_id: input.globalItemId,
+      p_create_response: input.createResponse ?? {},
+      p_readback_response: input.readbackResponse ?? input.officialReadback ?? {},
+      p_prepared_arguments: input.preparedArguments ?? {},
+    },
+  );
+  if (recorded.error) throw new Error("SHOPEE_SG_GLOBAL_CREATE_RECEIPT_UNAVAILABLE");
+  const value = recordValue(recorded.data);
+  if (value?.contract !== "sellerpilot-shopee-sg-create-resume/1"
+      || !["recorded", "replayed"].includes(String(value.status))) {
+    throw new Error("SHOPEE_SG_GLOBAL_CREATE_RECEIPT_INVALID");
+  }
+}
+
+async function rebindShopeeSgSuccessor(
+  dependencies: ServerlessCsGatewayDependencies,
+  gatewayTokenHash: string,
+  job: ServerlessGatewayClaim,
+) {
+  const rebound = await callRpc(dependencies, REBIND_SHOPEE_SG_SUCCESSOR_RPC, {
+    p_token_hash: gatewayTokenHash,
+    p_job_id: job.id,
+    p_claim_token: job.claim_token,
+  });
+  if (rebound.error) throw new Error("SHOPEE_SG_CREATE_STAGE_UNAVAILABLE");
+  return recordValue(rebound.data);
+}
+
 async function beginLazadaOAuthProviderCall(
   dependencies: ServerlessCsGatewayDependencies,
   gatewayTokenHash: string,
@@ -529,7 +851,13 @@ type CompletionResult = "completed" | "completed_reconciliation" | "ownership_lo
 
 async function completeClaim(dependencies: ServerlessCsGatewayDependencies, gatewayTokenHash: string, job: ServerlessGatewayClaim, input: GatewayWorkerCompletion): Promise<CompletionResult> {
   if (isShippingOperation(job.operation)) return completeShippingClaim(dependencies, gatewayTokenHash, job, input as ShippingCompletion);
-  if (!isCsOperation(job.operation)) return completeCommerceClaim(dependencies, gatewayTokenHash, job, input);
+  if (!isCsOperation(job.operation)) {
+    if (isShopeeListingCreate(job) && input.status === "succeeded"
+        && !shopeeSgCreateSameTransactionMap(input)) {
+      return "unavailable";
+    }
+    return completeCommerceClaim(dependencies, gatewayTokenHash, job, input);
+  }
   const parsed = gatewayWorkerCompletionSchema.safeParse(input);
   if (!parsed.success || parsed.data.status === "succeeded" && !isCsOperation(parsed.data.result.operation)) return "ownership_lost";
   return completeCsClaim(dependencies, gatewayTokenHash, job, parsed.data as CsCompletion);
@@ -577,6 +905,47 @@ export async function runOneServerlessCsGatewayJob(
   gatewayTokenHash: string,
 ) {
   const logError = dependencies.logError ?? defaultLogError;
+  const drained = await drainElevenstCreateRecovery({
+    rpc: (name, arguments_ = {}) => callRpc(dependencies, name, arguments_),
+    tokenHash: gatewayTokenHash,
+  });
+  if (drained.kind === "invalid") {
+    logError("elevenst_create_recovery_claim_contract", { status: 503 });
+    return jsonResponse({ message: "11번가 복구 작업 계약을 확인하지 못했습니다." }, 503);
+  }
+  if (drained.kind === "execute_failed") {
+    logError("elevenst_create_recovery_execute", {
+      status: 503,
+      channel: "elevenst",
+      operation: "listing.create",
+    });
+    return jsonResponse({ message: "11번가 공식 GET-only 복구를 확인하지 못했습니다." }, 503);
+  }
+  if (drained.kind === "finish_failed") {
+    logError("elevenst_create_recovery_finish", {
+      status: 503,
+      channel: "elevenst",
+      operation: "listing.create",
+      code: "unknown",
+    });
+    return jsonResponse({ message: "11번가 복구 완료 여부를 확인하지 못했습니다." }, 503);
+  }
+  if (drained.kind === "finished") {
+    const observation = drained.observation;
+    const officialCompleted = drained.status === "completed"
+      && observation.contract === "sellerpilot_elevenst_create_get_only_recovery_v2"
+      && observation.providerMutationPerformed === false;
+    return jsonResponse({
+      ok: officialCompleted,
+      status: officialCompleted ? "succeeded" : "reconciliation_required",
+      claimed: 1,
+      processed: 1,
+      jobId: drained.jobId,
+      channel: "elevenst",
+      operation: "listing.create",
+      providerMutationPerformed: false,
+    });
+  }
   const claimed = await claimOneJob(dependencies, gatewayTokenHash);
   if (claimed.error) {
     logError("claim", { status: 503, code: safeRpcCode(claimed.error) });
@@ -649,6 +1018,7 @@ export async function runOneServerlessCsGatewayJob(
   let heartbeatStopped = false;
   let externalMutationStarted = false;
   let providerMutationFenced = false;
+  let qoo10CreateBoundaryCrossed = false;
   let lazadaOAuthProviderCallFenced = false;
   let credentialMutationInFlight = false;
   let credentialRefresh: CredentialRefreshSnapshot | undefined;
@@ -707,16 +1077,125 @@ export async function runOneServerlessCsGatewayJob(
       await stageCredentialRefresh(dependencies, gatewayTokenHash, job, refresh);
       await assertLeaseHealthy();
       credentialMutationInFlight = false;
+      if (isShopeeListingCreate(job)) {
+        await rebindShopeeSgSuccessor(dependencies, gatewayTokenHash, job);
+      }
     },
-    beginProviderMutation: async (options) => {
+    beginProviderMutation: async (options?: {
+      fresh?: boolean;
+      providerBody?: Record<string, unknown>;
+    }) => {
       await assertLeaseHealthy();
+      if (isQoo10ListingCreate(job)) {
+        const argumentsValue = recordValue(job.request.arguments);
+        const binding = argumentsValue
+          ? qoo10DurableCreateFulfillmentBinding(argumentsValue)
+          : null;
+        if (!argumentsValue || !binding || binding.credentialId !== job.credential_id) {
+          throw new Error("QOO10_CREATE_FULFILLMENT_DURABLE_CONTEXT_REQUIRED");
+        }
+        try {
+          await beginQoo10GatewayCreateMutationBoundary({
+            rpc: (name, parameters) => callRpc(dependencies, name, parameters),
+            argumentsValue,
+            gatewayTokenHash,
+            jobId: job.id,
+            claimToken: job.claim_token,
+            now: dependencies.now?.(),
+          });
+        } catch {
+          throw new GatewayProviderMutationStateUncertainError();
+        }
+        qoo10CreateBoundaryCrossed = true;
+        providerMutationFenced = true;
+      }
+      if (isCoupangListingCreate(job)) {
+        if (!options?.providerBody) {
+          throw new Error("COUPANG_CREATE_PROVIDER_BODY_FENCE_REQUIRED");
+        }
+        const begun = await callRpc(dependencies, BEGIN_COUPANG_CREATE_PROVIDER_MUTATION_RPC, {
+          p_token_hash: gatewayTokenHash,
+          p_job_id: job.id,
+          p_claim_token: job.claim_token,
+          p_provider_body: options.providerBody,
+        });
+        if (begun.error) throw new GatewayProviderMutationStateUncertainError();
+        if (begun.data !== true) throw new GatewayOwnershipLostError();
+        providerMutationFenced = true;
+      }
       // The owning provider can require a fresh durable fence for each write.
-      if (options?.fresh || !providerMutationFenced) {
+      if ((options?.fresh || !providerMutationFenced)
+          && !isQoo10ListingCreate(job)
+          && !isCoupangListingCreate(job)) {
         await beginProviderMutation(dependencies, gatewayTokenHash, job);
         providerMutationFenced = true;
       }
       await assertLeaseHealthy();
       externalMutationStarted = true;
+    },
+    stageSmartstoreCreateTransport: async (transport) => {
+      await assertLeaseHealthy();
+      const staged = await stageSmartstoreCreateTransport(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        transport,
+      );
+      await assertLeaseHealthy();
+      return staged;
+    },
+    readShopeeSgCreateStageState: async () => {
+      await assertLeaseHealthy();
+      const state = await readShopeeSgCreateStageState(
+        dependencies,
+        gatewayTokenHash,
+        job,
+      );
+      await assertLeaseHealthy();
+      return state;
+    },
+    beginShopeeSgCreateStage: async (stage) => {
+      await assertLeaseHealthy();
+      const begun = await beginShopeeSgCreateStage(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        stage,
+      );
+      if (begun.status === "started") externalMutationStarted = true;
+      await assertLeaseHealthy();
+      return begun;
+    },
+    completeShopeeSgCreateStage: async (stage) => {
+      await assertLeaseHealthy();
+      const completed = await completeShopeeSgCreateStage(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        stage,
+      );
+      await assertLeaseHealthy();
+      return completed;
+    },
+    readShopeeSgCreateResume: async () => {
+      await assertLeaseHealthy();
+      const receipt = await readShopeeSgCreateResume(
+        dependencies,
+        gatewayTokenHash,
+        job,
+      );
+      await assertLeaseHealthy();
+      return receipt;
+    },
+    recordShopeeSgGlobalCreateReadback: async (receipt) => {
+      await assertLeaseHealthy();
+      await recordShopeeSgGlobalCreateReadback(
+        dependencies,
+        gatewayTokenHash,
+        job,
+        receipt,
+      );
+      await assertLeaseHealthy();
     },
   };
 
@@ -735,10 +1214,17 @@ export async function runOneServerlessCsGatewayJob(
       job,
     );
     await assertLeaseHealthy();
+    const elevenstCredentialVersion = await verifyElevenstGatewayCredentialVersion(
+      dependencies,
+      gatewayTokenHash,
+      executionJob,
+    );
+    await assertLeaseHealthy();
     const result = await (dependencies.executeProvider ?? executeServerlessCsProviderJob)({
       job: executionJob,
       signal: runtimeSignal,
       hooks,
+      elevenstCredentialVersion,
     });
     const rateLimit = "steps" in result && Array.isArray(result.steps)
       ? providerRateLimitEvidence(result as ChannelOperationResult, dependencies.now?.() ?? new Date())
@@ -864,7 +1350,19 @@ export async function runOneServerlessCsGatewayJob(
         };
     const parsedCompletion = gatewayWorkerCompletionSchema.safeParse(completionInput);
     if (!parsedCompletion.success) throw new Error("SERVERLESS_GATEWAY_RESULT_CONTRACT_INVALID");
-    const completion = parsedCompletion.data;
+    let completion = parsedCompletion.data;
+    if (isShopeeListingCreate(job) && completion.status === "succeeded") {
+      const map = shopeeSgCreateCompletionMap(completionInput);
+      if (map) {
+        completion = {
+          ...completion,
+          result: {
+            ...completion.result,
+            shopeeSgCreateCompletionMap: map,
+          },
+        } as unknown as typeof completion;
+      }
+    }
     await assertLeaseHealthy();
     await stopHeartbeat();
     return finishClaim(dependencies, gatewayTokenHash, job, completion, logError);
@@ -887,6 +1385,15 @@ export async function runOneServerlessCsGatewayJob(
     const retryableLineageReadback = job.operation === "listing.lineage.verify"
       && effectiveError instanceof Error
       && /LISTING_LINEAGE_TRANSIENT_PROVIDER_ERROR|fetch failed|ETIMEDOUT|ECONNRESET|EAI_AGAIN|UND_ERR_|aborted|network/i.test(effectiveError.message);
+    const qoo10CreateRecoveryResult = isQoo10ListingCreate(job)
+      && (qoo10CreateBoundaryCrossed || externalMutationStarted || providerMutationStateUncertain)
+      ? await recoverQoo10CreateAfterResponseLoss({
+        dependencies,
+        gatewayTokenHash,
+        job,
+        errorReason,
+      })
+      : undefined;
     const completion: GatewayWorkerCompletion =
       externalMutationStarted || providerMutationStateUncertain || retryableLineageReadback
         ? {
@@ -894,6 +1401,7 @@ export async function runOneServerlessCsGatewayJob(
           claimToken: job.claim_token,
           status: "reconciliation_required",
           error: errorReason,
+          ...(qoo10CreateRecoveryResult ? { result: qoo10CreateRecoveryResult } : {}),
           ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
         }
         : {

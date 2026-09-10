@@ -37,10 +37,10 @@ test("literal and dispatched Supabase RPC names fit PostgreSQL's 63-byte identif
     }
   }
   assert.ok(observed.includes(
-    "sellerpilot_service_get_qoo10_adopted_localization_identity",
+    "sellerpilot_service_begin_qoo10_gateway_create_v1",
   ));
   assert.ok(observed.includes(
-    "sellerpilot_service_arm_qoo10_adopted_localization_update",
+    "sellerpilot_service_smartstore_create_category_collect_ctx",
   ));
   assert.ok(observed.length > 0, "at least one literal Supabase RPC must be checked");
 });

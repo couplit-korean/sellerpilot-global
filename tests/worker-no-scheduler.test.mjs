@@ -4,7 +4,7 @@ import vm from "node:vm";
 import test from "node:test";
 import { canRunPeriodicChannelSync, canRunGatewayClaim, isWorkerTokenConfigured } from "../scripts/worker-claim-backoff.mjs";
 
-const source = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+const source = await readFile(new URL("../scripts/channel-gateway-worker.mjs", import.meta.url), "utf8");
 function section(start, end) {
   const left = source.indexOf(start);
   const right = source.indexOf(end, left);
@@ -20,14 +20,16 @@ function scopeState(flags, environmentToken = false) {
       return environmentToken && name.endsWith("_WORKER_TOKEN") ? `spw_${"x".repeat(43)}` : target[name];
     },
   });
-  const state = vm.runInNewContext(`${section('const productOnly =', 'const gatewayPolling =')}\n({ aiWorkerConfigured, gatewayWorkerConfigured, schedulerWorkerConfigured, localRecoveryOnly });`, {
+  const flagSource = section("const localRecoveryOnly =", "function loadWorkerToken");
+  const credentials = section("function loadWorkerToken", "const gatewayPolling =");
+  const state = vm.runInNewContext(`${flagSource}\n${credentials}\n({ aiWorkerConfigured, gatewayWorkerConfigured, schedulerWorkerConfigured, localRecoveryOnly });`, {
     process: { argv: flags, env, platform: "darwin" },
     execFileSync(_program, args) { keychain.push(args[args.indexOf("-s") + 1]); return `spw_${"x".repeat(43)}`; },
     isWorkerTokenConfigured,
   });
   return { ...state, reads, keychain };
 }
-const periodic = section("    if (canRunPeriodicChannelSync({", "    if (canRunGatewayClaim({");
+const periodic = section("if (canRunPeriodicChannelSync({", "if (canRunGatewayClaim({");
 async function periodicCalls(state) {
   const calls = [];
   await vm.runInNewContext(`(async () => { ${periodic} })()`, {
@@ -63,9 +65,14 @@ test("no-scheduler skips the actual periodic sync, competitor refresh and Kakao 
   await vm.runInNewContext(`(async () => { ${body} })()`, {
     workerVersion: "sellerpilot-cli-worker/1.60", localRecoveryOnly: state.localRecoveryOnly,
     localChannelExecutorAttestation: null, localChannelExecutorClaimMode: "local_channel_executor",
+    EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE: "ebay_publication_reconciliation",
+    ebayRecoveryClaimAttempted: true,
     api: async (path, init) => { requests.push({ path, body: JSON.parse(init.body) }); return { status: 204 }; },
   });
-  assert.deepEqual(requests, [{ path: "/api/channel-gateway/worker/claim", body: { version: "sellerpilot-cli-worker/1.60" } }]);
+  assert.deepEqual(requests, [
+    { path: "/api/channel-gateway/worker/claim", body: { version: "sellerpilot-cli-worker/1.60", mode: "ebay_publication_reconciliation" } },
+    { path: "/api/channel-gateway/worker/claim", body: { version: "sellerpilot-cli-worker/1.60" } },
+  ]);
 });
 
 test("gateway default behavior remains additive: scheduler and periodic calls are unchanged", async () => {
@@ -75,8 +82,8 @@ test("gateway default behavior remains additive: scheduler and periodic calls ar
   assert.deepEqual(await periodicCalls(state), ["/api/internal/channel-sync", "competitor-refresh", "/api/internal/kakao-notifications"]);
 });
 
-test("AI-only, product-only and local recovery retain previous scope restrictions", () => {
-  for (const flags of [["--ai-only"], ["--product-only"], ["--gateway-only", "--local-recovery-only"]]) {
+test("the split gateway runtime never enables AI work and local recovery retains gateway scope", () => {
+  for (const flags of [[], ["--local-recovery-only"]]) {
     const before = scopeState(flags);
     const after = scopeState([...flags, "--no-scheduler"]);
     assert.equal(before.aiWorkerConfigured, after.aiWorkerConfigured);
@@ -84,7 +91,7 @@ test("AI-only, product-only and local recovery retain previous scope restriction
     assert.equal(after.schedulerWorkerConfigured, false);
   }
   const all = scopeState(["--no-scheduler"]);
-  assert.equal(all.aiWorkerConfigured, true);
+  assert.equal(all.aiWorkerConfigured, false);
   assert.equal(all.gatewayWorkerConfigured, true);
   assert.equal(all.schedulerWorkerConfigured, false);
 });

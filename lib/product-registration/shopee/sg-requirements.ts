@@ -19,6 +19,14 @@ export type ShopeeSgWarehouse = {
   name: string;
 };
 
+export function parseShopeeSgDaysToShip(value: unknown) {
+  const days = positiveInteger(value);
+  if (days === null || (days !== 1 && (days < 4 || days > 10))) {
+    throw new Error("SHOPEE_SG_DAYS_TO_SHIP_REQUIRED");
+  }
+  return days;
+}
+
 function record(value: unknown): UnknownRecord | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
@@ -430,6 +438,9 @@ export function assertShopeeSgWarehouseEligibleShop(input: {
 
 export function shopeeSgRequirementInputPaths(error: unknown) {
   const code = error instanceof Error ? error.message : text(error);
+  if (code.includes("DAYS_TO_SHIP")) {
+    return [["body", "days_to_ship"], ["publish", "item", "days_to_ship"]];
+  }
   if (code.includes("BRAND")) return [["body", "brand", "original_brand_name"]];
   if (code.includes("LOGISTICS")) return [["publish", "item", "logistic"]];
   if (code.includes("WAREHOUSE")) return [["body", "seller_stock", "0", "location_id"]];

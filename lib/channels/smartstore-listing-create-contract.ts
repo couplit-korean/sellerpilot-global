@@ -231,6 +231,32 @@ function assertBrandAndOrigin(detailAttribute: UnknownRecord) {
   }
 }
 
+function assertProductAttributes(detailAttribute: UnknownRecord) {
+  if (!Object.hasOwn(detailAttribute, "productAttributes")) return;
+  const attributes = detailAttribute.productAttributes;
+  if (!Array.isArray(attributes)) {
+    throw new Error("NAVER_CREATE_PRODUCT_ATTRIBUTES_INVALID");
+  }
+  const seen = new Set<string>();
+  for (const value of attributes) {
+    const attribute = record(value);
+    const attributeSeq = attribute.attributeSeq;
+    const attributeValueSeq = attribute.attributeValueSeq;
+    const realValue = text(attribute.attributeRealValue);
+    const unitCode = text(attribute.attributeRealValueUnitCode);
+    const key = `${String(attributeSeq)}:${String(attributeValueSeq)}`;
+    if (!integerInRange(attributeSeq, 1, Number.MAX_SAFE_INTEGER)
+        || !integerInRange(attributeValueSeq, 1, Number.MAX_SAFE_INTEGER)
+        || seen.has(key)
+        || (Object.hasOwn(attribute, "attributeRealValue") && !realValue)
+        || (Object.hasOwn(attribute, "attributeRealValueUnitCode")
+          && (!unitCode || !realValue))) {
+      throw new Error("NAVER_CREATE_PRODUCT_ATTRIBUTES_INVALID");
+    }
+    seen.add(key);
+  }
+}
+
 /** Shared create fields that must be explicit at draft and final boundaries. */
 function assertSmartstoreCreateBodyFields(
   value: unknown,
@@ -275,6 +301,7 @@ function assertSmartstoreCreateBodyFields(
   assertProvidedNotice(detailAttribute, allowServerManagedContact);
   assertCertificationDecision(detailAttribute);
   assertBrandAndOrigin(detailAttribute);
+  assertProductAttributes(detailAttribute);
   assertUnitCapacityShape(detailAttribute);
   assertOptions(detailAttribute);
 
@@ -324,4 +351,21 @@ export function smartstoreCreateIdentity(value: unknown): SmartstoreCreateIdenti
       && originProductNo !== channelProductNo
     ? { originProductNo, channelProductNo }
     : null;
+}
+
+/** Exact-one seller-code search hit used by GET-only CREATE response-loss recovery. */
+export function smartstoreCreateSearchIdentity(
+  value: unknown,
+): SmartstoreCreateIdentity | null {
+  const data = record(value);
+  const contents = data.contents;
+  if (!Array.isArray(contents) || contents.length !== 1) return null;
+  const row = record(contents[0]);
+  const channels = Array.isArray(row.channelProducts) ? row.channelProducts : [];
+  if (channels.length !== 1) return null;
+  const channel = record(channels[0]);
+  return smartstoreCreateIdentity({
+    originProductNo: row.originProductNo,
+    smartstoreChannelProductNo: channel.channelProductNo,
+  });
 }

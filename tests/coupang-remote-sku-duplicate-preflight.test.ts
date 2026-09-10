@@ -51,6 +51,10 @@ function draft(overrides: Record<string, unknown> = {}) {
     body: {
       displayCategoryCode: 59631,
       sellerProductName: "롯데샌드 315g",
+      outboundShippingPlaceCode: 12345,
+      returnCenterCode: "RET-1",
+      deliveryCompanyCode: "HANJIN",
+      returnCharge: 4_500,
       deliveryChargeType: "NOT_FREE",
       deliveryCharge: 3_000,
       freeShipOverAmount: 0,
@@ -113,7 +117,7 @@ async function prepare(options: {
     if (pathname.endsWith("/shipping-place/outbound")) {
       return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, outboundShippingPlaceCode: 12345, placeAddresses: [address] }] } });
     }
-    if (pathname.includes("/returnShippingCenters")) {
+    if (pathname.includes("/return/shipping-places/center-code")) {
       return Response.json({ code: "SUCCESS", data: { content: [{ usable: true, returnCenterCode: "RET-1", deliverCode: "HANJIN", shippingPlaceName: "반품지", returnFee02kg: 4_500, placeAddresses: [address] }] } });
     }
     if (pathname.endsWith("/status")) return Response.json({ code: "SUCCESS", data: true });
@@ -154,6 +158,14 @@ test("Coupang create checks the exact external seller SKU before all write prepa
   );
   assert.equal(result.calls.length, 5);
   assert.equal(result.mutationStarted, false);
+  const outbound = result.calls.find((call) =>
+    new URL(call.url).pathname.endsWith("/shipping-place/outbound"));
+  const returns = result.calls.find((call) =>
+    new URL(call.url).pathname.endsWith("/return/shipping-places/center-code"));
+  assert.equal(new URL(outbound!.url).searchParams.get("placeCodes"), "12345");
+  assert.equal(new URL(outbound!.url).searchParams.has("pageNum"), false);
+  assert.equal(new URL(returns!.url).searchParams.get("returnCenterCodes"), "RET-1");
+  assert.equal(new URL(returns!.url).searchParams.has("pageNum"), false);
   assert.equal((result.prepared.arguments.body as Record<string, unknown>).vendorId, vendorId);
 });
 

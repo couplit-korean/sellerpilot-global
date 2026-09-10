@@ -63,6 +63,7 @@ export async function ebayListingResultWithPublicationReadback(
         ? input.arguments.listingId
         : undefined,
     expected,
+    expectedArguments: input.arguments,
     readOffer: (readbackOfferId) =>
       ebayRequest({
         payload: input.payload,

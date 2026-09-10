@@ -4,6 +4,7 @@ import {
   assertShopeeSgWarehouseEligibleShop,
   bindShopeeSgWarehouseStock,
   normalizeShopeeSgWarehouses,
+  parseShopeeSgDaysToShip,
   parseShopeeSgPackage,
   resolveShopeeSgBrand,
   shopeeSgOfficialBrandPage,
@@ -19,6 +20,16 @@ import {
 const packageValue = parseShopeeSgPackage({
   weight: 0.4,
   dimension: { package_length: 28, package_width: 20, package_height: 7 },
+});
+
+test("Shopee SG requires the current Seller Centre days-to-ship choices", () => {
+  assert.equal(parseShopeeSgDaysToShip(1), 1);
+  for (let days = 4; days <= 10; days += 1) {
+    assert.equal(parseShopeeSgDaysToShip(days), days);
+  }
+  for (const invalid of [undefined, null, "", true, 0, 2, 3, 11, 1.5, Number.NaN]) {
+    assert.throws(() => parseShopeeSgDaysToShip(invalid), /SHOPEE_SG_DAYS_TO_SHIP_REQUIRED/u);
+  }
 });
 
 test("Shopee SG validates the seller selection instead of enabling every active logistics channel", () => {
@@ -131,6 +142,10 @@ test("Shopee SG warehouse stock keeps global and local shop identities separate"
 });
 
 test("Shopee SG provider errors map back to persisted input paths", () => {
+  assert.deepEqual(shopeeSgRequirementInputPaths(new Error("SHOPEE_SG_DAYS_TO_SHIP_REQUIRED")), [
+    ["body", "days_to_ship"],
+    ["publish", "item", "days_to_ship"],
+  ]);
   assert.deepEqual(shopeeSgRequirementInputPaths(new Error("SHOPEE_SG_BRAND_REQUIRED")), [["body", "brand", "original_brand_name"]]);
   assert.deepEqual(shopeeSgRequirementInputPaths(new Error("SHOPEE_SG_LOGISTICS_SIZE_REQUIRED")), [["publish", "item", "logistic"]]);
   assert.deepEqual(shopeeSgRequirementInputPaths(new Error("SHOPEE_SG_WAREHOUSE_SELECTION_REQUIRED")), [["body", "seller_stock", "0", "location_id"]]);

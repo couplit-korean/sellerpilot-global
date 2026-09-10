@@ -49,6 +49,7 @@ export type Qoo10PublicationReadbackChecks = {
   imageCountVerified: boolean;
   sellerAccountIdentityVerified: boolean;
   categoryVerified: boolean;
+  catalogVerified: boolean;
   titleVerified: boolean;
   shippingVerified: boolean;
   priceQuantityVerified: boolean;
@@ -256,6 +257,10 @@ export function normalizeQoo10ListingPublicationReadback(
   const categoryVerified = (!strict || categoryCode === strict.categoryCode)
     && (!recovery || (recoveryExpectationVerified && categoryCode === recovery.categoryCode));
   const titleVerified = !strict || itemTitle === strict.itemTitle;
+  const manufacturerCode = exactText(item, ["ManufacturerCd", "ManufactureNo"]);
+  const brandCode = exactText(item, ["BrandCd", "BrandNo"]);
+  const catalogVerified = !strict
+    || (manufacturerCode === strict.manufactureNo && brandCode === strict.brandNo);
   const shippingNo = exactText(item, ["ShippingNo", "ShippingNO", "DeliveryGroupNo"]);
   const shippingVerified = (!strict || shippingNo === strict.shippingNo)
     && (!recovery || (recoveryExpectationVerified && shippingNo === recovery.shippingNo));
@@ -269,7 +274,11 @@ export function normalizeQoo10ListingPublicationReadback(
     || (recoveryExpectationVerified && sellPrice === recovery.sellPriceJpy);
   const quantityVerified = !recovery
     || (recoveryExpectationVerified && quantity === recovery.quantity);
-  const priceQuantityVerified = (!strict || (sellPrice === strict.price && quantity === strict.quantity))
+  const priceQuantityVerified = (!strict || (
+    retailPrice === strict.retailPrice
+    && sellPrice === strict.price
+    && quantity === strict.quantity
+  ))
     && retailPriceVerified
     && sellPriceVerified
     && quantityVerified;
@@ -298,6 +307,7 @@ export function normalizeQoo10ListingPublicationReadback(
   const detailImageDigestVerified = (!strict || sameOrderedValues(detailImageUrls, strict.detailImageUrls))
     && detailImageUrlsVerified;
   const strictProjectionVerified = categoryVerified
+    && catalogVerified
     && titleVerified
     && shippingVerified
     && priceQuantityVerified
@@ -312,6 +322,7 @@ export function normalizeQoo10ListingPublicationReadback(
     imageCountVerified,
     sellerAccountIdentityVerified,
     categoryVerified,
+    catalogVerified,
     titleVerified,
     shippingVerified,
     priceQuantityVerified,
@@ -339,7 +350,7 @@ export function normalizeQoo10ListingPublicationReadback(
     verifiedAt: (input.verifiedAt ?? new Date()).toISOString(),
     evidence: {
       version: strict
-        ? "qoo10_get_item_detail_create_v3"
+        ? "qoo10_get_item_detail_create_v4"
         : recovery
           ? "qoo10_get_item_detail_rollback_recovery_v1"
           : "qoo10_get_item_detail_v1",
@@ -353,7 +364,28 @@ export function normalizeQoo10ListingPublicationReadback(
       ...(strict
         ? {
             sellerAccountIdentityDigest: input.expectedSellerAccountIdentityDigest,
+            approvalRevision: strict.approval.approvalRevision,
+            approvalContentSha256: strict.approval.approvalContentSha256,
+            approvalPayloadDigestVerified: true,
+            approvalPayloadDigest: strict.approval.approvalPayloadDigest,
+            japaneseDocumentSha256: strict.approval.japaneseDocumentSha256,
+            englishDocumentSha256: strict.approval.englishDocumentSha256,
+            fulfillmentEvidenceRevision:
+              strict.approval.fulfillmentEvidenceRevision,
+            fulfillmentEvidenceObservedAt:
+              strict.approval.fulfillmentEvidenceObservedAt,
+            fulfillmentEvidenceExpiresAt:
+              strict.approval.fulfillmentEvidenceExpiresAt,
+            fulfillmentEvidenceDigest:
+              strict.approval.fulfillmentEvidenceDigest,
+            dispatchPlaceId: strict.approval.dispatchPlaceId,
+            returnPolicyId: strict.approval.returnPolicyId,
+            dispatchPlaceDigest: strict.approval.dispatchPlaceDigest,
+            returnPolicyDigest: strict.approval.returnPolicyDigest,
             categoryVerified: true,
+            catalogVerified: true,
+            manufacturerCode: strict.manufactureNo,
+            brandCode: strict.brandNo,
             titleVerified: true,
             shippingVerified: true,
             priceQuantityVerified: true,
@@ -381,6 +413,18 @@ export function normalizeQoo10ListingPublicationReadback(
             detailImageUrlsVerified: true,
             officialMarket: "JP",
             officialCurrencySemantics: "JPY",
+            prewriteProductionPlaceType: strict.productionPlaceType,
+            prewriteProductionPlace: strict.productionPlace,
+            prewriteAvailableDateType: strict.availableDateType,
+            prewriteAvailableDateValue: strict.availableDateValue,
+            prewriteOptionContract: strict.optionContract,
+            officialReadbackUnsupportedFields: [
+              "ProductionPlace",
+              "AvailableDateType",
+              "AvailableDateValue",
+              "AdditionalOption",
+              "ItemType",
+            ],
           }
         : {}),
       ...(recovery
@@ -410,6 +454,8 @@ export function normalizeQoo10ListingPublicationReadback(
       ...(strict
         ? {
             categoryCode: strict.categoryCode,
+            manufactureNo: strict.manufactureNo,
+            brandNo: strict.brandNo,
             shippingNo: strict.shippingNo,
             standardImageDigest: strict.standardImageDigest,
             representativeImageBinding,

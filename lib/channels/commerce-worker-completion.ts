@@ -3,9 +3,17 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { gatewayJobCompletionStatusAtJobBoundary, gatewayResultRequiresAdditionalEvidence, smartstoreContentRepairWorkerResultSchema, smartstoreManualAdoptionLineageResultSchema } from "./gateway-contract";
 import { smartstoreContentRepairCompletionSchema } from "../server-smartstore-content-repair";
+import {
+  completeSmartstoreListingCreate,
+  smartstoreListingCreateCompletionReceiptFromWorkerResult,
+} from "../server-smartstore-listing-create-completion";
 import { workerRpcErrorMessage, workerRpcErrorStatus } from "../worker-rpc";
+import {
+  gateLazadaGatewayCreateCompletion,
+  lazadaGatewayCreateArgumentsFromJobRequest,
+} from "../product-registration/lazada/my-create-gateway-receipt";
 
-const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
+const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "coupang", "ebay"]);
 const smartstoreManualAdoptionCompletionBase = z.object({
   contract: z.literal("smartstore_manual_adoption_readback_completion_v1"),
   jobId: z.string().uuid(),
@@ -47,9 +55,13 @@ const listingLineageCompletionSchema = z.object({
 
 type ListingLineageWorkerResult = {
   ok: true;
-  channel: "qoo10" | "shopee" | "lazada" | "ebay";
+  channel: "qoo10" | "shopee" | "lazada" | "coupang" | "ebay";
   operation: "listing.lineage.verify";
   verificationStatus: "verified" | "manual_required";
+  publicationStateContract?: "verified_remote_state_v1";
+  publicationIntent?: "safe_test" | "live";
+  publicationFulfilled?: boolean;
+  remoteState?: Record<string, unknown>;
   evidence: {
     expectedRemoteId: string;
     verifiedRemoteId: string | null;
@@ -58,6 +70,14 @@ type ListingLineageWorkerResult = {
     evidenceVersion: "provider_listing_readback_rebind_v1";
     marketplaceSku?: string;
     providerResourceId?: string;
+    sourceJobId?: string;
+    sourceAttemptId?: string;
+    listingId?: string;
+    sourceRequestSha256?: string;
+    sellerSkus?: string[];
+    vendorId?: string;
+    sellerProductItemIds?: string[];
+    reconciliationContract?: "coupang_durable_create_reconciliation_v1";
 
     reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
   };
@@ -98,6 +118,30 @@ function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
     market: evidence.market,
     targetId: evidence.targetId,
     verification: "exact_provider_readback",
+    ...(result.channel === "coupang"
+      && evidence.reconciliationContract === "coupang_durable_create_reconciliation_v1"
+      ? {
+        reconciliationContract: evidence.reconciliationContract,
+        sourceJobId: evidence.sourceJobId,
+        sourceAttemptId: evidence.sourceAttemptId,
+        listingId: evidence.listingId,
+        sourceRequestSha256: evidence.sourceRequestSha256,
+        sellerSkus: evidence.sellerSkus,
+        vendorId: evidence.vendorId,
+        sellerProductItemIds: evidence.sellerProductItemIds,
+        ...(result.publicationStateContract
+          && result.publicationIntent
+          && result.publicationFulfilled !== undefined
+          && result.remoteState
+          ? {
+            publicationStateContract: result.publicationStateContract,
+            publicationIntent: result.publicationIntent,
+            publicationFulfilled: result.publicationFulfilled,
+            remoteState: result.remoteState,
+          }
+          : {}),
+      }
+      : {}),
     ...(result.channel === "ebay" && evidence.marketplaceSku && evidence.providerResourceId
       ? {
         marketplaceSku: evidence.marketplaceSku,
@@ -258,6 +302,57 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     });
   }
 
+  if (job.channel === "smartstore" && job.operation === "listing.create") {
+    if (parsed.data.status !== "succeeded" || !parsed.data.result) {
+      return NextResponse.json(
+        { message: "스마트스토어 등록 완료는 전용 경로만 사용할 수 있습니다." },
+        { status: 409 },
+      );
+    }
+    let receipt;
+    try {
+      receipt = smartstoreListingCreateCompletionReceiptFromWorkerResult(
+        parsed.data.result,
+      );
+    } catch {
+      return NextResponse.json(
+        { message: "스마트스토어 등록 완료 형식이 올바르지 않습니다." },
+        { status: 409 },
+      );
+    }
+    try {
+      const completion = await completeSmartstoreListingCreate({
+        rpc: (name, argumentsValue) => serviceClient.rpc(name, argumentsValue),
+        tokenHash,
+        jobId: parsed.data.jobId,
+        claimToken: parsed.data.claimToken,
+        originProductNo: receipt.originProductNo,
+        channelProductNo: receipt.channelProductNo,
+        responsePayload: receipt.responsePayload,
+      });
+      return NextResponse.json({
+        completionStatus: completion.status,
+        reused: completion.reused,
+        originProductNo: completion.originProductNo,
+        channelProductNo: completion.channelProductNo,
+        message: completion.reused
+          ? "스마트스토어 등록 완료를 동일 영수증으로 재확인했습니다."
+          : "스마트스토어 등록 결과를 전용 완료 경로로 저장했습니다.",
+      });
+    } catch (error) {
+      const unavailable = error instanceof Error
+        && error.message === "SMARTSTORE_CREATE_COMPLETION_UNAVAILABLE";
+      return NextResponse.json(
+        {
+          message: unavailable
+            ? workerRpcErrorMessage(503)
+            : "스마트스토어 등록 완료 요청이 현재 작업과 일치하지 않습니다.",
+        },
+        { status: unavailable ? 503 : 409 },
+      );
+    }
+  }
+
   if (parsed.data.status === "succeeded") {
     storedResponse = oauthResult
       ? { ok: true, channel: oauthResult.channel, operation: oauthResult.operation, safeMessage: oauthResult.safeMessage }
@@ -301,7 +396,9 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     }
 
     const { data: lineageData, error: lineageCompletionError } = await serviceClient.rpc(
-      "sellerpilot_complete_listing_lineage_verification",
+      job.channel === "coupang"
+        ? "sellerpilot_complete_coupang_create_reconciliation"
+        : "sellerpilot_complete_listing_lineage_verification",
       {
         p_token_hash: tokenHash,
         p_job_id: parsed.data.jobId,
@@ -333,11 +430,38 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     });
   }
 
+  if (job.channel === "lazada" && job.operation === "listing.create") {
+    const gated = gateLazadaGatewayCreateCompletion({
+      status: parsed.data.status,
+      result: parsed.data.result,
+      argumentsValue: lazadaGatewayCreateArgumentsFromJobRequest(job.request),
+      jobId: parsed.data.jobId,
+      listingId: typeof job.listing_id === "string" ? job.listing_id : undefined,
+    });
+    if (!gated.ok) {
+      return NextResponse.json({
+        message: gated.error ?? "LAZADA_MY_CREATE_OFFICIAL_EVIDENCE_REQUIRED",
+      }, { status: 409 });
+    }
+    if (gated.store) {
+      const storedReceipt = await serviceClient.rpc(gated.store.rpc, gated.store.arguments);
+      if (storedReceipt.error) {
+        return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+      }
+    }
+    if (gated.cas) {
+      const storedCas = await serviceClient.rpc(gated.cas.rpc, gated.cas.arguments);
+      if (storedCas.error) {
+        return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
+      }
+    }
+  }
+
   const diagnostic = parsed.data.status === "succeeded"
     && parsed.data.result.operation === "diagnostic.test"
     ? parsed.data.result.diagnostic
     : null;
-  const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_gateway_transaction", {
+  const genericCompletion = await serviceClient.rpc("sellerpilot_service_complete_gateway_transaction", {
     p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
     p_claim_token: parsed.data.claimToken,
@@ -349,6 +473,8 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     p_normalized_inquiries: null,
     p_diagnostic: diagnostic,
   });
+  const data = genericCompletion.data;
+  const error = genericCompletion.error;
   if (error) {
     const status = workerRpcErrorStatus(error);
     console.error("channel gateway final completion RPC failed", { code: error.code ?? "unknown", status });

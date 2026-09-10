@@ -10,20 +10,25 @@ function tagged(source, tag) {
   const matches = [...source.matchAll(new RegExp(`\\$${tag}\\$([\\s\\S]*?)\\$${tag}\\$`, 'g'))];
   return matches.map(m => m[1]);
 }
-test('DB review: published predecessor replacement has neither exact marker required by 211500', () => {
+test('DB review: 211500 accepts the exact published predecessor without weakening unknown drift', () => {
   const predecessorLocalNew = tagged(predecessor, 'new')[1];
   const expectedOld = tagged(patch, 'old')[0];
   const alreadyNew = tagged(patch, 'new')[0];
-  assert.ok(predecessorLocalNew.includes("j.channel = 'shopee'"));
+  const publishedPredecessor = tagged(patch, 'published')[0];
   assert.equal(predecessorLocalNew.split(expectedOld).length - 1, 0);
   assert.equal(predecessorLocalNew.split(alreadyNew).length - 1, 0);
-  assert.ok(patch.includes("raise exception '11820 Shopee in-list marker count=%', v_old_count"));
-  // This reproduces the exact string precondition mismatch, NOT PostgreSQL replay.
+  assert.equal(predecessorLocalNew, publishedPredecessor);
+  assert.ok(publishedPredecessor.includes("j.channel = 'shopee'"));
+  assert.ok(patch.includes('v_published_predecessor_count = 1'));
+  assert.ok(patch.includes('and v_attr_old_count = 0'));
+  assert.ok(patch.includes('and v_attr_new_count = 0 then'));
+  assert.ok(patch.includes("'11820 Shopee marker cardinality drift old=%, new=%, published=%, attr_old=%, attr_new=%'"));
 });
-test('DB review: failed patch itself documents reliance on previous live overlay', () => {
+test('DB review: operator marker branches have explicit cardinality', () => {
   assert.ok(patch.includes('A previous live overlay put Shopee categories into that in-list'));
   assert.ok(patch.includes("'public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure"));
-  assert.ok(patch.includes('if v_old_count <> 1 then'));
+  assert.match(patch, /elsif v_old_count = 1[\s\S]*?v_attr_old_count = 3[\s\S]*?v_attr_new_count = 0 then/);
+  assert.match(patch, /elsif v_old_count = 0[\s\S]*?v_new_count = 1[\s\S]*?v_attr_old_count = 0[\s\S]*?v_attr_new_count = 3 then/);
 });
 test('DB review: gate response inherits base fields, so old broad substring test cannot prove response schema', () => {
   const start = gate.indexOf('CREATE OR REPLACE FUNCTION public.sellerpilot_service_listing_mutation_release_gate_status()');
