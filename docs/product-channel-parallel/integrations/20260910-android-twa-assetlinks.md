@@ -80,10 +80,14 @@ https://sellerpilot-global.vercel.app
 | 시점 | couplit-korean/main SHA |
 |---|---|
 | 작업 전 | `dd4f762f` (Document the retention finding for the new product evidence tables.) |
-| 작업 후 | `ea7b72cd` (Publish Android Digital Asset Links for the SellerPilot TWA app.) |
+| assetlinks 커밋 | `ea7b72cd` (Publish Android Digital Asset Links for the SellerPilot TWA app.) |
+| 기록 커밋 | `5aa470a7` (Record the Android TWA assetlinks deployment and its rollback path.) |
 
-`ea7b72cd`는 `dd4f762f` **바로 위에 얹힌 커밋**이라 fast-forward로 올라간다.
+`ea7b72cd`는 `dd4f762f` **바로 위에 얹힌 커밋**이라 fast-forward로 올라갔다.
 되돌리기 어려운 병합이나 이력 재작성은 하지 않았다.
+
+배포 후 `https://sellerpilot-global.vercel.app/.well-known/assetlinks.json`이
+**HTTP 200, `application/json`** 으로 응답하는 것을 확인했다(2026-09-10).
 
 ---
 
@@ -113,6 +117,7 @@ Invoke-WebRequest -Uri "https://sellerpilot-global.vercel.app/.well-known/assetl
 ```
 
 - 성공 기준: HTTP 200, `Content-Type: application/json`, 본문의 `sha256_cert_fingerprints`가 위 3장의 값과 일치.
+- **확인 결과(2026-09-10): HTTP 200 / `application/json; charset=utf-8` / 지문 일치.**
 - 배포 전에는 404가 정상이다. Vercel 빌드가 끝나면 200으로 바뀐다.
 - 캐시된 404가 보이면 쿼리 파라미터(`?v=<난수>`)를 붙여 재확인한다.
 
@@ -143,14 +148,14 @@ revert 후 `/.well-known/assetlinks.json`은 404가 되고, 기존 앱은 주소
 
 | 항목 | 상태 | 비고 |
 |---|---|---|
-| Vercel Production 배포 확인 | 진행 | 200 응답 확인 필요 |
+| Vercel Production 배포 확인 | **완료** | `/.well-known/assetlinks.json` 200 · 지문 일치 |
 | DB runtime release SHA 대조 | 미확인 | 배포 SHA가 바뀌므로 기존 attested release와 대조 필요 |
 | 웹 푸시 VAPID 키 설정 | 미확인 | 미설정 시 앱에 "푸시 키 설정 대기" 상태로 표시 |
 | 실기기 설치 검증 | 미실시 | 이 PC에 Android 기기 미연결 |
 | `integration-aside` 반영 여부 | 보류 | 운영 배포는 `main` 기준으로만 했다 |
 
 DB release SHA 대조는 운영 정책 판단이 필요한 항목이라 이번 작업에서 임의로
-바꾸지 않았다. 배포 SHA가 `ea7b72cd`로 갱신된 사실만 기록한다.
+바꾸지 않았다. 운영 배포 라인의 SHA가 `5aa470a7`로 갱신된 사실만 기록한다.
 
 ---
 
