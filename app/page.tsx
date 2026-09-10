@@ -5110,6 +5110,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const authenticatedOperationsFetch = operations.authenticatedFetch;
   const reloadOperations = operations.reload;
   const syncingOrdersRef = useRef(false);
+  const syncingCsRef = useRef(false);
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
   const pipeline = operations.data?.pipeline ?? null;
@@ -5639,6 +5640,29 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       setSyncingOrders(false);
     }
   }, [authenticatedOperationsFetch, notify, reloadOperations]);
+
+  const syncCsInquiries = useCallback(async () => {
+    if (syncingCsRef.current) return;
+    syncingCsRef.current = true;
+    setSyncingOrders(true);
+    try {
+      const selected = csRoute.channel === "all" ? null : csRoute.channel;
+      const response = await authenticatedOperationsFetch("/api/admin/cs/sync", {
+        method: "POST",
+        body: JSON.stringify(selected ? { channels: [selected] } : {}),
+      });
+      const payload = await response.json().catch(() => ({ message: "문의 동기화 응답을 읽지 못했습니다." })) as { message?: string };
+      if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 문의 동기화를 시작하지 못했습니다.");
+      notify(payload.message ?? "이 채널 문의 조회를 시작했습니다.");
+      window.setTimeout(() => void reloadOperations(), 3_000);
+      window.setTimeout(() => void reloadOperations(), 12_000);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "판매채널 문의 동기화를 시작하지 못했습니다.");
+    } finally {
+      syncingCsRef.current = false;
+      setSyncingOrders(false);
+    }
+  }, [authenticatedOperationsFetch, csRoute.channel, notify, reloadOperations]);
 
   const refreshInquiryHistoryBackfill = useCallback(async (runId: string | null = null) => {
     const params = runId ? `?runId=${encodeURIComponent(runId)}` : "";
@@ -6172,7 +6196,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsInAppDesk notify={notify} displayTickets={displayTickets} authenticatedFetch={operations.authenticatedFetch} snapshotGeneratedAt={operations.data?.generatedAt ?? null} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncOrders} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "cs") return <CsInAppDesk notify={notify} displayTickets={displayTickets} authenticatedFetch={operations.authenticatedFetch} snapshotGeneratedAt={operations.data?.generatedAt ?? null} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncCsInquiries} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;

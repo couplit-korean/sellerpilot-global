@@ -438,7 +438,7 @@ export async function POST(request: Request) {
     connectedChannels,
     inquiryResults,
     message: inquiryResults.some((result) => result.status === "fixed_egress_required")
-      ? "Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다. 설정 전에는 해당 조회를 접수하거나 자동 재시도하지 않습니다."
+      ? "쿠팡·스마트스토어·Temu 문의는 Vercel 고정 IP 없이 채널 게이트웨이 워커로 조회합니다. 게이트웨이 꺼져 있으면 원장에 안 들어옵니다."
       : needsAttention
       ? "동기화를 요청했지만 일부 채널은 연결·재연동 또는 외부 처리 결과의 수동 확인이 필요합니다. 채널별 상태를 확인해 주세요."
       : "연결된 판매채널의 고객 문의 동기화를 요청했습니다.",
