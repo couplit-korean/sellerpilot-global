@@ -7,13 +7,13 @@ import {
   ELEVENST_CREATE_RECOVERY_CLAIM_RPC,
   ELEVENST_CREATE_RECOVERY_FINISH_RPC,
   parseElevenstCreateRecoveryClaim,
-} from "../../../../../../lib/channels/elevenst-create-recovery-drain";
-import { supabaseUrl } from "../../../../../../lib/supabase/config";
+} from "../../../../../lib/channels/elevenst-create-recovery-drain";
+import { supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
   workerRpcErrorStatus,
-} from "../../../../../../lib/worker-rpc";
+} from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
