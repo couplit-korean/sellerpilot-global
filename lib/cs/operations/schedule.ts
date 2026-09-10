@@ -8,7 +8,7 @@ type CsScheduleDependencies = {
   staticEgressChannels?: readonly ServerlessStaticEgressChannel[];
   enableHistoryRepair?: boolean;
 };
-export const SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES = 5;
+export const SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES = 1;
 export const SERVERLESS_CS_REPAIR_MIN_INTERVAL_MINUTES = 24 * 60;
 export const SERVERLESS_CS_ENQUEUE_CONCURRENCY = 3;
 export const SERVERLESS_CS_CURRENT_INQUIRY_CHANNELS = [

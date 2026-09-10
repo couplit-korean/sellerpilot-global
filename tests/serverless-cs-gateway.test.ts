@@ -735,7 +735,7 @@ test("normal drain enqueues only current supported inquiries before bounded conc
       messageLimit: 100,
     },
   });
-  assert.equal(lazadaFanout[0]?.arguments_.p_min_interval_minutes, 5);
+  assert.equal(lazadaFanout[0]?.arguments_.p_min_interval_minutes, 1);
   assert.equal(maxActiveEnqueues, Math.min(SERVERLESS_CS_ENQUEUE_CONCURRENCY, enqueues.length));
   assert.ok(maxActiveEnqueues >= 2 && maxActiveEnqueues <= 4);
   assert.equal(
@@ -751,14 +751,14 @@ test("normal drain enqueues only current supported inquiries before bounded conc
     SERVERLESS_CS_DRAIN_CONCURRENCY * 10
       > SERVERLESS_GATEWAY_MAX_PERIODIC_JOBS_PER_FIVE_MINUTES,
   );
-  assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 5);
+  assert.equal(SERVERLESS_CS_PERIODIC_MIN_INTERVAL_MINUTES, 1);
   assert.deepEqual(
     enqueues.map(({ arguments_ }) => arguments_.p_channel).sort(),
     ["ebay", "ebay", "ebay", "ebay", "qoo10", "qoo10", "qoo10", "qoo10", "shopee", "shopee"],
   );
   assert.ok(enqueues.every(({ arguments_ }) =>
     arguments_.p_operation === "inquiries.list"
-      && arguments_.p_min_interval_minutes === 5));
+      && arguments_.p_min_interval_minutes === 1));
   assert.deepEqual(
     enqueues.map(({ arguments_ }) => {
       const payload = arguments_.p_request_payload as { periodicKey: string };
@@ -941,7 +941,7 @@ test("configured repair enqueues use a daily cooldown with hourly catch-up offer
   assert.equal(maxActiveEnqueues, SERVERLESS_CS_ENQUEUE_CONCURRENCY);
   assert.ok(repair.every(({ arguments_ }) => arguments_.p_min_interval_minutes === 1440));
   assert.ok(enqueues.filter((entry) => !repair.includes(entry))
-    .every(({ arguments_ }) => arguments_.p_min_interval_minutes === 5));
+    .every(({ arguments_ }) => arguments_.p_min_interval_minutes === 1));
 });
 
 test("fixed-egress claims fail closed before provider execution without runtime attestation", async () => {

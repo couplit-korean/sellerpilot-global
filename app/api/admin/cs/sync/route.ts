@@ -389,13 +389,13 @@ export async function POST(request: Request) {
               p_credential_id: credential.id,
               p_operation: "inquiries.list",
               p_request_payload: payload,
-              p_min_interval_minutes: 5,
+              p_min_interval_minutes: 1,
             })
           : admin.serviceClient.rpc("sellerpilot_service_enqueue_periodic_sync", {
               p_channel: channel,
               p_operation: "inquiries.list",
               p_request_payload: payload,
-              p_min_interval_minutes: 5,
+              p_min_interval_minutes: 1,
             }))));
         if (queued.some(({ error }) => Boolean(error))) throw new Error("inquiry_sync_enqueue_failed");
         return {

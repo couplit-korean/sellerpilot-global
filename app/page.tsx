@@ -5697,7 +5697,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   useEffect(() => {
     if (view !== "cs") return;
     const refreshWhenVisible = () => {
-      if (document.visibilityState === "visible") void refreshOperations();
+      if (document.visibilityState !== "visible") return;
+      void syncCsInquiries();
+      void refreshOperations();
     };
     refreshWhenVisible();
     const interval = window.setInterval(refreshWhenVisible, 60_000);
@@ -5706,7 +5708,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [refreshOperations, view]);
+  }, [refreshOperations, syncCsInquiries, view]);
 
   useEffect(() => {
     if (view !== "cs" || !inquiryHistoryBackfill
