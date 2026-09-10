@@ -35,6 +35,10 @@ function elevenstDateTime(value: Date) {
     .slice(0, 12);
 }
 
+function elevenstCalendarDate(value: Date) {
+  return koreaCalendarDate(value).replaceAll("-", "");
+}
+
 export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()): Record<string, unknown> | null {
   const from = new Date(now.getTime() - 14 * 86_400_000);
   if (channel === "coupang") return { query: { createdAtFrom: coupangDailyDate(from), createdAtTo: coupangDailyDate(now), status: "ACCEPT", maxPerPage: 50 } };
@@ -189,6 +193,18 @@ export function inquirySyncArguments(
       updateAtEnd: now.getTime(),
     }];
   }
+  if (channel === "elevenst") return [{
+    startDate: elevenstCalendarDate(from),
+    endDate: elevenstCalendarDate(now),
+    answerStatus: "00",
+  }];
+  if (channel === "shopee") return [{ kind: "product_review", cursor: "", pageSize: 100 }, {
+    kind: "return_refund",
+    pageNo: 1,
+    pageSize: 100,
+    createTimeFrom: Math.floor(from.getTime() / 1000),
+    createTimeTo: Math.floor(now.getTime() / 1000),
+  }];
   if (channel === "ebay") {
     return [ebayAsqInquirySyncArguments(now, releaseContext.marketplaceId)];
   }
@@ -209,6 +225,8 @@ function inquiryRequestKey(channel: ActiveChannelKey, argumentsValue: Record<str
     const answered = query.answered === true ? "answered" : "unanswered";
     return `inquiries:${kind || "product"}:${answered}`;
   }
+  if (channel === "elevenst") return "inquiries:product_qna:all";
+  if (channel === "shopee") return `inquiries:${kind || "product_review"}`;
   return `inquiries:${index}`;
 }
 
@@ -304,6 +322,43 @@ export function inquiryHistorySyncRequests(
         },
       },
     }];
+  }
+
+  if (channel === "elevenst") {
+    const requests: Array<{ periodicKey: string; arguments: Record<string, unknown> }> = [];
+    for (let start = new Date(firstDay); start.getTime() <= lastDay.getTime(); start = new Date(start.getTime() + 7 * 86_400_000)) {
+      const end = new Date(Math.min(start.getTime() + 6 * 86_400_000, lastDay.getTime()));
+      const startDate = start.toISOString().slice(0, 10);
+      const endDate = end.toISOString().slice(0, 10);
+      requests.push({
+        periodicKey: `inquiries:history:${startDate}:${endDate}:product_qna:all`,
+        arguments: {
+          startDate: startDate.replaceAll("-", ""),
+          endDate: endDate.replaceAll("-", ""),
+          answerStatus: "00",
+        },
+      });
+    }
+    return requests;
+  }
+
+  if (channel === "shopee") {
+    const requests: Array<{ periodicKey: string; arguments: Record<string, unknown> }> = [];
+    for (let start = new Date(firstDay); start.getTime() <= now.getTime();) {
+      const end = new Date(Math.min(start.getTime() + 15 * 86_400_000 - 1_000, now.getTime()));
+      requests.push({
+        periodicKey: `inquiries:history:${start.toISOString()}:${end.toISOString()}:return_refund`,
+        arguments: {
+          kind: "return_refund",
+          pageNo: 1,
+          pageSize: 100,
+          createTimeFrom: Math.floor(start.getTime() / 1000),
+          createTimeTo: Math.floor(end.getTime() / 1000),
+        },
+      });
+      start = new Date(end.getTime() + 1_000);
+    }
+    return requests;
   }
 
   return [];

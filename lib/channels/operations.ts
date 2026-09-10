@@ -80,6 +80,8 @@ import {
   elevenstExactExistingStagedReadbackVerified,
   elevenstExactExistingUpdateTarget,
 } from "./elevenst-exact-existing-publication";
+import { executeElevenstInquiry } from "./elevenst-inquiries";
+import { executeShopeeInquiry } from "./shopee-inquiries";
 import {
   assertCoupangExactQaCurrentProduct,
   assertCoupangExactQaInventoryReadback,
@@ -903,7 +905,7 @@ function ensureProviderSupport(channel: ActiveChannelKey, operation: ChannelOper
   if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
-  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel)) {
+  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore", "ebay", "elevenst", "shopee"].includes(channel)) {
     throw new Error(`CHANNEL_OPERATION_UNSUPPORTED:${operation}`);
   }
   const capability = channelCatalog[channel].capabilities[channelOperationCapabilities[operation]];
@@ -1091,6 +1093,10 @@ function elevenstCategoryScore(query: string, category: ElevenstCategory) {
 }
 
 async function executeElevenst(input: ExecuteInput) {
+  if (input.operation === "inquiries.list" || input.operation === "inquiries.reply") {
+    const inquiry = await executeElevenstInquiry({ ...input, operation: input.operation });
+    return result(input, inquiry.steps, inquiry.remoteId);
+  }
   if (input.operation === "listing.create"
       && listingPublicationIntentFromArguments(input.arguments) === "safe_test") {
     return result(input, [elevenstPrewriteFailureStep(
@@ -3862,6 +3868,12 @@ async function executeShopee(input: ExecuteInput) {
       query,
     });
     return result(input, [step("order", remote)], stringArgument(input.arguments, "orderSn", false) || undefined);
+  }
+  if (input.operation === "inquiries.list" || input.operation === "inquiries.reply") {
+    const inquiry = await executeShopeeInquiry({ ...input, operation: input.operation });
+    return inquiry.continuationArguments
+      ? paginationResult(input, inquiry.steps, inquiry.continuationArguments)
+      : result(input, inquiry.steps, inquiry.remoteId);
   }
   const remote = await shopeeRequest({
     payload: input.payload,
