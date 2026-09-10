@@ -71,3 +71,26 @@ Temu가 IP 화이트리스트로 막으므로, **허용된 IP를 가진 이 머�
 - `연결 검사`는 고정 IP 워커가 실행한다. 지금 워커는 `sellerpilot-cs-apply-20260910`(CS 트리)에서 돌고 있고, 로그 메시지는 `Temu 고정 IP 채널 워커에서 연결 검사를 완료하지 못했습니다`였다.
 - 이 세션에서는 통합 트리 워커를 띄울 수 없다. launchd 제어가 거부되고, `tsx`는 esbuild quarantine, Node 네이티브 변환은 `sharp` 네이티브 모듈 Gatekeeper 차단에 걸린다(우회하지 않음).
 - 따라서 **통합 트리 워커로 교체**하면 Temu·Lazada 읽기 진단이 함께 풀린다.
+
+## 워커 교체 시도 결과 (2026-09-10 22:05 KST)
+
+통합 코드 워커를 별도 트리로 띄워 읽기 진단을 끝내려 했고, 결과는 아래와 같다.
+
+- `/Users/kimchangheemac/dev/sellerpilot-worker-merged-20260910` (origin/main = 768960de, node_modules는 메인 리포 설치에 연결)
+- 실행: `node --import tsx scripts/ai-cli-worker.mjs --gateway-only --no-scheduler`
+  - 정상 기동: `version=sellerpilot-cli-worker/1.61+768960de...`, health 8085, `gateway=configured`
+  - 워커 토큰(`SellerPilot Gateway Worker` 키체인)으로 `/api/channel-gateway/worker/claim` 직접 호출 → **204 (큐 비어 있음)**. 토큰과 릴리스 일치는 정상이다.
+  - 그러나 이 프로세스는 claim 루프에 들어가지 않아 로그가 더 남지 않았고 readiness는 `starting`에 머물렀다.
+- 반면 기존 launchd 워커(`sellerpilot-cs-apply-20260910`, CS 트리)는 계속 정상 처리 중이다.
+- 이 세션 샌드박스는 프로세스 제어가 막혀 있다: `kill`/`pkill` → `Operation not permitted`, `launchctl bootstrap` → `Bootstrap failed: 5: Input/output error`.
+
+### 그래서 남은 한 단계 (사용자 터미널에서 1회)
+
+```
+launchctl bootout gui/$(id -u)/com.sellerpilot.channel-gateway 2>/dev/null
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sellerpilot.channel-gateway.plist
+```
+
+plist의 `WorkingDirectory`는 이미 `/Users/kimchangheemac/dev/sellerpilot-merge-line-20260910`(통합 트리)로 바꿔 뒀다. 이걸 다시 읽히면 Temu·Lazada 읽기 진단이 함께 처리된다.
+
+정리: 이번 시도에서 띄운 임시 워커가 남아 있으면 `pkill -f sellerpilot-worker-merged-20260910`로 종료한다(8085 포트).
