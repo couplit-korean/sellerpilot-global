@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "app.vercel.sellerpilot_global.twa",
+      "sha256_cert_fingerprints": [
+        "EE:EE:23:C2:B5:B5:37:27:59:D1:0E:18:E5:26:6E:C0:67:66:C3:66:35:18:E8:8C:92:50:AD:1D:E2:78:95:41"
+      ]
+    }
+  }
+]
