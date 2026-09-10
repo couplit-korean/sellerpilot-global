@@ -388,6 +388,8 @@ export async function attestTemuCredentialIdentityForSave(input: {
       JSON.stringify({
         keys: Object.keys(remote.data ?? {}).join(","),
         success: remote.data?.success === true,
+        errorCode: remote.data?.errorCode ?? null,
+        errorMsg: String(remote.data?.errorMsg ?? "").slice(0, 160),
         mallId: Boolean(result.mallId),
         regionId: Boolean(result.regionId),
         mallType: Boolean(result.mallType),
