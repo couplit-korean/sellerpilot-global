@@ -130,3 +130,19 @@ or sellerpilot_private.active_serverless_runtime_release_sha() != p_release_sha
 ### 다음 한 단계
 
 `/api/internal/*` 503을 해소해 앱이 현재 릴리스를 DB에 기록하게 만들면, 고정 IP lane이 워커를 받아들이고 테무·라자다 읽기 진단이 실행된다. 워커는 이미 그 lane으로 claim하고 폴백까지 갖췄다.
+
+## 런타임 릴리스 활성화로 401 해소 (2026-09-10 22:47 KST)
+
+`/api/internal/*` 503의 원인은 릴리스 불일치였다. 관리자 런타임 릴리스 엔드포인트를 현재 배포로 활성화했다.
+
+```
+POST /api/admin/serverless-runtime-release {"action":"canary_activate"}
+-> ok, release=08677dfc5e7a6c332eba587ca4182b4877ac419f,
+   canaries: gateway 200, schedules 전부 200, activeRelease=08677dfc...
+```
+
+이후 `active_serverless_runtime_release_sha()`가 `08677dfc...`로 갱신됐고, 내부 경로 6개가 모두 200이 됐다. 고정 IP lane도 같은 릴리스로 claim하면 **401 → 204(수락)** 로 바뀌었다. route 행의 `release_sha`도 현재 릴리스로 맞췄다.
+
+## 남은 한 조각
+
+lane이 수락은 하지만 큐에 있는 `temu diagnostic.test` 작업을 아직 넘기지 않는다(204). lane은 내부적으로 일반 claim 함수를 호출하고, 그 경로가 `serverless_gateway_job_allowed` 계열의 제외 목록을 그대로 적용하기 때문으로 보인다. 이 제외를 **lane 마커(`sellerpilot.local_channel_executor_lane = 'enabled'`)가 켜진 경우에만** 읽기 전용 작업에 대해 열어주는 변경이 필요하다(쿠팡 복구 패치가 이미 같은 방식).
