@@ -1,0 +1,85 @@
+{
+  "contract": "sellerpilot_channel_test_evidence_supplement_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-04.json",
+  "capturedThrough": "2026-09-08T15:45:36Z",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node",
+    "version": "24.19.0",
+    "database": "PGlite 0.3.16 with pgcrypto"
+  },
+  "reproducedDefects": [
+    {
+      "source": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/tests/cs-ebay-supplement04-integration-review.test.ts",
+      "evidence": "/tmp/cs-ebay-supplement04-review.tap",
+      "failure": "page-2 common pagination metadata was rejected by the dedicated strict argument schema"
+    },
+    {
+      "source": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/tests/cs-ebay-supplement04-integration-review.test.ts",
+      "evidence": "/tmp/cs-ebay-supplement04-review.tap",
+      "failure": "a normal dedicated case page entered generic inquiry normalization and failed before completion"
+    }
+  ],
+  "runs": [
+    {
+      "name": "supplemental_05_dedicated_gateway_sql_and_actual_entrypoints",
+      "environment": "/tmp/sellerpilot-ebay05-verify.L6llk8 isolated copy of the current integrated workspace plus the proposed shared patch",
+      "command": "node --import tsx --test tests/cs-ebay-case-dispute-gateway.test.ts tests/cs-ebay-case-dispute-durable-collection-v2-db.test.mjs tests/cs-ebay-case-dispute-completion-entrypoints.test.ts",
+      "exitCode": 0,
+      "tests": 17,
+      "passed": 17,
+      "failed": 0,
+      "coverage": [
+        "common pagination metadata accepted on the second dedicated page",
+        "repeated cursor digest rejected in TypeScript and SQL",
+        "in-process serverless exact envelope then claim-fenced ledger then generic completion child",
+        "external worker POST exact envelope then claim-fenced ledger then generic completion child",
+        "404 unavailable evidence preserved through both completion entrypoints as failed unknown rather than zero inquiries",
+        "no generic zero-inquiry normalization for the dedicated step",
+        "root through every provider page and every resolution window",
+        "partial failure restart without false initial completion",
+        "last window with an extra provider page remains incomplete",
+        "synthetic succeeded child without page ledger remains incomplete",
+        "wrong kind resource anchor seller credential parent lease and orphan rejected",
+        "130 Payment Dispute continuations",
+        "initial resolution lineage longer than 128 pages"
+      ]
+    },
+    {
+      "name": "shared_gateway_regression_on_isolated_proposed_tree",
+      "command": "node --import tsx --test tests/serverless-cs-gateway.test.ts tests/channel-gateway-worker-route-contract.test.mjs tests/channel-gateway-contract.test.ts",
+      "exitCode": 0,
+      "tests": 100,
+      "passed": 100,
+      "failed": 0
+    },
+    {
+      "name": "typescript_on_isolated_proposed_tree",
+      "command": "node node_modules/typescript/bin/tsc --noEmit --pretty false",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_05_eslint",
+      "command": "node node_modules/eslint/bin/eslint.js lib/channels/cs/ebay/case-dispute-gateway.ts tests/cs-ebay-case-dispute-gateway.test.ts tests/cs-ebay-case-dispute-durable-collection-v2-db.test.mjs tests/cs-ebay-case-dispute-completion-entrypoints.test.ts",
+      "exitCode": 0
+    },
+    {
+      "name": "current_integrated_patch_apply_check",
+      "command": "git -C /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908 apply --check --whitespace=error-all docs/cs-parallel/proposals/ebay/ebay-case-dispute-completion-entrypoints-v2.patch",
+      "exitCode": 0,
+      "sharedFilesWritten": 0
+    }
+  ],
+  "mutations": {
+    "productionDatabaseWrites": 0,
+    "actualProviderReadsDuringSupplemental05": 0,
+    "providerReplies": 0,
+    "caseOrDisputeActions": 0,
+    "credentialRefreshes": 0,
+    "browserActions": 0,
+    "sharedSourceWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

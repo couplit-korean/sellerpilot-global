@@ -12,6 +12,22 @@ import {
 export const runtime = "nodejs";
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const fingerprintPattern = /^[A-Fa-f0-9]{12,64}$/u;
+
+function ebayCreateCredentialIncarnation(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const id = typeof record.id === "string" ? record.id : "";
+  const version = Number(record.version);
+  const fingerprint = typeof record.fingerprint === "string" ? record.fingerprint : "";
+  if (!uuidPattern.test(id)
+      || !Number.isSafeInteger(version)
+      || version < 1
+      || !fingerprintPattern.test(fingerprint)) {
+    return null;
+  }
+  return { id, version, fingerprint };
+}
 
 export async function POST(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
@@ -99,5 +115,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
 
-  return NextResponse.json({ status: staged.status });
+  const { data: incarnationData, error: incarnationError } = await serviceClient.rpc(
+    "sellerpilot_service_ebay_create_credential_incarnation_v1",
+    {
+      p_token_hash: tokenHash,
+      p_job_id: parsed.data.jobId,
+      p_claim_token: parsed.data.claimToken,
+    },
+  );
+  const credentialIncarnation = ebayCreateCredentialIncarnation(incarnationData);
+  if (incarnationError && !credentialIncarnation) {
+    const code = typeof incarnationError.message === "string" ? incarnationError.message : "";
+    if (code.includes("EBAY_CREATE_")) {
+      const status = workerRpcErrorStatus(incarnationError);
+      console.error("eBay create credential incarnation RPC failed", {
+        code: incarnationError.code ?? "unknown",
+        status,
+      });
+      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
+    }
+  }
+
+  return NextResponse.json({
+    status: staged.status,
+    ...(credentialIncarnation ? { credentialIncarnation } : {}),
+  });
 }

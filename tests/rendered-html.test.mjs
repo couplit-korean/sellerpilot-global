@@ -359,7 +359,7 @@ test("contains the complete multi-channel operating storyboard and 175-item acce
   const shopeeMigration = await readFile(new URL("../supabase/migrations/20260816133601_add_shopee_connector.sql", import.meta.url), "utf8");
   const channelCatalog = await readFile(new URL("../lib/channels/catalog.ts", import.meta.url), "utf8");
   const channelProtocols = await readFile(new URL("../lib/channels/protocols.ts", import.meta.url), "utf8");
-  const channelOperations = await readFile(new URL("../lib/channels/operations.ts", import.meta.url), "utf8");
+  const channelOperations = await readFile(new URL("../lib/channels/commerce-operations.ts", import.meta.url), "utf8");
   const channelOperationsRoute = await readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8");
   const channelOperationsContract = await readFile(new URL("../docs/판매채널_실행_API_계약.md", import.meta.url), "utf8");
   const channelTargetClient = await readFile(new URL("../app/channel-target-client.ts", import.meta.url), "utf8");

@@ -1,0 +1,21 @@
+# 공통 변경 요청 smartstore-004
+
+- 목적: SmartStore 전체 제공기간을 한 번에 폭넓게 enqueue하지 않고, 종류별 30일 이하의 동일 창 두 작업을 최신→과거 방향으로 하나씩 실행하며 중단 후 durable checkpoint에서 재개한다.
+- 요청 채널: smartstore
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / 전용 `smartstore:history:v1`, 공용 `cs_history_coverage_read_v1`
+- 수정할 공통 파일과 함수: `app/api/operations/sync/route.ts` history 분기, `lib/channels/sync-arguments.ts` SmartStore history 요청 생성, `app/cs/history-window.tsx`, `lib/cs/history-coverage.ts`, `app/api/admin/cs/history-coverage/route.ts`, 기존 history coverage RPC의 채널 filter 후속 버전
+- 현재 파일 SHA-256: `app/api/operations/sync/route.ts`=`71ef296055feff2c6d7dfb9b5e51b24337766f16cc13e874f2086c2e9c2f9f91`, `lib/channels/sync-arguments.ts`=`17a7670bc5ed8ca6237c412aa80a30b36af337585d3a34f22cb540735424a7a2`, `app/cs/history-window.tsx`=`b58adcbb4ca8fc6757d830143939fb0ffc514fd37056c6f24442f1adf8ee7f04`, `lib/cs/history-coverage.ts`=`601f486f4918cf61491a7dd3e7488b1e9763f24dfe1e431ff1c2bbe4893f9387`, `app/api/admin/cs/history-coverage/route.ts`=`a8faac8ced853a877ec4dcb15fcf5a6f4940d2c5879697e508b709473be2a6fd`
+- DB 객체: 기존 `inquiry_history_backfill_runs/items`, `cs_history_scans`, `cs_history_scan_gaps`, `sellerpilot_start_inquiry_history_backfill_v4`. 새 business table 불필요. 조회용 채널 filter RPC 또는 기존 함수의 새 버전만 필요하다.
+- 기존 동작: UI는 사용자가 종료일을 지정해 SmartStore 30일 한 창을 실행할 수 있고, 같은 창은 run ID로 dedupe/retry된다. 전체 46개 창의 다음 미완료 창을 자동 계산하고 checkpoint에서 이어가는 공통 control은 없다.
+- 문제를 재현하는 최소 입력: `floor=2022-11-30`, `through=2026-09-08`, 앞 10개 창 완료 후 프로세스 중단. 단순 날짜 감소 루프는 완료 창을 다시 실행하거나 과거/현재 경계를 틀릴 수 있다.
+- 원하는 동작: `buildSmartstoreHistoryWindows()`가 만든 46개 key와 history coverage의 완료 scope를 비교해 최신 미완료 창 하나만 v4에 전달한다. 실제 coverage scope 형식 `inquiries:history:<run UUID>:smartstore:<kind>:<from>:<to>`와 credential owner/channel/environment를 모두 묶는다. 한 창은 product/customer 정확히 2작업이며 둘 다 completed/reconciled이고 unprocessed 0이어야 다음 창으로 이동한다. 같은 완료 key의 중복 observation은 다음 창 선택에 영향을 주지 않는다. failed는 기존 retry fence를 따르고 cancelled/reconciliation_required/exhausted는 자동 재전송하지 않는다.
+- 전용 모듈 경로와 export: `lib/channels/cs/smartstore/history-recovery.ts`의 `buildSmartstoreHistoryWindows`, `smartstoreHistoryPlanDigest`, `resumeSmartstoreHistoryWindows`
+- 기존/새 입력·출력 계약: 입력 `{floorDate,throughDate,completedWindowKeys[]}`; 출력 `{nextWindow,remainingWindows,completedDistinctCount,duplicateCompletionCount}`. window는 두 native kind의 exact periodicKey와 arguments를 포함한다. 완료 때 `nextWindow=null`이다.
+- 최소 변경안: `smartstore-004-next-history-window-v1.sql`이 관리자 actor와 credential seller owner를 분리해 다음 미완료 창을 read-only로 계산한다. `smartstore-003-004-common-integration.patch`의 전용 admin route는 그 다음 한 window만 기존 v4 RPC에 전달하고 HTTP 202를 접수로만 표시한다. UI에는 `46개 중 n개 창 확인`, `다음 기간`, `gap/reconciliation_required`를 별도 표시한다. 단, 기존 v4가 7일 미만 입력을 거부하므로 임의 floor에서 마지막 1~6일 조각은 exact-window enqueue v5 없이는 fail-closed한다. 현재 검증 floor 2022-11-30~2026-09-08의 마지막 창은 29일이라 이 제한에 걸리지 않는다.
+- 다른 채널 영향: SmartStore history resume action에만 적용한다. Coupang/11st와 다른 채널 planner는 건드리지 않는다.
+- 상품/주문/배송 mutation 영향: 없음. `inquiries.list` 두 작업만 생성하며 상품·주문·배송·환불 operation은 허용하지 않는다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-smartstore-recovery.test.ts tests/cs-smartstore-common-proposals.test.mjs tests/cs-history-channel-db.test.mjs tests/cs-history-coverage-db.test.mjs tests/cs-history-window-route.test.ts`
+- migration 선행/preimage/ACL 요구: history coverage가 전 채널 최근 100개로 잘리는 문제를 피하도록 `p_channel='smartstore'`, seller owner, credential/environment scope가 강제된 v2 read RPC를 추가한다. admin-only/RLS/direct grant 금지 유지. enqueue는 기존 v4와 credential owner/static-egress gate를 재사용한다.
+- 우선순위: 과거누락
+- 통합 담당 처리 상태: 실제 checkpoint SQL draft와 공용 연결 patch 제출, 운영 migration/route/UI에는 미반영
+- 반영된 통합 소스 hash와 검증: PGlite에서 shared admin/다른 seller/credential revoked/한 종류만 완료/두 종류 완료를 통과. 공용 patch `git apply --check` 통과. 운영 반영 hash는 미반영

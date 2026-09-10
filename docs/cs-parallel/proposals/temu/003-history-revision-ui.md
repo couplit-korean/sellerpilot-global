@@ -1,0 +1,21 @@
+# 공통 변경 요청 temu-003
+
+- 목적: Temu 과거 after-sales를 KST 일자·상태·region·seller scope로 재개/누락 추적하고, 상세-only 변경을 별도 revision으로 저장·표시한다.
+- 요청 채널: temu
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `cs_history_coverage_read_v1`
+- 수정할 공통 파일과 함수: `lib/channels/sync-arguments.ts`의 `inquiryHistorySyncRequests`; `lib/channels/inquiry-sync.ts`의 Temu normalizer; `app/cs/history-window.tsx`; `app/page.tsx`의 history channel union/parser/request; `lib/cs/history-coverage.ts`; Temu ingest/revision SQL은 새 migration으로 작성
+- 현재 파일 SHA-256: `lib/channels/sync-arguments.ts` `17a7670bc5ed8ca6237c412aa80a30b36af337585d3a34f22cb540735424a7a2`; `lib/channels/inquiry-sync.ts` `a5c85be43d7ed4f0f9c20c176f0769c495ba7665c71ceb16f1de051190634598`; `app/cs/history-window.tsx` `b58adcbb4ca8fc6757d830143939fb0ffc514fd37056c6f24442f1adf8ee7f04`; `app/page.tsx` `153db8ff7e77c428acefbe560f03f0d4d2be3f4e6e4a5c1dcbb4f9d65943ba96`; `lib/cs/history-coverage.ts` `601f486f4918cf61491a7dd3e7488b1e9763f24dfe1e431ff1c2bbe4893f9387`; 기존 Temu SQL `9f389f276a43066f5305b2fd1795b360af9af61bcca33431140ab414be132d3a`
+- DB 객체(해당 시 이름과 signature): `public.sellerpilot_service_ingest_inquiries(uuid,text,jsonb)` preimage를 유지하는 새 migration; common history scan/gap 객체는 통합 담당이 실제 signature를 확인한다.
+- 기존 동작: Temu 30일 시작을 KST calendar date의 `T00:00:00Z`로 계산해 첫날 00:00~08:59 KST 9시간이 빠진다. history UI는 Smartstore/Coupang/11st만 선택 가능하다. revision은 list summary `updateAt`을 우선해 동일 list timestamp에서 detail `lastUpdateAtMillis`와 내용만 바뀌면 같은 revision으로 접힐 수 있다.
+- 문제를 재현하는 최소 입력: `now=2026-09-08T03:00:00Z`, 30일 범위의 현재 시작 `2026-08-10T00:00:00Z`, 기대 KST 첫날 시작 `2026-08-09T15:00:00Z`; 동일 parent ID/list `updateAt`, 서로 다른 detail `lastUpdateAtMillis`/status/comment.
+- 원하는 동작: provider에서 확인한 earliest date 안에서 1일×status 1~7의 닫힌 초 단위 창을 만들고 scope에 region/seller hash를 둔다. 각 창의 page/detail/projection/unique/excluded/unprocessed와 checkpoint를 UI에 표시한다. 상세가 있으면 검증된 `lastUpdateAtMillis`와 allowlisted content/state digest를 revision material로 사용한다.
+- 전용 모듈 경로와 export: `lib/channels/cs/temu/history-plan.ts`의 `planTemuAfterSalesHistory`; `lib/channels/cs/temu/after-sales-event.ts`의 `projectTemuAfterSalesStatusChange`
+- 기존/새 입력·출력 계약: 기존 30일 단일 request → 새 `providerRangeVerifiedAt`, `earliestProviderDate`, `region`, `sellerAccountKeyHash`, `statusGroups`를 가진 일별 window 배열. history scan에 statusGroup/current checkpoint/missing ID count를 추가한다. normalizer의 `providerRevisionSource`에 `detailLastUpdateAtMillis`를 추가한다.
+- 최소 변경안: planner export를 공통 history route에서 호출하고 `temu`를 UI channel union에 추가한다. provider args에는 region/seller hash를 넣지 않고 job scope metadata로만 전달한다. detail timestamp가 13자리 safe integer인지 검사해 milliseconds로 사용하고, 불일치/부재 시 현재 state digest fallback을 쓴다.
+- 다른 채널 영향: UI channel union과 history schema 확장 외 없음. 기존 채널 window 동작은 유지한다.
+- 상품/주문/배송 mutation 영향: 없음. read-only history와 presentation만 변경한다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-temu-history-runtime-event.test.ts tests/temu-after-sales-detail.test.ts tests/cs-history-channel-db.test.mjs tests/cs-history-window-route.test.ts`
+- migration 선행/preimage/ACL 요구: 기존 `sellerpilot_service_ingest_inquiries` owner/security definer/search_path/grant preimage를 다시 검증한다. address/phone/email은 context allowlist에서 계속 금지하고 revision append는 동일 seller scope에서만 허용한다.
+- 우선순위: 과거누락
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 미반영

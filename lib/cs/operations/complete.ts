@@ -204,7 +204,7 @@ export async function completeCsClaim(
         }
         normalizedInquiries = normalizeChannelInquiries(
           job.channel,
-          syncResponse,
+          syncResponse as unknown as Parameters<typeof normalizeChannelInquiries>[1],
           stableNormalizationTimestamp,
           {
             lazadaRawStorageReady: job.channel === "lazada",

@@ -1,0 +1,21 @@
+# 공통 변경 요청 smartstore-001
+
+- 목적: 네이버페이 고객문의가 부모 `orderId` 또는 다른 판매자 소유의 동일 주문번호로 잘못 연결되는 것을 막고, 정확히 하나인 `productOrderIdList`만 SellerPilot 상품주문 원장에 결속한다.
+- 요청 채널: smartstore
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-inquiry-sync/2`
+- 수정할 공통 파일과 함수: `tests/channel-sync-determinism.test.ts`의 `Smartstore product Q&A and customer inquiries keep disjoint provider identities` fixture/기대값. 필요 시 공통 주문연결 상태 UI가 `providerContext.orderReferenceState`를 표시하도록 `lib/cs/order-binding-health.ts`와 `app/cs/order-binding-health.tsx`를 후속 반영한다.
+- 현재 파일 SHA-256: `tests/channel-sync-determinism.test.ts`=`82c949a9be5ee9dd215292ddcc196608fd348efbbe3c1eee7e25d9c75013661c`, `lib/channels/order-sync.ts`=`9a8f5bb5513ff7c84330341517057bcb591b3b063696410396d7027581c8e177`
+- DB 객체: 기존 `commerce_orders.external_order_id`는 스마트스토어 `productOrderId`를 저장한다. 이번 요청은 schema/migration 변경 없음.
+- 기존 동작: 공통 fixture가 고객문의에 `orderId: "ORDER-1"`만 넣고 이를 `externalOrderReference`로 기대한다. 그러나 스마트스토어 주문 정규화는 부모 주문번호가 아니라 `productOrderId`를 원장 외부키로 사용한다.
+- 문제를 재현하는 최소 입력: `{ inquiryNo: 987654, orderId: "ORDER-1" }`. 현재 S0 공통 시험의 기대값은 `externalOrderReference: "ORDER-1"`이다.
+- 원하는 동작: 부모 `orderId`만 있으면 자동 연결하지 않는다. 쉼표로 구분된 `productOrderIdList`가 정확히 한 개의 유효 ID일 때만 그 값을 연결한다. 복수·중복·형식 오류·legacy 값 충돌은 각각 상태를 남기고 미결속한다. 상품 Q&A는 주문 식별자가 없으므로 항상 미결속한다.
+- 전용 모듈 경로와 export: `lib/channels/smartstore-inquiry-history.ts`의 `normalizeSmartstoreInquiries`
+- 기존/새 입력·출력 계약: 기존 `{ orderId } -> externalOrderReference=orderId`; 새 `{ orderId, productOrderIdList:"10001" } -> externalOrderReference="10001", providerContext.orderId=orderId, providerContext.productOrderIds=["10001"], orderReferenceState="exact_product_order"`. `{ orderId }`만 있거나 ID가 복수면 `externalOrderReference` 없음.
+- 최소 변경안: 공통 fixture에 `productOrderIdList: "10001"`를 추가하고 기대 참조를 `10001`로 바꾼다. 별도 음성 fixture에서는 `orderId`만 제공하고 미결속과 `orderReferenceState: "unavailable"`을 검증한다. DB 연결 시 기존 seller/account/shop/credential 소유자 조건은 그대로 유지한다.
+- 다른 채널 영향: 없음. SmartStore customer kind에만 적용한다.
+- 상품/주문/배송 mutation 영향: 없음. 읽기 정규화 및 연결 후보 생성만 변경하며 주문 상태·송장·클레임 mutation을 호출하지 않는다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-smartstore-contract.test.ts tests/channel-sync-determinism.test.ts tests/cs-history-channel-db.test.mjs`
+- migration 선행/preimage/ACL 요구: 없음. 공통 시험 기대값 변경 후 통합 담당이 기존 원장의 `smartstore` 티켓 중 `external_order_reference`가 부모 `orderId`로 저장된 행을 read-only 진단하고, 별도 승인 전에는 보정 mutation을 하지 않는다.
+- 우선순위: 오연결·손실
+- 통합 담당 처리 상태: 기본 요청과 공통 determinism fixture 반영. 배열형 `productOrderIdList` 보완은 `delta-supplement-001.json`으로 재제출.
+- 반영된 통합 소스 hash와 검증: 통합본 `tests/channel-sync-determinism.test.ts`=`788651792f6b794286825b9bd036912f69447e2ed795530552760870e389b495`; 통합 담당 보고 8채널 최소회귀 136/136. 보완 preimage는 전용 보고서에 별도 고정.

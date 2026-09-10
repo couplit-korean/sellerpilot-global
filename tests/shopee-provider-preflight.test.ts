@@ -117,6 +117,7 @@ function attributeResponse(categoryId: number, attributeId: number, valueId: num
           attribute_id: attributeId,
           name: `Required ${attributeId}`,
           mandatory: true,
+          attribute_info: { input_type: 1, max_value_count: 1, mandatory_region: ["SG"] },
           attribute_value_list: available ? [{ value_id: valueId, name: "Cable organizer" }] : [],
         }],
       }],
@@ -166,6 +167,8 @@ function input(): PrepareProviderListingInput {
     market: "SG",
     targetId: SHOP_ID,
     currency: "SGD",
+    targetPrice: 5,
+    globalPrice: 4,
     rate: rate(),
   });
   assert.ok(createContext);
@@ -183,7 +186,14 @@ function input(): PrepareProviderListingInput {
         category_id: GLOBAL_CATEGORY_ID,
         global_item_name: "Reusable cable organizer clips",
         description: "Keep charging cables tidy on a desk.",
+        brand: { brand_id: 101, original_brand_name: "Fixture Brand" },
         attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
+        normal_stock: 1,
+        seller_stock: [{ location_id: "SG-LOC", stock: 1 }],
+        days_to_ship: 1,
+        pre_order: { is_pre_order: false, days_to_ship: 1 },
+        weight: 0.4,
+        dimension: { package_length: 8, package_width: 4, package_height: 2 },
       },
       publish: {
         shop_id: Number(SHOP_ID),
@@ -193,10 +203,23 @@ function input(): PrepareProviderListingInput {
           item_name: "Reusable Cable Organizer Clips",
           item_sku: SKU,
           description: "Keep charging cables tidy with durable adhesive clips designed for desks, walls, and everyday home use.",
+          brand: { brand_id: 101, original_brand_name: "Fixture Brand" },
           attribute_list: [{ attribute_id: 501, attribute_value_list: [{ value_id: 601 }] }],
+          normal_stock: 1,
+          seller_stock: [{ location_id: "SG-LOC", stock: 1 }],
+          days_to_ship: 1,
+          pre_order: { is_pre_order: false, days_to_ship: 1 },
+          weight: 0.4,
+          dimension: { package_length: 8, package_width: 4, package_height: 2 },
+          logistic: [{ logistic_id: 8001, enabled: true }],
         },
       },
     }, createContext);
+  const boundBody = arguments_.body as Record<string, unknown>;
+  const boundPublish = arguments_.publish as Record<string, unknown>;
+  const boundItem = boundPublish.item as Record<string, unknown>;
+  boundBody.seller_stock = [{ location_id: "SG-LOC", stock: 1 }];
+  boundItem.seller_stock = [{ location_id: "SG-LOC", stock: 1 }];
   return {
     channel: "shopee",
     operation: "listing.create",
@@ -284,7 +307,7 @@ function dependencies(inputValue: {
       }
       throw new Error(`unexpected shop request: ${path}`);
     },
-    merchantRequest: async ({ path, query }) => {
+    merchantRequest: async ({ path, query, body }) => {
       inputValue.events.push(`merchant:${path}?${query?.toString() ?? ""}`);
       const inventoryOverride = inputValue.merchantInventoryRequest?.(
         path,
@@ -302,6 +325,38 @@ function dependencies(inputValue: {
       }
       if (path.endsWith("get_attribute_tree")) {
         return attributeResponse(GLOBAL_CATEGORY_ID, 501, 601, inputValue.globalAttributeAvailable ?? true);
+      }
+      if (path.endsWith("get_brand_list")) {
+        return remote({
+          error: "",
+          response: {
+            brand_list: [{ brand_id: 101, display_brand_name: "Fixture Brand" }],
+            has_next_page: false,
+            next_offset: 0,
+            is_mandatory: true,
+            input_type: "DROP_DOWN",
+          },
+        });
+      }
+      if (path.endsWith("get_merchant_warehouse_list")) {
+        return remote({
+          error: null,
+          response: {
+            warehouse_list: [{ warehouse_id: 9001, location_id: "SG-LOC", warehouse_name: "Fixture Pickup" }],
+            cursor: { next_id: null, page_size: 30 },
+          },
+        });
+      }
+      if (path.endsWith("get_warehouse_eligible_shop_list")) {
+        const requestBody = body as { warehouse_id?: number } | undefined;
+        assert.equal(requestBody?.warehouse_id, 9001);
+        return remote({
+          error: null,
+          response: {
+            shop_list: [{ shop_id: Number(SHOP_ID), shop_name: "Fixture SG Shop" }],
+            cursor: { next_id: null, page_size: 30 },
+          },
+        });
       }
       if (path.endsWith("get_global_item_limit")) {
         return limitResponse(inputValue.galleryMax ?? 9, inputValue.descriptionMax ?? 8);
@@ -424,11 +479,14 @@ test("Shopee SG validates logistics, the global category/attributes, and the rec
   const events: string[] = [];
   const prepared = await prepareShopeeGlobalListing(input(), dependencies({ events }));
   const firstUpload = events.findIndex((event) => event.startsWith("upload:"));
-  assert.equal(firstUpload, 12);
+  assert.equal(firstUpload, 15);
   assert.equal(events.slice(0, firstUpload).every((event) => !event.startsWith("upload:")), true);
   assert.equal(events.some((event) => event.includes("global_product/get_global_item_list?offset=0&page_size=100")), true);
   assert.equal(events.filter((event) => event.includes("product/get_item_list?")).length, 4);
   assert.equal(events.some((event) => event.includes(`global_product/get_attribute_tree?category_id_list=${GLOBAL_CATEGORY_ID}`)), true);
+  assert.equal(events.some((event) => event.includes(`global_product/get_brand_list?category_id=${GLOBAL_CATEGORY_ID}`)), true);
+  assert.equal(events.some((event) => event.includes("merchant/get_merchant_warehouse_list")), true);
+  assert.equal(events.some((event) => event.includes("merchant/get_warehouse_eligible_shop_list")), true);
   assert.equal(events.some((event) => event.includes("product/category_recommend?item_name=Reusable+Cable+Organizer+Clips")), true);
   assert.equal(events.some((event) => event.includes(`global_product/get_global_item_limit?category_id=${GLOBAL_CATEGORY_ID}`)), true);
   assert.equal(events.some((event) => event.includes(`product/get_item_limit?category_id=${LOCAL_CATEGORY_ID}`)), true);
@@ -631,9 +689,9 @@ test("Shopee SG exact create fails closed on incomplete, duplicate, or failed in
   }
 });
 
-test("Shopee SG exact create binds the provider-selected merchant and shop before every provider read", async () => {
+test("Shopee SG create binds a valid provider-selected merchant and matching shop before every provider read", async () => {
   for (const [name, mutate] of [
-    ["merchant", (value: PrepareProviderListingInput) => { value.credential.merchant_id = "5511565"; }],
+    ["merchant", (value: PrepareProviderListingInput) => { value.credential.merchant_id = "invalid-merchant"; }],
     ["shop", (value: PrepareProviderListingInput) => {
       if (value.shopeeShopCredential) value.shopeeShopCredential.shop_id = "1719148845";
     }],
@@ -643,7 +701,7 @@ test("Shopee SG exact create binds the provider-selected merchant and shop befor
     const events: string[] = [];
     await assert.rejects(
       prepareShopeeGlobalListing(candidate, dependencies({ events })),
-      /SHOPEE_SG_EXACT_CREATE_PROVIDER_BINDING_MISMATCH/,
+      /SHOPEE_SG_CREATE_PROVIDER_BINDING_MISMATCH/,
       name,
     );
     assert.deepEqual(events, [], name);
@@ -685,7 +743,7 @@ test("Shopee SG falls back to buyer-visible extended description without droppin
 
 test("Shopee SG provider-preflight failure occurs before any image mutation", async () => {
   for (const { options, error } of [
-    { options: { activeLogistics: false }, error: /SHOPEE_LOGISTICS_MISSING/ },
+    { options: { activeLogistics: false }, error: /SHOPEE_SG_LOGISTICS_UNAVAILABLE/ },
     { options: { globalHasChildren: true }, error: /SHOPEE_SG_EXACT_CATEGORY_PATH_INVALID/ },
     { options: { localCategoryAvailable: false }, error: /SHOPEE_LOCAL_CATEGORY_RECOMMENDATION_INVALID/ },
     { options: { localGalleryMax: 8, localDescriptionMax: 7 }, error: /SHOPEE_EXTENDED_DESCRIPTION_IMAGES_UNAVAILABLE/ },
@@ -707,7 +765,7 @@ test("Shopee SG provider-preflight failure occurs before any image mutation", as
       invalidAttributeInput,
       dependencies({ events: attributeEvents, globalAttributeAvailable: false }),
     ),
-    /SHOPEE_GLOBAL_REQUIRED_ATTRIBUTES_MISSING/,
+    /SHOPEE_SG_ATTRIBUTE_VALUE_INVALID/,
   );
   assert.equal(attributeEvents.some((event) => event.startsWith("upload:")), false);
 });

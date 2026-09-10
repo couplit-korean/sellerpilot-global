@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   assertShopeeSgCurrentPrice,
+  assertShopeeSgCreateProviderBinding,
   bindShopeeSgListingCreateArguments,
   buildShopeeSgListingCreateContext,
   buildShopeeSgPreparedCreateEvidence,
@@ -9,7 +10,6 @@ import {
   shopeeExactGlobalCategoryPath,
   shopeeGlobalLeafCategoryPaths,
   shopeeSgCableClipCategory,
-  shopeeSgExactCreateIdentity,
   shopeeSgListingCreateExpectation,
   shopeeSgListingCreateContextContract,
   shopeeSgPreparedCreateExpectation,
@@ -111,6 +111,8 @@ function strictArguments() {
     market: "SG",
     targetId: SHOP_ID,
     currency: "SGD",
+    targetPrice: 5,
+    globalPrice: 4,
     rate: rate(),
   });
   assert.ok(context);
@@ -228,14 +230,16 @@ test("Shopee uses the exact stored provider ancestry and only returns complete l
   assert.equal(shopeeExactGlobalCategoryPath(missingParent, "100479"), null);
 });
 
-test("Shopee SG context binds the exact central SKU, 5,000 KRW, stock one, category and request-time SGD/USD prices", () => {
+test("Shopee SG context binds the central SKU, stock, category and separately saved SGD/USD prices", () => {
   const arguments_ = strictArguments();
   const context = arguments_.sellerpilotShopeeSgCreateContext as Record<string, unknown>;
   assert.equal(context.contract, shopeeSgListingCreateContextContract);
   assert.equal(context.sku, SKU);
   assert.equal(context.sourcePriceKrw, 5_000);
   assert.equal(context.targetPriceSgd, 5);
+  assert.equal(context.targetPriceSource, "stored_channel_price");
   assert.equal(context.globalPriceUsd, 4);
+  assert.equal(context.globalPriceSource, "stored_global_price");
   assert.equal(context.quantity, 1);
   assert.deepEqual(context.categoryPath, [...shopeeSgCableClipCategory.path]);
   assert.equal((arguments_.body as Record<string, unknown>).global_item_sku, SKU);
@@ -244,30 +248,57 @@ test("Shopee SG context binds the exact central SKU, 5,000 KRW, stock one, categ
   assert.equal(shopeeSgdPriceFromKrw(5_000, 1_000), 5);
   assert.equal(shopeeUsdPriceFromKrw(5_000, 1_250), 4);
   assert.equal(shopeeSgListingCreateExpectation(arguments_).ok, true);
-  assert.deepEqual(shopeeSgExactCreateIdentity, {
-    productId: PRODUCT_ID,
-    sku: SKU,
-    merchantId: "5511564",
-    shopId: SHOP_ID,
-    market: "SG",
-  });
+
 });
 
-test("Shopee SG exact context rejects product, SKU, or shop drift before provider access", () => {
-  for (const [field, mutate] of [
-    ["productId", (context: Record<string, unknown>) => {
-      context.productId = "10000000-0000-4000-8000-000000000001";
+test("Shopee SG context never derives missing local or global prices from the exchange-rate evidence", () => {
+  const base = {
+    productId: PRODUCT_ID,
+    product: { id: PRODUCT_ID, sku: SKU, onHand: 1 },
+    manualFields: { sellingPrice: 5_000, currency: "KRW" },
+    assignments: [{
+      channel: "shopee",
+      market: "SG",
+      status: "confirmed",
+      categoryId: shopeeSgCableClipCategory.id,
+      categoryPath: [...shopeeSgCableClipCategory.path],
+      confirmedAt: "2026-08-30T04:55:00.000Z",
     }],
-    ["sku", (context: Record<string, unknown>) => { context.sku = `${SKU}-SG`; }],
-    ["targetId", (context: Record<string, unknown>) => { context.targetId = "1719148845"; }],
-  ] as const) {
-    const argumentsValue = strictArguments();
-    mutate(argumentsValue.sellerpilotShopeeSgCreateContext as Record<string, unknown>);
-    const parsed = shopeeSgListingCreateExpectation(argumentsValue);
-    assert.equal(parsed.ok, false, field);
-    if (!parsed.ok) {
-      assert.equal(parsed.mismatchFields.includes("sellerpilotShopeeSgCreateContext"), true, field);
-    }
+    market: "SG",
+    targetId: SHOP_ID,
+    currency: "SGD",
+    rate: rate(),
+  };
+  assert.equal(buildShopeeSgListingCreateContext({ ...base, globalPrice: 4 }), null);
+  assert.equal(buildShopeeSgListingCreateContext({ ...base, targetPrice: 5 }), null);
+});
+
+test("Shopee SG accepts any product and binds SKU and selected shop independently", () => {
+  const argumentsValue = strictArguments();
+  const context = argumentsValue.sellerpilotShopeeSgCreateContext as Record<string, unknown>;
+  context.productId = "10000000-0000-4000-8000-000000000001";
+  const parsed = shopeeSgListingCreateExpectation(argumentsValue);
+  assert.equal(parsed.ok, true);
+  if (!parsed.ok) throw new Error("fixture invalid");
+  assert.equal(assertShopeeSgCreateProviderBinding({
+    expectation: parsed.expectation,
+    merchantCredential: { merchant_id: "123456" },
+    shopCredential: { shop_id: SHOP_ID },
+  }).productId, context.productId);
+  assert.throws(() => assertShopeeSgCreateProviderBinding({
+    expectation: parsed.expectation,
+    merchantCredential: { merchant_id: "123456" },
+    shopCredential: { shop_id: "987654" },
+  }), /SHOPEE_SG_CREATE_PROVIDER_BINDING_MISMATCH/);
+  for (const [field, value, mismatch] of [
+    ["sku", `${SKU}-SG`, "body.global_item_sku"],
+    ["targetId", "1719148845", "publish.shop_id"],
+  ]) {
+    const candidate = strictArguments();
+    (candidate.sellerpilotShopeeSgCreateContext as Record<string, unknown>)[field] = value;
+    const checked = shopeeSgListingCreateExpectation(candidate);
+    assert.equal(checked.ok, false, field);
+    if (!checked.ok) assert.ok(checked.mismatchFields.includes(mismatch), field);
   }
 });
 
@@ -285,7 +316,7 @@ test("Coinbase KRW exchange response is converted to authoritative KRW-per-SGD a
   assert.deepEqual(loaded, rate());
 });
 
-test("Shopee SG prewrite and request-time FX checks fail before provider image mutation on any guessed commerce field", () => {
+test("Shopee SG prewrite and request-time rate-evidence checks fail before provider image mutation", () => {
   for (const [field, mutate] of [
     ["body.category_id", (value: ReturnType<typeof strictArguments>) => {
       (value.body as Record<string, unknown>).category_id = 100480;

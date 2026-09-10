@@ -1,0 +1,21 @@
+# 공통 변경 요청 lazada-002
+
+- 목적: Lazada가 실제 반환한 `code=ApiCallLimit`를 텍스트 문구 누락 때문에 영구 실패로 오판하지 않고, 안전한 읽기에서만 단 1회 재시도한다.
+- 요청 채널: lazada
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `lazadaRequest`
+- 수정할 공통 파일과 함수: `lib/channels/protocols.ts`의 `lazadaRequest`
+- 현재 파일 SHA-256: `8f2bbead6f2c6935c64ecd79cb5e27c1e22132a115f6a05b2d9277f68bf0ec1a`
+- DB 객체: 없음
+- 기존 동작: `/api access frequency exceeds the limit/i` 문구만 재시도한다. 2026-09-08 실제 `/im/message/list`는 HTTP 200과 `code=ApiCallLimit`만 반환했고 기존 분기가 이를 잡지 못한다.
+- 문제를 재현하는 최소 입력: 첫 GET 응답 `{code:"ApiCallLimit"}`, 두 번째 `{code:"0",data:{has_more:false,message_list:[]}}`.
+- 원하는 동작: provider code가 정확히 `ApiCallLimit`이거나 기존 공식 문구인 경우 GET 요청만 100~5,000ms 범위에서 한 번 재시도한다. POST mutation은 자동 재시도하지 않고 reconciliation 대상으로 남긴다.
+- 전용 모듈 경로와 export: 없음
+- 기존/새 입력·출력 계약: ABI 유지. GET에만 최대 2회 transport, POST는 1회
+- 최소 변경안: `first.data.code`의 exact 비교를 추가하고 `method === "GET"` gate를 둔다. 재귀/무제한 retry는 금지한다.
+- 다른 채널 영향: 없음
+- 상품/주문/배송 mutation 영향: POST 자동 재시도를 축소하므로 중복 mutation 위험 감소
+- 재현·회귀 시험 명령: `node --import tsx --test tests/channel-protocols.test.ts tests/lazada-history-pagination.test.ts`
+- migration 선행/preimage/ACL 요구: 없음
+- 우선순위: 첫 실제 읽기/웹 차단
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

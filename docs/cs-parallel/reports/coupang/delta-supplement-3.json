@@ -1,0 +1,101 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-2.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/status.md",
+      "change": "modify",
+      "beforeSha256": "23c0232f91d35d453775fe1a10cd053f2835225ff5b532a4d81044ee87418086",
+      "afterSha256": "2b8a3d064e7199bbb37264b10eecbb3c22be3a355181e6448ced1658a5f25a77",
+      "reason": "Add integrated 74-test evidence, 46-test follow-up evidence and the executable order-lineage boundary."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/005-authenticated-db-web-verification.md",
+      "change": "modify",
+      "beforeSha256": "c6bac5ace77342c28dbf437b82e13e51196dacb3b3ae4fdeabc8fb6fcc4ac812",
+      "afterSha256": "d9c1fb8153c29e909f7e307cbb26ae8ff49ae7c4ba5230f42597e6936075348e",
+      "reason": "Require exact request-to-RPC scope and internal result-count binding before display."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/006-multi-vendor-order-lineage.md",
+      "change": "modify",
+      "beforeSha256": "9cd3afe45991282dd440f62b4d9e2a58146e40a0cd01ba86f45439217795ab81",
+      "afterSha256": "62c78dcc269f89a40d1348c92d1e4ff9ae05848663e44bf8b12a1374a88f7fea",
+      "reason": "Link the diagnosed gap to the executable proposal 007 without claiming runtime integration."
+    },
+    {
+      "path": "lib/cs/channels/coupang/verification.ts",
+      "change": "modify",
+      "beforeSha256": "c96a521ec2103ca2ef36bb012ced4335225fe6084ce04a84a07cda3abf3a1ef2",
+      "afterSha256": "30b2f217667bb6e5ca21ee2529d1d8b174f9d18ce042c5bebce64ce4b4cc3e4f",
+      "reason": "Validate counts, ticket-kind prefixes and exact response scope against the request."
+    },
+    {
+      "path": "app/api/admin/cs/channels/coupang/verification/route.ts",
+      "change": "modify",
+      "beforeSha256": "580de05498d659565674013eced7e48d048e76e6cd237d14de3f500f788044a8",
+      "afterSha256": "9e8521ea18439c527c497a4c9038f829b361a5511a2605b42a77842a3c4aa5ce",
+      "reason": "Return 502 instead of displaying a valid-shaped but wrong-scope RPC response."
+    },
+    {
+      "path": "tests/cs-coupang-db-web.test.ts",
+      "change": "modify",
+      "beforeSha256": "4937acd43bece3eaa21837846751b7e934c74b812bdf65f86ed4f043f0c32d9e",
+      "afterSha256": "cfcd68f79c7dfa8283201c118f40866dd4744e32973eb44e38a3e224c086bd73",
+      "reason": "Cover wrong credential, kind, dates, counts and ticket prefix returned by the RPC."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/007-executable-order-lineage.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a06795b14cbf8d5368256c8694e13eefd756603cb1a15d125856f1d257e424bb",
+      "reason": "Specify schema, exact ingest hook, lookup, legacy quarantine and integration order."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f993756a891011257ed934da132e5114ed434348aaf020801538a835cbf3ad80",
+      "reason": "Provide executable private lineage ledger, recorder, candidate, validator and reconciliation SQL."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage-ingest.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4c46ae07ab2717a4d7e4c85edc6819639720dac5ba05b72b84cc97581c2a9e1f",
+      "reason": "Show the one exact same-transaction call required in the coordinator-owned order ingest function."
+    },
+    {
+      "path": "tests/fixtures/cs/coupang/order-lineage-fixture.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "50f1383725e87ae132178b82d287c503fb4aed498a716fbf47fb802c1c3964a1",
+      "reason": "Provide synthetic rotated and cross-vendor credentials, orders and tickets."
+    },
+    {
+      "path": "tests/cs-coupang-order-lineage-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "80891336c483655acf8e9b277ff5e2a47339dd3ddcbcd8309c4d354d6170075b",
+      "reason": "Execute rotation, cross-vendor collision, legacy unknown, credential mismatch and grant regressions."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-3-20260908.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "fe957950fa9489de62e5b27dd76e25d3805e13eda54c42914823c9515980f0d7",
+      "reason": "Report the follow-up execution while retaining provider and production evidence boundaries."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260908-supplement-3-validation.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a3dee53494bb25004e842fefb07e7c70acfbd66de7d1f0b81b3b38e5fbbf73b6",
+      "reason": "Record integrated and isolated regression outcomes including the initial PGlite-only failure."
+    }
+  ],
+  "sharedProposals": ["coupang-005", "coupang-006", "coupang-007"],
+  "testEvidence": ["docs/cs-parallel/reports/coupang/logs/20260908-supplement-3-validation.md"]
+}

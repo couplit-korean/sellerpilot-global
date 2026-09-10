@@ -1,0 +1,8 @@
+{
+  "source": "docs/cs-parallel/proposals/shopee/shopee-012-history-date-intent-cutoff-draft.sql",
+  "name": "20260908151735_cs_shopee_history_date_intent_cutoff.sql",
+  "stage": "/var/folders/65/_08g03553cs0qbvvfl_yqqvr0000gn/T/cs-shopee005-migration-lzjy_0pb/supabase/migrations/20260908151735_cs_shopee_history_date_intent_cutoff.sql",
+  "owner": "CS root integration",
+  "sourceSha256": "87ebc67918a18621b4cdc1403fb07442bf533e60ebfa2c7bfda415e8948eb02c",
+  "state": "created_local_candidate_frozen005"
+}

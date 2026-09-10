@@ -90,10 +90,10 @@ async function vaultedEbayPayload(serviceRoleKey, accessToken) {
   };
 }
 
-if (categoryId !== ebayCookieCategoryId) {
+if (!/^[1-9]\d{0,9}$/u.test(categoryId)) {
   console.log(JSON.stringify({
-    blocked: "EBAY_GET_ONLY_COOKIE_CATEGORY_REQUIRED",
-    expectedCategoryId: ebayCookieCategoryId,
+    blocked: "EBAY_CATEGORY_ID_INVALID",
+    categoryId,
   }));
   process.exit(2);
 }
@@ -148,15 +148,22 @@ try {
     categoryTreeId: result.categoryTreeId,
     treeHttpStatus: result.treeHttpStatus,
     aspectsHttpStatus: result.aspectsHttpStatus,
+    aspectsShapeVerified: result.aspectsShapeVerified,
     aspectCount: result.aspectCount,
     requiredAspectNames: result.requiredAspectNames,
+    upcomingRequiredAspectNames: result.upcomingRequiredAspectNames,
     brandAspect: result.brandAspect,
     productAspect: result.productAspect,
     brandProbeHits: result.brandProbeHits,
     productProbeHits: result.productProbeHits,
+    conditionPolicyHttpStatus: result.conditionPolicyHttpStatus,
+    conditionPolicyCategoryTreeId: result.conditionPolicyCategoryTreeId,
+    conditionRequired: result.conditionRequired,
+    conditionIds: result.conditionIds,
     fulfillmentPolicy: result.fulfillmentPolicy,
     paymentPolicy: result.paymentPolicy,
     returnPolicy: result.returnPolicy,
+    returnPolicyDetails: result.returnPolicyDetails,
     unverifiedReason: result.unverifiedReason ?? null,
   }));
 } finally {

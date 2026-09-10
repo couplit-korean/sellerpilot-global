@@ -1,0 +1,28 @@
+{
+  "contract": "ebay_cs_readonly_evidence_v1",
+  "checked_at": "2026-09-07T10:36:26.962Z",
+  "environment": "production",
+  "commerce_message_api": {
+    "recorded_scope": false,
+    "http_status": 403,
+    "status": "authorization_required"
+  },
+  "trading_my_messages": {
+    "http_status": 200,
+    "status": "readable",
+    "total": 9,
+    "unread": 9,
+    "classification": "mailbox_total_includes_non_customer_ebay_messages"
+  },
+  "trading_asq_retained_history": {
+    "status": "readable",
+    "from": "2025-09-07T10:36:22.136Z",
+    "to": "2026-09-07T10:36:22.136Z",
+    "checked_windows": 13,
+    "maximum_window_days": 30,
+    "total_customer_questions": 0,
+    "non_empty_windows": 0
+  },
+  "customer_content_logged": false,
+  "provider_mutation_performed": false
+}

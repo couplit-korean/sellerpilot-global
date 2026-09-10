@@ -1,0 +1,68 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-6.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/status.md",
+      "change": "modify",
+      "beforeSha256": "bdb18f82d055765a969a1548d935101c046613a9de19fb8ca94a16f3a8447da5",
+      "afterSha256": "4e0c4f0a37a2dbbfc5f55d2438fc6c38467669eb41a51dda69d8a60cfd081787",
+      "reason": "Record the 007 non-interference evidence, 54-test channel run, and integration hold."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/007-executable-order-lineage.md",
+      "change": "modify",
+      "beforeSha256": "feb1b22fcb09a42a63ec7dec3719fe91e5cd14b60cc3968e2c05d5a48fe85447",
+      "afterSha256": "148deaf2b0c7d540e2666bdc72cfda1b2d5dc4ff98b88071531789d81fcfa24c",
+      "reason": "Specify complete wrapper chaining, canonical non-Coupang delegation, and impact/quarantine/rebind sequencing."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "change": "modify",
+      "beforeSha256": "83b0c4cecc0a61709e6242dfd86a45787210d1b1e662bea006e422e4376e7592",
+      "afterSha256": "d842b4d4278135a777728457be2f2e8a330c7fae1a42bd0038651b924805e776",
+      "reason": "Replace the rollback-prone bulk-clear draft with a production-hash-pinned full wrapper and best-effort provenance."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage-ingest.patch",
+      "change": "delete",
+      "beforeSha256": "4c46ae07ab2717a4d7e4c85edc6819639720dac5ba05b72b84cc97581c2a9e1f",
+      "afterSha256": null,
+      "reason": "Remove the ellipsis-only pseudo hook now replaced by the complete executable SQL wrapper."
+    },
+    {
+      "path": "tests/cs-coupang-order-lineage-db.test.mjs",
+      "change": "modify",
+      "beforeSha256": "16fb75dcfbf021be30a4418c01e1b3bc165ba3b26cbb5e28c423653f57e0c303",
+      "afterSha256": "0afe400112010cd49b558ebaf809266bc87d6cdf0e37a39615d89262101a1342",
+      "reason": "Execute the actual wrapper chain and assert install counts, error and field equivalence, non-rollback, and exact lineage counterexamples."
+    },
+    {
+      "path": "tests/fixtures/cs/coupang/order-lineage-fixture.sql",
+      "change": "delete",
+      "beforeSha256": "601484b2e46305cbe1ab91319ec3af2e3c126b03d999faffcab8b172179d916b",
+      "afterSha256": null,
+      "reason": "Remove the reduced stub now that the test runs the canonical migration chain."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-7-order-lineage-20260909.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "67e9bc817cd78ceb23db3d42c986704d461a587116f9d3dd7495dc2d1ad9bafd",
+      "reason": "Report the 007 design correction, evidence, rollout boundary, and remaining owner review."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260909-supplement-7-order-lineage.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f340807ea8e3f3906cfe072104c1ebe1535675176930fbb480ae91b28f9a50d6",
+      "reason": "Record exact production hashes and focused, common, channel, and lint outcomes."
+    }
+  ],
+  "sharedProposals": ["coupang-007"],
+  "testEvidence": [
+    "docs/cs-parallel/reports/coupang/logs/20260909-supplement-7-order-lineage.md"
+  ]
+}

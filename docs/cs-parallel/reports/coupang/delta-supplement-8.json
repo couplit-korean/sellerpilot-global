@@ -1,0 +1,75 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-7.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/status.md",
+      "change": "modify",
+      "beforeSha256": "4e0c4f0a37a2dbbfc5f55d2438fc6c38467669eb41a51dda69d8a60cfd081787",
+      "afterSha256": "553ffdc75d61e6912ab27a72da4c26e8d18973b90e73ec5fc13e0e04e7550e61",
+      "reason": "Record stale-lineage isolation, the exact reader gate, and the latest 57-test channel result."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/007-executable-order-lineage.md",
+      "change": "modify",
+      "beforeSha256": "148deaf2b0c7d540e2666bdc72cfda1b2d5dc4ff98b88071531789d81fcfa24c",
+      "afterSha256": "09612c5412a5b22351587b7532705c97e63e438f4233976747cab0f531a3a6b8",
+      "reason": "Specify current-order freshness and isolate only Coupang CS projection failures from intake."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "change": "modify",
+      "beforeSha256": "d842b4d4278135a777728457be2f2e8a330c7fae1a42bd0038651b924805e776",
+      "afterSha256": "885c58d9c01ac02c23d6ccc9e7224bb8ac925a4a1e53adb3d4ff84b2b5138ec3",
+      "reason": "Require fresh lineage after the latest order update and keep CS projection exceptions from rolling back provider/order intake."
+    },
+    {
+      "path": "tests/cs-coupang-order-lineage-db.test.mjs",
+      "change": "modify",
+      "beforeSha256": "0afe400112010cd49b558ebaf809266bc87d6cdf0e37a39615d89262101a1342",
+      "afterSha256": "dadd1e63589976c896089c9542ac33aeba13ba437ba0a8f552e1f56b2148c314",
+      "reason": "Exercise actual projection and ledger trigger failures plus stale vendor-A evidence after a failed vendor-B provenance write."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/009-exact-order-reader-gate.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d3410f306632dd3b063679fe61f2c28b2916b04a5100bc97ee73b3c275fd842c",
+      "reason": "Specify fail-closed exact-order behavior for workspace, detail, AI drafts, and binding health."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/009-coupang-exact-order-reader-gate.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "740ac8c8ae3ff8cd14b3326d3a2072dab33693fd3ac9d8da7535cf9c6bd95ea0",
+      "reason": "Wrap canonical readers and AI job creation with the 007 exact validator without bulk unlinking or changing non-Coupang results."
+    },
+    {
+      "path": "tests/cs-coupang-order-reader-gate-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "2abe214cca5f20a35d76fdb58765b0c87795ae615c4e9b6aa92babba49df646b",
+      "reason": "Reproduce legacy leakage in one database and prove gated hiding, exact rebind, non-Coupang preservation, ACLs, and preimage abort."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-8-reader-gate-20260909.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "eceda3d551b9411c35ba14905d1dc487d43d358cc21dea5062d8f0a964235b61",
+      "reason": "Report the reviewed 007 corrections, the 009 reader gate, evidence, and remaining operational boundaries."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260909-supplement-8-reader-gate.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5bdb45fea4d037b194f67657d098cebb3ca2f4451638f0db65a372e9d68ad409",
+      "reason": "Record pinned reader hashes and focused, common, channel, cross-channel, and lint outcomes."
+    }
+  ],
+  "sharedProposals": ["coupang-007", "coupang-009"],
+  "testEvidence": [
+    "docs/cs-parallel/reports/coupang/logs/20260909-supplement-8-reader-gate.md"
+  ]
+}

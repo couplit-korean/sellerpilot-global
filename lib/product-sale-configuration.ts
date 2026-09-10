@@ -8,9 +8,5 @@ export type ProductSaleConfiguration = (typeof productSaleConfigurations)[number
 
 export function normalizeProductSaleConfiguration(value: unknown): ProductSaleConfiguration | "" {
   const normalized = typeof value === "string" ? value.trim() : "";
-  if (!normalized) return "";
-  if (/1\s*\+\s*1/.test(normalized)) return "상품 1+1";
-  if (/(?:^|[^\d])6\s*개(?:\s|$)/.test(normalized)) return "상품 6개";
-  if (/(?:^|[^\d])1\s*개(?:\s|$)/.test(normalized) || /\bsingle(?:\s+item)?\b/i.test(normalized)) return "상품 1개";
-  return "";
+  return productSaleConfigurations.find((configuration) => configuration.value === normalized)?.value ?? "";
 }

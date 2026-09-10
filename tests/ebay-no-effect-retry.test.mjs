@@ -15,8 +15,8 @@ const routeUrl = new URL(
   "../app/api/admin/channel-operations/route.ts",
   import.meta.url,
 );
-const recoveryUrl = new URL(
-  "../lib/channels/ebay-exact-existing-qa-recovery.ts",
+const retirementUrl = new URL(
+  "../lib/channels/retired-product-recovery.ts",
   import.meta.url,
 );
 
@@ -30,11 +30,11 @@ function extractFunction(source, signature) {
   return source.slice(start, end + 3);
 }
 
-test("the retry surface is one new permit and never an old-job replay", async () => {
-  const [migration, route, recovery] = await Promise.all([
+test("the historical retry migration remains immutable while its application surface is retired", async () => {
+  const [migration, route, retirement] = await Promise.all([
     readFile(sourceMigrationUrl, "utf8"),
     readFile(routeUrl, "utf8"),
-    readFile(recoveryUrl, "utf8"),
+    readFile(retirementUrl, "utf8"),
   ]);
   assert.match(migration, /exact_existing_one_retry_per_source_job/u);
   assert.match(migration, /retry_source_job_id[\s\S]*?08e8cff9-5d7c-4992-b668-6d932aa5ff10/u);
@@ -52,14 +52,8 @@ test("the retry surface is one new permit and never an old-job replay", async ()
     route,
     /sellerpilot_service_arm_ebay_no_effect_retry/u,
   );
-  assert.match(
-    route,
-    /boundEbayExactNoEffectRetry[\s\S]*?ebayExactAtomicEnqueueRequired = true[\s\S]*?sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry/u,
-  );
-  assert.match(
-    recovery,
-    /sellerpilotEbayExactNoEffectRetry[\s\S]*?deterministic_rejection_no_effect/u,
-  );
+  assert.doesNotMatch(route, /sellerpilot_service_arm_.*exact|sellerpilot_service_atomic_enqueue_ebay_exact/iu);
+  assert.match(retirement, /EbayExact/u);
 });
 
 test("PGlite proves only the exact 400/25718 first-write rejection", async () => {

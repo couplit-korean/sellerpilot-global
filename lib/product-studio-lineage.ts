@@ -1,3 +1,5 @@
+import { z } from "zod";
+import { studioSourceEvidenceSchema } from "./studio-source-planning";
 import {
   aiGeneratedAssetSpecs,
   coreFirstDraftAssetIds,
@@ -28,9 +30,11 @@ export type ProductResearchPreflightAuditLineage = {
   role: "creative" | "detail";
   auditMode: "segmented-source-composite" | "source-photo-catalog";
   sourceRole: string;
+  sourceSha256?: string;
 };
 
 export type ValidatedProductResearchPreflight = {
+  sourcePhotoEvidence?: z.infer<typeof studioSourceEvidenceSchema>[];
   preflightVersion: 1;
   researchInputSha256: string;
   sourcePhotoSha256: string;
@@ -147,6 +151,15 @@ export function validateSucceededProductResearchPreflight(input: {
     return { valid: false, reason: "source_photo_mismatch" };
   }
 
+  const sourceEvidence = result.sourcePhotoEvidence === undefined ? undefined
+    : z.array(studioSourceEvidenceSchema).min(1).max(10).safeParse(result.sourcePhotoEvidence);
+  if (sourceEvidence && !sourceEvidence.success) return { valid: false, reason: "preflight_invalid" };
+  if (sourceEvidence?.success && (
+    sourceEvidence.data.some((source, index) => source.sourceIndex !== index)
+    || sourceEvidence.data[0].inputRole !== "main"
+    || sourceEvidence.data[0].sourceSha256 !== result.sourcePhotoSha256
+  )) return { valid: false, reason: "preflight_invalid" };
+  const sourceDigests = sourceEvidence?.success ? new Set(sourceEvidence.data.map(source => source.sourceSha256)) : null;
   const rawPaths = recordValue(result.asset_storage_paths);
   const rawLineage = recordValue(result.preflightAssetLineage);
   if (!rawPaths || !rawLineage
@@ -175,7 +188,9 @@ export function validateSucceededProductResearchPreflight(input: {
         || typeof lineage.sourceRole !== "string"
         || lineage.sourceRole.trim().length < 1
         || lineage.sourceRole.length > 80
-        || hasAsciiControlCharacter(lineage.sourceRole)) {
+        || hasAsciiControlCharacter(lineage.sourceRole)
+        || (sourceDigests && !sourceDigests.has(String(lineage.sourceSha256)))
+        || (lineage.sourceSha256 !== undefined && (typeof lineage.sourceSha256 !== "string" || !lowercaseSha256Pattern.test(lineage.sourceSha256)))) {
       return { valid: false, reason: "preflight_invalid" };
     }
     sharedClaimToken ||= claimToken;
@@ -186,12 +201,14 @@ export function validateSucceededProductResearchPreflight(input: {
       role: lineage.role as ProductResearchPreflightAuditLineage["role"],
       auditMode: lineage.auditMode as ProductResearchPreflightAuditLineage["auditMode"],
       sourceRole: lineage.sourceRole.trim(),
+      ...(typeof lineage.sourceSha256 === "string" ? { sourceSha256: lineage.sourceSha256 } : {}),
     };
   }
 
   return {
     valid: true,
     preflight: {
+      ...(sourceEvidence?.success ? { sourcePhotoEvidence: sourceEvidence.data } : {}),
       preflightVersion: 1,
       researchInputSha256: result.researchInputSha256,
       sourcePhotoSha256: result.sourcePhotoSha256,

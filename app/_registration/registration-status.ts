@@ -19,7 +19,7 @@ export const registrationStatusMeta: Record<RegistrationStatus, { label: string;
   publishing: { label: "채널 등록 중", detail: "선택한 채널에 상품을 동시에 전송하고 있습니다." },
   completed: { label: "등록 완료", detail: "선택 채널의 등록 처리가 완료되었습니다." },
   failed: { label: "재시도 필요", detail: "채널 응답을 확인한 뒤 다시 실행할 수 있습니다." },
-  blocked: { label: "외부 권한 대기", detail: "판매자센터 권한 또는 필수값 보완이 필요합니다." },
+  blocked: { label: "등록 확인 필요", detail: "채널별 오류·필수값·승인 또는 권한을 확인해 주세요." },
 };
 
 export function isRegistrationActivityRunning(status: RegistrationStatus) {
@@ -36,6 +36,7 @@ export function isCancelledRegistrationActivity(activity: Pick<RegistrationActiv
 
 export function registrationActivityDisplayStatusLabel(activity: RegistrationActivity) {
   if (isCancelledRegistrationActivity(activity)) return "작업 중지됨";
+  if (activity.status === "completed" && activity.channelCount > 0 && activity.publishedCount < activity.channelCount) return "일부 등록 · 확인 필요";
   if (activity.status === "failed") {
     if (activity.id.startsWith("asset:")) return "이미지 재제작 실패";
     if (activity.id.startsWith("revision:")) return "상품 수정 작업 실패";
@@ -80,6 +81,16 @@ export function registrationActivityDisplayElapsedSeconds(activity: Registration
 }
 
 export function registrationActivityProgress(activity: RegistrationActivity) {
+  if (activity.channelCount > 0) {
+    const total = activity.channelCount;
+    const published = Math.min(total, Math.max(0, activity.publishedCount));
+    const processed = Math.min(total, Math.max(published,
+      published + Math.max(0, activity.failedCount) + Math.max(0, activity.blockedCount)));
+    return {
+      percent: Math.round((published / total) * 100),
+      label: `등록 성공 ${published}/${total}개 · 처리 결과 ${processed}/${total}개 (${Math.round((processed / total) * 100)}%). 실패·확인 필요는 등록 성공에 포함하지 않습니다.`,
+    } as const;
+  }
   if (activity.status === "completed") {
     return {
       percent: 100,
@@ -113,7 +124,7 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
     if (activity.status === "blocked") {
       return {
         percent: 0,
-        label: "외부 권한 또는 필수값 보완이 필요해 작업이 중단되었습니다.",
+        label: "오류·필수값·승인 또는 권한 확인이 필요해 작업이 중단되었습니다.",
       } as const;
     }
     if (activity.status !== "analyzing") {
@@ -129,20 +140,13 @@ export function registrationActivityProgress(activity: RegistrationActivity) {
         : "AI 분석 단계입니다. 채널 대상이 확정되면 실제 완료 비율을 표시합니다.",
     } as const;
   }
-  const terminalCount = Math.min(
-    activity.channelCount,
-    Math.max(0, activity.publishedCount + activity.failedCount + activity.blockedCount),
-  );
-  return {
-    percent: Math.round((terminalCount / activity.channelCount) * 100),
-    label: `${activity.channelCount}개 채널 중 ${terminalCount}개 처리 결과를 확인했습니다.`,
-  } as const;
+  return { percent: 0, label: "채널 등록 대상이 없어 진행률을 표시하지 않습니다." } as const;
 }
 
 export function registrationChannelStatusLabel(status: string) {
   if (status === "published") return "완료";
   if (status === "failed") return "오류";
-  if (status === "blocked") return "권한";
+  if (status === "blocked") return "확인";
   if (status === "paused") return "중지";
   if (status === "scope_excluded") return "제외";
   if (status === "draft") return "준비";

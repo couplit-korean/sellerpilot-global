@@ -1,0 +1,46 @@
+{
+  "stats": {
+    "tests": 2916,
+    "pass": 2909,
+    "fail": 7,
+    "skipped": 0
+  },
+  "failures": [
+    {
+      "name": "both full-series and individual-regeneration worker paths use the same hash gate and initial-plus-three-retry loop",
+      "test": "image-generation-contract.test.ts:1:31520",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "image generation retries only the exact Codex timeout inside the finite shot-attempt loop",
+      "test": "image-generation-contract.test.ts:1:40660",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "protected products never send source pixels to image generation and preserve legacy input compatibility",
+      "test": "image-generation-contract.test.ts:1:43905",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "channel operations binds request image mode to the server product lineage before claiming an attempt",
+      "test": "manual-product-mvp.test.ts:1:25841",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "the AI worker uses the shared fetcher and propagates both research leases",
+      "test": "public-reference-fetch.test.ts:1:7747",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "today dashboard routes and tablet overflow fix remain wired",
+      "test": "today-ui-regressions.test.ts:1:20952",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    },
+    {
+      "name": "restoring stale or malicious parent patches cannot smuggle bound identities",
+      "test": "unified-registration-identity.test.ts:1:3670",
+      "details": "See original local TAP /tmp/channel-all-ts-final.tap; source-source invariant or existing general feature assertion; not a domain boundary violation."
+    }
+  ],
+  "fullLocalLog": "/tmp/channel-all-ts-final.tap"
+}

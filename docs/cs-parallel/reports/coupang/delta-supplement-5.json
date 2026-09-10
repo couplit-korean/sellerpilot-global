@@ -1,0 +1,131 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-4.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/status.md",
+      "change": "modify",
+      "beforeSha256": "2b8a3d064e7199bbb37264b10eecbb3c22be3a355181e6448ced1658a5f25a77",
+      "afterSha256": "7e2b6818b10d77f43d41b558e0d1abb2658f179678d94dbd5e7eb064f5c07a51",
+      "reason": "Replace stale provider evidence and record the hardened reply-completion and order-lineage integration boundaries."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-4-wing-read-20260908.md",
+      "change": "modify",
+      "beforeSha256": "d1bd3c0cc8a492c090d976cc3657aae4e49976bace6b32c5b7819b7a1daed4b5",
+      "afterSha256": "23f8265a984d1c4bf6d671abe7ea529a1fb0357e81aad0f608e852956420992f",
+      "reason": "Upgrade return evidence from the default receipt list to an explicit all-status and all-compensation search."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260908-supplement-4-wing-read.md",
+      "change": "modify",
+      "beforeSha256": "d706a4fbfa89bc1e57e4f567ed625fc30080436923fbad5fc0d09e12db937475",
+      "afterSha256": "14e5f7996cdd12addcc8cef5d637ff88301908138e36ffb172e47216d51c33bf",
+      "reason": "Record the explicit WING return all-status filter and zero result."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/008-live-read-only-runtime.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8eba274528ca9d68141f54ebd6167fbbdf40d8e426b36498570790ecccfb8527",
+      "reason": "Specify the existing worker reuse path and exact remaining credential, egress, migration and route dependencies."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "36b657ea0addca31787b14c0d90a5956fdf241c9e2b5eb0e4f0597349b7e0150",
+      "reason": "Propose only the Coupang inquiries.list read tuple and deny regressions in coordinator-owned common files."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/008-coupang-inquiries-local-executor.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "86ba046c2a7df334664ef4b688ff4ee95240daa840d1f9648686e68043452c29",
+      "reason": "Provide preimage-pinned schema-only read access without creating a route, job, credential or provider request."
+    },
+    {
+      "path": "tests/cs-coupang-read-only-runtime-proposal.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "a2f4e491bf34879fb0d62fff211fa0edbb6d705c3d9ae9409918d4b3c0c90a85",
+      "reason": "Assert that the proposal widens only inquiries.list as read and pins the observed production preimage."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-5-live-runtime-audit-20260908.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "bb07843330a8cf15be549620e58e739a7db8ab4d55ba1f59caafb43821a1b0bb",
+      "reason": "Report current production evidence plus the synthetic common completion and order-lineage hardening results."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260908-supplement-5-live-audit.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "74b200bc6d2b3be7507b8811f670e932d25310262fe99088e0958fa31aadd29f",
+      "reason": "Record read-only production audit and all local hardening regression outcomes."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/003-call-center-reply-readback.md",
+      "change": "modify",
+      "beforeSha256": "cf28b516b2cdb249957cf0db0a15f1fdf2a058448c85ed90d6920aaa7c39eb90",
+      "afterSha256": "33e7915ab380f67a24f54f91b8a05d8d427c94909db1411cf2520076321e2be2",
+      "reason": "Document exact completion-response preservation and fail-closed request, credential, seller, environment and owner bindings."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "change": "modify",
+      "beforeSha256": "bc5a97c23fac9d0c70b5b790c360781862884629d29522e3e9bb7828ddb0bc67",
+      "afterSha256": "97a227621ccc055af2b1a4b88ad771ffd0a7019dcb15b12be088b4a3facc1518",
+      "reason": "Reject NULL call-center kinds and require one exact provider-certified production credential and seller lineage."
+    },
+    {
+      "path": "tests/cs-coupang-reply-readback-db.test.mjs",
+      "change": "modify",
+      "beforeSha256": "2c32085525f8ca5cf8fd3734e97037fe413d1e0fd4d6d0ff6d1fc415c010e3da",
+      "afterSha256": "d3bf5193a7c2ad9b452d9a58d92be257daf24d01acbef0dbdae8ec86757c60cb",
+      "reason": "Exercise the actual completion to stored response to delivery to child chain and all requested fail-closed mismatches."
+    },
+    {
+      "path": "tests/cs-coupang-reply-completion-storage.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5be13892b32ef095fea839943e45c836a45f7ee22b0db9cf1e5f0872a3dd82df",
+      "reason": "Pin both common completion paths to preserve inquiry reply acceptance while limiting sanitization to list results."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/007-executable-order-lineage.md",
+      "change": "modify",
+      "beforeSha256": "a06795b14cbf8d5368256c8694e13eefd756603cb1a15d125856f1d257e424bb",
+      "afterSha256": "feb1b22fcb09a42a63ec7dec3719fe91e5cd14b60cc3968e2c05d5a48fe85447",
+      "reason": "Document single-row candidate semantics and the provider-certified Coupang vendor identity requirement."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "change": "modify",
+      "beforeSha256": "f993756a891011257ed934da132e5114ed434348aaf020801538a835cbf3ad80",
+      "afterSha256": "83b0c4cecc0a61709e6242dfd86a45787210d1b1e662bea006e422e4376e7592",
+      "reason": "Stop non-exact branches before exact fall-through and reject credential-incarnation-only vendor evidence."
+    },
+    {
+      "path": "tests/cs-coupang-order-lineage-db.test.mjs",
+      "change": "modify",
+      "beforeSha256": "80891336c483655acf8e9b277ff5e2a47339dd3ddcbcd8309c4d354d6170075b",
+      "afterSha256": "16fb75dcfbf021be30a4418c01e1b3bc165ba3b26cbb5e28c423653f57e0c303",
+      "reason": "Assert one row for every non-exact candidate and reject credential incarnation as vendor proof."
+    },
+    {
+      "path": "tests/fixtures/cs/coupang/order-lineage-fixture.sql",
+      "change": "modify",
+      "beforeSha256": "50f1383725e87ae132178b82d287c503fb4aed498a716fbf47fb802c1c3964a1",
+      "afterSha256": "601484b2e46305cbe1ab91319ec3af2e3c126b03d999faffcab8b172179d916b",
+      "reason": "Model production, verified, expiring provider-certified credentials for exact vendor-lineage tests."
+    }
+  ],
+  "sharedProposals": ["coupang-003", "coupang-007", "coupang-008"],
+  "testEvidence": [
+    "docs/cs-parallel/reports/coupang/logs/20260908-supplement-5-live-audit.md"
+  ]
+}

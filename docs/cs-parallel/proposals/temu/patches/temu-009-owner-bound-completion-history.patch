@@ -1,0 +1,22 @@
+diff --git a/app/api/channel-gateway/worker/complete/route.ts b/app/api/channel-gateway/worker/complete/route.ts
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -268,5 +268,5 @@ export async function POST(request: Request) {
+       const receipt = await recordTemuDetailRetryWithReplay(async () => {
+         const rpc = await serviceClient.rpc(
+-          "sellerpilot_service_requeue_temu_after_sales_detail_v2",
++          "sellerpilot_service_requeue_temu_after_sales_detail_v3",
+           retryArguments,
+         );
+diff --git a/app/api/admin/cs/history-coverage/route.ts b/app/api/admin/cs/history-coverage/route.ts
+--- a/app/api/admin/cs/history-coverage/route.ts
++++ b/app/api/admin/cs/history-coverage/route.ts
+@@ -10,5 +10,7 @@ export async function GET(request: Request) {
+   if (isAdminApiError(admin)) return admin;
+   try {
+-    const { data, error } = await admin.userClient.rpc("sellerpilot_read_cs_history_coverage_v1");
++    const { data, error } = await admin.userClient.rpc("sellerpilot_read_cs_history_coverage_v2", {
++      p_owner_id: admin.user.id,
++    });
+     if (error) return NextResponse.json({ message: "과거 문의 수집 범위를 조회하지 못했습니다." }, { status: 503, headers });
+     const coverage = csHistoryCoverageSchema.safeParse(data);

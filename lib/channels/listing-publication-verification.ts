@@ -1,82 +1,27 @@
-import { createHash } from "node:crypto";
+
 import { z } from "zod";
 import type { ActiveChannelKey } from "./catalog";
 import { assertProviderAccountIdentity } from "./provider-account-identity";
 import { elevenstVerifiedListingRemoteState } from "./elevenst-listing-publication";
-import {
-  readCoupangListingPublicationState,
-  readEbayListingPublicationState,
-  readSmartstoreListingPublicationState,
-} from "./listing-publication-readback";
-import {
-  parseListingPublicationAssetBinding,
-  verifyListingPublicationContent,
-} from "./listing-publication-content";
-import {
-  verifiedListingRemoteStateSchema,
-  type VerifiedListingRemoteState,
-} from "./listing-publication-state";
-import type { ChannelOperationStep } from "./operations";
-import {
-  coupangRequest,
-  ebayRequest,
-  ebayTradingRequest,
-  ebayTradingXmlEscape,
-  elevenstSellerXmlRequest,
-  fetchEbayTradingUserIdentity,
-  naverRequest,
-  qoo10Request,
-  readStoredNaverAccessToken,
-  temuExactLong,
-  temuRequest,
-  textValue,
-  type RemoteResponse,
-  type SecretPayload,
-} from "./protocols";
+import { readCoupangListingPublicationState, readEbayListingPublicationState, readSmartstoreListingPublicationState } from "./listing-publication-readback";
+import { parseListingPublicationAssetBinding, verifyListingPublicationContent } from "./listing-publication-content";
+import { verifiedListingRemoteStateSchema, type VerifiedListingRemoteState } from "./listing-publication-state";
+import type { ChannelOperationStep } from "./commerce-operations";
+import { coupangRequest, ebayRequest, ebayTradingRequest, ebayTradingXmlEscape, elevenstSellerXmlRequest, fetchEbayTradingUserIdentity, naverRequest, qoo10Request, readStoredNaverAccessToken, temuExactLong, temuRequest, textValue, type RemoteResponse, type SecretPayload } from "./protocols";
 import { readLazadaListingPublicationState } from "./provider-lazada-publication-readback";
-import {
-  readShopeeGlobalListingPublicationState,
-  readShopeeListingPublicationState,
-} from "./provider-shopee-publication-readback";
+import { readShopeeGlobalListingPublicationState, readShopeeListingPublicationState } from "./provider-shopee-publication-readback";
 import { qoo10ResultMessage } from "./qoo10";
-import {
-  normalizeQoo10ListingPublicationReadback,
-  qoo10VerifiedListingRemoteState,
-} from "./qoo10-listing-publication";
-import {
-  qoo10ListingCreateExpectation,
-  qoo10DetailImageUrls,
-  qoo10SellerAccountIdentityDigestFromReadback,
-} from "./qoo10-listing-create-preflight";
-import {
-  qoo10RollbackUpdateRecoveryBinding,
-} from "./listing-update";
-import {
-  qoo10LotteShippingS1ExpectedShippingNo,
-  qoo10ShippingS1VerifierArgument,
-  qoo10ShippingS1VerifierContract,
-} from "./qoo10-lotte-shipping-s1-identity";
-import {
-  normalizeTemuListingPublicationReadback,
-  temuExactLongGoodsId,
-  temuExactGoodsListArguments,
-  temuPublicationExpectedSkus,
-} from "./provider-temu-publication-readback";
-import {
-  qoo10ExactRecoveryContentRemoteState,
-  qoo10ExactSuccessResultCode,
-  qoo10ProviderDetailHtmlEquivalent,
-  qoo10ProviderKeywordMatches,
-  qoo10CriticalReadbackAliasesConsistent,
-} from "./qoo10-listing-activation";
+import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
+import { qoo10ListingCreateExpectation, qoo10SellerAccountIdentityDigestFromReadback } from "./qoo10-listing-create-preflight";
+import { inspectTemuGeneralCreateBody } from "../product-registration/temu/create-contract";
+
+import { normalizeTemuListingPublicationReadback, temuExactLongGoodsId, temuExactGoodsListArguments, temuPublicationExpectedSkus } from "./provider-temu-publication-readback";
 
 type PublicationChannel = ActiveChannelKey;
 type SourceOperation = "listing.create" | "listing.update" | "listing.activate";
 type UnknownRecord = Record<string, unknown>;
-
 export const listingPublicationVerificationSourceContract =
   "listing_publication_verification_source_v1" as const;
-
 export const listingPublicationVerificationSourceSchema = z.object({
   contract: z.literal(listingPublicationVerificationSourceContract),
   verificationJobId: z.string().uuid(),
@@ -92,21 +37,22 @@ export const listingPublicationVerificationSourceSchema = z.object({
   targetId: z.string().max(160),
 }).strict().superRefine((value, context) => {
   try {
-    if (Buffer.byteLength(JSON.stringify(value.sourceArguments), "utf8") > 128_000) {
+    if (Buffer.byteLength(JSON.stringify(value.sourceArguments), "utf8") > 128000) {
       context.addIssue({
         code: "custom",
         path: ["sourceArguments"],
         message: "publication source arguments are too large",
       });
     }
-    if (Buffer.byteLength(JSON.stringify(value.sourceResponsePayload), "utf8") > 1_000_000) {
+    if (Buffer.byteLength(JSON.stringify(value.sourceResponsePayload), "utf8") > 1000000) {
       context.addIssue({
         code: "custom",
         path: ["sourceResponsePayload"],
         message: "publication source response is too large",
       });
     }
-  } catch {
+  }
+  catch {
     context.addIssue({
       code: "custom",
       path: ["sourceArguments"],
@@ -114,11 +60,9 @@ export const listingPublicationVerificationSourceSchema = z.object({
     });
   }
 });
-
 export type ListingPublicationVerificationSource = z.infer<
   typeof listingPublicationVerificationSourceSchema
 >;
-
 type VerificationInput = {
   channel: PublicationChannel;
   operation: "listing.publication.verify";
@@ -127,29 +71,24 @@ type VerificationInput = {
   arguments: UnknownRecord;
   environment: "sandbox" | "production";
 };
-
 export type ListingPublicationVerificationExecution = {
   steps: ChannelOperationStep[];
   remoteId: string;
   remoteState?: VerifiedListingRemoteState;
 };
-
 function recordValue(value: unknown): UnknownRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as UnknownRecord
     : {};
 }
-
 function exactText(value: unknown) {
   return typeof value === "string" || typeof value === "number"
     ? String(value).trim()
     : "";
 }
-
 function pathSegment(value: string) {
   return encodeURIComponent(value);
 }
-
 function requestIdentifier(data: UnknownRecord) {
   for (const key of ["request_id", "requestId", "traceId", "rCode"]) {
     const value = exactText(data[key]);
@@ -157,7 +96,6 @@ function requestIdentifier(data: UnknownRecord) {
   }
   return undefined;
 }
-
 function providerStep(name: string, remote: RemoteResponse): ChannelOperationStep {
   const resultCode = remote.data.ResultCode ?? remote.data.ErrorCode;
   const commonCode = remote.data.code;
@@ -179,11 +117,8 @@ function providerStep(name: string, remote: RemoteResponse): ChannelOperationSte
     data: remote.data,
   };
 }
-
 function sourceContext(input: VerificationInput) {
-  const source = listingPublicationVerificationSourceSchema.safeParse(
-    input.arguments.sellerpilotPublicationSource,
-  );
+  const source = listingPublicationVerificationSourceSchema.safeParse(input.arguments.sellerpilotPublicationSource);
   const remoteId = exactText(input.arguments.remoteId);
   const expectedLocale = exactText(input.arguments.publicationExpectedLocale);
   const expectedFingerprint = exactText(input.arguments.publicationExpectedFingerprint);
@@ -192,164 +127,37 @@ function sourceContext(input: VerificationInput) {
   const targetId = exactText(input.arguments.targetId);
   const sourceJobId = exactText(input.arguments.publicationReviewSourceJobId);
   if (input.arguments.sellerpilotReadOnly !== true
-      || input.arguments.publicationIntent !== "live"
-      || input.arguments.publicationStateContract !== "verified_remote_state_v1"
-      || input.arguments.publicationExpectedImageCount !== 8
-      || !remoteId
-      || !expectedLocale
-      || !/^[a-f0-9]{64}$/u.test(expectedFingerprint)
-      || !source.success
-      || source.data.sourceJobId !== sourceJobId
-      || source.data.expectedRemoteId !== remoteId
-      || source.data.expectedLocale !== expectedLocale
-      || source.data.expectedImageCount !== expectedImageCount
-      || source.data.sourceFingerprint !== expectedFingerprint
-      || source.data.market !== market
-      || source.data.targetId !== targetId) {
+    || input.arguments.publicationIntent !== "live"
+    || input.arguments.publicationStateContract !== "verified_remote_state_v1"
+    || input.arguments.publicationExpectedImageCount !== 8
+    || !remoteId
+    || !expectedLocale
+    || !/^[a-f0-9]{64}$/u.test(expectedFingerprint)
+    || !source.success
+    || source.data.sourceJobId !== sourceJobId
+    || source.data.expectedRemoteId !== remoteId
+    || source.data.expectedLocale !== expectedLocale
+    || source.data.expectedImageCount !== expectedImageCount
+    || source.data.sourceFingerprint !== expectedFingerprint
+    || source.data.market !== market
+    || source.data.targetId !== targetId) {
     throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_CONTEXT_INVALID");
   }
   const sourceArguments = source.data.sourceArguments;
-  const legacyElevenstSnapshotAttestation = recordValue(
-    sourceArguments.sellerpilotElevenstLegacySnapshotAttestation,
-  );
-  const legacyElevenstSnapshot = input.channel === "elevenst"
-    && input.arguments.sellerpilotElevenstSnapshotRecovery
-      === "elevenst_exact_legacy_snapshot_recovery_v1"
-    && input.arguments.sellerpilotSnapshotOnly === true;
-  const validLegacyElevenstSnapshot = legacyElevenstSnapshot
-    && legacyElevenstSnapshotAttestation.contract
-      === "elevenst_exact_legacy_source_attestation_v1"
-    && legacyElevenstSnapshotAttestation.snapshotOnly === true
-    && legacyElevenstSnapshotAttestation.approvedContentVerified === false
-    && legacyElevenstSnapshotAttestation.publicationReviewAllowed === false
-    && /^[a-f0-9]{64}$/u.test(exactText(
-      legacyElevenstSnapshotAttestation.sourceRequestSha256,
-    ))
-    && /^[a-f0-9]{64}$/u.test(exactText(
-      legacyElevenstSnapshotAttestation.sourceResponseSha256,
-    ))
-    && exactText(legacyElevenstSnapshotAttestation.approvedManifestDigest)
-      === exactText(input.arguments.approvedManifestDigest)
-    && Number(legacyElevenstSnapshotAttestation.approvedDetailPageVersion)
-      === Number(input.arguments.approvedDetailPageVersion)
-    && Number.isSafeInteger(Number(input.arguments.approvedDetailPageVersion))
-    && Number(input.arguments.approvedDetailPageVersion) > 0
-    && Object.keys(recordValue(sourceArguments.product)).length > 0
-    && sourceArguments.publicationIntent === undefined
-    && sourceArguments.publicationStateContract === undefined
-    && sourceArguments.publicationExpectedLocale === undefined
-    && sourceArguments.publicationExpectedFingerprint === undefined
-    && sourceArguments.publicationExpectedImageCount === undefined
-    && sourceArguments.sellerpilotPublicationAssetBinding === undefined
-    && Object.keys(recordValue(source.data.sourceResponsePayload.remoteState)).length === 0;
-  const qoo10RecoveryBinding = input.channel === "qoo10"
-    ? qoo10RollbackUpdateRecoveryBinding(sourceArguments)
-    : null;
-  const sourceResponse = source.data.sourceResponsePayload;
-  const sourceSteps = responseSteps(sourceResponse);
-  const qoo10NoEffectMarker = exactText(
-    input.arguments.sellerpilotQoo10NoEffectReconciliation,
-  );
-  const qoo10LocalizationMarker = recordValue(
-    sourceArguments.sellerpilotQoo10ExactLocalization,
-  );
-  const qoo10SourceParams = recordValue(sourceArguments.params);
-  const qoo10PrewriteStep = sourceSteps[0] ?? {};
-  const qoo10PrewriteData = recordValue(qoo10PrewriteStep.data);
-  const exactQoo10LegacyNoEffectSource =
-    source.data.sourceJobId === "fac9c5c4-940d-4600-88f3-8f97a069dfbf"
-    && qoo10RecoveryBinding !== null
-    && qoo10RecoveryBinding.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
-    && qoo10RecoveryBinding.remoteId === "1217336970"
-    && qoo10RecoveryBinding.providerStatus === "S1"
-    && qoo10RecoveryBinding.expectedState.categoryCode === "320000542"
-    && qoo10RecoveryBinding.expectedState.retailPriceJpy === 1871
-    && qoo10RecoveryBinding.expectedState.sellPriceJpy === 1871
-    && qoo10RecoveryBinding.expectedState.quantity === 1
-    && qoo10RecoveryBinding.expectedState.shippingNo === "806971"
-    && qoo10RecoveryBinding.expectedState.biContentsNo === 8461402963
-    && exactText(qoo10SourceParams.SecondSubCat) === "320000542"
-    && exactText(qoo10SourceParams.ProductionPlaceType) === "2"
-    && exactText(qoo10SourceParams.ProductionPlace) === "CN"
-    && exactText(qoo10SourceParams.ShippingNo) === "806971"
-    && exactText(qoo10SourceParams.AdultYN) === "N"
-    && !Object.hasOwn(qoo10SourceParams, "ItemPrice")
-    && !Object.hasOwn(qoo10SourceParams, "ItemQty")
-    && (!Object.hasOwn(qoo10SourceParams, "SellerCode")
-      || exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001");
-  const exactQoo10V2NoEffectSource = qoo10LocalizationMarker.status === "allowed"
-    && qoo10LocalizationMarker.contract === "qoo10_exact_localization_update_v2"
-    && qoo10LocalizationMarker.productId === "ddccde35-9c58-4856-b673-d7aa27ce4220"
-    && qoo10LocalizationMarker.listingId === "4e5b97be-3fe5-4537-9e26-d36fb36ec1fc"
-    && qoo10LocalizationMarker.credentialId === "2b49d081-5188-4a75-9555-e0a6438e8a2b"
-    && qoo10LocalizationMarker.remoteId === "1217336970"
-    && qoo10LocalizationMarker.sellerSku === "QA-20260823-CC-001"
-    && /^[a-f0-9]{40}$/u.test(exactText(qoo10LocalizationMarker.releaseSha))
-    && exactText(qoo10SourceParams.SellerCode) === "QA-20260823-CC-001"
-    && exactText(qoo10SourceParams.ItemPrice) === "1871"
-    && exactText(qoo10SourceParams.ItemQty) === "1";
-  const exactQoo10NoEffectReconciliation = input.channel === "qoo10"
-    && qoo10NoEffectMarker === "qoo10_exact_no_remote_effect_verifier_v1"
-    && source.data.sourceOperation === "listing.update"
-    && (exactQoo10LegacyNoEffectSource || exactQoo10V2NoEffectSource)
-    && exactText(qoo10SourceParams.ItemCode) === "1217336970"
-    && exactText(qoo10SourceParams.RetailPrice) === "1871"
-    && sourceResponse.channel === "qoo10"
-    && sourceResponse.operation === "listing.update"
-    && exactText(sourceResponse.remoteId) === "1217336970"
-    && exactText(qoo10PrewriteStep.name) === "qoo10-exact-current-s1-prewrite-readback"
-    && qoo10PrewriteStep.ok === true
-    && Number(qoo10PrewriteStep.status) >= 200
-    && Number(qoo10PrewriteStep.status) < 300
-    && exactText(qoo10PrewriteData.ResultCode) === "0"
-    && qoo10PrewriteData.ResultObject !== null
-    && qoo10PrewriteData.ResultObject !== undefined
-    && sourceArguments.publicationIntent === "live"
-    && sourceArguments.publicationStateContract === "verified_remote_state_v1"
-    && sourceArguments.publicationExpectedLocale === expectedLocale
-    && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
-    && sourceArguments.publicationExpectedImageCount === 8;
-  const exactQoo10S1Recovery = input.channel === "qoo10"
-    && (input.arguments.sellerpilotQoo10ExactS1Recovery === "qoo10_exact_s1_verifier_v1"
-      || input.arguments[qoo10ShippingS1VerifierArgument] === qoo10ShippingS1VerifierContract)
-    && source.data.sourceOperation === "listing.update"
-    && Boolean(qoo10RecoveryBinding)
-    && qoo10RecoveryBinding?.remoteId === remoteId
-    && exactText(recordValue(sourceArguments.params).ItemCode) === remoteId
-    && sourceResponse.channel === "qoo10"
-    && sourceResponse.operation === "listing.update"
-    && exactText(sourceResponse.remoteId) === remoteId
-    && sourceSteps.filter((item) => exactText(item.name) === "qoo10-rollback-pre-activation-readback").length === 1
-    && sourceSteps.every((item) => ![
-      "qoo10-rollback-recovery-activate",
-      "qoo10-s1-activation",
-    ].includes(exactText(item.name)))
-    && sourceArguments.publicationIntent === "live"
-    && sourceArguments.publicationStateContract === "verified_remote_state_v1"
-    && sourceArguments.publicationExpectedLocale === expectedLocale
-    && sourceArguments.publicationExpectedFingerprint === expectedFingerprint
-    && sourceArguments.publicationExpectedImageCount === 8;
-  if (!validLegacyElevenstSnapshot
-      && !exactQoo10S1Recovery
-      && !exactQoo10NoEffectReconciliation
-      && (sourceArguments.publicationIntent !== "live"
-      || sourceArguments.publicationStateContract !== "verified_remote_state_v1"
-      || sourceArguments.publicationExpectedLocale !== expectedLocale
-      || sourceArguments.publicationExpectedFingerprint !== expectedFingerprint
-      || sourceArguments.publicationExpectedImageCount !== 8
-      || !parseListingPublicationAssetBinding(
-        sourceArguments.sellerpilotPublicationAssetBinding,
-      )
-      || recordValue(recordValue(source.data.sourceResponsePayload.remoteState).evidence)
-        .publicationAssetBinding === undefined)) {
+
+  if ((sourceArguments.publicationIntent !== "live"
+    || sourceArguments.publicationStateContract !== "verified_remote_state_v1"
+    || sourceArguments.publicationExpectedLocale !== expectedLocale
+    || sourceArguments.publicationExpectedFingerprint !== expectedFingerprint
+    || sourceArguments.publicationExpectedImageCount !== 8
+    || !parseListingPublicationAssetBinding(sourceArguments.sellerpilotPublicationAssetBinding)
+    || recordValue(recordValue(source.data.sourceResponsePayload.remoteState).evidence)
+      .publicationAssetBinding === undefined)) {
     throw new Error("LISTING_PUBLICATION_VERIFY_SOURCE_BINDING_INVALID");
   }
   return {
     source: source.data,
     remoteId,
-    legacyElevenstSnapshot: validLegacyElevenstSnapshot,
-    exactQoo10S1Recovery,
-    exactQoo10NoEffectReconciliation,
     expected: {
       locale: expectedLocale,
       fingerprint: expectedFingerprint,
@@ -358,55 +166,18 @@ function sourceContext(input: VerificationInput) {
   };
 }
 
-const elevenstLegacySnapshotImmutableFields = [
-  "sellerPrdCd",
-  "dispCtgrNo",
-  "selMthdCd",
-  "prdTypCd",
-  "rmaterialTypCd",
-  "orgnTypCd",
-  "suplDtyfrPrdClfCd",
-  "forAbrdBuyClf",
-  "minorSelCnYn",
-  "selPrdClfCd",
-  "dlvCnAreaCd",
-  "dlvWyCd",
-  "dlvCstInstBasiCd",
-  "bndlDlvCnYn",
-  "dlvCstPayTypCd",
-] as const;
-
-function elevenstLegacySnapshotImmutableProductMatches(
-  sourceProductValue: unknown,
-  remoteProductValue: unknown,
-) {
-  const sourceProduct = recordValue(sourceProductValue);
-  const remoteProduct = recordValue(remoteProductValue);
-  if (!exactText(sourceProduct.sellerPrdCd)
-      || !exactText(sourceProduct.dispCtgrNo)) return false;
-  if (elevenstLegacySnapshotImmutableFields.some((field) =>
-    exactText(remoteProduct[field]) !== exactText(sourceProduct[field]))) return false;
-  return JSON.stringify(remoteProduct.ProductCertGroup ?? null)
-    === JSON.stringify(sourceProduct.ProductCertGroup ?? null);
-}
 
 function sourceSellerCode(argumentsValue: UnknownRecord) {
   return exactText(recordValue(argumentsValue.params).SellerCode);
 }
-
 function sourceElevenstSellerCode(argumentsValue: UnknownRecord) {
   return exactText(recordValue(argumentsValue.product).sellerPrdCd);
 }
-
-function sourceShopeeArguments(
-  argumentsValue: UnknownRecord,
-  immutableGlobalItemId = "",
-) {
+function sourceShopeeArguments(argumentsValue: UnknownRecord, immutableGlobalItemId = "") {
   const source = structuredClone(argumentsValue);
   if (immutableGlobalItemId) source.globalItemId = immutableGlobalItemId;
   return source;
 }
-
 function immutableSourceResources(source: ListingPublicationVerificationSource) {
   const state = recordValue(source.sourceResponsePayload.remoteState);
   const resources = recordValue(state.resources);
@@ -415,17 +186,12 @@ function immutableSourceResources(source: ListingPublicationVerificationSource) 
   }
   return resources;
 }
-
 function responseSteps(responsePayload: UnknownRecord) {
   return Array.isArray(responsePayload.steps)
     ? responsePayload.steps.map(recordValue)
     : [];
 }
-
-function qoo10SourceMainImageContentId(
-  source: ListingPublicationVerificationSource,
-  remoteId: string,
-) {
+function qoo10SourceMainImageContentId(source: ListingPublicationVerificationSource, remoteId: string) {
   const matches = responseSteps(source.sourceResponsePayload).filter((item) =>
     exactText(item.name) === "SetNewGoods"
     && item.ok === true
@@ -442,11 +208,7 @@ function qoo10SourceMainImageContentId(
     ? contentId
     : "";
 }
-
-function sourceRemotePayload(
-  channel: PublicationChannel,
-  source: ListingPublicationVerificationSource,
-) {
+function sourceRemotePayload(channel: PublicationChannel, source: ListingPublicationVerificationSource) {
   const steps = responseSteps(source.sourceResponsePayload);
   const matchingData = (names: RegExp) => {
     const matched = [...steps].reverse().find((item) => names.test(exactText(item.name)));
@@ -475,48 +237,6 @@ function sourceRemotePayload(
     offer: matchingData(/^offer-publication-readback$/u),
     inventoryItem: matchingData(/^inventory-item-publication-readback$/u),
   };
-}
-
-function qoo10ExactRecoveryItems(
-  value: unknown,
-  remoteId: string,
-  depth = 0,
-  found: UnknownRecord[] = [],
-) {
-  if (depth > 7 || value === null || value === undefined) return found;
-  if (Array.isArray(value)) {
-    for (const item of value) qoo10ExactRecoveryItems(item, remoteId, depth + 1, found);
-    return found;
-  }
-  const record = recordValue(value);
-  if (!Object.keys(record).length) return found;
-  const identities = ["ItemNo", "ItemCode", "GdNo"]
-    .filter((key) => Object.hasOwn(record, key))
-    .map((key) => typeof record[key] === "string" || typeof record[key] === "number"
-      ? String(record[key])
-      : "");
-  if (identities.length > 0 && identities.every((identity) => identity === remoteId)) found.push(record);
-  for (const nested of Object.values(record)) {
-    qoo10ExactRecoveryItems(nested, remoteId, depth + 1, found);
-  }
-  return found;
-}
-
-function qoo10ExactRecoveryField(record: UnknownRecord, aliases: readonly string[]) {
-  const normalized = new Set(aliases.map((alias) => alias.toLowerCase()));
-  const value = Object.entries(record).find(([key]) => normalized.has(key.toLowerCase()))?.[1];
-  return typeof value === "string" || typeof value === "number" ? String(value) : "";
-}
-
-function qoo10ExactRecoveryShippingNo(resultObject: unknown, remoteId: string) {
-  const matches = qoo10ExactRecoveryItems(resultObject, remoteId);
-  return matches.length === 1
-    ? qoo10ExactRecoveryField(matches[0] ?? {}, ["ShippingNo", "ShippingNO", "DeliveryGroupNo"])
-    : "";
-}
-
-function sha256(value: string) {
-  return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
 function verificationStep(input: {
@@ -561,12 +281,7 @@ function verificationStep(input: {
     },
   } satisfies ChannelOperationStep;
 }
-
-function boundRemoteState(
-  source: ListingPublicationVerificationSource,
-  remoteState: VerifiedListingRemoteState | null | undefined,
-  content: ReturnType<typeof verifyListingPublicationContent>,
-) {
+function boundRemoteState(source: ListingPublicationVerificationSource, remoteState: VerifiedListingRemoteState | null | undefined, content: ReturnType<typeof verifyListingPublicationContent>) {
   if (!remoteState || !content.verified) return undefined;
   const parsed = verifiedListingRemoteStateSchema.safeParse({
     ...remoteState,
@@ -600,7 +315,6 @@ function boundRemoteState(
   });
   return parsed.success ? parsed.data : undefined;
 }
-
 function verifiedExecution(input: {
   channel: PublicationChannel;
   source: ListingPublicationVerificationSource;
@@ -615,6 +329,7 @@ function verifiedExecution(input: {
     expectedLocale: input.expectedLocale,
     expectedImageCount: 8,
     remoteId: input.remoteId,
+    sourceJobId: input.source.sourceJobId,
     sourceArguments: input.source.sourceArguments,
     sourceResponsePayload: input.source.sourceResponsePayload,
     sourceRemotePayload: sourceRemotePayload(input.channel, input.source),
@@ -631,18 +346,8 @@ function verifiedExecution(input: {
     ...(remoteState ? { remoteState } : {}),
   };
 }
-
-export async function executeListingPublicationVerification(
-  input: VerificationInput,
-): Promise<ListingPublicationVerificationExecution> {
-  const {
-    source,
-    remoteId,
-    expected,
-    legacyElevenstSnapshot,
-    exactQoo10S1Recovery,
-    exactQoo10NoEffectReconciliation,
-  } = sourceContext(input);
+export async function executeListingPublicationVerification(input: VerificationInput): Promise<ListingPublicationVerificationExecution> {
+  const { source, remoteId, expected, } = sourceContext(input);
   const sourceOperation = source.sourceOperation as SourceOperation;
   const mutationSourceOperation = (): "listing.create" | "listing.update" => {
     if (sourceOperation === "listing.activate") {
@@ -651,7 +356,6 @@ export async function executeListingPublicationVerification(
     return sourceOperation;
   };
   const sourceArguments = source.sourceArguments;
-
   if (input.channel === "qoo10") {
     const strictCreateSource = sourceOperation === "listing.create"
       && Object.hasOwn(sourceArguments, "sellerpilotQoo10CreateContext");
@@ -668,12 +372,12 @@ export async function executeListingPublicationVerification(
       }),
       strictExpectation?.ok
         ? qoo10Request({
-            payload: input.payload,
-            service: "ItemsLookup",
-            method: "GetItemDetailInfo",
-            version: "1.2",
-            params: { ItemCode: strictExpectation.expectation.testItemCode, SellerCode: "" },
-          })
+          payload: input.payload,
+          service: "ItemsLookup",
+          method: "GetItemDetailInfo",
+          version: "1.2",
+          params: { ItemCode: strictExpectation.expectation.testItemCode, SellerCode: "" },
+        })
         : Promise.resolve(null),
     ]);
     const sourceRemoteState = recordValue(source.sourceResponsePayload.remoteState);
@@ -681,9 +385,9 @@ export async function executeListingPublicationVerification(
     const expectedSellerAccountIdentityDigest = exactText(sourceEvidence.sellerAccountIdentityDigest);
     const sellerIdentity = strictExpectation?.ok && sellerIdentityRemote
       ? qoo10SellerAccountIdentityDigestFromReadback({
-          remote: sellerIdentityRemote,
-          expectation: strictExpectation.expectation,
-        })
+        remote: sellerIdentityRemote,
+        expectation: strictExpectation.expectation,
+      })
       : null;
     const sellerIdentityStep: ChannelOperationStep | null = sellerIdentity?.step
       ? { ...sellerIdentity.step }
@@ -716,176 +420,18 @@ export async function executeListingPublicationVerification(
         : {}),
       ...(strictExpectation?.ok
         ? {
-            expectedCreate: strictExpectation.expectation,
-            expectedSellerAccountIdentityDigest: strictIdentityVerified
-              ? currentSellerAccountIdentityDigest
-              : "",
-            ...(expectedRepresentativeImageContentId
-              ? { expectedRepresentativeImageContentId }
-              : {}),
-          }
+          expectedCreate: strictExpectation.expectation,
+          expectedSellerAccountIdentityDigest: strictIdentityVerified
+            ? currentSellerAccountIdentityDigest
+            : "",
+          ...(expectedRepresentativeImageContentId
+            ? { expectedRepresentativeImageContentId }
+            : {}),
+        }
         : {}),
     });
     const remoteState = strictIdentityVerified ? verifiedReadbackState : null;
     const readbackStep = providerStep("GetItemDetailInfo-publication-reverification", remote);
-    if (exactQoo10NoEffectReconciliation) {
-      const exactProviderSuccess = remote.response.ok && qoo10ExactSuccessResultCode(remote.data);
-      readbackStep.ok = exactProviderSuccess;
-      readbackStep.data = {
-        ...readbackStep.data,
-        sellerpilotVerification: exactProviderSuccess
-          ? "QOO10_EXACT_NO_EFFECT_CURRENT_READBACK_CAPTURED"
-          : "QOO10_EXACT_NO_EFFECT_CURRENT_READBACK_REJECTED",
-        sellerpilotNoWriteConfirmed: true,
-      };
-      return {
-        remoteId,
-        steps: [readbackStep],
-      };
-    }
-    if (exactQoo10S1Recovery) {
-      const recovery = qoo10RollbackUpdateRecoveryBinding(sourceArguments)!;
-      const params = recordValue(sourceArguments.params);
-      const sourceTitle = qoo10ExactRecoveryField(params, ["ItemTitle"]);
-      const sourceKeyword = qoo10ExactRecoveryField(params, ["Keyword"]);
-      const sourceDetailHtml = qoo10ExactRecoveryField(params, ["ItemDescription"]);
-      const sourceDetailImageUrls = qoo10DetailImageUrls(sourceDetailHtml);
-      const matches = qoo10ExactRecoveryItems(remote.data.ResultObject, remoteId);
-      const item = matches.length === 1 ? matches[0] : {};
-      const remoteTitle = qoo10ExactRecoveryField(item, ["ItemTitle"]);
-      const remoteKeyword = qoo10ExactRecoveryField(item, ["Keyword", "Keywords"]);
-      const remoteDetailHtml = qoo10ExactRecoveryField(item, ["ItemDetail", "ItemDescription", "Description"]);
-      const remoteDetailImageUrls = qoo10DetailImageUrls(remoteDetailHtml);
-      const sourceSellerCodeValue = qoo10ExactRecoveryField(params, ["SellerCode"]);
-      const sourceObservedShippingNo = qoo10ExactRecoveryShippingNo(
-        recordValue(
-          recordValue(
-            responseSteps(source.sourceResponsePayload).find((item) =>
-              exactText(item.name) === "qoo10-rollback-pre-activation-readback",
-            ) ?? {},
-          ).data,
-        ).ResultObject,
-        remoteId,
-      );
-      const currentObservedShippingNo = qoo10ExactRecoveryShippingNo(
-        remote.data.ResultObject,
-        remoteId,
-      );
-      const expectedShippingNo = qoo10LotteShippingS1ExpectedShippingNo({
-        listingId: recovery.listingId,
-        remoteId: recovery.remoteId,
-        sourceJobId: recovery.sourceJobId,
-        updateJobId: source.sourceJobId,
-        requestShippingNo: exactText(params.ShippingNo),
-        confirmationShippingNo: recovery.expectedState.shippingNo,
-        observedShippingNos: [sourceObservedShippingNo, currentObservedShippingNo],
-      });
-      const publication = normalizeQoo10ListingPublicationReadback({
-        operation: "listing.update",
-        remoteId,
-        resultObject: remote.data.ResultObject,
-        expectedLocale: expected.locale,
-        expectedFingerprint: expected.fingerprint,
-        expectedImageCount: expected.imageCount,
-        ...(sourceSellerCodeValue ? { expectedSellerCode: sourceSellerCodeValue } : {}),
-        expectedRecovery: {
-          ...recovery.expectedState,
-          shippingNo: expectedShippingNo,
-          detailImageUrls: sourceDetailImageUrls,
-        },
-      });
-      const mutableChecks = {
-        exactItemVerified: matches.length === 1,
-        criticalAliasesConsistent: matches.length === 1
-          && qoo10CriticalReadbackAliasesConsistent(item),
-        s1Verified: publication.providerStatus.trim().toUpperCase() === "S1"
-          && publication.remoteState?.visibility === "non_public",
-        titleVerified: Boolean(sourceTitle) && remoteTitle === sourceTitle,
-        promotionNameVerified: qoo10ExactRecoveryField(item, ["PromotionName", "PromotionNm"])
-          === qoo10ExactRecoveryField(params, ["PromotionName"]),
-        industrialCodeVerified: qoo10ExactRecoveryField(item, ["IndustrialCode", "barcode", "gtin"])
-          === qoo10ExactRecoveryField(params, ["IndustrialCode"]),
-        keywordVerified: qoo10ProviderKeywordMatches(sourceKeyword, remoteKeyword, sourceTitle),
-        detailHtmlVerified: qoo10ProviderDetailHtmlEquivalent(
-          sourceDetailHtml,
-          remoteDetailHtml,
-        ),
-        orderedDetailImagesVerified: sourceDetailImageUrls.length === 8
-          && remoteDetailImageUrls.length === 8
-          && remoteDetailImageUrls.every((url, index) => url === sourceDetailImageUrls[index]),
-        originTypeVerified: qoo10ExactRecoveryField(item, ["ProductionPlaceType", "OriginType"])
-          === qoo10ExactRecoveryField(params, ["ProductionPlaceType"]),
-        originCodeVerified: qoo10ExactRecoveryField(item, ["ProductionPlace", "Origin", "OriginCode"])
-          === qoo10ExactRecoveryField(params, ["ProductionPlace"]),
-        adultYnVerified: qoo10ExactRecoveryField(item, ["AdultYN", "AdultYn", "AdultFlag"])
-          === qoo10ExactRecoveryField(params, ["AdultYN"]),
-      };
-      const exactContentVerified = Boolean(publication.remoteState)
-        && Object.values(mutableChecks).every(Boolean);
-      const boundS1State = exactContentVerified && publication.remoteState
-        ? qoo10ExactRecoveryContentRemoteState({
-            remoteState: publication.remoteState,
-            title: remoteTitle,
-            keyword: remoteKeyword,
-            detailHtml: remoteDetailHtml,
-            detailImageUrls: remoteDetailImageUrls,
-            sourceJobId: source.sourceJobId,
-            sourceOperation: "listing.update",
-          })
-        : undefined;
-      const exactProviderSuccess = remote.response.ok && qoo10ExactSuccessResultCode(remote.data);
-      readbackStep.ok = exactProviderSuccess && Boolean(boundS1State);
-      readbackStep.data = {
-        ...readbackStep.data,
-        sellerpilotVerification: exactProviderSuccess && boundS1State
-          ? "QOO10_EXACT_S1_RECOVERY_REVERIFIED"
-          : "QOO10_EXACT_S1_RECOVERY_UNVERIFIED",
-        sellerpilotPublicationChecks: publication.checks,
-        sellerpilotMutableChecks: mutableChecks,
-        sellerpilotExactResultCodeVerified: exactProviderSuccess,
-      };
-      const activationExpectation = boundS1State
-        ? {
-            expectedState: {
-              ...recovery.expectedState,
-              shippingNo: expectedShippingNo,
-              originType: qoo10ExactRecoveryField(params, ["ProductionPlaceType"]),
-              originCode: qoo10ExactRecoveryField(params, ["ProductionPlace"]),
-              adultYn: qoo10ExactRecoveryField(params, ["AdultYN"]),
-            },
-            expectedTitle: remoteTitle,
-            expectedKeyword: remoteKeyword,
-            expectedPromotionName: qoo10ExactRecoveryField(params, ["PromotionName"]),
-            expectedIndustrialCode: qoo10ExactRecoveryField(params, ["IndustrialCode"]),
-            expectedDetailHtmlSha256: sha256(remoteDetailHtml),
-            expectedDetailImageUrls: remoteDetailImageUrls,
-            ...(sourceSellerCodeValue ? { expectedSellerCode: sourceSellerCodeValue } : {}),
-          }
-        : undefined;
-      const exactStep: ChannelOperationStep = {
-        name: "qoo10-exact-s1-recovery-verification",
-        ok: Boolean(exactProviderSuccess && boundS1State && activationExpectation),
-        status: exactProviderSuccess && boundS1State ? 200 : 422,
-        data: {
-          ...remote.data,
-          sellerpilotVerification: exactProviderSuccess && boundS1State
-            ? "QOO10_EXACT_S1_RECOVERY_VERIFIED"
-            : "QOO10_EXACT_S1_RECOVERY_UNVERIFIED",
-          sellerpilotPublicationChecks: publication.checks,
-          sellerpilotMutableChecks: mutableChecks,
-          sellerpilotExactResultCodeVerified: exactProviderSuccess,
-          ...(exactProviderSuccess && boundS1State ? { remoteState: boundS1State } : {}),
-          ...(exactProviderSuccess && activationExpectation
-            ? { sellerpilotQoo10ActivationExpectation: activationExpectation }
-            : { sellerpilotReconciliationRequired: true }),
-        },
-      };
-      return {
-        remoteId,
-        steps: [readbackStep, exactStep],
-        ...(exactProviderSuccess && boundS1State ? { remoteState: boundS1State } : {}),
-      };
-    }
     readbackStep.ok = readbackStep.ok && Boolean(remoteState);
     readbackStep.data = {
       ...readbackStep.data,
@@ -904,7 +450,6 @@ export async function executeListingPublicationVerification(
       remotePayload: remote.data,
     });
   }
-
   if (input.channel === "elevenst") {
     const remote = await elevenstSellerXmlRequest({
       payload: input.payload,
@@ -918,62 +463,18 @@ export async function executeListingPublicationVerification(
       product,
       expectedLocale: expected.locale,
       expectedFingerprint: expected.fingerprint,
-      expectedImageCount: legacyElevenstSnapshot ? 0 : expected.imageCount,
+      expectedImageCount: expected.imageCount,
       ...(sourceElevenstSellerCode(sourceArguments)
         ? { expectedSellerProductCode: sourceElevenstSellerCode(sourceArguments) }
         : {}),
-      verifyFullProductSnapshot:
-        legacyElevenstSnapshot
-        || input.arguments.sellerpilotElevenstSnapshotRecovery
-          === "elevenst_exact_snapshot_recovery_v1",
+
     });
     const readbackStep = providerStep("product-publication-reverification", remote);
-    const immutableSourceFieldsVerified = legacyElevenstSnapshot
-      ? elevenstLegacySnapshotImmutableProductMatches(
-          recordValue(sourceArguments.product),
-          product,
-        )
-      : true;
+    const immutableSourceFieldsVerified = true;
     readbackStep.ok = readbackStep.ok
       && remote.data.accepted === true
       && Boolean(remoteState)
       && immutableSourceFieldsVerified;
-    if (legacyElevenstSnapshot) {
-      const attestation = recordValue(
-        sourceArguments.sellerpilotElevenstLegacySnapshotAttestation,
-      );
-      const snapshotState = verifiedListingRemoteStateSchema.safeParse(
-        remoteState && immutableSourceFieldsVerified
-          ? {
-              ...remoteState,
-              evidence: {
-                ...remoteState.evidence,
-                snapshotOnly: true,
-                approvedContentVerified: false,
-                approvedImageCountVerified: false,
-                publicationReviewCreated: false,
-                legacySourceAttested: true,
-                freshFullProductReadback: true,
-                immutableSourceFieldsVerified: true,
-                sourceJobId: source.sourceJobId,
-                sourceOperation: source.sourceOperation,
-                approvedManifestDigest: exactText(
-                  attestation.approvedManifestDigest,
-                ),
-                approvedDetailPageVersion: Number(
-                  attestation.approvedDetailPageVersion,
-                ),
-                observedDetailImageCount: remoteState.imageCount,
-              },
-            }
-          : null,
-      );
-      return {
-        remoteId,
-        steps: [readbackStep],
-        ...(snapshotState.success ? { remoteState: snapshotState.data } : {}),
-      };
-    }
     return verifiedExecution({
       channel: input.channel,
       source,
@@ -984,7 +485,6 @@ export async function executeListingPublicationVerification(
       remotePayload: remote.data,
     });
   }
-
   if (input.channel === "shopee") {
     const immutableResources = immutableSourceResources(source);
     const immutableLocalItemId = exactText(immutableResources.localItemId);
@@ -996,9 +496,9 @@ export async function executeListingPublicationVerification(
       || exactText(sourceArguments.shop_id);
     const globalProduct = sourceArguments.globalProduct === true || Boolean(immutableGlobalItemId);
     if (immutableLocalItemId !== remoteId
-        || !immutableShopId
-        || immutableShopId !== source.targetId
-        || (sourceShopId && sourceShopId !== immutableShopId)) {
+      || !immutableShopId
+      || immutableShopId !== source.targetId
+      || (sourceShopId && sourceShopId !== immutableShopId)) {
       throw new Error("SHOPEE_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
     }
     const mutationArguments = sourceShopeeArguments(sourceArguments, immutableGlobalItemId);
@@ -1081,7 +581,6 @@ export async function executeListingPublicationVerification(
       remotePayload: readback.remote.data,
     });
   }
-
   if (input.channel === "lazada") {
     const readback = await readLazadaListingPublicationState({
       payload: input.payload,
@@ -1116,7 +615,6 @@ export async function executeListingPublicationVerification(
       remotePayload: readback.remote.data,
     });
   }
-
   if (input.channel === "coupang") {
     const readback = await readCoupangListingPublicationState({
       operation: mutationSourceOperation(),
@@ -1154,40 +652,37 @@ export async function executeListingPublicationVerification(
       remotePayload: readback.sellerProductReadback?.data ?? {},
     });
   }
-
   if (input.channel === "smartstore") {
     const accessToken = readStoredNaverAccessToken(input.payload);
     if (!accessToken) {
       throw new Error("LISTING_PUBLICATION_VERIFY_CREDENTIAL_REFRESH_REQUIRED");
     }
-    const readOriginProduct = (originProductNo: string) => naverRequest({
-      accessToken,
-      method: "GET",
-      path: `/v2/products/origin-products/${pathSegment(originProductNo)}`,
-    });
+    const sourceBody = recordValue(sourceArguments.body);
+    const sourceOriginProduct = recordValue(sourceBody.originProduct);
+    const sourceDetailAttribute = recordValue(sourceOriginProduct.detailAttribute);
+    const sourceSellerCodeInfo = recordValue(sourceDetailAttribute.sellerCodeInfo);
+    const sellerSku = exactText(sourceSellerCodeInfo.sellerManagementCode);
     const readback = await readSmartstoreListingPublicationState({
       operation: mutationSourceOperation(),
       intent: "live",
       remoteId,
       expected,
-      readOriginProduct,
-      readChannelProduct: (channelProductNo) => naverRequest({
+      ...(sellerSku ? { sellerSku } : {}),
+      request: (request) => naverRequest({
+        ...request,
         accessToken,
-        method: "GET",
-        path: `/v2/products/channel-products/${pathSegment(channelProductNo)}`,
       }),
     });
-    const readbackStep = providerStep(
-      "origin-product-publication-reverification",
-      readback.originProductReadback,
-    );
+    const readbackStep = providerStep("origin-product-publication-reverification", readback.originProductReadback);
     readbackStep.ok = readbackStep.ok && Boolean(readback.state);
-    const steps = [readbackStep];
+    const steps = [
+      ...(readback.searchProductReadback
+        ? [providerStep("seller-code-publication-reverification", readback.searchProductReadback)]
+        : []),
+      readbackStep,
+    ];
     if (readback.channelProductReadback) {
-      steps.push(providerStep(
-        "channel-product-publication-reverification",
-        readback.channelProductReadback,
-      ));
+      steps.push(providerStep("channel-product-publication-reverification", readback.channelProductReadback));
     }
     return verifiedExecution({
       channel: input.channel,
@@ -1202,13 +697,13 @@ export async function executeListingPublicationVerification(
       },
     });
   }
-
   if (input.channel === "temu") {
     const immutableResources = immutableSourceResources(source);
     const immutableGoodsId = exactText(immutableResources.goodsId);
     const immutableExternalGoodsId = exactText(immutableResources.externalGoodsId);
     const sourceBody = recordValue(sourceArguments.body);
     const sourceGoodsBasic = recordValue(sourceBody.goodsBasic);
+    const sourceBodyInspection = inspectTemuGeneralCreateBody(sourceBody);
     const sourceExternalGoodsId = exactText(sourceGoodsBasic.externalGoodsId);
     const exactGoodsId = temuExactLongGoodsId(remoteId);
     const expectedRepresentativeImages = Array.isArray(sourceGoodsBasic.goodsCarouselImage)
@@ -1222,18 +717,17 @@ export async function executeListingPublicationVerification(
       : [];
     const expectedSkus = temuPublicationExpectedSkus(sourceBody);
     if (exactGoodsId === null
-        || immutableGoodsId !== remoteId
-        || !immutableExternalGoodsId
-        || immutableExternalGoodsId !== sourceExternalGoodsId
-        || sourceBody.language !== "ko"
-        || expected.locale !== "ko-KR"
-        || !/^[1-9]\d*$/u.test(exactText(sourceGoodsBasic.extCatName))
-        || !exactText(sourceGoodsBasic.costTemplate)
-        || !expectedSkus
-        || expectedRepresentativeImages.length !== 1
-        || expectedDetailImages.includes(expectedRepresentativeImages[0])
-        || expectedDetailImages.length !== expected.imageCount
-        || new Set(expectedDetailImages).size !== expected.imageCount) {
+      || immutableGoodsId !== remoteId
+      || !immutableExternalGoodsId
+      || immutableExternalGoodsId !== sourceExternalGoodsId
+      || sourceBody.language !== "ko"
+      || expected.locale !== "ko-KR"
+      || !sourceBodyInspection.ok
+      || !expectedSkus
+      || expectedRepresentativeImages.length !== 1
+      || expectedDetailImages.includes(expectedRepresentativeImages[0])
+      || expectedDetailImages.length !== expected.imageCount
+      || new Set(expectedDetailImages).size !== expected.imageCount) {
       throw new Error("TEMU_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
     }
     const [listRemote, statusRemote, detailRemote, stockRemote] = await Promise.all([
@@ -1313,7 +807,6 @@ export async function executeListingPublicationVerification(
       remotePayload: detailRemote.data,
     });
   }
-
   const immutableResources = immutableSourceResources(source);
   const offerId = exactText(immutableResources.offerId);
   const listingId = exactText(immutableResources.listingId);
@@ -1323,16 +816,15 @@ export async function executeListingPublicationVerification(
   const sourceSku = exactText(sourceArguments.sku)
     || exactText(recordValue(sourceArguments.inventoryItem).sku);
   if (!offerId
-      || !listingId
-      || !sku
-      || !marketplaceId
-      || remoteId !== listingId
-      || source.targetId.toUpperCase() !== marketplaceId
-      || (sourceSku && sourceSku !== sku)
-      || exactText(sourceOffer.marketplaceId).toUpperCase() !== marketplaceId) {
+    || !listingId
+    || !sku
+    || !marketplaceId
+    || remoteId !== listingId
+    || source.targetId.toUpperCase() !== marketplaceId
+    || (sourceSku && sourceSku !== sku)
+    || exactText(sourceOffer.marketplaceId).toUpperCase() !== marketplaceId) {
     throw new Error("EBAY_PUBLICATION_VERIFY_IMMUTABLE_IDENTITY_INVALID");
   }
-
   const providerAccount = await fetchEbayTradingUserIdentity({
     environment: input.environment,
     accessToken: textValue(input.payload, "access_token"),
@@ -1353,6 +845,7 @@ export async function executeListingPublicationVerification(
     remoteId,
     offerId,
     expected,
+    expectedArguments: sourceArguments,
     readOffer: (readbackOfferId) => ebayRequest({
       payload: input.payload,
       environment: input.environment,
@@ -1386,10 +879,7 @@ export async function executeListingPublicationVerification(
   if (readback.inventoryItemReadback) {
     steps.push(providerStep("inventory-item-publication-reverification", readback.inventoryItemReadback));
   }
-  const listingIdentityStep = providerStep(
-    "listing-identity-publication-reverification",
-    listingIdentityRemote,
-  );
+  const listingIdentityStep = providerStep("listing-identity-publication-reverification", listingIdentityRemote);
   listingIdentityStep.ok = listingIdentityStep.ok && tradingIdentityVerified;
   listingIdentityStep.data = {
     ...listingIdentityStep.data,

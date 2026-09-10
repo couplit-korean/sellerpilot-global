@@ -1,0 +1,36 @@
+{
+  "recordedAt": "2026-09-08T10:40:00Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "preparedVerifiedAt": "2026-09-08T09:42:45Z",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "independentApfsClone": true,
+  "manifestFilesVerified": 1628,
+  "environmentFilesCopied": false,
+  "schedulersEnabled": false,
+  "nodeDependenciesPresent": true,
+  "allowedExistingFiles": [
+    {
+      "path": "lib/channels/elevenst-inquiries.ts",
+      "sha256": "cd39e95b613a78a533c92185908131802e3acc72a6366f2822d3db6ec0e785e0",
+      "matchedSnapshot": true
+    },
+    {
+      "path": "tests/elevenst-product-qna.test.ts",
+      "sha256": "eb4a02dfb355ff2908a6e76091ee108bc7a5472e14b785f315f0f34a8a6844d7",
+      "matchedSnapshot": true
+    },
+    {
+      "path": "tests/elevenst-product-qna-db.test.mjs",
+      "sha256": "685f0f1c4422f897671f2a549a20ad065cd0564141c63f5337fa946146a6a22c",
+      "matchedSnapshot": true
+    },
+    {
+      "path": "tests/elevenst-product-qna-db-dynamic.test.mjs",
+      "sha256": "dee2535e865c56bbfd81c113b7a9e902ad87e94f7255e741c2fad47665c3315b",
+      "matchedSnapshot": true
+    }
+  ],
+  "verificationCompletedBeforeCoding": true
+}

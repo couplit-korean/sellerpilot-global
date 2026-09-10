@@ -1,0 +1,75 @@
+{
+  "format": "sellerpilot-explicit-ddl-baseline-v1",
+  "projectRef": "sqaoqucxakebqkiygdxb",
+  "capturedAt": "2026-09-05T14:23:32.066387+00:00",
+  "serverVersion": "17.6",
+  "objects": 8593,
+  "ddlBytes": 5215956,
+  "ddlSha256": "536d3ae416bf84ef2364381076daa2999583b6924fa3796b236c3f0ed67ed9ea",
+  "historyCount": 271,
+  "lastHistory": "20260905130000",
+  "unsupported": [],
+  "externalDependencies": [],
+  "literalRiskMatches": 0,
+  "secretScanProvesAbsence": false,
+  "encryptedAtRest": true,
+  "dataRowsExported": 0,
+  "historicalReplayProven": false,
+  "nativeRestoreVerified": false,
+  "dependencyClosureVerified": false,
+  "bundle": "/Users/kimchangheemac/.aside/u/0/sessions/2026-09-05_qag8yiZBDcqXqOkB/artifacts/db-baseline-974d4cb-v4.enc",
+  "keyFileForParentRetention": "/Users/kimchangheemac/.aside/u/0/sessions/2026-09-05_qag8yiZBDcqXqOkB/tmp/db-baseline-974d4cb-v4.key",
+  "securityCoverage": {
+    "roleMemberships": 22,
+    "enumOwners": 10,
+    "enumAcls": 20,
+    "customCollations": 0,
+    "identityTables": 6
+  },
+  "tests": {
+    "passed": 13,
+    "failed": 0,
+    "skipped": 0,
+    "realSqlEngine": "PGlite PostgreSQL WASM, not native",
+    "securityFixtureRoundTrip": true
+  },
+  "portableDownload": {
+    "name": "@embedded-postgres/darwin-arm64",
+    "version": "17.6.0-beta.15",
+    "repository": {
+      "url": "git+https://github.com/leinelissen/embedded-postgres.git",
+      "type": "git"
+    },
+    "license": "MIT",
+    "tarball": "https://registry.npmjs.org/@embedded-postgres/darwin-arm64/-/darwin-arm64-17.6.0-beta.15.tgz",
+    "compressedBytes": 51181833,
+    "unpackedBytes": 136203982,
+    "integrity": "sha512-6qadBAn0/b1iccZISh0ZPaI3FpHlChSrLr0wMlonBUCJyTIJth7l9XZZd2eNlJixnbQU4LMVea+7d/YGFgGg9w==",
+    "registrySignatureVerified": true,
+    "registryKeyId": "SHA256:DhQ8wR5APBvFHLF/+Tc+AYvPOdTpcIDqOhxsBHRwC7U",
+    "scriptsExecuted": false
+  },
+  "nativeExecution": {
+    "majorMatches": true,
+    "developerId": "EnterpriseDB Corporation (26QKX55P9K)",
+    "postgresVersionAttempt": "SIGKILL 9, exit 137; executable subsequently absent",
+    "initdbVersionAttempt": "SIGKILL 9, exit 137",
+    "hostEnforcementReason": "unknown; no bypass attempted",
+    "serverStarted": false,
+    "dataDirectoryInitialized": false,
+    "otherProcessKilled": false,
+    "missingExtensionControls": [
+      "supabase_vault",
+      "pg_cron",
+      "pg_net"
+    ],
+    "psqlIncluded": false,
+    "nativeDdlExecuted": false
+  },
+  "isolatedSafetyOverlay": "new roles NOLOGIN; no passwords or production row data copied",
+  "remaining": [
+    "Native restoration blocked before initdb by process termination; no native DDL error can honestly be claimed",
+    "Real required extension binaries unavailable in downloaded package; no stubs installed",
+    "Dynamic SQL dependency closure and full operational security equivalence remain unverified"
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "status": "local_business_code_separation_complete",
+  "verifiedAt": "2026-09-08T18:17:05.836642+00:00",
+  "scope": "Local business-code isolation, independent read models and CS draft queue/lifecycle; shared authentication and gateway transport infrastructure retained",
+  "root": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "checkpoint": "/Users/kimchangheemac/dev/sellerpilot-cs-snapshots/separation-20260908T162925Z",
+  "regression": {
+    "tests": 441,
+    "pass": 441,
+    "fail": 0,
+    "skipped": 0,
+    "log": "regression.tap"
+  },
+  "additionalActualDraftApiSqlWorkerReadback": {
+    "tests": 1,
+    "pass": 1,
+    "fail": 0,
+    "log": "draft-api-flow.tap",
+    "identityAndGeneration": "fixture",
+    "database": "PGlite executing actual migration and actual HTTP route handlers"
+  },
+  "typescriptExit": 0,
+  "eslintExit": 0,
+  "nextWebpackBuildExit": 0,
+  "businessImportViolations": {
+    "csToCommerce": 0,
+    "commerceToCs": 0
+  },
+  "physicalGatewayInfrastructureShared": true,
+  "csEntry": "/cs",
+  "productWorkbenchUnchanged": {
+    "sha256": "96f046ec06cdbdaba2a7b041d930132f6beca57796dd38c9a6c5646c3372794f",
+    "matchesCheckpoint": true
+  },
+  "browser": "browser-verification.json",
+  "newMigrations": [
+    "supabase/migrations/20260908170140_isolate_cs_workspace_snapshot.sql",
+    "supabase/migrations/20260908171055_isolate_commerce_workspace_snapshot.sql",
+    "supabase/migrations/20260908172414_isolate_cs_reply_draft_queue.sql"
+  ],
+  "changedFiles": 113,
+  "actions": {
+    "delegation": 0,
+    "commit": 0,
+    "push": 0,
+    "deploy": 0,
+    "productionDatabaseMutation": 0,
+    "providerMutation": 0,
+    "customerReply": 0
+  },
+  "limits": [
+    "Browser has no local Supabase configuration; live authenticated data not verified",
+    "Full historical migration replay has an existing marker mismatch in 20260904211500; isolated new migrations are tested",
+    "Eight-channel live operation readiness not recertified"
+  ],
+  "eslintUniqueChangedTsJsFiles": 106
+}

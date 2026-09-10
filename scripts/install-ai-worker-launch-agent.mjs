@@ -117,20 +117,58 @@ async function pathExists(path) {
   }
 }
 
+function stagedPreflightCommand(step, program, args, options = {}) {
+  try {
+    return command(program, args, {
+      ...options,
+      timeout: 60_000,
+      killSignal: "SIGKILL",
+      maxBuffer: 1024 * 1024,
+    });
+  } catch (error) {
+    const reason = error?.code === "ETIMEDOUT" ? "timeout"
+      : error?.signal ? `signal ${error.signal}`
+        : Number.isInteger(error?.status) ? `exit ${error.status}` : "command failed";
+    // Do not surface child output or environment values in installer errors.
+    throw new Error(`Staged runtime preflight ${step}: ${reason}`);
+  }
+}
+
 async function validateStagedRuntime(stagedRuntimeRoot) {
-  command(process.execPath, ["--check", join(stagedRuntimeRoot, "scripts", "ai-cli-worker.mjs")]);
-  command("/usr/bin/swiftc", [
-    "-typecheck",
-    join(stagedRuntimeRoot, "scripts", "source-product-cutout.swift"),
-  ]);
-  command(process.execPath, [
-    "--import", "tsx",
-    "--input-type=module",
-    "--eval", "await import('sharp'); await import('./lib/channels/marketplace-images.ts');",
-  ], {
+  for (const relativePath of [
+    "scripts/ai-cli-worker.mjs",
+    "scripts/ai-studio-output.schema.json",
+    "scripts/ai-product-research-output.schema.json",
+    "scripts/ai-support-reply-output.schema.json",
+    "scripts/ai-background-audit-output.schema.json",
+    "scripts/image-label-fidelity.swift",
+    "scripts/source-product-cutout.swift",
+    "prompts/detail-pages/category-prompts.json",
+    "lib/channels/marketplace-images.ts",
+  ]) {
+    try {
+      await access(join(stagedRuntimeRoot, relativePath));
+    } catch {
+      throw new Error(`Staged runtime required file missing: ${relativePath}`);
+    }
+  }
+  const options = {
     cwd: stagedRuntimeRoot,
     env: { ...process.env, PATH: `${dirname(process.execPath)}:${process.env.PATH ?? "/usr/bin:/bin"}` },
-  });
+  };
+  stagedPreflightCommand("syntax", process.execPath, ["--check", join(stagedRuntimeRoot, "scripts", "ai-cli-worker.mjs")], options);
+  stagedPreflightCommand("swift", "/usr/bin/swiftc", [
+    "-typecheck",
+    join(stagedRuntimeRoot, "scripts", "source-product-cutout.swift"),
+  ], options);
+  stagedPreflightCommand("sharp", process.execPath, [
+    "--input-type=module", "--eval", "await import('sharp');",
+  ], options);
+  stagedPreflightCommand("marketplace-images", process.execPath, [
+    "--import", "tsx",
+    "--input-type=module",
+    "--eval", "await import('./lib/channels/marketplace-images.ts');",
+  ], options);
 }
 
 async function stageRuntime() {
@@ -139,7 +177,7 @@ async function stageRuntime() {
   await mkdir(runtimeParent, { recursive: true, mode: 0o700 });
   const stagedRuntimeRoot = await mkdtemp(join(runtimeParent, ".worker-runtime-staging-"));
   try {
-    for (const entry of ["lib", "scripts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]) {
+    for (const entry of ["lib", "scripts", "prompts", "package.json", "pnpm-lock.yaml", "tsconfig.json"]) {
       await cp(join(sourceRoot, entry), join(stagedRuntimeRoot, entry), { recursive: true });
     }
     command(pnpm, ["install", "--frozen-lockfile", "--ignore-scripts"], {
@@ -222,6 +260,18 @@ function commandLineValue(flag) {
   const value = process.argv[index + 1]?.trim() ?? "";
   if (!value || value.startsWith("--")) throw new Error(`${flag} 값을 확인해 주세요.`);
   return value;
+}
+
+function resolveInstallerConcurrency(args) {
+  const flags = args.filter((arg) => arg === "--max-concurrency" || arg.startsWith("--max-concurrency="));
+  if (flags.length === 0) return 9; // Preserve the existing installer default.
+  if (flags.length !== 1) throw new Error("--max-concurrency는 한 번만 지정해 주세요.");
+  const flag = flags[0];
+  const value = flag.includes("=") ? flag.slice(flag.indexOf("=") + 1) : args[args.indexOf(flag) + 1];
+  if (value !== "1" && value !== "2") {
+    throw new Error("--max-concurrency는 M4 절약 모드의 1 또는 2만 지정할 수 있습니다.");
+  }
+  return Number(value);
 }
 
 function tokenSetProof(tokenSetId, tokenChanges) {
@@ -336,6 +386,8 @@ if (process.argv.includes("--status")) {
 }
 
 async function install() {
+  // Validate before staging files, reading tokens or changing the LaunchAgent.
+  const maxConcurrency = resolveInstallerConcurrency(process.argv.slice(2));
   const tokenSetId = commandLineValue("--token-set");
   const rotateAll = process.argv.includes("--rotate-token");
   const rotatesOne = workerTokenScopes.some((definition) => process.argv.includes(definition.rotateFlag));
@@ -429,8 +481,8 @@ async function install() {
   <key>WorkingDirectory</key><string>${xml(runtimeRoot)}</string>
   <key>EnvironmentVariables</key><dict>
     <key>SELLERPILOT_URL</key><string>${xml(sellerpilotUrl)}</string>
-    <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>9</string>
-    <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>9</string>
+    <key>SELLERPILOT_AI_WORKER_CONCURRENCY</key><string>${maxConcurrency}</string>
+    <key>SELLERPILOT_CODEX_CONCURRENCY</key><string>${maxConcurrency}</string>
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>

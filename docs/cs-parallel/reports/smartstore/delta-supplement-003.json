@@ -1,0 +1,63 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "smartstore",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-smartstore",
+  "baseManifest": "docs/cs-parallel/reports/smartstore/delta-supplement-002.json",
+  "baseManifestSha256": "478ebba8d24e960b2ee5e63efcbfac419c6126ea71e69c70cc12018706b15b42",
+  "reason": "002를 동결한 채 임의 1~30일 exact SmartStore history enqueue v5와 1·6·7일 재개 반례를 추가",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-005-exact-history-window-v5.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7a11223587a2621ef3548e7ae4efe0cca8f4acfc148144dc5a68228ca3962b8f",
+      "reason": "SmartStore만 1~30일을 허용하고 exact credential seller scope로 product/customer 2개 읽기 job을 접수하는 SQL draft"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-005-common-integration.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0086c96b70292d0c862f7cfe869986db4ae198723d6300c41f993e4c3b8a9179",
+      "reason": "checkpoint nextWindow의 exact from/through를 v5에 전달하고 HTTP 202를 접수로 표시하는 별도 관리자 route patch"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/smartstore/smartstore-005-exact-history-window.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "592ef7b56be72c77af03289659fc994c3fe2f0e175998fe86c34ab5af9ca02b5",
+      "reason": "exact period, KST/UTC, credential owner, idempotent restart와 checkpoint 통합 계약"
+    },
+    {
+      "path": "tests/cs-smartstore-exact-history-window-v5.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "861d7999a6309d9b56fedb9ce32547e23d9dff78b7d1006527cc8f28b967790d",
+      "reason": "PGlite 1·6·7·30일, 임의 윤일 범위, UTC/KST, 중복, 재시작, exhausted, revoked, 다른 seller, 양 종류 checkpoint 시험"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/test-evidence-003.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1edb7f06a7205b79bee7a279d947defc49d4d2644d67c3ee4ff4ea8458f4d888",
+      "reason": "v5 PGlite 5/5, 결합 회귀 18/18, patch apply-check, 인증 증거 분리 기록"
+    },
+    {
+      "path": "docs/cs-parallel/reports/smartstore/status-supplement-003.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "fb9784c9e8b01e964f61cfe237efcf8b63b4c7dcf5ac0611fa802412c9a69285",
+      "reason": "002 동결, exact short-window 구현 범위, 운영 미반영·실답변·TalkTalk·리뷰 제한 분리"
+    }
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/smartstore/test-evidence-003.md",
+    "tests/cs-smartstore-exact-history-window-v5.test.mjs"
+  ],
+  "mutations": {
+    "provider": 0,
+    "productionDatabase": 0,
+    "credential": 0,
+    "customerReply": 0,
+    "commerce": 0
+  }
+}

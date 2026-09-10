@@ -3,32 +3,14 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ActiveChannelKey } from "../lib/channels/catalog";
-import {
-  buildChannelArguments,
-  buildDraftMap,
-  missingNativeValues,
-} from "../app/product-publish-workbench";
-import {
-  manualProductRequestFingerprint,
-  normalizePendingManualProductRequest,
-} from "../app/ai-product-studio";
+import { buildChannelArguments, buildDraftMap, missingNativeValues, normalizeManualFields } from "../app/product-publish-workbench";
+import { manualProductRequestFingerprint, normalizePendingManualProductRequest } from "../app/ai-product-studio";
 import { prepareMarketplaceImages } from "../lib/channels/marketplace-images";
-import {
-  prepareListingUpdateArguments,
-  unapprovedLocalizationReviewMarker,
-} from "../lib/channels/listing-update";
-import { qoo10DetailImageUrls } from "../lib/channels/qoo10-listing-create-preflight";
+import { unapprovedLocalizationReviewMarker } from "../lib/channels/listing-update";
+
 import { executeChannelOperation } from "../lib/channels/operations";
-import {
-  listingPublicationLanguageVerified,
-  normalizedListingPublicationText,
-} from "../lib/channels/listing-publication-content";
-import {
-  qoo10ExactForeignPriceCopyPresent,
-  bindQoo10ExactLocalizationUpdateArguments,
-  qoo10ExactLegacyRomanizedCopyPresent,
-  qoo10ExactLocalizationRecoveryIdentity,
-} from "../lib/channels/qoo10-exact-localization-recovery";
+import { listingPublicationLanguageVerified } from "../lib/channels/listing-publication-content";
+
 
 type PublishContext = Parameters<typeof buildChannelArguments>[1];
 
@@ -107,6 +89,7 @@ test("manual MVP draft keeps source photos explicit without inventing AI assets"
   assert.equal(JSON.stringify(draft).includes("detail-overview"), false);
   assert.equal(missingNativeValues("qoo10", draft).some((item) => item.includes("dedicated marketplace")), false);
   assert.equal(missingNativeValues("qoo10", draft).includes("manual source detail image"), false);
+  assert.equal(missingNativeValues("qoo10", draft).includes("approved marketplace detail images (8)"), true);
 });
 
 test("one rejected channel localization keeps every unrelated draft available", () => {
@@ -291,122 +274,6 @@ test("Qoo10 create and exact existing-product update replace legacy romanized re
   }
 });
 
-test("exact Qoo10 workbench draft discards source KRW and romanized copy before provider preparation", () => {
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  const context = productionLikeQoo10LegacyContext("update");
-  context.product.id = identity.productId;
-  context.product.sku = identity.sellerSku;
-  context.manualFields.sellerSku = identity.sellerSku;
-  context.manualFields.sellingPrice = 5_000;
-  context.manualFields.stock = 1;
-  context.manualFields.description = `${identity.legacyRomanizedName} 가격은 5,000원입니다.`;
-  context.assignments[0].categoryId = identity.categoryCode;
-
-  const draft = buildChannelArguments(
-    "qoo10",
-    context,
-    5_000,
-    1,
-    undefined,
-    { weight: 0.2, length: 10, width: 8, height: 4 },
-    10,
-  ) as {
-    params: Record<string, string>;
-    sellerpilotAssets: { detailImageUrls: string[] };
-  };
-
-  assert.equal(draft.params.ItemTitle, identity.title);
-  assert.equal(draft.params.PromotionName, identity.promotionName);
-  assert.equal(draft.params.SellerCode, identity.sellerSku);
-  assert.equal(draft.params.Keyword, identity.sourceKeyword);
-  assert.equal(draft.params.RetailPrice, String(identity.priceJpy));
-  assert.equal(draft.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(draft.params.ItemQty, String(identity.quantity));
-  assert.equal(draft.params.ShippingNo, identity.shippingNo);
-  assert.match(draft.params.ItemDescription, /販売価格は1,871円です/u);
-  assert.equal(qoo10ExactLegacyRomanizedCopyPresent(draft.params.ItemDescription), false);
-  assert.equal(qoo10ExactForeignPriceCopyPresent(draft.params.ItemDescription), false);
-  assert.doesNotMatch(draft.params.ItemDescription, /[가-힣]/u);
-  assert.equal(
-    listingPublicationLanguageVerified(
-      "ja-JP",
-      normalizedListingPublicationText(draft.params.ItemDescription),
-      "description",
-    ),
-    true,
-  );
-  assert.equal(draft.sellerpilotAssets.detailImageUrls.length, 8);
-  assert.deepEqual(
-    qoo10DetailImageUrls(draft.params.ItemDescription),
-    draft.sellerpilotAssets.detailImageUrls,
-  );
-  const prepared = prepareListingUpdateArguments(
-    "qoo10",
-    bindQoo10ExactLocalizationUpdateArguments(
-      draft as unknown as Record<string, unknown>,
-      "c".repeat(40),
-    ),
-    { status: "published", remoteId: identity.remoteId },
-  ) as { params: Record<string, string> };
-  assert.equal(prepared.params.SellerCode, identity.sellerSku);
-  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(prepared.params.ItemQty, String(identity.quantity));
-  assert.equal(prepared.params.ShippingNo, identity.shippingNo);
-});
-
-test("exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option", () => {
-  const identity = qoo10ExactLocalizationRecoveryIdentity;
-  const context = productionLikeQoo10LegacyContext("update");
-  context.product.id = identity.productId;
-  context.product.sku = identity.sellerSku;
-  context.manualFields.sellerSku = identity.sellerSku;
-  context.manualFields.sellingPrice = 5_000;
-  context.manualFields.stock = 1;
-  context.assignments[0].categoryId = identity.categoryCode;
-  context.listings[0] = {
-    ...context.listings[0]!,
-    status: "failed",
-    failureClass: "external_action",
-    remoteVisibility: "unknown",
-    providerStatus: null,
-  };
-  const draft = buildChannelArguments(
-    "qoo10",
-    context,
-    5_000,
-    1,
-    undefined,
-    { weight: 0.2, length: 10, width: 8, height: 4 },
-    10,
-  ) as { params: Record<string, string> };
-  assert.equal(draft.params.ItemTitle, identity.title);
-  assert.throws(
-    () => prepareListingUpdateArguments("qoo10", draft, context.listings[0]!),
-    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
-    "the generic external_action path remains fenced",
-  );
-  const prepared = prepareListingUpdateArguments(
-    "qoo10",
-    draft,
-    { ...context.listings[0]!, listingId: context.listings[0]!.id },
-    { qoo10ExactLocalizationProductId: identity.productId },
-  ) as { params: Record<string, string> };
-  assert.equal(prepared.params.ItemCode, identity.remoteId);
-  assert.equal(prepared.params.ItemPrice, String(identity.priceJpy));
-  assert.equal(prepared.params.ItemQty, String(identity.quantity));
-  assert.equal(Object.hasOwn(prepared.params, "StandardImage"), false);
-  assert.throws(
-    () => prepareListingUpdateArguments(
-      "qoo10",
-      draft,
-      { ...context.listings[0]!, listingId: context.listings[0]!.id, targetId: "OTHER" },
-      { qoo10ExactLocalizationProductId: identity.productId },
-    ),
-    /PUBLISHED_REMOTE_LISTING_REQUIRED/,
-    "near-miss tuples remain fenced before a provider request can be built",
-  );
-});
-
 test("Qoo10 preserves seller-authored Japanese and Hangul titles and description text", () => {
   for (const sellerTitle of ["販売者作成のケーブル整理クリップ", "부착형 케이블 클립 - 購入前確認"]) {
     const context = manualContext();
@@ -547,8 +414,11 @@ test("every marketplace draft preserves the explicit manual source-image contrac
   }
 });
 
-test("Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied", () => {
+test("Temu draft uses the seller-confirmed sale unit and never derives it from inner packs", () => {
   const context = manualContext();
+  context.product.name = "롯데 롯샌 파스퇴르 순우유맛 315g (6봉입)";
+  context.manualFields.productName = context.product.name;
+  context.manualFields.packageContents = "상품 1개";
   context.assignments = [{
     ...context.assignments[0],
     channel: "temu",
@@ -565,10 +435,21 @@ test("Temu draft sends the confirmed leaf ID and blocks until a shipping templat
     { weight: 0.1, length: 10, width: 8, height: 2 },
     5,
   ) as Record<string, unknown>;
-  const body = draft.body as { goodsBasic: Record<string, unknown> };
-  assert.equal(body.goodsBasic.extCatName, "601099");
-  assert.equal(body.goodsBasic.costTemplate, "");
-  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), true);
+  const body = draft.body as {
+    goodsBasic: Record<string, unknown>;
+    skuList: Array<{ variations: Array<{ name: string; value: string }> }>;
+  };
+  assert.equal(body.goodsBasic.extCatName, "Electronics / Cable organizers");
+  assert.equal(Object.hasOwn(body.goodsBasic, "costTemplate"), false);
+  assert.equal(missingNativeValues("temu", draft).includes("Temu shipping template"), false);
+  assert.deepEqual(body.skuList[0].variations, [{ name: "판매 구성", value: "상품 1개" }]);
+  assert.equal(JSON.stringify(body.skuList).includes("상품 6개"), false);
+});
+
+test("publish context preserves an explicit box and inner-pack description without changing sale quantity", () => {
+  const context = manualContext();
+  context.manualFields.packageContents = "1박스 · 박스당 6봉 · 총 315g";
+  assert.equal(normalizeManualFields(context).packageContents, "1박스 · 박스당 6봉 · 총 315g");
 });
 
 test("Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent", () => {
@@ -662,7 +543,27 @@ test("manual MVP image contract reaches URL validation instead of the AI detail 
   );
 });
 
-test("Qoo10 manual MVP accepts and reads back one explicit source detail image", async () => {
+test("Qoo10 final preparation rejects intake-only manual source images before normalization", async () => {
+  await assert.rejects(
+    prepareMarketplaceImages({} as SupabaseClient, "qoo10", {
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "live",
+      sellerpilotAssets: {
+        contentMode: "manual_mvp",
+        detailAssetMode: "manual_source",
+        galleryImageUrls: ["https://example.test/manual.jpg"],
+        detailImageUrls: ["https://example.test/manual.jpg"],
+      },
+      params: {
+        StandardImage: "https://example.test/manual.jpg",
+        ItemDescription: "<p>판매자 확인 설명</p>",
+      },
+    }),
+    /MARKETPLACE_DETAIL_IMAGE_REQUIRED:QOO10_MANUAL_SOURCE_INTAKE_ONLY/,
+  );
+});
+
+test("Qoo10 manual content mode cannot bypass the verified create context", async () => {
   const originalFetch = globalThis.fetch;
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
@@ -701,9 +602,10 @@ test("Qoo10 manual MVP accepts and reads back one explicit source detail image",
       },
       environment: "production",
     });
-    assert.equal(result.ok, true);
-    assert.equal(result.steps.at(-1)?.name, "detail-image-readback");
-    assert.equal(calls.includes("ItemsBasic.EditGoodsStatus"), false);
+    assert.equal(result.ok, false);
+    assert.equal(result.steps[0]?.name, "qoo10-create-contract-preflight");
+    assert.equal(result.steps[0]?.data.ResultMsg, "QOO10_CREATE_CONTEXT_INVALID");
+    assert.deepEqual(calls, []);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -732,6 +634,7 @@ test("manual intake route validates preserved photos and the client retries the 
   assert.match(page, /onManualResultReady=\{\(productId, _jobId, submittedIntake\)[\s\S]{0,360}onManualProductCreated\(\)/);
   assert.match(page, /onManualProductCreated=\{\(\) => void operations\.reloadAfterMutation\(\)\}/);
   assert.match(marketplaceImages, /uniqueStrings\(manualSourceMode \? gallery : \[\.\.\.gallery, \.\.\.details\]\)/);
+  assert.match(studio, /채널 전송 전에는 상세페이지 8장을 별도로 제작·승인해야 합니다/);
   assert.match(marketplaceImages, /if \(!productPatch && index > 0\) product\[field\] = ""/);
   assert.doesNotMatch(route, /sellerpilot_create_ai_job/);
 });
@@ -788,7 +691,7 @@ test("channel operations binds request image mode to the server product lineage 
   assert.ok(claimIndex > bindingIndex, "content mode mismatch must fail before an idempotency attempt is claimed");
   assert.match(
     route,
-    /contentBoundListingOperation = operation === "listing\.create"[\s\S]{0,120}operation === "listing\.update" && isRecord\(parsed\.data\.arguments\.sellerpilotAssets\)/,
+    /contentBoundListingOperation = operation === "listing\.create"[\s\S]{0,120}operation === "listing\.update" && \(channel === "elevenst"\s*\? elevenstRequestedContentAssets\s*:\s*isRecord\(parsed\.data\.arguments\.sellerpilotAssets\)/,
   );
   assert.match(route, /prepared\.sellerpilotContentMode = "manual_mvp"/);
   assert.match(route, /delete prepared\.sellerpilotContentMode/);

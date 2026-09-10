@@ -4,9 +4,10 @@ import { blockingListingRequirements, inspectListingDraft, setListingDraftValue 
 
 test("eBay preflight blocks server-managed policy and location placeholders", () => {
   const draft = {
-    inventoryItem: { product: { title: "Test item", description: "A real test item", imageUrls: ["https://example.com/item.jpg"] } },
+    inventoryItem: { condition: "NEW", availability: { shipToLocationAvailability: { quantity: 1 } }, product: { title: "Test item", description: "A real test item", imageUrls: ["https://example.com/item.jpg"] } },
     offer: {
       categoryId: "123",
+      listingDescription: "A real test listing",
       availableQuantity: 1,
       pricingSummary: { price: { value: "10", currency: "USD" } },
       listingPolicies: { fulfillmentPolicyId: "SERVER_MANAGED", paymentPolicyId: "SERVER_MANAGED", returnPolicyId: "SERVER_MANAGED" },
@@ -18,7 +19,7 @@ test("eBay preflight blocks server-managed policy and location placeholders", ()
     blockingListingRequirements("ebay", draft).map((item) => item.key),
     ["fulfillment-policy", "payment-policy", "return-policy", "location"],
   );
-  const accountFields = inspectListingDraft("ebay", draft).filter((item) => item.manualPath);
+  const accountFields = inspectListingDraft("ebay", draft).filter((item) => item.manualPath && item.source === "판매자 계정");
   assert.equal(accountFields.length, 4);
   assert.equal(accountFields.every((item) => item.status === "manual"), true);
   assert.equal(accountFields.every((item) => item.placeholder?.startsWith("Seller Hub")), true);
@@ -62,6 +63,95 @@ test("Coupang account fields are explicit runtime checks while unknown product f
   assert.equal(requirements.find((item) => item.key === "quantity-attribute")?.status, "runtime");
   assert.deepEqual(requirements.find((item) => item.key === "notices")?.manualPath, ["facts", "noticeContent"]);
   assert.ok(blockingListingRequirements("coupang", draft).some((item) => item.key === "notices"));
+});
+
+test("Coupang preflight applies the exact identifier and purchase-option rules to every item", () => {
+  const valid = {
+    itemName: "옵션 1",
+    externalVendorSku: "CP-UI-001",
+    barcode: "8802259030799",
+    emptyBarcode: false,
+    modelNo: "",
+    attributes: [{ attributeTypeName: "수량", attributeValueName: "1개", exposed: "EXPOSED" }],
+  };
+  const draft = {
+    body: {
+      brand: "SellerPilotBrand",
+      items: [valid, {
+        ...valid,
+        itemName: "옵션 2",
+        externalVendorSku: "CP-UI-002",
+        barcode: "8802259030798",
+        modelNo: "MODEL-CANNOT-BYPASS-BAD-GTIN",
+      }],
+    },
+  };
+  assert.equal(inspectListingDraft("coupang", draft).find((row) => row.key === "product-identifier")?.status, "manual");
+
+  const noGtin = structuredClone(draft);
+  Object.assign(noGtin.body.items[1], {
+    barcode: "",
+    emptyBarcode: true,
+    emptyBarcodeReason: "제조사 바코드 미부여",
+    modelNo: "BRAND-MODEL-002",
+    attributes: [{ attributeTypeName: "검색필터", attributeValueName: "값", exposed: "NONE" }],
+  });
+  assert.equal(inspectListingDraft("coupang", noGtin).find((row) => row.key === "product-identifier")?.status, "ready");
+  assert.equal(inspectListingDraft("coupang", noGtin).find((row) => row.key === "purchase-option")?.status, "manual");
+});
+
+test("Coupang preflight validates saved option rows through the same payload compiler", () => {
+  const draft = {
+    sellerpilotCoupangBaseSku: "CP-OPTIONS",
+    facts: {
+      coupangOptionRows: [{
+        skuSuffix: "RED-M",
+        itemName: "옵션 상품 빨강 M",
+        barcode: "",
+        modelNo: "BRAND-RED-M",
+        emptyBarcodeReason: "제조사 바코드 미부여",
+        salePrice: 10_000,
+        stock: 2,
+        unitCount: 1,
+        purchaseOptions: [{ name: "색상", value: "빨강" }, { name: "사이즈", value: "M" }],
+      }, {
+        skuSuffix: "BLUE-L",
+        itemName: "옵션 상품 파랑 L",
+        barcode: "8802259030799",
+        modelNo: "",
+        emptyBarcodeReason: "",
+        salePrice: 11_000,
+        stock: 3,
+        unitCount: 1,
+        purchaseOptions: [{ name: "색상", value: "파랑" }, { name: "사이즈", value: "L" }],
+      }],
+    },
+    body: {
+      brand: "SellerPilotBrand",
+      items: [{
+        itemName: "기본 상품",
+        externalVendorSku: "CP-OPTIONS",
+        barcode: "",
+        emptyBarcode: true,
+        emptyBarcodeReason: "바코드 없음",
+        modelNo: "",
+        maximumBuyCount: 1,
+        unitCount: 1,
+        attributes: [{ attributeTypeName: "수량", attributeValueName: "1개", exposed: "EXPOSED" }],
+      }],
+    },
+  };
+  const requirements = inspectListingDraft("coupang", draft);
+  assert.equal(requirements.find((row) => row.key === "product-identifier")?.status, "ready");
+  assert.equal(requirements.find((row) => row.key === "purchase-option")?.status, "ready");
+
+  draft.facts.coupangOptionRows[1].purchaseOptions = [];
+  const invalid = inspectListingDraft("coupang", draft);
+  assert.equal(invalid.find((row) => row.key === "product-identifier")?.status, "manual");
+  assert.equal(invalid.find((row) => row.key === "purchase-option")?.status, "manual");
+
+  const malformed = { ...draft, facts: { coupangOptionRows: true } };
+  assert.equal(inspectListingDraft("coupang", malformed).find((row) => row.key === "product-identifier")?.status, "manual");
 });
 
 test("Coupang preflight rejects placeholder notices and accepts seller-confirmed notice content", () => {
@@ -225,12 +315,25 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
         salePrice: 10_000,
         stockQuantity: 1,
         detailAttribute: {
+          unitCapacity: { unitPriceYn: false }, // Explicit fixture; runtime still verifies category eligibility.
+          naverShoppingSearchInfo: { brandName: "Fixture Brand" },
+          sellerCodeInfo: { sellerManagementCode: "FIXTURE-SMARTSTORE-001" },
+          certificationTargetExcludeContent: {
+            childCertifiedProductExclusionYn: false,
+            kcCertifiedProductExclusionYn: "FALSE",
+            greenCertifiedProductExclusionYn: false,
+            chemicalCertifiedProductExclusionYn: false,
+          },
           originAreaInfo: { content: "중국" },
           minorPurchasable: true,
           productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC" },
         },
       },
-      smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
+      smartstoreChannelProduct: {
+        channelProductDisplayStatusType: "ON",
+        naverShoppingRegistration: true,
+        channelProductName: "[API TEST] 수납함",
+      },
     },
   };
 
@@ -241,12 +344,11 @@ test("Smartstore preflight exposes the official purchase-age and display-status 
   assert.deepEqual(blockingListingRequirements("smartstore", draft), []);
 });
 
-test("Temu preflight requires a numeric leaf category and an explicit shipping template", () => {
+test("Temu preflight accepts an optional external category and rejects leaf IDs or costTemplate", () => {
   const draft = {
     body: {
       goodsBasic: {
         extCatName: "생활 > 정리",
-        costTemplate: "",
         goodsName: "부착형 케이블 정리 클립 6개 세트",
         goodsDesc: "케이블 정리 상품의 구성과 사용 방법을 안내합니다.",
         externalGoodsId: "QA-20260823-CC-001",
@@ -259,6 +361,9 @@ test("Temu preflight requires a numeric leaf category and an explicit shipping t
         { name: "Material", value: ["ABS"] },
       ],
       skuList: [{
+        externalSkuId: "QA-20260823-CC-001",
+        images: ["https://example.com/hero.jpg"],
+        variations: [{ name: "Type", value: "Standard" }],
         price: { basePrice: { amount: "5000", currency: "KRW" } },
         quantity: 1,
         packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
@@ -266,11 +371,13 @@ test("Temu preflight requires a numeric leaf category and an explicit shipping t
     },
   };
 
-  assert.deepEqual(
-    blockingListingRequirements("temu", draft).map((item) => item.key),
-    ["category", "shipping-template"],
+  assert.deepEqual(blockingListingRequirements("temu", draft), []);
+  const numericLeaf = setListingDraftValue(draft, ["body", "goodsBasic", "extCatName"], "601099");
+  assert.deepEqual(blockingListingRequirements("temu", numericLeaf).map((item) => item.key), ["category"]);
+  const unsupportedTemplate = setListingDraftValue(
+    draft,
+    ["body", "goodsBasic", "costTemplate"],
+    "QA_KR_STANDARD",
   );
-  const withCategory = setListingDraftValue(draft, ["body", "goodsBasic", "extCatName"], "601099");
-  const ready = setListingDraftValue(withCategory, ["body", "goodsBasic", "costTemplate"], "QA_KR_STANDARD");
-  assert.deepEqual(blockingListingRequirements("temu", ready), []);
+  assert.deepEqual(blockingListingRequirements("temu", unsupportedTemplate).map((item) => item.key), ["shipping-template"]);
 });

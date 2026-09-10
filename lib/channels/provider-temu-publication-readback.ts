@@ -64,6 +64,8 @@ export type TemuImmutableListingIdentity = {
 };
 
 export const temuCreateCorrelationContract = "temu_create_attempt_external_id_v1" as const;
+export const temuCreateAccountLineageContract =
+  "temu_create_account_lineage_v1" as const;
 export const temuActivationContract = "temu_verified_non_public_activation_v1" as const;
 export const temuContainmentDiscoveryContract = "temu_safe_test_containment_discovery_v1" as const;
 const canonicalUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
@@ -80,12 +82,16 @@ export function bindTemuCreateAttemptIdentity(input: {
   delete sanitizedArguments.sellerpilotTemuActivation;
   delete sanitizedArguments.sellerpilotTemuContainment;
   const sourceSku = input.canonicalSellerSku.trim().slice(0, 128);
+  const market = input.market.trim().toUpperCase();
+  const targetMallId = input.targetId.trim();
   const body = recordValue(sanitizedArguments.body);
   const goodsBasic = recordValue(body.goodsBasic);
   const skuList = Array.isArray(body.skuList)
     ? body.skuList.map(recordValue).filter((item) => Object.keys(item).length > 0)
     : [];
   if (!sourceSku
+      || market !== "KR"
+      || !/^[1-9]\d*$/u.test(targetMallId)
       || exactText(goodsBasic.externalGoodsId) !== sourceSku
       || skuList.length === 0
       || skuList.some((sku) => exactText(sku.externalSkuId) !== sourceSku)) {
@@ -95,8 +101,8 @@ export function bindTemuCreateAttemptIdentity(input: {
     contract: temuCreateCorrelationContract,
     productId: input.productId,
     sourceSku,
-    market: input.market.trim().toUpperCase(),
-    targetId: input.targetId.trim(),
+    market,
+    targetId: targetMallId,
     idempotencyKey: input.idempotencyKey,
   }), "utf8").digest("hex");
   const productPrefix = input.productId.replace(/[^a-f0-9]/giu, "").slice(0, 12).toUpperCase();
@@ -122,6 +128,31 @@ export function bindTemuCreateAttemptIdentity(input: {
       scopeFingerprint,
       skuCount: skuList.length,
     },
+    sellerpilotTemuCreateAccountLineage: {
+      version: temuCreateAccountLineageContract,
+      market,
+      mallId: targetMallId,
+    },
+  };
+}
+
+export function temuCreateAccountLineageBinding(
+  argumentsValue: Record<string, unknown>,
+) {
+  const marker = recordValue(
+    argumentsValue.sellerpilotTemuCreateAccountLineage,
+  );
+  const market = exactText(marker.market).toUpperCase();
+  const mallId = exactText(marker.mallId);
+  if (marker.version !== temuCreateAccountLineageContract
+      || market !== "KR"
+      || !/^[1-9]\d*$/u.test(mallId)) {
+    return null;
+  }
+  return {
+    version: temuCreateAccountLineageContract,
+    market,
+    mallId,
   };
 }
 
@@ -209,7 +240,6 @@ export function temuExactGoodsListArguments(externalGoodsId: string) {
   return {
     outGoodsSnList: [exactExternalGoodsId],
     pageSize: 25,
-    goodsSearchType: "ALL",
   };
 }
 

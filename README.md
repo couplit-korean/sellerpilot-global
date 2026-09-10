@@ -6,6 +6,7 @@ Qoo10 Japan, Shopee, Lazada, 쿠팡, 11번가, 네이버 스마트스토어, eBa
 - 스택: Next.js + Supabase(Auth·Postgres·Vault) + Vercel Production
 - **계정 연결 (GitHub vs Vercel):** [docs/계정연결.md](docs/계정연결.md)
 - **지금 연결·IP·배포 사실:** [docs/현재상태.md](docs/현재상태.md)
+- **상품·CS·배송 / 8채널 코드 연결 지도:** [채널별 소유 파일과 작업 지침](docs/channel-connections/README.md)
 - 문서 색인: [docs/README.md](docs/README.md)
 
 관리자 초대 계정만 로그인한다. 샘플 자동생성 운영 데이터는 쓰지 않는다.

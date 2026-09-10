@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-05-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T15:15:13Z",
+  "integratedRootPreimage": {
+    "scripts/ai-cli-worker.mjs": "8bbff07389d304b5c2a7149dfe911cc48edae6d59448f8dcb046f35f81324563",
+    "app/api/channel-gateway/worker/complete/route.ts": "8d3c1b41f5db38c4eb6275ab82b7014206ba108d362c7200ffdc045a610bdd96",
+    "lib/channels/gateway-contract.ts": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4"
+  },
+  "checks": [
+    {
+      "name": "worker-failed-completion-pure-and-wiring",
+      "command": "node --import tsx --test tests/cs-elevenst-worker-failed-completion.test.ts",
+      "exitCode": 0,
+      "passed": 5,
+      "failed": 0,
+      "counterexamples": [
+        "raw provider message and memID are stripped from business 500",
+        "other channel and operation do not attach result",
+        "non-200 provider status does not attach result",
+        "transport catch keeps a literal failed payload without result",
+        "Temu retryContinuation remains byte-equivalent while its provider result is omitted",
+        "external and serverless stored result shapes are identical"
+      ]
+    },
+    {
+      "name": "actual-next-worker-completion-post",
+      "command": "NODE_ENV=test node --import tsx scripts/cs-elevenst-worker-failed-completion-web-smoke.mjs --port=3214",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0,
+      "businessCompletionStatus": 200,
+      "businessStoredMarker": "normalized_inquiries_v1",
+      "businessObservationCount": 1,
+      "transportCompletionStatus": 200,
+      "transportStoredResponse": null,
+      "transportObservationCount": 0,
+      "portCleanAfterExit": true
+    },
+    {
+      "name": "gateway-serverless-typescript-regression",
+      "exitCode": 0,
+      "passed": 102,
+      "failed": 0
+    },
+    {
+      "name": "worker-route-journal-lifecycle-regression",
+      "exitCode": 0,
+      "passed": 31,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "changed-path-eslint",
+      "exitCode": 0
+    },
+    {
+      "name": "worker-syntax",
+      "command": "node --check scripts/ai-cli-worker.mjs",
+      "exitCode": 0
+    },
+    {
+      "name": "008-common-patch-dry-run",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "command": "git apply --check docs/cs-parallel/proposals/elevenst/elevenst-008-worker-failed-read-sender.patch",
+      "exitCode": 0,
+      "patchedPaths": 2
+    },
+    {
+      "name": "central-root-accidental-apply-recovery",
+      "result": "restored",
+      "reverseCheckPassed": true,
+      "restoredPreimageHashes": true,
+      "productionImpact": false
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-09-08T16:12:16Z",
+  "seller": {
+    "sellerId": "couplit",
+    "sellerName": "커플릿"
+  },
+  "finding": {
+    "surface": "product_qna",
+    "risk": "An internally inconsistent response with HTTP 200, accepted=true and resultCode=500 could be classified as an accepted empty or row-bearing response.",
+    "requiredPrecedence": "HTTP 200 plus resultCode 500 is always business_error before accepted-state classification.",
+    "remoteCountOnBusinessError": null,
+    "emptyConfirmedOnBusinessError": false
+  },
+  "change": {
+    "sourceOfTruth": "lib/channels/cs/elevenst/contracts.ts",
+    "readModelDuplicateSpecialCaseRemoved": true,
+    "regressionCase": {
+      "httpStatus": 200,
+      "accepted": true,
+      "resultCode": "500",
+      "providerRows": 0,
+      "classification": "business_error"
+    }
+  },
+  "operationalState": {
+    "productQnaCurrentRead": "http_200_provider_resultCode_500_business_error",
+    "productQnaHistoryComplete": false,
+    "customerReplySent": false,
+    "providerWriteCount": 0,
+    "productionDatabaseWriteCount": 0
+  }
+}

@@ -1,0 +1,67 @@
+SellerPilot CS 통합 담당 지시문
+
+너는 8개 채널 CS 작업의 시작본·공통 코드·DB·통합 검증 담당이다. 각 채널 구현은 별도 채팅이 맡는다. 사용자는 커밋·푸시 없이 로컬 검증을 먼저 하라고 했다. 이미 구현한 부분을 보존하며 채널 하나씩 실제 검증 가능한 결과를 완주하도록 통합해라.
+
+1. 기준과 먼저 읽을 문서
+- 기준 폴더: /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908
+- 기준 HEAD: 3cb72144e991626fae98a30cf51022d9a1aa6b0b. 미커밋 변경도 시작본이다.
+- 원래 Documents 폴더와 /tmp의 동명 폴더는 이번 통합 기준이 아니다.
+- /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/AGENTS.md
+- /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/README.md
+- /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/ownership.json
+- /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/TEMPLATES.md
+- /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/docs/cs-parallel/channels/ 아래 8개 계획
+- 사용자의 커밋·푸시 금지가 AGENTS의 기존 closeout보다 우선한다.
+
+2. 첫 작업: 공통 시작본 S0와 8개 전용 폴더
+- 지시문 작성 시점에는 S0와 8개 전용 폴더가 아직 없다. 현재 상태를 읽고 준비돼 있으면 검증·재사용해라. 무조건 재생성하지 마라.
+- 최초 점검의 변경 227개는 당시 값이다. 현재 diff·신규·삭제를 다시 확인하고 작성 중인 파일을 함부로 덮어쓰지 마라.
+- commit/stash/reset 없이 HEAD와 tracked 변경, 필요한 untracked 소스·시험·migration·문서를 보존해 S0를 만들어라.
+- 파일별 hash·삭제·실행 비트·HEAD·스냅샷 ID를 기록한다. 원본 변경 전후 hash를 대조해 복사 중 다른 수정이 들어온 경우 다시 확인한다.
+- .git 자체, .env, 브라우저/인증 자료, 실고객 원문, 비밀값, 빌드 결과, node_modules, 임시 로그를 복제 묶음에서 제외한다. 필요한 설정 템플릿과 익명 fixture의 누락 여부는 확인한다.
+- 원래 저장소의 다른 작업을 지우거나 원래 브랜치를 전환하지 마라.
+- ownership.json에 지정된 8개 workdir/branch를 동일 S0로 준비한다. 다른 작업이 사용 중인 폴더·브랜치는 덮어쓰지 않는다.
+- Node 22·동일 lockfile을 쓰고 각 폴더의 빌드 결과·DB·포트를 분리한다. 대용량 build/전체 DB suite는 동시에 하나만 돌린다.
+- 로컬 앱에 운영 DB를 넣거나 scheduler/worker를 자동 실행하지 마라. 집중 DB 시험은 격리 PGlite, 실제 인증 UI/다중 세션은 별도 격리 환경을 사용한다.
+- 8개 폴더 내용과 S0 manifest를 대조한 뒤에만 snapshotId/workspacesPrepared를 갱신한다.
+- 첫 결과로 S0 ID·8개 경로·복제 검증 결과를 보고해라. 초기 전체 검사만 반복하느라 시작본 준비를 뒤로 미루지 마라.
+
+3. 소유권과 공통 변경
+- inquiry-sync/reply/coverage, reply-verification, protocols, sync-arguments, gateway/serverless, 공통 OAuth/credential, 공통 archive/history/UI, SQL migration과 설정은 네 소유다.
+- 채널별 허용 파일은 ownership.json을 따른다. 채널 폴더의 소유 파일을 동시에 수정하지 말고 수정 요청으로 조정해라.
+- 채널 보고서와 proposals는 각 전용 폴더의 docs/cs-parallel/reports/<channel>/, proposals/<channel>/에서 읽는다.
+- 요청을 받을 때 before hash·인터페이스·fixture·최소 변경안을 확인하고 공유 파일 변경은 한 번에 하나씩 통합한다.
+- 채널 함수는 필요한 부분만 분리한다. 새로운 대형 프레임워크나 전체 재작성으로 범위를 늘리지 마라.
+- 공통 요청 우선순위: 실제 읽기/웹 차단 → 오연결·손실 → 중복 답변 → 과거 누락 → 추가 기능.
+- 진행 중 채널 폴더에 새 통합본을 통째로 복사하지 마라. 공통 인터페이스 갱신은 별도 버전/patch와 변경 영향으로 전달한다.
+
+4. 지금 확인된 통합 잔여
+- 현재 날짜 지정 과거수집 UI는 쿠팡·스마트스토어·11번가뿐이다. 나머지 채널의 고정 기간/shop별 planner와 history route/DB/UI를 연결해라.
+- 최근30일/1년 복구와 제공 가능한 전체 이력의 분모를 구분하고 scan·page·cursor·gap·재개를 같은 범위에 결속해라.
+- provider ACK와 원격 답변 관측을 구분한다. 불확실 답변은 자동 재송신하지 않는다.
+- 계정/shop/kind별 권한·키 만료·수집 실패가 다른 scope 성공으로 가려지지 않게 해라.
+- 상품/재고/주문/배송 mutation이 CS에서 발생하지 않는 경계를 유지해라.
+- 11번가 seller는 couplit/커플릿이다. Chrome 계정 이메일과 혼동하지 마라.
+
+5. SQL
+- 여러 채널 SQL이 같은 sellerpilot_service_ingest_inquiries를 rename/wrap한다. 파일명 충돌뿐 아니라 함수 preimage·순서·ACL 충돌을 확인해라.
+- 기존 22개 프리플라이트는 11번가 20260908049000을 포함하지 않는다. 현재 migration 의존 집합과 해시를 새로 확정해라.
+- 실제 파일 번호는 너만 배정하고 scripts/check-migration-version.mjs로 검증한다.
+- 공통 RPC·RLS·GRANT·SECURITY DEFINER·search_path, 공유 관리자/소유자·credential 변경과 이전 8채널 행을 함께 시험한다.
+- 현재는 운영 적용하지 않는다. 운영 상태는 version·name·source hash와 실제 객체를 읽기 대조하는 데 사용한다.
+
+6. 통합과 검증
+- S0 대비 채널 delta만 받아라. HEAD diff에는 기존 미커밋 변경이 섞이므로 통합본 전체 덮어쓰기는 금지한다.
+- 채널 반영 → 관련 공통 검사 → 다른7개 최소 fixture smoke 순으로 진행한다.
+- 쿠팡 핵심 흐름을 첫 통합 대상으로 우선한다. 실제 차단이 있으면 이미 읽기를 통과한 채널을 먼저 끝낸다.
+- 각 채널 집중 시험은 담당에게 맡기고 전체 TS/MJS/build:vercel은 통합 후보에서 실행한다. 로그를 파일로 남겨 결과가 잘려서 재실행하는 낭비를 막아라.
+- 알려진 실패도 이름·환경·동일 소스/기준 비교로 구분한다. 이전 실패 숫자만으로 회귀가 없다고 하지 마라.
+- 실제 DB multi-session·RLS·인증 UI 결과를 PGlite만으로 통과했다고 하지 마라.
+
+7. 외부 작업과 보고
+- 판매자 Chrome은 CHANGHEE, Vercel/Supabase는 JEONGHUN. 프로필 목록을 읽기 확인하고 seller/team/project를 확인한다. 준비된 세션과 기존 승인을 재사용한다.
+- 고객 답변·외부 알림 전송은 승인된 대상/내용이 있을 때만 한다. 현재 코딩용 자동 시험에서 실고객 답변을 보내지 마라.
+- 커밋·푸시·배포·운영 DB 변경은 하지 마라. 운영 적용을 위한 정확한 소스·migration·scope·rollback은 준비한다.
+- 44.2%는 운영 완성도가 아니다. G1 범위/권한, G2 로컬, G3 실제읽기, G4 과거/웹, G5 신규, G6 답변관측, G7 복구, G8 운영을 채널별 증거로 보고해라.
+- 문서 정리만 반복하지 말고 S0 준비와 첫 채널의 실제 검증 가능한 통합 결과를 우선 완성해라.
+

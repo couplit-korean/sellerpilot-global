@@ -1,5 +1,8 @@
+import { elevenstXmlValue, elevenstXmlNodes, elevenstNamespacedXmlValue } from "./elevenst-xml";
 import { createHash, createHmac } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { ebayDefaultScopes, ebayOAuthScopes } from "./ebay-oauth-scopes";
+export { ebayDefaultScopes } from "./ebay-oauth-scopes";
 import { hashSync as bcryptHashSync } from "bcryptjs";
 import {
   assertProviderAccountIdentity,
@@ -15,15 +18,22 @@ import {
 
 export type SecretPayload = Record<string, unknown>;
 
+export type CredentialRefreshTarget = {
+  channel: "shopee";
+  targetType: "shop" | "merchant";
+  targetId: string;
+};
+
 export type CredentialRefreshSnapshot = {
   payload: SecretPayload;
   expiresAt: string | null;
   oauthComplete?: boolean;
   recoveryOnly?: boolean;
+  target?: CredentialRefreshTarget;
 };
 
 type CredentialRefreshHandler = (refresh: CredentialRefreshSnapshot) => void | Promise<void>;
-type ExternalMutationStartHandler = () => void | Promise<void>;
+type ExternalMutationStartHandler = (target?: CredentialRefreshTarget) => void | Promise<void>;
 
 export type RemoteResponse = {
   response: Response;
@@ -31,34 +41,53 @@ export type RemoteResponse = {
   text: string;
 };
 
-const channelRequestSignalStorage = new AsyncLocalStorage<AbortSignal>();
-const providerReadOnlyTransportStorage = new AsyncLocalStorage<true>();
-
+type ProviderTransportContext = {
+  signal?: AbortSignal;
+  readOnly?: boolean;
+  reserve?: () => Promise<void>;
+};
+// AsyncLocalStorage contains one immutable context per invocation. Independent
+// jobs start with an explicit context rather than inheriting a caller's budget,
+// cancellation signal or read-only mode from another business domain.
+const providerTransportContext = new AsyncLocalStorage<Readonly<ProviderTransportContext>>();
+export function runWithProviderTransportContext<T>(context: ProviderTransportContext, execute: () => Promise<T>) {
+  return providerTransportContext.run(Object.freeze({ ...context }), execute);
+}
 export function runWithChannelRequestSignal<T>(signal: AbortSignal, execute: () => Promise<T>) {
-  return channelRequestSignalStorage.run(signal, execute);
+  return runWithProviderTransportContext({ ...providerTransportContext.getStore(), signal }, execute);
+}
+export function runWithProviderReadOnlyTransport<T>(execute: () => Promise<T>) {
+  return runWithProviderTransportContext({ ...providerTransportContext.getStore(), readOnly: true }, execute);
+}
+export function runWithProviderRequestBudget<T>(reserve: () => Promise<void>, execute: () => Promise<T>) {
+  return runWithProviderTransportContext({ ...providerTransportContext.getStore(), reserve }, execute);
 }
 
-export function runWithProviderReadOnlyTransport<T>(execute: () => Promise<T>) {
-  return providerReadOnlyTransportStorage.run(true, execute);
+export async function providerFetch(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) {
+  const reserve = providerTransportContext.getStore()?.reserve;
+  if (reserve) await reserve();
+  return fetch(input, init);
 }
 
 function assertProviderReadOnlyTransport(
   method: string,
-  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "temu_read_rpc",
+  exception?: "qoo10_read_rpc" | "ebay_trading_read" | "smartstore_read_rpc" | "temu_read_rpc" | "shopee_merchant_read_rpc",
 ) {
-  if (!providerReadOnlyTransportStorage.getStore()) return;
+  if (!providerTransportContext.getStore()?.readOnly) return;
   const normalized = method.trim().toUpperCase();
   if (normalized === "GET") return;
   if (normalized === "POST"
-      && (exception === "qoo10_read_rpc"
-        || exception === "ebay_trading_read"
-        || exception === "temu_read_rpc")) return;
+    && (exception === "qoo10_read_rpc"
+      || exception === "ebay_trading_read"
+      || exception === "smartstore_read_rpc"
+      || exception === "temu_read_rpc"
+      || exception === "shopee_merchant_read_rpc")) return;
   throw new Error("LISTING_PUBLICATION_VERIFY_NON_READ_TRANSPORT_BLOCKED");
 }
 
 function boundedChannelRequestSignal(timeoutMs: number) {
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
-  const ownerSignal = channelRequestSignalStorage.getStore();
+  const ownerSignal = providerTransportContext.getStore()?.signal;
   return ownerSignal ? AbortSignal.any([ownerSignal, timeoutSignal]) : timeoutSignal;
 }
 
@@ -133,7 +162,7 @@ export async function coupangRequest(input: {
   // provider's strict date parser expects that colon to remain literal.
   const query = (input.query?.toString() ?? "").replace(/%3A/gi, ":");
   const url = new URL(`https://api-gateway.coupang.com${input.path}${query ? `?${query}` : ""}`);
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -202,7 +231,7 @@ export async function fetchNaverAccessToken(payload: SecretPayload) {
     type,
   });
   if (type === "SELLER") body.set("account_id", accountId);
-  const response = await fetch("https://api.commerce.naver.com/external/v1/oauth2/token", {
+  const response = await providerFetch("https://api.commerce.naver.com/external/v1/oauth2/token", {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -247,10 +276,30 @@ export async function naverRequest(input: {
   path: string;
   query?: URLSearchParams;
   body?: unknown;
+  rawJsonBody?: string;
 }) {
-  assertProviderReadOnlyTransport(input.method);
+  if (input.body !== undefined && input.rawJsonBody !== undefined) {
+    throw new Error("NAVER_REQUEST_BODY_AMBIGUOUS");
+  }
+  if (input.rawJsonBody !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(input.rawJsonBody);
+    } catch {
+      throw new Error("NAVER_REQUEST_RAW_JSON_INVALID");
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("NAVER_REQUEST_RAW_JSON_INVALID");
+    }
+  }
+  assertProviderReadOnlyTransport(
+    input.method,
+    input.method === "POST" && input.path === "/v1/products/search"
+      ? "smartstore_read_rpc"
+      : undefined,
+  );
   const query = input.query?.toString() ?? "";
-  const response = await fetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
+  const response = await providerFetch(`https://api.commerce.naver.com/external${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -260,7 +309,9 @@ export async function naverRequest(input: {
       authorization: `Bearer ${input.accessToken}`,
       "user-agent": "SellerPilot-Naver-Commerce-Connector/1.0",
     },
-    body: input.body === undefined ? undefined : JSON.stringify(input.body),
+    body: input.rawJsonBody ?? (
+      input.body === undefined ? undefined : JSON.stringify(input.body)
+    ),
   });
   return readRemoteResponse(response);
 }
@@ -275,7 +326,7 @@ export type TemuExactLong = {
 export function temuExactLong(value: string): TemuExactLong {
   const decimal = value.trim();
   if (!/^[1-9]\d{0,18}$/u.test(decimal)
-      || BigInt(decimal) > BigInt("9223372036854775807")) {
+    || BigInt(decimal) > BigInt("9223372036854775807")) {
     throw new Error("TEMU_GOODS_ID_NOT_EXACT_LONG");
   }
   return Object.freeze({ decimal, [temuExactLongBrand]: true as const });
@@ -287,12 +338,12 @@ function temuJson(value: unknown) {
   }).rawJSON;
   const serialized = JSON.stringify(value, (_key, candidate) => {
     if (!candidate
-        || typeof candidate !== "object"
-        || !(temuExactLongBrand in candidate)) return candidate;
+      || typeof candidate !== "object"
+      || !(temuExactLongBrand in candidate)) return candidate;
     const exact = candidate as TemuExactLong;
     if (exact[temuExactLongBrand] !== true
-        || temuExactLong(exact.decimal).decimal !== exact.decimal
-        || typeof rawJson !== "function") {
+      || temuExactLong(exact.decimal).decimal !== exact.decimal
+      || typeof rawJson !== "function") {
       throw new Error("TEMU_EXACT_LONG_JSON_UNSUPPORTED");
     }
     return rawJson(exact.decimal);
@@ -322,10 +373,21 @@ export async function temuRequest(input: {
 }) {
   const readOnlyRpc = new Set([
     "bg.open.accesstoken.info.get",
+    "bg.aftersales.parentaftersales.list.get",
+    "temu.aftersales.parentaftersales.detail.get",
     "temu.local.goods.list.retrieve",
     "bg.local.goods.publish.status.get",
     "bg.local.goods.detail.query",
     "temu.local.goods.sku.stock.query",
+    "bg.local.goods.category.recommend",
+    "bg.local.goods.cats.get",
+    "bg.local.goods.property.get",
+    "bg.local.goods.size.element.get",
+    "bg.local.goods.template.get",
+    "bg.local.goods.compliance.rules.get",
+    "bg.local.goods.compliance.extra.template.get",
+    "bg.local.goods.compliance.property.check",
+    "bg.freight.template.list.query",
   ]).has(input.type);
   assertProviderReadOnlyTransport("POST", readOnlyRpc ? "temu_read_rpc" : undefined);
   const appKey = textValue(input.payload, "app_key");
@@ -341,7 +403,7 @@ export async function temuRequest(input: {
     version: "V1",
     ...(input.arguments ?? {}),
   };
-  const response = await fetch("https://openapi-b-global.temu.com/openapi/router", {
+  const response = await providerFetch("https://openapi-b-global.temu.com/openapi/router", {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(30_000),
@@ -371,8 +433,8 @@ export async function temuRequest(input: {
       context,
     ) {
       if (["goodsId", "skuId"].includes(key)
-          && typeof value === "number"
-          && /^[1-9]\d{0,18}$/u.test(context?.source ?? "")) {
+        && typeof value === "number"
+        && /^[1-9]\d{0,18}$/u.test(context?.source ?? "")) {
         return context!.source!;
       }
       return value;
@@ -471,7 +533,7 @@ export async function exchangeShopeeOAuthToken(input: {
   const body = input.code
     ? { code: input.code, [targetKey]: targetId, partner_id: partnerId }
     : { refresh_token: input.refreshToken, [targetKey]: targetId, partner_id: partnerId };
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -537,7 +599,7 @@ export function readStoredShopeeShopAccessToken(
     if (!storedIdentity) return null;
     assertProviderAccountIdentity(payload, shopeeProviderAccountIdentityFromPayload(payload));
     if (storedIdentity.subject.startsWith("shopee:shop:")
-        && storedIdentity.subject !== `shopee:shop:${shopId}`) {
+      && storedIdentity.subject !== `shopee:shop:${shopId}`) {
       return null;
     }
   } catch {
@@ -560,10 +622,10 @@ export function readStoredShopeeShopAccessToken(
     ? Date.parse(authorizationExpiresAtText)
     : null;
   if (!accessToken
-      || !Number.isFinite(accessExpiresAt)
-      || accessExpiresAt <= nowMs + Math.max(0, bufferMs)
-      || (authorizationExpiresAt !== null
-        && (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt <= nowMs))) {
+    || !Number.isFinite(accessExpiresAt)
+    || accessExpiresAt <= nowMs + Math.max(0, bufferMs)
+    || (authorizationExpiresAt !== null
+      && (!Number.isFinite(authorizationExpiresAt) || authorizationExpiresAt <= nowMs))) {
     return null;
   }
   return selectedPayload;
@@ -593,14 +655,19 @@ async function ensureShopeeTargetAccessToken(
   const selectedTarget = requestedTargetId
     ? targets.find((target) => target.type === targetType && target.id === requestedTargetId)
     : targets.find((target) => target.type === targetType && target.id === textValue(payload, targetKey))
-      ?? targets.find((target) => target.type === targetType);
+    ?? targets.find((target) => target.type === targetType);
   if (requestedTargetId && !selectedTarget) throw new Error(targetType === "shop" ? "SHOPEE_SHOP_NOT_AUTHORIZED" : "SHOPEE_MERCHANT_NOT_AUTHORIZED");
   const selectedPayload = selectedTarget ? projectShopeeTarget(payload, selectedTarget) : payload;
   const selectedTargetId = textValue(selectedPayload, targetKey);
+  const refreshTarget: CredentialRefreshTarget = {
+    channel: "shopee",
+    targetType,
+    targetId: selectedTargetId,
+  };
   if ((storedAccountIdentity || requireProviderIdentity)
-      && expectedAccountIdentity.subject.startsWith("shopee:shop:")
-      && (targetType !== "shop"
-        || expectedAccountIdentity.subject !== `shopee:shop:${selectedTargetId}`)) {
+    && expectedAccountIdentity.subject.startsWith("shopee:shop:")
+    && (targetType !== "shop"
+      || expectedAccountIdentity.subject !== `shopee:shop:${selectedTargetId}`)) {
     throw new Error("PROVIDER_ACCOUNT_IDENTITY_MISMATCH");
   }
   const accessToken = textValue(selectedPayload, "access_token");
@@ -621,9 +688,13 @@ async function ensureShopeeTargetAccessToken(
         throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
       }
       const attestedPayload = withProviderAccountIdentity(selectedPayload, expectedAccountIdentity);
-      await onExternalMutationStart?.();
+      await onExternalMutationStart?.(refreshTarget);
       const credentialExpiresAt = textValue(payload, "authorization_expires_at") || null;
-      await onCredentialRefresh({ payload: attestedPayload, expiresAt: credentialExpiresAt });
+      await onCredentialRefresh({
+        payload: attestedPayload,
+        expiresAt: credentialExpiresAt,
+        target: refreshTarget,
+      });
       return { payload: attestedPayload, refreshed: true as const, credentialExpiresAt };
     }
     return { payload: selectedPayload, refreshed: false as const, credentialExpiresAt: textValue(payload, "authorization_expires_at") || null };
@@ -641,7 +712,7 @@ async function ensureShopeeTargetAccessToken(
     throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
   }
 
-  await onExternalMutationStart?.();
+  await onExternalMutationStart?.(refreshTarget);
   const remote = await exchangeShopeeOAuthToken({
     environment,
     partnerId,
@@ -682,6 +753,7 @@ async function ensureShopeeTargetAccessToken(
       payload: withoutProviderAccountIdentity(refreshedTokenPayload),
       expiresAt: credentialExpiresAt,
       recoveryOnly: true,
+      target: refreshTarget,
     });
   }
   if ((storedAccountIdentity || requireProviderIdentity) && targetType === "shop") {
@@ -697,7 +769,7 @@ async function ensureShopeeTargetAccessToken(
     assertShopeeShopProfileTarget(profile.data, targetId, { acceptSignedRequestBinding: true });
   }
   if (onExternalMutationStart && onCredentialRefresh) {
-    await onExternalMutationStart();
+    await onExternalMutationStart(refreshTarget);
   }
   const refreshPayload = withProviderAccountIdentity(refreshedTokenPayload, expectedAccountIdentity);
   const refresh = {
@@ -705,7 +777,11 @@ async function ensureShopeeTargetAccessToken(
     refreshed: true as const,
     credentialExpiresAt,
   };
-  await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
+  await onCredentialRefresh?.({
+    payload: refresh.payload,
+    expiresAt: refresh.credentialExpiresAt,
+    target: refreshTarget,
+  });
   return refresh;
 }
 
@@ -756,7 +832,7 @@ export async function shopeeRequest(input: {
   query.set("access_token", accessToken);
   query.set("shop_id", shopId);
   query.set("sign", buildShopeeSignature({ partnerId, partnerKey, path: input.path, timestamp, accessToken, shopId }));
-  const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
+  const response = await providerFetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -786,7 +862,7 @@ export async function shopeePartnerRequest(input: {
   query.set("partner_id", partnerId);
   query.set("timestamp", String(timestamp));
   query.set("sign", buildShopeeSignature({ partnerId, partnerKey, path: input.path, timestamp }));
-  const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
+  const response = await providerFetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: "GET",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -803,7 +879,13 @@ export async function shopeeMerchantRequest(input: {
   query?: URLSearchParams;
   body?: unknown;
 }) {
-  assertProviderReadOnlyTransport(input.method);
+  const merchantReadPost = input.method === "POST"
+    && (input.path === "/api/v2/merchant/get_merchant_warehouse_list"
+      || input.path === "/api/v2/merchant/get_warehouse_eligible_shop_list");
+  assertProviderReadOnlyTransport(
+    input.method,
+    merchantReadPost ? "shopee_merchant_read_rpc" : undefined,
+  );
   const partnerId = textValue(input.payload, "partner_id");
   const partnerKey = textValue(input.payload, "partner_key");
   const merchantId = textValue(input.payload, "merchant_id");
@@ -818,7 +900,7 @@ export async function shopeeMerchantRequest(input: {
   query.set("access_token", accessToken);
   query.set("merchant_id", merchantId);
   query.set("sign", buildShopeeSignature({ partnerId, partnerKey, path: input.path, timestamp, accessToken, merchantId }));
-  const response = await fetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
+  const response = await providerFetch(`${shopeeEnvironment(input.environment)}${input.path}?${query}`, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -901,7 +983,7 @@ export async function lazadaRequest(input: {
       ...(input.params ?? {}),
     };
     params.sign = signLazadaRequest(input.path, params, appSecret);
-    const response = await fetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
+    const response = await providerFetch(`${endpoint}${input.path}${method === "GET" ? `?${new URLSearchParams(params)}` : ""}`, {
       method,
       cache: "no-store",
       signal: boundedChannelRequestSignal(15_000),
@@ -942,7 +1024,7 @@ export async function exchangeLazadaOAuthToken(input: {
   params.sign = signLazadaRequest(path, params, input.appSecret);
   const url = new URL(`https://auth.lazada.com/rest${path}`);
   url.search = new URLSearchParams(params).toString();
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: "GET",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -967,9 +1049,9 @@ export async function ensureLazadaAccessToken(
   const accessToken = textValue(payload, "access_token");
   const accessExpiresAt = Date.parse(textValue(payload, "access_token_expires_at"));
   if (!accountAttestationRequired
-      && accessToken
-      && Number.isFinite(accessExpiresAt)
-      && accessExpiresAt > Date.now() + bufferMs) {
+    && accessToken
+    && Number.isFinite(accessExpiresAt)
+    && accessExpiresAt > Date.now() + bufferMs) {
     return { payload, refreshed: false as const, credentialExpiresAt: textValue(payload, "refresh_token_expires_at") || null };
   }
 
@@ -1053,7 +1135,9 @@ export async function qoo10Request(input: {
   if (!apiKey) throw new Error("QOO10_CREDENTIALS_MISSING");
   assertProviderReadOnlyTransport(
     "POST",
-    input.service === "ItemsLookup" && input.method === "GetItemDetailInfo"
+    (input.service === "ItemsLookup" && input.method === "GetItemDetailInfo")
+      || (input.service === "CSCenter" && input.method === "GetInquiryMessage")
+      || (input.service === "ShippingBasic" && input.method === "GetClaimInfo_V3")
       ? "qoo10_read_rpc"
       : undefined,
   );
@@ -1071,7 +1155,7 @@ export async function qoo10Request(input: {
   if (input.params?.Qty !== undefined) {
     url.searchParams.set("Qty", input.params.Qty);
   }
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: "POST",
     body: JSON.stringify({ returnType: "json", ...(input.params ?? {}) }),
     cache: "no-store",
@@ -1087,41 +1171,8 @@ export async function qoo10Request(input: {
   return readRemoteResponse(response);
 }
 
-function elevenstXmlValue(xml: string, tag: string) {
-  const match = xml.match(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i"));
-  return match?.[1]
-    ?.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .trim() ?? "";
-}
-
-function elevenstXmlNodes(xml: string, tag: string) {
-  const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const pattern = new RegExp(
-    `<(?:[\\w.-]+:)?${escapedTag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/(?:[\\w.-]+:)?${escapedTag}>`,
-    "gi",
-  );
-  return [...xml.matchAll(pattern)].map((match) => match[1] ?? "");
-}
-
-function elevenstNamespacedXmlValue(xml: string, tag: string) {
-  const node = elevenstXmlNodes(xml, tag)[0] ?? "";
-  return node
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, "\"")
-    .replace(/&#39;/g, "'")
-    .trim();
-}
-
 export async function elevenstCategoryRequest() {
-  const response = await fetch("https://api.11st.co.kr/rest/cateservice/category", {
+  const response = await providerFetch("https://api.11st.co.kr/rest/cateservice/category", {
     method: "GET",
     cache: "no-store",
     signal: boundedChannelRequestSignal(20_000),
@@ -1190,7 +1241,7 @@ export async function elevenstRequest(input: {
     apiCode: input.apiCode,
     ...(input.params ?? {}),
   }).toString();
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: "GET",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -1238,7 +1289,7 @@ export async function elevenstOrderRequest(input: {
   const url = new URL(
     `https://api.11st.co.kr/rest/ordservices/complete/${input.startTime}/${input.endTime}`,
   );
-  const response = await fetch(url, {
+  const response = await providerFetch(url, {
     method: "GET",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -1286,13 +1337,6 @@ export async function elevenstOrderRequest(input: {
   } satisfies RemoteResponse;
 }
 
-export const ebayDefaultScopes = [
-  "https://api.ebay.com/oauth/api_scope",
-  "https://api.ebay.com/oauth/api_scope/sell.account",
-  "https://api.ebay.com/oauth/api_scope/sell.inventory",
-  "https://api.ebay.com/oauth/api_scope/sell.fulfillment",
-] as const;
-
 export function ebayEnvironment(environment: "sandbox" | "production") {
   return environment === "sandbox"
     ? { auth: "https://auth.sandbox.ebay.com", api: "https://api.sandbox.ebay.com" }
@@ -1323,7 +1367,9 @@ const ebayTradingSiteIds: Readonly<Record<string, string>> = {
   EBAY_SG: "216",
 };
 
-const ebayTradingCalls = new Set(["GetMemberMessages", "GetItem", "AddMemberMessageRTQ"]);
+type EbayTradingCallName = "GetMemberMessages" | "GetMyMessages" | "GetItem" | "AddMemberMessageRTQ";
+
+const ebayTradingCalls = new Set<EbayTradingCallName>(["GetMemberMessages", "GetMyMessages", "GetItem", "AddMemberMessageRTQ"]);
 // 1475 is the latest published Trading API release with a resolvable official
 // XSD. Do not advance this header from search-index text alone.
 const ebayTradingCompatibilityLevel = "1475";
@@ -1516,9 +1562,9 @@ function parseEbayXml(xml: string, expectedRoot: string) {
       const instructionEnd = xml.indexOf("?>", markupStart + 2);
       const instruction = instructionEnd < 0 ? "" : xml.slice(markupStart + 2, instructionEnd).trim();
       if (instructionEnd < 0
-          || !/^xml\s+version\s*=\s*(?:"1\.0"|'1\.0')(?:\s+encoding\s*=\s*(?:"utf-8"|'utf-8'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/i.test(instruction)
-          || root
-          || stack.length) {
+        || !/^xml\s+version\s*=\s*(?:"1\.0"|'1\.0')(?:\s+encoding\s*=\s*(?:"utf-8"|'utf-8'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/i.test(instruction)
+        || root
+        || stack.length) {
         invalidEbayTradingResponse();
       }
       cursor = instructionEnd + 2;
@@ -1531,7 +1577,7 @@ function parseEbayXml(xml: string, expectedRoot: string) {
     if (tagSource.startsWith("/")) {
       const qualifiedName = tagSource.slice(1).trim();
       if (!/^[A-Za-z_][A-Za-z0-9_.:-]*$/.test(qualifiedName)
-          || stack.at(-1)?.qualifiedName !== qualifiedName) {
+        || stack.at(-1)?.qualifiedName !== qualifiedName) {
         invalidEbayTradingResponse();
       }
       stack.pop();
@@ -1576,20 +1622,52 @@ function ebayXmlNodeText(node: EbayXmlNode | null) {
   return node.textParts.join("").trim();
 }
 
+function ebayXmlMessageBody(node: EbayXmlNode | null, maxLength: number) {
+  if (!node) return "";
+  if (node.children.length) invalidEbayTradingResponse();
+  const body = node.textParts.join("");
+  // Message content must survive parsing unchanged. Reject oversized content
+  // visibly rather than saving a silently truncated original.
+  if (body.length > maxLength) throw new Error("EBAY_MESSAGE_BODY_LIMIT");
+  return body;
+}
+
+function ebayXmlMailboxBody(node: EbayXmlNode | null) {
+  if (!node) return { content: "", contentOmitted: false, contentBytes: 0, contentSha256: "" };
+  if (node.children.length) invalidEbayTradingResponse();
+  const content = node.textParts.join("");
+  const contentBytes = Buffer.byteLength(content, "utf8");
+  const contentSha256 = createHash("sha256").update(content, "utf8").digest("hex");
+  if (content.length > 20_000 || contentBytes > 60_000) {
+    return { content: "", contentOmitted: true, contentBytes, contentSha256 };
+  }
+  return { content, contentOmitted: false, contentBytes, contentSha256 };
+}
+
 function ebayXmlText(node: EbayXmlNode, name: string) {
   return ebayXmlNodeText(ebayXmlChild(node, name));
 }
 
 function ebayXmlNonNegativeInteger(node: EbayXmlNode, name: string) {
-  const value = Number(ebayXmlText(node, name));
+  const text = ebayXmlText(node, name);
+  if (!text) return null;
+  const value = Number(text);
   return Number.isInteger(value) && value >= 0 ? value : null;
 }
 
-export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetItem" | "AddMemberMessageRTQ", xml: string) {
+function ebayXmlOptionalBoolean(node: EbayXmlNode, name: string) {
+  const value = ebayXmlText(node, name);
+  if (!value) return null;
+  if (/^true$/i.test(value)) return true;
+  if (/^false$/i.test(value)) return false;
+  invalidEbayTradingResponse();
+}
+
+export function parseEbayTradingResponse(callName: EbayTradingCallName, xml: string) {
   if (!ebayTradingCalls.has(callName)
-      || !xml
-      || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
-      || /<!DOCTYPE|<!ENTITY/i.test(xml)) {
+    || !xml
+    || Buffer.byteLength(xml, "utf8") > EBAY_TRADING_RESPONSE_LIMIT_BYTES
+    || /<!DOCTYPE|<!ENTITY/i.test(xml)) {
     throw new Error("EBAY_TRADING_RESPONSE_INVALID");
   }
   const expectedRoot = `${callName}Response`;
@@ -1625,22 +1703,86 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetIte
     };
   }
 
+  if (callName === "GetMyMessages") {
+    const summaryNode = ebayXmlChild(root, "Summary");
+    const summary = summaryNode ? {
+      flaggedMessageCount: ebayXmlNonNegativeInteger(summaryNode, "FlaggedMessageCount"),
+      newHighPriorityCount: ebayXmlNonNegativeInteger(summaryNode, "NewHighPriorityCount"),
+      newMessageCount: ebayXmlNonNegativeInteger(summaryNode, "NewMessageCount"),
+      totalHighPriorityCount: ebayXmlNonNegativeInteger(summaryNode, "TotalHighPriorityCount"),
+      totalMessageCount: ebayXmlNonNegativeInteger(summaryNode, "TotalMessageCount"),
+    } : null;
+    const messagesNode = ebayXmlChild(root, "Messages");
+    const messages = messagesNode ? ebayXmlChildren(messagesNode, "Message") : [];
+    if (messages.length > 200) invalidEbayTradingResponse();
+    const boolean = (node: EbayXmlNode, name: string) => {
+      const value = ebayXmlText(node, name);
+      if (!value) return null;
+      if (/^true$/i.test(value)) return true;
+      if (/^false$/i.test(value)) return false;
+      invalidEbayTradingResponse();
+    };
+    const myMessages = messages.map((message) => {
+      const media = ebayXmlChildren(message, "MessageMedia");
+      if (media.length > 100) invalidEbayTradingResponse();
+      const response = ebayXmlChild(message, "ResponseDetails");
+      const contentNode = ebayXmlChild(message, "Content");
+      const textNode = ebayXmlChild(message, "Text");
+      const mailboxBody = ebayXmlMailboxBody(contentNode ?? textNode);
+      return {
+        messageId: ebayXmlText(message, "MessageID").slice(0, 240),
+        externalMessageId: ebayXmlText(message, "ExternalMessageID").slice(0, 240),
+        sender: ebayXmlText(message, "Sender").slice(0, 240),
+        recipientUserId: ebayXmlText(message, "RecipientUserID").slice(0, 240),
+        subject: ebayXmlText(message, "Subject").slice(0, 2_000),
+        ...mailboxBody,
+        receiveDate: ebayXmlText(message, "ReceiveDate").slice(0, 80),
+        expirationDate: ebayXmlText(message, "ExpirationDate").slice(0, 80),
+        itemId: ebayXmlText(message, "ItemID").slice(0, 240),
+        itemTitle: ebayXmlText(message, "ItemTitle").slice(0, 500),
+        messageType: ebayXmlText(message, "MessageType").slice(0, 120),
+        questionType: ebayXmlText(message, "QuestionType").slice(0, 120),
+        read: boolean(message, "Read"),
+        replied: boolean(message, "Replied"),
+        flagged: boolean(message, "Flagged"),
+        highPriority: boolean(message, "HighPriority"),
+        responseEnabled: response ? boolean(response, "ResponseEnabled") : null,
+        media: media.map((entry) => ({
+          name: ebayXmlText(entry, "MediaName").slice(0, 500),
+          url: ebayXmlText(entry, "MediaURL").slice(0, 8_000),
+        })),
+      };
+    });
+    const paginationResult = ebayXmlChild(root, "PaginationResult");
+    return {
+      ...base,
+      myMessages,
+      summary,
+      paginationResult: {
+        totalNumberOfPages: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfPages") : null,
+        totalNumberOfEntries: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfEntries") : null,
+      },
+    };
+  }
+
   const memberMessage = ebayXmlChild(root, "MemberMessage");
   const exchanges = memberMessage ? ebayXmlChildren(memberMessage, "MemberMessageExchange") : [];
   if (exchanges.length > 500) invalidEbayTradingResponse();
   const memberMessages = exchanges.map((exchange) => {
     const item = ebayXmlChild(exchange, "Item");
     const question = ebayXmlChild(exchange, "Question");
+    const responses = ebayXmlChildren(exchange, "Response");
+    if (responses.length > 100) throw new Error("EBAY_ANSWER_CONTEXT_LIMIT");
     return {
       itemId: item ? ebayXmlText(item, "ItemID").slice(0, 240) : "",
       itemTitle: item ? ebayXmlText(item, "Title").slice(0, 500) : "",
       messageId: question ? ebayXmlText(question, "MessageID").slice(0, 230) : "",
       senderId: question ? ebayXmlText(question, "SenderID").slice(0, 240) : "",
       subject: question ? ebayXmlText(question, "Subject").slice(0, 500) : "",
-      // eBay documents Question.Body as at most 4,000 characters for schema
-      // versions >=653. Keeping that bound also keeps each durable page below
-      // the gateway transaction payload ceiling.
-      body: question ? ebayXmlText(question, "Body").slice(0, 4_000) : "",
+      body: question ? ebayXmlMessageBody(ebayXmlChild(question, "Body"), 4_000) : "",
+      // GetMemberMessages returns repeated response bodies without per-answer
+      // timestamps or native response IDs. Never infer those from exchange dates.
+      responses: responses.map((response) => ebayXmlMessageBody(response, 20_000)),
       messageStatus: ebayXmlText(exchange, "MessageStatus").slice(0, 80),
       creationDate: ebayXmlText(exchange, "CreationDate").slice(0, 80),
       lastModifiedDate: ebayXmlText(exchange, "LastModifiedDate").slice(0, 80),
@@ -1650,7 +1792,7 @@ export function parseEbayTradingResponse(callName: "GetMemberMessages" | "GetIte
   return {
     ...base,
     memberMessages,
-    hasMoreItems: /^true$/i.test(ebayXmlText(root, "HasMoreItems")),
+    hasMoreItems: ebayXmlOptionalBoolean(root, "HasMoreItems"),
     paginationResult: {
       totalNumberOfPages: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfPages") : null,
       totalNumberOfEntries: paginationResult ? ebayXmlNonNegativeInteger(paginationResult, "TotalNumberOfEntries") : null,
@@ -1684,23 +1826,25 @@ async function readBoundedEbayTradingText(response: Response) {
 export async function ebayTradingRequest(input: {
   payload: SecretPayload;
   environment: "sandbox" | "production";
-  callName: "GetMemberMessages" | "GetItem" | "AddMemberMessageRTQ";
+  callName: EbayTradingCallName;
   marketplaceId: string;
   body: string;
 }) {
   assertProviderReadOnlyTransport(
     "POST",
-    input.callName === "GetItem" ? "ebay_trading_read" : undefined,
+    input.callName === "GetItem" || input.callName === "GetMemberMessages" || input.callName === "GetMyMessages"
+      ? "ebay_trading_read"
+      : undefined,
   );
   const accessToken = textValue(input.payload, "access_token");
   if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
   if (!ebayTradingCalls.has(input.callName)
-      || !new RegExp(`^<\\?xml[^>]*>\\s*<${input.callName}Request\\b`, "i").test(input.body)
-      || Buffer.byteLength(input.body, "utf8") > 64_000
-      || /<!DOCTYPE|<!ENTITY/i.test(input.body)) {
+    || !new RegExp(`^<\\?xml[^>]*>\\s*<${input.callName}Request\\b`, "i").test(input.body)
+    || Buffer.byteLength(input.body, "utf8") > 64_000
+    || /<!DOCTYPE|<!ENTITY/i.test(input.body)) {
     throw new Error("EBAY_TRADING_REQUEST_INVALID");
   }
-  const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
+  const response = await providerFetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -1780,7 +1924,7 @@ export async function exchangeEbayOAuthToken(input: {
   } else {
     throw new Error("EBAY_OAUTH_GRANT_MISSING");
   }
-  const response = await fetch(`${ebayEnvironment(input.environment).api}/identity/v1/oauth2/token`, {
+  const response = await providerFetch(`${ebayEnvironment(input.environment).api}/identity/v1/oauth2/token`, {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -1801,7 +1945,7 @@ export async function fetchEbayTradingUserIdentity(input: {
 }) {
   assertProviderReadOnlyTransport("POST", "ebay_trading_read");
   if (!input.accessToken.trim()) throw new Error("EBAY_ACCOUNT_IDENTITY_VERIFICATION_FAILED");
-  const response = await fetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
+  const response = await providerFetch(`${ebayEnvironment(input.environment).api}/ws/api.dll`, {
     method: "POST",
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),
@@ -1872,7 +2016,7 @@ export async function ensureEbayAccessToken(
     clientSecret,
     ruName,
     refreshToken,
-    scopes: ebayDefaultScopes,
+    scopes: ebayOAuthScopes(payload),
   });
   const nextAccessToken = textValue(remote.data, "access_token");
   if (!remote.response.ok || !nextAccessToken) throw new Error("EBAY_TOKEN_REFRESH_FAILED");
@@ -1915,7 +2059,7 @@ export async function elevenstSellerXmlTransport(input: {
   const apiKey = textValue(input.payload, "api_key");
   if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
   if (!input.path.startsWith("/rest/")) throw new Error("ELEVENST_PATH_INVALID");
-  const response = await fetch(`https://api.11st.co.kr${input.path}`, {
+  const response = await providerFetch(`https://api.11st.co.kr${input.path}`, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(20_000),
@@ -1938,42 +2082,52 @@ export async function elevenstSellerXmlTransport(input: {
   return { response, xml, bytes };
 }
 
+export type ElevenstXmlTransportEvidence = {
+  method: "GET" | "POST" | "PUT";
+  requestBytesSha256: string;
+  responseBodySha256: string;
+  responseBodyBytes: number;
+};
+
+export function elevenstXmlTransportEvidence(input: {
+  method: "GET" | "POST" | "PUT";
+  path: string;
+  body?: string;
+  bytes: ArrayBuffer;
+}): ElevenstXmlTransportEvidence {
+  return {
+    method: input.method,
+    requestBytesSha256: createHash("sha256")
+      .update(`${input.method}\n${input.path}\n${input.body ?? ""}`, "utf8")
+      .digest("hex"),
+    responseBodySha256: createHash("sha256")
+      .update(Buffer.from(input.bytes))
+      .digest("hex"),
+    responseBodyBytes: input.bytes.byteLength,
+  };
+}
+
 export async function elevenstSellerXmlRequest(input: {
   payload: SecretPayload;
   method: "GET" | "POST" | "PUT";
   path: string;
   body?: string;
 }) {
-  assertProviderReadOnlyTransport(input.method);
-  const apiKey = textValue(input.payload, "api_key");
-  if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
-  if (!input.path.startsWith("/rest/")) throw new Error("ELEVENST_PATH_INVALID");
-  const response = await fetch(`https://api.11st.co.kr${input.path}`, {
+  const { response, xml, bytes } = await elevenstSellerXmlTransport(input);
+  const transportEvidence = elevenstXmlTransportEvidence({
     method: input.method,
-    cache: "no-store",
-    signal: boundedChannelRequestSignal(20_000),
-    headers: {
-      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
-      "content-type": "text/xml;charset=UTF-8",
-      openapikey: apiKey,
-      "user-agent": "SellerPilot-11st-SellerAPI-Connector/1.0",
-    },
+    path: input.path,
     body: input.body,
+    bytes,
   });
-  const bytes = await response.arrayBuffer();
-  let xml = "";
-  try {
-    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
-    xml = new TextDecoder(/charset\s*=\s*["']?utf-?8/.test(contentType) ? "utf-8" : "euc-kr").decode(bytes);
-  } catch {
-    xml = new TextDecoder().decode(bytes);
-  }
   const documentRoot = /^(?:\s*<\?xml[^>]*>\s*)?<([A-Za-z_][\w.:-]*)\b/u.exec(xml)?.[1] ?? "";
   const resultCode = elevenstNamespacedXmlValue(xml, "resultCode")
     || elevenstNamespacedXmlValue(xml, "ResultCode")
+    || elevenstNamespacedXmlValue(xml, "result_code")
     || elevenstNamespacedXmlValue(xml, "ErrorCode");
   const resultMessage = elevenstNamespacedXmlValue(xml, "resultMessage")
     || elevenstNamespacedXmlValue(xml, "ResultMessage")
+    || elevenstNamespacedXmlValue(xml, "result_text")
     || elevenstNamespacedXmlValue(xml, "ErrorMessage")
     || elevenstNamespacedXmlValue(xml, "message")
     || elevenstNamespacedXmlValue(xml, "AuthMessage");
@@ -1986,7 +2140,7 @@ export async function elevenstSellerXmlRequest(input: {
     "prdStatCd", "minorSelCnYn", "selStatCd", "selStatNm", "prdImage01", "prdImage02",
     "prdImage03", "prdImage04", "htmlDetail", "selPrdClfCd", "aplBgnDy", "aplEndDy",
     "selPrc", "prdSelQty", "dlvCnAreaCd", "dlvWyCd", "dlvCstInstBasiCd", "bndlDlvCnYn",
-    "dlvCstPayTypCd", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail",
+    "dlvCstPayTypCd", "dlvCst1", "addrSeqOut", "addrSeqIn", "rtngdDlvCst", "exchDlvCst", "asDetail", "rtngExchDetail",
   ] as const;
   const product = Object.fromEntries(productScalarFields.flatMap((field) => {
     const value = productNode ? elevenstNamespacedXmlValue(productNode, field) : "";
@@ -2004,12 +2158,12 @@ export async function elevenstSellerXmlRequest(input: {
   }
   const certificationGroups = productNode
     ? elevenstXmlNodes(productNode, "ProductCertGroup").flatMap((groupNode) => {
-        const crtfGrpTypCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpTypCd");
-        const crtfGrpObjClfCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpObjClfCd");
-        return crtfGrpTypCd && crtfGrpObjClfCd
-          ? [{ crtfGrpTypCd, crtfGrpObjClfCd }]
-          : [];
-      })
+      const crtfGrpTypCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpTypCd");
+      const crtfGrpObjClfCd = elevenstNamespacedXmlValue(groupNode, "crtfGrpObjClfCd");
+      return crtfGrpTypCd && crtfGrpObjClfCd
+        ? [{ crtfGrpTypCd, crtfGrpObjClfCd }]
+        : [];
+    })
     : [];
   if (certificationGroups.length) product.ProductCertGroup = certificationGroups;
   const products = elevenstXmlNodes(xml, "product").slice(0, 500).map((node) => ({
@@ -2023,20 +2177,28 @@ export async function elevenstSellerXmlRequest(input: {
     text: "",
     data: {
       accepted: response.ok && acceptedCode,
+      transportEvidence,
       ...(resultCode ? { resultCode: resultCode.slice(0, 80) } : {}),
       ...(resultMessage ? { resultMessage: resultMessage.slice(0, 300) } : {}),
       ...(productNo ? { productNo: productNo.slice(0, 80) } : {}),
       ...(Object.keys(product).length ? { product } : {}),
       ...(input.method === "GET"
         && input.path.startsWith("/rest/prodmarketservice/sellerprodcode/")
-        && !resultCode
-        && !productNo
         ? {
-            lookupDocumentRoot: documentRoot.slice(0, 80),
-            lookupBodyBytes: bytes.byteLength,
-          }
+          lookupDocumentRoot: documentRoot.slice(0, 80),
+          lookupBodyBytes: bytes.byteLength,
+        }
         : {}),
       products,
+      ...(input.method === "GET" && input.path.startsWith("/rest/prodmarketservice/prodmarket/stck/")
+        ? {
+          stockDocumentRoot: documentRoot,
+          stocks: elevenstXmlNodes(xml, "ProductStock").map((node) => Object.fromEntries(
+            ["prdNo", "prdStckNo", "stckQty", "optWght", "sellerStockCd", "prdStckStatCd"].map((field) =>
+              [field, elevenstNamespacedXmlValue(node, field)]),
+          )),
+        }
+        : {}),
     },
   } satisfies RemoteResponse;
 }
@@ -2053,7 +2215,7 @@ export async function ebayRequest(input: {
   const accessToken = textValue(input.payload, "access_token");
   if (!accessToken) throw new Error("EBAY_ACCESS_TOKEN_MISSING");
   const query = input.query?.toString() ?? "";
-  const response = await fetch(`${ebayEnvironment(input.environment).api}${input.path}${query ? `?${query}` : ""}`, {
+  const response = await providerFetch(`${ebayEnvironment(input.environment).api}${input.path}${query ? `?${query}` : ""}`, {
     method: input.method,
     cache: "no-store",
     signal: boundedChannelRequestSignal(15_000),

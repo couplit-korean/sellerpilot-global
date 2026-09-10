@@ -1,0 +1,165 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "supplement": 1,
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta.json",
+  "baseDeltaStatus": "integration_review_pending",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "integratedBaselineReadOnlyRoot": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "files": [
+    {
+      "path": "lib/channels/cs/ebay/cases-disputes.ts",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "d84c2a5e36943db9614da901420420926c0d00335a063cd472efd34c1a3f1558",
+      "afterSha256": "3f3421d21d2d13176891c2d4b36b37cd39a67678303fc0b08560e4c44de2c5e1",
+      "reason": "Add official resolution-case search, IAF Post-Order transport, 18-month/31-day gates, seller binding, and safe GET-only normalization."
+    },
+    {
+      "path": "lib/cs/channels/ebay/cases-disputes.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "aa6de71a6448c5248cb69588851d31a089c034a30cf43afb2121328f7e5fc9d9",
+      "reason": "Add exact client query and response schemas that preserve unavailable totals as null."
+    },
+    {
+      "path": "app/api/admin/cs/channels/ebay/cases-disputes/route.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "bc61b8cea7fc8bc93aba4e7ac157bb06ad7bfac1886ecf5fab4e2f697d560276",
+      "reason": "Add authenticated provider-certified seller-bound GET-only route."
+    },
+    {
+      "path": "app/cs/channels/ebay/cases-disputes.tsx",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "dd88e94e2f6fda8196e930d4ccc7220340cdf0ed0bdd42f7361aa3a46a9cd529",
+      "reason": "Add a read-only payment-dispute and resolution-case viewer with no business actions."
+    },
+    {
+      "path": "app/cs/channels/ebay/cases-disputes.module.css",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ccd5c881857d5f2d388c5e0c69a478f65416a226c35921196aa1aa0fdc9a1876",
+      "reason": "Style the isolated read-only viewer."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes.test.ts",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "140151e1d988413fca02e8f3aee07b6e1e776a988fe3a642594ad56644060b40",
+      "afterSha256": "79a04fe822052e4acd3b01b63461b5d26df4aaed677bce00211b3896b853f8a3",
+      "reason": "Cover IAF/Bearer separation, search pagination, seller mismatch, range, identity, and customer-data stripping."
+    },
+    {
+      "path": "tests/cs-ebay-cases-disputes-web.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "84a527182d320df8891a0590b31e05c82dc90c242642e924699fd977f0ccb7f6",
+      "reason": "Verify query/schema boundaries and the GET-only route/UI contract."
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-summary-page.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "5484d5b3398a43bf1f85164c9145ea078c76fb6f728a571e3d1e289b35a6c4c0",
+      "reason": "Fake payment-dispute summary fixture."
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-detail.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d8104c50d2792013df11bd9127b2ad463ce89a747dd9d222e9c9f8e2b8c2e905",
+      "reason": "Fake detail fixture containing fields that must be stripped."
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/payment-dispute-activity.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0f5d283e648e5b6fc8007a222b471290de34a4969d9bae2120b7e3e273cfd269",
+      "reason": "Fake activity fixture."
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/resolution-case-search-page.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "126305fb6f77d278d3a88554266af6ff1bdffe5a3ab0f8601ddc1a0301401e0a",
+      "reason": "Fake case-search page including buyer fields that must not escape normalization."
+    },
+    {
+      "path": "tests/fixtures/cs/ebay/resolution-case-detail.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "ed92847f7a6bfb4778045147acf51b0042972c2aa92c4f33eca17dd38d1ca161",
+      "reason": "Fake known-case fixture including raw history and address fields that must be stripped."
+    },
+    {
+      "path": "scripts/cs-ebay-cases-disputes-get-only.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8503f3e1a55255923f84d60754f301660e22016dc6ffd4954aa44bb85c1feb7f",
+      "reason": "Add default-dry-run production GET diagnostic with 18-month windowed case search and count-only output."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "24ede6c1e679eeebb630cea4ac8dd4289976e08d1705920a468b4807eb3bcde4",
+      "afterSha256": "447a3fd42d438f8f89bd59a44dd7e85305c83e3dd052149eb76cd5e49eecbf2e",
+      "reason": "Correct the case-search contract and record the current IAF case readback separately from unavailable surfaces."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/first-read-evidence.json",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "385c92cc746286db2a87906cacc2a8e419e02fafd2a0da2aed1b347a509e606a",
+      "afterSha256": "cc97825c415147847688f87df67ecafd3a0df4fb3e7e41f07033e68ffc4d32c5",
+      "reason": "Mark the initial no-case-search interpretation as superseded while preserving the original first-read observations."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/case-dispute-read-evidence.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "64f15e0983a7c7e35022a5b2da72416417fdfbf5af9922d989ec0c92fd1ef5bf",
+      "reason": "Record redacted aggregate provider readback without customer content or provider IDs."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-01.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "b131a8701c0ffd93229b817893db8ec5a4e337c4e2ad141267b7396d95d6bd4e",
+      "reason": "Record focused test, typecheck, lint, and actual-read evidence."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-shared-integration.md",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "e2869444b067201473a41f3b3923700cd8cfb8b42739d88d4f55b7a83419b01d",
+      "afterSha256": "346c13c8c57b0b3a624cd5fde25fa75ca21a4505e02c5928942820b0cf2708b8",
+      "reason": "Correct the official search availability, authorization scheme, and 18-month contract."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-normalization-web-supplement.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e0b84b92ac9886de1ff5de9eb84da62241de93a30a8adf6f1c889eee226b7a0d",
+      "reason": "Submit exact shared UI/capability patches, input/output contracts, SQL ledger draft, ordering, and regression tests."
+    }
+  ],
+  "sharedFilesModified": [],
+  "sharedProposalIds": ["EBAY-SHARED-002", "EBAY-SHARED-003"],
+  "verification": {
+    "focusedTests": { "tests": 13, "passed": 13, "failed": 0, "exitCode": 0 },
+    "typescript": { "exitCode": 0 },
+    "eslint": { "exitCode": 0 },
+    "jsonAndWhitespace": { "exitCode": 0 }
+  },
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "credentialRefresh": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true,
+    "listingInventoryShippingChanges": true
+  }
+}

@@ -1,0 +1,47 @@
+diff --git a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+index 65aae9b..4a3fcca 100644
+--- a/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
++++ b/app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts
+@@ -11,13 +11,13 @@ const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+ const inputSchema = z.object({ floorDate: day, throughDate: day }).strict()
+   .refine(value => value.floorDate <= value.throughDate, { message: "invalid range" });
+ const checkpointSchema = z.object({
+-  contract: z.literal("sellerpilot-smartstore-history-checkpoint/3"),
++  contract: z.literal("sellerpilot-smartstore-history-checkpoint/4"),
+   checkedAt: z.string().datetime({ offset: true }), environment: z.literal("production"),
+   totalWindowCount: z.number().int().nonnegative(), completedWindowCount: z.number().int().nonnegative(),
+   remainingWindowCount: z.number().int().nonnegative(), complete: z.boolean(),
+   nextWindow: z.object({ key: z.string(), fromDate: day, throughDate: day,
+     productItemKey: z.string(), customerItemKey: z.string() }).strict().nullable(),
+-  advanceRule: z.literal("same_succeeded_run_both_kinds_exact_full_kst_day_coverage"),
++  advanceRule: z.literal("current_cutoff_deferred_behind_older_exact_full_kst_day_windows"),
+ }).strict().refine(value => value.totalWindowCount > 0
+   && value.totalWindowCount === value.completedWindowCount + value.remainingWindowCount
+   && value.complete === (value.remainingWindowCount === 0)
+@@ -35,7 +35,7 @@ async function context(request: Request, input: unknown) {
+   if (credentialError || !credential || typeof credential.id !== "string") {
+     return { response: NextResponse.json({ message: "활성 스마트스토어 운영 credential을 확인해 주세요." }, { status: 409, headers }) } as const;
+   }
+-  const { data, error } = await admin.userClient.rpc("sellerpilot_next_smartstore_history_window_v3", {
++  const { data, error } = await admin.userClient.rpc("sellerpilot_next_smartstore_history_window_v4", {
+     p_floor_date: parsed.data.floorDate, p_through_date: parsed.data.throughDate,
+     p_credential_id: credential.id, p_environment: "production",
+   });
+@@ -52,7 +52,7 @@ async function context(request: Request, input: unknown) {
+   if (checkpoint.data.totalWindowCount !== Math.ceil(totalDays / 30)
+     || (next && (daysBefore < 0 || daysBefore % 30 !== 0 || next.fromDate !== expectedStart
+       || next.throughDate < floorDate || next.throughDate > throughDate
+-      || next.key !== `smartstore:history:v3:${next.fromDate}:${next.throughDate}`
++      || next.key !== `smartstore:history:v4:${next.fromDate}:${next.throughDate}`
+       || next.productItemKey !== `product:${next.fromDate}:${next.throughDate}`
+       || next.customerItemKey !== `customer:${next.fromDate}:${next.throughDate}`))) {
+     return { response: NextResponse.json({ message: "요청 기간과 스마트스토어 이력 조회 결과가 일치하지 않습니다." }, { status: 502, headers }) } as const;
+@@ -75,7 +75,7 @@ export async function POST(request: Request) {
+   if (!resolved.checkpoint.nextWindow) {
+     return NextResponse.json({ ok: true, checkpoint: resolved.checkpoint, historyBackfill: null }, { headers });
+   }
+-  const { data, error } = await resolved.admin.userClient.rpc("sellerpilot_start_smartstore_inquiry_history_window_v6", {
++  const { data, error } = await resolved.admin.userClient.rpc("sellerpilot_start_smartstore_inquiry_history_window_v7", {
+     p_from_date: resolved.checkpoint.nextWindow.fromDate,
+     p_through_date: resolved.checkpoint.nextWindow.throughDate,
+     p_credential_id: resolved.credentialId,

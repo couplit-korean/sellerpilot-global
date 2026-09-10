@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, ArrowRight, CheckCircle2, Clock3, ExternalLink, LoaderCircle, Package, RefreshCw, Search, ShieldCheck, X } from "lucide-react";
 import { channels } from "../channel-config";
-import type { OperationMarginScenario } from "../use-operations-snapshot";
+import type { OperationMarginScenario } from "../../lib/product-margin-scenario-contract";
 import { activeChannelKeys } from "../../lib/channels/catalog";
 import {
   COMPETITOR_MATCHER_VERSION,

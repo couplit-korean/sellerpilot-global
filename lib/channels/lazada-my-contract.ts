@@ -7,6 +7,7 @@ export const lazadaTargetCredentialChangedCode = "LAZADA_TARGET_CREDENTIAL_CHANG
 
 const lazadaOAuthStatePrefix = `sellerpilot-lazada-${lazadaTargetCountry}-`;
 const oauthNoncePattern = /^[A-Za-z0-9_-]{32}$/u;
+const credentialUuidPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu;
 
 export function lazadaOAuthState(nonce: string) {
   if (!oauthNoncePattern.test(nonce)) throw new Error("LAZADA_OAUTH_STATE_NONCE_INVALID");
@@ -18,6 +19,17 @@ export function lazadaCountryFromOAuthState(state: string) {
   return oauthNoncePattern.test(state.slice(lazadaOAuthStatePrefix.length))
     ? lazadaTargetCountry
     : "";
+}
+
+export function lazadaOAuthClaimedCredential(
+  cookieCredentialId: string,
+  claimedCredentialId: unknown,
+) {
+  if (!credentialUuidPattern.test(cookieCredentialId)
+      || typeof claimedCredentialId !== "string"
+      || !credentialUuidPattern.test(claimedCredentialId)
+      || claimedCredentialId !== cookieCredentialId) return "";
+  return claimedCredentialId;
 }
 
 export function lazadaAuthorizationUrl(input: {

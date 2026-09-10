@@ -20,7 +20,7 @@ test("11st update route binds the trusted snapshot RPC to listing, credential, a
 
 test("11st provider execution requires exact GET identity and unchanged trusted mutable fingerprint before PUT", async () => {
   const operations = await readFile(
-    new URL("../lib/channels/operations.ts", import.meta.url),
+    new URL("../lib/product-registration/channels/elevenst.ts", import.meta.url),
     "utf8",
   );
   const updateBranch = operations.slice(
@@ -29,9 +29,9 @@ test("11st provider execution requires exact GET identity and unchanged trusted 
   );
   assert.match(updateBranch, /\/rest\/prodmarketservice\/prodmarket\/\$\{productNo\}/);
   assert.match(updateBranch, /beforeMutableFingerprint === snapshotMutableFingerprint/);
-  assert.match(updateBranch, /if \(!beforeStep\.ok\) return/);
+  assert.match(updateBranch, /if \(!beforeStep\.ok\)\s+return/);
   assert.match(updateBranch, /method:\s*"PUT"[\s\S]*\/rest\/prodservices\/product\/\$\{productNo\}/);
-  assert.ok(updateBranch.indexOf("if (!beforeStep.ok) return") < updateBranch.indexOf('method: "PUT"'));
+  assert.ok(updateBranch.search(/if \(!beforeStep\.ok\)\s+return/) < updateBranch.indexOf('method: "PUT"'));
 });
 
 test("11st serverless claim is fail-closed behind both DB policy and attested fixed-egress header", async () => {

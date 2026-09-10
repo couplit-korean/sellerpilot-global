@@ -1,0 +1,57 @@
+{
+  "baseCommit": "b71e46e",
+  "checkedAt": "2026-09-09T04:41:38Z",
+  "workerSnapshot": "8 active; Coupang cursor revision13; others unchanged",
+  "reviews": {
+    "shopee": "Independent implementation active; initial status only, no frozen submission yet.",
+    "lazada": "SellerSku duplicate preflight implementation active; no frozen submission yet.",
+    "smartstore": "General create input/identity implementation active; no frozen submission yet.",
+    "qoo10": "Owned 8cec1138 and common001r2/002r3 applied after preimage checks. Shared regression129/129, type/lint, boundaries40/28 passed. Local Next build passed. Live writes0.",
+    "coupang": "962fb0a/r2 has SKU-missing validation bypass and UI/runtime validation mismatch; corrective task sent. Not integrated.",
+    "elevenst": "0b77e214/r1 needs conflicting response product IDs rejected and official GET projection field mapping. Corrective task sent. Not integrated.",
+    "temu": "r1 actual patch SHA066ac21 differs from declared SHA08f4ba7; new immutable revision and official field evidence requested. Not integrated.",
+    "ebay": "r1 hardcodes Brand/Product aspects for all categories; dynamic taxonomy and applicable regression patch requested. Not integrated."
+  },
+  "statusSnapshotIds": [
+    "f37994c7f616edafbcad595d665b65626926935614e6f2c7668fbbb6a11c7179",
+    "8003aa59fe798a28158458527ee0a4cfaab6f57dbe4b9d4e9e32d65ecab494a6",
+    "56957e6cff5b79ef810024d7c3bc128e86dc013a98abd7adef64d446c8b54525",
+    "3921d984d452de1ef6fff2953c93ff1696ce2f445a1c42a0c864f9378ff5ce78",
+    "5e9425aebe5e272ce5b331b9dc10184e526f9227c5bd72cf16b9c538ef15be1c",
+    "9a5c82f5fe38654479642e09fc94c1cda263be49c93aba8f9d36503f8d039822",
+    "dc49e611e4df075280eda1029bdeff193051cb787bf4d21f51e46a3f85a12451",
+    "95de95625945843b13992bdff4a111b44d43220a70ec99b9167a65b3a43d77c2"
+  ],
+  "returnedProposalIds": {
+    "ceb6bb749ddddc7bf44de1d45a715044879a3f5e22da095c7db487ca9fc7b0bb": "temu",
+    "a446a175a7eee6e5b2d7b99dbb48380c8533a61b5730b97481cf50a85148984d": "temu",
+    "dfeeb0db1fa9ff4942a357207c8416561f1f8ebc6dca559ab2110543fca3e0c7": "coupang",
+    "4dc7ea96eb77d14172b43da264d5c2e0d91daa6e4ba089fb7e416e5fbf4a3be6": "elevenst",
+    "e32a57f999642b9495b460aeee32c66cd7ff54677b7d5255144b074a0713e83b": "ebay"
+  },
+  "qoo10Validation": {
+    "focusedAndShared": "129/129",
+    "domainIsolation": "40/40",
+    "channelIsolation": "28/28",
+    "typecheck": "passed",
+    "eslint": "passed",
+    "build": "passed"
+  },
+  "providerWrites": 0,
+  "productionDbWrites": 0,
+  "deployments": 0,
+  "integratedSnapshotIds": [
+    "fed5861f12e59b9ae6b62297eb4c82b32149cc4ccdb1c9a51d2da07da8e69e04",
+    "9b5342481d784ac1436955da3d291d513235c2f8ccfa6f4765aaadc7e2567a8a",
+    "764ff75f6e2cad517dd93a368bfb3ec3ff8b14535e20faa439dbe88962adb485",
+    "9c207e310b21191769d2069b242eca027c598bd667f48de72eff117cf21cbefd"
+  ],
+  "qoo10SourceCommit": "8cec1138d4c61e5a2a34c11d0fea9fa3baa1c35b",
+  "integratedFileHashes": {
+    "lib/product-registration/channels/qoo10.ts": "05ba35ffd7b577a55c2436f5dfa79b514ed5cd4b92b39db2b51956cea7eb7c9f",
+    "lib/channels/commerce-provider.ts": "cfa43324e40c10387fe80ec4e9e7a84b8c48d004b6bc341722fdd5f5fa6838e7",
+    "tests/qoo10-listing-create-preflight.test.ts": "0804fec3655ae30b96861f79ffda42083e7037f913a142e118ab9ebbfec9398f",
+    "tests/serverless-gateway-provider.test.ts": "b799048ae4980623228f865b697c3a24f0ff7263977015c0fa5050c796803c41",
+    "tests/channel-protocols.test.ts": "451f9252ee2de7cb286b3004b9f86c3c8c3aac999bf39a1bfd94965fe4e637e5"
+  }
+}

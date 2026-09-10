@@ -1,0 +1,18 @@
+{
+  "href": "https://api.ebay.com/sell/fulfillment/v1/payment_dispute_summary?limit=25&offset=0",
+  "limit": 25,
+  "offset": 0,
+  "total": 1,
+  "paymentDisputeSummaries": [
+    {
+      "paymentDisputeId": "fixture-dispute-1001",
+      "orderId": "fixture-order-2001",
+      "paymentDisputeStatus": "ACTION_NEEDED",
+      "reason": "TRANSACTION_NOT_RECOGNIZED",
+      "openDate": "2026-09-01T12:00:00.000Z",
+      "respondByDate": "2026-09-10T12:00:00.000Z",
+      "amount": { "value": "42.50", "currency": "USD" },
+      "buyerUsername": "fixture-buyer-must-not-reach-web"
+    }
+  ]
+}

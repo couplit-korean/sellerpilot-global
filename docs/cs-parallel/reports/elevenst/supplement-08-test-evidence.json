@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-08-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T16:12:16Z",
+  "checks": [
+    {
+      "name": "classifier-and-read-model-regression",
+      "runtime": "Node v22.23.2",
+      "command": "node --import tsx --test tests/cs-elevenst-contracts.test.ts tests/cs-elevenst-read-model.test.ts",
+      "exitCode": 0,
+      "passed": 10,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-elevenst-parallel-attempt",
+      "runtime": "Node v22.23.2",
+      "target": "/tmp/sellerpilot-elevenst-008-verify.FTOY4z",
+      "exitCode": 1,
+      "passed": 41,
+      "failed": 1,
+      "failure": "concurrent_next_dev_port_3214_collision",
+      "functionalAssertionFailure": false
+    },
+    {
+      "name": "isolated-auth-web-retry-after-port-release",
+      "runtime": "Node v22.23.2",
+      "exitCode": 0,
+      "passed": 1,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-elevenst-serial-regression",
+      "runtime": "Node v22.23.2",
+      "target": "/tmp/sellerpilot-elevenst-008-verify.FTOY4z",
+      "command": "node --import tsx --test --test-concurrency=1 tests/cs-elevenst*.test.ts tests/cs-elevenst*.test.mjs",
+      "exitCode": 0,
+      "passed": 42,
+      "failed": 0
+    },
+    {
+      "name": "typescript",
+      "command": "tsc --noEmit",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    },
+    {
+      "name": "changed-path-eslint",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    },
+    {
+      "name": "port-cleanup",
+      "port": 3214,
+      "listenersAfterTests": 0
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

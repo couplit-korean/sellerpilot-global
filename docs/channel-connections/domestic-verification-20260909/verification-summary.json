@@ -1,0 +1,51 @@
+{
+  "checkedAt": "2026-09-08T20:32:49.930351+00:00",
+  "baseCommit": "96c4328b3e929ebf6db42197a986413485bc34c2",
+  "allTypescript": {
+    "tests": 2966,
+    "pass": 2966,
+    "fail": 0,
+    "skipped": 0
+  },
+  "domainIsolation": {
+    "tests": 40,
+    "pass": 40,
+    "fail": 0,
+    "skipped": 0
+  },
+  "channelIsolation": {
+    "tests": 28,
+    "pass": 28,
+    "fail": 0,
+    "skipped": 0
+  },
+  "earlierSixFailureFiles": {
+    "tests": 71,
+    "pass": 71,
+    "fail": 0,
+    "skipped": 0
+  },
+  "countsOverlapDoNotSum": true,
+  "typecheck": "passed",
+  "changedFilesLint": "passed",
+  "localBuild": "passed",
+  "businessCrossDependencies": 0,
+  "channelCrossDependencies": 0,
+  "browserValidation": "unavailable: CUA getState timeout 30s,30s,15s",
+  "productionAccess": {
+    "project": "sqaoqucxakebqkiygdxb",
+    "cliManagementHttpStatus": 403,
+    "domesticListingsNotReadThisTurn": true
+  },
+  "providerCreates": 0,
+  "productionDataWrites": 0,
+  "vercelDeployments": 0,
+  "newDomesticLiveCompletions": 0,
+  "artifacts": {
+    "all-typescript.tap": "10f08c46f50bdae11eafb5fb31539cf7e163e0f093b9ccf8d722c2a9062fae2b",
+    "domain-isolation.tap": "5a8c119c12139e521d034b3a46b0dd8533c08ed38622105c856dd893976f7c4f",
+    "channel-isolation.tap": "864eab744400c39fd8096a739f32d2949ae966b747e35b03e37056655399a9db",
+    "prior-general-regressions.tap": "8729b6e2c37d947b40f7aa2ee5b1297c39aa44325daaa71085fb9368a2103a12",
+    "build.log": "2f227074ac410de13e8b5c02398aa73ace766855e807bf4d23c4be1bb77dcb56"
+  }
+}

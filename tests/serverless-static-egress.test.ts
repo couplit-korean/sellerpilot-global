@@ -101,12 +101,12 @@ test("Smartstore replies and channel writes fail before enqueue without both run
     readFile(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(replyRoute, /channel === "coupang" \|\| channel === "smartstore"/);
+  assert.match(replyRoute, /channel === "coupang" \|\| channel === "elevenst" \|\| channel === "smartstore"/);
   assert.match(replyRoute, /sellerpilot_service_serverless_static_egress_status/);
   assert.match(replyRoute, /databasePolicy\?\.\[channel\] !== true/);
-  assert.match(operationRoute, /if \(channel === "smartstore"\)/);
-  assert.match(operationRoute, /hasServerlessStaticEgressFor\([\s\S]*?\["smartstore"\]/);
-  assert.match(operationRoute, /databasePolicy\.smartstore !== true/);
+  assert.match(operationRoute, /channel === "smartstore"/);
+  assert.match(operationRoute, /hasServerlessStaticEgressFor\([\s\S]*?\[providerMutationStaticEgressChannel\]/);
+  assert.match(operationRoute, /databasePolicy\[providerMutationStaticEgressChannel\] !== true/);
   assert.match(operationRoute, /mode: "static_egress_required"/);
   assert.match(operationRoute, /mode: "serverless_worker_required"/);
 });
@@ -120,7 +120,7 @@ test("Coupang and 11st provider mutations fail before permit or queue creation w
     "const providerMutationStaticEgressChannel",
   );
   const preflightEnd = operationRoute.indexOf(
-    'if (channel === "smartstore")',
+    'if (channel === "smartstore" && isSmartstoreLocalReadOperation(operation))',
     preflightStart,
   );
   const preflight = operationRoute.slice(preflightStart, preflightEnd);
@@ -133,7 +133,7 @@ test("Coupang and 11st provider mutations fail before permit or queue creation w
 
   assert.ok(preflightStart >= 0, "the Korean provider-mutation preflight must exist");
   assert.ok(preflightEnd > preflightStart, "the preflight must be independently bounded");
-  assert.ok(preflightStart < permitIndex, "static egress must fail before an exact permit is armed");
+  assert.equal(permitIndex, -1, "retired product-specific permits must stay removed");
   assert.ok(preflightStart < attemptIndex, "static egress must fail before an attempt or job is created");
   assert.match(
     preflight,
@@ -230,8 +230,8 @@ test("Temu periodic inquiry gate composes after the eBay wrapper with closed pre
 
 test("manual sync and the 30-day UI disclose static egress blocking without local fallback", async () => {
   const [route, page] = await Promise.all([
-    readFile(new URL("../app/api/operations/sync/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/cs/sync/route.ts", import.meta.url), "utf8"),
+    Promise.all(["../app/cs/workspace.tsx", "../app/cs/use-workspace.ts"].map((file) => readFile(new URL(file, import.meta.url), "utf8"))).then((parts) => parts.join("\n")),
   ]);
   assert.match(route, /status === "fixed_egress_required"/);
   assert.match(route, /staticEgressReady: false/);
@@ -242,7 +242,7 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.doesNotMatch(route, /로컬 스케줄러에서 처리합니다/);
   const inquiryFlow = route.slice(
     route.indexOf("const inquiryResults"),
-    route.indexOf("const push ="),
+    route.indexOf("const needsAttention ="),
   );
   const unsupportedBranch = inquiryFlow.indexOf("if (!requests.length)");
   const temuEgressGate = inquiryFlow.indexOf('channel === "temu" && !hasServerlessStaticEgressFor');
@@ -254,10 +254,10 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
   assert.match(route, /Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다/);
   assert.match(
     route,
-    /쿠팡·스마트스토어 문의 조회에는 각 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다[\s\S]*두 채널의 30일 작업/,
+    /선택한 채널에 승인된 송신 경로 설정이 필요합니다[\s\S]*다른 채널은 별도로 과거 문의를 불러올 수 있습니다/,
   );
   assert.match(route, /fixedEgressRequired \? \{ blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED \} : \{\}/);
-  assert.match(page, /Vercel 고정 egress 설정 필요/);
+  assert.match(page, /채널 송신 경로 설정 필요/);
   assert.match(page, /작업을 접수하거나 자동 재시도하지 않습니다/);
   assert.match(page, /if \(parsedBackfill\) setInquiryHistoryBackfill\(parsedBackfill\)/);
 });

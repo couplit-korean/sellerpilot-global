@@ -5,6 +5,7 @@ export const SMARTSTORE_LOCAL_READ_OPERATIONS = [
   "categories.attributes",
   "categories.validate",
   "inquiries.list",
+  "listing.lineage.verify",
   "listing.publication.verify",
 ] as const;
 

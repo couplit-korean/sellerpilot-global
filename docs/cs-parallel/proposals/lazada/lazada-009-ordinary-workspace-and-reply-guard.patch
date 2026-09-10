@@ -1,0 +1,153 @@
+--- a/app/use-operations-snapshot.ts
++++ b/app/use-operations-snapshot.ts
+@@ -175,5 +175,7 @@ export type OperationTicket = {
+   latestInboundKey?: string | null;
+   ticketKind?: "conversation" | "after_sales";
++  latestMessageState?: "normal" | "recalled" | "conflict_review_required";
++  replyAllowed?: boolean;
+   delivery?: OperationTicketDelivery | null;
+   blockingDelivery?: OperationTicketDelivery | null;
+   status: "urgent" | "waiting" | "in_progress" | "resolved";
+--- a/app/page.tsx
++++ b/app/page.tsx
+@@ -620,6 +620,8 @@ type DisplayTicket = {
+   providerStatus: "unknown" | "waiting" | "answered" | "closed";
+   latestInboundKey: string | null;
+   ticketKind: "conversation" | "after_sales";
++  latestMessageState: "normal" | "recalled" | "conflict_review_required";
++  replyAllowed: boolean;
+   remoteReplySupported: boolean;
+   delivery: OperationTicketDelivery | null;
+   blockingDelivery: OperationTicketDelivery | null;
+@@ -5174,13 +5176,16 @@ function CsPage({
+   const statusTickets = channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, resolvedInitialStatus));
+   const filteredTickets = statusTickets.filter((ticket) => !query.trim() || matchesSearch(`${ticket.id} ${ticket.customer} ${ticket.channel} ${ticket.subject} ${ticket.preview}`, query));
+   const selected = selectedCsTicket(initialTicketId ? statusTickets : filteredTickets, initialTicketId ? initialTicket?.sourceId ?? "__missing_ticket__" : null);
+-  const selectedDraftTicket = selected ? { ...selected, sourceId: `${selected.sourceId}:${selected.latestInboundKey ?? "unbound"}` } : null;
+-  const reply = csReplyDraftValue(replyDrafts, selectedDraftTicket);
++  const selectedDraftTicket = selected ? { ...selected, sourceId: `${selected.sourceId}:${selected.latestInboundKey ?? "unbound"}:${selected.latestMessageState}` } : null;
++  const reply = selected?.latestMessageState === "normal" ? csReplyDraftValue(replyDrafts, selectedDraftTicket) : "";
+   const remoteReplyChannel = Boolean(selected
+     && selected.remoteReplySupported
+     && isRemoteCsReplyChannel(selected.channelKey));
+   const providerConfirmed = selected?.providerStatus === "answered" || selected?.providerStatus === "closed";
+-  const providerReplyReady = selected?.providerStatus === "waiting" && Boolean(selected.latestInboundKey);
++  const providerReplyReady = selected?.providerStatus === "waiting"
++    && Boolean(selected.latestInboundKey)
++    && selected.latestMessageState === "normal"
++    && selected.replyAllowed;
+   const delivery = selected ? effectiveDeliveryByTicket.get(selected.sourceId) ?? null : null;
+   const blockingDelivery = selected?.blockingDelivery ?? null;
+   const sending = Boolean(selected && sendingByTicket[selected.sourceId]);
+@@ -5189,7 +5194,11 @@ function CsPage({
+   const completed = selected?.status === "처리 완료";
+   const composerLocked = !selected || completed || !providerReplyReady || sending || deliveryActive || deliveryReconciliation || !remoteReplyChannel;
+   const composerLockReason = completed
+     ? "처리 완료된 문의는 수정하거나 재전송할 수 없습니다."
++    : selected?.latestMessageState === "recalled"
++      ? "최신 Lazada 고객 메시지가 회수되어 초안 생성과 답변 전송을 차단했습니다."
++    : selected?.latestMessageState === "conflict_review_required"
++      ? "같은 Lazada 메시지 ID에서 서로 다른 본문 또는 첨부가 관측됐습니다. 원문함에서 충돌을 검토해 주세요."
+     : providerConfirmed
+       ? "판매채널에서 이미 답변 또는 종료가 확인됐습니다. 채널 확인 후 처리 완료로 정리해 주세요."
+     : blockingDelivery
+@@ -5268,12 +5277,23 @@ function CsPage({
+   };
+   const sendReply = async () => {
+     if (!reviewReply) return;
+     const { ticket, reply: replyToSend } = reviewReply;
++    const currentTicket = displayTickets.find((candidate) => candidate.sourceId === ticket.sourceId);
++    if (!currentTicket
++      || currentTicket.latestInboundKey !== ticket.latestInboundKey
++      || currentTicket.latestMessageState !== "normal"
++      || !currentTicket.replyAllowed) {
++      setReviewReply(null);
++      notify(currentTicket?.latestMessageState === "recalled"
++        ? "최신 Lazada 메시지가 회수되어 답변을 접수하지 않았습니다."
++        : "문의 내용이 변경됐거나 충돌 상태입니다. 최신 문의를 다시 확인해 주세요.");
++      return;
++    }
+     if (sendingByTicket[ticket.sourceId]) return;
+     setReviewReply(null);
+     setSendingByTicket((current) => ({ ...current, [ticket.sourceId]: true }));
+     try {
+-      const queued = await onSend(ticket, replyToSend);
++      const queued = await onSend(currentTicket, replyToSend);
+       if (queued) {
+         setDeliveryByTicket((current) => ({ ...current, [ticket.sourceId]: queued.delivery }));
+         notify(queued.message);
+@@ -5355,3 +5375,3 @@ function CsPage({
+       <section className={`cs-workspace panel ${mobileConversationOpen || initialTicketId ? "mobile-conversation-open" : ""}`}>
+-        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => { const ticketDelivery = effectiveDeliveryByTicket.get(ticket.sourceId) ?? ticket.blockingDelivery ?? null; const deliveryMeta=ticketDelivery?replyDeliveryPresentation(ticketDelivery):null; return <button type="button" key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><span className="ticket-state-row"><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} />{ticketDelivery&&deliveryMeta ? <em className={`ticket-delivery-state ${deliveryMeta.tone}`}>{ticket.blockingDelivery?.jobId === ticketDelivery.jobId ? `이전 메시지 · ${deliveryMeta.label}` : deliveryMeta.label}</em> : null}</span></div></button>; })}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
++        <aside className="ticket-list"><div className="ticket-list-header"><div className="search-field"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="고객명, 문의번호, 내용 검색" aria-label="문의 검색" /></div></div><div className="ticket-tabs" role="tablist" aria-label="문의 처리 상태">{([{ key: "waiting", label: "미답변" }, { key: "in_progress", label: "처리 중" }, { key: "resolved", label: "완료" }] as const).map((tab) => <button type="button" role="tab" aria-selected={resolvedInitialStatus === tab.key} key={tab.key} className={resolvedInitialStatus === tab.key ? "active" : ""} onClick={() => applyFilters(initialChannel, tab.key)}>{tab.label}{tab.key === "waiting" && <span>{channelTickets.filter((ticket) => csTicketMatchesFilter(ticket, "waiting")).length}</span>}</button>)}</div>{filteredTickets.map((ticket) => { const ticketDelivery = effectiveDeliveryByTicket.get(ticket.sourceId) ?? ticket.blockingDelivery ?? null; const deliveryMeta=ticketDelivery?replyDeliveryPresentation(ticketDelivery):null; return <button type="button" key={ticket.sourceId} className={`ticket-item ${selected?.sourceId === ticket.sourceId ? "active" : ""}`} onClick={() => selectTicket(ticket)}><div className="ticket-avatar">{ticket.customer.charAt(0)}</div><div><div><b>{ticket.customer}</b><small>{ticket.time}</small></div><span><ChannelMark code={ticketChannelCodes[ticket.channel] ?? "Q"} size="sm" />{ticket.subject}</span><p>{ticket.preview}</p><span className="ticket-state-row"><StatusBadge status={ticket.replyDeliveryStatus === "reconciliation_required" ? "원장 확인 필요" : ticket.status} />{ticket.latestMessageState === "recalled" ? <StatusBadge status="메시지 회수" /> : ticket.latestMessageState === "conflict_review_required" ? <StatusBadge status="원문 충돌 검토" /> : null}{ticketDelivery&&deliveryMeta ? <em className={`ticket-delivery-state ${deliveryMeta.tone}`}>{ticket.blockingDelivery?.jobId === ticketDelivery.jobId ? `이전 메시지 · ${deliveryMeta.label}` : deliveryMeta.label}</em> : null}</span></div></button>; })}{filteredTickets.length === 0 && <div className="ticket-list-empty"><Inbox size={24} /><b>이 조건의 문의가 없습니다.</b><small>다른 상태나 채널을 선택해 주세요.</small></div>}</aside>
+         {!selected ? <article className="conversation conversation-empty"><div className="live-empty-state"><MessageCircleMore size={30} /><b>표시할 문의를 선택해 주세요.</b><small>목록이 비어 있으면 다른 상태 또는 채널 필터를 선택할 수 있습니다.</small></div></article> : <>
+@@ -5933,6 +5953,8 @@ export default function Home() {
+     providerStatus: ticket.providerStatus ?? "unknown",
+     latestInboundKey: ticket.latestInboundKey ?? null,
+     ticketKind: ticket.ticketKind ?? "conversation",
++    latestMessageState: ticket.latestMessageState ?? "normal",
++    replyAllowed: ticket.replyAllowed !== false,
+     remoteReplySupported: ticket.providerContext?.replySupported !== false,
+     delivery: ticket.delivery ?? null,
+     blockingDelivery: ticket.blockingDelivery ?? null,
+--- a/app/api/ai/support-reply/route.ts
++++ b/app/api/ai/support-reply/route.ts
+@@ -24,5 +24,8 @@ export async function POST(request: Request) {
+     if (error.message.includes("INQUIRY_CONTEXT_STALE")) {
+       return NextResponse.json({ message: "새 고객 메시지가 도착했습니다. 최신 문의를 다시 확인해 주세요." }, { status: 409 });
+     }
++    if (error.message.includes("LAZADA_IM_LATEST_MESSAGE_NOT_ACTIONABLE")) {
++      return NextResponse.json({ message: "회수됐거나 원문 충돌 상태인 Lazada 메시지에는 답변 초안을 만들 수 없습니다." }, { status: 409 });
++    }
+     return NextResponse.json({ message: "CLI 답변 초안 작업을 등록하지 못했습니다." }, { status: 500 });
+   }
+--- a/app/api/operations/snapshot/route.ts
++++ b/app/api/operations/snapshot/route.ts
+@@ -270,5 +270,8 @@ export async function POST(request: Request) {
+     if (parsed.data.action === "ticket_update" && mutationError.message.includes("REMOTE_REPLY_SUCCESS_REQUIRED")) {
+       return NextResponse.json({ message: "판매채널의 답변 또는 종료 상태가 아직 확인되지 않았습니다. 채널에서 결과를 확인해 주세요." }, { status: 409 });
+     }
++    if (parsed.data.action === "ticket_update" && mutationError.message.includes("LAZADA_IM_LATEST_MESSAGE_NOT_ACTIONABLE")) {
++      return NextResponse.json({ message: "회수됐거나 원문 충돌 상태인 Lazada 메시지에는 답변 초안을 저장하거나 완료 처리할 수 없습니다." }, { status: 409 });
++    }
+     if (parsed.data.action === "product_create" && mutationError.code === "23505") {
+       return NextResponse.json({
+--- a/app/api/admin/cs/reply/route.ts
++++ b/app/api/admin/cs/reply/route.ts
+@@ -89,4 +89,5 @@ function failureMessage(error: unknown) {
+   if (message.includes("CHANNEL_GATEWAY_REPLY_RECONCILIATION_REQUIRED")) return "이 문의의 이전 답변 접수 여부를 먼저 판매자센터에서 확인해야 합니다.";
+   if (message.includes("CHANNEL_GATEWAY_REPLY_PROVIDER_NOT_WAITING")) return "판매채널에서 이미 답변되었거나 종료된 문의입니다. 문의를 새로고침해 주세요.";
+   if (message.includes("CHANNEL_GATEWAY_REPLY_CONTEXT_STALE")) return "최신 고객 메시지 연결을 확인할 수 없습니다. 문의를 새로고침해 주세요.";
++  if (message.includes("CHANNEL_GATEWAY_REPLY_MESSAGE_NOT_ACTIONABLE")) return "회수됐거나 원문 충돌 상태인 Lazada 메시지에는 답변을 전송할 수 없습니다.";
+   if (/CREDENTIALS_MISSING|TOKEN_EXCHANGE_FAILED|ACCESS_TOKEN_MISSING/.test(message)) return "판매채널 인증값이 누락됐거나 만료됐습니다.";
+@@ -161,4 +162,12 @@ export async function POST(request: Request) {
+       { status: 409, headers: noStoreHeaders },
+     );
+   }
++  if (channel === "lazada" && (ticket.latest_message_state !== "normal" || ticket.reply_allowed !== true)) {
++    return NextResponse.json(
++      { message: ticket.latest_message_state === "recalled"
++        ? "최신 Lazada 고객 메시지가 회수되어 답변을 접수하지 않았습니다."
++        : "Lazada 원문 충돌을 검토하기 전에는 답변을 접수할 수 없습니다." },
++      { status: 409, headers: noStoreHeaders },
++    );
++  }
+   if (ticket.status === "resolved") {
+@@ -252,5 +261,5 @@ export async function POST(request: Request) {
+       status: /EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(message)
+         ? 429
+-        : /CHANNEL_GATEWAY_(?:STATIC_EGRESS_REQUIRED|REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED|PROVIDER_NOT_WAITING|CONTEXT_STALE))/.test(message)
++        : /CHANNEL_GATEWAY_(?:STATIC_EGRESS_REQUIRED|REPLY_(?:CONFLICT|LINEAGE_UNBOUND|RECONCILIATION_REQUIRED|PROVIDER_NOT_WAITING|CONTEXT_STALE|MESSAGE_NOT_ACTIONABLE))/.test(message)
+           ? 409
+           : 422,
+--- a/lib/channels/gateway.ts
++++ b/lib/channels/gateway.ts
+@@ -389,5 +389,8 @@ export async function enqueueInquiryReplyViaChannelGateway(input: {
+     if (/INQUIRY_LATEST_MESSAGE_UNBOUND|INQUIRY_CONTEXT_STALE/.test(enqueueError.message)) {
+       throw new Error("CHANNEL_GATEWAY_REPLY_CONTEXT_STALE");
+     }
++    if (enqueueError.message.includes("LAZADA_IM_LATEST_MESSAGE_NOT_ACTIONABLE")) {
++      throw new Error("CHANNEL_GATEWAY_REPLY_MESSAGE_NOT_ACTIONABLE");
++    }
+     if (/EBAY_ASQ_(?:RATE_LIMITED_75_PER_60_SECONDS|PROVIDER_COOLDOWN_100_SECONDS)/.test(enqueueError.message)) {
+       throw new Error(enqueueError.message.includes("PROVIDER_COOLDOWN")

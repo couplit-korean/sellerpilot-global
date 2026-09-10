@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-02-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T12:50:01Z",
+  "supersedesForIntegration": "elevenst-supplement-01-20260908",
+  "checks": [
+    {
+      "name": "review-fixed-common-clone-regression",
+      "target": "current integrated source clone plus proposed patch",
+      "exitCode": 0,
+      "passed": 23,
+      "failed": 0,
+      "counterexamples": [
+        "5001 Alimi rows return accepted=false and explicit incomplete/error",
+        "status 04 with an older reply remains waiting",
+        "GET-only projection always exposes replySupported=false"
+      ]
+    },
+    {
+      "name": "dedicated-regression-with-auth-web",
+      "command": "node --import tsx --test tests/cs-elevenst-read-model.test.ts tests/cs-elevenst-isolated-db.test.ts tests/cs-elevenst-alimi-adapter.test.ts tests/cs-elevenst-contracts.test.ts tests/elevenst-product-qna.test.ts tests/cs-elevenst-isolated-auth-web.test.mjs",
+      "exitCode": 0,
+      "passed": 22,
+      "failed": 0
+    },
+    {
+      "name": "actual-isolated-auth-web-port-3214",
+      "command": "NODE_ENV=test node --import tsx scripts/cs-elevenst-isolated-auth-web-smoke.mjs --port=3214",
+      "exitCode": 0,
+      "webRuntime": "next-dev",
+      "missingBearerStatus": 401,
+      "invalidBearerStatus": 401,
+      "authorizedStatus": 200,
+      "databaseReadCount": 1,
+      "providerWrites": 0,
+      "productionDatabaseWrites": 0
+    },
+    {
+      "name": "owned-eslint",
+      "exitCode": 0
+    },
+    {
+      "name": "dedicated-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "current-integrated-typescript-after-qoo10-fix",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "review-fixed-common-patch-dry-run",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "command": "patch --dry-run -p1 < docs/cs-parallel/proposals/elevenst/elevenst-003-alimi-get-common.patch",
+      "exitCode": 0,
+      "patchedPaths": 4
+    },
+    {
+      "name": "review-fixed-common-clone-typescript",
+      "exitCode": 0
+    }
+  ],
+  "mutationEvidence": {
+    "localFixtureWrites": 1,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

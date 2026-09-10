@@ -1,0 +1,64 @@
+{
+  "checkedAt": "2026-09-08T20:01:26.606541+00:00",
+  "supabaseProject": "sqaoqucxakebqkiygdxb",
+  "source": "authenticated Supabase SQL editor and official developer portal DOM; no credential values queried",
+  "shopee": {
+    "credentialVersion": 80,
+    "credentialStatus": "active",
+    "lastCheck": "passed",
+    "lastCheckedAt": "2026-09-06T13:08:31.384895Z",
+    "targetCount": 8,
+    "currentTarget": "SG",
+    "shopId": "1719148844",
+    "listingStatus": "failed",
+    "remoteId": null,
+    "lastVerifiedAt": null,
+    "developerApp": "Couplit",
+    "developerAppStatus": "Online",
+    "livePartnerId": "2031489",
+    "livePartnerKeyExpiryDisplayed": "15/09/26 00:59",
+    "apiTestToolOfferedPartnerIds": [
+      "1228201"
+    ],
+    "apiTestToolLiveTestExecuted": false
+  },
+  "lazada": {
+    "credentialVersion": 5,
+    "credentialStatus": "active",
+    "lastCheck": "failed",
+    "lastCheckedAt": "2026-09-04T04:40:07.467798Z",
+    "sellerAccountVerifiedAt": null,
+    "marketTargetCount": 0,
+    "productListingCount": 0,
+    "developerPortalSession": "login required"
+  },
+  "temu": {
+    "activeCredentialCount": 0,
+    "marketTargetCount": 0,
+    "productListingCount": 0,
+    "application": "SellerPilot",
+    "appStatus": "Inactive",
+    "appInformation": "Approved",
+    "securityQuestionnaire": "Approved",
+    "complianceQuestionnaire": "Rejected",
+    "rejectionField": 4,
+    "rejectionReason": "Cloud service provider is incomplete."
+  },
+  "product": {
+    "id": "1ed4acfc-7603-48ec-a638-241131e59358",
+    "sku": "AUTO-780720401E2D4E4EA45F",
+    "name": "롯데 롯샌 파스퇴르 순우유맛 315g (6봉입)",
+    "detailPageVersion": 2,
+    "approvedVersion": 0
+  },
+  "websiteSession": "JEONGHUN profile shows administrator login; user login requested",
+  "newProviderCreateCalls": 0,
+  "productionDataWrites": 0,
+  "deploymentCalls": 0,
+  "successfulNewLiveRegistrations": 0,
+  "limits": [
+    "Saved checks are historical timestamps, not new provider diagnostics.",
+    "No live provider transport or buyer-visible result verified in this run.",
+    "Old remote IDs in historical documents are not current DB listing evidence."
+  ]
+}

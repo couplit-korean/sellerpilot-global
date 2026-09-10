@@ -1,0 +1,217 @@
+diff --git a/app/cs/archive.tsx b/app/cs/archive.tsx
+--- a/app/cs/archive.tsx
++++ b/app/cs/archive.tsx
+@@ -11,6 +11,7 @@ import { CsCredentialBindings } from "./credential-bindings";
+ import { CsImportStaging } from "./import-staging";
+ import { CsOrderBindingHealth } from "./order-binding-health";
+ import { CsRecoveryReadiness } from "./recovery-readiness";
++import { ShopeeHistoryProgress } from "./channels/shopee/history-progress";
+ import styles from "./archive.module.css";
+ 
+ type FetchArchive=(input:string,init?:RequestInit)=>Promise<Response>;
+@@ -44,5 +45,5 @@ export function CsArchive({authenticatedFetch}:{authenticatedFetch:FetchArchive}){
+   }catch{if(!abort.signal.aborted&&run===generation.current){setPage(null);setSelected(null);setError("보관 문의 검색에 실패했습니다. 다시 검색해 주세요.");}}
+   finally{if(run===generation.current)setLoading(false);}
+  };
+- return <><CsCapabilityInventory /><CsCredentialBindings authenticatedFetch={authenticatedFetch} /><CsScopeHealth authenticatedFetch={authenticatedFetch} /><CsOrderBindingHealth authenticatedFetch={authenticatedFetch} /><CsHistoryCoverage authenticatedFetch={authenticatedFetch} /><CsImportStaging authenticatedFetch={authenticatedFetch} /><CsRecoveryReadiness authenticatedFetch={authenticatedFetch} /><LazadaRawInbox authenticatedFetch={authenticatedFetch} /><LazadaQuarantine authenticatedFetch={authenticatedFetch} /><details className={`panel ${styles.archive}`}><summary>전체 보관 문의 검색 · 과거 대화 보기</summary>
++ return <><CsCapabilityInventory /><CsCredentialBindings authenticatedFetch={authenticatedFetch} /><CsScopeHealth authenticatedFetch={authenticatedFetch} /><CsOrderBindingHealth authenticatedFetch={authenticatedFetch} /><CsHistoryCoverage authenticatedFetch={authenticatedFetch} /><ShopeeHistoryProgress authenticatedFetch={authenticatedFetch} /><CsImportStaging authenticatedFetch={authenticatedFetch} /><CsRecoveryReadiness authenticatedFetch={authenticatedFetch} /><LazadaRawInbox authenticatedFetch={authenticatedFetch} /><LazadaQuarantine authenticatedFetch={authenticatedFetch} /><details className={`panel ${styles.archive}`}><summary>전체 보관 문의 검색 · 과거 대화 보기</summary>
+   <p>이미 수집한 문의와 판매자 답변을 전체 기간에서 검색합니다. 기간은 한국 시간의 문의 등록일 기준입니다.</p>
+diff --git a/lib/channels/protocols.ts b/lib/channels/protocols.ts
+--- a/lib/channels/protocols.ts
++++ b/lib/channels/protocols.ts
+@@ -17,15 +17,22 @@ import {
+ 
+ export type SecretPayload = Record<string, unknown>;
+ 
++export type CredentialRefreshTarget = {
++  channel: "shopee";
++  targetType: "shop" | "merchant";
++  targetId: string;
++};
++
+ export type CredentialRefreshSnapshot = {
+   payload: SecretPayload;
+   expiresAt: string | null;
+   oauthComplete?: boolean;
+   recoveryOnly?: boolean;
++  target?: CredentialRefreshTarget;
+ };
+ 
+ type CredentialRefreshHandler = (refresh: CredentialRefreshSnapshot) => void | Promise<void>;
+-type ExternalMutationStartHandler = () => void | Promise<void>;
++type ExternalMutationStartHandler = (target?: CredentialRefreshTarget) => void | Promise<void>;
+ 
+ export type RemoteResponse = {
+   response: Response;
+@@ -618,6 +625,11 @@ async function ensureShopeeTargetAccessToken(
+   if (requestedTargetId && !selectedTarget) throw new Error(targetType === "shop" ? "SHOPEE_SHOP_NOT_AUTHORIZED" : "SHOPEE_MERCHANT_NOT_AUTHORIZED");
+   const selectedPayload = selectedTarget ? projectShopeeTarget(payload, selectedTarget) : payload;
+   const selectedTargetId = textValue(selectedPayload, targetKey);
++  const refreshTarget: CredentialRefreshTarget = {
++    channel: "shopee",
++    targetType,
++    targetId: selectedTargetId,
++  };
+   if ((storedAccountIdentity || requireProviderIdentity)
+       && expectedAccountIdentity.subject.startsWith("shopee:shop:")
+       && (targetType !== "shop"
+@@ -642,9 +654,13 @@ async function ensureShopeeTargetAccessToken(
+         throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+       }
+       const attestedPayload = withProviderAccountIdentity(selectedPayload, expectedAccountIdentity);
+-      await onExternalMutationStart?.();
++      await onExternalMutationStart?.(refreshTarget);
+       const credentialExpiresAt = textValue(payload, "authorization_expires_at") || null;
+-      await onCredentialRefresh({ payload: attestedPayload, expiresAt: credentialExpiresAt });
++      await onCredentialRefresh({
++        payload: attestedPayload,
++        expiresAt: credentialExpiresAt,
++        target: refreshTarget,
++      });
+       return { payload: attestedPayload, refreshed: true as const, credentialExpiresAt };
+     }
+     return { payload: selectedPayload, refreshed: false as const, credentialExpiresAt: textValue(payload, "authorization_expires_at") || null };
+@@ -662,7 +678,7 @@ async function ensureShopeeTargetAccessToken(
+     throw new Error("PROVIDER_ACCOUNT_IDENTITY_STAGE_UNAVAILABLE");
+   }
+ 
+-  await onExternalMutationStart?.();
++  await onExternalMutationStart?.(refreshTarget);
+   const remote = await exchangeShopeeOAuthToken({
+     environment,
+     partnerId,
+@@ -703,5 +720,6 @@ async function ensureShopeeTargetAccessToken(
+       expiresAt: credentialExpiresAt,
+       recoveryOnly: true,
++      target: refreshTarget,
+     });
+   }
+   if ((storedAccountIdentity || requireProviderIdentity) && targetType === "shop") {
+@@ -718,7 +736,7 @@ async function ensureShopeeTargetAccessToken(
+     assertShopeeShopProfileTarget(profile.data, targetId, { acceptSignedRequestBinding: true });
+   }
+   if (onExternalMutationStart && onCredentialRefresh) {
+-    await onExternalMutationStart();
++    await onExternalMutationStart(refreshTarget);
+   }
+   const refreshPayload = withProviderAccountIdentity(refreshedTokenPayload, expectedAccountIdentity);
+   const refresh = {
+@@ -726,6 +744,10 @@ async function ensureShopeeTargetAccessToken(
+     refreshed: true as const,
+     credentialExpiresAt,
+   };
+-  await onCredentialRefresh?.({ payload: refresh.payload, expiresAt: refresh.credentialExpiresAt });
++  await onCredentialRefresh?.({
++    payload: refresh.payload,
++    expiresAt: refresh.credentialExpiresAt,
++    target: refreshTarget,
++  });
+   return refresh;
+ }
+diff --git a/lib/channels/serverless-gateway-provider.ts b/lib/channels/serverless-gateway-provider.ts
+--- a/lib/channels/serverless-gateway-provider.ts
++++ b/lib/channels/serverless-gateway-provider.ts
+@@ -45,6 +45,7 @@ import {
+   shopeeRequest,
+   textValue,
+   type CredentialRefreshSnapshot,
++  type CredentialRefreshTarget,
+   type SecretPayload,
+ } from "./protocols";
+ import {
+@@ -165,5 +166,5 @@ export const SERVERLESS_GATEWAY_READ_MATRIX = serverlessReadMatrix;
+ export type ServerlessGatewayExecutionHooks = {
+-  beginCredentialMutation: () => Promise<void>;
++  beginCredentialMutation: (target?: CredentialRefreshTarget) => Promise<void>;
+   beginOAuthProviderCall?: () => Promise<void>;
+   stageCredentialRefresh: (refresh: CredentialRefreshSnapshot) => Promise<void>;
+   beginProviderMutation: () => Promise<void>;
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -25,5 +25,6 @@ import { LazadaOAuthProviderFailureError } from "./provider-oauth-runtime";
+ import {
+   type CredentialRefreshSnapshot,
++  type CredentialRefreshTarget,
+ } from "./protocols";
+ import {
+   executeServerlessGatewayProviderJob,
+@@ -76,6 +77,8 @@ const LEGACY_EBAY_CLAIM_RPC = "sellerpilot_claim_ebay_asq_serverless_job";
+ const TOUCH_RPC = "sellerpilot_touch_serverless_cs_job";
+ const BEGIN_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_begin_serverless_cs_credential_refresh";
+ const PREPARE_CREDENTIAL_REFRESH_RPC = "sellerpilot_service_prepare_serverless_cs_credential_refresh";
++const BEGIN_SHOPEE_TARGET_REFRESH_RPC = "sellerpilot_service_begin_cs_shopee_target_refresh_v1";
++const PREPARE_SHOPEE_TARGET_REFRESH_RPC = "sellerpilot_service_prepare_cs_shopee_target_refresh_v1";
+ const BEGIN_LAZADA_OAUTH_PROVIDER_CALL_RPC =
+   "sellerpilot_service_mark_lazada_oauth_provider_call_started";
+ const BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation";
+@@ -576,14 +579,31 @@ async function beginCredentialMutation(
+   dependencies: ServerlessCsGatewayDependencies,
+   gatewayTokenHash: string,
+   job: ServerlessGatewayClaim,
++  target?: CredentialRefreshTarget,
+ ) {
+-  const begun = await callRpc(dependencies, BEGIN_CREDENTIAL_REFRESH_RPC, {
++  const begun = await callRpc(dependencies,
++    target?.channel === "shopee" ? BEGIN_SHOPEE_TARGET_REFRESH_RPC : BEGIN_CREDENTIAL_REFRESH_RPC, {
+     p_token_hash: gatewayTokenHash,
+     p_job_id: job.id,
+     p_claim_token: job.claim_token,
++    ...(target?.channel === "shopee" ? {
++      p_target_type: target.targetType,
++      p_target_id: target.targetId,
++    } : {}),
+   });
+   if (begun.error) throw new Error("gateway_credential_fence_unavailable");
+-  if (begun.data !== true) throw new GatewayOwnershipLostError();
++  if (target?.channel === "shopee") {
++    const value = recordValue(begun.data);
++    if (value?.contract !== "sellerpilot-shopee-target-refresh-claim/1") {
++      throw new GatewayOwnershipLostError();
++    }
++    if (value.status === "busy") throw new Error("SHOPEE_TARGET_REFRESH_BUSY");
++    if (value.status !== "acquired" && value.status !== "reused") {
++      throw new GatewayOwnershipLostError();
++    }
++  } else if (begun.data !== true) {
++    throw new GatewayOwnershipLostError();
++  }
+ }
+ 
+ async function stageCredentialRefresh(
+@@ -592,11 +609,17 @@ async function stageCredentialRefresh(
+   job: ServerlessGatewayClaim,
+   refresh: CredentialRefreshSnapshot,
+ ) {
+-  const staged = await callRpc(dependencies, PREPARE_CREDENTIAL_REFRESH_RPC, {
++  const target = refresh.target;
++  const staged = await callRpc(dependencies,
++    target?.channel === "shopee" ? PREPARE_SHOPEE_TARGET_REFRESH_RPC : PREPARE_CREDENTIAL_REFRESH_RPC, {
+     p_token_hash: gatewayTokenHash,
+     p_job_id: job.id,
+     p_claim_token: job.claim_token,
+-    p_secret_payload: refresh.payload,
++    ...(target?.channel === "shopee" ? {
++      p_target_type: target.targetType,
++      p_target_id: target.targetId,
++      p_candidate_payload: refresh.payload,
++    } : { p_secret_payload: refresh.payload }),
+     p_expires_at: refresh.expiresAt,
+     p_recovery_only: refresh.recoveryOnly === true,
+     p_oauth_complete: refresh.oauthComplete === true,
+@@ -1304,11 +1330,11 @@ export async function executeServerlessCsGateway(
+         await assertLeaseHealthy();
+       }
+     },
+-    beginCredentialMutation: async () => {
+-      externalMutationStarted = true;
+-      credentialMutationInFlight = true;
++    beginCredentialMutation: async (target) => {
+       await assertLeaseHealthy();
+-      await beginCredentialMutation(dependencies, gatewayTokenHash, job);
++      await beginCredentialMutation(dependencies, gatewayTokenHash, job, target);
+       await assertLeaseHealthy();
++      externalMutationStarted = true;
++      credentialMutationInFlight = true;
+     },
+     beginOAuthProviderCall: async () => {

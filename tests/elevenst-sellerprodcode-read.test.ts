@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
-  elevenstCookieSellerProductCode,
   readElevenstSellerProdcode,
 } from "../lib/channels/elevenst-sellerprodcode-read";
 import {
@@ -19,18 +18,6 @@ function xmlResponse(body: string, status = 200, contentType = "text/xml; charse
   return new Response(body, { status, headers: { "content-type": contentType } });
 }
 
-test("11st GET-only script decrypts vault in-process and never prints the key", async () => {
-  const source = await readFile(
-    new URL("../scripts/elevenst-sellerprodcode-get-only.mjs", import.meta.url),
-    "utf8",
-  );
-  assert.match(source, /sellerpilot_decrypt_credential/);
-  assert.match(source, /readElevenstSellerProdcode/);
-  assert.doesNotMatch(source, /from ["'].*live-channel-operation|executeChannelOperation|prodservices\/product/);
-  assert.doesNotMatch(source, /console\.log\([^\n]*api_key/);
-  assert.doesNotMatch(source, /api\.11st\.co\.kr[\s\S]{0,80}method:\s*"POST"/);
-});
-
 test("11st sellerprodcode read source is GET-only and cannot claim other channels", async () => {
   const source = await readFile(
     new URL("../lib/channels/elevenst-sellerprodcode-read.ts", import.meta.url),
@@ -42,10 +29,6 @@ test("11st sellerprodcode read source is GET-only and cannot claim other channel
   assert.doesNotMatch(source, /prodservices\/product|listing\.create|executeChannelOperation/);
   assert.doesNotMatch(source, /claim_channel_gateway|gateway:worker|live-channel-operation/);
   assert.doesNotMatch(source, /shopeeRequest|qoo10Request|coupangRequest|ebayRequest/);
-});
-
-test("11st cookie SKU constant matches the launch SKU", () => {
-  assert.equal(elevenstCookieSellerProductCode, cookieSku);
 });
 
 test("11st sellerprodcode GET treats official namespaced empty products as absent without prodmarket or POST", async () => {

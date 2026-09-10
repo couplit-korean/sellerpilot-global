@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-01-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T12:26:41Z",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-elevenst",
+  "branch": "codex/cs-elevenst-v1",
+  "firstDeltaSha256": "87c6387ce145e1ac196f7b692023faaf0eb5481ab14098bed883a1a4fc33ddf6",
+  "focusedSourceSetSha256": "3aaa369fbeb71239f603c4ac7623d74f4c27a6b4417d934c1c03571d8e1cd817",
+  "proposedCommonAfterSetSha256": "40d016efb48aa52ebf55b2d48446c83d768018ee10985101e435fb638a959c38",
+  "checks": [
+    {
+      "name": "dedicated-focused-regression",
+      "command": "node --import tsx --test tests/cs-elevenst-read-model.test.ts tests/cs-elevenst-isolated-db.test.ts tests/cs-elevenst-alimi-adapter.test.ts tests/cs-elevenst-contracts.test.ts tests/elevenst-product-qna.test.ts",
+      "exitCode": 0,
+      "passed": 21,
+      "failed": 0
+    },
+    {
+      "name": "owned-eslint",
+      "command": "eslint lib/channels/elevenst-inquiries.ts lib/cs/channels/elevenst/read-model.ts lib/cs/channels/elevenst/isolated-db.ts tests/cs-elevenst-read-model.test.ts tests/cs-elevenst-isolated-db.test.ts tests/cs-elevenst-alimi-adapter.test.ts",
+      "exitCode": 0
+    },
+    {
+      "name": "dedicated-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "common-patch-dry-run",
+      "command": "patch --dry-run -p1 < docs/cs-parallel/proposals/elevenst/elevenst-003-alimi-get-common.patch",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "exitCode": 0,
+      "patchedPaths": 4
+    },
+    {
+      "name": "proposed-common-integrated-clone-regression",
+      "command": "node --import tsx --test tests/cs-elevenst-alimi-common-integration.test.ts tests/cs-elevenst-read-model.test.ts tests/cs-elevenst-isolated-db.test.ts tests/cs-elevenst-alimi-adapter.test.ts tests/cs-elevenst-contracts.test.ts tests/elevenst-product-qna.test.ts",
+      "exitCode": 0,
+      "passed": 22,
+      "failed": 0
+    },
+    {
+      "name": "proposed-common-integrated-clone-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 2,
+      "blockedByUnrelatedExistingErrors": [
+        "lib/channels/qoo10-inquiries.ts:80 TS2339 inq_type",
+        "lib/channels/qoo10-inquiries.ts:80 TS2339 question_no",
+        "lib/channels/qoo10-inquiries.ts:80 TS2339 seq_no"
+      ]
+    }
+  ],
+  "notRepeated": {
+    "suite": "first-delta 174-test full focus suite",
+    "reason": "The first-delta source set is unchanged; the delegation forbids repeating the identical-source full suite. Only the new supplement and the affected Product Q&A file were rerun."
+  },
+  "mutationEvidence": {
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "sellerOfficeWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

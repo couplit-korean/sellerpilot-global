@@ -1,0 +1,76 @@
+{
+  "contract": "sellerpilot-lazada-ordinary-workspace-reply-guard-verification/1",
+  "checkedAt": "2026-09-09T00:28:41+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "node": "v22.23.2",
+  "canonical008Migration": {
+    "path": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/supabase/migrations/20260908145831_cs_lazada_v3_conversation_projection.sql",
+    "sha256": "834e098b9509360d9b3286b34237cb8c086ab5627896488cfa61c523425942cb",
+    "executedInPGlite": true
+  },
+  "runs": [
+    {
+      "command": "SELLERPILOT_INTEGRATED_ROOT=/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908 /Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+      "environment": "isolated PGlite; production normalizer; actual V3 ingest; canonical 008 migration; proposed 009 SQL; exported conversation GET",
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 1844.700667
+    },
+    {
+      "command": "SELLERPILOT_INTEGRATED_ROOT=/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908 /Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test --test-concurrency=1 tests/cs-lazada-ingest-v3-db.test.mjs tests/cs-lazada-runtime-v3-patch.test.mjs tests/cs-lazada-authenticated-raw-projection-get.test.mjs tests/cs-lazada-v3-conversation-projection-get.test.mjs tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+      "environment": "isolated PGlite and actual exported admin GET routes",
+      "tests": 18,
+      "passed": 18,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 41881.510834
+    },
+    {
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/eslint/bin/eslint.js tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+      "exitCode": 0
+    },
+    {
+      "command": "git apply --check /Users/kimchangheemac/dev/sellerpilot-cs-lazada/docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.patch",
+      "environment": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "exitCode": 0
+    }
+  ],
+  "verified": {
+    "productionNormalizerUsed": true,
+    "actualV3IngestRpcUsed": true,
+    "canonical008ConversationGetUsed": true,
+    "recallBeforeMessageConverges": true,
+    "messageBeforeRecallConverges": true,
+    "sameIdChangedBodyIsConflict": true,
+    "sameMessageReplayDoesNotAddRows": true,
+    "ordinaryWorkspaceRecallBodyMasked": true,
+    "ordinaryWorkspaceRecallTranslationMasked": true,
+    "ordinaryWorkspaceRecallDraftMasked": true,
+    "ordinaryWorkspaceConflictStateVisible": true,
+    "ordinaryWorkspaceConflictDraftMasked": true,
+    "recalledAiDraftRejected": true,
+    "conflictAiDraftRejected": true,
+    "recalledReplyEnqueueRejected": true,
+    "conflictReplyEnqueueRejected": true,
+    "normalAiDraftAndReplyEnqueuePreserved": true,
+    "exactTicketLineageProjection": true,
+    "sharedPatchAppliesToCurrentIntegration": true
+  },
+  "environmentNote": {
+    "firstCommand": "node --import tsx --test tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+    "firstExitCode": 127,
+    "reason": "The non-login shell did not include node in PATH.",
+    "replacement": "Used the existing Node 22.23.2 binary without installing dependencies or changing the lockfile."
+  },
+  "productionMutation": false,
+  "providerMutation": false,
+  "credentialMutation": false,
+  "realCustomerReply": false,
+  "commitOrPush": false
+}

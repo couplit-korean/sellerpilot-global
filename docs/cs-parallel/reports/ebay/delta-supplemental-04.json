@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "supplement": 4,
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-03.json",
+  "baseDeltaStatus": "locally_integrated_by_coordinator_without_production_release",
+  "fixedPriorManifestHashes": {
+    "docs/cs-parallel/reports/ebay/delta.json": "1bed81dff1522af64b302417b106468e2f5f0e35cd1e89385142f2bcef8c945c",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-01.json": "1071d5b02f4a2f66b24cc172ae789b446fc66dbe503149bc1dc167881106d31b",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-02.json": "2ce9f39b1dfe5be454e2778b9ea81cb9f526468d51c5d0f216cfe3e951cd0404",
+    "docs/cs-parallel/reports/ebay/delta-supplemental-03.json": "363c7ba5aee6f8ef20858c0bca740b30e2fc3f0838f62bd9d9a15c14dcb64e58"
+  },
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "files": [
+    {
+      "path": "lib/channels/cs/ebay/case-dispute-gateway.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "780e4a54a5f208d33c8ab92992057226b767b1f65bed43b56a7d47832f69dde7",
+      "reason": "Plan sequential 18-month resolution recovery, recent overlap, and Payment Dispute cursors and execute only strict GET pages with claim-fenced observations."
+    },
+    {
+      "path": "lib/channels/ebay-inquiries.ts",
+      "change": "modify_after_base_delta",
+      "beforeSha256": "eeccbf6828667964b0c32b805a6893a1f2a3c590588588781c8162415d65af00",
+      "afterSha256": "443f967a8f6ea60fe6d4c9e48a804aefbe747889bd6d18e1db2ddcd820b877d9",
+      "reason": "Route only the strict case_dispute_history inquiries.list kind to the dedicated GET-only executor."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-durable-collection.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "4a42e951ea08ef2a93bd2a6c39d31b119d6a93e701e7310f4b9d851ef5295808",
+      "reason": "Provide service-only durable enqueue, continuation completion, claim fencing, native-ID dedupe, and per-resource 403/404 isolation."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-durable-scheduler.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7d5018dad112f06ce14e50826ade93c1fbfd0e546f279c20e7479dd5bc8c84c0",
+      "reason": "Submit an apply-checkable minimal patch for the eBay dispatcher and shared scheduler worker without writing shared source."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/ebay/cases-disputes-durable-scheduler-supplement-04.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "7b7743b92b48acf95aa31fdcc2f0ee6a60a86c0e1dee616d192cacc8e498ad94",
+      "reason": "Document exact inputs, outputs, lifecycle, migration order, current shared hashes, evidence, and operational limits."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-gateway.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d2c037cdade3d31ccd6e50ea05abbb53b4ef9f9f05683d30eaecc3e247abde3f",
+      "reason": "Verify scheduler windows, provider-first continuation, Payment cursor, unavailable observation, and action-shaped argument rejection."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-durable-collection-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "096a0ba3551fed6987279de14028568bb192d0931b5beda2b179933924d5de91",
+      "reason": "Execute the durable SQL in PGlite for plan validation, resume, idempotency, per-resource blocking, credential rotation, ACL, and claim fencing."
+    },
+    {
+      "path": "tests/cs-ebay-case-dispute-durable-scheduler-patch.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "43e5247bcec3514bd5882c4f000a89aad3b37363651091b70ee896fdc940ee0a",
+      "reason": "Keep the shared patch minimal and require claim-fenced ordering, blocker propagation, service-only SQL, and GET-only execution."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/status.md",
+      "change": "modify_after_supplemental_03",
+      "beforeSha256": "07f83488935b081d828e88556b6ca0c758463682a3cced061f0bca87b4e5f0af",
+      "afterSha256": "6d5cc97d95fe90b0e6e75b2002edd6bee0ebce3104ea64ff60e98cabffce2def",
+      "reason": "Separate durable local scheduler evidence from shared integration, production database, provider, and operational completion."
+    },
+    {
+      "path": "docs/cs-parallel/reports/ebay/test-evidence-supplemental-04.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f9e959838b154c4cf3b522e54d1f96b4ee60f05f46c146d045f713a1bd4d558b",
+      "reason": "Record failed-first SQL and lint corrections, final isolated tests, integrated migration compatibility, typecheck, lint, patch check, and mutation exclusions."
+    }
+  ],
+  "sharedFilesModified": [],
+  "sharedProposalIds": ["EBAY-SHARED-006"],
+  "integrationTarget": {
+    "serverlessGatewayBeforeSha256": "bbfd8b122b6dcf3f0d16f760ccd75f7a2db34fd14252c4d2ce1fec3a259d5286",
+    "ebayInquiriesBeforeSha256": "eeccbf6828667964b0c32b805a6893a1f2a3c590588588781c8162415d65af00",
+    "currentIntegratedLedgerSha256": "c271569f05a2aa83f907da4499bb845ac505eadcd0cdc538b290cccf8e9aed1f"
+  },
+  "verification": {
+    "durableSchedulerSqlPatchContract": { "tests": 12, "passed": 12, "failed": 0, "exitCode": 0 },
+    "currentIntegratedLedgerCompatibility": { "tests": 4, "passed": 4, "failed": 0, "exitCode": 0 },
+    "combinedFocusedTests": { "tests": 37, "passed": 37, "failed": 0, "exitCode": 0 },
+    "patchApplyCheck": { "exitCode": 0 },
+    "typescript": { "exitCode": 0 },
+    "eslint": { "exitCode": 0 },
+    "jsonWhitespaceAndHashes": { "exitCode": 0 }
+  },
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "credentialRefresh": true,
+    "actualProviderReadDuringSupplemental04": true,
+    "realBrowserSession": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true,
+    "sharedSourceWrite": true
+  }
+}

@@ -1,0 +1,104 @@
+diff --git a/lib/cs/order-binding-health.ts b/lib/cs/order-binding-health.ts
+--- a/lib/cs/order-binding-health.ts
++++ b/lib/cs/order-binding-health.ts
+@@ -1,2 +1,5 @@
+ import{z}from"zod";import{activeChannelKeys}from"../channels/catalog";
+-export const csOrderBindingHealthSchema=z.object({contract:z.literal("sellerpilot-cs-order-binding-health/1"),checkedAt:z.string().datetime({offset:true}),matchingRule:z.literal("same_owner_channel_exact_external_order_and_credential"),csCommerceMutationAllowed:z.literal(false),groups:z.array(z.object({channel:z.enum(activeChannelKeys),status:z.enum(["exact","unmatched","unverified_credential","not_applicable"]),count:z.number().int().nonnegative()}).strict()).max(100)}).strict();export type CsOrderBindingHealth=z.infer<typeof csOrderBindingHealthSchema>;
++const status=z.enum(["exact","unmatched","unverified_credential","not_applicable","ambiguous_product_orders","invalid_product_order_list","contract_mismatch"]);const group=z.object({channel:z.enum(activeChannelKeys),status,count:z.number().int().nonnegative()}).strict();
++export const csOrderBindingHealthV1Schema=z.object({contract:z.literal("sellerpilot-cs-order-binding-health/1"),checkedAt:z.string().datetime({offset:true}),matchingRule:z.literal("same_owner_channel_exact_external_order_and_credential"),csCommerceMutationAllowed:z.literal(false),groups:z.array(group).max(100)}).strict();
++export const smartstoreOrderBindingHealthV2Schema=z.object({contract:z.literal("sellerpilot-cs-smartstore-order-binding-health/2"),checkedAt:z.string().datetime({offset:true}),projectionContract:z.literal("smartstore-cs-order-binding-projection/1"),matchingRule:z.literal("same_owner_channel_exact_product_order_and_credential"),automaticOrderLinkState:z.literal("exact"),csCommerceMutationAllowed:z.literal(false),groups:z.array(group.extend({channel:z.literal("smartstore")}).strict()).max(7)}).strict();
++export const csOrderBindingHealthSchema=z.object({contract:z.literal("sellerpilot-cs-order-binding-health/2"),checkedAt:z.string().datetime({offset:true}),matchingRule:z.literal("preserve_v1_other_channels_and_project_smartstore_exact_product_order"),smartstoreProjectionContract:z.literal("smartstore-cs-order-binding-projection/1"),csCommerceMutationAllowed:z.literal(false),groups:z.array(group).max(100)}).strict();export type CsOrderBindingHealth=z.infer<typeof csOrderBindingHealthSchema>;
+diff --git a/app/api/admin/cs/order-bindings/route.ts b/app/api/admin/cs/order-bindings/route.ts
+--- a/app/api/admin/cs/order-bindings/route.ts
++++ b/app/api/admin/cs/order-bindings/route.ts
+@@ -1 +1 @@
+-import{NextResponse}from"next/server";import{authenticateAdminRequest,isAdminApiError}from"../../../../../lib/admin-api";import{csOrderBindingHealthSchema}from"../../../../../lib/cs/order-binding-health";export const runtime="nodejs";const headers={"cache-control":"private, no-store, max-age=0"};export async function GET(request:Request){const admin=await authenticateAdminRequest(request,{timeoutMs:8_000});if(isAdminApiError(admin))return admin;const{data,error}=await admin.userClient.rpc("sellerpilot_read_cs_order_binding_health_v1");if(error)return NextResponse.json({message:"CS 주문 결속을 읽지 못했습니다."},{status:503,headers});const parsed=csOrderBindingHealthSchema.safeParse(data);return parsed.success?NextResponse.json(parsed.data,{headers}):NextResponse.json({message:"CS 주문 결속 형식을 확인하지 못했습니다."},{status:502,headers});}
++import{NextResponse}from"next/server";import{authenticateAdminRequest,isAdminApiError}from"../../../../../lib/admin-api";import{csOrderBindingHealthSchema,csOrderBindingHealthV1Schema,smartstoreOrderBindingHealthV2Schema}from"../../../../../lib/cs/order-binding-health";export const runtime="nodejs";const headers={"cache-control":"private, no-store, max-age=0"};export async function GET(request:Request){const admin=await authenticateAdminRequest(request,{timeoutMs:8_000});if(isAdminApiError(admin))return admin;const[legacyRead,smartstoreRead]=await Promise.all([admin.userClient.rpc("sellerpilot_read_cs_order_binding_health_v1"),admin.userClient.rpc("sellerpilot_read_smartstore_cs_order_binding_health_v2")]);if(legacyRead.error||smartstoreRead.error)return NextResponse.json({message:"CS 주문 결속을 읽지 못했습니다."},{status:503,headers});const legacy=csOrderBindingHealthV1Schema.safeParse(legacyRead.data),smartstore=smartstoreOrderBindingHealthV2Schema.safeParse(smartstoreRead.data);if(!legacy.success||!smartstore.success)return NextResponse.json({message:"CS 주문 결속 형식을 확인하지 못했습니다."},{status:502,headers});const parsed=csOrderBindingHealthSchema.safeParse({contract:"sellerpilot-cs-order-binding-health/2",checkedAt:smartstore.data.checkedAt,matchingRule:"preserve_v1_other_channels_and_project_smartstore_exact_product_order",smartstoreProjectionContract:smartstore.data.projectionContract,csCommerceMutationAllowed:false,groups:[...legacy.data.groups.filter(group=>group.channel!=="smartstore"),...smartstore.data.groups]});return parsed.success?NextResponse.json(parsed.data,{headers}):NextResponse.json({message:"CS 주문 결속 형식을 확인하지 못했습니다."},{status:502,headers});}
+diff --git a/app/cs/order-binding-health.tsx b/app/cs/order-binding-health.tsx
+--- a/app/cs/order-binding-health.tsx
++++ b/app/cs/order-binding-health.tsx
+@@ -1,2 +1,2 @@
+-"use client";import{useEffect,useRef,useState}from"react";import{channelCatalog}from"../../lib/channels/catalog";import{csOrderBindingHealthSchema,type CsOrderBindingHealth}from"../../lib/cs/order-binding-health";import styles from"./lazada-quarantine.module.css";type Fetch=(input:string,init?:RequestInit)=>Promise<Response>;const labels={exact:"정확 결속",unmatched:"주문 미발견",unverified_credential:"계정 미검증",not_applicable:"주문번호 없음"}as const;
++"use client";import{useEffect,useRef,useState}from"react";import{channelCatalog}from"../../lib/channels/catalog";import{csOrderBindingHealthSchema,type CsOrderBindingHealth}from"../../lib/cs/order-binding-health";import styles from"./lazada-quarantine.module.css";type Fetch=(input:string,init?:RequestInit)=>Promise<Response>;const labels={exact:"정확 결속",unmatched:"주문 미발견",unverified_credential:"계정 미검증",not_applicable:"주문번호 없음",ambiguous_product_orders:"복수·중복 상품주문 확인",invalid_product_order_list:"상품주문 참조 오류",contract_mismatch:"정규화·원장 불일치"}as const;
+-export function CsOrderBindingHealth({authenticatedFetch}:{authenticatedFetch:Fetch}){const[data,setData]=useState<CsOrderBindingHealth|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState("");const abort=useRef<AbortController|null>(null);useEffect(()=>()=>abort.current?.abort(),[]);const load=async()=>{abort.current?.abort();const controller=new AbortController();abort.current=controller;setLoading(true);setError("");try{const response=await authenticatedFetch("/api/admin/cs/order-bindings",{cache:"no-store",signal:controller.signal});if(!response.ok)throw new Error();const next=csOrderBindingHealthSchema.parse(await response.json());if(!controller.signal.aborted)setData(next);}catch{if(!controller.signal.aborted){setData(null);setError("주문 결속을 조회하지 못했습니다.");}}finally{if(!controller.signal.aborted)setLoading(false);}};return <details className={`panel ${styles.panel}`}><summary>CS·주문·배송 경계</summary><p>같은 계정·채널의 정확한 외부 주문번호만 읽기 연결합니다. CS 계보가 상품·배송 mutation을 생성하는 것은 차단됩니다.</p><button type="button" className="filter-button" disabled={loading} onClick={()=>void load()}>{loading?"조회 중…":"주문 결속 조회"}</button>{error?<p role="alert">{error}</p>:null}<div className={styles.messages}>{data?.groups.map(group=><article key={`${group.channel}:${group.status}`}><header><strong>{channelCatalog[group.channel].name}</strong><span>{labels[group.status]}</span></header><p>{group.count}건</p></article>)}</div></details>;}
++export function CsOrderBindingHealth({authenticatedFetch}:{authenticatedFetch:Fetch}){const[data,setData]=useState<CsOrderBindingHealth|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState("");const abort=useRef<AbortController|null>(null);useEffect(()=>()=>abort.current?.abort(),[]);const load=async()=>{abort.current?.abort();const controller=new AbortController();abort.current=controller;setLoading(true);setError("");try{const response=await authenticatedFetch("/api/admin/cs/order-bindings",{cache:"no-store",signal:controller.signal});if(!response.ok)throw new Error();const next=csOrderBindingHealthSchema.parse(await response.json());if(!controller.signal.aborted)setData(next);}catch{if(!controller.signal.aborted){setData(null);setError("주문 결속을 조회하지 못했습니다.");}}finally{if(!controller.signal.aborted)setLoading(false);}};return <details className={`panel ${styles.panel}`}><summary>CS·주문·배송 경계</summary><p>같은 계정·채널의 정확한 상품주문번호 1개만 읽기 연결합니다. CS 계보가 상품·배송 mutation을 생성하는 것은 차단됩니다.</p><button type="button" className="filter-button" disabled={loading} onClick={()=>void load()}>{loading?"조회 중…":"주문 결속 조회"}</button>{error?<p role="alert">{error}</p>:null}<div className={styles.messages}>{data?.groups.map(group=><article key={`${group.channel}:${group.status}`}><header><strong>{channelCatalog[group.channel].name}</strong><span>{labels[group.status]}</span></header><p>{group.count}건</p></article>)}</div></details>;}
+diff --git a/app/api/admin/cs/channels/smartstore/history-resume/route.ts b/app/api/admin/cs/channels/smartstore/history-resume/route.ts
+new file mode 100644
+--- /dev/null
++++ b/app/api/admin/cs/channels/smartstore/history-resume/route.ts
+@@ -0,0 +1,75 @@
++import { NextResponse } from "next/server";
++import { z } from "zod";
++import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../../../../lib/admin-api";
++
++export const runtime = "nodejs";
++const headers = { "cache-control": "private, no-store, max-age=0" };
++const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
++  const parsed = new Date(`${value}T00:00:00Z`);
++  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
++});
++const inputSchema = z.object({ floorDate: day, throughDate: day }).strict()
++  .refine(value => value.floorDate <= value.throughDate, { message: "invalid range" });
++const checkpointSchema = z.object({
++  contract: z.literal("sellerpilot-smartstore-history-checkpoint/1"),
++  checkedAt: z.string().datetime({ offset: true }), environment: z.literal("production"),
++  totalWindowCount: z.number().int().nonnegative(), completedWindowCount: z.number().int().nonnegative(),
++  remainingWindowCount: z.number().int().nonnegative(), complete: z.boolean(),
++  nextWindow: z.object({ key: z.string(), fromDate: day, throughDate: day,
++    productItemKey: z.string(), customerItemKey: z.string() }).strict().nullable(),
++  advanceRule: z.literal("both_product_and_customer_completed_reconciled_zero_unprocessed"),
++}).strict();
++async function context(request: Request, input: unknown) {
++  const admin = await authenticateAdminRequest(request, { timeoutMs: 8_000 });
++  if (isAdminApiError(admin)) return { response: admin } as const;
++  const parsed = inputSchema.safeParse(input);
++  if (!parsed.success) return { response: NextResponse.json({ message: "전체 이력 기간을 확인해 주세요." }, { status: 400, headers }) } as const;
++  const { data: rows, error: credentialError } = await admin.userClient.rpc("sellerpilot_list_credentials");
++  const credentials = Array.isArray(rows) ? rows.filter(row => row && typeof row === "object"
++    && row.channel === "smartstore" && row.environment === "production" && row.status === "active") : [];
++  const credential = credentials.length === 1 ? credentials[0] : null;
++  if (credentialError || !credential || typeof credential.id !== "string") {
++    return { response: NextResponse.json({ message: "활성 스마트스토어 운영 credential을 확인해 주세요." }, { status: 409, headers }) } as const;
++  }
++  const { data, error } = await admin.userClient.rpc("sellerpilot_next_smartstore_history_window_v1", {
++    p_floor_date: parsed.data.floorDate, p_through_date: parsed.data.throughDate,
++    p_credential_id: credential.id, p_environment: "production",
++  });
++  const checkpoint = checkpointSchema.safeParse(data);
++  if (error || !checkpoint.success) {
++    return { response: NextResponse.json({ message: "스마트스토어 이력 체크포인트를 읽지 못했습니다." }, { status: 503, headers }) } as const;
++  }
++  return { admin: admin as AdminApiContext, checkpoint: checkpoint.data } as const;
++}
++
++export async function GET(request: Request) {
++  const url = new URL(request.url);
++  const resolved = await context(request, {
++    floorDate: url.searchParams.get("floorDate"), throughDate: url.searchParams.get("throughDate"),
++  });
++  if ("response" in resolved) return resolved.response;
++  return NextResponse.json(resolved.checkpoint, { headers });
++}
++
++export async function POST(request: Request) {
++  const resolved = await context(request, await request.json().catch(() => null));
++  if ("response" in resolved) return resolved.response;
++  if (!resolved.checkpoint.nextWindow) {
++    return NextResponse.json({ ok: true, checkpoint: resolved.checkpoint, historyBackfill: null }, { headers });
++  }
++  const from = Date.parse(`${resolved.checkpoint.nextWindow.fromDate}T00:00:00Z`);
++  const through = Date.parse(`${resolved.checkpoint.nextWindow.throughDate}T00:00:00Z`);
++  const historyDays = Math.round((through - from) / 86_400_000) + 1;
++  if (historyDays < 7 || historyDays > 30) {
++    return NextResponse.json({ ok: false, checkpoint: resolved.checkpoint,
++      message: "1~6일 최종 조각은 기존 v4가 처리하지 못하므로 SmartStore exact-window enqueue v5가 필요합니다." }, { status: 409, headers });
++  }
++  const { data, error } = await resolved.admin.userClient.rpc("sellerpilot_start_inquiry_history_backfill_v4", {
++    p_channels: ["smartstore"], p_history_days: historyDays,
++    p_end_date: resolved.checkpoint.nextWindow.throughDate,
++  });
++  if (error) return NextResponse.json({ ok: false, checkpoint: resolved.checkpoint,
++    message: "다음 스마트스토어 읽기 창을 접수하지 못했습니다." }, { status: 409, headers });
++  return NextResponse.json({ ok: true, checkpointBeforeEnqueue: resolved.checkpoint,
++    historyBackfill: data, acceptedNotCompleted: true }, { status: 202, headers });
++}

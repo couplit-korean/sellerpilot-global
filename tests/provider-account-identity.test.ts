@@ -505,9 +505,9 @@ test("legacy eBay credential attests a valid access token with GetUser before be
 
 test("gateway worker removes cross-account Shopee fallback and requires provider identity on live refresh", async () => {
   const [worker, oauthRuntime, providerRuntime] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/provider-oauth-runtime.ts", import.meta.url), "utf8"),
-    readFile(new URL("../lib/channels/serverless-gateway-provider.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/commerce-provider.ts", import.meta.url), "utf8"),
   ]);
   const source = `${worker}\n${oauthRuntime}\n${providerRuntime}`;
   assert.doesNotMatch(source, /get_shops_by_partner|shopeePartnerRequest/);

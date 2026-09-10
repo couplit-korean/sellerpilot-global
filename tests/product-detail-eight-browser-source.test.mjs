@@ -84,6 +84,7 @@ test("PUT and channel publication validate and byte-bind the approved manifest b
     channelRoute,
     /executeViaChannelGateway\(\{[\s\S]{0,320}arguments: gatewayArguments/,
   );
+  assert.match(channelRoute, /replace it with a different GET context that can drop receipts/);
   assert.match(channelRoute, /mode: "approved_detail_image_manifest_required"/);
   assert.match(channelRoute, /mode: "approved_detail_image_assets_unavailable"/);
   assert.match(channelRoute, /mode: "approved_detail_image_binding_invalid"/);

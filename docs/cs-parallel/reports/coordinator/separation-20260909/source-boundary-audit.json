@@ -1,0 +1,19 @@
+{
+  "csToCommerce": [],
+  "commerceToCs": [],
+  "counts": {
+    "csToCommerce": 0,
+    "commerceToCs": 0
+  },
+  "moduleDependenciesPass": true,
+  "scope": "Business module dependency isolation; DB, lifecycle, and UI evidence are verified separately",
+  "compositionRoots": [
+    "app/page.tsx",
+    "app/api/channel-gateway/worker/complete/route.ts",
+    "lib/channels/operations.ts",
+    "lib/channels/serverless-gateway.ts",
+    "lib/channels/serverless-gateway-provider.ts",
+    "scripts/channel-gateway-worker.mjs",
+    "scripts/ai-cli-worker.mjs"
+  ]
+}

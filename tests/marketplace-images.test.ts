@@ -17,6 +17,7 @@ import {
   renderQoo10DetailDescription,
   upsertMarketplaceDetailImages,
 } from "../lib/channels/marketplace-images";
+import { assertListingShippingReady } from "../lib/channels/listing-shipping";
 import {
   listingPublicationProviderAssetEvidence,
   parseListingPublicationAssetBinding,
@@ -406,24 +407,90 @@ test("marketplace detail image upsert replaces its generated section instead of 
 });
 
 test("11st title-only update does not require or mutate marketplace image assets", async () => {
+  const shipping = {
+    shippingFeeKrw: 3_000,
+    shippingRule: "결제 후 1~2영업일 내 출고",
+    packagingRule: "완충재 포장",
+    shippingRuleReview: "확인",
+    packagingRuleReview: "확인",
+    coupangLeadTimeConfirmation: {
+      shippingRule: "결제 후 1~2영업일 내 출고",
+      outboundShippingTimeDay: 2,
+      source: "coupang-wing",
+      orderDateAndCalendarConfirmed: true,
+      approvedPromiseMatched: true,
+      sameDayShipping: false,
+    },
+  };
   const product = {
     prdNm: "수정 상품",
     prdImage01: "https://cdn.example.com/existing.jpg",
     htmlDetail: '<p>Existing detail</p><section data-sellerpilot-detail-images="true"><img src="https://cdn.example.com/existing-detail.jpg" /></section>',
   };
   const prepared = await prepareMarketplaceImages({} as SupabaseClient, "elevenst", {
-    sellerpilotAssets: { intentionallyInvalidForMediaWrite: true },
+    sellerpilotAssets: {
+      intentionallyInvalidForMediaWrite: true,
+      shipping,
+    },
     product: structuredClone(product),
     productPatch: { prdNm: "수정 상품" },
     productNo: "123456789",
     sellerpilotSnapshotMutableFingerprint: "a".repeat(64),
   });
   assert.deepEqual(prepared, {
+    sellerpilotAssets: { shipping },
     product,
     productPatch: { prdNm: "수정 상품" },
     productNo: "123456789",
     sellerpilotSnapshotMutableFingerprint: "a".repeat(64),
   });
+});
+
+test("marketplace image preparation keeps only shipping evidence for the worker guard", async () => {
+  const shipping = {
+    shippingFeeKrw: 3_000,
+    shippingRule: "결제 후 1~2영업일 내 출고",
+    policyReview: "확인",
+    shippingRuleReview: "확인",
+    packagingRule: "완충재 포장",
+    packagingRuleReview: "확인",
+    coupangLeadTimeConfirmation: {
+      shippingRule: "결제 후 1~2영업일 내 출고",
+      outboundShippingTimeDay: 2,
+      source: "coupang-wing",
+      orderDateAndCalendarConfirmed: true,
+      approvedPromiseMatched: true,
+      sameDayShipping: false,
+    },
+  };
+  // The 11st non-media update branch avoids network work while exercising the
+  // same common asset-consumption boundary used before every marketplace job.
+  const prepared = await prepareMarketplaceImages({} as SupabaseClient, "elevenst", {
+    sellerpilotAssets: {
+      shipping: { ...shipping, token: "must-not-survive-inside-shipping" },
+      galleryImageUrls: ["https://cdn.example.com/internal.jpg"],
+      contentMode: "ai_generated",
+      token: "must-not-survive",
+    },
+    product: { prdNm: "수정 상품" },
+    productPatch: { prdNm: "수정 상품" },
+    body: {
+      deliveryChargeType: "NOT_FREE",
+      deliveryCharge: 3_000,
+      freeShipOverAmount: 0,
+      items: [{ outboundShippingTimeDay: 2 }],
+    },
+  });
+
+  assert.deepEqual(prepared.sellerpilotAssets, { shipping });
+  const queuedArguments = JSON.parse(JSON.stringify(prepared)) as Record<string, unknown>;
+  assert.doesNotThrow(() => assertListingShippingReady("coupang", queuedArguments, "listing.create"));
+  const withoutShipping = structuredClone(queuedArguments);
+  delete withoutShipping.sellerpilotAssets;
+  assert.throws(
+    () => assertListingShippingReady("coupang", withoutShipping, "listing.create"),
+    /shipping-source-fee,shipping-lead-time-confirmation,shipping-lead-time-0,shipping-fee-contract/,
+  );
 });
 
 test("Qoo10 detail markup uses conservative div and image tags", () => {

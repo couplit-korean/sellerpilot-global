@@ -67,7 +67,7 @@ export async function POST(request: Request) {
   if (body.scope !== undefined && body.scope !== "product") {
     return NextResponse.json({ message: "지원하지 않는 AI 작업 범위입니다." }, { status: 400 });
   }
-  const productOnlyClaim = body.scope === "product";
+  const productOnlyClaim = true;
   if (!supportsLiveResultUploadAuthorization(version)) {
     return NextResponse.json({
       message: "AI 작업자를 최신 버전으로 재시작해 주세요.",
@@ -202,11 +202,6 @@ export async function POST(request: Request) {
   jobForWorker.terminalImageFailureContext = parsedTerminalImageFailureContext?.success
     ? parsedTerminalImageFailureContext.data
     : null;
-  if (job.kind === "support_reply") {
-    return NextResponse.json({ ...jobForWorker, request: jobRequest }, {
-      headers: { "cache-control": "no-store, max-age=0" },
-    });
-  }
   if (job.kind === "product_research" || jobRequest.research_only === true) {
     return NextResponse.json({
       ...jobForWorker,

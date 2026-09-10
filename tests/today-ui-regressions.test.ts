@@ -1,3 +1,4 @@
+import { csEventState, csEventNotifications } from "../app/cs/event-notifications";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
@@ -41,7 +42,7 @@ function activity(id: string, productName: string, status: RegistrationActivity[
     completedAt: null,
     elapsedSeconds: 0,
     channelCount: 1,
-    publishedCount: 0,
+    publishedCount: status === "completed" ? 1 : 0,
     failedCount: 0,
     blockedCount: 0,
     channels: [],
@@ -78,12 +79,15 @@ test("sale configuration has one shared dropdown contract", () => {
     { value: "상품 1+1", label: "1+1" },
     { value: "상품 6개", label: "6개" },
   ]);
-  assert.equal(normalizeProductSaleConfiguration("본품 1 + 1 세트"), "상품 1+1");
+  assert.equal(normalizeProductSaleConfiguration("상품 1+1"), "상품 1+1");
   assert.equal(normalizeProductSaleConfiguration("상품 1개"), "상품 1개");
-  assert.equal(normalizeProductSaleConfiguration("본품 1개"), "상품 1개");
-  assert.equal(normalizeProductSaleConfiguration("머그컵 1개"), "상품 1개");
-  assert.equal(normalizeProductSaleConfiguration("검정색 케이블 정리 클립 6개"), "상품 6개");
-  assert.equal(normalizeProductSaleConfiguration("클립 6개 세트"), "상품 6개");
+  assert.equal(normalizeProductSaleConfiguration("상품 6개"), "상품 6개");
+  assert.equal(normalizeProductSaleConfiguration("본품 1개"), "");
+  assert.equal(normalizeProductSaleConfiguration("머그컵 1개"), "");
+  assert.equal(normalizeProductSaleConfiguration("검정색 케이블 정리 클립 6개"), "");
+  assert.equal(normalizeProductSaleConfiguration("클립 6개 세트"), "");
+  assert.equal(normalizeProductSaleConfiguration("315g 1봉 안에 6개 소포장"), "");
+  assert.equal(normalizeProductSaleConfiguration("1박스 · 박스당 6봉 · 총 315g"), "");
   assert.equal(normalizeProductSaleConfiguration("상품 2개"), "");
   assert.equal(normalizeProductSaleConfiguration("상품 11개"), "");
 });
@@ -219,7 +223,7 @@ test("failed AI cards expose the exact retryable job while only orphan studio jo
   assert.equal(retryableRegistrationActivityJobId({ ...revision, id: `product:${jobId}` }), null);
 });
 
-test("registration progress uses terminal channel results and never invents an AI percentage", () => {
+test("registration success excludes failed and blocked channels and never invents an AI percentage", () => {
   const analyzing = activity("analysis", "분석 상품", "analyzing");
   analyzing.channelCount = 0;
   assert.deepEqual(registrationActivityProgress(analyzing), {
@@ -259,7 +263,7 @@ test("registration progress uses terminal channel results and never invents an A
   blocked.channelCount = 0;
   assert.deepEqual(registrationActivityProgress(blocked), {
     percent: 0,
-    label: "외부 권한 또는 필수값 보완이 필요해 작업이 중단되었습니다.",
+    label: "오류·필수값·승인 또는 권한 확인이 필요해 작업이 중단되었습니다.",
   });
 
   const publishingWithoutChannel = activity("publishing", "채널 없는 등록 상품", "publishing");
@@ -275,8 +279,8 @@ test("registration progress uses terminal channel results and never invents an A
   publishing.failedCount = 1;
   publishing.blockedCount = 1;
   assert.deepEqual(registrationActivityProgress(publishing), {
-    percent: 50,
-    label: "8개 채널 중 4개 처리 결과를 확인했습니다.",
+    percent: 25,
+    label: "등록 성공 2/8개 · 처리 결과 4/8개 (50%). 실패·확인 필요는 등록 성공에 포함하지 않습니다.",
   });
   const completedImageOperation = activity("revision:done", "완료 상품 수정", "completed");
   completedImageOperation.channelCount = 0;
@@ -347,9 +351,9 @@ test("order, delivery, CS, and synchronization events all enter the notification
   assert.deepEqual(operationEventNotifications(operationEventState(initial), next), [
     "주문 상태 변경: lazada O-1 · 배송 중",
     "새 주문: elevenst O-2 · 결제 완료",
-    "CS 상태 변경: qoo10 T-1 · 처리 완료",
     "shopee 주문 동기화 완료",
   ]);
+  assert.deepEqual(csEventNotifications(csEventState({ tickets: initial.tickets, syncStatus: [] }), { tickets: next.tickets, syncStatus: [] }), ["CS 상태 변경: qoo10 T-1 · 처리 완료"]);
 });
 
 test("product edit preserves sold-out stock and bounded promises cannot hang forever", async () => {
@@ -398,7 +402,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
     readFile(new URL("../app/commerce-ux-refactor.css", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-product-studio.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/internal/competitor-prices/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/api/operations/snapshot/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/admin/products/snapshot/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-push-manager.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/competitor-provider-snapshot.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/_publishing/competitor-price-v3-ui.tsx", import.meta.url), "utf8"),
@@ -411,7 +415,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /상품 상세에서 다시 수정/);
   assert.match(page, /params\.set\("status", nextRegistrationStatus\)/);
   assert.match(page, /registrationActivityFilterFromValue\(params\.get\("status"\) \?\? \(typeof state\.status === "string" \? state\.status : null\)\)/);
-  assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(payload, payload\.registrationActivities/);
+  assert.match(operationsSnapshotRoute, /reconcileRegistrationDashboardMetrics\(\s*payload,\s*payload\.registrationActivities/);
   assert.match(page, /activityState === "unavailable"[\s\S]*등록 진행 이력을 불러오지 못했습니다/);
   assert.match(page, /const enqueueScope = createPageAbortScope\(\[productResearchController\.signal\], 30_000/);
   assert.match(page, /signal: enqueueScope\.signal/);
@@ -423,7 +427,9 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /모바일 메모리를 보호하며 3장씩 처리/);
   assert.match(page, /for \(const url of objectUrls\) URL\.revokeObjectURL\(url\)/);
   assert.doesNotMatch(page, /Promise\.allSettled\(selected\.map/);
-  assert.match(page, /result\.failed === 0 && result\.reconciliationRequired === 0/);
+  const shippingWorkspace = await readFile(new URL("../app/shipping/workspace.tsx", import.meta.url), "utf8");
+  assert.match(page, /import \{ OrdersPage \} from "\.\/shipping\/workspace"/);
+  assert.match(shippingWorkspace, /result\.failed === 0 && result\.reconciliationRequired === 0/);
   assert.doesNotMatch(page, /sellingPrice: current\.sellingPrice > 0 \? current\.sellingPrice : 5000/);
   assert.doesNotMatch(page, /brandName: text\("brandName", "No Brand"\)/);
   assert.doesNotMatch(page, /manufacturer: text\("manufacturer", "공급처 확인 필요"\)/);
@@ -445,8 +451,8 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /disabled=\{remoteListingState !== "ready" \|\| productRevision\?\.status === "pending"/);
   assert.match(page, /resolveHydratedProductEditDraft\(current, incomingEditDraft/);
   assert.match(page, /editDraftDirtyRef\.current = true;[\s\S]{0,120}setEditDraft/);
-  assert.match(publishWorkbench, /<select required value=\{context\.manualFields\.packageContents\}/);
-  assert.doesNotMatch(publishWorkbench, /판매 구성품[^\n]*<input/);
+  assert.match(publishWorkbench, /<input required value=\{context\.manualFields\.packageContents\}/);
+  assert.match(publishWorkbench, /updateProductFact\("packageContents", event\.target\.value\)/);
   assert.match(commerceStyles, /\.registration-filter-strip\s*\{[^}]*grid-template-columns:\s*repeat\(6, minmax\(0, 1fr\)\)/);
   assert.match(mobileStyles, /@media \(min-width: 901px\) and \(max-width: 1200px\)[\s\S]*?\.overview-toolbar[\s\S]*?flex-direction: column/);
   const narrowFixedSidebarMedia = cssMediaBody(mobileStyles, "(min-width: 901px) and (max-width: 1080px)");
@@ -492,7 +498,7 @@ test("today dashboard routes and tablet overflow fix remain wired", async () => 
   assert.match(page, /competitorResearchControllerRef\.current !== competitorController/);
   assert.match(competitorPriceUi, /가격 다시 확인/);
   assert.match(page, /productResearchPendingStorageKey/);
-  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256\)/);
+  assert.match(page, /pendingProductResearchForOwner\(stored, ownerId, researchInput, sourcePhotoSha256, sourceSelectionSha256\)/);
   assert.match(page, /JSON\.stringify\(\{[\s\S]{0,220}version: 3,[\s\S]{0,120}jobId,[\s\S]{0,120}researchInput,[\s\S]{0,120}ownerId,[\s\S]{0,120}sourcePhotoSha256,[\s\S]{0,120}lineageReceipt,[\s\S]{0,220}imagePaths,[\s\S]{0,120}imageSpecs,[\s\S]{0,120}cleanupPaths/);
   assert.match(page, /productResearchControllerRef\.current\?\.abort\(\)/);
   assert.match(page, /detailRegenerationControllerRef = useRef<AbortController \| null>\(null\)/);
@@ -587,17 +593,17 @@ test("390px registration, CS, preview, and notification surfaces keep their mobi
 });
 
 test("Fold secondary controls keep a real 44px touch target", async () => {
-  const [page, acceptance, globals, mobileStyles, interactionStyles] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+  const [shipping, acceptance, globals, mobileStyles, interactionStyles] = await Promise.all([
+    readFile(new URL("../app/shipping/workspace.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/acceptance-checklist.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/mobile-optimization.css", import.meta.url), "utf8"),
     readFile(new URL("../app/interaction-layers.css", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /<label className="search-field"><Search[\s\S]{0,220}aria-label="주문 검색"/);
-  assert.match(page, /<label className="order-checkbox-control"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
-  assert.match(page, /<label className="bulk-order-selection"><input type="checkbox" aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(shipping, /<label className="search-field">\s*<Search[\s\S]{0,400}aria-label="주문 검색"/);
+  assert.match(shipping, /<label className="order-checkbox-control">\s*<input\s+type="checkbox"\s+aria-label="출고 가능 주문 전체 선택"/);
+  assert.match(shipping, /<label className="bulk-order-selection">\s*<input\s+type="checkbox"\s+aria-label="출고 가능 주문 전체 선택"/);
   assert.match(globals, /\.order-checkbox-control \{[^}]*width: 44px;[^}]*height: 44px/);
   assert.match(globals, /\.bulk-order-selection \{[^}]*min-height: 44px/);
   assert.match(mobileStyles, /\.bulk-order-bar > \.bulk-order-selection \{\s*width: 100%;\s*\}/);
@@ -605,4 +611,16 @@ test("Fold secondary controls keep a real 44px touch target", async () => {
   assert.match(mobileStyles, /\.acceptance-search input \{\s*min-height: 44px;\s*\}/);
   assert.match(interactionStyles, /\.template-form-grid \.template-default,[\s\S]{0,100}\.master-notification-toggle \{\s*min-height: 44px;\s*\}/);
   assert.match(interactionStyles, /\.master-notification-toggle input \{\s*flex: 0 0 auto;\s*\}/);
+});
+
+// A terminal aggregate may include provider failures; it is not evidence of publication.
+test("terminal failures do not display a completed upload bar", () => {
+  const mixed = activity("mixed", "부분 등록", "completed");
+  Object.assign(mixed, { channelCount: 4, publishedCount: 1, failedCount: 1, blockedCount: 2 });
+  assert.equal(registrationActivityProgress(mixed).percent, 25);
+  assert.match(registrationActivityProgress(mixed).label, /처리 결과 4\/4개 \(100%\)/);
+  mixed.publishedCount = 0;
+  mixed.failedCount = 2;
+  assert.equal(registrationActivityProgress(mixed).percent, 0);
+  assert.equal(registrationChannelStatusLabel("blocked"), "확인");
 });

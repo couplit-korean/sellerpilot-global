@@ -14,7 +14,7 @@ import { SHOPEE_OAUTH_OPERATION } from "../lib/channels/shopee-oauth-executor-re
 import { SMARTSTORE_LOCAL_READ_OPERATIONS } from "../lib/channels/smartstore-local-read-routing";
 
 const claimRouteUrl = new URL("../app/api/channel-gateway/worker/claim/route.ts", import.meta.url);
-const workerUrl = new URL("../scripts/ai-cli-worker.mjs", import.meta.url);
+const workerUrl = new URL("../scripts/channel-gateway-worker.mjs", import.meta.url);
 const migrationUrl = new URL(
   "../supabase/migrations/20260905015000_scope_local_gateway_recovery_lane.sql",
   import.meta.url,
@@ -89,25 +89,20 @@ test("claim route picks scoped RPC only for local_recovery and rejects unknown m
 test("CLI local-recovery flag is gateway-only, sends mode, and stops unexpected claims before provider", async () => {
   const source = await readFile(workerUrl, "utf8");
   const flag = source.indexOf('process.argv.includes("--local-recovery-only")');
-  const gated = source.indexOf("localRecoveryOnly && !gatewayOnly");
-  const scheduler = source.indexOf("const schedulerWorkerToken = (aiOnly || localRecoveryOnly)");
-  const claimBody = source.indexOf("localRecoveryOnly ? { mode: LOCAL_GATEWAY_RECOVERY_CLAIM_MODE }");
-  const unexpected409 = source.indexOf("localRecoveryOnly && gatewayResponse.status === 409");
-  const tupleFence = source.indexOf("isLocalGatewayRecoveryAllowedTuple(claimedChannel, claimedOperation)");
-  const processJob = source.indexOf("await processGatewayJob(gatewayJob)");
-
-  assert.ok(flag >= 0 && gated > flag && scheduler > gated);
-  assert.match(source.slice(gated, scheduler), /only valid with --gateway-only/);
-  assert.ok(claimBody > scheduler);
-  assert.ok(unexpected409 > claimBody);
-  assert.ok(tupleFence > unexpected409);
-  assert.ok(processJob > tupleFence);
+  const scheduler = source.indexOf('const schedulerWorkerToken = (localRecoveryOnly || noScheduler)');
+  const claimBody = source.indexOf('? { mode: LOCAL_GATEWAY_RECOVERY_CLAIM_MODE }');
+  const unexpected409 = source.indexOf('localRecoveryOnly && gatewayResponse.status === 409');
+  const tupleFence = source.indexOf('isLocalGatewayRecoveryAllowedTuple(claimedChannel, claimedOperation)');
+  const processJob = source.indexOf('processGatewayJob(gatewayJob, reserve)', tupleFence);
+  assert.ok(flag >= 0 && scheduler > flag && claimBody > scheduler);
+  assert.match(source.slice(scheduler, scheduler + 200), /\? "" : loadWorkerToken/);
+  assert.ok(unexpected409 > claimBody && tupleFence > unexpected409 && processJob > tupleFence);
   assert.match(source.slice(unexpected409, tupleFence), /stopping = true/);
   assert.match(source.slice(unexpected409, tupleFence), /process\.exitCode = 1/);
-  assert.doesNotMatch(source.slice(unexpected409, processJob), /processGatewayJob/);
-  assert.doesNotMatch(source.slice(unexpected409, processJob), /\/api\/channel-gateway\/worker\/complete/);
-  assert.match(source, /sellerpilot-cli-worker\/1\.60/);
-  assert.doesNotMatch(source.slice(flag, processJob), /gateway:worker:once/);
+  assert.doesNotMatch(source.slice(unexpected409, tupleFence), /processGatewayJob|worker\/complete/);
+  const compatibility = await readFile(new URL('../scripts/ai-cli-worker.mjs', import.meta.url), 'utf8');
+  assert.match(compatibility, /process\.argv\.includes\("--gateway-only"\)[\s\S]*import\(".\/channel-gateway-worker.mjs"\)/);
+  assert.match(source, /sellerpilot-cli-worker\/1\.61/);
 });
 
 test("15000 reuses original claim and does not rewrite 14800, 183000, or queued source rows", async () => {

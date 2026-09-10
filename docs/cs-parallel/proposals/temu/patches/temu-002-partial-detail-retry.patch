@@ -1,0 +1,114 @@
+diff --git a/lib/channels/operations.ts b/lib/channels/operations.ts
+--- a/lib/channels/operations.ts
++++ b/lib/channels/operations.ts
+@@ -1,5 +1,9 @@
+ import { executeQoo10Inquiry } from "./qoo10-inquiries";
+-import { executeTemuInquiry } from "./temu-inquiries";
++import {
++  executeTemuInquiry,
++  temuInquiryRetryContinuation,
++  type TemuInquiryRetryContinuation,
++} from "./temu-inquiries";
+ import { temuResultRecords } from "./temu-response";
+ import { MAX_PROVIDER_SYNC_PAGES, MAX_PROVIDER_SYNC_CONTINUATIONS } from "./operation-pagination";
+ import { executeCoupangInquiry } from "./coupang-inquiries";
+@@ -263,6 +267,7 @@ export type ChannelOperationResult = {
+     reason: "page_cap_reached";
+     arguments: Record<string, unknown>;
+   };
++  retryContinuation?: TemuInquiryRetryContinuation;
+   smartstoreContentRepair?: {
+     contract: "smartstore_existing_content_repair_mutation_v1";
+     originProductNo: string;
+@@ -455,6 +460,7 @@ function result(
+   remoteId?: string,
+   continuation?: ChannelOperationResult["continuation"],
+   verifiedRemoteState?: VerifiedListingRemoteState,
++  retryContinuation?: TemuInquiryRetryContinuation,
+ ): ChannelOperationResult {
+   const providerStepsSucceeded = steps.length > 0 && steps.every((item) => item.ok);
+   // A create response is not a durable success until the provider identity is
+@@ -524,6 +530,7 @@ function result(
+     ...(remoteState ? { remoteState } : {}),
+     ...(publicationFulfilled === undefined ? {} : { publicationFulfilled }),
+     ...(ok && continuation ? { continuation } : {}),
++    ...(!ok && retryContinuation ? { retryContinuation } : {}),
+     safeMessage: ok
+       ? continuation
+         ? `${channelCatalog[input.channel].name} ${input.operation} 현재 구간이 정상 응답했고 다음 페이지 구간을 이어서 처리합니다.`
+@@ -6295,6 +6302,8 @@ async function executeTemu(input: ExecuteInput) {
+   }
+   if (input.operation === "inquiries.list") {
+     const inquiry = await executeTemuInquiry({ ...input, operation: input.operation });
++    const retryContinuation = temuInquiryRetryContinuation(inquiry);
++    if (retryContinuation) return result(input, inquiry.steps, undefined, undefined, undefined, retryContinuation);
+     return inquiry.continuationArguments
+       ? paginationResult(input, inquiry.steps, inquiry.continuationArguments)
+       : result(input, inquiry.steps);
+diff --git a/lib/channels/serverless-gateway.ts b/lib/channels/serverless-gateway.ts
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -90,6 +90,8 @@ const PUBLICATION_VERIFICATION_SOURCE_RPC =
+ const RESERVE_PROVIDER_RATE_BUDGET_RPC = "sellerpilot_service_reserve_provider_rate_budget_v1";
+ const RESERVE_PROVIDER_REQUEST_RATE_BUDGET_RPC = "sellerpilot_service_reserve_provider_request_rate_budget_v1";
+ const REPORT_PROVIDER_RATE_LIMIT_RPC = "sellerpilot_service_report_provider_rate_limit_v1";
++const REQUEUE_TEMU_AFTER_SALES_DETAIL_RPC =
++  "sellerpilot_service_requeue_temu_after_sales_detail_v1";
+ const SANITIZED_ORDER_LIST_MARKER = "normalized_orders_v1";
+ const SANITIZED_INQUIRY_LIST_MARKER = "normalized_inquiries_v1";
+ const NO_STORE_HEADERS = {
+@@ -1403,6 +1405,54 @@ export async function runServerlessCsGatewayWorker(
+         });
+       }
+     }
++    const retryContinuation = "retryContinuation" in result
++      ? result.retryContinuation
++      : undefined;
++    if (retryContinuation) {
++      if (result.ok
++          || result.channel !== "temu"
++          || result.operation !== "inquiries.list") {
++        throw new Error("TEMU_AFTER_SALES_DETAIL_RETRY_RESULT_INVALID");
++      }
++      await assertLeaseHealthy();
++      await stopHeartbeat();
++      const requeued = await callRpc(dependencies, REQUEUE_TEMU_AFTER_SALES_DETAIL_RPC, {
++        p_token_hash: gatewayTokenHash,
++        p_job_id: job.id,
++        p_claim_token: job.claim_token,
++        p_retry_arguments: retryContinuation.arguments,
++        p_retry_count: retryContinuation.retryCount,
++        p_retry_after_seconds: retryContinuation.retryAfterSeconds,
++        p_deferred_count: retryContinuation.deferredCount,
++        p_provider_status: retryContinuation.providerStatus,
++      });
++      const receipt = recordValue(requeued.data);
++      if (requeued.error
++          || receipt?.contract !== "temu-after-sales-detail-retry-v1"
++          || receipt.status !== "deferred"
++          || receipt.retryCount !== retryContinuation.retryCount
++          || receipt.retryAfterSeconds !== retryContinuation.retryAfterSeconds) {
++        throw new Error("TEMU_AFTER_SALES_DETAIL_RETRY_RECORDING_FAILED");
++      }
++      // The provider read failed. A durable retry is scheduled, but neither
++      // this execution nor the job is reported through a success/202 path.
++      return jsonResponse({
++        ok: false,
++        status: "failed",
++        claimed: 1,
++        processed: 0,
++        deferred: 1,
++        retryScheduled: true,
++        retryState: "provider_read_failed",
++        jobId: job.id,
++        channel: job.channel,
++        operation: job.operation,
++        providerStatus: retryContinuation.providerStatus,
++        retryCount: retryContinuation.retryCount,
++        retryAfterSeconds: retryContinuation.retryAfterSeconds,
++        deferredCount: retryContinuation.deferredCount,
++      }, 503);
++    }
+     const resultSteps = "steps" in result && Array.isArray(result.steps)
+       ? result.steps
+       : [];

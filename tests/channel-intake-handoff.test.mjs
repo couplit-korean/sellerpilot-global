@@ -43,5 +43,5 @@ test("publish workbench never paints invented fallback commerce facts", () => {
 test("restored 11st food state receives new required notices and cannot remain falsely confirmed", () => {
   assert.match(categoryWorkbench, /appendChannelRequiredAttributes\(channel, state\.selected\.id, restoredAttributes\)/);
   assert.match(categoryWorkbench, /restoredPhase === "confirmed"/);
-  assert.match(categoryWorkbench, /attributes\.some\(\(attribute\) => attribute\.required && !restoredValues\[attribute\.id\]\?\.trim\(\)\)/);
+  assert.match(categoryWorkbench, /missingCategoryInputIssues\(attributes, restoredValues\)\.length > 0/);
 });

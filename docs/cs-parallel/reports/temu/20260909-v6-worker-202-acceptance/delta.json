@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "submission": "20260909-v6-worker-202-acceptance",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+  "branch": "codex/cs-temu-v1",
+  "previousSubmissionFrozen": "docs/cs-parallel/reports/temu/20260908-v5-external-worker-retry/delta.json",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/temu/tests/temu-008-external-worker-202-ack.test.mjs",
+      "sha256": "aab28a1647818137aed04124099d7b418acbcb76979cd2e888decdfff6ada234"
+    },
+    {
+      "path": "docs/cs-parallel/reports/temu/20260909-v6-worker-202-acceptance/status.md",
+      "sha256": "10a621aead2bcdda515051742c121d1ca908182c44b6aa28483c25e9b8f44379"
+    }
+  ],
+  "verification": {
+    "explicitHttp202Acceptance": "1/1 passed",
+    "workerLifecycleRegression": "11/11 passed",
+    "lint": "passed",
+    "commonSourceModified": false
+  },
+  "externalCalls": 0
+}

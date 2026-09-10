@@ -8,6 +8,7 @@ import "./style-learning-center.css";
 import "./mobile-optimization.css";
 import "./interaction-layers.css";
 import "./product-publish-workbench.css";
+import "./product-detail-buyer.css";
 
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`

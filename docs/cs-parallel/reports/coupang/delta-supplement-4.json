@@ -1,0 +1,26 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/coupang/delta-supplement-3.json",
+  "channel": "coupang",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-coupang",
+  "files": [
+    {
+      "path": "docs/cs-parallel/reports/coupang/supplement-4-wing-read-20260908.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d1bd3c0cc8a492c090d976cc3657aae4e49976bace6b32c5b7819b7a1daed4b5",
+      "reason": "Record read-only WING all-status results for product, call-center, return, exchange, stop-shipment and review surfaces without upgrading them to OpenAPI evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/coupang/logs/20260908-supplement-4-wing-read.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d706a4fbfa89bc1e57e4f567ed625fc30080436923fbad5fc0d09e12db937475",
+      "reason": "Preserve exact WING date, state and count observations while excluding customer text and personal data."
+    }
+  ],
+  "sharedProposals": [],
+  "testEvidence": [
+    "docs/cs-parallel/reports/coupang/logs/20260908-supplement-4-wing-read.md"
+  ]
+}

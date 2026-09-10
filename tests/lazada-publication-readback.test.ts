@@ -6,9 +6,27 @@ import {
   lazadaListingArgumentsForRemoteItem,
   normalizeLazadaListingPublicationReadback,
 } from "../lib/channels/provider-lazada-publication-readback";
+import { withLazadaProviderAccountIdentity } from "../lib/channels/provider-account-identity";
 
 const FINGERPRINT = "b".repeat(64);
 const IMAGES = Array.from({ length: 8 }, (_, index) => `https://my-live.slatic.net/p/image-${index + 1}.jpg`);
+const SELLER_ID = "200100300";
+
+function credential() {
+  return withLazadaProviderAccountIdentity({
+    app_key: "app",
+    app_secret: "secret",
+    access_token: "token",
+    country: "my",
+  }, {
+    account_platform: "seller_center",
+    country_user_info: [{
+      country: "my",
+      seller_id: SELLER_ID,
+      user_id: "300100200",
+    }],
+  }).payload;
+}
 
 function argumentsFor(intent: "safe_test" | "live") {
   return {
@@ -18,6 +36,26 @@ function argumentsFor(intent: "safe_test" | "live") {
     publicationExpectedFingerprint: FINGERPRINT,
     publicationExpectedImageCount: 8,
     country: "my",
+    sellerpilotExpectedSellerId: SELLER_ID,
+    sellerpilotExpectedPrimaryCategory: "12345",
+    sellerpilotLazadaMyCreateContext: {
+      contract: "lazada_my_listing_create_context_v1",
+      productId: "20000000-0000-4000-8000-000000000002",
+      sellerSku: "CAWAN-MY-1",
+      sourceCurrency: "KRW",
+      sourcePriceKrw: 10000,
+      market: "MY",
+      locale: "ms-MY",
+      sellerId: SELLER_ID,
+      targetCurrency: "MYR",
+      targetPriceMyr: 39.9,
+      quantity: 1,
+      categoryId: "12345",
+      categoryConfirmedAt: "2026-09-09T00:00:00.000Z",
+      sellerMode: "standard",
+      sellerModeVerifiedAt: "2026-09-09T00:00:00.000Z",
+      sellerModeEvidenceSource: "lazada-seller-center",
+    },
     request: {
       Request: {
         Product: {
@@ -31,6 +69,7 @@ function argumentsFor(intent: "safe_test" | "live") {
           Skus: {
             Sku: [{
               SellerSku: "CAWAN-MY-1",
+              package_content: "Cup", package_weight: "0.1", package_length: "10", package_width: "8", package_height: "2",
               price: "39.90",
               quantity: "1",
               Status: intent === "safe_test" ? "inactive" : "active",
@@ -61,6 +100,7 @@ function readback(status: string, qcStatus?: string) {
       skus: [{
         SkuId: 555001,
         SellerSku: "CAWAN-MY-1",
+              package_content: "Cup", package_weight: "0.1", package_length: "10", package_width: "8", package_height: "2",
         price: 39.90,
         quantity: 1,
         special_price: 0,
@@ -363,6 +403,12 @@ test("Lazada safe_test create writes inactive and completes only after exact non
   globalThis.fetch = async (input, init) => {
     const url = String(input);
     calls.push({ url, body: String(init?.body ?? "") });
+    if (url.includes("/seller/get")) {
+      return Response.json({ code: "0", data: { seller_id: SELLER_ID, is_active: true } });
+    }
+    if (url.includes("/products/get")) {
+      return Response.json({ code: "0", data: { total_products: 0, products: [] } });
+    }
     if (url.includes("/product/create")) {
       return Response.json({ code: "0", request_id: "create-request", data: { item_id: 987654321 } });
     }
@@ -372,13 +418,14 @@ test("Lazada safe_test create writes inactive and completes only after exact non
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      payload: credential(),
       arguments: argumentsFor("safe_test"),
       environment: "production",
     });
-    const payload = new URLSearchParams(calls[0].body).get("payload") ?? "";
+    const createCall = calls.find(({ url }) => url.includes("/product/create"));
+    const payload = new URLSearchParams(createCall?.body ?? "").get("payload") ?? "";
     assert.match(payload, /<Status>inactive<\/Status>/);
-    assert.equal(calls[1].url.includes("/product/item/get"), true);
+    assert.equal(calls.some(({ url }) => url.includes("/product/item/get")), true);
     assert.equal(result.ok, true);
     assert.equal(result.remoteId, "987654321");
     assert.equal(result.remoteState?.visibility, "non_public");
@@ -393,6 +440,12 @@ test("Lazada live create writes active but a QC-pending readback is not counted 
   let createPayload = "";
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    if (url.includes("/seller/get")) {
+      return Response.json({ code: "0", data: { seller_id: SELLER_ID, is_active: true } });
+    }
+    if (url.includes("/products/get")) {
+      return Response.json({ code: "0", data: { total_products: 0, products: [] } });
+    }
     if (url.includes("/product/create")) {
       createPayload = new URLSearchParams(String(init?.body ?? "")).get("payload") ?? "";
       return Response.json({ code: "0", request_id: "create-request", data: { item_id: 987654321 } });
@@ -404,7 +457,7 @@ test("Lazada live create writes active but a QC-pending readback is not counted 
     const result = await executeChannelOperation({
       channel: "lazada",
       operation: "listing.create",
-      payload: { app_key: "app", app_secret: "secret", access_token: "token", country: "my" },
+      payload: credential(),
       arguments: argumentsFor("live"),
       environment: "production",
     });

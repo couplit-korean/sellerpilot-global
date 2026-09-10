@@ -1,0 +1,62 @@
+{
+  "scope": "local-only historical product recovery retirement",
+  "baseCommit": "c2ca332df1b9ece3ec1055100a6288137455c29d",
+  "checks": [
+    {
+      "name": "all_typescript",
+      "command": "node --import tsx --test tests/*.test.ts",
+      "tests": 2763,
+      "pass": 2763,
+      "fail": 0,
+      "skipped": 0,
+      "logSha256": "12f9fff8a3704e3259db7c9d93e71cc0786e4cdce9c73b6fc65488efbc8b0217"
+    },
+    {
+      "name": "domain_isolation",
+      "command": "npm run test:domain-isolation",
+      "tests": 40,
+      "pass": 40,
+      "fail": 0,
+      "skipped": 0,
+      "logSha256": "cfe105dda566daa792d7fa227fcd88bc108464a2687473081ddd8bacab4d764f"
+    },
+    {
+      "name": "channel_isolation",
+      "command": "npm run test:channel-isolation",
+      "tests": 28,
+      "pass": 28,
+      "fail": 0,
+      "skipped": 0,
+      "logSha256": "7cd0d10b10bd719fc4fce069899025237330ae0e8861b0a58c5ad5157e0c620d"
+    },
+    {
+      "name": "preserved_oauth",
+      "command": "node --test tests/lazada-exact-dual-blocker-reauthorization.test.mjs",
+      "tests": 3,
+      "pass": 3,
+      "fail": 0,
+      "skipped": 0,
+      "logSha256": "e39e8192d1dd4f7463985263abeabd89cdda1908933ffe39c21c42be07ff833e"
+    },
+    {
+      "name": "build",
+      "command": "npm run build:vercel",
+      "exitCode": 0,
+      "logSha256": "8acfbc1cfeeada8a7b77b44387639089dbe601dd2cdba1eaedfe237f79af81a7"
+    },
+    {
+      "name": "changed_files_eslint",
+      "command": "npx eslint (55 changed TS/TSX/MJS files)",
+      "exitCode": 0,
+      "logSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "productionDeployed": false,
+  "productionDatabaseApplied": false,
+  "providerProductWrites": 0,
+  "deletedRoutes": 5,
+  "deletedLibraryFiles": 22,
+  "deletedScripts": 4,
+  "deletedDedicatedTestFiles": 88,
+  "retained": "general registration/update, account binding, duplicate prevention, readback, OAuth, CS, shipping; historical migrations unchanged"
+}

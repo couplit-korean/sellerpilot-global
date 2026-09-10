@@ -1,0 +1,93 @@
+{
+  "reviewRequest": "qoo10-reply-envelope-and-status-only-s3-fix",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "files": [
+    {
+      "path": "lib/channels/cs/qoo10/reply-guard.ts",
+      "beforeSha256": "bc5a029bb8c3281223e6d2f9f3213a7dd9f1be248607d82f044effee359a0804",
+      "afterSha256": "9d8e2e667e733e243a95d8b80618eacffb592c7d95d6cab6c1cc69ccb6b7dd36",
+      "change": "Return the complete gateway arguments envelope as {params:{inq_type,question_no,seq_no,contents}}."
+    },
+    {
+      "path": "lib/channels/cs/qoo10/reply-readback.ts",
+      "beforeSha256": "88c048920c51437e0e18803407289264b637d06d1240a71d05555adad8127b61",
+      "afterSha256": "e3ed662ca1e65cad3872253b7358b090788013e21ff85ae52377df49825209b2",
+      "change": "Build a delivery-bound idempotent S3 gateway readback payload without changing the native list adapter contract."
+    },
+    {
+      "path": "tests/cs-qoo10-history-runtime.test.ts",
+      "beforeSha256": "d5315f6af8a0ecc22a5caab400ea6e840fb1f76e5be8a7b4bd6764aff8323303",
+      "afterSha256": "629e73cbd226c66277dd3fbad4007b1ce9b4f0366fcdb773c8fad15627058569",
+      "change": "Replay guard to gateway enqueue payload to Qoo10 SetInquiryMessage adapter and delivery-bound S3 list payload."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "2ae4986a8a0dcef188856e7c134198eea1035a703016d331bc5ea3dc9ff894ee",
+      "change": "Apply the actual proposal SQL in isolated PGlite and verify exact, pending, wrong-sequence, and replay behavior."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/006-reply-compat-s3-readback.md",
+      "beforeSha256": "e31f99d47f2720ba84b6d9a15c73398630bb78b2b745317208f7c6a07bce32c5",
+      "afterSha256": "9d1afa284293eeb36ac419249e83ed6cab729b5e5b9929b1d170c7be3ab29e13",
+      "change": "Correct the common route patch envelope and prohibit generic remote_observed promotion for status-only S3 evidence."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "beforeSha256": null,
+      "afterSha256": "742f30c17441c90534339c989082f88a4e6ecb85dbc2819dbd91dd87f21dd835",
+      "change": "Provide a replayed service-role RPC draft that preserves provider_accepted and records only Qoo10 S3 status evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/runtime-integration-followup.md",
+      "beforeSha256": "c51271d9398cce5dcf92c9ca0abbf4fbde1552d240503e115e0d7fbe6bca12df",
+      "afterSha256": "c7a2bafb3b1cf923df6a8f33cbfec0b61d7d75ad2521c367b7714e357f2c3b47",
+      "change": "Record the integration review correction and keep code, remote, web, reply, and operating evidence separate."
+    }
+  ],
+  "behavior": {
+    "gatewayArgumentsShape": { "params": ["inq_type", "question_no", "seq_no", "contents"] },
+    "genericVerificationStatusAfterExactS3": "provider_accepted",
+    "qoo10StatusObservedAfterExactS3": true,
+    "replyContentObserved": false,
+    "automaticResendAllowed": false
+  },
+  "failedAttempts": [
+    {
+      "result": "0/3",
+      "cause": "PLpgSQL multiple rowtype INTO draft was invalid",
+      "resolution": "Lock the delivery row first and select lineage fields into scalar variables"
+    },
+    {
+      "result": "0/3",
+      "cause": "PGlite does not allow multiple parameterized commands in one prepared statement",
+      "resolution": "Split fixture seed writes into individual prepared statements"
+    }
+  ],
+  "verification": [
+    {
+      "command": "node --import tsx --test tests/cs-qoo10-history-runtime.test.ts",
+      "exitCode": 0,
+      "result": "10/10 passed after reply envelope fix"
+    },
+    {
+      "command": "node --test tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "exitCode": 0,
+      "result": "3/3 passed after SQL and fixture corrections"
+    },
+    {
+      "command": "node --import tsx --test tests/cs-qoo10-history-runtime.test.ts tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "exitCode": 0,
+      "result": "14/14 passed after delivery-bound readback builder"
+    },
+    {
+      "command": "node --import tsx --test six Qoo10 contract, runtime, isolated-ledger, S3-RPC, and claim files",
+      "exitCode": 0,
+      "result": "29/29 passed"
+    }
+  ],
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "customerRepliesSent": false
+}

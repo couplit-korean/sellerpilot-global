@@ -1,0 +1,17 @@
+{
+  "contract": "sellerpilot_cs_ingest_contract_read_v1",
+  "observedAt": "2026-09-08T01:29:50+09:00",
+  "functionPresent": true,
+  "securityDefiner": true,
+  "ownerIsPostgres": true,
+  "emptySearchPath": true,
+  "publicRolesBlocked": true,
+  "serviceDirectExecutionBlocked": true,
+  "readsSenderRoleInput": true,
+  "mentionsSystemRole": true,
+  "permitsExactSystemRole": true,
+  "serviceIngestSha256": "d50af6b5f00163d03cd166ca25c8f5e62105a6ceefc0f38c85b723bc93bfec4d",
+  "serviceIngestHardened": true,
+  "purpose": "Confirm that the current production ingest contract can preserve customer, seller, and system role input before preparing the local eBay mailbox collector.",
+  "mutationPerformed": false
+}

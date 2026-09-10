@@ -1,4 +1,5 @@
 import type { ActiveChannelKey } from "./catalog";
+import { ebayShipmentBody } from "./ebay-shipment";
 
 export type ShipmentDraft = {
   channel: ActiveChannelKey;
@@ -110,6 +111,24 @@ export function buildShipmentPreflightArguments(input: ShipmentDraft): Record<st
   return { shopId, query: { order_sn: externalOrderId } };
 }
 
+export function lazadaShipmentItemIds(rawItemIds: unknown): string[] {
+  // Never silently drop, deduplicate or truncate a whole-order item list.
+  if (!Array.isArray(rawItemIds) || !rawItemIds.length || rawItemIds.length > 100) {
+    throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderItemIds");
+  }
+  const orderItemIds = Array.from(rawItemIds, (value: unknown) => {
+    const id = typeof value === "string" ? value.trim()
+      : typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? String(value)
+        : "";
+    if (!id) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderItemIds");
+    return id;
+  });
+  if (new Set(orderItemIds).size !== orderItemIds.length) {
+    throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderItemIds");
+  }
+  return orderItemIds;
+}
+
 export function buildShipmentArguments(input: ShipmentDraft): Record<string, unknown> {
   const externalOrderId = requiredText(input.externalOrderId, "externalOrderId", 240);
   const carrierCode = requiredText(input.carrierCode, "carrierCode", 40);
@@ -155,7 +174,13 @@ export function buildShipmentArguments(input: ShipmentDraft): Record<string, unk
     };
   }
   if (input.channel === "ebay") {
-    return { orderId: externalOrderId, body: { shippingCarrierCode: carrierCode, trackingNumber, shippedDate: shippedAt } };
+    const orderId = exactProviderIdentity(input, externalOrderId, "orderId");
+    return { orderId, body: ebayShipmentBody({
+      lineItems: input.providerContext?.lineItems,
+      shippingCarrierCode: carrierCode,
+      trackingNumber,
+      shippedDate: shippedAt,
+    }) };
   }
   if (input.channel === "temu") {
     return { parentOrderSn: externalOrderId, carrierCode, trackingNumber, providerContext: input.providerContext ?? {} };
@@ -163,12 +188,9 @@ export function buildShipmentArguments(input: ShipmentDraft): Record<string, unk
   if (input.channel === "lazada") {
     const providerContext = input.providerContext ?? {};
     const orderId = String(providerContext.orderId ?? "").trim();
-    const orderItemIds = Array.isArray(providerContext.orderItemIds)
-      ? providerContext.orderItemIds.map((value) => String(value).trim()).filter(Boolean)
-      : [];
+    const orderItemIds = lazadaShipmentItemIds(providerContext.orderItemIds);
     const deliveryType = String(providerContext.deliveryType ?? "").trim();
     if (orderId !== externalOrderId) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderId");
-    if (!orderItemIds.length) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.orderItemIds");
     if (!deliveryType) throw new Error("SHIPMENT_PACKAGE_DETAILS_REQUIRED:lazada.deliveryType");
     return { orderId, carrierCode, trackingNumber, providerContext: { ...providerContext, orderId, orderItemIds, deliveryType } };
   }

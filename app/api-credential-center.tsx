@@ -81,7 +81,6 @@ type ChannelOperationName =
   | "inventory.update"
   | "orders.list"
   | "orders.get"
-  | "inquiries.list"
   | "shipment.acknowledge"
   | "shipment.confirm";
 
@@ -92,7 +91,6 @@ const channelOperationOptions: { value: ChannelOperationName; label: string }[] 
   { value: "categories.validate", label: "카테고리 유효성 검사" },
   { value: "orders.list", label: "주문 목록" },
   { value: "orders.get", label: "주문 상세" },
-  { value: "inquiries.list", label: "고객 문의 목록" },
 ];
 
 const writeOperations = new Set<ChannelOperationName>([
@@ -139,22 +137,6 @@ function operationTemplate(channel: ActiveChannelKey, operation: ChannelOperatio
     if (channel === "coupang") return { shipmentBoxId: "" };
     if (channel === "smartstore") return { productOrderId: "" };
     return { orderId: "" };
-  }
-  if (operation === "inquiries.list") {
-    if (channel === "qoo10") return { params: { search_start_dt: "", search_end_dt: "", proc_status: "S1" } };
-    if (channel === "coupang") return { kind: "product", query: { inquiryStartAt: "", inquiryEndAt: "", answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } };
-    if (channel === "lazada") return { bootstrap: true, startTime: Date.now(), pageSize: 20, sessionLimit: 100 };
-    if (channel === "ebay") {
-      const end = new Date();
-      return {
-        startCreationTime: new Date(end.getTime() - 14 * 86_400_000).toISOString(),
-        endCreationTime: end.toISOString(),
-        pageNumber: 1,
-        entriesPerPage: 200,
-        marketplaceId: "EBAY_US",
-      };
-    }
-    return { query: {} };
   }
   if (operation === "listing.create") {
     if (channel === "qoo10") return { params: { SecondSubCat: "", ItemTitle: "", ItemPrice: "", ItemQty: "", ShippingNo: "", ItemDescription: "" } };
@@ -252,7 +234,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
   const [showAudit, setShowAudit] = useState(false);
   const [testingId, setTestingId] = useState("");
   const [oauthStartingId, setOauthStartingId] = useState("");
-  const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string } | null>(null);
+  const [pendingOAuth, setPendingOAuth] = useState<{ channelName: string; authorizationUrl: string; includesMessages?: boolean } | null>(null);
   const [operationTarget, setOperationTarget] = useState<{ channel: ChannelDefinition; credential: Credential } | null>(null);
   const [tracxOperationTarget, setTracxOperationTarget] = useState<Credential | null>(null);
 
@@ -347,7 +329,13 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
     }
   };
 
-  const startOAuth = async (credential: Credential) => {
+  const startOAuth = async (credential: Credential, includeMessages = false) => {
+    if (credential.channel === "shopee") {
+      setPendingOAuth(null);
+      setError("");
+      window.dispatchEvent(new CustomEvent("sellerpilot:shopee-exact-start", { detail: { credentialId: credential.id } }));
+      return;
+    }
     if (credential.channel === "tracx") return;
     const definition = channelCatalog[credential.channel];
     setOauthStartingId(credential.id);
@@ -362,12 +350,13 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
           environment: credential.environment,
           secretPayload: {},
           startOAuth: true,
+          ...(credential.channel === "ebay" && includeMessages ? { includeMessages: true } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({ message: `${definition.name} OAuth 응답을 읽지 못했습니다.` })) as { message: string; authorizationUrl?: string };
       if (!response.ok || !payload.authorizationUrl) throw new Error(payload.message);
       setError("");
-      setPendingOAuth({ channelName: definition.name, authorizationUrl: payload.authorizationUrl });
+      setPendingOAuth({ channelName: definition.name, authorizationUrl: payload.authorizationUrl, includesMessages: includeMessages });
       notify(`${definition.name} 판매자 승인 링크를 준비했습니다.`);
     } catch (oauthError) {
       const message = oauthError instanceof Error ? oauthError.message : "판매 채널 OAuth를 시작하지 못했습니다.";
@@ -395,7 +384,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
       </section>
 
       {error && <div className="credential-alert"><AlertTriangle size={16} /><span><b>연결 설정 확인</b>{error}</span><button onClick={() => void load()}><RefreshCw size={14} />다시 확인</button></div>}
-      {pendingOAuth && <div className="credential-alert"><KeyRound size={16} /><span><b>{pendingOAuth.channelName} 판매자 승인 준비 완료</b>승인 화면에서 로그인하고 연결을 허용해 주세요.</span><button onClick={() => window.location.assign(pendingOAuth.authorizationUrl)}><KeyRound size={14} />판매자 승인 화면 열기</button><button aria-label="승인 링크 닫기" onClick={() => setPendingOAuth(null)}><X size={14} /></button></div>}
+      {pendingOAuth && <div className="credential-alert"><KeyRound size={16} /><span><b>{pendingOAuth.channelName} 판매자 승인 준비 완료</b>{pendingOAuth.includesMessages ? "일반 대화 조회·전송·관리 권한을 요청합니다. 실제 대화 수집 완료는 승인 후 별도로 확인합니다." : "승인 화면에서 로그인하고 연결을 허용해 주세요."}</span><button onClick={() => window.location.assign(pendingOAuth.authorizationUrl)}><KeyRound size={14} />판매자 승인 화면 열기</button><button aria-label="승인 링크 닫기" onClick={() => setPendingOAuth(null)}><X size={14} /></button></div>}
 
       <section className="credential-channel-grid">
         {channelDefinitions.map((channel) => {
@@ -423,7 +412,7 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
             {shopeeStatusUnavailable && <p className="last-check failed"><AlertTriangle size={13} />판매자 계정 확인 상태를 불러오지 못했습니다. 주문 자동 동기화 상태를 정상으로 간주하지 않습니다. 다시 확인해 주세요.</p>}
             {credential?.last_check_message && <p className={`last-check ${credential.last_check_status}`}>{credential.last_check_status === "passed" ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}{credential.last_check_message}</p>}
             {graceCredential && <p className="credential-grace"><RotateCcw size={13} /><span><b>이전 v{graceCredential.version} 롤백 유예</b>{formatDate(graceCredential.grace_ends_at, true)}까지 Vault 보관</span></p>}
-            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
+            <footer><button className="credential-secondary" onClick={() => credential && void testConnection(credential)} disabled={!credential || testingId === credential.id}>{testingId === credential?.id ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}연결 검사</button>{channel.oauth && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential)} disabled={oauthStartingId === credential.id}>{oauthStartingId === credential.id ? <LoaderCircle className="spin" size={14} /> : <KeyRound size={14} />}{needsOAuthReconnect ? "OAuth 재연동 필요" : "OAuth 재연결"}</button>}{channel.key === "ebay" && credential && <button className="credential-secondary" onClick={() => void startOAuth(credential, true)} disabled={oauthStartingId === credential.id}><KeyRound size={14} />일반 대화 권한 연결</button>}<button className="credential-secondary" onClick={() => credential && setOperationTarget({ channel, credential })} disabled={!credential} title="실제 판매 API 요청을 관리자 권한으로 검수합니다."><Code2 size={14} />API 실행 검수</button><button className="credential-primary" onClick={() => setEditing(channel)}><RotateCcw size={14} />{credential ? "키 교체" : "키 등록"}</button></footer>
           </article>;
         })}
       </section>
@@ -601,7 +590,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
     setResultJson("");
     try {
       const { data: sessionData } = await createClient().auth.getSession();
-      const response = await fetch("/api/admin/channel-operations", {
+      const response = await fetch(/^(orders|shipment)\./.test(operation) ? "/api/admin/shipping/operations" : "/api/admin/channel-operations", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${sessionData.session?.access_token ?? ""}` },
         body: JSON.stringify({ credentialId: target.credential.id, channel: target.channel.key, operation, idempotencyKey, confirmWrite, arguments: args }),
@@ -627,7 +616,7 @@ function ApiOperationConsole({ target, onClose, onCredentialChanged, notify }: {
 
   return <div className="credential-modal-backdrop" role="presentation" onMouseDown={(event) => { if (!running && event.currentTarget === event.target) onClose(); }}><form ref={dialogRef} tabIndex={-1} className="credential-modal operation-console" role="dialog" aria-modal="true" aria-label={`${target.channel.name} API 실행 검수`} onSubmit={execute}>
     <header><div><span>{target.channel.mark}</span><div><small>PROTECTED MARKETPLACE API CONSOLE</small><h3>{target.channel.name} API 실행 검수</h3></div></div><button type="button" onClick={onClose} aria-label="닫기" disabled={running}><X size={18} /></button></header>
-    <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서 조회 API만 호출합니다.</b><small>상품·재고·발송 쓰기는 정확한 상품·주문 원장을 선택하는 전용 화면에서만 실행합니다. 비밀키는 아래 JSON에 입력하지 마세요.</small></span></div>
+    <div className="operation-console-warning"><ShieldCheck size={18} /><span><b>Vault 키를 브라우저에 노출하지 않고 서버에서 조회 API만 호출합니다.</b><small>상품·재고·발송 쓰기는 정확한 상품·주문 원장을 선택하는 전용 화면에서만 실행합니다. 비밀키는 아래 JSON에 입력하지 마세요. 고객 문의 조회·답변은 <a href="/cs">CS 전용 화면</a>에서 실행합니다.</small></span></div>
     <fieldset className="operation-console-body" disabled={running} aria-busy={running}>
       <div className="operation-console-controls"><label><span>실행 작업</span><select value={operation} onChange={(event) => changeOperation(event.target.value as ChannelOperationName)}>{availableOperations.map((item) => <option value={item.value} key={item.value}>{item.label} · {item.value}</option>)}</select></label><label><span>중복 방지 키</span><input value={idempotencyKey} onChange={(event) => setIdempotencyKey(event.target.value)} minLength={16} maxLength={160} /></label></div>
       <label className="operation-json-field"><span>채널별 작업 인자 JSON</span><textarea value={argumentsJson} onChange={(event) => setArgumentsJson(event.target.value)} spellCheck={false} rows={13} /></label>

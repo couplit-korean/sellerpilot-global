@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-04-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T14:39:45Z",
+  "integratedRootPreimage": {
+    "lib/channels/gateway-contract.ts": "9b16f3e8cd1b8c4163f45ebe8f248257cc180e35a975447ce6058b5661daa516",
+    "lib/channels/serverless-gateway.ts": "bbfd8b122b6dcf3f0d16f760ccd75f7a2db34fd14252c4d2ce1fec3a259d5286",
+    "app/api/channel-gateway/worker/complete/route.ts": "5dd9777403d145791fba116152837a3b53c95059985d9d9eab542b73ab4e57ef",
+    "app/cs/archive.tsx": "fc989d35678d98f89f782d8508b9c21c5e99a821df054bdc63d29d377ff4fec0"
+  },
+  "checks": [
+    {
+      "name": "006-unpatched-runtime-counterexample",
+      "result": "reproduced",
+      "counterexamples": [
+        "Product Q&A business 500 completed failed but made zero observation RPC calls",
+        "transport exception made zero observation RPC calls as required",
+        "lost observation RPC response had no retry"
+      ]
+    },
+    {
+      "name": "006-and-007-common-patch-dry-run",
+      "target": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "exitCode": 0,
+      "patches": [
+        "elevenst-006-failed-read-observation-runtime.patch",
+        "elevenst-007-cs-read-state-panel-common.patch"
+      ]
+    },
+    {
+      "name": "latest-integrated-temporary-copy-related-regression",
+      "target": "006+007 applied to the latest integrated preimage",
+      "exitCode": 0,
+      "passed": 97,
+      "failed": 0,
+      "includes": [
+        "failed business result observation",
+        "transport no-observation",
+        "post-completion response-loss retry",
+        "failed completion scope schema",
+        "read-state UI/client contract",
+        "read-state SQL/shared support_tickets comparison",
+        "serverless gateway",
+        "gateway contract"
+      ]
+    },
+    {
+      "name": "external-worker-route-contract",
+      "exitCode": 0,
+      "passed": 13,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-typescript",
+      "command": "tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "changed-path-eslint",
+      "exitCode": 0
+    },
+    {
+      "name": "004-pglite-shared-ledger-comparison",
+      "command": "node --import tsx --test tests/cs-elevenst-read-state-rpc-db.test.mjs",
+      "exitCode": 0,
+      "passed": 3,
+      "failed": 0,
+      "sameStoredLedgerCompared": "sellerpilot_private.support_tickets"
+    },
+    {
+      "name": "actual-isolated-auth-web-port-3214-v3",
+      "command": "NODE_ENV=test node --import tsx scripts/cs-elevenst-isolated-auth-web-smoke.mjs --port=3214",
+      "exitCode": 0,
+      "webRuntime": "next-dev",
+      "missingBearerStatus": 401,
+      "invalidBearerStatus": 401,
+      "authorizedStatus": 200,
+      "uiRendered": true,
+      "uiStoredCounts": {
+        "productQna": 4,
+        "urgentAlimi": 0
+      },
+      "databaseReadCount": 1,
+      "providerWrites": 0,
+      "productionDatabaseWrites": 0,
+      "portCleanAfterExit": true
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

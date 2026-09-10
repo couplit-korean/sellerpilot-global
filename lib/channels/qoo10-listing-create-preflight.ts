@@ -5,6 +5,10 @@ import {
   parseListingPublicationAssetBinding,
 } from "./listing-publication-content";
 import type { RemoteResponse, SecretPayload } from "./protocols";
+import {
+  qoo10ListingCreateApprovalBinding,
+  type Qoo10ListingCreateApprovalBinding,
+} from "./qoo10-listing-create-approval";
 
 export const qoo10ListingCreateContextContract =
   "sellerpilot_qoo10_listing_create_context_v1" as const;
@@ -31,11 +35,22 @@ export type Qoo10ListingCreateContext = {
 
 export type Qoo10ListingCreateExpectation = {
   context: Qoo10ListingCreateContext;
+  approval: Qoo10ListingCreateApprovalBinding;
   sellerIdDigest: string;
   testItemCode: string;
   sellerCode: string;
   itemTitle: string;
   categoryCode: string;
+  manufactureNo: string;
+  brandNo: string;
+  productionPlaceType: string;
+  productionPlace: string;
+  availableDateType: string;
+  availableDateValue: string;
+  additionalOption: "";
+  itemType: "";
+  optionContract: "single_sku_no_options";
+  retailPrice: number;
   price: number;
   quantity: number;
   shippingNo: string;
@@ -100,6 +115,19 @@ function positiveAmount(value: unknown, maximum: number) {
   return Number.isFinite(parsed) && parsed > 0 && parsed <= maximum
     ? parsed
     : null;
+}
+
+function isoCalendarDate(value: unknown) {
+  const normalized = exactText(value);
+  const match = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/u);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day;
 }
 
 function digest(value: unknown) {
@@ -227,24 +255,27 @@ function activeHtmlRejected(html: string) {
 export function qoo10ListingCreateExpectation(input: {
   arguments: Record<string, unknown>;
   payload: SecretPayload;
+  now?: Date;
 }): { ok: true; expectation: Qoo10ListingCreateExpectation } | {
   ok: false;
   code: string;
   mismatchFields: string[];
 } {
   const context = parseCreateContext(input.arguments.sellerpilotQoo10CreateContext);
+  const approval = qoo10ListingCreateApprovalBinding(input.arguments, input.now);
   const params = recordValue(input.arguments.params);
   const binding = parseListingPublicationAssetBinding(input.arguments.sellerpilotPublicationAssetBinding);
   const sellerId = safeCredentialText(input.payload, "seller_id");
   const testItemCode = safeCredentialText(input.payload, "test_item_code");
   const sellerIdValid = sellerId.length > 0 && sellerId.length <= 160;
-  if (!context || !params || !binding || binding.providerImageSurface !== "detail_content"
+  if (!context || !approval || !params || !binding || binding.providerImageSurface !== "detail_content"
       || !sellerIdValid || !/^\d{9,10}$/u.test(testItemCode)) {
     return {
       ok: false,
       code: "QOO10_CREATE_CONTEXT_INVALID",
       mismatchFields: [
         ...(!context ? ["sellerpilotQoo10CreateContext"] : []),
+        ...(!approval ? ["sellerpilotQoo10CreateApprovalBinding"] : []),
         ...(!params ? ["params"] : []),
         ...(!binding || binding?.providerImageSurface !== "detail_content" ? ["sellerpilotPublicationAssetBinding"] : []),
         ...(!sellerIdValid ? ["credential.seller_id"] : []),
@@ -268,8 +299,14 @@ export function qoo10ListingCreateExpectation(input: {
   const htmlImageIdentities = detailImageUrls.map(canonicalNormalizedImage);
   const industrialCode = recordText(params, ["IndustrialCode"]);
   const industrialCodeType = recordText(params, ["IndustrialCodeType"]);
+  const manufactureNo = recordText(params, ["ManufactureNo"]);
+  const brandNo = recordText(params, ["BrandNo"]);
   const productionPlaceType = recordText(params, ["ProductionPlaceType"]);
   const productionPlace = recordText(params, ["ProductionPlace"]);
+  const availableDateType = recordText(params, ["AvailableDateType"]);
+  const availableDateValue = recordText(params, ["AvailableDateValue"]);
+  const additionalOption = recordText(params, ["AdditionalOption"]);
+  const itemType = recordText(params, ["ItemType"]);
   const productionPlaceVerified = productionPlaceType === "1"
     ? /^[A-Z][A-Z ]{2,49}$/u.test(productionPlace) && !/^[A-Z]{2}$/u.test(productionPlace)
     : productionPlaceType === "2"
@@ -289,12 +326,20 @@ export function qoo10ListingCreateExpectation(input: {
     ...(input.arguments.publicationExpectedImageCount === 8 ? [] : ["publicationExpectedImageCount"]),
     ...(/^[a-f0-9]{64}$/u.test(exactText(input.arguments.publicationExpectedFingerprint))
       ? [] : ["publicationExpectedFingerprint"]),
+    ...(approval.sellerIdDigest === digest({ sellerId })
+      ? [] : ["sellerpilotQoo10CreateFulfillmentEvidence.sellerIdDigest"]),
+    ...(approval.testItemCode === testItemCode
+      ? [] : ["sellerpilotQoo10CreateFulfillmentEvidence.testItemCode"]),
     ...(sellerCode === context.sku && sellerCode.length <= 100 ? [] : ["SellerCode"]),
     ...(categoryCode.match(/^\d{9}$/u) ? [] : ["SecondSubCat"]),
     ...(itemTitle.length > 0 && itemTitle.length <= 100
       && listingPublicationLanguageVerified("ja-JP", itemTitle, "title") ? [] : ["ItemTitle"]),
     ...(params.AudultYN === undefined && recordText(params, ["AdultYN"]) === "N" ? [] : ["AdultYN"]),
     ...(!industrialCode || /^[JKIUEH]$/u.test(industrialCodeType) ? [] : ["IndustrialCodeType"]),
+    ...(Object.hasOwn(params, "ManufactureNo") && /^(?:\d{1,10})?$/u.test(manufactureNo)
+      ? [] : ["ManufactureNo"]),
+    ...(Object.hasOwn(params, "BrandNo") && /^(?:\d{1,10})?$/u.test(brandNo)
+      ? [] : ["BrandNo"]),
     ...(["1", "2", "3"].includes(productionPlaceType) ? [] : ["ProductionPlaceType"]),
     ...(productionPlaceVerified ? [] : ["ProductionPlace"]),
     ...(itemPrice === context.price ? [] : ["ItemPrice"]),
@@ -303,9 +348,12 @@ export function qoo10ListingCreateExpectation(input: {
     ...(quantity === context.quantity ? [] : ["ItemQty"]),
     ...(/^\d+$/u.test(shippingNo) ? [] : ["ShippingNo"]),
     ...(recordText(params, ["TaxRate"]).match(/^(?:S|10|8|0)$/u) ? [] : ["TaxRate"]),
-    ...(recordText(params, ["ExpireDate"]).match(/^\d{4}-\d{2}-\d{2}$/u) ? [] : ["ExpireDate"]),
-    ...(recordText(params, ["AvailableDateType"]) === "0" ? [] : ["AvailableDateType"]),
-    ...(recordText(params, ["AvailableDateValue"]).match(/^\d{1,3}$/u) ? [] : ["AvailableDateValue"]),
+    ...(isoCalendarDate(recordText(params, ["ExpireDate"])) ? [] : ["ExpireDate"]),
+    ...(availableDateType === "0" ? [] : ["AvailableDateType"]),
+    ...(/^[1-3]$/u.test(availableDateValue) ? [] : ["AvailableDateValue"]),
+    ...(Object.hasOwn(params, "AdditionalOption") && additionalOption === ""
+      ? [] : ["AdditionalOption"]),
+    ...(Object.hasOwn(params, "ItemType") && itemType === "" ? [] : ["ItemType"]),
     ...(standardImage ? [] : ["StandardImage"]),
     ...(htmlBytes > 0 && htmlBytes <= qoo10DetailHtmlTransportMaximumBytes
       && htmlBytes <= qoo10DetailHtmlProviderMaximumBytes ? [] : ["ItemDescription.bytes"]),
@@ -315,7 +363,7 @@ export function qoo10ListingCreateExpectation(input: {
       && sameOrderedValues(detailImageUrls, boundDetailUrls) ? [] : ["ItemDescription.detailImages"]),
     ...(standardImage && !boundDetailDigests.includes(standardImage.digest) ? [] : ["StandardImage.digestIndependence"]),
   ];
-  if (mismatches.length || itemPrice === null || quantity === null || !standardImage) {
+  if (mismatches.length || itemPrice === null || retailPrice === null || quantity === null || !standardImage) {
     return { ok: false, code: "QOO10_CREATE_PREWRITE_MISMATCH", mismatchFields: [...new Set(mismatches)] };
   }
   const detailImageDigest = digest(boundDetailDigests);
@@ -323,11 +371,22 @@ export function qoo10ListingCreateExpectation(input: {
     ok: true,
     expectation: {
       context,
+      approval,
       sellerIdDigest: digest({ sellerId }),
       testItemCode,
       sellerCode,
       itemTitle,
       categoryCode,
+      manufactureNo,
+      brandNo,
+      productionPlaceType,
+      productionPlace,
+      availableDateType,
+      availableDateValue,
+      additionalOption: "",
+      itemType: "",
+      optionContract: "single_sku_no_options",
+      retailPrice,
       price: itemPrice,
       quantity,
       shippingNo,
@@ -336,7 +395,11 @@ export function qoo10ListingCreateExpectation(input: {
       detailImageUrls: boundDetailUrls,
       detailImageDigests: boundDetailDigests,
       detailImageDigest,
-      publicationAssetDigest: digest({ representative: standardImage.digest, details: boundDetailDigests }),
+      publicationAssetDigest: digest({
+        representative: standardImage.digest,
+        details: boundDetailDigests,
+        approvalPayload: approval.approvalPayloadDigest,
+      }),
     },
   };
 }
@@ -356,7 +419,22 @@ function collectRecords(value: unknown, depth = 0, records: UnknownRecord[] = []
 
 function responseAccepted(remote: RemoteResponse) {
   const code = remote.data.ResultCode ?? remote.data.ErrorCode;
-  return remote.response.ok && (code === undefined || code === null || String(code) === "0");
+  return remote.response.ok && (code !== undefined && code !== null && String(code) === "0");
+}
+
+/** GetItemDetailInfo 1.2 documents -10001 as missing ItemCode/SellerCode.
+ * Authentication/permission errors and malformed or contradictory data never prove absence.
+ */
+export function qoo10SellerCodeAbsent(remote: RemoteResponse) {
+  if (!remote.response.ok) return false;
+  const code = remote.data.ResultCode;
+  if (code === undefined || code === null) return false;
+  if (remote.data.ErrorCode !== undefined && remote.data.ErrorCode !== null
+      && String(remote.data.ErrorCode) !== String(code)) return false;
+  const value = remote.data.ResultObject;
+  const empty = Array.isArray(value) && value.length === 0;
+  return (String(code) === "0" && empty)
+    || (String(code) === "-10001" && (value === undefined || value === null || empty));
 }
 
 function failedRemoteResponse(): RemoteResponse {
@@ -464,7 +542,7 @@ export async function runQoo10ListingCreateProviderPreflight(input: {
   expectation: Qoo10ListingCreateExpectation;
   request: Qoo10ReadRequest;
 }): Promise<Qoo10ProviderPreflightResult> {
-  const [sellerRemote, categoryRemote, shippingRemote] = await Promise.all([
+  const [sellerRemote, categoryRemote, shippingRemote, duplicateRemote] = await Promise.all([
     settledRead(() => input.request({
       payload: input.payload,
       service: "ItemsLookup",
@@ -484,12 +562,38 @@ export async function runQoo10ListingCreateProviderPreflight(input: {
       method: "GetSellerDeliveryGroupInfo",
       params: {},
     })),
+    settledRead(() => input.request({
+      payload: input.payload, service: "ItemsLookup", method: "GetItemDetailInfo", version: "1.2",
+      params: { ItemCode: "", SellerCode: input.expectation.sellerCode },
+    })),
   ]);
   const seller = sellerIdentityVerification(sellerRemote, input.expectation);
+  const fulfillmentAccountBound = seller.identityDigest
+    === input.expectation.approval.sellerAccountIdentityDigest;
+  const absent = qoo10SellerCodeAbsent(duplicateRemote);
   const steps = [
     seller.step,
+    {
+      name: "qoo10-create-fulfillment-account-binding-preflight",
+      ok: fulfillmentAccountBound,
+      status: sellerRemote.response.status,
+      data: {
+        sellerpilotVerification: fulfillmentAccountBound
+          ? "QOO10_CREATE_FULFILLMENT_ACCOUNT_BOUND"
+          : "QOO10_CREATE_FULFILLMENT_ACCOUNT_UNBOUND",
+        fulfillmentEvidenceRevision: input.expectation.approval.fulfillmentEvidenceRevision,
+        fulfillmentEvidenceDigest: input.expectation.approval.fulfillmentEvidenceDigest,
+      },
+    },
     categoryVerification(categoryRemote, input.expectation),
     shippingVerification(shippingRemote, input.expectation),
+    {
+      name: "qoo10-seller-code-absence-preflight",
+      ok: absent,
+      status: duplicateRemote.response.status,
+      data: { ResultMsg: absent
+        ? "QOO10_SELLER_CODE_ABSENCE_VERIFIED" : "QOO10_SELLER_CODE_ABSENCE_UNVERIFIED" },
+    },
   ];
   const ok = steps.every((step) => step.ok) && Boolean(seller.identityDigest);
   return {

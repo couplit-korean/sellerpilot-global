@@ -66,8 +66,8 @@
           "properties": {
             "designArchetype": { "type": "string", "enum": ["proof-led", "problem-solution", "routine-led", "comparison-led", "material-led", "fit-guide", "gift-story", "spec-first"] },
             "purchaseDecision": { "type": "string", "minLength": 1, "maxLength": 300 },
-            "contentDensity": { "type": "string", "enum": ["long", "deep-dive"] },
-            "targetSectionCount": { "type": "integer", "minimum": 16, "maximum": 20 },
+            "contentDensity": { "type": "string", "enum": ["concise", "long", "deep-dive"] },
+            "targetSectionCount": { "type": "integer", "minimum": 8, "maximum": 20 },
             "lengthRationale": { "type": "string", "minLength": 1, "maxLength": 400 },
             "differentiationKey": { "type": "string", "minLength": 1, "maxLength": 300 },
             "artDirection": { "type": "string", "minLength": 1, "maxLength": 600 },
@@ -90,7 +90,7 @@
         "cta": { "type": "string", "minLength": 1, "maxLength": 80 },
         "sections": {
           "type": "array",
-          "minItems": 16,
+          "minItems": 8,
           "maxItems": 20,
           "items": {
             "type": "object",
@@ -102,8 +102,8 @@
               "evidence": { "type": "string", "minLength": 10, "maxLength": 500 },
               "eyebrow": { "type": "string", "minLength": 1, "maxLength": 80 },
               "title": { "type": "string", "minLength": 1, "maxLength": 160 },
-              "body": { "type": "string", "minLength": 160, "maxLength": 1100 },
-              "points": { "type": "array", "minItems": 3, "maxItems": 6, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
+              "body": { "type": "string", "minLength": 20, "maxLength": 1100 },
+              "points": { "type": "array", "minItems": 0, "maxItems": 6, "items": { "type": "string", "minLength": 1, "maxLength": 240 } },
               "layout": { "type": "string", "enum": ["split", "full-bleed", "cards", "steps", "spec-grid", "editorial"] },
               "imageAsset": { "type": "string", "enum": ["none", "detail-overview", "detail-feature", "detail-use", "detail-package", "detail-routine", "detail-scale", "detail-storage", "detail-context", "detail-material", "detail-dimensions", "detail-contents", "detail-care"] },
               "visualDirection": { "type": "string", "minLength": 10, "maxLength": 500 },

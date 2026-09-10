@@ -1,0 +1,94 @@
+TAP version 13
+# Subtest: identity-bearing item arrays reject deletion, insertion, reorder and identity changes
+ok 1 - identity-bearing item arrays reject deletion, insertion, reorder and identity changes
+  ---
+  duration_ms: 1.138333
+  type: 'test'
+  ...
+# Subtest: normal scalar edits and identity-free notice deletion remain restorable
+ok 2 - normal scalar edits and identity-free notice deletion remain restorable
+  ---
+  duration_ms: 0.699625
+  type: 'test'
+  ...
+# Subtest: fresh hidden and signed evidence is neither an identity issue nor a saved patch
+ok 3 - fresh hidden and signed evidence is neither an identity issue nor a saved patch
+  ---
+  duration_ms: 0.176917
+  type: 'test'
+  ...
+# Subtest: adding a protected identity to an identity-free draft is rejected
+ok 4 - adding a protected identity to an identity-free draft is rejected
+  ---
+  duration_ms: 0.070875
+  type: 'test'
+  ...
+# Subtest: restoring stale or malicious parent patches cannot smuggle bound identities
+ok 5 - restoring stale or malicious parent patches cannot smuggle bound identities
+  ---
+  duration_ms: 0.302333
+  type: 'test'
+  ...
+# Subtest: typed fields preserve false, zero, blank and independent package/net weight
+ok 6 - typed fields preserve false, zero, blank and independent package/net weight
+  ---
+  duration_ms: 1.054333
+  type: 'test'
+  ...
+# Subtest: common update regenerates inherited values and preserves edited price/notices
+ok 7 - common update regenerates inherited values and preserves edited price/notices
+  ---
+  duration_ms: 0.312625
+  type: 'test'
+  ...
+# Subtest: patches cannot rebind protected SKU inside arrays or leak internal evidence
+ok 8 - patches cannot rebind protected SKU inside arrays or leak internal evidence
+  ---
+  duration_ms: 0.165958
+  type: 'test'
+  ...
+# Subtest: restoring field edits does not reuse stale signed image URLs from evidence
+ok 9 - restoring field edits does not reuse stale signed image URLs from evidence
+  ---
+  duration_ms: 0.105959
+  type: 'test'
+  ...
+# Subtest: bank identities separate seller account, marketplace and target
+ok 10 - bank identities separate seller account, marketplace and target
+  ---
+  duration_ms: 0.07675
+  type: 'test'
+  ...
+# Subtest: category multi-values and Coupang notices/certificates reach native fields
+ok 11 - category multi-values and Coupang notices/certificates reach native fields
+  ---
+  duration_ms: 0.395667
+  type: 'test'
+  ...
+# Subtest: Smartstore required typed unit-capacity fields are available before payload keys exist
+ok 12 - Smartstore required typed unit-capacity fields are available before payload keys exist
+  ---
+  duration_ms: 0.561625
+  type: 'test'
+  ...
+# Subtest: draft client does not call a failed or mismatched response saved
+ok 13 - draft client does not call a failed or mismatched response saved
+  ---
+  duration_ms: 7.728166
+  type: 'test'
+  ...
+# Subtest: native notice deletion is durable rather than resurrecting old rows
+ok 14 - native notice deletion is durable rather than resurrecting old rows
+  ---
+  duration_ms: 0.289375
+  type: 'test'
+  ...
+1..14
+# tests 14
+# suites 0
+# pass 14
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 267.931917

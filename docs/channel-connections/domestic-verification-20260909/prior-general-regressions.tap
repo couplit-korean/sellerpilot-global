@@ -1,0 +1,437 @@
+TAP version 13
+# Subtest: all nine product groups enforce six semantic setting-shot boundaries
+ok 1 - all nine product groups enforce six semantic setting-shot boundaries
+  ---
+  duration_ms: 5.299833
+  type: 'test'
+  ...
+# Subtest: worker retries only missing or decoder-rejected Codex image artifacts inside the existing role budget
+ok 2 - worker retries only missing or decoder-rejected Codex image artifacts inside the existing role budget
+  ---
+  duration_ms: 5.616625
+  type: 'test'
+  ...
+# Subtest: different real food products receive deterministic cross-product variation in every corresponding setting slot
+ok 3 - different real food products receive deterministic cross-product variation in every corresponding setting slot
+  ---
+  duration_ms: 1.807959
+  type: 'test'
+  ...
+# Subtest: independent scene digest lanes avoid the known FNV collision and 5,000 full-plan identities
+ok 4 - independent scene digest lanes avoid the known FNV collision and 5,000 full-plan identities
+  ---
+  duration_ms: 4443.02925
+  type: 'test'
+  ...
+# Subtest: the setting-shot validator rejects a future semantic or camera collision
+ok 5 - the setting-shot validator rejects a future semantic or camera collision
+  ---
+  duration_ms: 1.497083
+  type: 'test'
+  ...
+# Subtest: hero, square, feature and package have mutually exclusive purpose, crop, placement and camera contracts
+ok 6 - hero, square, feature and package have mutually exclusive purpose, crop, placement and camera contracts
+  ---
+  duration_ms: 2.29
+  type: 'test'
+  ...
+# Subtest: the exact SHA-256 and 256-bit dHash gate allows an initial image plus three materially different retries
+ok 7 - the exact SHA-256 and 256-bit dHash gate allows an initial image plus three materially different retries
+  ---
+  duration_ms: 0.589625
+  type: 'test'
+  ...
+# Subtest: setting-shot retries deterministically replace all six scene dimensions without losing category context or source pixels
+ok 8 - setting-shot retries deterministically replace all six scene dimensions without losing category context or source pixels
+  ---
+  duration_ms: 1.802583
+  type: 'test'
+  ...
+# Subtest: surface-supported retries use horizontal functional materials instead of wet-room-like planes
+ok 9 - surface-supported retries use horizontal functional materials instead of wet-room-like planes
+  ---
+  duration_ms: 0.717416
+  type: 'test'
+  ...
+# Subtest: wide surface-supported retry guidance keeps perspective edges out of the contact bridge
+ok 10 - wide surface-supported retry guidance keeps perspective edges out of the contact bridge
+  ---
+  duration_ms: 0.741208
+  type: 'test'
+  ...
+# Subtest: portrait and wide background prompts pin the support ridge to the nominal 256-grid contact line
+ok 11 - portrait and wide background prompts pin the support ridge to the nominal 256-grid contact line
+  ---
+  duration_ms: 1.196458
+  type: 'test'
+  ...
+# Subtest: wide suspended retry guidance never asks for a support surface
+ok 12 - wide suspended retry guidance never asks for a support surface
+  ---
+  duration_ms: 0.329166
+  type: 'test'
+  ...
+# Subtest: all suspended setting retries keep every slot free of support-surface contradictions
+ok 13 - all suspended setting retries keep every slot free of support-surface contradictions
+  ---
+  duration_ms: 2.343041
+  type: 'test'
+  ...
+# Subtest: audit-directed retries explicitly repair reserved-zone, assigned-scene and series failures without weakening the full gate
+ok 14 - audit-directed retries explicitly repair reserved-zone, assigned-scene and series failures without weakening the full gate
+  ---
+  duration_ms: 1.164417
+  type: 'test'
+  ...
+# Subtest: every retry index keeps all eight setting slots visually and semantically separated
+ok 15 - every retry index keeps all eight setting slots visually and semantically separated
+  ---
+  duration_ms: 2.721167
+  type: 'test'
+  ...
+# Subtest: product-specific setting variations stay subordinate to recognizable real-life rooms
+ok 16 - product-specific setting variations stay subordinate to recognizable real-life rooms
+  ---
+  duration_ms: 1.256209
+  type: 'test'
+  ...
+# Subtest: individual regeneration rejects exact and near duplicates of the pre-replacement target
+ok 17 - individual regeneration rejects exact and near duplicates of the pre-replacement target
+  ---
+  duration_ms: 0.114
+  type: 'test'
+  ...
+# Subtest: both full-series and individual-regeneration worker paths use the same hash gate and initial-plus-three-retry loop
+ok 18 - both full-series and individual-regeneration worker paths use the same hash gate and initial-plus-three-retry loop
+  ---
+  duration_ms: 10.065583
+  type: 'test'
+  ...
+# Subtest: image generation retries only the exact Codex timeout inside the finite shot-attempt loop
+ok 19 - image generation retries only the exact Codex timeout inside the finite shot-attempt loop
+  ---
+  duration_ms: 0.977
+  type: 'test'
+  ...
+# Subtest: individual regeneration fetches the cross-product archive only for setting-shot assets
+ok 20 - individual regeneration fetches the cross-product archive only for setting-shot assets
+  ---
+  duration_ms: 1.512542
+  type: 'test'
+  ...
+# Subtest: cross-product UUID fences canonicalize case variants before self and duplicate checks
+ok 21 - cross-product UUID fences canonicalize case variants before self and duplicate checks
+  ---
+  duration_ms: 1.251125
+  type: 'test'
+  ...
+# Subtest: protected products never send source pixels to image generation and preserve legacy input compatibility
+ok 22 - protected products never send source pixels to image generation and preserve legacy input compatibility
+  ---
+  duration_ms: 18.823875
+  type: 'test'
+  ...
+# Subtest: manual MVP draft keeps source photos explicit without inventing AI assets
+ok 23 - manual MVP draft keeps source photos explicit without inventing AI assets
+  ---
+  duration_ms: 2.492417
+  type: 'test'
+  ...
+# Subtest: one rejected channel localization keeps every unrelated draft available
+ok 24 - one rejected channel localization keeps every unrelated draft available
+  ---
+  duration_ms: 9.645833
+  type: 'test'
+  ...
+# Subtest: Qoo10 create and exact existing-product update replace legacy romanized references across the reviewed 8-image payload
+ok 25 - Qoo10 create and exact existing-product update replace legacy romanized references across the reviewed 8-image payload
+  ---
+  duration_ms: 2.867667
+  type: 'test'
+  ...
+# Subtest: exact Qoo10 workbench draft discards source KRW and romanized copy before provider preparation
+ok 26 - exact Qoo10 workbench draft discards source KRW and romanized copy before provider preparation
+  ---
+  duration_ms: 3.624709
+  type: 'test'
+  ...
+# Subtest: exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option
+ok 27 - exact external-action Qoo10 draft normalizes only through the fixed v2 reachability option
+  ---
+  duration_ms: 2.19925
+  type: 'test'
+  ...
+# Subtest: Qoo10 preserves seller-authored Japanese and Hangul titles and description text
+ok 28 - Qoo10 preserves seller-authored Japanese and Hangul titles and description text
+  ---
+  duration_ms: 0.249541
+  type: 'test'
+  ...
+# Subtest: legacy Qoo10 repair leaves non-Qoo create and update payloads unchanged
+ok 29 - legacy Qoo10 repair leaves non-Qoo create and update payloads unchanged
+  ---
+  duration_ms: 0.781834
+  type: 'test'
+  ...
+# Subtest: every marketplace draft preserves the explicit manual source-image contract
+ok 30 - every marketplace draft preserves the explicit manual source-image contract
+  ---
+  duration_ms: 0.579334
+  type: 'test'
+  ...
+# Subtest: Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied
+ok 31 - Temu draft sends the confirmed leaf ID and blocks until a shipping template is supplied
+  ---
+  duration_ms: 0.253958
+  type: 'test'
+  ...
+# Subtest: Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent
+ok 32 - Lazada MY existing-product draft replaces the global USD default with the verified 5,000 KRW equivalent
+  ---
+  duration_ms: 0.508958
+  type: 'test'
+  ...
+# Subtest: manual MVP image contract reaches URL validation instead of the AI detail fence
+ok 33 - manual MVP image contract reaches URL validation instead of the AI detail fence
+  ---
+  duration_ms: 0.615541
+  type: 'test'
+  ...
+# Subtest: Qoo10 manual MVP accepts and reads back one explicit source detail image
+ok 34 - Qoo10 manual MVP accepts and reads back one explicit source detail image
+  ---
+  duration_ms: 9.639875
+  type: 'test'
+  ...
+# Subtest: manual intake route validates preserved photos and the client retries the exact UUID
+ok 35 - manual intake route validates preserved photos and the client retries the exact UUID
+  ---
+  duration_ms: 5.873334
+  type: 'test'
+  ...
+# Subtest: an ambiguous manual request preserves one canonical body and UUID for the same seller SKU
+ok 36 - an ambiguous manual request preserves one canonical body and UUID for the same seller SKU
+  ---
+  duration_ms: 2.338125
+  type: 'test'
+  ...
+# Subtest: channel operations binds request image mode to the server product lineage before claiming an attempt
+ok 37 - channel operations binds request image mode to the server product lineage before claiming an attempt
+  ---
+  duration_ms: 1.511709
+  type: 'test'
+  ...
+# Subtest: public reference address policy blocks private and special-purpose IPv4 ranges
+ok 38 - public reference address policy blocks private and special-purpose IPv4 ranges
+  ---
+  duration_ms: 0.764208
+  type: 'test'
+  ...
+# Subtest: public reference address policy blocks local, transition and reserved IPv6 ranges
+ok 39 - public reference address policy blocks local, transition and reserved IPv6 ranges
+  ---
+  duration_ms: 4.036458
+  type: 'test'
+  ...
+# Subtest: reference URL policy allows only credential-free http(s) default ports
+ok 40 - reference URL policy allows only credential-free http(s) default ports
+  ---
+  duration_ms: 0.326166
+  type: 'test'
+  ...
+# Subtest: the policy-only preflight blocks literal private targets without downloading
+ok 41 - the policy-only preflight blocks literal private targets without downloading
+  ---
+  duration_ms: 0.556
+  type: 'test'
+  ...
+# Subtest: bounded reference collector never buffers beyond its limit
+ok 42 - bounded reference collector never buffers beyond its limit
+  ---
+  duration_ms: 0.233792
+  type: 'test'
+  ...
+# Subtest: each redirect hop is re-resolved, public-checked and connected to its pinned address
+ok 43 - each redirect hop is re-resolved, public-checked and connected to its pinned address
+  ---
+  duration_ms: 1.276084
+  type: 'test'
+  ...
+# Subtest: redirect rebinding and mixed public/private DNS answers fail closed before a socket request
+ok 44 - redirect rebinding and mixed public/private DNS answers fail closed before a socket request
+  ---
+  duration_ms: 0.233625
+  type: 'test'
+  ...
+# Subtest: redirect loops, redirect limits, invalid content and oversized defensive results are rejected
+    # Subtest: loop
+    ok 1 - loop
+      ---
+      duration_ms: 0.159958
+      type: 'test'
+      ...
+    # Subtest: limit
+    ok 2 - limit
+      ---
+      duration_ms: 0.23775
+      type: 'test'
+      ...
+    # Subtest: content type
+    ok 3 - content type
+      ---
+      duration_ms: 0.1115
+      type: 'test'
+      ...
+    # Subtest: defensive body bound
+    ok 4 - defensive body bound
+      ---
+      duration_ms: 0.200042
+      type: 'test'
+      ...
+    1..4
+ok 45 - redirect loops, redirect limits, invalid content and oversized defensive results are rejected
+  ---
+  duration_ms: 1.088459
+  type: 'test'
+  ...
+# Subtest: the total deadline covers DNS and external aborts retain cancellation semantics
+ok 46 - the total deadline covers DNS and external aborts retain cancellation semantics
+  ---
+  duration_ms: 21.478083
+  type: 'test'
+  ...
+# Subtest: the AI worker uses the shared fetcher and propagates both research leases
+ok 47 - the AI worker uses the shared fetcher and propagates both research leases
+  ---
+  duration_ms: 3.480041
+  type: 'test'
+  ...
+# Subtest: only active AI activities expose a direct cancellable job id
+ok 48 - only active AI activities expose a direct cancellable job id
+  ---
+  duration_ms: 0.784666
+  type: 'test'
+  ...
+# Subtest: sale configuration has one shared dropdown contract
+ok 49 - sale configuration has one shared dropdown contract
+  ---
+  duration_ms: 0.615834
+  type: 'test'
+  ...
+# Subtest: dashboard range presets stay in one feature module
+ok 50 - dashboard range presets stay in one feature module
+  ---
+  duration_ms: 1.312542
+  type: 'test'
+  ...
+# Subtest: every new or changed registration event is queued once after initial hydration
+ok 51 - every new or changed registration event is queued once after initial hydration
+  ---
+  duration_ms: 0.2495
+  type: 'test'
+  ...
+# Subtest: image and revision failures use truthful activity-aware labels in cards and notifications
+ok 52 - image and revision failures use truthful activity-aware labels in cards and notifications
+  ---
+  duration_ms: 0.071125
+  type: 'test'
+  ...
+# Subtest: administrator cancellation is displayed as a resumable stop rather than an error
+ok 53 - administrator cancellation is displayed as a resumable stop rather than an error
+  ---
+  duration_ms: 0.102459
+  type: 'test'
+  ...
+# Subtest: every per-channel registration transition is notified while the aggregate stays publishing
+ok 54 - every per-channel registration transition is notified while the aggregate stays publishing
+  ---
+  duration_ms: 0.201667
+  type: 'test'
+  ...
+# Subtest: registration history outage preserves its notification baseline across recovery
+ok 55 - registration history outage preserves its notification baseline across recovery
+  ---
+  duration_ms: 0.128583
+  type: 'test'
+  ...
+# Subtest: ready registration cards are completed analysis drafts, not running work
+ok 56 - ready registration cards are completed analysis drafts, not running work
+  ---
+  duration_ms: 0.290959
+  type: 'test'
+  ...
+# Subtest: failed AI cards expose the exact retryable job while only orphan studio jobs need browser recovery
+ok 57 - failed AI cards expose the exact retryable job while only orphan studio jobs need browser recovery
+  ---
+  duration_ms: 0.669667
+  type: 'test'
+  ...
+# Subtest: registration success excludes failed and blocked channels and never invents an AI percentage
+ok 58 - registration success excludes failed and blocked channels and never invents an AI percentage
+  ---
+  duration_ms: 0.137416
+  type: 'test'
+  ...
+# Subtest: relative return paths cannot escape the SellerPilot origin
+ok 59 - relative return paths cannot escape the SellerPilot origin
+  ---
+  duration_ms: 0.136
+  type: 'test'
+  ...
+# Subtest: toast queue preserves separate events for two seconds instead of replacing them
+ok 60 - toast queue preserves separate events for two seconds instead of replacing them
+  ---
+  duration_ms: 0.415625
+  type: 'test'
+  ...
+# Subtest: late product detail hydration never replaces an open or dirty edit draft
+ok 61 - late product detail hydration never replaces an open or dirty edit draft
+  ---
+  duration_ms: 0.055584
+  type: 'test'
+  ...
+# Subtest: order, delivery, CS, and synchronization events all enter the notification queue
+ok 62 - order, delivery, CS, and synchronization events all enter the notification queue
+  ---
+  duration_ms: 0.279875
+  type: 'test'
+  ...
+# Subtest: product edit preserves sold-out stock and bounded promises cannot hang forever
+ok 63 - product edit preserves sold-out stock and bounded promises cannot hang forever
+  ---
+  duration_ms: 5.651542
+  type: 'test'
+  ...
+# Subtest: today dashboard routes and tablet overflow fix remain wired
+ok 64 - today dashboard routes and tablet overflow fix remain wired
+  ---
+  duration_ms: 11.427
+  type: 'test'
+  ...
+# Subtest: 390px registration, CS, preview, and notification surfaces keep their mobile contract
+ok 65 - 390px registration, CS, preview, and notification surfaces keep their mobile contract
+  ---
+  duration_ms: 1.177625
+  type: 'test'
+  ...
+# Subtest: Fold secondary controls keep a real 44px touch target
+ok 66 - Fold secondary controls keep a real 44px touch target
+  ---
+  duration_ms: 1.737209
+  type: 'test'
+  ...
+# Subtest: terminal failures do not display a completed upload bar
+ok 67 - terminal failures do not display a completed upload bar
+  ---
+  duration_ms: 0.0885
+  type: 'test'
+  ...
+1..67
+# tests 71
+# suites 0
+# pass 71
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4730.202916

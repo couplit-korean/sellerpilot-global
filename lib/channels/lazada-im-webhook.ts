@@ -72,7 +72,7 @@ export type LazadaInquiryIngestResult =
   | { ok: false; status: 500 | 503; partial?: boolean };
 
 export async function lazadaQuarantineReady(
-  inquiries: ReadonlyArray<{ orderingStatus?: "unverified" | "conflict" } | LazadaImInquiry>,
+  inquiries: ReadonlyArray<{ orderingStatus?: "unverified" | "conflict"; remoteMessageId?: string }>,
   verify?: () => PromiseLike<{ data: unknown; error: unknown }>,
 ): Promise<boolean> {
   if (!inquiries.some((inquiry) => "orderingStatus" in inquiry && inquiry.orderingStatus)) return true;

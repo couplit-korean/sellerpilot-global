@@ -14,6 +14,7 @@ import {
   runtimeStatusMatchesCurrentRelease,
 } from "../../../../lib/internal-scheduler-auth";
 import { deadlineAfter, deadlineRemaining } from "../../../../lib/time-deadline";
+import { reprocessPendingLazadaRawReceipts } from "../../../../lib/channels/lazada-raw-reprocess";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -160,7 +161,7 @@ async function cleanupPrunedMarketplaceStorage(serviceClient: SupabaseClient) {
   const { error: removeError } = await serviceClient.storage.from(claim.bucket).remove(claim.paths);
   const removedPaths = removeError ? [] : claim.paths;
   const { data: completion, error: completionError } = await serviceClient.rpc(
-    "sellerpilot_service_complete_marketplace_normalized_asset_cleanup",
+    "sellerpilot_service_complete_normalized_asset_cleanup",
     {
       p_claim_token: claim.claimToken,
       p_removed_paths: removedPaths,
@@ -292,6 +293,7 @@ function maintenanceDeadlineResponse(
   staleAiJobsRecovery: StaleAiJobRecovery,
   staleGatewayJobsRecovery: StaleGatewayJobRecovery,
   stalePushDeliveryRecovery: StalePushDeliveryRecovery,
+  extra: Record<string, unknown> = {},
 ) {
   return NextResponse.json({
     ok: false,
@@ -300,6 +302,7 @@ function maintenanceDeadlineResponse(
     staleAiJobsRecovery,
     staleGatewayJobsRecovery,
     stalePushDeliveryRecovery,
+    ...extra,
   }, { status: 503, headers: { "cache-control": "no-store, max-age=0" } });
 }
 
@@ -311,7 +314,8 @@ type MaintenanceRetentionStage =
   | "kakao_oauth_sweep"
   | "tracx_mutation_sweep"
   | "lazada_reply_sweep"
-  | "worker_token_expiry";
+  | "worker_token_expiry"
+  | "lazada_im_raw_inbox_prune";
 
 function safeMaintenanceRpcErrorCode(error: unknown) {
   if (!error || typeof error !== "object" || Array.isArray(error)) return "unknown";
@@ -327,6 +331,7 @@ function maintenanceRetentionFailureResponse(
   staleAiJobsRecovery: StaleAiJobRecovery,
   staleGatewayJobsRecovery: StaleGatewayJobRecovery,
   stalePushDeliveryRecovery: StalePushDeliveryRecovery,
+  extra: Record<string, unknown> = {},
 ) {
   const code = safeMaintenanceRpcErrorCode(error);
   console.error("maintenance retention RPC failed", { stage, code, status: 500 });
@@ -338,6 +343,7 @@ function maintenanceRetentionFailureResponse(
     staleAiJobsRecovery,
     staleGatewayJobsRecovery,
     stalePushDeliveryRecovery,
+    ...extra,
   }, { status: 500, headers: { "cache-control": "no-store, max-age=0" } });
 }
 
@@ -501,6 +507,19 @@ export async function GET(request: Request) {
       stalePushDeliveryRecovery,
     );
   }
+  const lazadaRawReprocess = await reprocessPendingLazadaRawReceipts(
+    (name, arguments_) => serviceClient.rpc(name, arguments_),
+    5,
+  );
+  if (!maintenanceHasBudget(maintenanceDeadline, MAINTENANCE_RPC_STAGE_RESERVE_MS)) {
+    return maintenanceDeadlineResponse(
+      "retention_ledger",
+      staleAiJobsRecovery,
+      staleGatewayJobsRecovery,
+      stalePushDeliveryRecovery,
+      lazadaRawReprocess,
+    );
+  }
   const retentionDays = 30;
   const completedBefore = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
   const runtimeCompletedBefore = new Date(
@@ -513,6 +532,7 @@ export async function GET(request: Request) {
     { data: tracxReconciliationRequired, error: tracxSweepError },
     { data: lazadaReplyReconciliationRequired, error: lazadaReplySweepError },
     { data: pendingWorkerTokensExpired, error: pendingWorkerTokenExpiryError },
+    { data: lazadaRawInboxDeleted, error: lazadaRawInboxPruneError },
   ] = await Promise.all([
     serviceClient.rpc("sellerpilot_prune_ai_jobs", {
       p_completed_before: completedBefore,
@@ -523,6 +543,7 @@ export async function GET(request: Request) {
     serviceClient.rpc("sellerpilot_service_sweep_stale_tracx_mutations"),
     serviceClient.rpc("sellerpilot_service_sweep_stale_lazada_replies"),
     serviceClient.rpc("sellerpilot_service_expire_pending_worker_token_sets"),
+    serviceClient.rpc("sellerpilot_service_prune_lazada_im_raw_inbox_v1"),
   ]);
   // These two functions can delete overlapping terminal gateway rows. Keep
   // them sequential while still attempting every independent retention sweep.
@@ -543,6 +564,7 @@ export async function GET(request: Request) {
     ["tracx_mutation_sweep", tracxSweepError],
     ["lazada_reply_sweep", lazadaReplySweepError],
     ["worker_token_expiry", pendingWorkerTokenExpiryError],
+    ["lazada_im_raw_inbox_prune", lazadaRawInboxPruneError],
   ] as const).find(([, candidate]) => candidate);
   if (retentionFailure) {
     return maintenanceRetentionFailureResponse(
@@ -551,6 +573,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      { lazadaRawReprocess },
     );
   }
 
@@ -565,6 +588,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      { lazadaRawReprocess },
     );
   }
   let storageCleanup: Awaited<ReturnType<typeof cleanupPrunedAiStorage>>;
@@ -579,6 +603,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      lazadaRawReprocess,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (storageCleanup.failed) {
@@ -593,6 +618,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      lazadaRawReprocess,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (!maintenanceHasBudget(maintenanceDeadline, MAINTENANCE_STORAGE_STAGE_RESERVE_MS)) {
@@ -601,6 +627,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      { lazadaRawReprocess },
     );
   }
   let marketplaceStorageCleanup: Awaited<ReturnType<typeof cleanupPrunedMarketplaceStorage>>;
@@ -618,6 +645,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      lazadaRawReprocess,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   if (marketplaceStorageCleanup.failed) {
@@ -635,6 +663,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      lazadaRawReprocess,
     }, { status: 502, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const pushDeferred = !maintenanceHasBudget(
@@ -664,6 +693,9 @@ export async function GET(request: Request) {
         finalizationFailed: 1,
       }));
   const pushRequiresAttention = push.reconciliationRequired > 0 || push.finalizationFailed > 0;
+  const lazadaRawRequiresAttention = lazadaRawReprocess.claimFailed
+    || lazadaRawReprocess.failed > 0
+    || lazadaRawReprocess.retried > 0;
 
   if (!staleAiJobsRecovery.ok || !staleGatewayJobsRecovery.ok || !stalePushDeliveryRecovery.ok) {
     return NextResponse.json({
@@ -681,6 +713,7 @@ export async function GET(request: Request) {
       staleAiJobsRecovery,
       staleGatewayJobsRecovery,
       stalePushDeliveryRecovery,
+      lazadaRawReprocess,
       personalData,
       runtimeData,
       kakaoReconciliationRequired,
@@ -688,6 +721,7 @@ export async function GET(request: Request) {
       tracxReconciliationRequired,
       lazadaReplyReconciliationRequired,
       pendingWorkerTokensExpired,
+      lazadaRawInboxDeleted,
       shopeeToken: shopeeToken.status,
       lazadaToken: lazadaToken.status,
       ebayToken: ebayToken.status,
@@ -704,7 +738,7 @@ export async function GET(request: Request) {
   }
 
   return NextResponse.json({
-    ok: !pushRequiresAttention,
+    ok: !pushRequiresAttention && !lazadaRawRequiresAttention,
     retentionDays,
     jobsPruned: rows.length,
     storageQueued: storagePaths.length,
@@ -717,6 +751,7 @@ export async function GET(request: Request) {
     staleAiJobsRecovery,
     staleGatewayJobsRecovery,
     stalePushDeliveryRecovery,
+    lazadaRawReprocess,
     personalData,
     runtimeData,
     kakaoReconciliationRequired,
@@ -724,6 +759,7 @@ export async function GET(request: Request) {
     tracxReconciliationRequired,
     lazadaReplyReconciliationRequired,
     pendingWorkerTokensExpired,
+    lazadaRawInboxDeleted,
     shopeeToken: shopeeToken.status,
     lazadaToken: lazadaToken.status,
     ebayToken: ebayToken.status,
@@ -737,7 +773,7 @@ export async function GET(request: Request) {
     },
     completedAt: new Date().toISOString(),
   }, {
-    status: pushRequiresAttention ? 207 : 200,
+    status: pushRequiresAttention || lazadaRawRequiresAttention ? 207 : 200,
     headers: { "cache-control": "no-store, max-age=0" },
   });
 }

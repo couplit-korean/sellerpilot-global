@@ -1,5 +1,9 @@
+import { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
+export { gatewayResultRequiresAdditionalEvidence } from "../gateway-result-evidence";
 import { z } from "zod";
-import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operations";
+import { ebayPublicationReconciliationBindingSchema } from "./ebay-publication-reconciliation-contract";
+import { smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
+import { channelOperationNames, writeChannelOperations, type ChannelOperationName } from "./operation-names";
 import {
   listingOperationRequiresVerifiedRemoteState,
   listingOperationUsesPublicationIntent,
@@ -41,7 +45,23 @@ export const gatewayClaimSchema = z.object({
   request: z.record(z.string(), z.unknown()),
   credential: credentialPayloadSchema,
   attempt_count: z.number().int().min(1).max(6),
+  ebay_publication_reconciliation:
+    ebayPublicationReconciliationBindingSchema.optional(),
 }).superRefine((value, context) => {
+  const ebayRecovery = value.ebay_publication_reconciliation;
+  if (ebayRecovery && (
+    value.channel !== "ebay"
+    || value.operation !== "listing.create"
+    || value.environment !== "production"
+    || ebayRecovery.sourceJobId !== value.id
+    || ebayRecovery.credentialId !== value.credential_id
+  )) {
+    context.addIssue({
+      code: "custom",
+      path: ["ebay_publication_reconciliation"],
+      message: "invalid eBay publication reconciliation lineage",
+    });
+  }
   if (!listingOperationRequiresVerifiedRemoteState(value.operation)) return;
   const argumentsValue = value.request.arguments;
   if (!argumentsValue || typeof argumentsValue !== "object" || Array.isArray(argumentsValue)) return;
@@ -59,8 +79,8 @@ export const gatewayClaimSchema = z.object({
   // executable as legacy jobs, while every new admin request injects the
   // normalized default before it is enqueued.
   if (listingOperationUsesPublicationIntent(value.operation)
-      && publicationIntent !== undefined
-      && !listingPublicationIntentSchema.safeParse(publicationIntent).success) {
+    && publicationIntent !== undefined
+    && !listingPublicationIntentSchema.safeParse(publicationIntent).success) {
     context.addIssue({
       code: "custom",
       path: ["request", "arguments", "publicationIntent"],
@@ -98,6 +118,33 @@ export const gatewayClaimSchema = z.object({
   }
 });
 
+function validShopeeInquiryContinuation(next: Record<string, unknown>) {
+  const integer = (value: unknown, min: number, max: number) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
+  if (!integer(next.pageSize, 1, 100)) return false;
+  if (next.sellerpilotPaginationEpoch !== undefined
+    && !integer(next.sellerpilotPaginationEpoch, 0, Number.MAX_SAFE_INTEGER)) return false;
+  const trail = next.sellerpilotPaginationTrail;
+  if (trail !== undefined && (!Array.isArray(trail) || trail.length > 50
+    || trail.some((entry) => typeof entry !== "string" || !/^[a-f0-9]{64}$/.test(entry)))) return false;
+  if (next.kind === "product_review") {
+    return typeof next.cursor === "string" && next.cursor.trim().length > 0 && next.cursor.length <= 500;
+  }
+  if (next.kind !== "return_refund"
+    || !integer(next.createTimeFrom, 1, 9_999_999_999)
+    || !integer(next.createTimeTo, 1, 9_999_999_999)
+    || Number(next.createTimeTo) <= Number(next.createTimeFrom)
+    || Number(next.createTimeTo) - Number(next.createTimeFrom) > 15 * 86_400
+    || !integer(next.pageNo, 1, 1_000_000)) return false;
+  if (next.returnQueue === undefined) return next.nextPageNo === undefined;
+  const queue = next.returnQueue;
+  return Array.isArray(queue) && queue.length > 0 && queue.length <= Number(next.pageSize)
+    && queue.every((serial) => typeof serial === "string" && /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(serial))
+    && new Set(queue).size === queue.length
+    && (next.nextPageNo === undefined
+      || (integer(next.nextPageNo, 2, 1_000_000) && next.nextPageNo === next.pageNo));
+}
+
 const paginationContinuationSchema = z.object({
   reason: z.literal("page_cap_reached"),
   arguments: z.record(z.string(), z.unknown()).superRefine((value, context) => {
@@ -132,10 +179,10 @@ const operationResultSchema = z.object({
   safeMessage: z.string().min(1).max(1_000),
 }).superRefine((value, context) => {
   if (listingOperationRequiresVerifiedRemoteState(value.operation)
-      && !value.publicationStateContract
-      && (value.publicationIntent !== undefined
-        || value.remoteState !== undefined
-        || value.publicationFulfilled !== undefined)) {
+    && !value.publicationStateContract
+    && (value.publicationIntent !== undefined
+      || value.remoteState !== undefined
+      || value.publicationFulfilled !== undefined)) {
     context.addIssue({
       code: "custom",
       path: ["publicationStateContract"],
@@ -216,28 +263,37 @@ const operationResultSchema = z.object({
       : {};
     const positiveInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 1;
     const nonNegativeInteger = (item: unknown) => Number.isInteger(Number(item)) && Number(item) >= 0;
+    const nonNegativeMultiple = (item: unknown, divisor: number) => nonNegativeInteger(item) && Number(item) % divisor === 0;
     const nonEmpty = (item: unknown) => typeof item === "string" && item.trim().length > 0;
     const valid = value.channel === "shopee" && value.operation === "orders.list"
       ? nonEmpty(query.cursor)
-      : value.channel === "lazada" && value.operation === "orders.list"
-        ? nonNegativeInteger(queryParams.offset)
-        : value.channel === "coupang" && value.operation === "orders.list"
-          ? nonEmpty(query.nextToken)
-          : value.channel === "coupang" && value.operation === "inquiries.list"
-            ? positiveInteger(query.pageNum)
-            : value.channel === "smartstore" && value.operation === "orders.list"
-              ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
-              : value.channel === "smartstore" && value.operation === "inquiries.list"
-                ? positiveInteger(query.page)
-                : value.channel === "ebay" && value.operation === "orders.list"
-                  ? nonNegativeInteger(query.offset)
-                  : value.channel === "ebay" && value.operation === "inquiries.list"
-                    ? positiveInteger(next.pageNumber)
-                    : value.channel === "temu" && value.operation === "orders.list"
-                      ? positiveInteger(next.pageNumber)
-                      : value.channel === "temu" && value.operation === "inquiries.list"
-                        ? positiveInteger(next.pageNo)
-                        : false;
+      : value.channel === "shopee" && value.operation === "inquiries.list"
+        ? validShopeeInquiryContinuation(next)
+        : value.channel === "lazada" && value.operation === "orders.list"
+          ? nonNegativeInteger(queryParams.offset)
+          : value.channel === "coupang" && value.operation === "orders.list"
+            ? nonEmpty(query.nextToken)
+            : value.channel === "coupang" && value.operation === "inquiries.list"
+              ? next.kind === "exchange_request" ? nonEmpty(query.nextToken) : positiveInteger(query.pageNum)
+              : value.channel === "smartstore" && value.operation === "orders.list"
+                ? nonEmpty(query.lastChangedFrom) && nonEmpty(query.moreSequence)
+                : value.channel === "smartstore" && value.operation === "inquiries.list"
+                  ? positiveInteger(query.page)
+                  : value.channel === "ebay" && value.operation === "orders.list"
+                    ? nonNegativeInteger(query.offset)
+                    : value.channel === "ebay" && value.operation === "inquiries.list"
+                      ? next.kind === "conversation"
+                        ? next.conversationType === "FROM_MEMBERS" || next.conversationType === "FROM_EBAY"
+                          ? typeof next.conversationId === "string" && next.conversationId.length > 0
+                            ? nonNegativeMultiple(next.messageOffset, 25)
+                            : nonNegativeMultiple(next.conversationOffset, 10)
+                          : false
+                        : positiveInteger(next.pageNumber)
+                      : value.channel === "temu" && value.operation === "orders.list"
+                        ? positiveInteger(next.pageNumber)
+                        : value.channel === "temu" && value.operation === "inquiries.list"
+                          ? positiveInteger(next.pageNo)
+                          : false;
     if (!valid) context.addIssue({ code: "custom", message: "invalid provider pagination continuation" });
   }
 });
@@ -248,6 +304,15 @@ const credentialRefreshSchema = z.object({
   recoveryOnly: z.boolean().optional(),
   oauthComplete: z.boolean().optional(),
 });
+const credentialBindingSchema = z.object({
+  contract: z.literal("sellerpilot-cs-credential-binding/1"),
+  channel: gatewayChannelSchema,
+  operation: z.enum(["inquiries.list", "inquiries.reply"]),
+  appFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  tokenFingerprint: z.string().regex(/^[a-f0-9]{64}$/u),
+  targetFingerprints: z.array(z.string().regex(/^[a-f0-9]{64}$/u)).min(1).max(100),
+  country: z.string().regex(/^[A-Z0-9_-]{1,40}$/u),
+}).strict();
 
 export const gatewayCredentialRefreshStageSchema = z.object({
   action: z.literal("stage"),
@@ -302,25 +367,7 @@ const listingLineageEvidenceBaseSchema = z.object({
   evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
   marketplaceSku: z.string().min(1).max(160).optional(),
   providerResourceId: z.string().min(1).max(240).optional(),
-  shopeeAdoption: z.object({
-    contract: z.literal("sellerpilot_shopee_sg_existing_adoption_readback_v1"),
-    itemId: z.literal("53717126190"),
-    sku: z.literal("QA-20260823-CC-001"),
-    merchantId: z.literal("5511564"),
-    shopId: z.literal("1719148844"),
-    market: z.literal("SG"),
-    locale: z.literal("en-SG"),
-    currency: z.literal("SGD"),
-    price: z.number().positive().max(999_999_999),
-    providerStatus: z.literal("UNLIST"),
-    galleryImageCount: z.number().int().min(1).max(9),
-    detailImageCount: z.literal(8),
-    representativeImageVerified: z.literal(true),
-    titleLanguageVerified: z.literal(true),
-    descriptionLanguageVerified: z.literal(true),
-    titleDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-    descriptionDigest: z.string().regex(/^[a-f0-9]{64}$/u),
-  }).strict().optional(),
+
 });
 
 const listingLineageStepDataSchema = z.object({
@@ -346,6 +393,165 @@ const listingLineageStepDataSchema = z.object({
   marketplaceId: z.string().min(1).max(160).optional(),
   marketplaceSkuPresent: z.boolean().optional(),
   exactOfferUnique: z.boolean().optional(),
+}).strict();
+
+const smartstoreManualAdoptionDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+
+export const smartstoreManualAdoptionReadbackJobSchema = z.object({
+  contract: z.literal("smartstore_manual_adoption_readback_job_v1"),
+  ownerId: z.string().uuid(),
+  productId: z.string().uuid(),
+  listingId: z.string().uuid(),
+  sourceJobId: z.string().uuid(),
+  sourceAttemptId: z.string().uuid(),
+  credentialId: z.string().uuid(),
+  sellerAccountKey: smartstoreManualAdoptionDigestSchema,
+  sellerSku: z.string().trim().min(1).max(100),
+  approvalRevision: z.number().int().positive(),
+  contentSha256: smartstoreManualAdoptionDigestSchema,
+  manifestDigest: smartstoreManualAdoptionDigestSchema,
+}).strict();
+
+export const smartstoreManualAdoptionReadbackSchema = z.object({
+  contract: z.literal("smartstore_official_manual_adoption_readback_v1"),
+  source: z.literal("smartstore_official_api_readback_v1"),
+  observedAt: z.string().datetime({ offset: true }),
+  providerMutationPerformed: z.literal(false),
+  searchReadback: z.object({
+    method: z.literal("POST"),
+    path: z.literal("/v1/products/search"),
+    httpStatus: z.literal(200),
+    request: z.record(z.string(), z.unknown()),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  originReadback: z.object({
+    method: z.literal("GET"),
+    path: z.string().regex(/^\/v2\/products\/origin-products\/[1-9]\d{5,19}$/u),
+    httpStatus: z.literal(200),
+    request: z.null(),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  channelReadback: z.object({
+    method: z.literal("GET"),
+    path: z.string().regex(/^\/v2\/products\/channel-products\/[1-9]\d{5,19}$/u),
+    httpStatus: z.literal(200),
+    request: z.null(),
+    response: z.record(z.string(), z.unknown()),
+  }).strict(),
+  detailImageUrls: z.array(z.string().url().max(4_000)).length(8),
+  detailImagePixelSha256s: z.array(smartstoreManualAdoptionDigestSchema).length(8),
+}).strict().superRefine((value, context) => {
+  if (new Set(value.detailImageUrls).size !== 8) {
+    context.addIssue({ code: "custom", path: ["detailImageUrls"], message: "SmartStore adoption image URLs must be distinct" });
+  }
+  if (new Set(value.detailImagePixelSha256s).size !== 8) {
+    context.addIssue({ code: "custom", path: ["detailImagePixelSha256s"], message: "SmartStore adoption image pixels must be distinct" });
+  }
+  try {
+    if (Buffer.byteLength(JSON.stringify(value), "utf8") > 2 * 1024 * 1024) {
+      context.addIssue({ code: "custom", message: "SmartStore adoption readback is too large" });
+    }
+  } catch {
+    context.addIssue({ code: "custom", message: "SmartStore adoption readback must be serializable" });
+  }
+});
+
+const smartstoreContentRepairDigestSchema = z.string().regex(/^[a-f0-9]{64}$/u);
+export const smartstoreContentRepairResultSchema = z.object({
+  contract: z.literal("smartstore_existing_content_repair_result_v1"),
+  source: z.literal("smartstore_official_content_repair_v1"),
+  observedAt: z.string().datetime({ offset: true }),
+  providerMutationPerformed: z.literal(true),
+  originProductNo: z.string().regex(/^[1-9]\d{5,19}$/u),
+  channelProductNo: z.string().regex(/^[1-9]\d{5,19}$/u),
+  baselineBodySha256: smartstoreContentRepairDigestSchema,
+  prewriteProtectedBodySha256: smartstoreContentRepairDigestSchema,
+  postwriteProtectedBodySha256: smartstoreContentRepairDigestSchema,
+  prewriteOriginResponseSha256: smartstoreContentRepairDigestSchema,
+  prewriteChannelResponseSha256: smartstoreContentRepairDigestSchema,
+  postwriteOriginResponseSha256: smartstoreContentRepairDigestSchema,
+  postwriteChannelResponseSha256: smartstoreContentRepairDigestSchema,
+  approvedTransmissionImages: smartstoreContentRepairTransmissionImagesSchema,
+  postwriteReadback: smartstoreManualAdoptionReadbackSchema,
+}).strict().superRefine((value, context) => {
+  if (value.prewriteProtectedBodySha256 !== value.postwriteProtectedBodySha256) {
+    context.addIssue({
+      code: "custom",
+      path: ["postwriteProtectedBodySha256"],
+      message: "SmartStore content repair changed protected provider fields",
+    });
+  }
+  if (value.observedAt !== value.postwriteReadback.observedAt
+    || value.postwriteReadback.originReadback.path
+    !== `/v2/products/origin-products/${value.originProductNo}`
+    || value.postwriteReadback.channelReadback.path
+    !== `/v2/products/channel-products/${value.channelProductNo}`) {
+    context.addIssue({
+      code: "custom",
+      path: ["postwriteReadback"],
+      message: "SmartStore content repair readback identity mismatch",
+    });
+  }
+  if (value.approvedTransmissionImages.some((image, index) => image.index !== index)
+    || new Set(value.approvedTransmissionImages.map((image) => image.url)).size !== 8
+    || new Set(value.approvedTransmissionImages.map((image) => image.contentSha256)).size !== 8
+    || new Set(value.approvedTransmissionImages.map((image) => image.decodedRgbaSha256)).size !== 8
+    || value.approvedTransmissionImages.some((image) => {
+      try {
+        const target = new URL(image.url);
+        return target.protocol !== "https:"
+          || Boolean(target.search || target.hash)
+          || target.pathname !== `/storage/v1/object/public/sellerpilot-marketplace/normalized/${image.contentSha256.slice(0, 2)}/${image.contentSha256}.jpg`;
+      } catch {
+        return true;
+      }
+    })
+    || value.postwriteReadback.detailImagePixelSha256s.some((digest, index) =>
+      digest !== value.approvedTransmissionImages[index]?.decodedRgbaSha256)) {
+    context.addIssue({
+      code: "custom",
+      path: ["approvedTransmissionImages"],
+      message: "SmartStore repair transmission images must be ordered and distinct",
+    });
+  }
+});
+
+export const smartstoreContentRepairWorkerResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("smartstore"),
+  operation: z.literal("listing.update"),
+  steps: z.array(z.object({
+    name: z.string().min(1).max(160),
+    ok: z.boolean(),
+    status: z.number().int().min(0).max(999),
+    requestId: z.string().max(160).optional(),
+    data: z.record(z.string(), z.unknown()),
+  })).min(1).max(128),
+  remoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+  evidence: smartstoreContentRepairResultSchema,
+  safeMessage: z.string().min(1).max(1_000),
+}).strict();
+
+export const smartstoreManualAdoptionLineageResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("smartstore"),
+  operation: z.literal("listing.lineage.verify"),
+  verificationStatus: z.literal("verified"),
+  evidence: z.object({
+    contract: z.literal("smartstore_manual_adoption_readback_result_v1"),
+    readback: smartstoreManualAdoptionReadbackSchema,
+  }).strict(),
+  steps: z.array(z.object({
+    name: z.literal("smartstore-manual-adoption-readback"),
+    ok: z.literal(true),
+    status: z.literal(200),
+    data: z.object({
+      sellerpilotVerification: z.literal("SMARTSTORE_MANUAL_ADOPTION_READBACK_VERIFIED"),
+      providerMutationPerformed: z.literal(false),
+      detailImageCount: z.literal(8),
+    }).strict(),
+  }).strict()).length(1),
+  safeMessage: z.string().min(1).max(1_000),
 }).strict();
 
 const listingLineageVerificationResultSchema = z.discriminatedUnion("verificationStatus", [
@@ -400,17 +606,159 @@ const listingLineageVerificationResultSchema = z.discriminatedUnion("verificatio
   if (value.channel !== "ebay" && (value.evidence.marketplaceSku || value.evidence.providerResourceId)) {
     context.addIssue({ code: "custom", message: "non-ebay lineage cannot carry ebay resource evidence" });
   }
-  if (value.channel !== "shopee" && value.evidence.shopeeAdoption) {
-    context.addIssue({ code: "custom", message: "non-shopee lineage cannot carry adoption evidence" });
-  }
+
   if (value.channel === "shopee" && !/^\d+$/.test(value.evidence.targetId)) {
     context.addIssue({ code: "custom", message: "verified shopee lineage requires a numeric shop id" });
   }
-  if (value.evidence.shopeeAdoption
-      && (value.evidence.expectedRemoteId !== value.evidence.shopeeAdoption.itemId
-        || value.evidence.targetId !== value.evidence.shopeeAdoption.shopId
-        || market !== value.evidence.shopeeAdoption.market)) {
-    context.addIssue({ code: "custom", message: "shopee adoption evidence identity mismatch" });
+
+});
+
+const coupangDurableCreateReconciliationResultSchema = z.object({
+  ok: z.literal(true),
+  channel: z.literal("coupang"),
+  operation: z.literal("listing.lineage.verify"),
+  verificationStatus: z.literal("verified"),
+  publicationStateContract: z.literal("verified_remote_state_v1").optional(),
+  publicationIntent: listingPublicationIntentSchema.optional(),
+  publicationFulfilled: z.boolean().optional(),
+  remoteState: verifiedListingRemoteStateSchema.optional(),
+  evidence: z.object({
+    expectedRemoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+    verifiedRemoteId: z.string().regex(/^[1-9]\d{5,19}$/u),
+    market: z.literal("KR"),
+    targetId: z.string().min(1).max(160),
+    evidenceVersion: z.literal("provider_listing_readback_rebind_v1"),
+    sourceJobId: z.string().uuid(),
+    sourceAttemptId: z.string().uuid(),
+    listingId: z.string().uuid(),
+    sourceRequestSha256: z.string().regex(/^[a-f0-9]{64}$/u),
+    sellerSkus: z.array(z.string().trim().min(1).max(160)).min(1).max(100),
+    vendorId: z.string().min(1).max(160),
+    sellerProductItemIds: z.array(z.string().regex(/^[1-9]\d{0,19}$/u)).min(1).max(100),
+    reconciliationContract: z.literal("coupang_durable_create_reconciliation_v1"),
+  }).strict(),
+  steps: z.array(z.object({
+    name: z.string().min(1).max(160),
+    ok: z.literal(true),
+    status: z.number().int().min(100).max(599),
+    data: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  }).strict()).min(2).max(201),
+  safeMessage: z.string().min(1).max(1_000),
+}).strict().superRefine((value, context) => {
+  if (value.evidence.expectedRemoteId !== value.evidence.verifiedRemoteId
+    || value.evidence.targetId !== value.evidence.vendorId
+    || value.evidence.sellerSkus.length !== value.evidence.sellerProductItemIds.length
+    || new Set(value.evidence.sellerSkus).size !== value.evidence.sellerSkus.length
+    || new Set(value.evidence.sellerProductItemIds).size !== value.evidence.sellerProductItemIds.length
+    || value.steps.length < value.evidence.sellerSkus.length + 1) {
+    context.addIssue({ code: "custom", message: "invalid Coupang durable CREATE reconciliation result" });
+  }
+  const publicationParts = [
+    value.publicationStateContract,
+    value.publicationIntent,
+    value.publicationFulfilled,
+    value.remoteState,
+  ];
+  const publicationPartCount = publicationParts.filter((item) => item !== undefined).length;
+  if (publicationPartCount !== 0 && publicationPartCount !== publicationParts.length) {
+    context.addIssue({ code: "custom", message: "partial Coupang publication evidence is forbidden" });
+  } else if (value.remoteState && value.publicationIntent
+      && (!listingRemoteStateMatchesOperation("listing.create", value.remoteState, value.publicationIntent)
+        || value.publicationFulfilled !== listingRemoteStateFulfillsOperation(
+          "listing.create",
+          value.remoteState,
+          value.publicationIntent,
+        ))) {
+    context.addIssue({ code: "custom", message: "Coupang publication evidence does not match its intent" });
+  }
+});
+
+const TEMU_AFTER_SALES_RETRYABLE_STATUSES = new Set([408, 425, 500, 502, 503, 504]);
+const TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS = new Set([
+  "parentAfterSalesSn",
+  "parentOrderSn",
+  "afterSalesStatusGroup",
+  "operateExpireTimeMs",
+  "availableOperateList",
+  "returnDeliveryType",
+  "parentAfterSalesStatus",
+  "updateAt",
+  "afterSalesType",
+  "createAt",
+]);
+
+function validTemuAfterSalesRetryQueue(value: unknown, allowEmpty: boolean) {
+  if (!Array.isArray(value) || value.length > 200 || !allowEmpty && value.length === 0) return false;
+  const serials = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const row = item as Record<string, unknown>;
+    if (Object.keys(row).some((key) => !TEMU_AFTER_SALES_RETRY_SUMMARY_KEYS.has(key))) return false;
+    const afterSalesSn = row.parentAfterSalesSn;
+    const orderSn = row.parentOrderSn;
+    if (typeof afterSalesSn !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(afterSalesSn)
+      || typeof orderSn !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/u.test(orderSn)
+      || serials.has(afterSalesSn)) return false;
+    serials.add(afterSalesSn);
+    const operations = row.availableOperateList;
+    if (!Array.isArray(operations)
+      || operations.length > 100
+      || operations.some((operation) => typeof operation !== "string"
+        && (typeof operation !== "number" || !Number.isFinite(operation)))) return false;
+    if (row.operateExpireTimeMs !== null
+      && (!Number.isSafeInteger(row.operateExpireTimeMs)
+        || Number(row.operateExpireTimeMs) <= 0)) return false;
+    for (const key of [
+      "afterSalesStatusGroup", "returnDeliveryType", "parentAfterSalesStatus",
+      "updateAt", "afterSalesType", "createAt",
+    ]) {
+      const scalar = row[key];
+      if (scalar !== null && typeof scalar !== "string"
+        && (typeof scalar !== "number" || !Number.isFinite(scalar))) return false;
+    }
+  }
+  return true;
+}
+
+export const temuAfterSalesDetailRetryContinuationSchema = z.object({
+  reason: z.literal("retryable_read_failure"),
+  arguments: z.record(z.string(), z.unknown()),
+  retryCount: z.number().int().min(1).max(3),
+  retryAfterSeconds: z.number().int().positive(),
+  deferredCount: z.number().int().min(1).max(200),
+  replayCount: z.number().int().min(0).max(199),
+  providerStatus: z.number().int(),
+}).strict().superRefine((value, context) => {
+  const arguments_ = value.arguments;
+  const detailQueue = arguments_.detailQueue;
+  const replayQueue = arguments_.retryReplayQueue ?? [];
+  const detailLength = Array.isArray(detailQueue) ? detailQueue.length : -1;
+  const replayLength = Array.isArray(replayQueue) ? replayQueue.length : -1;
+  const queuesValid = validTemuAfterSalesRetryQueue(detailQueue, false)
+    && validTemuAfterSalesRetryQueue(replayQueue, true);
+  const serials = queuesValid
+    ? [...replayQueue as Array<Record<string, unknown>>, ...detailQueue as Array<Record<string, unknown>>]
+      .map((row) => row.parentAfterSalesSn)
+    : [];
+  const serialized = JSON.stringify(arguments_);
+  if (arguments_.kind !== "after_sales"
+    || arguments_.includeDetails !== true
+    || arguments_.sellerpilotTemuDetailRetryCount !== value.retryCount
+    || value.retryAfterSeconds !== 5 * 2 ** (value.retryCount - 1)
+    || detailLength !== value.deferredCount
+    || replayLength !== value.replayCount
+    || detailLength + replayLength > 200
+    || !queuesValid
+    || new Set(serials).size !== serials.length
+    || !TEMU_AFTER_SALES_RETRYABLE_STATUSES.has(value.providerStatus)
+    || serialized.length > 64_000
+    || /"(phone|phoneNumber|address|contact|email|mobile)"\s*:/iu.test(serialized)
+    || "sellerpilotPaginationDepth" in arguments_
+    || "sellerpilotPaginationEpoch" in arguments_
+    || "sellerpilotPaginationTrail" in arguments_) {
+    context.addIssue({ code: "custom", message: "invalid Temu after-sales detail retry continuation" });
   }
 });
 
@@ -420,9 +768,12 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     claimToken: z.string().uuid(),
     status: z.literal("succeeded"),
     result: z.union([
+      smartstoreContentRepairWorkerResultSchema,
       operationResultSchema,
       diagnosticResultSchema,
       competitorSearchResultSchema,
+      smartstoreManualAdoptionLineageResultSchema,
+      coupangDurableCreateReconciliationResultSchema,
       listingLineageVerificationResultSchema,
       z.object({
         ok: z.literal(true),
@@ -445,13 +796,16 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
       }),
     ]),
     credentialRefresh: credentialRefreshSchema.optional(),
+    credentialBinding: credentialBindingSchema.optional(),
   }),
   z.object({
     jobId: z.string().uuid(),
     claimToken: z.string().uuid(),
     status: z.literal("failed"),
     error: z.string().min(1).max(500),
+    result: operationResultSchema.optional(),
     credentialRefresh: credentialRefreshSchema.optional(),
+    retryContinuation: temuAfterSalesDetailRetryContinuationSchema.optional(),
   }),
   z.object({
     jobId: z.string().uuid(),
@@ -460,8 +814,34 @@ export const gatewayWorkerCompletionSchema = z.discriminatedUnion("status", [
     error: z.string().min(1).max(500),
     result: operationResultSchema.optional(),
     credentialRefresh: credentialRefreshSchema.optional(),
+    credentialBinding: credentialBindingSchema.optional(),
   }),
 ]).superRefine((value, context) => {
+  if (value.status === "failed" && value.result
+    && (value.result.ok !== false
+      || (value.result.channel !== "elevenst"
+        && !(value.result.channel === "ebay" && value.result.steps.length === 1 && value.result.steps[0]?.name === "ebay-case-dispute-history-page"))
+      || value.result.operation !== "inquiries.list")) {
+    context.addIssue({
+      code: "custom",
+      path: ["result"],
+      message: "failed result evidence is limited to supported inquiry read envelopes",
+    });
+  }
+  if ("credentialBinding" in value && value.credentialBinding) {
+    const result = "result" in value ? value.result : undefined;
+    if (!result || result.channel !== value.credentialBinding.channel || result.operation !== value.credentialBinding.operation) {
+      context.addIssue({ code: "custom", path: ["credentialBinding"], message: "credential binding result mismatch" });
+    }
+  }
+  if (value.status === "failed"
+    && value.retryContinuation
+    && value.credentialRefresh) {
+    context.addIssue({
+      code: "custom", path: ["credentialRefresh"],
+      message: "Temu detail retry cannot rotate credentials",
+    });
+  }
   if (value.status !== "succeeded" || value.result.operation !== "oauth.exchange") return;
   if (!value.credentialRefresh || value.credentialRefresh.oauthComplete !== true) {
     context.addIssue({
@@ -531,11 +911,34 @@ export function gatewayResultHasObservedMutation(
   });
 }
 
+export function gatewayFreshCreateBlockedByExistingSellerCode(
+  operation: string,
+  steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
+): boolean {
+  if (operation !== "listing.create") return false;
+  return steps.some((step) =>
+    step.name === "product-create-duplicate-detected"
+    && step.status === 409
+    && step.data?.sellerpilotDuplicateExistingProduct === true
+    && step.data?.sellerpilotFreshCreateCompleted === false
+    && step.data?.sellerpilotProviderMutationPerformed === false);
+}
+
 export function gatewayJobCompletionStatus(
   operation: string,
   ok: boolean,
   steps: ReadonlyArray<{ name: string; ok: boolean; status?: number; data?: Record<string, unknown> }> = [],
 ): "succeeded" | "failed" | "reconciliation_required" {
+  if (gatewayFreshCreateBlockedByExistingSellerCode(operation, steps)) {
+    return "failed";
+  }
+  if (listingOperationRequiresVerifiedRemoteState(operation)
+    && gatewayResultRequiresAdditionalEvidence(steps)) {
+    return "reconciliation_required";
+  }
+  if (!ok && operation === "listing.publication.verify") {
+    return "reconciliation_required";
+  }
   if (!ok && steps.some((step) => step.data?.sellerpilotReconciliationRequired === true)) {
     return "reconciliation_required";
   }
@@ -550,14 +953,18 @@ export function gatewayJobCompletionStatusAtJobBoundary(
     ok?: unknown;
     operation?: unknown;
     remoteState?: unknown;
+    steps?: unknown;
   } | null | undefined,
   jobBoundary: unknown,
 ): "succeeded" | "failed" | "reconciliation_required" {
   if (status !== "succeeded"
-      || result?.ok !== true
-      || typeof result.operation !== "string"
-      || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
+    || result?.ok !== true
+    || typeof result.operation !== "string"
+    || !listingOperationRequiresVerifiedRemoteState(result.operation)) {
     return status;
+  }
+  if (Array.isArray(result.steps) && gatewayResultRequiresAdditionalEvidence(result.steps)) {
+    return "reconciliation_required";
   }
   return listingRemoteStateVerifiedAtOrAfterJobBoundary(result.remoteState, jobBoundary)
     ? status

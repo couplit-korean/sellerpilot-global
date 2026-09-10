@@ -1,7 +1,8 @@
-import type { ActiveChannelKey } from "./catalog";
-import { ebayAsqMarketplaceId } from "./ebay-asq";
+import type { ActiveChannelKey } from "./catalog.ts";
+import { ebayAsqMarketplaceId } from "./ebay-asq.ts";
+import { createHash } from "node:crypto";
 
-export const implementedInquiryReplyChannels = ["qoo10", "lazada", "coupang", "smartstore", "ebay"] as const;
+export const implementedInquiryReplyChannels = ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"] as const;
 
 export type InquiryReplyChannel = (typeof implementedInquiryReplyChannels)[number];
 
@@ -9,6 +10,7 @@ export type EbayInquiryReplyRelease = {
   providerCertified: boolean;
   sellerAccountVerified: boolean;
   marketplaceBound: boolean;
+  conversationBound?: boolean;
 };
 
 export const inquiryReplyChannels: readonly InquiryReplyChannel[] = implementedInquiryReplyChannels;
@@ -22,7 +24,7 @@ export function supportsInquiryReply(
     return (environment === "sandbox" || environment === "production")
       && ebayRelease?.providerCertified === true
       && ebayRelease.sellerAccountVerified === true
-      && ebayRelease.marketplaceBound === true;
+      && (ebayRelease.marketplaceBound === true || ebayRelease.conversationBound === true);
   }
   return (implementedInquiryReplyChannels as readonly string[]).includes(channel);
 }
@@ -37,12 +39,13 @@ export function coupangContactCenterParentAnswerId(value: unknown) {
       : "";
     const needAnswer = reply.needAnswer === true || String(reply.needAnswer ?? "").toLowerCase() === "true";
     const transferStatus = String(reply.partnerTransferStatus ?? "").trim().toLowerCase();
-    return /^\d+$/.test(answerId)
+    // Never select an arbitrary array tail when several transfers need an
+    // answer. The provider does not promise this array is chronologically sorted.
+    return /^[1-9]\d*$/.test(answerId)
       && (needAnswer || transferStatus === "requestanswer");
-  }).at(-1);
-  return actionable && (typeof actionable.answerId === "string" || typeof actionable.answerId === "number")
-    ? String(actionable.answerId).trim()
-    : "";
+  });
+  const ids = [...new Set(actionable.map((reply) => String(reply.answerId).trim()))];
+  return ids.length === 1 ? ids[0] : "";
 }
 
 function requiredText(value: string, name: string) {
@@ -86,6 +89,28 @@ export function buildInquiryReplyArguments(
     return { sessionId, reply: replyText };
   }
 
+  if (channel === "shopee") {
+    const match = /^shopee:([1-9]\d{0,31}):([1-9]\d{0,18})$/.exec(ticketId);
+    const contextShopId = typeof replyContext.shopId === "string" || typeof replyContext.shopId === "number"
+      ? String(replyContext.shopId).trim()
+      : "";
+    const contextCommentId = typeof replyContext.commentId === "string" || typeof replyContext.commentId === "number"
+      ? String(replyContext.commentId).trim()
+      : "";
+    const itemId = typeof replyContext.itemId === "string" || typeof replyContext.itemId === "number"
+      ? String(replyContext.itemId).trim()
+      : "";
+    if (!match
+        || contextShopId !== match[1]
+        || contextCommentId !== match[2]
+        || !/^[1-9]\d{0,18}$/.test(itemId)
+        || !Number.isSafeInteger(Number(match[2]))
+        || replyText.length > 500) {
+      throw new Error("INQUIRY_REPLY_INVALID:shopeeComment");
+    }
+    return { shopId: match[1], commentId: match[2], itemId, reply: replyText };
+  }
+
   if (channel === "coupang") {
     const separator = ticketId.indexOf(":");
     const kind = separator > 0 ? ticketId.slice(0, separator) : "";
@@ -109,6 +134,23 @@ export function buildInquiryReplyArguments(
     return { kind, inquiryId, reply: replyText };
   }
 
+  if (channel === "elevenst") {
+    const ticketMatch = /^elevenst:([1-9]\d{0,19})$/u.exec(ticketId);
+    const brdInfoNo = typeof replyContext.brdInfoNo === "string" || typeof replyContext.brdInfoNo === "number"
+      ? String(replyContext.brdInfoNo).trim()
+      : "";
+    const prdNo = typeof replyContext.prdNo === "string" || typeof replyContext.prdNo === "number"
+      ? String(replyContext.prdNo).trim()
+      : "";
+    if (!ticketMatch || brdInfoNo !== ticketMatch[1]
+        || !/^[1-9]\d{0,19}$/u.test(prdNo)
+        || replyText.length > 4_000
+        || hasForbiddenEbayControl(replyText)) {
+      throw new Error("INQUIRY_REPLY_INVALID:elevenstProductQna");
+    }
+    return { brdInfoNo, prdNo, reply: replyText };
+  }
+
   if (channel === "smartstore") {
     if (ticketId.startsWith("customer:")) {
       const inquiryNo = ticketId.slice("customer:".length).trim();
@@ -127,6 +169,28 @@ export function buildInquiryReplyArguments(
   }
 
   if (channel === "ebay") {
+    if (replyContext.kind === "conversation") {
+      const conversationId = typeof replyContext.conversationId === "string"
+        ? replyContext.conversationId
+        : "";
+      const conversationType = replyContext.conversationType;
+      const expectedTicketId = conversationId
+        ? `ebay:conversation:${createHash("sha256").update(`ebay-conversation-v1\u001f${conversationId}`).digest("hex")}`
+        : "";
+      if (ticketId !== expectedTicketId
+          || conversationType !== "FROM_MEMBERS"
+          || replyContext.replySupported !== true
+          || !conversationId
+          || conversationId.length > 240
+          || conversationId.trim() !== conversationId
+          || hasForbiddenEbayControl(conversationId)
+          || hasForbiddenEbayControl(replyText)
+          || hasEbayHtmlLikeMarkup(replyText)
+          || replyText.length > 4_000) {
+        throw new Error("INQUIRY_REPLY_INVALID:ebayConversationContext");
+      }
+      return { kind: "conversation", conversationId, conversationType, reply: replyText };
+    }
     const contextParentMessageId = typeof replyContext.parentMessageId === "string"
       || typeof replyContext.parentMessageId === "number"
       ? String(replyContext.parentMessageId).trim()

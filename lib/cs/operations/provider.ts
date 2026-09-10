@@ -111,7 +111,7 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
     });
     if (buyerChat) {
       const binding = input.job.credential_binding_context;
-      const guarded = temuBuyerChatDispatchGuard({
+      const guarded = temuBuyerChatDispatchGuard(({
         channel: "temu",
         operation: "inquiries.list",
         payload: {},
@@ -131,7 +131,7 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
             },
           },
         } : {}),
-      });
+      }) as unknown as Parameters<typeof temuBuyerChatDispatchGuard>[0]);
       if (guarded) return guarded;
     }
     if (input.job.channel === "shopee" && operation === "inquiries.list") {

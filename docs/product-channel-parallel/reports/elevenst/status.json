@@ -1,0 +1,47 @@
+{
+  "contract": "sellerpilot-product-channel-elevenst-status/1",
+  "updatedAt": "2026-09-10T17:40:00+09:00",
+  "title": "11번가 r6 로컬 HOLD 수리",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-elevenst-local-20260910",
+  "branch": "codex/product-elevenst-r6-local-20260910",
+  "baseSha": "0fb40d4c608e3ea1778743c8e99377352c39054a",
+  "round": "r6",
+  "ledger": "2/6",
+  "externalRegistration": "0/8",
+  "state": "local_r6_worker_recovery_drain_wired_uncommitted_no_write",
+  "workerCallsRecovery": true,
+  "accountVerified": "blocked_not_in_scope",
+  "policyVerified": true,
+  "localFlowPassed": true,
+  "integrated": false,
+  "providerCreated": false,
+  "providerUpdated": false,
+  "providerWriteExecuted": false,
+  "databaseChanged": false,
+  "deployed": false,
+  "pushed": false,
+  "committed": false,
+  "review69Counterexamples": {
+    "sqlIdentifierOver63Bytes": "closed",
+    "syntheticRecoveryObservationCompletion": "closed",
+    "existingSellerPrdCdFreshCreateWithoutPost": "closed"
+  },
+  "reservedMigration": "20260910044500_elevenst_recovery_observation_and_identifier_hardening_r6.sql",
+  "migrationChecker": "no_local_collision",
+  "focusedTests": {
+    "passed": 24,
+    "failed": 0,
+    "commands": [
+      "node --test tests/elevenst-r6-postgres-identifiers.test.mjs tests/elevenst-r6-recovery-boundaries.test.ts",
+      "node --import tsx --test tests/elevenst-create-recovery.test.ts tests/elevenst-create-recovery-drain.test.ts",
+      "node --import tsx --test --test-name-pattern='existing seller code|timed-out create|accepted create response without productNo|unresolved accepted create|seller XML request keeps the key' tests/elevenst-general-create-flow.test.ts tests/elevenst-listing.test.ts"
+    ]
+  },
+  "commonPatchApplied": "docs/product-channel-parallel/reports/elevenst/elevenst-013-r6-common-protocols-transport-evidence.md",
+  "blocker": "No production SQL, no provider CREATE, no buyer-to-seller conversion.",
+  "remainingUnwired": [
+    "production SQL 31700/43000/44500 not applied",
+    "worker HTTP elevenst-create-recovery route not deployed"
+  ],
+  "nextAction": "Central independently replays the 24 focused tests and 44500 identifier/recovery contracts. Do not apply production SQL or run a live CREATE."
+}

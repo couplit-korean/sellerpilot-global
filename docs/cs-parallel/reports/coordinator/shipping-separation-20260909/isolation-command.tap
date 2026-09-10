@@ -1,0 +1,110 @@
+
+> site-creator-vinext-starter@0.1.0 test:domain-isolation
+> node --import tsx --test tests/cs-product-registration-boundary.test.mjs tests/shipping-domain-flow.test.mjs tests/shipping-product-independent-db.test.mjs
+
+TAP version 13
+# Subtest: CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+ok 1 - CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+  ---
+  duration_ms: 4.092583
+  type: 'test'
+  ...
+# Subtest: CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+ok 2 - CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+  ---
+  duration_ms: 0.286958
+  type: 'test'
+  ...
+# Subtest: CS workspace owns its state without importing the product shell or its snapshot hook
+ok 3 - CS workspace owns its state without importing the product shell or its snapshot hook
+  ---
+  duration_ms: 0.19075
+  type: 'test'
+  ...
+# Subtest: dependency traversal never stops at a shared execution boundary
+ok 4 - dependency traversal never stops at a shared execution boundary
+  ---
+  duration_ms: 0.143917
+  type: 'test'
+  ...
+# Subtest: Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+ok 5 - Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+  ---
+  duration_ms: 0.480708
+  type: 'test'
+  ...
+# Subtest: actual shipping API and gateway use the order resource transaction, with no product binding
+ok 6 - actual shipping API and gateway use the order resource transaction, with no product binding
+  ---
+  duration_ms: 88.837416
+  type: 'test'
+  ...
+# Subtest: shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+ok 7 - shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+  ---
+  duration_ms: 78.272084
+  type: 'test'
+  ...
+# Subtest: pending and duplicate shipping receipts never create a second provider job
+ok 8 - pending and duplicate shipping receipts never create a second provider job
+  ---
+  duration_ms: 21.670458
+  type: 'test'
+  ...
+# Subtest: shipping provider rejects both other domains before lease or transport
+ok 9 - shipping provider rejects both other domains before lease or transport
+  ---
+  duration_ms: 0.372625
+  type: 'test'
+  ...
+# Subtest: shipping completion preserves the stable normalization boundary and strips raw order content
+ok 10 - shipping completion preserves the stable normalization boundary and strips raw order content
+  ---
+  duration_ms: 2.712583
+  type: 'test'
+  ...
+# Subtest: local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+ok 11 - local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+  ---
+  duration_ms: 1.143542
+  type: 'test'
+  ...
+# Subtest: three business domains have zero transitive imports in every direction and independent page roots
+ok 12 - three business domains have zero transitive imports in every direction and independent page roots
+  ---
+  duration_ms: 716.819875
+  type: 'test'
+  ...
+# Subtest: product registration read model runs with shipping and CS tables absent
+ok 13 - product registration read model runs with shipping and CS tables absent
+  ---
+  duration_ms: 666.465
+  type: 'test'
+  ...
+# Subtest: shipping snapshot and sales run with product registration and CS tables absent
+ok 14 - shipping snapshot and sales run with product registration and CS tables absent
+  ---
+  duration_ms: 419.547917
+  type: 'test'
+  ...
+# Subtest: all new read models reject anonymous and non-admin sessions
+ok 15 - all new read models reject anonymous and non-admin sessions
+  ---
+  duration_ms: 338.650666
+  type: 'test'
+  ...
+# Subtest: shipping replay RPC only returns the exact credential/channel/operation attempt
+ok 16 - shipping replay RPC only returns the exact credential/channel/operation attempt
+  ---
+  duration_ms: 314.045
+  type: 'test'
+  ...
+1..16
+# tests 16
+# suites 0
+# pass 16
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2109.972917

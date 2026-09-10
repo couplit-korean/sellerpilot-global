@@ -1,0 +1,259 @@
+{
+  "contract": "sellerpilot-elevenst-new-product-input-candidate/1",
+  "requestId": "elevenst-006-r1",
+  "observedAt": "2026-09-10T02:56:13+09:00",
+  "scope": "read_only_new_product_input_validation",
+  "mutationPolicy": {
+    "existingProductId": "9598600918",
+    "existingProductUse": "read_only_reference_only",
+    "createExecuted": false,
+    "updateExecuted": false,
+    "inventoryMutationExecuted": false,
+    "shippingMutationExecuted": false,
+    "credentialMutationExecuted": false,
+    "productionDatabaseWriteExecuted": false,
+    "deploymentExecuted": false,
+    "gateChanged": false
+  },
+  "freshLiveRead": {
+    "sellerOffice": {
+      "profile": "CHANGHEE",
+      "requestedAccount": "couplit",
+      "state": "blocked_system_maintenance",
+      "notice": "2026/09/10 02:00 AM ~ 2026/09/10 06:00 AM",
+      "accountObserved": null
+    },
+    "openApiManagement": {
+      "profile": "CHANGHEE",
+      "state": "blocked_system_maintenance",
+      "notice": "2026/09/10 02:00 AM ~ 2026/09/10 06:00 AM",
+      "usageStatusObserved": null
+    },
+    "sellerPilot": {
+      "profile": "JEONGHUN",
+      "state": "blocked_login_required",
+      "candidateObserved": false
+    }
+  },
+  "historicalAccountEvidence": {
+    "sellerOfficeAccount": "couplit",
+    "sellerDisplayName": "커플릿",
+    "activeCredentialVersion": 2,
+    "storedSellerId": "sample",
+    "sellerIdMatchesAccount": false,
+    "providerCertifiedOwnership": false,
+    "rawSecretRecorded": false
+  },
+  "candidate": {
+    "product": {
+      "id": "1ed4acfc-7603-48ec-a638-241131e59358",
+      "sellerProductCode": "AUTO-780720401E2D4E4EA45F",
+      "productName": "롯데 롯샌 파스퇴르 순우유맛 315g (6봉입)",
+      "brand": "롯데",
+      "manufacturer": "롯데웰푸드주식회사",
+      "countryOfOrigin": "대한민국",
+      "gtin": "8802259030799",
+      "priceKrw": 3190,
+      "stock": 1,
+      "weightKg": 0.4,
+      "packageDimensionsCm": {
+        "length": 28,
+        "width": 20,
+        "height": 7
+      },
+      "source": "repository_handoff_and_historical_sellerpilot_candidate",
+      "freshSellerPilotRead": false
+    },
+    "category": {
+      "id": "1346631",
+      "leaf": true,
+      "path": "과자/간식 > 스낵/시리얼 > 과자쿠키/비스킷/크래커 > 비스켓",
+      "notificationType": "891031"
+    },
+    "shipping": {
+      "shippingFeeKrw": 3000,
+      "dlvCnAreaCd": "01",
+      "dlvWyCd": "01",
+      "dlvCstInstBasiCd": "02",
+      "dlvCst1": "3000",
+      "dlvCstPayTypCd": "03",
+      "bndlDlvCnYn": "Y",
+      "policyResult": "valid_small_price_exception",
+      "freeShippingFallbackAllowed": false
+    },
+    "returns": {
+      "addrSeqOut": null,
+      "addrSeqIn": null,
+      "rtngdDlvCst": null,
+      "exchDlvCst": null,
+      "asDetail": null,
+      "rtngExchDetail": null,
+      "state": "seller_policy_confirmation_required",
+      "crossChannelValuesInherited": false
+    },
+    "salePeriod": {
+      "selPrdClfCd": "3y:110",
+      "aplBgnDy": "generated_at_execution_in_Asia/Seoul",
+      "aplEndDy": "start_plus_3_years_minus_1_day"
+    },
+    "certificationGroups": [
+      "01:03",
+      "02:03",
+      "03:03",
+      "04:05"
+    ],
+    "images": {
+      "historicalDetailImageCount": 8,
+      "historicalExistingProductDetailImageCount": 8,
+      "latestKnownDetailPageVersion": 2,
+      "latestKnownApprovedVersion": 0,
+      "newListingProductImageUrls": [],
+      "state": "approval_and_exact_urls_required"
+    },
+    "notifications": [
+      {
+        "code": "176400445",
+        "label": "생산자 및 소재지 (수입품의 경우 생산자, 수입자 및 제조국)",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "notice_wording_approval_required",
+        "availableCandidateFacts": [
+          "롯데웰푸드주식회사",
+          "대한민국"
+        ]
+      },
+      {
+        "code": "176398001",
+        "label": "제조연월일, 소비기한 또는 품질유지기한",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "exact_label_evidence_required"
+      },
+      {
+        "code": "42154823",
+        "label": "수입식품 해당 시 수입신고 문구",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "seller_approval_required"
+      },
+      {
+        "code": "23757260",
+        "label": "유전자변형식품 표시",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "exact_label_evidence_required"
+      },
+      {
+        "code": "23757095",
+        "label": "영양성분",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "complete_label_evidence_required"
+      },
+      {
+        "code": "176312674",
+        "label": "소비자안전을 위한 주의사항",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "complete_label_evidence_required"
+      },
+      {
+        "code": "176317774",
+        "label": "제품명",
+        "sourceMode": "auto_product_name",
+        "value": "롯데 롯샌 파스퇴르 순우유맛 315g (6봉입)",
+        "state": "candidate_confirmed"
+      },
+      {
+        "code": "23756754",
+        "label": "소비자상담 관련 전화번호",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "sellerpilot_candidate_approval_required",
+        "supplementalManufacturerEvidence": "080-024-6060"
+      },
+      {
+        "code": "23757245",
+        "label": "원재료명 (원산지 포함) 및 함량",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "complete_label_evidence_required"
+      },
+      {
+        "code": "42155152",
+        "label": "포장단위별 내용물의 용량(중량), 수량",
+        "sourceMode": "manual",
+        "value": "315g (6봉입)",
+        "state": "candidate_confirmed"
+      },
+      {
+        "code": "23757000",
+        "label": "식품의 유형",
+        "sourceMode": "manual",
+        "value": null,
+        "state": "regulatory_label_evidence_required"
+      }
+    ]
+  },
+  "existingProductReadOnlyReference": {
+    "productId": "9598600918",
+    "sellerProductCode": "AUTO-780720401E2D4E4EA45F",
+    "checkedAt": "2026-09-09T10:16:39.987Z",
+    "productGet": {
+      "httpStatus": 200,
+      "priceKrw": 3190,
+      "saleStatusCode": "104",
+      "saleStatusName": "판매중지중",
+      "detailImageCount": 8,
+      "shippingFieldsReturned": false,
+      "notificationReturned": false
+    },
+    "stockGet": {
+      "separateApi": true,
+      "rowCount": 1,
+      "quantity": 0,
+      "statusCode": "02"
+    },
+    "inferenceForbidden": [
+      "existing stock 0 does not replace the new SellerPilot candidate stock 1",
+      "missing Product GET shipping fields do not mean free shipping",
+      "missing Product GET notification does not mean no notice"
+    ]
+  },
+  "supplementalManufacturerPage": {
+    "url": "https://m.lottesweetmall.com/product/detail.html?product_no=4877",
+    "checkedAt": "2026-09-10T02:54:00+09:00",
+    "observedProductName": "[건과]롯샌 파스퇴르 순우유맛 315g",
+    "observedModel": "511002897",
+    "observedMerchantShippingFeeKrw": 3000,
+    "inheritAsSellerPilotPriceOrPolicy": false,
+    "use": "identity corroboration only"
+  },
+  "readiness": {
+    "state": "blocked",
+    "resolvedRequiredNoticeCount": 2,
+    "requiredNoticeCount": 11,
+    "blockingRequiredNoticeCodes": [
+      "176400445",
+      "176398001",
+      "42154823",
+      "23757260",
+      "23757095",
+      "176312674",
+      "23756754",
+      "23757245",
+      "23757000"
+    ],
+    "blockingFields": [
+      "fresh seller account and Open API status",
+      "credential seller_id ownership",
+      "nine required processed-food notice values",
+      "11st outbound and return address IDs",
+      "11st return and exchange fees",
+      "A/S and return/exchange detail",
+      "approved detail version",
+      "exact HTTPS listing image URLs",
+      "fresh SellerPilot candidate readback"
+    ]
+  }
+}

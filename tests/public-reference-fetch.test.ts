@@ -244,11 +244,11 @@ test("the total deadline covers DNS and external aborts retain cancellation sema
 });
 
 test("the AI worker uses the shared fetcher and propagates both research leases", async () => {
-  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
-  assert.match(worker, /import \{[\s\S]*fetchPublicReferenceDocument,[\s\S]*\} from "\.\.\/lib\/public-reference-fetch\.ts";/);
+  const worker = await readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
+  assert.match(worker, /import \{[\s\S]*fetchPublicReferenceDocument,?\s*\} from "\.\.\/lib\/public-reference-fetch\.ts";/);
   assert.doesNotMatch(worker, /function isPrivateAddress|function assertPublicUrl|function requestPublicReference/);
   assert.match(worker, /fetchPublicReferenceDocument\(value, \{ signal: leaseSignal \}\)/);
   assert.match(worker, /fetchReferencePages\(researchInput, "", leaseSignal\)/);
-  assert.match(worker, /String\(job\.request\?\.productUrl \|\| ""\),\s+jobHeartbeat\.signal,/);
-  assert.match(worker, /if \(leaseSignal\?\.aborted\) \{\s+throw leaseSignal\.reason/);
+  assert.match(worker, /String\(job\.request\?\.productUrl \|\| ""\),\s+jobHeartbeat\.signal(?:,|\))/);
+  assert.match(worker, /if \(leaseSignal\?\.aborted\)(?: \{)?\s+throw leaseSignal\.reason/);
 });

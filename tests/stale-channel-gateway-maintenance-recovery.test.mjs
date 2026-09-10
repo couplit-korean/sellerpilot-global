@@ -47,7 +47,7 @@ test("maintenance reports bounded gateway recovery without blocking unrelated cl
   assert.match(route, /!staleAiJobsRecovery\.ok \|\| !staleGatewayJobsRecovery\.ok \|\| !stalePushDeliveryRecovery\.ok/);
   assert.ok((route.match(/staleGatewayJobsRecovery,/g) ?? []).length >= 6);
   assert.match(route, /sellerpilot_service_claim_marketplace_normalized_asset_cleanup/);
-  assert.match(route, /sellerpilot_service_complete_marketplace_normalized_asset_cleanup/);
+  assert.match(route, /sellerpilot_service_complete_normalized_asset_cleanup/);
   assert.match(route, /candidate\.bucket !== "sellerpilot-marketplace"/);
   assert.match(route, /marketplaceStorageCleanup\.failed/);
   assert.match(route, /marketplaceStorageRequeued/);

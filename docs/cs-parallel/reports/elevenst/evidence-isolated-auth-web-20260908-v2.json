@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "evidenceId": "elevenst-isolated-auth-web-v2-20260908",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T13:44:55Z",
+  "command": "NODE_ENV=test /Users/kimchangheemac/.aside/runtime/bin/node --import tsx scripts/cs-elevenst-isolated-auth-web-smoke.mjs --port=3214",
+  "exitCode": 0,
+  "runtime": {
+    "database": "PGlite-memory",
+    "webRuntime": "next-dev",
+    "webHost": "127.0.0.1",
+    "webPort": 3214,
+    "nextCliLaunch": "process.execPath plus node_modules/next/dist/bin/next",
+    "portCleanAfterExit": true
+  },
+  "authentication": {
+    "implementation": "lib/admin-api.ts authenticateAdminRequest",
+    "missingBearerStatus": 401,
+    "invalidBearerStatus": 401,
+    "authorizedStatus": 200,
+    "testBypass": false,
+    "ephemeralTokenLogged": false
+  },
+  "projection": {
+    "productQna": {
+      "providerState": "business_error",
+      "remoteCount": null,
+      "emptyConfirmed": false
+    },
+    "urgentAlimi": {
+      "providerState": "empty",
+      "remoteCount": 0,
+      "emptyConfirmed": true
+    }
+  },
+  "effects": {
+    "databaseReadCount": 1,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0
+  },
+  "boundary": "This is an isolated Next.js, loopback Auth/PostgREST and PGlite proof. It is not production Supabase RPC application, production authentication, provider mutation or buyer-visible proof."
+}

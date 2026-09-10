@@ -1,0 +1,21 @@
+# 공통 변경 요청 qoo10-002
+
+- 목적: Qoo10 문의번호/순번을 실제 긴 대화 표본으로 검증한 뒤에만 ticket ID를 변경하고 기존 원장과 호환한다.
+- 요청 채널: qoo10
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / inbound key v2
+- 수정할 공통 파일과 함수: `lib/channels/inquiry-sync.ts`의 `normalizeQoo10`
+- 현재 파일 SHA-256: `a5c85be43d7ed4f0f9c20c176f0769c495ba7665c71ceb16f1de051190634598`
+- DB 객체: inquiry ledger의 external ticket alias/merge 계보 객체(통합 담당이 실제 이름 배정)
+- 기존 동작: `externalTicketId=qoo10:<INQ_TYPE>:<QUESTION_NO>:<SEQ_NO>`, `remoteMessageId=MESSAGE_ID ?? SEQ_NO`이다. 같은 QUESTION_NO라도 SEQ_NO가 다르면 별도 ticket이다.
+- 문제를 재현하는 최소 입력: 같은 `INQ_TYPE+QUESTION_NO`, 다른 `SEQ_NO` 두 행. 공식 설명만으로는 메시지 관계를 단정할 수 있고 현재 실계정 조회는 전기간 0행이라 실데이터 증거가 없다.
+- 원하는 동작: 지금은 현 ID 유지. 실제 QSM/QAPI 다중행 표본에서 동일 대화가 증명되면 v2 ticket root를 `INQ_TYPE+QUESTION_NO`에 두고 SEQ_NO를 immutable message ID로 사용한다.
+- 전용 모듈 경로와 export: 현재 변경 없음. `scripts/cs-qoo10-provider-read-only.mjs`가 customer content 없이 `questionDigest/sequenceDigest/multiSequenceThreads` 증거를 생성한다.
+- 기존/새 입력·출력 계약: 변경 승인 전 없음. 승인 후 새 ID와 함께 `legacyExternalTicketIds=[qoo10:type:question:sequence...]`, message identity `sequenceNo`, source query status를 보존한다.
+- 최소 변경안: (1) 실제 표본 digest 보고 승인, (2) alias 테이블/unique constraint 선행, (3) 기존 ticket을 삭제하지 않고 alias로 병합, (4) reply는 최신 inbound의 실제 type/question/sequence를 사용, (5) 이중 읽기 기간 뒤 v2 기본 전환.
+- 다른 채널 영향: 없음. qoo10 분기와 alias rows만.
+- 상품/주문/배송 mutation 영향: 없음.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/qoo10-claims.test.ts tests/inquiry-sync-contract.test.ts`
+- migration 선행/preimage/ACL 요구: 기존 inbound unique와 ticket foreign key preimage, collision dry-run, rollback alias mapping, 기존 reply delivery FK 보존.
+- 우선순위: 오연결·손실
+- 통합 담당 처리 상태: 증거 대기; 코드 변경 금지
+- 반영된 통합 소스 hash와 검증: 없음

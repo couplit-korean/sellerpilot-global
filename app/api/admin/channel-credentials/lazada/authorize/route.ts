@@ -11,6 +11,7 @@ import {
   lazadaAuthorizationUrl,
   lazadaCountryFromOAuthState,
   lazadaOAuthState,
+  lazadaOAuthClaimedCredential,
   resolveLazadaCredentialCountry,
   lazadaTargetCountry,
 } from "../../../../../../lib/channels/lazada-my-contract";
@@ -115,18 +116,19 @@ export async function POST(request: NextRequest) {
     const cookieValid = Boolean(cookieState)
       && sameValue(parsed.data.oauthState, cookieState)
       && z.string().uuid().safeParse(cookieCredentialId).success;
+    if (!cookieValid) {
+      return NextResponse.json({ message: "Lazada OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
+    }
     const { data: storedCredentialId, error: stateError } = await serviceClient.rpc("sellerpilot_service_claim_channel_oauth_state", {
       p_owner_id: userData.user.id,
       p_channel: "lazada",
       p_state_hash: stateHash(parsed.data.oauthState),
     });
-    const persistedCredentialId = !stateError && z.string().uuid().safeParse(storedCredentialId).success
-      ? String(storedCredentialId)
-      : "";
-    if (!persistedCredentialId && !cookieValid) {
+    const persistedCredentialId = stateError ? "" : lazadaOAuthClaimedCredential(cookieCredentialId, storedCredentialId);
+    if (!persistedCredentialId) {
       return NextResponse.json({ message: "Lazada OAuth 상태가 만료됐거나 일치하지 않습니다. 연결을 다시 시작해 주세요." }, { status: 403 });
     }
-    credentialId = persistedCredentialId || cookieCredentialId;
+    credentialId = persistedCredentialId;
   }
 
   if (oauthCode) {

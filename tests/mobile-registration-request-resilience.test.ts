@@ -204,3 +204,156 @@ test("aborting the only channel target consumer also releases its shared pending
     globalThis.fetch = originalFetch;
   }
 });
+
+const exactShopeeCredentialId = "22222222-2222-4222-8222-222222222222";
+const exactShopeeSelection = { targetId: "1719148844", marketCode: "SG" };
+
+function exactShopeeTargetPayload(includeReceipt: boolean) {
+  return {
+    contractVersion: 2,
+    channel: "shopee",
+    credentialId: exactShopeeCredentialId,
+    credentialVersion: 81,
+    targets: [{
+      credentialId: exactShopeeCredentialId,
+      targetId: exactShopeeSelection.targetId,
+      displayName: "gjrxn.sg",
+      marketCode: "SG",
+      locale: "en-SG",
+      language: "English",
+      currency: "SGD",
+      status: "NORMAL",
+    }],
+    ...(includeReceipt ? {
+      storeReceipt: {
+        contractVersion: 2,
+        credentialId: exactShopeeCredentialId,
+        credentialVersion: 81,
+        targetId: exactShopeeSelection.targetId,
+        marketCode: "SG",
+      },
+    } : {}),
+  };
+}
+
+test("exact Shopee SG cache miss performs one target-bound POST and accepts its v2 receipt", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: Array<{ url: string; method: string; body: unknown }> = [];
+  try {
+    globalThis.fetch = (async (input, init) => {
+      const method = init?.method ?? "GET";
+      requests.push({
+        url: String(input),
+        method,
+        body: method === "POST" ? JSON.parse(String(init?.body ?? "null")) : null,
+      });
+      if (method === "GET") {
+        return Response.json({
+          code: "SHOPEE_TARGET_CACHE_INCOMPLETE",
+          channel: "shopee",
+          credentialId: exactShopeeCredentialId,
+          targets: [],
+        }, { status: 409 });
+      }
+      return Response.json(exactShopeeTargetPayload(true));
+    }) as typeof fetch;
+
+    const response = await fetchChannelTargets("shopee", "exact-token", {
+      timeoutMs: 100,
+      selectedTarget: exactShopeeSelection,
+    });
+    assert.equal(response.ok, true);
+    assert.deepEqual(requests, [
+      {
+        url: "/api/admin/channel-targets?channel=shopee&targetId=1719148844&marketCode=SG",
+        method: "GET",
+        body: null,
+      },
+      {
+        url: "/api/admin/channel-targets?channel=shopee&targetId=1719148844&marketCode=SG",
+        method: "POST",
+        body: {
+          channel: "shopee",
+          credentialId: exactShopeeCredentialId,
+          targetId: "1719148844",
+          marketCode: "SG",
+        },
+      },
+    ]);
+    assert.deepEqual(await response.json(), exactShopeeTargetPayload(true));
+    assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact Shopee SG bound v2 GET is used without a provider POST", async () => {
+  const originalFetch = globalThis.fetch;
+  const methods: string[] = [];
+  try {
+    globalThis.fetch = (async (_input, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json(exactShopeeTargetPayload(false));
+    }) as typeof fetch;
+    const response = await fetchChannelTargets("shopee", "cached-exact-token", {
+      timeoutMs: 100,
+      selectedTarget: exactShopeeSelection,
+    });
+    assert.equal(response.ok, true);
+    assert.deepEqual(methods, ["GET"]);
+    assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("exact Shopee SG rejects an unbound synchronization response", async () => {
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    globalThis.fetch = (async (_input, init) => {
+      calls += 1;
+      if ((init?.method ?? "GET") === "GET") {
+        return Response.json({
+          code: "SHOPEE_TARGET_CACHE_CREDENTIAL_MISMATCH",
+          channel: "shopee",
+          credentialId: exactShopeeCredentialId,
+          targets: [],
+        }, { status: 409 });
+      }
+      const unbound = exactShopeeTargetPayload(true);
+      unbound.storeReceipt.targetId = "999999999";
+      return Response.json(unbound);
+    }) as typeof fetch;
+    const response = await fetchChannelTargets("shopee", "unbound-exact-token", {
+      timeoutMs: 100,
+      selectedTarget: exactShopeeSelection,
+    });
+    assert.equal(response.status, 502);
+    assert.equal(calls, 2);
+    assert.equal((await response.json()).code, "SHOPEE_EXACT_TARGET_RESPONSE_UNBOUND");
+    assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("non-SG Shopee reads remain legacy and never get coerced to the SG target", async () => {
+  const originalFetch = globalThis.fetch;
+  const requests: string[] = [];
+  try {
+    globalThis.fetch = (async (input, init) => {
+      requests.push(`${init?.method ?? "GET"} ${String(input)}`);
+      return Response.json({ targets: [{ targetId: "my-shop", marketCode: "MY" }] });
+    }) as typeof fetch;
+    const response = await fetchChannelTargets("shopee", "my-token", {
+      timeoutMs: 100,
+      selectedTarget: { targetId: "1719148844", marketCode: "MY" },
+    });
+    assert.equal(response.ok, true);
+    assert.deepEqual(requests, ["GET /api/admin/channel-targets?channel=shopee"]);
+    assert.equal(pendingChannelTargetRequestCount(), 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

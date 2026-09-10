@@ -216,16 +216,18 @@ test("listing gateway enqueue serializes shared-admin writes and fences unresolv
 });
 
 test("gateway timeout, atomic create, reconciliation, API, and workbench states stay distinct", async () => {
-  const [gateway, adminRoute, workbench, migration, atomicMigration] = await Promise.all([
+  const [gateway, gatewayRuntime, adminRoute, workbench, migration, atomicMigration] = await Promise.all([
     readFile(gatewayUrl, "utf8"),
+    readFile(new URL("../lib/channels/gateway-job-runtime.ts", import.meta.url), "utf8"),
     readFile(adminRouteUrl, "utf8"),
     readFile(workbenchUrl, "utf8"),
     readFile(migrationUrl, "utf8"),
     readFile(atomicMigrationUrl, "utf8"),
   ]);
 
-  assert.match(gateway, /job\?\.status === "reconciliation_required"[\s\S]*ChannelGatewayReconciliationRequiredError/);
-  assert.match(gateway, /throw new ChannelGatewayInProgressError\(jobId, attemptId, "CHANNEL_GATEWAY_TIMEOUT", listingId\)/);
+  assert.match(gatewayRuntime, /job\?\.status === "reconciliation_required"[\s\S]*ChannelGatewayReconciliationRequiredError/);
+  assert.match(gateway, /waitForGatewayJob[^\n]*from "\.\/gateway-job-runtime"/);
+  assert.match(gatewayRuntime, /throw new ChannelGatewayInProgressError\(\s*jobId,\s*attemptId,\s*"CHANNEL_GATEWAY_TIMEOUT",\s*listingId,/);
   assert.match(gateway, /sellerpilot_service_reserve_and_enqueue_listing_create/);
   assert.match(gateway, /effectiveListingId = enqueue\.listing_id/);
   assert.match(gateway, /enqueue\.status === "remote_exists"[\s\S]*ChannelGatewayListingAlreadyPublishedError/);
@@ -233,6 +235,7 @@ test("gateway timeout, atomic create, reconciliation, API, and workbench states 
   assert.match(gateway, /return \{ result, listingId: effectiveListingId \?\? undefined \}/);
   assert.match(gateway, /sellerpilot_service_enqueue_listing_gateway_job/);
   assert.match(adminRoute, /ChannelGatewayReconciliationRequiredError[\s\S]*manualRequired: true,[\s\S]*reconciliationRequired: true/);
+  assert.match(adminRoute, /error\.additionalEvidenceRequired[\s\S]*additionalEvidenceRequired: true[\s\S]*listing_additional_evidence_required/);
   assert.match(adminRoute, /ChannelGatewayInProgressError[\s\S]*inProgress: true,[\s\S]*reconciliationRequired: false/);
   assert.match(adminRoute, /ChannelGatewayListingAlreadyPublishedError[\s\S]*listingId: error\.listingId[\s\S]*status: 409/);
   assert.match(adminRoute, /ChannelGatewayListingBlockedError[\s\S]*listingId: error\.listingId[\s\S]*status: 409/);
@@ -261,7 +264,7 @@ test("gateway timeout, atomic create, reconciliation, API, and workbench states 
   assert.match(workbench, /phase: "queued"/);
   assert.match(workbench, /payload\.manualRequired === true \|\| payload\.reconciliationRequired === true/);
   assert.match(workbench, /phase: "blocked"/);
-  assert.match(workbench, /window\.setTimeout\(\(\) => void poll\(\), 5_000\)/);
+  assert.match(workbench, /window\.setTimeout\(\(\) => void poll\(\), 5_?000\)/);
   assert.match(workbench, /pollCount >= 60/);
   assert.match(workbench, /window\.clearTimeout\(timer\)/);
   assert.match(workbench, /result\.phase === "queued"[\s\S]*result\.phase === "blocked"/);

@@ -1,0 +1,134 @@
+{
+  "reviewRequest": "qoo10-reply-s3-actual-completion-receipt-status-delivery-chain",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "branch": "codex/cs-qoo10-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "sourceDelegatedTaskId": "01a077b1-61db-7c20-a4a3-ae00dbbbef19",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/010-reply-s3-actual-completion-compat.sql",
+      "beforeSha256": null,
+      "afterSha256": "1b6a391f392a12622b6d6f76bd5b95502f4e250b25e8d7890f552e70b6e3e827",
+      "change": "Route only delivery-bound Qoo10 S3 completion through a canonical terminal-and-receipt path without generic inquiry ingestion, allow the exact serverless_cs receipt owner in the sealed 007 lineage, preserve predecessor behavior for all other jobs, and retain service-role-only ACLs."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-actual-receipt-flow.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "c5a7054b91b9c46df33a23a6fb93c5704386e39d55ba5519cd1b738def5751f0",
+      "change": "Exercise the actual central runOne entrypoint and external completion POST through canonical completion, receipt trigger, 009 child, 008 seal, 007 status, and delivery GET, including ACK replay, response loss, failure, lineage mismatches, Coupang isolation, and ACLs."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-actual-receipt-followup.md",
+      "beforeSha256": null,
+      "afterSha256": "15c1a5e96005265587410c63cca23778d6966238b4cda21b3fd75e83005765bb",
+      "change": "Record the actual DB contract blockers, exact 010 proposal, execution evidence, failed attempts, frozen inputs, safety boundaries, and central integration checklist."
+    }
+  ],
+  "readOnlyInputs": [
+    {
+      "path": "lib/channels/cs/qoo10/reply-readback-completion.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "580e3f67b05dfba6bc030364817e5c08518edab93f44aeb8bbfcdce928a227d2"
+    },
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "c8bfa7422aa87efa16c7cca5317e718b4cddc13799e3bf3370affa7d48267e31"
+    },
+    {
+      "path": "supabase/migrations/20260826090400_atomic_gateway_completion_side_effects.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "9f1ec6f764ec39f8f4f8fce92e8449bdd5fd4feb02000beadfb2856152d3528f",
+      "purpose": "Current canonical completion contract that requires normalized inquiries for successful inquiries.list."
+    },
+    {
+      "path": "supabase/migrations/20260908140419_cs_qoo10_reply_s3_status.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "89a51d43800ea1621c646f7ed213f5ffdc32dcde4bcef2d5d08755925ed7e182"
+    },
+    {
+      "path": "supabase/migrations/20260908140421_cs_qoo10_reply_s3_response_seal.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "f31954baa26c91d8e20c07432fabdb77c021557b4d374d781d074fb7dec4672c"
+    },
+    {
+      "path": "supabase/migrations/20260908143355_cs_coupang_reply_readback.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "97a227621ccc055af2b1a4b88ad771ffd0a7019dcb15b12be088b4a3facc1518"
+    },
+    {
+      "path": "supabase/migrations/20260908145336_cs_qoo10_reply_s3_common_paths.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "a595454731d119f2608e19354a7972a44ea9a50e30fd7f87012821b9fb126889"
+    },
+    {
+      "path": "tests/cs-qoo10-integrated-entrypoint.test.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "4bc5c1e0573e4b6cf0472d2906cc41afcfedaceb577a35e8040c5ec983dd3621"
+    }
+  ],
+  "verification": [
+    {
+      "command": "Node 22.23.2 --import tsx --test tests/cs-qoo10-reply-s3-actual-receipt-flow.test.mjs with SELLERPILOT_QOO10_INTEGRATED_ROOT",
+      "exitCode": 0,
+      "result": "9/9 passed"
+    },
+    {
+      "command": "Node 22.23.2 --import tsx --test ten Qoo10 contract, history, runtime, ledger, reply, status, seal, common-path, actual-flow, and claim files",
+      "exitCode": 0,
+      "result": "60/60 passed"
+    },
+    {
+      "command": "Node 22.23.2 --import tsx --test central tests/cs-qoo10-integrated-entrypoint.test.ts",
+      "exitCode": 0,
+      "result": "4/4 passed"
+    },
+    {
+      "command": "Node 22.23.2 node_modules/eslint/bin/eslint.js tests/cs-qoo10-reply-s3-actual-receipt-flow.test.mjs",
+      "exitCode": 0,
+      "result": "passed with no output"
+    }
+  ],
+  "failedAttempts": [
+    {
+      "result": "ENOENT before test collection",
+      "cause": "The first invocation omitted SELLERPILOT_QOO10_INTEGRATED_ROOT and looked for the central 009 migration in the dedicated workspace.",
+      "resolution": "Rerun with the read-only integrated root explicitly selected."
+    },
+    {
+      "result": "QOO10_REPLY_S3_WORKSPACE_CONTRACT_MISMATCH during fixture setup",
+      "cause": "The synthetic workspace snapshot fixture did not use the exact d and blocking aliases expected by the frozen central 009 preimage rewrite.",
+      "resolution": "Align only the synthetic fixture aliases with the existing central DB test; actual-flow assertions then passed."
+    },
+    {
+      "result": "ESLint launcher exit 127",
+      "cause": "The pnpm-generated shell launcher could not resolve node in the non-login command environment.",
+      "resolution": "Invoke the same installed ESLint entrypoint with the fixed Node 22.23.2 binary; exit 0."
+    }
+  ],
+  "behavior": {
+    "actualServerlessRunOneCovered": true,
+    "actualExternalCompletionPostCovered": true,
+    "canonicalReceiptCreated": true,
+    "doubleAckChildCount": 1,
+    "completionResponseLossReplayCovered": true,
+    "failedResultInventsProviderRows": false,
+    "markerClaimReceiptMismatchStatusObservationCount": 0,
+    "coupang001003ImpactCount": 0,
+    "storesCustomerBodyOrBuyerPii": false,
+    "automaticResendAllowed": false,
+    "genericInquiryIngestionForDeliveryReadback": false
+  },
+  "existingCanonicalReportsOrDeltasModified": false,
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "providerMutations": false,
+  "customerRepliesSent": false,
+  "commitPushDeploy": false
+}

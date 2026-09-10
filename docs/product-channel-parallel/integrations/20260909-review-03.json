@@ -1,0 +1,57 @@
+{
+  "baseCommit": "490f1c8572",
+  "integratedOwnedCommits": [
+    "c194f737fc2ff439a5c0e5e34e9bfe9a3a2a4b0b",
+    "1e415d5a772f972ef15e3189adeb1a5af4dce214",
+    "5a237acd0bd08dd0e70b653428792c7ae9baab19",
+    "3531f03730ea01a88bc40df3763fb7c01f44c086",
+    "53c98e8b46959a0a13f3293def9cc42e318ca003"
+  ],
+  "integratedProposals": [
+    "temu-001-r3",
+    "CP-COUPANG-20260909-001-r4",
+    "elevenst-product-common-002-r2"
+  ],
+  "integratedInboxIds": [
+    "18c3e1ab90b4255a551003a89d30f9ca33a576828c62c44d7f39be3eab9be05f",
+    "9b419d509fd566844384b81b90be59372990a283ea8878a5e060483b9a8656a2",
+    "0b8223fb832e429a40bab097dbea40f850a6c6951908fadcb77029b6b1fee674",
+    "4895de7141d0813f214c24097705b4129fa50656d5d121d84fbdb0028041bbb6"
+  ],
+  "statusSnapshotIds": {
+    "shopee": "4f664ab19820bf2870208276e40bd2f90a1ec0717f20a7b6846b52dc727bb1d2",
+    "lazada": "5a510fcaa2f2b3dd7586ffd5511f6c0ada21c3fc922d1949a0fd777f8204dd5d",
+    "temu": "d75952bf25cbaf990118615a7f5d6b77646474b4126e0967060aff399e7e878d",
+    "smartstore": "96104ef410f9969b357b1eba41fcd21ec96c49da59437a5b50bfb3186ca2a644",
+    "coupang": "9f1ddd2111310569288b988d82c306a3112ea87374062556b254190f866aaa8c",
+    "elevenst": "85d08abaa016a256666f7f033c2fdd5890eebc520160491e171ca0760a2d3b09",
+    "qoo10": "2b9199682631b246b69357309eba2645abe7f5a68fd38a5c6034199a079dd4cd",
+    "ebay": "d481e47858ac1b786846aba84fd0c67d3ed6acaf6762951a9a6da8cdf70cfcdd"
+  },
+  "validation": {
+    "combined": "356/356",
+    "domain": "40/40",
+    "channel": "28/28",
+    "typecheck": "passed",
+    "changedFileLint": "32 files passed",
+    "localBuild": "passed"
+  },
+  "coordination": {
+    "resumed": [
+      "shopee",
+      "temu",
+      "elevenst",
+      "qoo10"
+    ],
+    "frozenIntegrationQueue": [
+      "lazada-001-r2",
+      "smartstore-001-r3 + smartstore-002-r2",
+      "ebay-common-001-r2",
+      "shopee-product-001-r2"
+    ],
+    "coupang": "integrated; seller-account temporary-deactivation warning remains worker-reported, no provider write assigned"
+  },
+  "providerWrites": 0,
+  "productionDbWrites": 0,
+  "deployments": 0
+}

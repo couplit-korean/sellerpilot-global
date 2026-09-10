@@ -1,0 +1,83 @@
+{
+  "recorded_at": "2026-09-09T00:01:33.801708+00:00",
+  "scope": "11st fee validation and read-only live product audit",
+  "code_verification": {
+    "elevenst": {
+      "exit_code": 0,
+      "sha256": "815d4bd6244329465af1cbbee912871efc48b1d128abd7c9e33409577ec87c6e",
+      "local_log": "/tmp/continue-elevenst.tap",
+      "summary_file": "elevenst-summary.txt"
+    },
+    "all-typescript": {
+      "exit_code": 0,
+      "sha256": "46d5f493eafcffb9f14d4dfe57435b01f7d0e5659614181f33f0a6e586132cdb",
+      "local_log": "/tmp/continue-all-ts.tap",
+      "summary_file": "all-typescript-summary.txt"
+    },
+    "typecheck": {
+      "exit_code": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "local_log": "/tmp/continue-tsc.log"
+    },
+    "lint": {
+      "exit_code": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "local_log": "/tmp/continue-lint.log"
+    },
+    "build": {
+      "exit_code": 0,
+      "sha256": "bd664d75aee5b557fbc598336dfda49f84b99e5b3da37e48a2d32080b1e23b27",
+      "local_log": "/tmp/continue-build.log"
+    }
+  },
+  "source_sha256": {
+    "lib/channels/elevenst-listing.ts": "3d7a27c86fe47bed9a5826d1b26821c5c404d1ff608d2bf526c9d42c0344a5e3",
+    "tests/elevenst-listing.test.ts": "672df7e169f1a2e0fd8a910dc7b95c5216e2e1771be2c3dca2fa739da22b38cd"
+  },
+  "live_evidence": {
+    "supabase_project": "sqaoqucxakebqkiygdxb",
+    "access": "browser SQL SELECT succeeded; CLI not retested",
+    "active_product_channel_credentials": 7,
+    "total_product_channels": 8,
+    "credentials_are_not_live_api_success": true,
+    "product_id": "1ed4acfc-7603-48ec-a638-241131e59358",
+    "seller_sku": "AUTO-780720401E2D4E4EA45F",
+    "detail_version": 2,
+    "approved_version": 0,
+    "central_stock": 1,
+    "central_shipping_fee_krw": 3000,
+    "elevenst": {
+      "account": "couplit",
+      "remote_id": "9598600918",
+      "seller_sku_match": true,
+      "stock": 0,
+      "price_krw": 3190,
+      "shipping_fee_krw": 0,
+      "seller_status": "sold_out",
+      "guide": "https://openapi.11st.co.kr/openapi/OpenApiGuide.tmall?categoryNo=81"
+    },
+    "ebay": {
+      "account": "jeon_57",
+      "active_listing_count": 4,
+      "target_sku_in_active_list": false,
+      "unpublished_inventory_not_checked": true
+    },
+    "temu": {
+      "app_status": "Inactive",
+      "compliance": "Rejected",
+      "security": "Approved",
+      "q4_draft_added": "Korea Telecom",
+      "egress_matches_existing_whitelist": true,
+      "public_ip_network_verification": "APNIC RDAP: KORNET-KR / Korea Telecom",
+      "attestation_checked": false,
+      "submitted": false
+    }
+  },
+  "mutations": {
+    "provider_product_write": 0,
+    "production_database_write": 0,
+    "customer_message": 0,
+    "vercel_deploy": 0,
+    "temu_unsubmitted_form_draft": 1
+  }
+}

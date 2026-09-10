@@ -1,0 +1,93 @@
+{
+  "reviewRequest": "qoo10-reply-s3-terminal-response-seal",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "preservedPriorDelta": {
+    "path": "docs/cs-parallel/reports/qoo10/reply-s3-null-evidence-acl-delta.json",
+    "sha256": "7eeb35259e3b130a87474ba2e881dcfb7318ff61c19c9b6e9d3e561bbd32b207"
+  },
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "beforeSha256": null,
+      "afterSha256": "f31954baa26c91d8e20c07432fabdb77c021557b4d374d781d074fb7dec4672c",
+      "change": "Seal only delivery-bound Qoo10 S3 completion request, response, receipt, and lineage, then wrap qoo10-007 behind SHA validation."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.md",
+      "beforeSha256": null,
+      "afterSha256": "bd67006b2d88be66b5e4765b89421f1a25373674543cc96288c6c2a7cd057956",
+      "change": "Trace common completion, replay, receipt insertion, and post-completion response writes and document the scoped integration contract."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-response-seal-db.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "88def740462db73e50cccb4428fa29fef9988f960cd7119f67327a1de769474b",
+      "change": "Replay first completion, mutation guards, SHA fallback, replay, other-channel compatibility, marker forgery, and failed response sealing."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/response-seal-followup.md",
+      "beforeSha256": null,
+      "afterSha256": "f2707d1875de41963842dcd947e2787545913e57c0a1a8fd765a7ccdc14a05d4",
+      "change": "Record source-level write-path findings, failures, verification, and remaining production application boundaries."
+    }
+  ],
+  "readOnlyPreimages": [
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "9e1ba34b77788d1ea68ac2489e09dda322fea4d9f8400cbd8c85e757e7831781"
+    },
+    {
+      "path": "supabase/migrations/20260826090400_atomic_gateway_completion_side_effects.sql",
+      "sha256": "9f1ec6f764ec39f8f4f8fce92e8449bdd5fd4feb02000beadfb2856152d3528f"
+    },
+    {
+      "path": "supabase/migrations/20260905140000_preserve_unordered_lazada_messages.sql",
+      "sha256": "48ad520707b79c740fba3f846974fc979302d6efefa8c66e7ab86fd0c67675f1"
+    }
+  ],
+  "failedAttempts": [
+    {
+      "result": "0/7",
+      "cause": "The PGlite distribution did not include the pgcrypto extension control file, so proposal SQL execution never started.",
+      "resolution": "Keep production SQL on the existing Supabase extensions.digest function and provide the equivalent sha256 signature in the isolated fixture only."
+    },
+    {
+      "result": "6/7",
+      "cause": "The other-channel compatibility fixture incorrectly carried a Qoo10-only readback marker.",
+      "resolution": "Use an unmarked normal Shopee job for compatibility and add a separate cross-channel marker forgery rejection test."
+    }
+  ],
+  "verification": [
+    {
+      "command": "bundled-node --test tests/cs-qoo10-reply-s3-response-seal-db.test.mjs",
+      "exitCode": 0,
+      "result": "8/8 passed"
+    },
+    {
+      "command": "bundled-node --import tsx --test seven Qoo10 contract, runtime, isolated-ledger, status-RPC, seal, and claim files",
+      "exitCode": 0,
+      "result": "42/42 passed"
+    },
+    {
+      "command": "bundled-node eslint Qoo10 dedicated sources and tests",
+      "exitCode": 0,
+      "result": "passed with no output"
+    },
+    {
+      "command": "bundled-node tsc strict Qoo10 dedicated modules",
+      "exitCode": 0,
+      "result": "passed with no output"
+    }
+  ],
+  "scope": {
+    "sealed": "delivery-bound qoo10 inquiries.list jobs with sellerpilotQoo10ReplyReadback metadata",
+    "unaffected": ["other channels", "ordinary Qoo10 inquiry history", "Qoo10 inquiry replies"],
+    "existingReceiptBackfill": false
+  },
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "customerRepliesSent": false,
+  "commitPushDeploy": false
+}

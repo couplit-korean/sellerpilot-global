@@ -1,0 +1,306 @@
+{
+  "requestId": "CS-CROSS-20260908-01",
+  "destination": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+  "sharedFiles": [
+    {
+      "path": "app/page.tsx",
+      "currentSha256": "a4feed2c14ea2199b690182f8706443306032265b6440d3ff03a2a045cd34cd8"
+    },
+    {
+      "path": "lib/cs/capability-inventory.ts",
+      "currentSha256": "bd4f5a778567e0712ec0e18e8b2aab2b409f7a4c1ad893fe5c2bed91bdb84445"
+    },
+    {
+      "path": "lib/channels/protocols.ts",
+      "currentSha256": "983b3157d794fab27dba2ba03026778ad86abd77916480f59ea6e8320ac59c2d"
+    },
+    {
+      "path": "lib/channels/inquiry-sync.ts",
+      "currentSha256": "4e32b5e2d53701ad587fe8cb8374c457d13cc2263beead7f449ad9db8b226f50"
+    },
+    {
+      "path": "lib/channels/gateway-contract.ts",
+      "currentSha256": "9b16f3e8cd1b8c4163f45ebe8f248257cc180e35a975447ce6058b5661daa516"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "currentSha256": "aa8703fff6a2441558f4bb926d7642dab4cbd21fcf8a73b90bcd98882e9ae852"
+    },
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "currentSha256": "9e1ba34b77788d1ea68ac2489e09dda322fea4d9f8400cbd8c85e757e7831781"
+    },
+    {
+      "path": "app/api/admin/cs/reply/route.ts",
+      "currentSha256": "fc458b2225c7c8a28994152bdf68056f41226424e14f2108521828c7489492f1"
+    },
+    {
+      "path": "app/api/admin/cs/order-bindings/route.ts",
+      "currentSha256": "2aa5c9ff191cc49b3be4af47a8f85d23fec2532acfb446bd69c3f30d87e8c3a4"
+    },
+    {
+      "path": "app/cs/history-window.tsx",
+      "currentSha256": "af83a163cbae072e45e76b802b638034304cea715e0f5e402372d7270c110c95"
+    },
+    {
+      "path": "lib/channels/operations.ts",
+      "currentSha256": "da653ed5fc9b66e03817603b850b8e6d091274453b86956f5ee59bd718ca1eab"
+    }
+  ],
+  "proposalObjects": [
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "object": "sellerpilot_private.coupang_reply_readback_links"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "object": "sellerpilot_private.coupang_reply_readback_links"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "object": "sellerpilot_private.enqueue_coupang_reply_readback_after_acceptance"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/003-coupang-call-center-reply-readback.sql",
+      "object": "enqueue_coupang_reply_readback_after_acceptance"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/004-coupang-history-checkpoint.sql",
+      "object": "public.sellerpilot_get_coupang_history_checkpoint_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/005-coupang-authenticated-web-verification.sql",
+      "object": "public.sellerpilot_read_coupang_cs_verification_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.coupang_order_credential_lineage"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.coupang_order_credential_lineage"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.cs_order_bindings"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.record_coupang_order_lineage_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.coupang_cs_order_binding_candidate_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.cs_order_binding_is_exact"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.reconcile_one_coupang_cs_order_binding_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.reconcile_coupang_cs_order_binding_from_ticket_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_zz_reconcile_coupang_cs_order_binding"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_private.reconcile_coupang_cs_order_bindings_from_lineage_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/coupang/patches/007-coupang-order-lineage.sql",
+      "object": "sellerpilot_reconcile_coupang_cs_order_bindings_after_lineage"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "object": "sellerpilot_private.ebay_case_dispute_history_events"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "object": "sellerpilot_private.ebay_case_dispute_history_events"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "object": "public.sellerpilot_service_record_ebay_case_dispute_history_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-ledger.sql",
+      "object": "public.sellerpilot_read_ebay_case_dispute_history_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/ebay/ebay-case-dispute-history-read-v2.sql",
+      "object": "public.sellerpilot_read_ebay_case_dispute_history_v2"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "sellerpilot_private.elevenst_cs_read_observations"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "sellerpilot_private.elevenst_alimi_state_events"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "sellerpilot_private.elevenst_cs_read_observations"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "sellerpilot_private.elevenst_alimi_state_events"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "public.sellerpilot_service_ingest_inquiries"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "public.sellerpilot_service_record_elevenst_cs_read_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/elevenst/elevenst-004-read-state-and-alimi-ledger.sql",
+      "object": "public.sellerpilot_read_elevenst_cs_read_state_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "object": "sellerpilot_private.lazada_im_message_revisions"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "object": "sellerpilot_private.lazada_im_message_revisions"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "object": "public.sellerpilot_service_lazada_im_ingest_ready_v3"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "object": "public.sellerpilot_service_ingest_lazada_inquiries_v3"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "object": "public.sellerpilot_service_ingest_lazada_gateway_v3"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "object": "sellerpilot_private.support_reply_deliveries"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "object": "public.sellerpilot_service_record_qoo10_reply_s3_readback_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.qoo10_reply_s3_completion_seals"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.qoo10_reply_s3_completion_seals"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.qoo10_reply_s3_json_sha256"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.seal_qoo10_reply_s3_gateway_completion"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "seal_qoo10_reply_s3_gateway_completion"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.guard_qoo10_reply_s3_sealed_job"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "guard_qoo10_reply_s3_sealed_job"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.guard_qoo10_reply_s3_seal_source"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "guard_qoo10_reply_s3_seal_source"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "sellerpilot_private.guard_qoo10_reply_s3_seal_immutable"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "guard_qoo10_reply_s3_seal_immutable"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "object": "public.sellerpilot_service_record_qoo10_reply_s3_readback_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-003-order-binding-health-v2.sql",
+      "object": "public.sellerpilot_read_smartstore_cs_order_binding_health_v2"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-004-next-history-window-v1.sql",
+      "object": "public.sellerpilot_next_smartstore_history_window_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-005-exact-history-window-v5.sql",
+      "object": "sellerpilot_private.inquiry_history_backfill_runs"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/smartstore/smartstore-005-exact-history-window-v5.sql",
+      "object": "public.sellerpilot_start_smartstore_inquiry_history_window_v5"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "sellerpilot_private.temu_after_sales_detail_retry_ledger"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "sellerpilot_private.temu_after_sales_detail_retry_ledger"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "public.sellerpilot_service_requeue_temu_after_sales_detail_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "sellerpilot_private.resolve_temu_after_sales_detail_retry"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "resolve_temu_after_sales_detail_retry"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-002-durable-detail-retry.sql",
+      "object": "public.sellerpilot_admin_temu_after_sales_detail_retry_status_v1"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "object": "sellerpilot_private.temu_after_sales_detail_retry_ledger"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "object": "sellerpilot_private.temu_after_sales_detail_retry_ledger"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "object": "sellerpilot_private.temu_after_sales_retry_queue_valid"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "object": "public.sellerpilot_service_requeue_temu_after_sales_detail_v2"
+    },
+    {
+      "proposal": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "object": "public.sellerpilot_admin_temu_after_sales_detail_retry_status_v2"
+    }
+  ],
+  "productionApplied": false,
+  "publicationSourceModified": false
+}

@@ -5,7 +5,7 @@ import { getVercelOidcToken } from "@vercel/oidc";
 import {
   SERVERLESS_CS_CANARY_MODE,
   SERVERLESS_CS_DRAIN_MODE_HEADER,
-} from "./channels/serverless-cs-gateway";
+} from "./channels/serverless-gateway";
 import {
   deriveSupabaseInternalScheduleBearer,
   INTERNAL_SCHEDULE_CANARY_HEADER,

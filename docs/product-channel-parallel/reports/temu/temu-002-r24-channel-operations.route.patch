@@ -1,0 +1,99 @@
+diff --git a/app/api/admin/channel-operations/route.ts b/app/api/admin/channel-operations/route.ts
+index 2f66da8..a8342fd 100644
+--- a/app/api/admin/channel-operations/route.ts
++++ b/app/api/admin/channel-operations/route.ts
+@@ -73,10 +73,9 @@ import { isSmartstoreLocalReadOperation, resolveLocalGatewayReadReady } from "..
+ import { channelListingRemoteIdentity, channelWriteResource, listingLedgerRemoteIdentity } from "../../../../lib/channels/write-resource";
+ import { resolveRuntimeReleaseIdentity } from "../../../../lib/internal-scheduler-auth";
+ import { bindTemuCreateAttemptIdentity, temuImmutableListingIdentityFromPublishContext } from "../../../../lib/channels/provider-temu-publication-readback";
+-import {
+-  bindTemuCreateAuthoritativeSourceBeforeClaim,
+-  TemuCreateSourceLedgerError,
+-} from "../../../../lib/product-registration/temu/create-authoritative-source-ledger";
++import { TemuCreateSourceLedgerError } from "../../../../lib/product-registration/temu/create-authoritative-source-ledger";
++import { normalizeTemuCreateBodyFromServerContext, produceTemuCreateAuthoritativeSourceBeforeClaim } from "../../../../lib/product-registration/temu/authoritative-create-producer";
++import { bindTemuFinalCreatePayloadBeforeEnqueue } from "../../../../lib/product-registration/temu/final-create-payload";
+ import { resolveTemuCreateAccountTarget } from "../../../../lib/product-registration/temu/account-identity";
+ 
+ import { parseListingPublicationAssetBinding } from "../../../../lib/channels/listing-publication-content";
+@@ -1277,6 +1276,8 @@ export async function POST(request: NextRequest) {
+   delete effectiveArguments[qoo10ListingCreateApprovalBindingArgument];
+   delete effectiveArguments[shopeeSgCreatePrewriteEvidenceArgument];
+   delete effectiveArguments.sellerpilotTemuReviewAndCreatePrewrite;
++  delete effectiveArguments.sellerpilotTemuAuthoritativeSource;
++  delete effectiveArguments.sellerpilotTemuFinalPayload;
+   delete effectiveArguments.sellerpilotEbayCreateApproval;
+   if (boundQoo10RollbackUpdateRecovery) effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments(effectiveArguments, boundQoo10RollbackUpdateRecovery);
+ 
+@@ -1498,6 +1499,10 @@ export async function POST(request: NextRequest) {
+         targetId: parsed.data.targetId,
+         idempotencyKey: parsed.data.idempotencyKey,
+       });
++      effectiveArguments = normalizeTemuCreateBodyFromServerContext({
++        argumentsValue: effectiveArguments,
++        publishContext: verifiedPublishContext!,
++      });
+     } catch {
+       return NextResponse.json({
+         message: "Temu 외부 상품·SKU 식별자가 선택 상품의 확정 SKU 및 현재 작업 계보와 일치하지 않아 등록을 시작하지 않았습니다.",
+@@ -2032,7 +2037,7 @@ export async function POST(request: NextRequest) {
+ 
+   if (channel === "temu" && operation === "listing.create") {
+     try {
+-      const authoritativeSource = await bindTemuCreateAuthoritativeSourceBeforeClaim({
++      const produced = await produceTemuCreateAuthoritativeSourceBeforeClaim({
+         rpc: async (name, parameters) => {
+           const result = await serviceClient.rpc(name, parameters);
+           return { data: result.data, error: result.error };
+@@ -2041,10 +2046,23 @@ export async function POST(request: NextRequest) {
+         productId: parsed.data.productId!,
+         credentialId: parsed.data.credentialId,
+         requestFingerprint,
++        argumentsValue: effectiveArguments,
++        publishContext: verifiedPublishContext!,
++        credentialMetadata: credentialMetadata as Record<string, unknown>,
++        decryptCredential: async () => {
++          const result = await serviceClient.rpc("sellerpilot_decrypt_credential", {
++            p_credential_id: parsed.data.credentialId,
++          });
++          if (result.error || !isRecord(result.data)) {
++            throw new Error("TEMU_CREATE_CREDENTIAL_UNAVAILABLE");
++          }
++          return result.data as Record<string, string>;
++        },
+       });
+       effectiveArguments = {
+         ...effectiveArguments,
+-        sellerpilotTemuAuthoritativeSource: authoritativeSource,
++        sellerpilotTemuAuthoritativeSource: produced.sourceBinding,
++        sellerpilotTemuReviewAndCreatePrewrite: produced.prewriteBinding,
+       };
+     } catch (error) {
+       const code = error instanceof TemuCreateSourceLedgerError
+@@ -2452,6 +2470,26 @@ export async function POST(request: NextRequest) {
+           sellerpilotEbayCreateApproval: approval,
+         };
+       }
++      if (channel === "temu" && operation === "listing.create") {
++        const source = isRecord(gatewayArguments.sellerpilotTemuAuthoritativeSource)
++          ? gatewayArguments.sellerpilotTemuAuthoritativeSource : null;
++        if (typeof source?.sourceId !== "string") {
++          throw new Error("TEMU_FINAL_CREATE_SOURCE_MISSING");
++        }
++        gatewayArguments = await bindTemuFinalCreatePayloadBeforeEnqueue({
++          rpc: async (name, parameters) => {
++            const result = await serviceClient.rpc(name, parameters);
++            return { data: result.data, error: result.error };
++          },
++          ownerId: userData.user.id,
++          productId: parsed.data.productId!,
++          credentialId: parsed.data.credentialId,
++          attemptId,
++          sourceId: source.sourceId,
++          requestFingerprint,
++          finalArguments: gatewayArguments,
++        });
++      }
+       if (operation === "listing.create" || operation === "listing.update") {
+         assertListingShippingReady(channel, gatewayArguments, operation);
+       }

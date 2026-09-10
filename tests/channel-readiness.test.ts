@@ -30,15 +30,16 @@ test("11번가는 운영 읽기·등록 성공과 아직 검증되지 않은 상
 
   assert.ok(elevenst);
   assert.equal(elevenst.overall, "partial");
-  assert.equal(elevenst.consoleVerified, false);
+  assert.equal(elevenst.consoleVerified, true);
   assert.equal(elevenst.apiReadPassed, true);
   assert.equal(elevenst.checks.find((check) => check.label === "실상품 등록·재조회")?.state, "verified");
   assert.equal(elevenst.checks.find((check) => check.label === "상품 콘텐츠 수정")?.state, "verified");
   assert.equal(elevenst.checks.find((check) => check.label === "미검증 가격·재고 변경")?.state, "blocked");
   assert.equal(elevenst.checks.find((check) => check.label === "미검증 발송 범위")?.state, "blocked");
-  assert.match(elevenst.summary, /listing\.create가 HTTP 200/);
+  assert.match(elevenst.summary, /couplit Seller Office/);
+  assert.match(elevenst.summary, /최대 7일 GET/);
   assert.doesNotMatch(elevenst.summary, /성공 이력 없음/);
-  assert.match(elevenst.nextAction, /원격 상품번호.*Seller Office/);
+  assert.match(elevenst.nextAction, /운영 Key로 7일 읽기와 30일 백필/);
 });
 
 test("국내 채널은 운영 키 읽기 통과만으로 남은 기능 차단을 완료 상태로 숨기지 않는다", () => {
@@ -55,24 +56,22 @@ test("국내 채널은 운영 키 읽기 통과만으로 남은 기능 차단을
   }
 });
 
-test("Temu 정적 스냅샷은 최신 이력을 날짜와 함께 외부 차단으로 표시하고 재제출 행동 루프를 만들지 않는다", () => {
+test("Temu 최신 Partner 관측은 날짜와 함께 외부 차단으로 표시하고 임의 재제출 행동 루프를 만들지 않는다", () => {
   const temu = temuReadiness();
 
   assert.equal(channelReadinessObservedAt, "2026.08.24");
   assert.equal(temu.overall, "blocked");
   assert.equal(temu.apiReadPassed, false);
-  assert.match(temu.summary, /2026-08-24/);
-  assert.match(temu.summary, /재제출 전 마지막 스냅샷/);
-  assert.match(temu.summary, /현재 심사 결과를 뜻하지 않습니다/);
+  assert.match(temu.summary, new RegExp(temuHistoricComplianceRejectedOn));
+  assert.match(temu.summary, /Partner 화면/);
   assert.match(temu.appState, new RegExp(temuHistoricComplianceRejectedOn));
   assert.match(temu.appState, /Rejected/);
   assert.match(temu.summary, /Inactive/);
   assert.match(temu.summary, /Rejected/);
-  assert.match(temu.summary, /gateway job 0건/);
   assert.equal(temu.checks.find((check) => check.label === "Partner App")?.state, "blocked");
   assert.equal(temu.checks.find((check) => check.label === "컴플라이언스 설문")?.state, "blocked");
   assert.equal(temu.checks.find((check) => check.label === "V3 상품 발행 구현")?.state, "verified");
-  assert.match(temu.nextAction, /외부 확인/);
+  assert.match(temu.nextAction, /외부 심사 승인/);
   assert.doesNotMatch(temu.nextAction, /View\s*Details|Create\s*App|설문 수정|Vault 저장|Access Token 발급/i);
   assert.equal(temu.blockers.includes(TEMU_EXTERNAL_APPROVAL_UNKNOWN), true);
   assert.equal(temu.blockers.some((blocker) => /앱 발행/.test(blocker)), false);

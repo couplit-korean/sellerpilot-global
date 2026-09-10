@@ -1,0 +1,79 @@
+{
+  "capturedAt": "2026-09-08T10:38:04.002Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "seller": {
+    "sellerId": "couplit",
+    "sellerName": "커플릿",
+    "country": "KR",
+    "environment": "production",
+    "credentialVersion": 2,
+    "credentialLineage": "credential_incarnation_v1",
+    "credentialFingerprintMatched": true,
+    "sellerAccountVerified": true,
+    "lastCredentialCheckPassed": true,
+    "registeredEgressMatched": true,
+    "actualEgressSha256": "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01",
+    "rawCredentialOrIpRecorded": false
+  },
+  "productQnaCurrentSevenDays": {
+    "from": "2026-09-02",
+    "to": "2026-09-08",
+    "timezone": "Asia/Seoul",
+    "statuses": {
+      "00": { "httpStatus": 200, "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      "01": { "httpStatus": 200, "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      "02": { "httpStatus": 200, "accepted": false, "resultCode": "500", "remoteUniqueIds": null }
+    },
+    "responseRoot": "ns2:productQnas",
+    "responseBytes": 269,
+    "responseSha256": "5b78d469aea90187d628390721fa2f780649e77e3212e06411db2b821c17b2be",
+    "providerRequestsPerformed": 3,
+    "providerMutationPerformed": false,
+    "interpretation": "official_business_error_not_an_empty_result"
+  },
+  "productQnaFirstThirtyDays": {
+    "from": "2026-08-10",
+    "to": "2026-09-08",
+    "timezone": "Asia/Seoul",
+    "windows": [
+      { "from": "2026-08-10", "to": "2026-08-16", "statusesAttempted": ["00", "01", "02"], "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      { "from": "2026-08-17", "to": "2026-08-23", "statusesAttempted": ["00", "01", "02"], "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      { "from": "2026-08-24", "to": "2026-08-30", "statusesAttempted": ["00", "01", "02"], "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      { "from": "2026-08-31", "to": "2026-09-06", "statusesAttempted": ["00", "01", "02"], "accepted": false, "resultCode": "500", "remoteUniqueIds": null },
+      { "from": "2026-09-07", "to": "2026-09-08", "statusesAttempted": ["00", "01", "02"], "accepted": false, "resultCode": "500", "remoteUniqueIds": null }
+    ],
+    "providerRequestsPerformed": 15,
+    "providerMutationPerformed": false,
+    "historicalLedgerComplete": false,
+    "earliestProviderAvailabilityKnown": false
+  },
+  "urgentAlimiThirtyDays": {
+    "from": "2026-08-10",
+    "to": "2026-09-08",
+    "timezone": "Asia/Seoul",
+    "httpStatus": 200,
+    "accepted": true,
+    "acceptedEmpty": true,
+    "resultCode": "0",
+    "providerRows": 0,
+    "urgentInquiryRows": 0,
+    "urgentNoticeRows": 0,
+    "statusCounts": { "01": 0, "02": 0, "03": 0, "04": 0, "05": 0, "06": 0 },
+    "responseRoot": "ns2:alimi",
+    "responseBytes": 256,
+    "responseSha256": "184a64edbdf5c0dac4c3ba072949504d34350de0dd29084c6ab38fd55400bd7f",
+    "providerRequestsPerformed": 1,
+    "providerMutationPerformed": false
+  },
+  "productionWiring": {
+    "migration20260908049000Applied": false,
+    "productQnaGatewayInstalled": false,
+    "productQnaIngestInstalled": false,
+    "productQnaReplyInstalled": false,
+    "productQnaHistoryInstalled": false,
+    "urgentAlimiInstalled": false,
+    "productionDatabaseMutated": false
+  },
+  "customerContentLogged": false,
+  "secretsLogged": false
+}

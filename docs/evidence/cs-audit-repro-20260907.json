@@ -1,0 +1,36 @@
+{
+  "kind": "synthetic-local-regression-verification",
+  "observedAt": "2026-09-07T14:21:35.128Z",
+  "baseHead": "0a7f5662add45dec9afd7d754beabf01724b1747",
+  "providerRequests": 0,
+  "results": [
+    {
+      "id": "REGRESSION-01",
+      "finding": "missing_summary_count_remains_unknown",
+      "observed": {
+        "flaggedMessageCount": null,
+        "newHighPriorityCount": null,
+        "newMessageCount": null,
+        "totalHighPriorityCount": null,
+        "totalMessageCount": null
+      }
+    },
+    {
+      "id": "REGRESSION-02",
+      "finding": "ebay_empty_page_with_remainder_is_rejected",
+      "allStepsOk": false,
+      "code": "EBAY_ASQ_PAGINATION_INCONSISTENT"
+    },
+    {
+      "id": "REGRESSION-03",
+      "finding": "shopee_bounded_page_batch_returns_resumable_cursor",
+      "calls": 4,
+      "continuation": "cursor-4"
+    },
+    {
+      "id": "REGRESSION-04",
+      "finding": "lazada_missing_session_id_is_rejected_by_upstream_validator",
+      "classification": "existing_guard_verified"
+    }
+  ]
+}

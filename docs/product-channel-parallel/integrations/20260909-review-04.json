@@ -1,0 +1,60 @@
+{
+  "status": "integrated_locally_verified",
+  "createdAt": "2026-09-09T07:01:28.865635+00:00",
+  "base": "8038ccfa9336f2e4e70da5809e0a820f224e1800",
+  "requests": [
+    "lazada-001-r2",
+    "lazada-002-r2",
+    "smartstore-001-r4 (a1a8e44c)",
+    "smartstore-002-r2",
+    "temu-001-r4"
+  ],
+  "tests": {
+    "affected": {
+      "passed": 666,
+      "failed": 0,
+      "fileCount": 57
+    },
+    "domain": {
+      "passed": 40,
+      "failed": 0
+    },
+    "channel": {
+      "passed": 28,
+      "failed": 0
+    },
+    "typescript": "passed",
+    "eslint": {
+      "files": 37,
+      "result": "passed"
+    },
+    "build": "passed"
+  },
+  "providerWrites": 0,
+  "productionDatabaseWrites": 0,
+  "deployments": 0,
+  "files": {
+    "app/api/admin/channel-operations/route.ts": "690732ea4b846f41ac6e620c6c49591127473c7003b600a253571590f3898f74",
+    "app/api/admin/channel-targets/route.ts": "b8e174d062265e83e9eb0a9fc263e5ceb5d42a20bfb635a210ceec8c1dd79704",
+    "app/category-classification-workbench.tsx": "0164e31d70dd74014b56f64f6df66fbec4287a4706806eaf66cb2db86c67054e",
+    "app/product-publish-workbench.tsx": "4dde78fc157386fb07e0fb2fd779ed1cd38f74d181bfac7a572252c6930e2180",
+    "app/channel-registration-fields.tsx": "f3e78fec44ba32e560d859e0fe8384f038aeead22017bb271ece4687cc0f24f5",
+    "lib/channels/provider-listing-runtime.ts": "8837d6c896f9d3e48a9a76b70fe100e3450f738d6acd3943d8332f906b5c03f5",
+    "lib/channels/commerce-provider.ts": "2ebc02fba3d21017d33b7fe6c17cf350f2ab411df8d7c6aa8b053360a06a93e4",
+    "lib/channels/listing-preflight.ts": "bdad384a6c23bca04f051063f303130bba4a5cbf62ff31402e49d7d577253def",
+    "lib/channel-registration-form.ts": "cd9d0a314564d71077d1b491236c2d0b759f12199e100481d9f1c231356b36f5",
+    "lib/channels/smartstore-listing-create-contract.ts": "7315bad77bdf0f0e2a79cce8f13690d0da50208460d6cc8bed70767925f185ce",
+    "lib/product-registration/channels/smartstore.ts": "8668d28c01ca6b07fe750ca4871d204d4ef77f302a5e2ee2e9b1bd7a27bf7a61",
+    "lib/product-registration/channels/lazada.ts": "cfdb7a39e2097561aa8a6d4e44e1c6c68f664514f02c5b3de7af0913515be92a",
+    "lib/product-registration/channels/temu.ts": "88a4b27d29392517c6fc1d13f0f25778772ede65dd26e017f052a33aed594298",
+    "lib/product-registration/lazada/listing-create-context.ts": "eda54aa43ffd3e624b2021bb17f22eba84efce450f7d46c2b46d3bffd269a485",
+    "lib/product-registration/lazada/my-create-contract.ts": "200c16ce11cebf32151e7b7d030b9fcd4b8eebe5312f87a31e19e488ec218e1f"
+  },
+  "remaining": [
+    "ebay-common-001-r2 and owned fbae37e0",
+    "shopee-product-001-r2 and shopee-product-002-r1",
+    "CP-COUPANG-OPTIONS-20260909-001-r1 and owned 183d6f0016",
+    "qoo10-003-r1 and owned 535f337f",
+    "current live account/category/approved target/create/readback evidence on all channels"
+  ]
+}

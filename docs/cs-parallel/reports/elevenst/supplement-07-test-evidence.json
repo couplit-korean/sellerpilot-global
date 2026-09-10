@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "supplementId": "elevenst-supplement-07-20260909",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "recordedAt": "2026-09-08T15:56:10Z",
+  "checks": [
+    {
+      "name": "retention-unit-source-audit",
+      "result": "pass",
+      "sellerOfficeNotice": "maximum_three_months",
+      "exactDays": null,
+      "productionHistoryCutoffConsumers": 0,
+      "liveCodeConsumersOutsideElevenstProjection": 0,
+      "frozenNinetyDayRecordsModified": false
+    },
+    {
+      "name": "corrected-model-db-and-auth-web",
+      "runtime": "Node v22.23.2",
+      "exitCode": 0,
+      "passed": 19,
+      "failed": 0
+    },
+    {
+      "name": "latest-integrated-temporary-copy-elevenst-regression",
+      "runtime": "Node v22.23.2",
+      "target": "/tmp/sellerpilot-elevenst-007-verify.iw5OB6",
+      "command": "node --import tsx --test --test-concurrency=1 tests/cs-elevenst-*.test.ts tests/cs-elevenst-*.test.mjs",
+      "exitCode": 0,
+      "passed": 42,
+      "failed": 0
+    },
+    {
+      "name": "actual-next-authenticated-read-state-v3",
+      "runtime": "Next dev",
+      "port": 3214,
+      "exitCode": 0,
+      "unauthorizedStatus": 401,
+      "invalidTokenStatus": 401,
+      "authorizedStatus": 200,
+      "contractVersion": "sellerpilot-elevenst-authenticated-read-state/3",
+      "limitedContractVersion": "sellerpilot-elevenst-limited-access-projection/2",
+      "retention": {
+        "maximum": 3,
+        "unit": "month",
+        "exactDays": null
+      },
+      "retentionDaysFieldPresent": false,
+      "databaseReadCount": 1,
+      "providerWrites": 0,
+      "productionDatabaseWrites": 0,
+      "portCleanAfterExit": true
+    },
+    {
+      "name": "typescript",
+      "command": "tsc --noEmit",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    },
+    {
+      "name": "changed-path-eslint",
+      "dedicatedWorkspaceExitCode": 0,
+      "integratedTemporaryCopyExitCode": 0
+    }
+  ],
+  "mutationEvidence": {
+    "isolatedFixtureWrites": true,
+    "providerWrites": 0,
+    "productionDatabaseWrites": 0,
+    "customerReplies": 0,
+    "reviewComments": 0,
+    "productOrderShippingWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

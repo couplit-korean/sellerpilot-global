@@ -1,4 +1,4 @@
-import type { ChannelOperationResult } from "./operations";
+import type { ChannelOperationResult } from "./commerce-operations";
 
 export type ListingFailureKind = "category_permission" | "image" | "missing_field" | "authentication" | "provider";
 

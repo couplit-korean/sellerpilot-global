@@ -1,0 +1,21 @@
+# 공통 변경 요청 qoo10-001
+
+- 목적: 사용자가 지정한 Qoo10 과거 from/to를 일 단위 S1/S2/S3와 클레임 작업으로 만들고 gap·포화를 공통 UI/DB에 보인다.
+- 요청 채널: qoo10
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-inquiry-coverage/1`
+- 수정할 공통 파일과 함수: `lib/channels/sync-arguments.ts`의 `inquiryHistorySyncRequests`, `app/cs/history-window.tsx`, `app/api/operations/sync/route.ts`, `app/page.tsx`, 공통 history backfill RPC 및 coverage RPC
+- 현재 파일 SHA-256: `sync-arguments.ts=17a7670bc5ed8ca6237c412aa80a30b36af337585d3a34f22cb540735424a7a2`; `history-window.tsx=b58adcbb4ca8fc6757d830143939fb0ffc514fd37056c6f24442f1adf8ee7f04`; `sync/route.ts=71ef296055feff2c6d7dfb9b5e51b24337766f16cc13e874f2086c2e9c2f9f91`; `page.tsx=153db8ff7e77c428acefbe560f03f0d4d2be3f4e6e4a5c1dcbb4f9d65943ba96`
+- DB 객체: `sellerpilot_start_inquiry_history_backfill_v4(text[],integer,date)` 계열과 `sellerpilot_service_record_cs_history_page_v1`
+- 기존 동작: UI는 coupang/elevenst/smartstore의 종료일+고정 30일만 허용한다. Qoo10 공통 planner는 선택한 마지막 날이 아니라 현재 `now`를 종료로 쓰고 한 30일 창을 S1/S2/S3/claim 네 작업으로 만든다.
+- 문제를 재현하는 최소 입력: `channel=qoo10, from=2024-01-01, to=2024-02-29`; 기존 UI schema가 qoo10과 직접 from을 거부하고 공통 planner가 일별 포화 상태를 표현할 수 없다.
+- 원하는 동작: 날짜 직접 지정, Japan timezone 고정, 날짜마다 S1/S2/S3와 요청일 조건 claim 작업 생성, `providerRowCount/totalState/observedLimit/completionState/gapReason` 저장. 0행 성공만 즉시 완료; total 없는 양수행은 미검증; 관찰 상한 도달은 미완료 후 시간 분할.
+- 전용 모듈 경로와 export: `lib/channels/cs/qoo10/history.ts`의 `planQoo10History`, `splitSaturatedQoo10Day`; `contracts.ts`의 `assessQoo10WindowCompleteness`
+- 기존/새 입력·출력 계약: 기존 `{historyDays,endDate}` → 새 Qoo10 전용 `{fromDate,toDate,timezone:'Asia/Tokyo'}` 및 창별 종료 상태. 기존 호출은 그대로 유지한다.
+- 최소 변경안: 공통 dispatcher가 전용 planner 결과를 job payload로 복사하고 unique key에 credential/channel/source/status/from/to를 포함한다. 같은 창 재요청은 기존 run을 재사용하고 실패한 read만 재개한다. coverage에서 `unknown`을 100%로 계산하지 않는다.
+- 다른 채널 영향: qoo10 분기 추가만; 기존 3개 채널의 schema·RPC 호출 유지.
+- 상품/주문/배송 mutation 영향: 없음. `inquiries.list` 읽기 작업만 허용.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-qoo10-contracts.test.ts tests/cs-history-channel-db.test.mjs`
+- migration 선행/preimage/ACL 요구: 기존 v4와 coverage RPC의 owner/security-definer/search_path/anon·service ACL preimage 검사. 새 RPC를 만들면 authenticated admin만 실행, service worker의 page 기록 권한은 credential scope와 qoo10 read operation에 한정.
+- 우선순위: 과거누락
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

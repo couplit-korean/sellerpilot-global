@@ -1,0 +1,116 @@
+{
+  "contract": "sellerpilot-cs-smartstore-reconciliation-input/2",
+  "checkedAt": "2026-09-08T10:12:22.459Z",
+  "timezone": "Asia/Seoul",
+  "sourceEvidence": {
+    "artifactSha256": "f3a66489c9275e6bf4aee54f26a7c796ea1e3d54fb75a2b809a0c78bcda31801",
+    "observedAt": "2026-09-08T10:12:22.459Z"
+  },
+  "scope": {
+    "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+    "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+    "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+    "environment": "production"
+  },
+  "floorDate": "2022-11-30",
+  "throughDate": "2026-09-08",
+  "history": {
+    "plannedWindowCount": 46,
+    "completedWindowCount": 46,
+    "failedWindowCount": 0,
+    "duplicateCompletionCount": 0,
+    "plannedWindowKeysSha256": "79eb8c618a34c45a273dbbf76cdd8575d6d1f2f4cade5bf852bddc0a566c8904",
+    "completedWindowKeysSha256": "79eb8c618a34c45a273dbbf76cdd8575d6d1f2f4cade5bf852bddc0a566c8904"
+  },
+  "provider": [
+    {
+      "kind": "product",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "successfulWindowCount": 46,
+      "failedWindowCount": 0,
+      "comparisonFromDate": "2026-06-09",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    },
+    {
+      "kind": "customer",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "successfulWindowCount": 46,
+      "failedWindowCount": 0,
+      "comparisonFromDate": "2026-06-08",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    }
+  ],
+  "ledger": [
+    {
+      "kind": "product",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "comparisonFromDate": "2026-06-09",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    },
+    {
+      "kind": "customer",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "comparisonFromDate": "2026-06-08",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    }
+  ],
+  "web": [
+    {
+      "kind": "product",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "comparisonFromDate": "2026-06-09",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    },
+    {
+      "kind": "customer",
+      "scope": {
+        "sellerAccountSha256": "0ef452801dfcfafc296f6661a3d19a61435cd91d0d976da16575ae14d50ff53d",
+        "credentialSha256": "808e5f7041a54cce81d99a2b2056a68784a76b2a3a6509ebdedcec339ef5cc1a",
+        "shopSha256": "114fd4c4ec22a4b292bb5a5f0c90bd1fc49764963c024cc4b125d89058357adf",
+        "environment": "production"
+      },
+      "comparisonFromDate": "2026-06-08",
+      "comparisonThroughDate": "2026-09-08",
+      "nativeIdDigests": []
+    }
+  ],
+  "authClaim": {
+    "evidenceLevel": "snapshot_claim_only",
+    "administratorStatus": 200,
+    "anonymousStatus": 401,
+    "expiredSessionStatus": 401
+  },
+  "customerBodiesIncluded": false,
+  "providerWrites": 0,
+  "databaseWrites": 0
+}

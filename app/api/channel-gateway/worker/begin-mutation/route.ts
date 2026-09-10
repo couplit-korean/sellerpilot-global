@@ -14,6 +14,7 @@ export const runtime = "nodejs";
 const mutationSchema = z.object({
   jobId: z.string().uuid(),
   claimToken: z.string().uuid(),
+  providerBody: z.record(z.string(), z.unknown()).optional(),
 });
 
 function providerMutationStateUncertainResponse() {
@@ -48,12 +49,16 @@ export async function POST(request: Request) {
     global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+  const exactCoupangCreate = parsed.data.providerBody !== undefined;
   const { data, error } = await serviceClient.rpc(
-    "sellerpilot_service_begin_gateway_provider_mutation",
+    exactCoupangCreate
+      ? "sellerpilot_service_begin_coupang_create_provider_mutation"
+      : "sellerpilot_service_begin_gateway_provider_mutation",
     {
       p_token_hash: tokenHash,
       p_job_id: parsed.data.jobId,
       p_claim_token: parsed.data.claimToken,
+      ...(exactCoupangCreate ? { p_provider_body: parsed.data.providerBody } : {}),
     },
   );
   if (error) {

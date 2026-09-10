@@ -1,44 +1,7 @@
+import { smartstoreContentRepairArgument, smartstoreContentRepairBinding, smartstoreContentRepairTransmissionArgument, smartstoreContentRepairTransmissionImagesSchema } from "./smartstore-content-repair-contract";
 import type { ActiveChannelKey } from "./catalog";
-import {
-  coupangExactQaRecoveryArgument,
-  coupangExactQaRepresentativeArgument,
-  coupangExactQaRecoveryBinding,
-  coupangExactQaRecoveryCandidate,
-} from "./coupang-exact-qa-recovery";
-import {
-  elevenstListingUpdatePatchFromProduct,
-  elevenstListingUpdateProjection,
-} from "./elevenst-listing";
-import {
-  elevenstExactExistingPublicationArgument,
-  elevenstExactExistingPublicationCandidate,
-  elevenstExactExistingPublicationIdentity,
-} from "./elevenst-exact-existing-identity";
-import { lazadaExactExistingPublicationCandidate } from "./lazada-exact-existing-identity";
-import {
-  qoo10ExactAdoptedLiveListingCandidate,
-  qoo10ExactAdoptedLocalizationArgument,
-  qoo10ExactLocalizationLedgerCandidate,
-  qoo10ExactLocalizationRecoveryIdentity,
-  qoo10ExactLocalizationUpdateBinding,
-  qoo10ExactLocalizationUpdateArgument,
-} from "./qoo10-exact-localization-identity";
-import {
-  smartstoreExactQaRecoveryArgument,
-  smartstoreExactQaRecoveryCandidate,
-} from "./smartstore-exact-qa-recovery";
-import {
-  ebayExactExistingQaRecoveryArgument,
-  ebayExactExistingQaRecoveryBinding,
-  ebayExactExistingQaRecoveryCandidate,
-  ebayExactNoEffectRetryArgument,
-  ebayExactV101ContentContractArgument,
-} from "./ebay-exact-existing-qa-recovery";
-import {
-  temuExactExistingUpdateArgument,
-  temuExactPreservedAssetsArgument,
-  temuExactExistingUpdateRequest,
-} from "./temu-existing-update";
+
+import { elevenstListingUpdatePatchFromProduct, elevenstListingUpdateProjection } from "./elevenst-listing";
 
 export type ListingUpdateReference = {
   listingId?: string | null;
@@ -358,73 +321,9 @@ function listingHasVerifiedUpdateIdentity(listing: ListingUpdateReference) {
  * and rollback-confirmed Qoo10 rows still require their channel-specific
  * service RPC checks after this structural predicate succeeds.
  */
-export function listingUpdateServerCandidate(
-  channel: ActiveChannelKey,
-  listing: ListingUpdateReference | null | undefined,
-) {
+export function listingUpdateServerCandidate(channel: ActiveChannelKey, listing: ListingUpdateReference | null | undefined) {
   if (!listing) return false;
-  return (
-    (listing.failureClass !== "external_action" && listingHasVerifiedUpdateIdentity(listing))
-    || ebayExactExistingQaRecoveryCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      marketplaceSku: listing.marketplaceSku,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    })
-    || legacyEbayListingUpdateCandidate(channel, listing)
-    || qoo10RollbackListingUpdateCandidate(channel, listing)
-    || coupangExactQaRecoveryCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    })
-    || elevenstExactExistingPublicationCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      marketplaceSku: listing.marketplaceSku,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    })
-    || smartstoreExactQaRecoveryCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    })
-    || lazadaExactExistingPublicationCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    })
-  );
+  return (listing.failureClass !== "external_action" && listingHasVerifiedUpdateIdentity(listing)) || legacyEbayListingUpdateCandidate(channel, listing) || qoo10RollbackListingUpdateCandidate(channel, listing);
 }
 
 export type ListingCoreContent = {
@@ -485,7 +384,7 @@ function listingLocalizedContentOrThrow(input: {
   const shortDescription = input.localized?.shortDescription?.trim() ?? "";
   const description = input.localized?.description?.trim() ?? "";
   if (input.operation === "listing.update"
-      && (!title || !shortDescription || !description)) {
+    && (!title || !shortDescription || !description)) {
     throw new Error("LISTING_UPDATE_LOCALIZED_CONTENT_NOT_APPROVED");
   }
   if (!title || !shortDescription || !description) return null;
@@ -553,34 +452,34 @@ export function qoo10RollbackUpdateRecoveryBinding(
   const value = recordValue(argumentsValue[qoo10RollbackUpdateRecoveryArgument]);
   const expectedState = recordValue(value.expectedState);
   if (Object.keys(value).length !== qoo10RollbackUpdateRecoveryKeys.length
-      || !qoo10RollbackUpdateRecoveryKeys.every((key) => Object.hasOwn(value, key))
-      || Object.keys(expectedState).length !== qoo10RollbackExpectedStateKeys.length
-      || !qoo10RollbackExpectedStateKeys.every((key) => Object.hasOwn(expectedState, key))
-      || value.status !== "allowed"
-      || value.contract !== qoo10RollbackUpdateRecoveryContract
-      || value.providerStatus !== "S1"
-      || typeof value.listingId !== "string"
-      || !uuidPattern.test(value.listingId)
-      || typeof value.sourceJobId !== "string"
-      || !uuidPattern.test(value.sourceJobId)
-      || typeof value.remoteId !== "string"
-      || !/^\d{9,10}$/u.test(value.remoteId)
-      || typeof expectedState.categoryCode !== "string"
-      || !/^\d{9}$/u.test(expectedState.categoryCode)
-      || !Number.isSafeInteger(expectedState.retailPriceJpy)
-      || Number(expectedState.retailPriceJpy) < 1
-      || Number(expectedState.retailPriceJpy) > 999_999_999
-      || !Number.isSafeInteger(expectedState.sellPriceJpy)
-      || Number(expectedState.sellPriceJpy) < 1
-      || Number(expectedState.sellPriceJpy) > Number(expectedState.retailPriceJpy)
-      || !Number.isSafeInteger(expectedState.quantity)
-      || Number(expectedState.quantity) < 1
-      || Number(expectedState.quantity) > 99_999_999
-      || typeof expectedState.shippingNo !== "string"
-      || !/^\d{1,20}$/u.test(expectedState.shippingNo)
-      || !Number.isSafeInteger(expectedState.biContentsNo)
-      || Number(expectedState.biContentsNo) < 100_000
-      || Number(expectedState.biContentsNo) > Number.MAX_SAFE_INTEGER) {
+    || !qoo10RollbackUpdateRecoveryKeys.every((key) => Object.hasOwn(value, key))
+    || Object.keys(expectedState).length !== qoo10RollbackExpectedStateKeys.length
+    || !qoo10RollbackExpectedStateKeys.every((key) => Object.hasOwn(expectedState, key))
+    || value.status !== "allowed"
+    || value.contract !== qoo10RollbackUpdateRecoveryContract
+    || value.providerStatus !== "S1"
+    || typeof value.listingId !== "string"
+    || !uuidPattern.test(value.listingId)
+    || typeof value.sourceJobId !== "string"
+    || !uuidPattern.test(value.sourceJobId)
+    || typeof value.remoteId !== "string"
+    || !/^\d{9,10}$/u.test(value.remoteId)
+    || typeof expectedState.categoryCode !== "string"
+    || !/^\d{9}$/u.test(expectedState.categoryCode)
+    || !Number.isSafeInteger(expectedState.retailPriceJpy)
+    || Number(expectedState.retailPriceJpy) < 1
+    || Number(expectedState.retailPriceJpy) > 999_999_999
+    || !Number.isSafeInteger(expectedState.sellPriceJpy)
+    || Number(expectedState.sellPriceJpy) < 1
+    || Number(expectedState.sellPriceJpy) > Number(expectedState.retailPriceJpy)
+    || !Number.isSafeInteger(expectedState.quantity)
+    || Number(expectedState.quantity) < 1
+    || Number(expectedState.quantity) > 99_999_999
+    || typeof expectedState.shippingNo !== "string"
+    || !/^\d{1,20}$/u.test(expectedState.shippingNo)
+    || !Number.isSafeInteger(expectedState.biContentsNo)
+    || Number(expectedState.biContentsNo) < 100_000
+    || Number(expectedState.biContentsNo) > Number.MAX_SAFE_INTEGER) {
     return null;
   }
   return value as Qoo10RollbackUpdateRecoveryBinding;
@@ -665,7 +564,7 @@ export function listingUpdateRemoteIdentity(channel: ActiveChannelKey, arguments
                 ? [argumentsValue.listingId]
                 : channel === "temu"
                   ? [argumentsValue.goodsId]
-                : [];
+                  : [];
   const identities = [...new Set(candidates.map(identityValue).filter(Boolean))];
   if (identities.length !== 1) {
     throw new Error(identities.length ? "LISTING_UPDATE_IDENTITY_MISMATCH" : "LISTING_UPDATE_IDENTITY_REQUIRED");
@@ -787,11 +686,18 @@ function safeSmartstoreBody(value: unknown) {
   const originProduct = recordValue(body.originProduct);
   const detailAttribute = recordValue(originProduct.detailAttribute);
   const smartstoreChannelProduct = recordValue(body.smartstoreChannelProduct);
+  const unitCapacity = definedEntries(recordValue(detailAttribute.unitCapacity), [
+    "unitPriceYn",
+    "totalCapacityValue",
+    "unitCapacity",
+    "indicationUnit",
+  ]);
   const sellerCodeInfo = definedEntries(recordValue(detailAttribute.sellerCodeInfo), [
     "sellerManagementCode",
   ]);
   const safeDetailAttribute = {
     ...definedEntries(detailAttribute, ["originAreaInfo"]),
+    ...(Object.hasOwn(detailAttribute, "unitCapacity") ? { unitCapacity } : {}),
     ...(Object.keys(sellerCodeInfo).length ? { sellerCodeInfo } : {}),
   };
   const safeOriginProduct = {
@@ -800,8 +706,6 @@ function safeSmartstoreBody(value: unknown) {
       "name",
       "detailContent",
       "images",
-      "salePrice",
-      "stockQuantity",
     ]),
     ...(Object.keys(safeDetailAttribute).length ? { detailAttribute: safeDetailAttribute } : {}),
   };
@@ -822,7 +726,6 @@ export function prepareListingUpdateArguments(
   channel: ActiveChannelKey,
   createArguments: Record<string, unknown>,
   listing: ListingUpdateReference,
-  options: { qoo10ExactLocalizationProductId?: string | null } = {},
 ) {
   const remoteId = listing.remoteId?.trim() ?? "";
   // Public callers must pass the verified ledger classifier above. The
@@ -832,43 +735,14 @@ export function prepareListingUpdateArguments(
   const authorizedProviderReference = listing.status === "published" && Boolean(remoteId);
   const verifiedServerCandidate = listingUpdateServerCandidate(channel, listing);
   const qoo10RollbackCandidate = qoo10RollbackListingUpdateCandidate(channel, listing);
-  const qoo10ExactLocalizationCandidate = qoo10ExactLocalizationLedgerCandidate({
-    channel,
-    productId: options.qoo10ExactLocalizationProductId,
-    listingId: listing.listingId,
-    remoteId: listing.remoteId,
-    market: listing.market,
-    targetId: listing.targetId,
-    status: listing.status,
-    failureClass: listing.failureClass,
-    requestedPublicationIntent: listing.requestedPublicationIntent,
-    remoteVisibility: listing.remoteVisibility,
-  });
-  const qoo10ExactAdoptedLocalizationCandidate = qoo10ExactAdoptedLiveListingCandidate({
-    channel,
-    credentialId: qoo10ExactLocalizationRecoveryIdentity.credentialId,
-    productId: options.qoo10ExactLocalizationProductId,
-    listingId: listing.listingId,
-    remoteId: listing.remoteId,
-    market: listing.market,
-    targetId: listing.targetId,
-    status: listing.status,
-    failureClass: listing.failureClass,
-    requestedPublicationIntent: listing.requestedPublicationIntent,
-    remoteVisibility: listing.remoteVisibility,
-    providerStatus: listing.providerStatus,
-    publishedAt: listing.publishedAt,
-  });
+
   if ((!verifiedServerCandidate
-      && !qoo10ExactLocalizationCandidate
-      && !qoo10ExactAdoptedLocalizationCandidate
-      && !authorizedProviderReference)
-      || !remoteId) {
+    && !authorizedProviderReference)
+    || !remoteId) {
     throw new Error("PUBLISHED_REMOTE_LISTING_REQUIRED");
   }
 
   if (channel === "qoo10") {
-    const sourceParams = recordValue(createArguments.params);
     const params: Record<string, unknown> = {
       ...nonEmptyEntries(recordValue(createArguments.params), [
         ...qoo10MutableFields,
@@ -876,34 +750,15 @@ export function prepareListingUpdateArguments(
       ]),
       ItemCode: remoteId,
     };
-    if (remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId
-        && (sourceParams.SellerCode === qoo10ExactLocalizationRecoveryIdentity.sellerSku
-          || qoo10ExactLocalizationCandidate
-          || qoo10ExactAdoptedLocalizationCandidate)) {
-      params.SellerCode = qoo10ExactLocalizationRecoveryIdentity.sellerSku;
-      if (qoo10ExactLocalizationCandidate
-          || qoo10ExactAdoptedLocalizationCandidate) {
-        params.ItemPrice = String(qoo10ExactLocalizationRecoveryIdentity.priceJpy);
-        params.ItemQty = String(qoo10ExactLocalizationRecoveryIdentity.quantity);
-      } else if (Object.hasOwn(createArguments, qoo10ExactLocalizationUpdateArgument)) {
-        params.ItemPrice = sourceParams.ItemPrice;
-        params.ItemQty = sourceParams.ItemQty;
-      }
-    }
+    if (qoo10RollbackCandidate || qoo10RollbackUpdateRecoveryBinding(createArguments)) delete params.StandardImage;
+
     // Qoo10 rehosts representative images. A rollback recovery must preserve
     // the already confirmed remote CDN image instead of triggering another
     // upload/content-id and a false literal-URL readback mismatch.
-    if (qoo10RollbackCandidate
-        || qoo10ExactLocalizationCandidate
-        || qoo10ExactAdoptedLocalizationCandidate
-        || Object.hasOwn(createArguments, qoo10ExactAdoptedLocalizationArgument)) {
-      delete params.StandardImage;
-    }
+
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, qoo10RollbackUpdateRecoveryArgument),
-      ...optionalArgument(createArguments, qoo10ExactLocalizationUpdateArgument),
-      ...optionalArgument(createArguments, qoo10ExactAdoptedLocalizationArgument),
       params,
     };
   }
@@ -945,8 +800,6 @@ export function prepareListingUpdateArguments(
     const items = safeCoupangItems(sourceBody.items);
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
-      ...optionalArgument(createArguments, coupangExactQaRecoveryArgument),
-      ...optionalArgument(createArguments, coupangExactQaRepresentativeArgument),
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       body: {
         ...definedEntries(sourceBody, coupangMutableProductFields),
@@ -957,10 +810,22 @@ export function prepareListingUpdateArguments(
   }
 
   if (channel === "smartstore") {
+    const repair = smartstoreContentRepairBinding(createArguments);
+    if (repair) {
+      if (repair.originProductNo !== remoteId) throw new Error("SMARTSTORE_CONTENT_REPAIR_TARGET_MISMATCH");
+      const evidence = smartstoreContentRepairTransmissionImagesSchema.parse(createArguments[smartstoreContentRepairTransmissionArgument]);
+      return {
+        ...optionalArgument(createArguments, "imageUrls"),
+        [smartstoreContentRepairArgument]: structuredClone(repair),
+        [smartstoreContentRepairTransmissionArgument]: structuredClone(evidence),
+        originProductNo: remoteId,
+        body: structuredClone(recordValue(createArguments.body)),
+      };
+    }
+
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "imageUrls"),
-      ...optionalArgument(createArguments, smartstoreExactQaRecoveryArgument),
       originProductNo: remoteId,
       body: safeSmartstoreBody(createArguments.body),
     };
@@ -972,52 +837,20 @@ export function prepareListingUpdateArguments(
     const sourceOffer = Object.keys(recordValue(createArguments.body)).length
       ? recordValue(createArguments.body)
       : recordValue(createArguments.offer);
-    const boundExactRecovery = ebayExactExistingQaRecoveryBinding(createArguments);
-    const exactRecovery = boundExactRecovery
-      ?? (ebayExactExistingQaRecoveryCandidate({
-        channel,
-        listingId: listing.listingId,
-        remoteId: listing.remoteId,
-        marketplaceSku: listing.marketplaceSku,
-        status: listing.status,
-        requestedPublicationIntent: listing.requestedPublicationIntent,
-        remoteVisibility: listing.remoteVisibility,
-        providerStatus: listing.providerStatus,
-        publishedAt: listing.publishedAt,
-        failureClass: listing.failureClass,
-      }) ? true : null);
-    const inventoryProduct = exactRecovery
-      ? boundExactRecovery
-        ? definedEntries(sourceProduct, ["description", "imageUrls"])
-        : {}
-      : definedEntries(sourceProduct, [
-          "title", "description", "imageUrls", "aspects",
-        ]);
-    const offer = definedEntries(sourceOffer, exactRecovery
-      ? boundExactRecovery
-        ? ["availableQuantity", "listingDescription", "pricingSummary"]
-        : ["availableQuantity", "pricingSummary"]
-      : ["listingDescription"]);
-    if (!exactRecovery && !Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
+
+
+    const inventoryProduct = definedEntries(sourceProduct, [
+      "title", "description", "imageUrls", "aspects",
+    ]);
+    const offer = definedEntries(sourceOffer, ["listingDescription"]);
+    if (!Object.keys(inventoryProduct).length && !Object.keys(offer).length) {
       throw new Error("EBAY_LISTING_UPDATE_CONTENT_REQUIRED");
     }
     return {
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
-      ...optionalArgument(createArguments, ebayExactExistingQaRecoveryArgument),
-      ...optionalArgument(createArguments, ebayExactNoEffectRetryArgument),
-      ...optionalArgument(createArguments, ebayExactV101ContentContractArgument),
       listingId: remoteId,
-      ...(exactRecovery || Object.keys(inventoryProduct).length
-        ? {
-            inventoryItem: {
-              ...(exactRecovery
-                ? definedEntries(sourceInventoryItem, ["availability", "condition"])
-                : {}),
-              product: inventoryProduct,
-            },
-          }
-        : {}),
+      ...(Object.keys(inventoryProduct).length ? { inventoryItem: { product: inventoryProduct } } : {}),
       ...(Object.keys(offer).length ? { offer } : {}),
     };
   }
@@ -1026,30 +859,8 @@ export function prepareListingUpdateArguments(
     const suppliedPatch = recordValue(createArguments.productPatch);
     const suppliedProduct = recordValue(createArguments.product);
     const hasSuppliedPatch = Object.keys(suppliedPatch).length > 0;
-    const exactExistingPublication = elevenstExactExistingPublicationCandidate({
-      channel,
-      listingId: listing.listingId,
-      remoteId: listing.remoteId,
-      marketplaceSku: listing.marketplaceSku,
-      status: listing.status,
-      requestedPublicationIntent: listing.requestedPublicationIntent,
-      remoteVisibility: listing.remoteVisibility,
-      providerStatus: listing.providerStatus,
-      publishedAt: listing.publishedAt,
-      failureClass: listing.failureClass,
-    });
-    if (exactExistingPublication) {
-      const exactCommerceValuesVerified = hasSuppliedPatch
-        ? identityValue(suppliedPatch.selPrc) === String(elevenstExactExistingPublicationIdentity.priceKrw)
-          && identityValue(suppliedPatch.prdSelQty) === String(elevenstExactExistingPublicationIdentity.stock)
-        : identityValue(suppliedProduct.sellerPrdCd) === elevenstExactExistingPublicationIdentity.sellerSku
-          && identityValue(suppliedProduct.dispCtgrNo) === elevenstExactExistingPublicationIdentity.categoryId
-          && identityValue(suppliedProduct.selPrc) === String(elevenstExactExistingPublicationIdentity.priceKrw)
-          && identityValue(suppliedProduct.prdSelQty) === String(elevenstExactExistingPublicationIdentity.stock);
-      if (!exactCommerceValuesVerified) {
-        throw new Error("ELEVENST_EXACT_EXISTING_COMMERCE_VALUES_REQUIRED");
-      }
-    }
+
+
     const basePatch = hasSuppliedPatch
       ? structuredClone(suppliedPatch)
       : elevenstListingUpdatePatchFromProduct(createArguments.product);
@@ -1057,40 +868,11 @@ export function prepareListingUpdateArguments(
       ...optionalArgument(createArguments, "sellerpilotAssets"),
       ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
       ...optionalArgument(createArguments, "sellerpilotSnapshotMutableFingerprint"),
-      ...optionalArgument(createArguments, elevenstExactExistingPublicationArgument),
       productNo: remoteId,
-      productPatch: exactExistingPublication
-        ? {
-            ...basePatch,
-            selPrc: String(elevenstExactExistingPublicationIdentity.priceKrw),
-            prdSelQty: String(elevenstExactExistingPublicationIdentity.stock),
-          }
-        : basePatch,
+      productPatch: basePatch,
       ...(hasSuppliedPatch && Object.keys(suppliedProduct).length
         ? { product: structuredClone(suppliedProduct) }
         : {}),
-    };
-  }
-
-  if (channel === "temu") {
-    const exact = temuExactExistingUpdateRequest(createArguments);
-    if (!exact || exact.binding.goodsId !== remoteId) {
-      throw new Error("LISTING_UPDATE_NOT_RELEASED:temu");
-    }
-    return {
-      goodsId: remoteId,
-      externalGoodsId: exact.binding.externalGoodsId,
-      body: structuredClone(createArguments.body),
-      sellerpilotTemuPartialUpdate: structuredClone(
-        createArguments.sellerpilotTemuPartialUpdate,
-      ),
-      [temuExactExistingUpdateArgument]: structuredClone(
-        createArguments[temuExactExistingUpdateArgument],
-      ),
-      [temuExactPreservedAssetsArgument]: structuredClone(
-        createArguments[temuExactPreservedAssetsArgument],
-      ),
-      ...optionalArgument(createArguments, "sellerpilotPublicationAssetBinding"),
     };
   }
 
@@ -1152,15 +934,6 @@ export function elevenstListingUpdateProjectionDigestInput(value: unknown) {
   return canonicalComparableJson(normalizedComparable(elevenstListingUpdateProjection(value)));
 }
 
-export function elevenstExactExistingUpdateProjectionDigestInput(value: unknown) {
-  const product = recordValue(value);
-  return canonicalComparableJson(normalizedComparable({
-    ...elevenstListingUpdateProjection(product),
-    selPrc: product.selPrc,
-    prdSelQty: product.prdSelQty,
-  }));
-}
-
 function subsetMismatches(expectedValue: unknown, actualValue: unknown, path = ""): string[] {
   const expected = normalizedComparable(expectedValue);
   const actual = normalizedComparable(actualValue);
@@ -1179,49 +952,6 @@ function subsetMismatches(expectedValue: unknown, actualValue: unknown, path = "
   const numericEquivalent = (typeof expected === "number" && typeof actual === "string" && actual.trim() !== "" && Number(actual) === expected)
     || (typeof actual === "number" && typeof expected === "string" && expected.trim() !== "" && Number(expected) === actual);
   return Object.is(expected, actual) || numericEquivalent ? [] : [path || "value"];
-}
-
-function orderedSubsetMismatches(
-  expectedValue: unknown,
-  actualValue: unknown,
-  path = "",
-): string[] {
-  const expected = normalizedComparable(expectedValue);
-  const actual = normalizedComparable(actualValue);
-  if (Array.isArray(expected)) {
-    if (!Array.isArray(actual) || expected.length !== actual.length) {
-      return [path || "value"];
-    }
-    return expected.flatMap((expectedItem, index) =>
-      orderedSubsetMismatches(
-        expectedItem,
-        actual[index],
-        `${path}[${index}]`,
-      ));
-  }
-  if (expected && typeof expected === "object") {
-    if (!actual || typeof actual !== "object" || Array.isArray(actual)) {
-      return [path || "value"];
-    }
-    return Object.entries(expected as Record<string, unknown>).flatMap(
-      ([key, item]) => orderedSubsetMismatches(
-        item,
-        (actual as Record<string, unknown>)[key],
-        path ? `${path}.${key}` : key,
-      ),
-    );
-  }
-  const numericEquivalent = (typeof expected === "number"
-      && typeof actual === "string"
-      && actual.trim() !== ""
-      && Number(actual) === expected)
-    || (typeof actual === "number"
-      && typeof expected === "string"
-      && expected.trim() !== ""
-      && Number(expected) === actual);
-  return Object.is(expected, actual) || numericEquivalent
-    ? []
-    : [path || "value"];
 }
 
 function firstRecursiveValue(value: unknown, aliases: readonly string[], depth = 0): unknown {
@@ -1263,8 +993,8 @@ function qoo10RollbackKeywordVerified(expectedValue: unknown, actualValue: unkno
   const expectedTerms = expectedValue.split(",").map((term) => term.trim());
   const actualTerms = actualValue.split(",").map((term) => term.trim());
   if (expectedTerms.some((term) => !term) || actualTerms.some((term) => !term)
-      || expectedTerms.join(",") !== expectedValue
-      || actualTerms.join(",") !== actualValue) return false;
+    || expectedTerms.join(",") !== expectedValue
+    || actualTerms.join(",") !== actualValue) return false;
 
   // In the observed QAPI readback, Qoo10 removed the one keyword entry that
   // exactly duplicated ItemTitle at the start. Permit only that exact prefix
@@ -1296,7 +1026,7 @@ function qoo10ExactReadbackRecords(
     .filter((alias) => Object.hasOwn(record, alias))
     .map((alias) => identityValue(record[alias]));
   if (identities.length > 0
-      && identities.every((identity) => identity === expectedRemoteId)) {
+    && identities.every((identity) => identity === expectedRemoteId)) {
     found.push(record);
   }
   for (const nested of Object.values(record)) {
@@ -1318,8 +1048,7 @@ function qoo10ReadbackProjection(argumentsValue: Record<string, unknown>, remote
     Keyword: ["Keyword", "keywords"],
   };
   const expectedFields = Object.keys(definedEntries(params, qoo10MutableFields));
-  if (!qoo10RollbackUpdateRecoveryBinding(argumentsValue)
-      && !qoo10ExactLocalizationUpdateBinding(argumentsValue)) {
+  if (!qoo10RollbackUpdateRecoveryBinding(argumentsValue)) {
     return Object.fromEntries(expectedFields.map((key) => [
       key,
       firstRecursiveValue(remoteData.ResultObject ?? remoteData, aliases[key] ?? [key]),
@@ -1461,39 +1190,6 @@ function actualListingUpdateProjection(channel: ActiveChannelKey, argumentsValue
   return {};
 }
 
-function coupangProviderManagedGalleryMatches(
-  expectedValue: unknown,
-  actualValue: unknown,
-) {
-  const expected = Array.isArray(expectedValue) ? expectedValue.map(recordValue) : [];
-  const actual = Array.isArray(actualValue) ? actualValue.map(recordValue) : [];
-  if (!expected.length || expected.length !== actual.length) return false;
-  const actualIdentities = actual.map((image) =>
-    identityValue(image.cdnPath) || identityValue(image.vendorPath));
-  return actualIdentities.every(Boolean)
-    && new Set(actualIdentities).size === actual.length
-    && expected.every((image, index) =>
-      Number(image.imageOrder) === Number(actual[index].imageOrder)
-      && identityValue(image.imageType).toUpperCase()
-        === identityValue(actual[index].imageType).toUpperCase());
-}
-
-function coupangExactQaComparableReadback(
-  expectedValue: unknown,
-  actualValue: unknown,
-) {
-  const expected = recordValue(expectedValue);
-  const actual = structuredClone(recordValue(actualValue));
-  const expectedItems = Array.isArray(expected.items) ? expected.items.map(recordValue) : [];
-  const actualItems = Array.isArray(actual.items) ? actual.items.map(recordValue) : [];
-  if (expectedItems.length !== 1 || actualItems.length !== 1) return actual;
-  if (coupangProviderManagedGalleryMatches(expectedItems[0].images, actualItems[0].images)) {
-    actualItems[0].images = structuredClone(expectedItems[0].images);
-    actual.items = actualItems;
-  }
-  return actual;
-}
-
 export function verifyListingUpdateReadback(
   channel: ActiveChannelKey,
   argumentsValue: Record<string, unknown>,
@@ -1503,29 +1199,23 @@ export function verifyListingUpdateReadback(
   const actual = actualListingUpdateProjection(channel, argumentsValue, remoteData);
   let comparableActual: unknown = actual;
   if (channel === "qoo10"
-      && (qoo10RollbackUpdateRecoveryBinding(argumentsValue)
-        || qoo10ExactLocalizationUpdateBinding(argumentsValue))) {
+    && (qoo10RollbackUpdateRecoveryBinding(argumentsValue))) {
     const qooExpected = expected as Record<string, unknown>;
     const qooActual = { ...(actual as Record<string, unknown>) };
     if (Object.hasOwn(qooExpected, "Keyword")
-        && qoo10RollbackKeywordVerified(
-          qooExpected.Keyword,
-          qooActual.Keyword,
-          recordValue(argumentsValue.params).ItemTitle,
+      && qoo10RollbackKeywordVerified(
+        qooExpected.Keyword,
+        qooActual.Keyword,
+        recordValue(argumentsValue.params).ItemTitle,
       )) {
       qooActual.Keyword = qooExpected.Keyword;
     }
     comparableActual = qooActual;
   }
-  if (channel === "coupang"
-      && coupangExactQaRecoveryBinding(argumentsValue, "listing.update")) {
-    comparableActual = coupangExactQaComparableReadback(expected, actual);
-  }
-  const mismatches = (channel === "ebay"
-      && ebayExactExistingQaRecoveryBinding(argumentsValue)
-    ? orderedSubsetMismatches(expected, comparableActual)
-    : subsetMismatches(expected, comparableActual))
-    .filter(Boolean);
+
+
+  const mutableMismatches = subsetMismatches(expected, comparableActual).filter(Boolean);
+  const mismatches = [...new Set(mutableMismatches)];
   return { ok: Object.keys(expected).length > 0 && mismatches.length === 0, mismatches };
 }
 

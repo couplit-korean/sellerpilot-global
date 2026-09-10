@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "ebay",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-ebay",
+  "branch": "codex/cs-ebay-v1",
+  "files": [
+    { "path": "lib/channels/ebay-inquiries.ts", "change": "modify", "beforeSha256": "8ffcd3c5d6a8ccc4db5bad3ab066648ae41330f4c545da9eac6f7cf13c45c60c", "afterSha256": "eeccbf6828667964b0c32b805a6893a1f2a3c590588588781c8162415d65af00", "reason": "Continue empty ASQ, Inbox, and Commerce pages and require latest-customer readback before a Commerce reply." },
+    { "path": "lib/channels/ebay-message-history.ts", "change": "modify", "beforeSha256": "4eec28a0097fc8b1c067276047a0ab840056c113ea077f4ce93aaadf9fde41c9", "afterSha256": "9f7d5eaf84fe2f7702e3ba861210ea90e97d869eed838c502611aadb5ede2306", "reason": "Keep omitted Commerce totals unknown and validate the access-probe next link." },
+    { "path": "lib/channels/ebay-message-pages.ts", "change": "modify", "beforeSha256": "ea73f1a70d51956a2f16b84714e1f8360280c0ce47c0eb6767b03c4e4d213925", "afterSha256": "1f2abec8f017522c41248ccc05564f4e577518cb0258a9cc2f5af36d45405275", "reason": "Parse nullable totals and accept only same-origin, same-query, advancing provider next cursors." },
+    { "path": "lib/cs/ebay-messages.ts", "change": "modify", "beforeSha256": "e460be8e3c66f88ac76a328f2f8c29ec07e00afbbc669530ce5de214c38f427a", "afterSha256": "35175c1c486a1da4c70af57c9707f2f0deb2e659ccc4423d6af1e88c7e6196f4", "reason": "Represent an omitted provider total as null in the client contract." },
+    { "path": "app/cs/ebay-messages.tsx", "change": "modify", "beforeSha256": "9ec397aa7d2d8b786a3d738871fe35dae7d7ad33c66d0c747a8134d831248126", "afterSha256": "23cd42d1cd44c78c8740449e7390c6a808cf2002a270a6b26cca2578ca7365dd", "reason": "Render missing conversation and message totals as not provided instead of zero." },
+    { "path": "tests/ebay-asq.test.ts", "change": "modify", "beforeSha256": "1f321aef1f79a05c0662e9a5d1b699919d21cfb481c1f304f6a1aec8cc331fb1", "afterSha256": "aaa2a899a447beae8e82898a6d82ef0be2f1c6121b85b4101ef265dc7ac1996d", "reason": "Cover ASQ empty plus hasMore continuation." },
+    { "path": "tests/ebay-message-history.test.ts", "change": "modify", "beforeSha256": "3e12d14c78d7b3673ba774336faee280f602f6d5e9462182868561628514a290", "afterSha256": "bfa2eb6dbd50856383d809c462cf6b4b45795c3ade96b64a6e22d9c7c2eb9e92", "reason": "Cover unknown total and hostile probe cursor handling." },
+    { "path": "tests/ebay-message-pages.test.ts", "change": "modify", "beforeSha256": "ff87a107273091d5980f789bc8b01905ae6e5f6102288c21202f5123bdbe3d7b", "afterSha256": "b5ad80785b323dbeda78e50c996c6c4a322eced759fb6a1afe73a5e153891b97", "reason": "Cover empty next, missing total, cross-origin, repeated, altered, and skipping cursors." },
+    { "path": "tests/ebay-conversation-sync.test.ts", "change": "modify", "beforeSha256": "a5af14bd5dcc1061798ead7ccac6f21814077eae88e53223592590af2fc1cb19", "afterSha256": "a57ea197a5999bfadd9ac6b86635b74d55f9e8f91b51c1eb287381f076f5767e", "reason": "Cover empty discovery, same-body different IDs, latest-customer reply binding, and FROM_EBAY blocking." },
+    { "path": "tests/ebay-mailbox-history.test.ts", "change": "modify", "beforeSha256": "792832bc1374cdf98e23289c4364aaa83544af420ce7d8ea63ef8d54bd70df8f", "afterSha256": "4d16f7c12e3c9f7f518757e972360406324c2aa5a97c62bf1719055d0dfbd30a", "reason": "Cover header-detail ID mismatch, empty intermediate pages, and full unknown-total continuation." },
+    { "path": "lib/channels/cs/ebay/cases-disputes.ts", "change": "add", "beforeSha256": null, "afterSha256": "d84c2a5e36943db9614da901420420926c0d00335a063cd472efd34c1a3f1558", "reason": "Add GET-only payment-dispute and known resolution-case contracts with business mutations blocked." },
+    { "path": "tests/cs-ebay-cases-disputes.test.ts", "change": "add", "beforeSha256": null, "afterSha256": "140151e1d988413fca02e8f3aee07b6e1e776a988fe3a642594ad56644060b40", "reason": "Verify availability, pagination, identity, sandbox, and GET-only case/dispute boundaries." }
+  ],
+  "reports": [
+    "docs/cs-parallel/reports/ebay/status.md",
+    "docs/cs-parallel/reports/ebay/first-read-evidence.json",
+    "docs/cs-parallel/reports/ebay/test-evidence.json",
+    "docs/cs-parallel/reports/ebay/delta.json"
+  ],
+  "proposals": [
+    "docs/cs-parallel/proposals/ebay/commerce-message-shared-integration.md",
+    "docs/cs-parallel/proposals/ebay/cases-disputes-shared-integration.md"
+  ],
+  "sharedProposals": ["EBAY-SHARED-001", "EBAY-SHARED-002"],
+  "testEvidence": [
+    "docs/cs-parallel/reports/ebay/status.md",
+    "docs/cs-parallel/reports/ebay/test-evidence.json"
+  ],
+  "excluded": {
+    "commit": true,
+    "push": true,
+    "deploy": true,
+    "productionDatabaseWrite": true,
+    "realCustomerReply": true,
+    "caseOrDisputeBusinessMutation": true
+  }
+}

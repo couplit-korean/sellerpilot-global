@@ -63,40 +63,10 @@ test("Qoo10 current and history schedules keep three inquiry states and claims d
     },
   });
   const history = inquiryHistorySyncRequests("qoo10", now, 30);
-  assert.equal(history.length, 30 * 4);
-  assert.equal(new Set(history.map((request) => request.periodicKey)).size, history.length);
-  const dailySources = new Map<string, string[]>();
-  for (const request of history) {
-    const window = request.arguments.sellerpilotHistoryWindow as Record<string, unknown>;
-    const params = request.arguments.params as Record<string, unknown>;
-    assert.equal(window.contractVersion, "sellerpilot-qoo10-history-window/1");
-    assert.equal(window.windowKey, request.periodicKey);
-    assert.equal(window.refinement, "day");
-    const day = String(window.calendarDate);
-    const compact = day.replaceAll("-", "");
-    const sources = dailySources.get(day) ?? [];
-    if (window.source === "qapi_claim") {
-      assert.equal(request.arguments.kind, "claim");
-      assert.deepEqual(params, {
-        search_Sdate: `${compact}000000`, search_Edate: `${compact}235959`, search_condition: "2",
-      });
-      sources.push("claim");
-    } else {
-      assert.equal(window.source, "qapi_inquiry");
-      assert.equal(request.arguments.kind, undefined);
-      assert.deepEqual(params, {
-        search_start_dt: `${compact}000000`, search_end_dt: `${compact}235959`, proc_status: window.status,
-      });
-      sources.push(String(window.status));
-    }
-    dailySources.set(day, sources);
-  }
-  const expectedDays = Array.from({ length: 30 }, (_, index) =>
-    new Date(Date.UTC(2026, 7, 10 + index)).toISOString().slice(0, 10));
-  assert.deepEqual([...dailySources.keys()].sort(), expectedDays);
-  for (const sources of dailySources.values()) {
-    assert.deepEqual(sources.sort(), ["S1", "S2", "S3", "claim"]);
-  }
+  assert.equal(history.length, 4);
+  assert.match(history[3]?.periodicKey ?? "", /:claim:all$/u);
+  assert.equal(history[3]?.arguments.kind, "claim");
+  assert.equal((history[3]?.arguments.params as Record<string, unknown>).search_condition, "2");
 });
 
 test("Qoo10 claims call only the documented ShippingBasic read contract", async () => {

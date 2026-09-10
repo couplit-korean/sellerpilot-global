@@ -1,10 +1,10 @@
+import { elevenstVerifiedSkuAbsence } from "./elevenst-create-preflight";
 import {
   elevenstSellerXmlRequest,
   runWithProviderReadOnlyTransport,
   type SecretPayload,
 } from "./protocols";
 
-export const elevenstCookieSellerProductCode = "AUTO-780720401E2D4E4EA45F";
 
 const SELLERPRODCODE_PREFIX = "/rest/prodmarketservice/sellerprodcode/";
 const PRODMARKET_PREFIX = "/rest/prodmarketservice/prodmarket/";
@@ -125,15 +125,7 @@ export async function readElevenstSellerProdcode(input: {
       };
     }
 
-    const lookupProducts = Array.isArray(remote.data.products) ? remote.data.products : null;
-    const verifiedEmptyCollection = remote.response.status === 200
-      && remote.data.accepted === true
-      && /^(?:[A-Za-z_][\w.-]*:)?products$/iu.test(fingerprint.lookupRoot)
-      && lookupProducts?.length === 0
-      && Number.isSafeInteger(fingerprint.bodyBytes)
-      && fingerprint.bodyBytes > 0
-      && fingerprint.bodyBytes <= 4_096;
-    if (remote.response.status === 404 || fingerprint.resultCode === "404" || verifiedEmptyCollection) {
+    if (elevenstVerifiedSkuAbsence(remote)) {
       return {
         sellerProductCode,
         outcome: "absent",

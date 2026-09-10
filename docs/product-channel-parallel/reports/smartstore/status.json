@@ -1,0 +1,57 @@
+{
+  "channel": "smartstore",
+  "round": "r4",
+  "date": "2026-09-10",
+  "worktree": "/Users/kimchangheemac/dev/sellerpilot-product-smartstore-local-20260910",
+  "baseHead": "0fb40d4",
+  "ledger": "2/6",
+  "ledgerRaised": false,
+  "externalCreateCompletion": "0/8",
+  "commitPush": false,
+  "productionSql": false,
+  "providerMutation": false,
+  "counterexample": {
+    "id": "review-69-same-snapshot-different-title-price-stock",
+    "status": "closed",
+    "ownedModules": [
+      "lib/server-smartstore-listing-create-binding.ts",
+      "lib/product-registration/channels/smartstore.ts",
+      "lib/channels/smartstore-listing-create-contract.ts",
+      "app/api/admin/channel-operations/route.ts",
+      "lib/channels/commerce-worker-completion.ts",
+      "lib/server-smartstore-listing-create-completion.ts",
+      "supabase/migrations/20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql"
+    ]
+  },
+  "tests": {
+    "migrationCheck": {
+      "command": "node scripts/check-migration-version.mjs 20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql",
+      "result": "no local filename collision"
+    },
+    "ownedCreateCasRecoveryRoute": {
+      "command": "node --import tsx --test tests/product-smartstore-create-contract.test.ts tests/smartstore-approved-product-create-fence.test.ts tests/smartstore-create-transport.test.ts tests/smartstore-create-source-revision-fence.test.mjs tests/smartstore-create-final-transport-r4.test.mjs tests/smartstore-create-readback-contract.test.ts tests/smartstore-current-publish-flow.test.ts tests/smartstore-create-category-source-collector.test.ts tests/smartstore-preimage-preflight.test.ts tests/smartstore-serverless-create-source-fence.test.mjs tests/server-smartstore-category-attribute-binding.test.ts tests/smartstore-worker-listing-create-completion.test.ts tests/gateway-additional-evidence-runtime.test.ts tests/smartstore-content-repair-api.test.ts tests/smartstore-manual-adoption-fixed-gateway.test.ts tests/channel-gateway-worker-route-contract.test.mjs",
+      "passed": 93,
+      "failed": 0
+    }
+  },
+  "confirmed": [
+    "same source snapshot cannot authorize two different title/price/stock bodies at bind, execute, 50500 stage, channel-operations route, or dedicated worker completion",
+    "GET-only CREATE response-loss recovery refuses mismatched official commercial fields without a second POST",
+    "50500 identifiers are <= 63 bytes",
+    "channel-operations snapshot RPC failure is 503 smartstore_listing_create_source_unavailable and does not claim",
+    "channel-operations attaches category source, transport, and bodyBindingSha256 before execute",
+    "50500 dedicated sellerpilot_complete_smartstore_listing_create is used by the owned complete route and by commerce-worker-completion listing.create",
+    "commerce-worker-completion listing.create does not call sellerpilot_service_complete_gateway_transaction"
+  ],
+  "unconfirmed": [
+    "production migration and live CREATE",
+    "failed listing.create dedicated failure completion RPC"
+  ],
+  "sharedPatchProposal": "docs/product-channel-parallel/reports/smartstore/20260910-r4-channel-operations-source-unavailable.patch.md",
+  "blockers": [
+    "local tests are not live registration",
+    "failed listing.create has no dedicated failure completion RPC"
+  ],
+  "nextOneStep": "Keep ledger at 2/6. Do not apply production SQL or provider CREATE from this worktree.",
+  "workerUsesDedicatedRpc": true
+}

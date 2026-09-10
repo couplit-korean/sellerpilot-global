@@ -1,0 +1,76 @@
+{
+  "contract": "sellerpilot-lazada-message-reconciliation/1",
+  "checkedAt": "2026-09-08T09:58:30.769Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "scope": {
+    "environment": "production-read-only",
+    "country": "MY",
+    "seller": "MY4N...ISR2D",
+    "sessionIdFingerprint": "650199f2da1f01bf",
+    "sessionClassification": "official",
+    "accountWideHistoryComplete": false,
+    "reasonAccountWideIncomplete": "The one-row session-list page returned has_more=true. Only the selected session was deliberately traversed."
+  },
+  "selectedSession": {
+    "messageListPages": 1,
+    "messageListHasMoreAtEnd": false,
+    "fullyTraversedWithinObservedSession": true,
+    "remoteRows": 13,
+    "remoteUniqueIds": 13,
+    "remoteDuplicateObservations": 0,
+    "firstNativeSendTime": "2026-04-30T05:11:25.195Z",
+    "lastNativeSendTime": "2026-09-03T06:00:28.177Z",
+    "remoteFromAccountTypeCounts": {
+      "1": 13
+    },
+    "remoteTypeCounts": {
+      "1": 13
+    },
+    "remoteStatusCounts": {
+      "0": 13
+    },
+    "remoteTemplateIdCounts": {
+      "200016": 13
+    },
+    "localProjectionAfterFix": {
+      "replyableCustomer": 0,
+      "seller": 0,
+      "systemOrUnconfirmed": 13,
+      "basis": [
+        "seller_center_official_session_tag",
+        "undocumented_template_200016"
+      ]
+    }
+  },
+  "database": {
+    "ticketRows": 0,
+    "messageRows": 0,
+    "rawInboxTablePresent": false
+  },
+  "web": {
+    "sellerPilotTicketCount": 0,
+    "sellerPilotMessageCount": 0,
+    "sellerPilotConnectionState": "연결 확인 필요",
+    "sellerCenterConversationRows": 1,
+    "sellerCenterUnreadCount": 13,
+    "sellerCenterConversationOpened": false,
+    "reasonNotOpened": "Opening the row could mutate unread state."
+  },
+  "reconciliation": {
+    "matchedRemoteDatabaseIds": 0,
+    "remoteOnlyIds": 13,
+    "databaseOnlyIds": 0,
+    "remoteDatabaseGap": 13,
+    "remoteDatabaseWebEqual": false,
+    "rootCauseClass": [
+      "production_raw_ledger_not_applied",
+      "bootstrap_not_projected",
+      "push_not_configured"
+    ]
+  },
+  "privacy": {
+    "messageIdsStored": false,
+    "customerBodiesStored": false,
+    "secretsStored": false
+  }
+}

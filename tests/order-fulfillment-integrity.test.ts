@@ -67,7 +67,7 @@ test("reconciliation-required shipments are never counted as full success or rem
 test("fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure", async () => {
   const [route, page, orderSync, failureMigration, resourceMigration] = await Promise.all([
     readFile(new URL("../app/api/admin/orders/fulfill/route.ts", import.meta.url), "utf8"),
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/shipping/use-workspace.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/order-sync.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825071000_harden_order_shipment_ledger_integrity.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260825104900_resource_bound_gateway_writes.sql", import.meta.url), "utf8"),
@@ -98,7 +98,7 @@ test("fulfillment route preserves a stable resource-bound gateway write and defe
   assert.doesNotMatch(route, /AbortSignal\.timeout\(120_000\)/);
   assert.match(route, /Promise\.all\(parsed\.data\.shipments\.slice\(offset, offset \+ shipmentConcurrency\)\.map\(processShipmentSafely\)\)/);
   assert.match(page, /const fulfillmentRequestBatchSize = 3/);
-  assert.match(page, /shipments\.slice\(offset, offset \+ fulfillmentRequestBatchSize\)/);
+  assert.match(page, /shipments\.slice\(\s*offset,\s*offset \+ fulfillmentRequestBatchSize,?\s*\)/);
   assert.match(route, /출고 처리 중 예상하지 못한 응답/);
   assert.match(route, /new Set\(ids\)\.size !== ids\.length/);
   assert.doesNotMatch(route, /sellerpilot_record_order_shipment/);

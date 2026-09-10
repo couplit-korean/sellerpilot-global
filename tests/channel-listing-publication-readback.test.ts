@@ -8,8 +8,11 @@ import {
 } from "../lib/channels/listing-publication-readback";
 import { executeChannelOperation } from "../lib/channels/operations";
 import type { RemoteResponse } from "../lib/channels/protocols";
+import { smartstoreListingCreateContract } from "../lib/channels/smartstore-listing-create-contract";
 
 const fingerprint = "a".repeat(64);
+const smartstoreSellerSku = "SMARTSTORE-PUBLICATION-TEST";
+const coupangSellerSku = "COUPANG-PUBLICATION-TEST";
 
 function remote(data: Record<string, unknown>, status = 200): RemoteResponse {
   return {
@@ -26,6 +29,34 @@ function coupangContents(count = 8) {
   }));
 }
 
+function coupangCreateItem(contents = coupangContents()) {
+  return {
+    itemName: "검증 옵션 1",
+    externalVendorSku: coupangSellerSku,
+    barcode: "8802259030799",
+    emptyBarcode: false,
+    emptyBarcodeReason: "",
+    modelNo: "",
+    maximumBuyCount: 1,
+    unitCount: 1,
+    attributes: [{
+      attributeTypeName: "수량",
+      attributeValueName: "1개",
+      exposed: "EXPOSED",
+    }],
+    contents,
+  };
+}
+
+function coupangCreateBody(sellerProductName: string, requested: boolean, contents = coupangContents()) {
+  return {
+    sellerProductName,
+    brand: "SellerPilotBrand",
+    requested,
+    items: [coupangCreateItem(contents)],
+  };
+}
+
 function coupangSellerProduct(input: {
   requested: boolean;
   statusName: string;
@@ -36,9 +67,12 @@ function coupangSellerProduct(input: {
     code: "SUCCESS",
     data: {
       sellerProductId: 987654321,
+      vendorId: "A00012345",
       requested: input.requested,
       statusName: input.statusName,
       items: [{
+        sellerProductItemId: 3333,
+        externalVendorSku: coupangSellerSku,
         ...(input.vendorItemId ? { vendorItemId: Number(input.vendorItemId) } : {}),
         contents: coupangContents(input.imageCount ?? 8),
       }],
@@ -72,6 +106,57 @@ function smartstoreDetailHtml(count = 8) {
   )).join("");
 }
 
+function smartstoreStrictCreateBody() {
+  return {
+    originProduct: {
+      statusType: "SALE",
+      saleType: "NEW",
+      leafCategoryId: "50022679",
+      name: "검증된 스마트스토어 신규 상품명",
+      detailContent: smartstoreDetailHtml(),
+      images: {
+        representativeImage: { url: smartstoreImageUrl(0) },
+        optionalImages: Array.from({ length: 8 }, (_, index) => ({ url: smartstoreImageUrl(index + 1) })),
+      },
+      salePrice: 3190,
+      stockQuantity: 1,
+      deliveryInfo: {
+        deliveryType: "DELIVERY",
+        deliveryAttributeType: "NORMAL",
+        deliveryCompany: "HANJIN",
+        deliveryFee: { deliveryFeeType: "PAID", baseFee: 3000, deliveryFeePayType: "PREPAID" },
+        claimDeliveryInfo: { returnDeliveryCompanyPriorityType: "PRIMARY", returnDeliveryFee: 3000, exchangeDeliveryFee: 6000, shippingAddressId: 123, returnAddressId: 456 },
+      },
+      detailAttribute: {
+        naverShoppingSearchInfo: { brandName: "TEST" },
+        afterServiceInfo: { afterServiceTelephoneNumber: "02-1234-5678", afterServiceGuideContent: "판매자 안내에 따라 접수합니다." },
+        originAreaInfo: { originAreaCode: "04", content: "대한민국" },
+        sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku },
+        certificationTargetExcludeContent: {
+          childCertifiedProductExclusionYn: true,
+          kcCertifiedProductExclusionYn: "TRUE",
+          greenCertifiedProductExclusionYn: true,
+          chemicalCertifiedProductExclusionYn: true,
+        },
+        productInfoProvidedNotice: { productInfoProvidedNoticeType: "ETC", etc: {
+          returnCostReason: "상품상세 참조", noRefundReason: "상품상세 참조",
+          qualityAssuranceStandard: "상품상세 참조", compensationProcedure: "상품상세 참조",
+          troubleShootingContents: "상품상세 참조", itemName: "검증 상품",
+          modelName: "SMARTSTORE-PUBLICATION-TEST", certificateDetails: "해당사항 없음",
+          manufacturer: "TEST", customerServicePhoneNumber: "02-1234-5678",
+        } },
+        optionInfo: {},
+        unitCapacity: { unitPriceYn: false },
+      },
+    },
+    smartstoreChannelProduct: {
+      naverShoppingRegistration: true,
+      channelProductName: "검증된 스마트스토어 신규 상품명",
+      channelProductDisplayStatusType: "ON",
+    },
+  };
+}
+
 function smartstoreOriginProduct(input: {
   originStatus: string;
   channelStatus: string;
@@ -82,7 +167,12 @@ function smartstoreOriginProduct(input: {
     smartstoreChannelProductNo: 20000001,
     originProduct: {
       statusType: input.originStatus,
+      name: "검증된 스마트스토어 원상품명",
+      leafCategoryId: "50022679",
+      salePrice: 3190,
+      stockQuantity: 1,
       detailContent: smartstoreDetailHtml(input.imageCount ?? 8),
+      detailAttribute: { sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku } },
       images: {
         representativeImage: { url: smartstoreImageUrl(0) },
         optionalImages: Array.from({ length: input.imageCount ?? 8 }, (_, index) => ({
@@ -99,6 +189,43 @@ function smartstoreOriginProduct(input: {
   };
 }
 
+function smartstorePublicationRequest(input: {
+  origin: Record<string, unknown>;
+  channelProduct?: Record<string, unknown>;
+}) {
+  const originProduct = structuredClone(input.origin.originProduct) as Record<string, unknown>;
+  const channelProduct = structuredClone(
+    input.channelProduct ?? input.origin.smartstoreChannelProduct,
+  ) as Record<string, unknown>;
+  return async (request: { method: string; path: string }) => {
+    if (request.path === "/v1/products/search") return remote({
+      page: 1,
+      size: 50,
+      totalElements: 1,
+      totalPages: 1,
+      first: true,
+      last: true,
+      contents: [{
+        originProductNo: "10000001",
+        channelProducts: [{
+          channelProductNo: "20000001",
+          sellerManagementCode: smartstoreSellerSku,
+        }],
+      }],
+    });
+    if (request.path === "/v2/products/origin-products/10000001") return remote(input.origin);
+    if (request.path === "/v2/products/channel-products/20000001") return remote({
+      originProduct,
+      smartstoreChannelProduct: channelProduct,
+    });
+    return remote({ code: "NOT_FOUND" }, 404);
+  };
+}
+
+function ebayApprovedDescription(imageCount = 8) {
+  return `Verified description${detailHtml(imageCount)}`;
+}
+
 function ebayOffer(input: {
   status: "PUBLISHED" | "UNPUBLISHED";
   listingStatus?: string;
@@ -107,10 +234,14 @@ function ebayOffer(input: {
 }) {
   return {
     offerId: "offer-123",
+    format: "FIXED_PRICE",
     sku: "SELLERPILOT-001",
     marketplaceId: input.marketplaceId ?? "EBAY_US",
+    categoryId: "1234",
+    availableQuantity: 1,
+    pricingSummary: { price: { value: "29.50", currency: "USD" } },
     status: input.status,
-    listingDescription: detailHtml(input.imageCount ?? 8),
+    listingDescription: ebayApprovedDescription(input.imageCount ?? 8),
     listingPolicies: {
       fulfillmentPolicyId: "fulfillment-1",
       paymentPolicyId: "payment-1",
@@ -128,6 +259,7 @@ function ebayInventoryImages(count = 9) {
 }
 
 function ebayCreateArguments(intent: "safe_test" | "live") {
+  const description = ebayApprovedDescription();
   return {
     ...publicationArguments(intent),
     publicationExpectedLocale: "en-US",
@@ -135,13 +267,20 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
     inventoryItem: {
       availability: { shipToLocationAvailability: { quantity: 1 } },
       condition: "NEW",
-      product: { title: "Verified item", imageUrls: ebayInventoryImages() },
+      product: {
+        title: "Verified item",
+        description,
+        imageUrls: ebayInventoryImages(),
+      },
     },
     offer: {
       sku: "SELLERPILOT-001",
       marketplaceId: "EBAY_US",
       format: "FIXED_PRICE",
-      listingDescription: detailHtml(),
+      categoryId: "1234",
+      availableQuantity: 1,
+      pricingSummary: { price: { value: "29.50", currency: "USD" } },
+      listingDescription: description,
       listingPolicies: {
         fulfillmentPolicyId: "fulfillment-1",
         paymentPolicyId: "payment-1",
@@ -150,6 +289,47 @@ function ebayCreateArguments(intent: "safe_test" | "live") {
       merchantLocationKey: "seoul-warehouse",
     },
   };
+}
+
+function ebayCreateMetadataResponse(url: URL) {
+  if (url.pathname.endsWith("/get_default_category_tree_id")) {
+    return Response.json({ categoryTreeId: "0" });
+  }
+  if (url.pathname.includes("get_item_aspects_for_category")) {
+    return Response.json({ aspects: [] });
+  }
+  if (url.pathname.includes("get_item_condition_policies")) {
+    return Response.json({ itemConditionPolicies: [{
+      categoryId: "1234",
+      categoryTreeId: "0",
+      itemConditionRequired: true,
+      itemConditions: [{ conditionId: "1000" }],
+    }] });
+  }
+  if (url.pathname.endsWith("/fulfillment_policy")) {
+    return Response.json({ total: 1, fulfillmentPolicies: [{
+      fulfillmentPolicyId: "fulfillment-1", marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/payment_policy")) {
+    return Response.json({ total: 1, paymentPolicies: [{
+      paymentPolicyId: "payment-1", marketplaceId: "EBAY_US",
+    }] });
+  }
+  if (url.pathname.endsWith("/return_policy")) {
+    return Response.json({ total: 1, returnPolicies: [{
+      returnPolicyId: "return-1", marketplaceId: "EBAY_US", returnsAccepted: false,
+    }] });
+  }
+  if (url.pathname.endsWith("/location")) {
+    return Response.json({ total: 1, locations: [{
+      merchantLocationKey: "seoul-warehouse",
+      merchantLocationStatus: "ENABLED",
+      location: { address: { country: "KR" } },
+    }] });
+  }
+  if (url.pathname.endsWith("/offer")) return Response.json({ total: 0, offers: [] });
+  return null;
 }
 
 test("Coupang read-only publication boundary combines seller-product and vendor-item state", async () => {
@@ -206,11 +386,7 @@ test("Coupang safe-test create forces requested false and verifies a non-public 
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: {
-          sellerProductName: "안전 초안",
-          requested: true,
-          items: [{ contents: coupangContents() }],
-        },
+        body: coupangCreateBody("안전 초안", true),
       },
       environment: "production",
     });
@@ -249,7 +425,7 @@ test("Coupang live create is not published until vendor-item onSale is read back
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("live"),
-        body: { sellerProductName: "판매 상품", requested: false, items: [{ contents: coupangContents() }] },
+        body: coupangCreateBody("판매 상품", false),
       },
       environment: "production",
     });
@@ -278,7 +454,7 @@ test("Coupang approval acceptance without a vendor item remains pending review",
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret", requested_by: "wing-user" },
       arguments: {
         ...publicationArguments("live"),
-        body: { sellerProductName: "심사 상품", requested: true, items: [{ contents: coupangContents() }] },
+        body: coupangCreateBody("심사 상품", true),
       },
       environment: "production",
     });
@@ -289,6 +465,29 @@ test("Coupang approval acceptance without a vendor item remains pending review",
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test("Coupang approved seller-product with on-sale inventory is live even when requested remains false", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const readback = await readCoupangListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "987654321",
+    expected,
+    readSellerProduct: async () => remote(coupangSellerProduct({
+      requested: false,
+      statusName: "승인완료",
+      vendorItemId: "4444",
+    })),
+    readVendorItem: async () => remote({
+      code: "SUCCESS",
+      data: { sellerItemId: 3333, onSale: true },
+    }),
+  });
+  assert.equal(readback.failureCode, undefined);
+  assert.equal(readback.state?.visibility, "live");
+  assert.equal(readback.state?.providerStatus, "승인완료|requested=false|onSale=true");
 });
 
 test("Coupang rejected seller-product state cannot be overridden by stale on-sale vendor inventory", async () => {
@@ -369,7 +568,7 @@ test("Coupang refuses verified success when the detail readback is not exactly e
       payload: { vendor_id: "A00012345", access_key: "access", secret_key: "secret" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: { sellerProductName: "이미지 불일치", items: [{ contents: coupangContents(7) }] },
+        body: coupangCreateBody("이미지 불일치", false, coupangContents(7)),
       },
       environment: "production",
     });
@@ -385,15 +584,21 @@ test("SmartStore read-only publication boundary requires SALE and ON for live", 
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
   let requestedId = "";
+  const origin = smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" });
+  delete (origin as Record<string, unknown>).originProductNo;
+  delete (origin as Record<string, unknown>).smartstoreChannelProductNo;
+  delete (origin.smartstoreChannelProduct as Record<string, unknown>).channelProductNo;
+  delete (origin.smartstoreChannelProduct as Record<string, unknown>).originProductNo;
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "10000001",
     expected,
     verifiedAt: "2026-08-29T22:00:00.000Z",
-    readOriginProduct: async (originProductNo) => {
-      requestedId = originProductNo;
-      return remote(smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }));
+    sellerSku: smartstoreSellerSku,
+    request: async (request) => {
+      if (request.path.includes("/origin-products/")) requestedId = request.path.split("/").at(-1) ?? "";
+      return smartstorePublicationRequest({ origin })(request);
     },
   });
   assert.equal(requestedId, "10000001");
@@ -407,27 +612,44 @@ test("SmartStore read-only publication boundary requires SALE and ON for live", 
   assert.equal(readback.state?.imageCount, 8);
 });
 
-test("SmartStore dedicated channel-product wrapper overrides stale origin-embedded title and visibility", async () => {
+test("SmartStore publication readback rejects a conflicting optional GET identity before attestation", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" });
+  origin.originProductNo = 99999999;
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote({
-      ...smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }),
-      smartstoreChannelProduct: {
-        channelProductNo: 20000001,
-        originProductNo: 10000001,
-        channelProductName: "승인된 원상품의 오래된 채널명",
-        channelProductDisplayStatusType: "ON",
-      },
-    }),
-    readChannelProduct: async () => remote({
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
+  });
+  assert.equal(readback.state, undefined);
+  assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_IDENTITY_UNVERIFIED");
+});
+
+test("SmartStore dedicated channel-product wrapper overrides stale origin-embedded title and visibility", async () => {
+  const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
+  assert.ok(expected);
+  const origin = {
+    ...smartstoreOriginProduct({ originStatus: "SALE", channelStatus: "ON" }),
+    smartstoreChannelProduct: {
+      channelProductNo: 20000001,
       originProductNo: 10000001,
-      smartstoreChannelProductNo: 20000001,
-      smartstoreChannelProduct: {
+      channelProductName: "승인된 원상품의 오래된 채널명",
+      channelProductDisplayStatusType: "ON",
+    },
+  };
+  const readback = await readSmartstoreListingPublicationState({
+    operation: "listing.update",
+    intent: "live",
+    remoteId: "10000001",
+    expected,
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({
+      origin,
+      channelProduct: {
         channelProductNo: 20000001,
         originProductNo: 10000001,
         channelProductName: "공격자가 바꾼 실제 채널 상품명",
@@ -452,14 +674,13 @@ test("SmartStore dedicated channel-product read fails closed without official ti
       intent: "live",
       remoteId: "10000001",
       expected,
-      readOriginProduct: async () => remote(smartstoreOriginProduct({
+      sellerSku: smartstoreSellerSku,
+      request: smartstorePublicationRequest({
+        origin: smartstoreOriginProduct({
         originStatus: "SALE",
         channelStatus: "ON",
-      })),
-      readChannelProduct: async () => remote({
-        originProductNo: 10000001,
-        smartstoreChannelProductNo: 20000001,
-        smartstoreChannelProduct,
+        }),
+        channelProduct: smartstoreChannelProduct,
       }),
     });
     assert.equal(readback.state, undefined);
@@ -470,15 +691,17 @@ test("SmartStore dedicated channel-product read fails closed without official ti
 test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({
+    originStatus: "OUTOFSTOCK",
+    channelStatus: "ON",
+  });
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote(smartstoreOriginProduct({
-      originStatus: "OUTOFSTOCK",
-      channelStatus: "ON",
-    })),
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
   });
   assert.equal(readback.state?.visibility, "non_public");
   assert.equal(readback.state?.providerStatus, "OUTOFSTOCK|ON");
@@ -486,19 +709,35 @@ test("SmartStore OUTOFSTOCK cannot be attested as buyer-visible live", async () 
 
 test("SmartStore safe-test create writes SUSPENSION and verifies it after origin-product GET", async () => {
   const originalFetch = globalThis.fetch;
+  let created = false;
   let createBody: Record<string, unknown> = {};
   const calls: string[] = [];
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" });
     calls.push(`${init?.method ?? "GET"} ${new URL(url).pathname}`);
     if (url.endsWith("/v1/oauth2/token")) {
       return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     }
     if (url.endsWith("/v2/products") && init?.method === "POST") {
+      created = true;
       createBody = JSON.parse(String(init.body));
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
-    return Response.json(smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" }));
+    if (url.endsWith("/v1/products/search") && !created) return Response.json({
+      page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [],
+    });
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -507,10 +746,8 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: {
         ...publicationArguments("safe_test"),
-        body: {
-          originProduct: { statusType: "SALE", detailContent: detailHtml() },
-          smartstoreChannelProduct: { channelProductDisplayStatusType: "ON" },
-        },
+        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+        body: smartstoreStrictCreateBody(),
       },
       environment: "production",
     });
@@ -519,7 +756,7 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
       (createBody.smartstoreChannelProduct as Record<string, unknown>).channelProductDisplayStatusType,
       "SUSPENSION",
     );
-    assert.equal(calls.filter((call) => call === "GET /external/v2/products/origin-products/10000001").length, 2);
+    assert.equal(calls.filter((call) => call === "GET /external/v2/products/origin-products/10000001").length, 3);
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteState?.visibility, "non_public");
@@ -531,13 +768,29 @@ test("SmartStore safe-test create writes SUSPENSION and verifies it after origin
 
 test("SmartStore WAIT readback remains pending_review and is never counted as published", async () => {
   const originalFetch = globalThis.fetch;
+  let created = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.endsWith("/v2/products") && init?.method === "POST") {
+      created = true;
       return Response.json({ originProductNo: 10000001, smartstoreChannelProductNo: 20000001 });
     }
-    return Response.json(smartstoreOriginProduct({ originStatus: "WAIT", channelStatus: "WAIT" }));
+    if (url.endsWith("/v1/products/search") && !created) return Response.json({
+      page: 1, size: 50, totalElements: 0, totalPages: 0, first: true, last: true, contents: [],
+    });
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -546,10 +799,8 @@ test("SmartStore WAIT readback remains pending_review and is never counted as pu
       payload: { client_id: "client", client_secret: "$2b$12$WnE2VbmwC6wC9Q6oVt5Pze", token_type: "SELLER", account_id: "seller-uid" },
       arguments: {
         ...publicationArguments("live"),
-        body: {
-          originProduct: { detailContent: detailHtml() },
-          smartstoreChannelProduct: {},
-        },
+        sellerpilotSmartstoreCreateContract: smartstoreListingCreateContract,
+        body: smartstoreStrictCreateBody(),
       },
       environment: "production",
     });
@@ -565,9 +816,20 @@ test("SmartStore stop requires origin status SUSPENSION in the final GET", async
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {
     const url = String(input);
+    const providerState = smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" });
     if (url.endsWith("/v1/oauth2/token")) return Response.json({ access_token: "naver-token", expires_in: 10_800 });
     if (url.includes("/change-status")) return Response.json({});
-    return Response.json(smartstoreOriginProduct({ originStatus: "SUSPENSION", channelStatus: "SUSPENSION" }));
+    if (url.endsWith("/v1/products/search")) return Response.json({
+      page: 1, size: 50, totalElements: 1, totalPages: 1, first: true, last: true,
+      contents: [{ originProductNo: "10000001", channelProducts: [{
+        channelProductNo: "20000001", sellerManagementCode: smartstoreSellerSku,
+      }] }],
+    });
+    if (url.includes("/v2/products/channel-products/")) return Response.json({
+      originProduct: providerState.originProduct,
+      smartstoreChannelProduct: providerState.smartstoreChannelProduct,
+    });
+    return Response.json(providerState);
   };
   try {
     const operation = await executeChannelOperation({
@@ -595,16 +857,18 @@ test("SmartStore stop requires origin status SUSPENSION in the final GET", async
 test("SmartStore does not issue verified state when final detail HTML has seven unique images", async () => {
   const expected = listingPublicationReadbackExpectation(publicationArguments("live"));
   assert.ok(expected);
+  const origin = smartstoreOriginProduct({
+    originStatus: "SALE",
+    channelStatus: "ON",
+    imageCount: 7,
+  });
   const readback = await readSmartstoreListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "10000001",
     expected,
-    readOriginProduct: async () => remote(smartstoreOriginProduct({
-      originStatus: "SALE",
-      channelStatus: "ON",
-      imageCount: 7,
-    })),
+    sellerSku: smartstoreSellerSku,
+    request: smartstorePublicationRequest({ origin }),
   });
   assert.equal(readback.state, undefined);
   assert.equal(readback.failureCode, "SMARTSTORE_PUBLICATION_READBACK_UNVERIFIED");
@@ -617,20 +881,23 @@ test("eBay read-only publication boundary binds getOffer to getInventoryItem", a
     imageCount: 8,
   };
   const calls: string[] = [];
+  const offer = ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", marketplaceId: "EBAY_DE" });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "110000000001",
     offerId: "offer-123",
     expected,
+    expectedArguments: { inventoryItem, offer },
     verifiedAt: "2026-08-29T22:00:00.000Z",
     readOffer: async (offerId) => {
       calls.push(`offer:${offerId}`);
-      return remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", marketplaceId: "EBAY_DE" }));
+      return remote(offer);
     },
     readInventoryItem: async (sku) => {
       calls.push(`inventory:${sku}`);
-      return remote({ product: { imageUrls: ebayInventoryImages() } });
+      return remote(inventoryItem);
     },
   });
   assert.deepEqual(calls, ["offer:offer-123", "inventory:SELLERPILOT-001"]);
@@ -650,12 +917,22 @@ test("eBay read-only publication boundary binds getOffer to getInventoryItem", a
 test("eBay safe-test create keeps an unpublished offer even when legacy publish=true is supplied", async () => {
   const originalFetch = globalThis.fetch;
   const calls: Array<{ url: string; method: string }> = [];
+  let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
     calls.push({ url, method });
+    if (method === "GET") {
+      const metadata = ebayCreateMetadataResponse(parsedUrl);
+      if (metadata) return metadata;
+    }
+    if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+      return Response.json(ebayCreateArguments("live").inventoryItem);
     }
     if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
     if (url.endsWith("/offer/offer-123") && method === "GET") {
@@ -672,14 +949,16 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
       environment: "production",
     });
     assert.equal(calls.some((call) => call.url.endsWith("/publish")), false);
-    assert.deepEqual(calls.map((call) => `${call.method} ${new URL(call.url).pathname}`), [
+    assert.deepEqual(calls.filter((call) => call.method !== "GET")
+      .map((call) => `${call.method} ${new URL(call.url).pathname}`), [
       "PUT /sell/inventory/v1/inventory_item/SELLERPILOT-001",
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
       "POST /sell/inventory/v1/offer",
-      "GET /sell/inventory/v1/offer/offer-123",
-      "GET /sell/inventory/v1/offer/offer-123",
-      "GET /sell/inventory/v1/inventory_item/SELLERPILOT-001",
     ]);
+    for (const path of ["get_default_category_tree_id", "get_item_aspects_for_category",
+      "get_item_condition_policies", "/fulfillment_policy", "/payment_policy",
+      "/return_policy", "/location", "/inventory_item/", "/offer"]) {
+      assert.equal(calls.some((call) => call.method === "GET" && call.url.includes(path)), true, path);
+    }
     assert.equal(operation.ok, true);
     assert.equal(operation.publicationFulfilled, true);
     assert.equal(operation.remoteId, "offer-123");
@@ -692,11 +971,21 @@ test("eBay safe-test create keeps an unpublished offer even when legacy publish=
 test("eBay live create requires final PUBLISHED ACTIVE readback after publishOffer", async () => {
   const originalFetch = globalThis.fetch;
   let published = false;
+  let inventoryWritten = false;
   globalThis.fetch = async (input, init) => {
     const url = String(input);
+    const parsedUrl = new URL(url);
     const method = init?.method ?? "GET";
+    if (method === "GET") {
+      const metadata = ebayCreateMetadataResponse(parsedUrl);
+      if (metadata) return metadata;
+    }
+    if (url.includes("/inventory_item/") && method === "PUT") inventoryWritten = true;
+    if (url.includes("/inventory_item/") && method === "GET" && !inventoryWritten) {
+      return Response.json({ errors: [{ errorId: 25710, domain: "API_INVENTORY" }] }, { status: 400 });
+    }
     if (url.includes("/inventory_item/") && method === "GET") {
-      return Response.json({ product: { imageUrls: ebayInventoryImages() } });
+      return Response.json(ebayCreateArguments("live").inventoryItem);
     }
     if (url.endsWith("/offer") && method === "POST") return Response.json({ offerId: "offer-123" }, { status: 201 });
     if (url.endsWith("/offer/offer-123") && method === "GET") {
@@ -729,14 +1018,17 @@ test("eBay live create requires final PUBLISHED ACTIVE readback after publishOff
 });
 
 test("eBay published acceptance without ACTIVE listing readback remains pending review", async () => {
+  const offer = ebayOffer({ status: "PUBLISHED" });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.create",
     intent: "live",
     remoteId: "110000000001",
     offerId: "offer-123",
     expected: { locale: "en-US", fingerprint, imageCount: 8 },
-    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED" })),
-    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+    expectedArguments: { inventoryItem, offer },
+    readOffer: async () => remote(offer),
+    readInventoryItem: async () => remote(inventoryItem),
   });
   assert.equal(readback.state?.visibility, "pending_review");
   assert.equal(readback.state?.providerStatus, "PUBLISHED|NONE");
@@ -767,9 +1059,10 @@ test("eBay listing update verifies the exact offer, SKU, locale, and live status
         listingId: "110000000001",
         sku: "SELLERPILOT-001",
         marketplaceId: "EBAY_US",
+        inventoryItem: { product: { imageUrls: ebayInventoryImages() } },
         offer: {
           format: "FIXED_PRICE",
-          listingDescription: detailHtml(),
+          listingDescription: ebayApprovedDescription(),
           listingPolicies: {
             fulfillmentPolicyId: "fulfillment-1",
             paymentPolicyId: "payment-1",
@@ -813,6 +1106,8 @@ test("eBay withdraw is complete only after getOffer is UNPUBLISHED", async () =>
         publicationExpectedLocale: "en-US",
         publicationExpectedFingerprint: fingerprint,
         publicationExpectedImageCount: 0,
+        inventoryItem: { product: { imageUrls: ebayInventoryImages() } },
+        offer: ebayOffer({ status: "UNPUBLISHED" }),
       },
       environment: "production",
     });
@@ -825,15 +1120,32 @@ test("eBay withdraw is complete only after getOffer is UNPUBLISHED", async () =>
   }
 });
 
+test("eBay hex publication fingerprint is not verified without official GET projections", async () => {
+  const readback = await readEbayListingPublicationState({
+    operation: "listing.create",
+    intent: "live",
+    remoteId: "110000000001",
+    offerId: "offer-123",
+    expected: { locale: "en-US", fingerprint, imageCount: 8 },
+    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE" })),
+    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+  });
+  assert.equal(readback.state, undefined);
+  assert.equal(readback.failureCode, "EBAY_PUBLICATION_FINGERPRINT_UNVERIFIED");
+});
+
 test("eBay refuses verified success when getOffer returns only seven detail images", async () => {
+  const offer = ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", imageCount: 7 });
+  const inventoryItem = { product: { imageUrls: ebayInventoryImages() } };
   const readback = await readEbayListingPublicationState({
     operation: "listing.update",
     intent: "live",
     remoteId: "offer-123",
     offerId: "offer-123",
     expected: { locale: "en-US", fingerprint, imageCount: 8 },
-    readOffer: async () => remote(ebayOffer({ status: "PUBLISHED", listingStatus: "ACTIVE", imageCount: 7 })),
-    readInventoryItem: async () => remote({ product: { imageUrls: ebayInventoryImages() } }),
+    expectedArguments: { inventoryItem, offer },
+    readOffer: async () => remote(offer),
+    readInventoryItem: async () => remote(inventoryItem),
   });
   assert.equal(readback.state, undefined);
   assert.equal(readback.failureCode, "EBAY_PUBLICATION_IMAGE_COUNT_UNVERIFIED");

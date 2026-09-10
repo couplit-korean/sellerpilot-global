@@ -104,8 +104,8 @@ test("master generation uses a compact brief and one medium-to-low timeout fallb
   assert.equal((source.match(/\.\.\.studioMasterInvocationPolicy,\s*masterInvocationBudget,/g) ?? []).length, 4);
   assert.doesNotMatch(localizedInvocation, /studioMasterInvocationPolicy/);
   assert.match(localizedInvocation, /timeoutMs: studioLocalizedTimeoutMs/);
-  assert.match(source, /단순 상품은 서로 다른 근거가 있는 질문 16개를 기본/);
-  assert.match(source, /최소 160자를 유지하되 보통 160~360자/);
+  assert.match(source, /단순 상품은 8개로 구성/);
+  assert.match(source, /20~120자 중심의 1~3문장/);
 });
 
 test("semantic repair is limited to the master or affected localized chunks", async () => {
@@ -164,7 +164,7 @@ test("studio result normalization applies general-food safety before semantic an
   const terminalHelperEnd = contract.indexOf("\nexport const requiredLocalizedMarkets", terminalHelperStart);
   const terminalHelper = contract.slice(terminalHelperStart, terminalHelperEnd);
 
-  assert.match(helper, /sections\.length < 16 \|\| sections\.length > 20/);
+  assert.match(helper, /sections\.length < \(concise \? 8 : 16\) \|\| sections\.length > \(concise \? 12 : 20\)/);
   assert.match(helper, /targetSectionCount: sections\.length/);
   assert.match(terminalHelper, /normalizeStudioLocalizedKeywordCoverage\(normalizeStudioWarningLimits\(/);
   assert.match(

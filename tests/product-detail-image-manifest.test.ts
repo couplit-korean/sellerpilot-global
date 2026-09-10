@@ -209,3 +209,34 @@ test("byte-approved historical fallback is not an eligible publication manifest"
     code: "STUDIO_DEGRADED_RESULT_REGENERATION_REQUIRED",
   });
 });
+
+
+test("approved manifest preserves roles and localized alt text for all 256 mixed matched and unmatched section combinations", () => {
+  const approved = approvedProductDetailManifestFromPublishContext(approvedContext());
+  assert.equal(approved.ok, true);
+  if (!approved.ok) return;
+  const roles = defaultProductDetailImageRoles;
+  const signedUrls = roles.map((role) => `https://storage.example/${role}.png`);
+  for (let mask = 0; mask < 256; mask += 1) {
+    const localizedDetailSections = roles.map((imageAsset, index) => ({
+      // detail-context is a valid generated role outside this approved manifest.
+      imageAsset: mask & (1 << index) ? "detail-context" : imageAsset,
+      imageAltText: `Verified English image description ${index}`,
+      body: `Seller-verified product content ${index}`,
+    }));
+    const input = { sellerpilotAssets: { localizedDetailSections } };
+    const original = structuredClone(input);
+    const bound = bindMarketplaceArgumentsToApprovedDetailManifest(input, approved.value, signedUrls);
+    const assets = bound.sellerpilotAssets as Record<string, unknown>;
+    const sections = assets.localizedDetailSections as Record<string, unknown>[];
+    assert.deepEqual(sections.map((section) => section.imageAsset), roles, `role assignment mask ${mask}`);
+    assert.deepEqual(
+      assets.detailImageAltTexts,
+      roles.map((_role, index) => `Verified English image description ${index}`),
+      `localized alt preservation mask ${mask}`,
+    );
+    assert.deepEqual(sections.map((section) => section.body), localizedDetailSections.map((section) => section.body));
+    assert.deepEqual(assets.detailImageUrls, signedUrls);
+    assert.deepEqual(input, original, `input immutability mask ${mask}`);
+  }
+});

@@ -1,0 +1,186 @@
+--- a/lib/channels/gateway-contract.ts
++++ b/lib/channels/gateway-contract.ts
+@@ -659,6 +659,7 @@
+     claimToken: z.string().uuid(),
+     status: z.literal("failed"),
+     error: z.string().min(1).max(500),
++    result: operationResultSchema.optional(),
+     credentialRefresh: credentialRefreshSchema.optional(),
+   }),
+   z.object({
+@@ -671,6 +672,16 @@
+     credentialBinding: credentialBindingSchema.optional(),
+   }),
+ ]).superRefine((value, context) => {
++  if (value.status === "failed" && value.result
++      && (value.result.ok !== false
++        || value.result.channel !== "elevenst"
++        || value.result.operation !== "inquiries.list")) {
++    context.addIssue({
++      code: "custom",
++      path: ["result"],
++      message: "failed result evidence is limited to 11st inquiry reads",
++    });
++  }
+   if ("credentialBinding" in value && value.credentialBinding) {
+     const result = "result" in value ? value.result : undefined;
+     if (!result || result.channel !== value.credentialBinding.channel || result.operation !== value.credentialBinding.operation) {
+--- a/lib/channels/serverless-gateway.ts
++++ b/lib/channels/serverless-gateway.ts
+@@ -991,7 +991,7 @@
+     ? parsed.data.result
+     : parsed.data.status === "reconciliation_required"
+       ? parsed.data.result
+-      : undefined;
++      : parsed.data.result;
+   if (completionProviderResult
+       && (completionProviderResult.channel !== job.channel
+         || completionProviderResult.operation !== job.operation)) {
+@@ -1044,18 +1044,6 @@
+       if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
+       const stableNormalizationTimestamp = normalizationTimestamp.toISOString();
+       if (!syncResponse.ok) {
+-        if (job.channel === "elevenst" && job.operation === "inquiries.list") {
+-          const failedRead = buildElevenstCsReadObservation({
+-            result: syncResponse,
+-            arguments: recordValue(job.request.arguments) ?? {},
+-            checkedAt: stableNormalizationTimestamp,
+-            normalizedInquiries: [],
+-          });
+-          const recorded = await callRpc(dependencies, "sellerpilot_service_record_elevenst_cs_read_v1", {
+-            p_credential_id: job.credential_id, p_observation: failedRead.observation, p_inquiries: [],
+-          });
+-          if (recorded.error) return "unavailable";
+-        }
+         return "unavailable";
+       }
+       if (job.operation === "orders.list") {
+@@ -1109,6 +1097,18 @@
+         }
+       }
+     }
++  } else if (parsed.data.status === "failed" && parsed.data.result) {
++    const normalizationTimestamp = typeof context.normalization_timestamp === "string"
++      ? new Date(context.normalization_timestamp)
++      : null;
++    if (!normalizationTimestamp || Number.isNaN(normalizationTimestamp.getTime())) return "unavailable";
++    elevenstReadReceipt = buildElevenstCsReadObservation({
++      result: parsed.data.result,
++      arguments: recordValue(job.request.arguments) ?? {},
++      checkedAt: normalizationTimestamp.toISOString(),
++      normalizedInquiries: [],
++    });
++    storedResponse = parsed.data.result;
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+   }
+@@ -1198,12 +1198,25 @@
+     return "unavailable";
+   }
+   if (elevenstReadReceipt) {
+-    const readObservation = await callRpc(dependencies, "sellerpilot_service_record_elevenst_cs_read_v1", {
++    const observationArguments = {
+       p_credential_id: job.credential_id,
+       p_observation: elevenstReadReceipt.observation,
+       p_inquiries: elevenstReadReceipt.inquiries,
+-    });
+-    const receipt = recordValue(readObservation.data);
++    };
++    let readObservation = await callRpc(
++      dependencies,
++      "sellerpilot_service_record_elevenst_cs_read_v1",
++      observationArguments,
++    );
++    let receipt = recordValue(readObservation.data);
++    if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
++      readObservation = await callRpc(
++        dependencies,
++        "sellerpilot_service_record_elevenst_cs_read_v1",
++        observationArguments,
++      );
++      receipt = recordValue(readObservation.data);
++    }
+     if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
+       return "unavailable";
+     }
+@@ -1585,6 +1598,11 @@
+         claimToken: job.claim_token,
+         status: "failed",
+         error: result.safeMessage,
++        ...(job.channel === "elevenst"
++          && result.channel === "elevenst"
++          && result.operation === "inquiries.list"
++          ? { result: result as ChannelOperationResult }
++          : {}),
+         ...(credentialRefresh ? { credentialRefresh } : {}),
+       }
+       : completionStatus === "reconciliation_required"
+--- a/app/api/channel-gateway/worker/complete/route.ts
++++ b/app/api/channel-gateway/worker/complete/route.ts
+@@ -278,7 +278,7 @@
+     ? parsed.data.result
+     : parsed.data.status === "reconciliation_required"
+       ? parsed.data.result
+-      : undefined;
++      : parsed.data.result;
+   if (completionResult
+       && (job.channel !== completionResult.channel || job.operation !== completionResult.operation)) {
+     return NextResponse.json({ message: "채널 작업 결과가 요청과 일치하지 않습니다." }, { status: 409 });
+@@ -466,6 +466,16 @@
+     storedResponse = oauthResult
+       ? { ok: true, channel: oauthResult.channel, operation: oauthResult.operation, safeMessage: oauthResult.safeMessage }
+       : parsed.data.result;
++  } else if (parsed.data.status === "failed" && parsed.data.result) {
++    if (!normalizationTimestamp) {
++      return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
++    }
++    elevenstReadReceipt = buildElevenstCsReadObservation({
++      result: parsed.data.result,
++      arguments: (job.request as { arguments: Record<string, unknown> }).arguments,
++      checkedAt: normalizationTimestamp,
++      normalizedInquiries: [],
++    });
+   } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
+     storedResponse = parsed.data.result;
+   }
+@@ -593,20 +603,32 @@
+     return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
+   }
+   if (elevenstReadReceipt) {
+-    const readObservation = await serviceClient.rpc(
+-      "sellerpilot_service_record_elevenst_cs_read_v1",
+-      {
+-        p_credential_id: job.credential_id,
+-        p_observation: elevenstReadReceipt.observation,
+-        p_inquiries: elevenstReadReceipt.inquiries,
+-      },
++    const observationArguments = {
++      p_credential_id: job.credential_id,
++      p_observation: elevenstReadReceipt.observation,
++      p_inquiries: elevenstReadReceipt.inquiries,
++    };
++    let readObservation = await serviceClient.rpc(
++      "sellerpilot_service_record_elevenst_cs_read_v1",
++      observationArguments,
+     );
+-    const receipt = readObservation.data
++    let receipt = readObservation.data
+       && typeof readObservation.data === "object"
+       && !Array.isArray(readObservation.data)
+       ? readObservation.data as Record<string, unknown>
+       : null;
+     if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
++      readObservation = await serviceClient.rpc(
++        "sellerpilot_service_record_elevenst_cs_read_v1",
++        observationArguments,
++      );
++      receipt = readObservation.data
++        && typeof readObservation.data === "object"
++        && !Array.isArray(readObservation.data)
++        ? readObservation.data as Record<string, unknown>
++        : null;
++    }
++    if (readObservation.error || receipt?.contract !== "sellerpilot-elevenst-cs-read-record/1") {
+       console.error("11st CS read observation RPC failed", {
+         code: readObservation.error?.code ?? "invalid_contract",
+       });

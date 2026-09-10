@@ -59,6 +59,7 @@ export function resolveGatewayPolling(environment = process.env) {
 
 export function createGatewayWorkerHealth({
   version,
+  runtimeAttestation = null,
   gatewayConfigured,
   schedulerConfigured,
   staleAfterMs = DEFAULT_GATEWAY_READINESS_STALE_MS,
@@ -85,6 +86,12 @@ export function createGatewayWorkerHealth({
       status: stopping ? "stopping" : ready ? "ready" : contacted ? "degraded" : "starting",
       mode: "gateway-only",
       version,
+      runtimeAttestation: runtimeAttestation
+        ? {
+            releaseSha: runtimeAttestation.releaseSha,
+            egressIpSha256: runtimeAttestation.egressIpSha256,
+          }
+        : null,
       uptimeSeconds: Math.max(0, Math.floor((currentTime - startedAt) / 1_000)),
       ready,
       configuredScopes: {

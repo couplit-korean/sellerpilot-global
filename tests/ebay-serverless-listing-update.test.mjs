@@ -12,10 +12,10 @@ const exactPermitMigrationUrl = new URL(
   import.meta.url,
 );
 const providerUrl = new URL(
-  "../lib/channels/serverless-gateway-provider.ts",
+  "../lib/channels/commerce-provider.ts",
   import.meta.url,
 );
-const operationsUrl = new URL("../lib/channels/operations.ts", import.meta.url);
+const operationsUrl = new URL("../lib/product-registration/channels/ebay.ts", import.meta.url);
 
 function extractFunction(source, signature) {
   const start = source.indexOf(signature);
@@ -422,11 +422,12 @@ test("the exact production-shaped expired tuple is rearmed once without touching
   }
 });
 
-test("the enabled pair still reaches the exact permit and delayed provider readback fences", async () => {
-  const [permitMigration, provider, operations] = await Promise.all([
+test("the historical permit remains while the retired special provider branch stays removed", async () => {
+  const [permitMigration, provider, operations, retirement] = await Promise.all([
     readFile(exactPermitMigrationUrl, "utf8"),
     readFile(providerUrl, "utf8"),
     readFile(operationsUrl, "utf8"),
+    readFile(new URL("../lib/channels/retired-product-recovery.ts", import.meta.url), "utf8"),
   ]);
   assert.match(
     permitMigration,
@@ -436,16 +437,14 @@ test("the enabled pair still reaches the exact permit and delayed provider readb
     permitMigration,
     /sellerpilot_private\.exact_existing_update_provider_allowed\([\s\S]*?sellerpilot_private\.consume_exact_existing_update_provider\(/u,
   );
-  assert.match(
+  assert.match(provider, /assertNoRetiredProductRecovery\(rawArguments\);/u);
+  assert.doesNotMatch(
     provider,
-    /input\.job\.channel === "ebay" && input\.job\.operation === "listing\.update"[\s\S]*?EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED[\s\S]*?assertEbayExactExistingQaProviderCopyRequest/u,
+    /EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED|assertEbayExactExistingQaProviderCopyRequest|delayedEbayExactUpdateBoundary/u,
   );
-  assert.match(
-    provider,
-    /const delayedEbayExactUpdateBoundary = input\.job\.channel === "ebay"[\s\S]*?providerMutationHooks/u,
-  );
+  assert.match(retirement, /EbayExact/u);
   assert.match(
     operations,
-    /offer-update-preflight-readback[\s\S]*?EBAY_IMMUTABLE_LISTING_IDENTITY_VERIFIED[\s\S]*?providerMutationHooks\.begin\(\)[\s\S]*?method: "PUT"/u,
+    /offer-update-preflight-readback[\s\S]*?EBAY_IMMUTABLE_LISTING_IDENTITY_VERIFIED[\s\S]*?method: "PUT"/u,
   );
 });

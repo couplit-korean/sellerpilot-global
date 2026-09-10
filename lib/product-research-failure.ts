@@ -22,6 +22,9 @@ const PRODUCT_RESEARCH_FAILURE_MESSAGES = {
     "AI가 반환한 상품정보 형식을 확인하지 못했습니다. 같은 입력으로 다시 시도해 주세요.",
   runtime_timeout:
     "AI 상품정보 분석 시간이 초과되었습니다. 잠시 후 같은 입력으로 다시 시도해 주세요.",
+  source_photo_analysis_limit: "한 번의 제작에는 대표사진을 포함해 최대 10장을 선택해 주세요.",
+  source_product_identity_mismatch: "다른 상품으로 보이는 사진이 포함되어 있습니다. 같은 상품의 사진인지 확인한 뒤 다시 실행해 주세요.",
+  source_view_not_compositable: "연출컷에 사용할 상품 전체 모습을 확인하지 못했습니다. 상품이 온전히 보이는 사진을 추가해 주세요.",
   research_input_invalid:
     "상품 링크 또는 설명을 2자 이상 입력해 주세요.",
   // Older jobs may still contain this pre-auto-OIDC reason. Keep it private

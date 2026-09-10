@@ -95,6 +95,7 @@ test("Qoo10 publication diagnostics preserve each passing field when one readbac
     imageCountVerified: true,
     sellerAccountIdentityVerified: true,
     categoryVerified: true,
+    catalogVerified: true,
     titleVerified: true,
     shippingVerified: true,
     priceQuantityVerified: true,

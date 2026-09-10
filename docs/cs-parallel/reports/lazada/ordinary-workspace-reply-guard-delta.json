@@ -1,0 +1,78 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "preservedDeltas": [
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-conversation-projection-delta.json",
+      "sha256": "38cd76886aaaac7f8cb27437624d92fb07bdb1a7ef4ee9bb154ea58fd599e264"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/v3-followup-delta.json",
+      "sha256": "0e0ec4f3a9d20e4bf86c94baeb29bc59376e6c51b308761d5b0b9c47d4db5ba1"
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/authenticated-web-projection-delta.json",
+      "sha256": "44dd39ac3b25f11d684fcf880dc9128fa0fe3d75dca838ba62746d05d6424e48"
+    }
+  ],
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f6a20872cac2295a37e9c9e6c94989e611765a5d35dca63322d76a0d9025cb20",
+      "reason": "Overlay evidence-backed latest Lazada state on the ordinary workspace and atomically fence saved drafts, AI draft creation, and reply enqueue."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "61f8656d5ca839424c0013f931ce038aa2413622c674fdd9b5d2842a2dc6bf41",
+      "reason": "Preserve projection state in the common operations UI, remove local draft reuse, recheck the review modal, and return explicit API errors."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-009-ordinary-workspace-and-reply-guard.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "f84b4b23c47001f4f8fa65a809dac93dae599ddf4f90f245704c1c8ee00cfcf6",
+      "reason": "Record the ordinary snapshot and worker-payload defect, exact lineage design, preimages, integration order, and non-goals."
+    },
+    {
+      "path": "tests/cs-lazada-v3-normalizer-ordinary-workspace-get.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "c023bcaea391ed0e166bfb9bcdb778d00774164d308941b49522a2b9b8048797",
+      "reason": "Connect the production normalizer to actual V3 ingest and canonical 008 GET in one PGlite database, then verify 009 workspace/draft/enqueue behavior."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/ordinary-workspace-reply-guard-status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "cc2d1ccc01d2d5aedd0f50d54a2342f7146ed5ca12e026afe0c3cc2848c3e763",
+      "reason": "Separate locally verified behavior from unapplied integration, deployment, and live-account evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/ordinary-workspace-reply-guard-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "213c0562d6e85258e28cd1b8b30cc98b49e681b1042d1fe0aeb6d810f06b93d7",
+      "reason": "Pin the canonical 008 input, exact isolated commands, 18-test result, and mutation exclusions."
+    }
+  ],
+  "commonFilesModifiedDirectly": [],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/ordinary-workspace-reply-guard-verification.json"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "provider mutation",
+    "real customer reply"
+  ]
+}

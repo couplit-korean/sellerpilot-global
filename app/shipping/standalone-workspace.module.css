@@ -1,0 +1,47 @@
+.workspace {
+  max-width: 1500px;
+  margin: auto;
+  padding: 32px;
+  color: var(--text-primary, #182235);
+}
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+.header h1 {
+  font-size: 28px;
+}
+.header p {
+  color: #637084;
+}
+.header a {
+  color: #315fde;
+}
+.notice,
+.status {
+  padding: 20px;
+  margin-bottom: 20px;
+  border: 1px solid #d9e2ef;
+  border-radius: 12px;
+  background: #fff;
+}
+.notice {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.status button {
+  margin-right: 12px;
+}
+@media (max-width: 700px) {
+  .workspace {
+    padding: 16px;
+  }
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

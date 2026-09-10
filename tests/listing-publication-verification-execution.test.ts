@@ -39,7 +39,7 @@ const { executeServerlessGatewayProviderJob } = await import(
 const {
   deriveServerlessCsGatewayCredentials,
   runOneServerlessCsGatewayJob,
-} = await import("../lib/channels/serverless-cs-gateway");
+} = await import("../lib/channels/serverless-gateway");
 
 const JOB_ID = "71000000-0000-4000-8000-000000000001";
 const SOURCE_JOB_ID = "72000000-0000-4000-8000-000000000001";
@@ -233,6 +233,7 @@ const coupangData = {
 };
 const smartstoreProviderRepresentative =
   "https://shop-phinf.pstatic.net/20260830_sellerpilot/representative.jpg";
+const smartstoreSellerSku = "SELLERPILOT-SMARTSTORE-001";
 const smartstoreProviderImages = detailUrls.map((_, index) =>
   `https://shop-phinf.pstatic.net/20260830_sellerpilot/detail-${index + 1}.jpg`);
 const smartstoreDescriptionText = "한국어 상품 상세 정보입니다.";
@@ -246,6 +247,9 @@ const smartstoreData = {
   originProduct: {
     name: "한국어로 확인된 스마트스토어 판매 상품",
     statusType: "SALE",
+    detailAttribute: {
+      sellerCodeInfo: { sellerManagementCode: smartstoreSellerSku },
+    },
     detailContent: smartstoreProviderDescription,
     images: {
       representativeImage: { url: smartstoreProviderRepresentative },
@@ -276,8 +280,7 @@ const ebayInventory = {
 const temuGoodsBasic = {
   externalGoodsId: "TEMU-KR-001",
   goodsName: "한국어로 확인된 테무 판매 상품",
-  extCatName: "601099",
-  costTemplate: "QA_KR_STANDARD",
+  extCatName: "Home & Kitchen / Storage & Organization / Cable Management",
   goodsDesc: "이 상품은 품질과 사용 방법을 한국어로 자세히 설명한 상품입니다.",
   bulletPoints: ["검증된 재질과 구성 정보를 한국어로 안내합니다."],
   goodsCarouselImage: [galleryUrl],
@@ -285,8 +288,11 @@ const temuGoodsBasic = {
 };
 const temuSku = {
   externalSkuId: "TEMU-KR-001-01",
+  images: [galleryUrl],
   quantity: 2,
   price: { basePrice: { amount: "5000", currency: "KRW" } },
+  packageInfo: { weight: "100", length: "10", width: "8", height: "2" },
+  variations: [{ name: "Type", value: "Standard" }],
 };
 const temuDetailData = {
   success: true,
@@ -596,7 +602,12 @@ const fixtures: Fixture[] = [
       publicationExpectedLocale: "ko-KR",
       publicationExpectedFingerprint: FINGERPRINT,
       publicationExpectedImageCount: 8,
-      body: { language: "ko", goodsBasic: temuGoodsBasic, skuList: [temuSku] },
+      body: {
+        language: "ko",
+        goodsBasic: temuGoodsBasic,
+        attributes: [{ name: "Brand", value: ["COUPLIT"] }, { name: "Material", value: ["ABS"] }],
+        skuList: [temuSku],
+      },
     }),
     sourceStepName: "goods-detail-image-readback",
     remoteData: temuDetailData,
@@ -746,6 +757,9 @@ test("all eight real provider executors reverify read-only state without opening
       const isExactEbayTradingRead = method === "POST"
         && url.endsWith("/ws/api.dll")
         && ["GetUser", "GetItem"].includes(ebayTradingCall);
+      const isExactSmartstoreRead = fixture.channel === "smartstore"
+        && method === "POST"
+        && url.endsWith("/v1/products/search");
       const temuRequestBody = fixture.channel === "temu" && typeof init?.body === "string"
         ? JSON.parse(init.body) as Record<string, unknown>
         : {};
@@ -756,7 +770,8 @@ test("all eight real provider executors reverify read-only state without opening
           "bg.local.goods.detail.query",
           "temu.local.goods.sku.stock.query",
         ].includes(String(temuRequestBody.type ?? ""));
-      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead && !isExactTemuRead) {
+      if (method !== "GET" && !isExactQoo10ReadRpc && !isExactEbayTradingRead
+        && !isExactSmartstoreRead && !isExactTemuRead) {
         providerWriteRequests += 1;
       }
       if (fixture.channel === "elevenst") {
@@ -783,11 +798,37 @@ test("all eight real provider executors reverify read-only state without opening
       if (fixture.channel === "coupang" && url.includes("/vendor-items/4444/inventories")) {
         return Response.json({ code: "SUCCESS", data: { sellerItemId: 3333, onSale: true } });
       }
+      if (isExactSmartstoreRead) {
+        assert.deepEqual(JSON.parse(String(init?.body)), {
+          searchKeywordType: "SELLER_CODE",
+          sellerManagementCode: smartstoreSellerSku,
+          page: 1,
+          size: 50,
+          orderType: "NO",
+        });
+        return Response.json({
+          page: 1,
+          size: 50,
+          first: true,
+          last: true,
+          totalElements: 1,
+          totalPages: 1,
+          contents: [{
+            originProductNo: smartstoreData.originProductNo,
+            channelProducts: [{
+              originProductNo: smartstoreData.originProductNo,
+              channelProductNo: smartstoreData.smartstoreChannelProductNo,
+              sellerManagementCode: smartstoreSellerSku,
+            }],
+          }],
+        });
+      }
       if (fixture.channel === "smartstore" && url.includes("/v2/products/channel-products/")) {
         assert.equal(new Headers(init?.headers).get("authorization"), "Bearer naver-access");
         return Response.json({
           originProductNo: smartstoreData.originProductNo,
           smartstoreChannelProductNo: smartstoreData.smartstoreChannelProductNo,
+          originProduct: smartstoreData.originProduct,
           smartstoreChannelProduct: smartstoreData.smartstoreChannelProduct,
         });
       }
@@ -878,7 +919,8 @@ test("all eight real provider executors reverify read-only state without opening
       assert.ok(calls.length >= 1, fixture.channel);
       if (fixture.channel === "smartstore") {
         assert.equal(calls.some((call) => call.url.includes("/oauth2/token")), false);
-        assert.ok(calls.every((call) => call.method === "GET"));
+        assert.equal(calls.filter((call) => call.method === "POST").length, 1);
+        assert.ok(calls.every((call) => call.method === "GET" || call.url.endsWith("/v1/products/search")));
       }
     } finally {
       globalThis.fetch = originalFetch;
@@ -1350,6 +1392,30 @@ test("asset binding rejects an attacker host even when every normalized path and
   assert.equal(parseListingPublicationAssetBinding(malicious), null);
 });
 
+test("asset binding accepts canonical external-detail approved source paths", () => {
+  const binding = structuredClone(assetBinding());
+  const ownerId = "11111111-1111-4111-8111-111111111111";
+  const productId = "22222222-2222-4222-8222-222222222222";
+  const detailJobId = "33333333-3333-4333-8333-333333333333";
+  const claimId = "44444444-4444-4444-8444-444444444444";
+  for (const image of binding.approvedDetailImages) {
+    image.approvedObjectPath = [
+      "external-detail",
+      ownerId,
+      productId,
+      detailJobId,
+      claimId,
+      `${image.approvedSourceSha256}.png`,
+    ].join("/");
+  }
+  assert.ok(parseListingPublicationAssetBinding(binding));
+
+  const traversal = structuredClone(binding);
+  traversal.approvedDetailImages[0].approvedObjectPath =
+    `external-detail/${ownerId}/${productId}/${detailJobId}/${claimId}/../escape.png`;
+  assert.equal(parseListingPublicationAssetBinding(traversal), null);
+});
+
 test("every Coupang variant must expose the same ordered eight approved detail images", () => {
   const fixture = fixtures.find((item) => item.channel === "coupang")!;
   const multiVariantSourceArguments = structuredClone(fixture.sourceArguments);
@@ -1396,6 +1462,54 @@ test("every Coupang variant must expose the same ordered eight approved detail i
   assert.equal(verification.verified, false);
   assert.equal(verification.detailImageCountVerified, false);
   assert.equal(verification.descriptionVerified, false);
+});
+
+test("Coupang exact GET reconciliation binds provider-assigned vendor items after create", () => {
+  const fixture = fixtures.find((item) => item.channel === "coupang")!;
+  const sourceReadback = structuredClone(coupangData);
+  delete sourceReadback.data.items[0].vendorItemId;
+  const source = sourceContext({
+    channel: "coupang",
+    sourceArguments: fixture.sourceArguments,
+    sourceStepName: fixture.sourceStepName,
+    sourceStepData: sourceReadback,
+    resources: { sellerProductId: fixture.remoteId, vendorItemIds: [] },
+    remoteId: fixture.remoteId,
+    locale: fixture.locale,
+    market: fixture.market,
+    targetId: fixture.targetId,
+  });
+  const evidence = source.sourceResponsePayload.remoteState.evidence as Record<string, unknown>;
+  evidence.providerAssignedDescendantIdentityBinding = {
+    contract: "coupang_provider_assigned_vendor_items_v1",
+    sourceJobId: SOURCE_JOB_ID,
+    sellerProductId: fixture.remoteId,
+  };
+  const input = {
+    channel: "coupang" as const,
+    expectedLocale: fixture.locale,
+    expectedImageCount: 8,
+    remoteId: fixture.remoteId,
+    sourceJobId: SOURCE_JOB_ID,
+    sourceArguments: fixture.sourceArguments,
+    sourceResponsePayload: source.sourceResponsePayload,
+    sourceRemotePayload: sourceReadback,
+    remotePayload: coupangData,
+    remoteResources: fixture.resources,
+  };
+  const verified = verifyListingPublicationContent(input);
+  assert.equal(verified.verified, true);
+  assert.equal(verified.sourceIdentityVerified, true);
+  assert.equal(verified.contentDigestVerified, true);
+
+  const missingBinding = structuredClone(input);
+  delete (missingBinding.sourceResponsePayload.remoteState.evidence as Record<string, unknown>)
+    .providerAssignedDescendantIdentityBinding;
+  assert.equal(verifyListingPublicationContent(missingBinding).verified, false);
+
+  const wrongSource = structuredClone(input);
+  wrongSource.sourceJobId = "5f668657-d4bd-4c32-a9e9-1d4c211db26f";
+  assert.equal(verifyListingPublicationContent(wrongSource).verified, false);
 });
 
 test("buyer-visible titles and provider-assigned identities are exact-bound for Coupang, SmartStore, and eBay", () => {
@@ -1921,6 +2035,9 @@ test("the scheduled worker hydrates the immutable source by owned service RPC an
         }
         if (name === "sellerpilot_touch_serverless_cs_job") {
           return { data: "running", error: null };
+        }
+        if (name === "sellerpilot_service_reserve_provider_rate_budget_v1") {
+          return { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null };
         }
         if (name === "sellerpilot_service_listing_publication_verification_source") {
           return { data: sourceResponse(fixture), error: null };

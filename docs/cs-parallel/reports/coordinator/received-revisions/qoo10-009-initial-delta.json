@@ -1,0 +1,148 @@
+{
+  "reviewRequest": "qoo10-reply-s3-common-completion-and-ui-paths",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "branch": "codex/cs-qoo10-v1",
+  "sourceDelegatedTaskId": "01a077b1-61db-7c20-a4a3-ae00dbbbef19",
+  "files": [
+    {
+      "path": "lib/channels/cs/qoo10/reply-readback-completion.ts",
+      "beforeSha256": null,
+      "afterSha256": "580e3f67b05dfba6bc030364817e5c08518edab93f44aeb8bbfcdce928a227d2",
+      "change": "Parse the delivery-bound Qoo10 S3 marker, build a PII-free frozen-007-compatible stored response, derive exact status-only evidence, and construct RPC arguments."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/009-reply-s3-common-paths.sql",
+      "beforeSha256": null,
+      "afterSha256": "a595454731d119f2608e19354a7972a44ea9a50e30fd7f87012821b9fb126889",
+      "change": "Enqueue one exact S3 child in the new provider ACK receipt transaction, expose a restricted completion marker, and add actual delivery and workspace snapshot read fields."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/009-reply-s3-helper.patch",
+      "beforeSha256": null,
+      "afterSha256": "62a4c7b9eb00a5b79b35e841949f5d58d0a9f4895ffbcf6df9e04480f01fdf15",
+      "change": "Apply the Qoo10-owned completion helper to the latest integrated workspace."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/009-reply-s3-common-paths.patch",
+      "beforeSha256": null,
+      "afterSha256": "d674ade75d68e293219c21703cc86858147b9aa7b228d9ecc5bb5e6aa9ef23da",
+      "change": "Connect remote worker and serverless completion to the sealed status RPC and expose status-only UI text without claiming body observation or allowing resend."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-completion.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "2c99d6653e10d06d288ad8bae80e53e0d8569e8cebaa37b8af15120675d62946",
+      "change": "Verify marker parsing, PII-free evidence shaping, exact and wrong-sequence status, transport and envelope failures, and fail-closed RPC arguments."
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-common-path-db.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "c274e66854cec60e32efa4a887b84a63cf371e04fd3c2d96e63a01158691285d",
+      "change": "Replay no-backfill, same-transaction ACK enqueue, binding rollback, failed receipt handling, lineage, sealing, frozen-007 status, and real read fields in isolated PGlite."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-common-path-followup.md",
+      "beforeSha256": null,
+      "afterSha256": "98e2d3d9d61ebc256132cee3a2f8ad97da3c4ec190742189421068bf623d39bf",
+      "change": "Record the stored-response mismatch, executable integration order, latest preimages, focused and full verification, and operational boundaries."
+    }
+  ],
+  "frozenInputs": [
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/007-reply-s3-status-rpc.sql",
+      "sha256": "89a51d43800ea1621c646f7ed213f5ffdc32dcde4bcef2d5d08755925ed7e182"
+    },
+    {
+      "path": "docs/cs-parallel/proposals/qoo10/008-reply-s3-completion-response-seal.sql",
+      "sha256": "f31954baa26c91d8e20c07432fabdb77c021557b4d374d781d074fb7dec4672c"
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-null-evidence-acl-delta.json",
+      "sha256": "7eeb35259e3b130a87474ba2e881dcfb7318ff61c19c9b6e9d3e561bbd32b207"
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-status-db.test.mjs",
+      "sha256": "b9b9e82900377309b522d94f5663fcb3a126055127292fd695038a2a0d8e733b"
+    },
+    {
+      "path": "tests/cs-qoo10-reply-s3-response-seal-db.test.mjs",
+      "sha256": "88def740462db73e50cccb4428fa29fef9988f960cd7119f67327a1de769474b"
+    }
+  ],
+  "readOnlyPreimages": [
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "5dd9777403d145791fba116152837a3b53c95059985d9d9eab542b73ab4e57ef"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "bbfd8b122b6dcf3f0d16f760ccd75f7a2db34fd14252c4d2ce1fec3a259d5286"
+    },
+    {
+      "path": "app/use-operations-snapshot.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "3176a281ab994d1e259591e2d53633329ff414e7b51972dd48bb6c846228704a"
+    },
+    {
+      "path": "app/page.tsx",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "a4feed2c14ea2199b690182f8706443306032265b6440d3ff03a2a045cd34cd8"
+    },
+    {
+      "path": "lib/channels/qoo10-inquiries.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "87b92edadf85c04359ea56fa10020eeefcfb593635ea9029e4a3dbe1b1c995ac"
+    }
+  ],
+  "verification": [
+    {
+      "command": "bundled-node --import tsx --test qoo10-007, qoo10-008, qoo10-009 DB and helper focused files",
+      "exitCode": 0,
+      "result": "25/25 passed"
+    },
+    {
+      "command": "bundled-node --import tsx --test ten Qoo10 contract, history, runtime, ledger, reply, status, seal, common-path, and claim files",
+      "exitCode": 0,
+      "result": "63/63 passed"
+    },
+    {
+      "command": "bundled-node tsc -p temporary patched common overlay",
+      "exitCode": 0,
+      "result": "passed with no output after resolving the temporary overlay's bare-module path"
+    },
+    {
+      "command": "git apply --check 009 helper patch and 009 common paths patch against latest integrated workspace",
+      "exitCode": 0,
+      "result": "both patches apply cleanly"
+    },
+    {
+      "command": "bundled-node tsc and eslint on Qoo10-owned branch sources and tests",
+      "exitCode": 0,
+      "result": "passed with no output"
+    }
+  ],
+  "failedAttempts": [
+    {
+      "result": "temporary overlay type resolution failed before source checking",
+      "cause": "The temporary overlay could not resolve bare modules such as next, React, Supabase, and zod because it had no node_modules ancestor.",
+      "resolution": "Link the integrated dependency directory read-only into the temporary overlay and rerun the same five-file typecheck; exit 0."
+    }
+  ],
+  "behavior": {
+    "existingReceiptBackfill": false,
+    "newSuccessfulAckEnqueuesS3InReceiptTransaction": true,
+    "failedOrReconciliationReplyEnqueuesS3": false,
+    "storedResponseContainsCustomerBody": false,
+    "statusObservationClaimsBodyObserved": false,
+    "automaticResendAllowed": false,
+    "uiReadsActualStatusFields": true
+  },
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "providerMutations": false,
+  "customerRepliesSent": false,
+  "commitPushDeploy": false
+}

@@ -1,0 +1,51 @@
+diff --git a/lib/cs/conversation.ts b/lib/cs/conversation.ts
+--- a/lib/cs/conversation.ts
++++ b/lib/cs/conversation.ts
+@@ -15,6 +15,7 @@ export const conversationPageSchema = z.object({
+     deliveryStatus: z.enum(["remote_observed", "recorded", "provider_accepted", "queued", "running", "failed", "cancelled", "reconciliation_required"]),
+     remoteMessageId: z.string().nullable(), jobId: z.string().uuid().nullable(),
+     nativeMedia: z.record(z.string(),z.unknown()).nullable().default(null),
++    messageState: z.enum(["normal", "recalled", "conflict_review_required"]).default("normal"),
+     unsequencedAnswers: z.array(z.object({ body: z.string().max(20000), reason: z.literal("provider_timestamp_unavailable") })).max(100).default([]),
+   })).max(100),
+   nextCursor: conversationCursorSchema.nullable(),
+diff --git a/app/cs/conversation-timeline.tsx b/app/cs/conversation-timeline.tsx
+--- a/app/cs/conversation-timeline.tsx
++++ b/app/cs/conversation-timeline.tsx
+@@ -53,6 +53,9 @@ export function ConversationTimeline({ ticketId, refreshKey, authenticatedFetch
+       {messages.map((message) => { const media=conversationMediaLinks(message.nativeMedia); return <li key={message.key} className={`${styles.message} ${message.role === "seller" ? styles.seller : ""}`}>
+         <div><small className={styles.meta}>{message.role === "customer" ? "고객" : message.role === "seller" ? "판매자" : "시스템"} · <time dateTime={message.occurredAt}>{new Date(message.occurredAt).toLocaleString("ko-KR")}</time></small>
+           <p className={styles.body}>{message.body ?? "답변 본문 보관 여부를 확인해 주세요."}</p>
++          {message.messageState==="recalled"?<small className={styles.meta}>발신자가 회수한 메시지 · 저장 원문과 첨부는 대화 화면에 표시하지 않음</small>
++            :message.messageState==="conflict_review_required"?<small className={styles.meta}>같은 메시지 ID의 본문·첨부 변경 감지 · 기존 투영 유지 · 원문/격리함 검토 필요</small>
++            :null}
+           {message.nativeMedia?<aside className={styles.attachments} aria-label="채널 첨부"><small className={styles.meta}>채널 첨부 메타데이터 보존됨</small>
+             {media.length?<ul>{media.map(item=><li key={item.url}>{item.availability==="expired"
+               ? <span>{item.kind==="image"?"이미지":item.kind==="video"?"영상":item.kind==="file"?"파일":"첨부"} · 링크 만료 · 채널 이력을 다시 조회해 복구 여부를 확인하세요.</span>
+diff --git a/lib/cs/archive.ts b/lib/cs/archive.ts
+--- a/lib/cs/archive.ts
++++ b/lib/cs/archive.ts
+@@ -16,7 +16,8 @@ export const archivePageSchema=z.object({
+   status:z.enum(["waiting","urgent","in_progress","resolved"]),receivedAt:z.string().datetime({offset:true}),
+   accountId:z.string().uuid().nullable().default(null),shopId:z.string().nullable().default(null),
+   ticketKind:z.enum(["conversation","after_sales"]).default("conversation"),
+-  source:z.enum(["channel","legacy_ticket"]).default("legacy_ticket")})).max(50),
++  source:z.enum(["channel","legacy_ticket"]).default("legacy_ticket"),
++  latestMessageState:z.enum(["normal","recalled","conflict_review_required"]).default("normal")})).max(50),
+  asOf:z.string().datetime({offset:true}),nextCursor:archiveCursorSchema.nullable(),
+ });
+ export type ArchiveFilters=z.infer<typeof archiveFiltersSchema>;
+diff --git a/app/cs/archive.tsx b/app/cs/archive.tsx
+--- a/app/cs/archive.tsx
++++ b/app/cs/archive.tsx
+@@ -62,7 +62,9 @@ export function CsArchive({authenticatedFetch}:{authenticatedFetch:FetchArchive}
+   {error?<p role="alert">{error}</p>:null}
+   {page?<p role="status">현재 {page.tickets.length}건 표시{page.nextCursor?" · 더 많은 결과가 있습니다.":" · 검색 결과 끝"}</p>:null}
+   <div className={styles.results}>{page?.tickets.map(ticket=><button key={ticket.id} type="button" aria-pressed={selected?.id===ticket.id} onClick={()=>setSelected(ticket)}>
+-   <span>{channelCatalog[ticket.channel].name} · {statuses[ticket.status]} · {ticket.ticketKind==="after_sales"?"반품·환불":"고객 대화"} · {ticket.source==="channel"?"채널 수집":"이전 원장"} · {new Date(ticket.receivedAt).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}</span>
++   <span>{channelCatalog[ticket.channel].name} · {statuses[ticket.status]} · {ticket.ticketKind==="after_sales"?"반품·환불":"고객 대화"} · {ticket.source==="channel"?"채널 수집":"이전 원장"} · {new Date(ticket.receivedAt).toLocaleDateString("ko-KR",{timeZone:"Asia/Seoul"})}
++    {ticket.latestMessageState==="recalled"?" · 최신 메시지 회수됨":ticket.latestMessageState==="conflict_review_required"?" · 메시지 변경 검토 필요":""}
++   </span>
+    <strong>{ticket.subject}</strong><span>{ticket.customer} · {ticket.externalId}</span><p>{ticket.preview}</p>
+   </button>)}</div>
+   {page?.nextCursor?<button type="button" className="filter-button" disabled={loading} onClick={()=>void search(true)}>검색 결과 더 보기</button>:null}

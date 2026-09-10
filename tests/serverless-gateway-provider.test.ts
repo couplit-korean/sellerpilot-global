@@ -16,7 +16,7 @@ registerHooks({
 const {
   deriveServerlessCsGatewayCredentials,
   runServerlessCsGatewayDrain,
-} = await import("../lib/channels/serverless-cs-gateway");
+} = await import("../lib/channels/serverless-gateway");
 const {
   executeServerlessGatewayProviderJob,
   serverlessGatewayOperationAllowed,
@@ -24,10 +24,7 @@ const {
 const {
   verifyShopeeGlobalListingPostPublish,
 } = await import("../lib/channels/provider-shopee-post-publish-runtime");
-const {
-  ebayExactExistingQaRecoveryArgument,
-  ebayExactExistingQaRecoveryIdentity,
-} = await import("../lib/channels/ebay-exact-existing-qa-recovery");
+
 
 const CRON_SECRET = "serverless-generic-gateway-cron-secret";
 const JOB_ID = "51000000-0000-4000-8000-000000000001";
@@ -71,7 +68,13 @@ function authorizedRequest() {
   });
 }
 
-test("generic serverless operation matrix is exact and price updates stay closed", () => {
+function rateBudgetRpc(name: string) {
+  return name === "sellerpilot_service_reserve_provider_rate_budget_v1"
+    ? { data: { contract: "sellerpilot-provider-rate-budget/1", status: "reserved", retryAfterSeconds: 0 }, error: null }
+    : null;
+}
+
+test("generic serverless operation matrix permits only the readback-verified Coupang price path", () => {
   for (const [operation, allowed] of Object.entries(expectedWrites)) {
     for (const channel of channels) {
       assert.equal(
@@ -103,7 +106,7 @@ test("generic serverless operation matrix is exact and price updates stay closed
     }
   }
   for (const channel of channels) {
-    assert.equal(serverlessGatewayOperationAllowed(channel, "price.update"), false);
+    assert.equal(serverlessGatewayOperationAllowed(channel, "price.update"), channel === "coupang");
     assert.equal(serverlessGatewayOperationAllowed(channel, "orders.list"), true);
     assert.equal(serverlessGatewayOperationAllowed(channel, "diagnostic.test"), true);
     assert.equal(
@@ -120,17 +123,157 @@ test("generic serverless operation matrix is exact and price updates stay closed
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "listing.lineage.verify"),
-      ["qoo10", "shopee", "lazada", "ebay"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "ebay"].includes(channel),
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "inquiries.list"),
-      ["qoo10", "lazada", "coupang", "smartstore", "ebay", "temu"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"].includes(channel),
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "inquiries.reply"),
-      ["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel),
+      ["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"].includes(channel),
     );
   }
+});
+
+test("periodic Shopee comment reads persist each OAuth-authorized shop in a separate continuation", async () => {
+  const job = genericClaim("shopee", "inquiries.list");
+  job.environment = "production";
+  job.request = { periodicKey: "inquiries:0", arguments: { cursor: "", pageSize: 100 } };
+  job.credential = {
+    partner_id: "2031489",
+    partner_key: "partner-secret-long-enough",
+    main_account_id: "9001",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "shopee:main:9001",
+    shop_id: "1001",
+    shop_ids: ["1001", "1002"],
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1002", access_token: "shop-two-access", refresh_token: "shop-two-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const calls: Array<{ shopId: string; accessToken: string }> = [];
+  const execute = (claim: GatewayClaim) => executeServerlessGatewayProviderJob({
+    job: claim,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { },
+      beginProviderMutation: async () => { throw new Error("unexpected provider mutation"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
+    },
+  }, async (input) => {
+    calls.push({ shopId: String(input.arguments.shopId), accessToken: String(input.payload.access_token) });
+    return {
+      ok: true,
+      channel: "shopee",
+      operation: "inquiries.list",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: { sellerpilotProviderContext: { shopId: input.arguments.shopId }, response: { item_comment_list: [], more: false, next_cursor: "" } } }],
+      safeMessage: "ok",
+    };
+  });
+  const first = await execute(job);
+  assert.equal(first.ok, true);
+  assert.deepEqual(calls, [{ shopId: "1001", accessToken: "shop-one-access" }]);
+  assert.equal(first.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.equal(first.continuation?.arguments.cursor, "");
+  assert.equal(first.continuation?.arguments.sellerpilotPaginationDepth, 1);
+  assert.equal(first.continuation?.arguments.sellerpilotPaginationEpoch, 0);
+  assert.deepEqual(first.continuation?.arguments.sellerpilotPaginationTrail, []);
+  assert.equal(Object.hasOwn(first.continuation?.arguments ?? {}, "shopId"), false);
+
+  const secondJob = {
+    ...job,
+    request: { ...job.request, arguments: first.continuation!.arguments },
+  };
+  const second = await execute(secondJob);
+  assert.equal(second.ok, true);
+  assert.deepEqual(calls, [
+    { shopId: "1001", accessToken: "shop-one-access" },
+    { shopId: "1002", accessToken: "shop-two-access" },
+  ]);
+  assert.equal("continuation" in second, false);
+});
+
+test("periodic Shopee return reads finish a shop detail queue before advancing to the next authorized shop", async () => {
+  const job = genericClaim("shopee", "inquiries.list");
+  job.environment = "production";
+  job.request = {
+    periodicKey: "inquiries:return_refund",
+    arguments: {
+      kind: "return_refund",
+      createTimeFrom: 1_800_000_000,
+      createTimeTo: 1_800_086_400,
+      pageNo: 1,
+      pageSize: 100,
+    },
+  };
+  job.credential = {
+    partner_id: "2031489",
+    partner_key: "partner-secret-long-enough",
+    main_account_id: "9001",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "shopee:main:9001",
+    shop_id: "1001",
+    shop_ids: ["1001", "1002"],
+    authorization_expires_at: "2099-01-01T00:00:00.000Z",
+    shopee_targets: [
+      { type: "shop", id: "1001", access_token: "shop-one-access", refresh_token: "shop-one-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+      { type: "shop", id: "1002", access_token: "shop-two-access", refresh_token: "shop-two-refresh", access_token_expires_at: "2099-01-01T00:00:00.000Z", refresh_token_expires_at: "2099-01-01T00:00:00.000Z" },
+    ],
+  };
+  const calls: Array<{ shopId: string; returnQueue: unknown }> = [];
+  const execute = (claim: GatewayClaim) => executeServerlessGatewayProviderJob({
+    job: claim,
+    signal: new AbortController().signal,
+    hooks: {
+      assertLeaseHealthy: async () => { },
+      beginProviderMutation: async () => { throw new Error("unexpected provider mutation"); },
+      beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
+      stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
+    },
+  }, async (input) => {
+    calls.push({ shopId: String(input.arguments.shopId), returnQueue: input.arguments.returnQueue });
+    const continuing = input.arguments.returnQueue === undefined;
+    return {
+      ok: true,
+      channel: "shopee",
+      operation: "inquiries.list",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: { sellerpilotProviderContext: { shopId: input.arguments.shopId, kind: "return_refund" }, response: { return_sn: "RETURN-1" } } }],
+      ...(continuing ? {
+        continuation: {
+          reason: "page_cap_reached" as const,
+          arguments: { ...input.arguments, returnQueue: ["RETURN-2"], nextPageNo: null },
+        },
+      } : {}),
+      safeMessage: "ok",
+    };
+  });
+
+  const first = await execute(job);
+  assert.equal(first.continuation?.arguments.sellerpilotShopeeTargetIndex, 0);
+  assert.deepEqual(first.continuation?.arguments.returnQueue, ["RETURN-2"]);
+  assert.equal(Object.hasOwn(first.continuation?.arguments ?? {}, "shopId"), false);
+
+  const second = await execute({ ...job, request: { ...job.request, arguments: first.continuation!.arguments } });
+  assert.equal(second.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.equal(second.continuation?.arguments.kind, "return_refund");
+  assert.equal(Object.hasOwn(second.continuation?.arguments ?? {}, "returnQueue"), false);
+
+  const third = await execute({ ...job, request: { ...job.request, arguments: second.continuation!.arguments } });
+  assert.equal(third.continuation?.arguments.sellerpilotShopeeTargetIndex, 1);
+  assert.deepEqual(third.continuation?.arguments.returnQueue, ["RETURN-2"]);
+
+  const fourth = await execute({ ...job, request: { ...job.request, arguments: third.continuation!.arguments } });
+  assert.equal("continuation" in fourth, false);
+  assert.deepEqual(calls, [
+    { shopId: "1001", returnQueue: undefined },
+    { shopId: "1001", returnQueue: ["RETURN-2"] },
+    { shopId: "1002", returnQueue: undefined },
+    { shopId: "1002", returnQueue: ["RETURN-2"] },
+  ]);
 });
 
 test("a bounded provider write crosses the mutation fence and rechecks its lease", async () => {
@@ -161,9 +304,9 @@ test("a bounded provider write crosses the mutation fence and rechecks its lease
   assert.deepEqual(events, ["lease", "mutation-fence", "lease", "provider"]);
 });
 
-test("generic eBay listing update remains closed without the exact server-owned recovery marker", async () => {
+test("Qoo10 create requires strict publication context before any mutation fence", async () => {
   const events: string[] = [];
-  const job = genericClaim("ebay", "listing.update");
+  const job = genericClaim("qoo10", "listing.create");
   await assert.rejects(
     executeServerlessGatewayProviderJob({
       job,
@@ -175,50 +318,7 @@ test("generic eBay listing update remains closed without the exact server-owned 
         stageCredentialRefresh: async () => { events.push("credential-stage"); },
       },
     }),
-    /EBAY_EXACT_EXISTING_QA_SERVER_CONTEXT_REQUIRED/,
-  );
-  assert.deepEqual(events, []);
-});
-
-test("exact eBay update rejects a job whose credential differs from the current bound lineage", async () => {
-  const events: string[] = [];
-  const job = genericClaim("ebay", "listing.update");
-  job.environment = "production";
-  job.request = {
-    arguments: {
-      [ebayExactExistingQaRecoveryArgument]: {
-        contract: "ebay_exact_existing_qa_recovery_v2",
-        phase: "listing.update",
-        productId: ebayExactExistingQaRecoveryIdentity.productId,
-        listingId: ebayExactExistingQaRecoveryIdentity.listingId,
-        sourceAttemptId: ebayExactExistingQaRecoveryIdentity.sourceAttemptId,
-        publicListingId: ebayExactExistingQaRecoveryIdentity.publicListingId,
-        market: ebayExactExistingQaRecoveryIdentity.market,
-        marketplaceId: ebayExactExistingQaRecoveryIdentity.marketplaceId,
-        marketplaceSku: ebayExactExistingQaRecoveryIdentity.marketplaceSku,
-        offerId: ebayExactExistingQaRecoveryIdentity.offerId,
-        currency: ebayExactExistingQaRecoveryIdentity.currency,
-        priceUsd: ebayExactExistingQaRecoveryIdentity.priceUsd,
-        stock: 1,
-        credentialId: "11111111-2222-4333-8444-555555555555",
-        sellerAccountKey: ebayExactExistingQaRecoveryIdentity.sellerAccountKey,
-        offerIdSource: "immutable_lineage_attestation_v1",
-        sellerAccountLineage: "validated_by_service_rpc",
-      },
-    },
-  };
-  await assert.rejects(
-    executeServerlessGatewayProviderJob({
-      job,
-      signal: new AbortController().signal,
-      hooks: {
-        assertLeaseHealthy: async () => { events.push("lease"); },
-        beginProviderMutation: async () => { events.push("mutation-fence"); },
-        beginCredentialMutation: async () => { events.push("credential-fence"); },
-        stageCredentialRefresh: async () => { events.push("credential-stage"); },
-      },
-    }),
-    /EBAY_EXACT_EXISTING_QA_CREDENTIAL_LINEAGE_MISMATCH/,
+    /QOO10_CREATE_STRICT_PUBLICATION_CONTEXT_REQUIRED/u,
   );
   assert.deepEqual(events, []);
 });
@@ -245,6 +345,29 @@ test("Temu safe-test requires the approved localized asset binding before its mu
       },
     }),
     /LISTING_PUBLICATION_APPROVED_ASSET_BINDING_REQUIRED/,
+  );
+  assert.deepEqual(events, []);
+});
+
+test("Temu legacy create jobs fail before credentials, media preparation, or mutation fences", async () => {
+  const events: string[] = [];
+  const job = genericClaim("temu", "listing.create");
+  job.request = { arguments: { body: {} } };
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("mutation-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async () => {
+      events.push("provider");
+      throw new Error("provider must not run");
+    }),
+    /TEMU_CREATE_CONTRACT_REQUIRED/,
   );
   assert.deepEqual(events, []);
 });
@@ -316,10 +439,215 @@ test("legacy eBay diagnostic stages immutable GetUser identity before privilege 
   }
 });
 
-test("publication reverification is allowlisted for the eight release channels and never opens the provider mutation fence", async () => {
+test("eBay create keeps credential refresh, media preparation, read preflight and provider fence distinct", async () => {
+  const originalFetch = globalThis.fetch;
+  const events: string[] = [];
+  const eiasToken = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=";
+  const job = genericClaim("ebay", "listing.create");
+  job.request = { arguments: {
+    sku: "SELLERPILOT-FENCE",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "safe_test",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 0,
+    inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+    offer: {
+      marketplaceId: "EBAY_US",
+      listingPolicies: {
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      },
+      merchantLocationKey: "warehouse-1",
+    },
+  } };
+  job.credential = {
+    client_id: "sandbox-client",
+    client_secret: "sandbox-secret",
+    ru_name: "sandbox-runame",
+    access_token: "expired-access-token",
+    access_token_expires_at: "2000-01-01T00:00:00.000Z",
+    refresh_token: "sandbox-refresh-token",
+    refresh_token_expires_at: "2099-01-01T00:00:00.000Z",
+    scopes: [
+      "https://api.ebay.com/oauth/api_scope/sell.account",
+      "https://api.ebay.com/oauth/api_scope/sell.inventory",
+    ].join(" "),
+    provider_account_identity_version: "v1",
+    provider_account_subject: `ebay:eias:${eiasToken}`,
+  };
+  globalThis.fetch = async (input, init) => {
+    const url = String(input);
+    const callName = new Headers(init?.headers).get("x-ebay-api-call-name") ?? "";
+    if (url.endsWith("/identity/v1/oauth2/token")) {
+      events.push("oauth-token");
+      return Response.json({ access_token: "fresh-access-token", expires_in: 7200 });
+    }
+    if (callName === "GetUser") {
+      events.push("get-user");
+      return new Response(
+        `<?xml version="1.0" encoding="UTF-8"?><GetUserResponse xmlns="urn:ebay:apis:eBLBaseComponents"><Ack>Success</Ack><User><UserID>seller</UserID><EIASToken>${eiasToken}</EIASToken></User></GetUserResponse>`,
+        { status: 200, headers: { "content-type": "text/xml" } },
+      );
+    }
+    throw new Error(`unexpected eBay request: ${url}`);
+  };
+  try {
+    const result = await executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("provider-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async (input) => {
+      events.push("adapter-read-preflight");
+      assert.ok(input.providerMutationHooks);
+      await input.providerMutationHooks.assertLeaseHealthy();
+      await input.providerMutationHooks.begin();
+      await input.providerMutationHooks.assertLeaseHealthy();
+      events.push("provider-write");
+      return {
+        ok: true,
+        channel: "ebay",
+        operation: "listing.create",
+        steps: [],
+        safeMessage: "ok",
+      };
+    });
+    assert.equal(result.ok, true);
+    assert.ok(events.indexOf("credential-fence") < events.indexOf("oauth-token"));
+    assert.ok(events.indexOf("oauth-token") < events.indexOf("get-user"));
+    assert.ok(events.indexOf("get-user") < events.indexOf("credential-stage"));
+    assert.ok(events.indexOf("credential-stage") < events.indexOf("adapter-read-preflight"));
+    assert.ok(events.indexOf("adapter-read-preflight") < events.indexOf("provider-fence"));
+    assert.ok(events.indexOf("provider-fence") < events.indexOf("provider-write"));
+    assert.equal(events.filter((event) => event === "provider-fence").length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("eBay create rejects an incomplete recorded Sell scope before provider fence", async () => {
+  const job = genericClaim("ebay", "listing.create");
+  job.request = { arguments: {
+    sku: "SELLERPILOT-SCOPE",
+    publicationStateContract: "verified_remote_state_v1",
+    publicationIntent: "safe_test",
+    publicationExpectedLocale: "en-US",
+    publicationExpectedFingerprint: "a".repeat(64),
+    publicationExpectedImageCount: 0,
+    inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+    offer: {
+      marketplaceId: "EBAY_US",
+      listingPolicies: {
+        fulfillmentPolicyId: "fulfillment-1",
+        paymentPolicyId: "payment-1",
+        returnPolicyId: "return-1",
+      },
+      merchantLocationKey: "warehouse-1",
+    },
+  } };
+  job.credential = {
+    access_token: "valid-access-token",
+    access_token_expires_at: "2099-01-01T00:00:00.000Z",
+    scopes: "https://api.ebay.com/oauth/api_scope/sell.account",
+    provider_account_identity_version: "v1",
+    provider_account_subject: "ebay:eias:QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=",
+  };
+  const events: string[] = [];
+  await assert.rejects(
+    executeServerlessGatewayProviderJob({
+      job,
+      signal: new AbortController().signal,
+      hooks: {
+        assertLeaseHealthy: async () => { events.push("lease"); },
+        beginProviderMutation: async () => { events.push("provider-fence"); },
+        beginCredentialMutation: async () => { events.push("credential-fence"); },
+        stageCredentialRefresh: async () => { events.push("credential-stage"); },
+      },
+    }, async () => {
+      events.push("provider-executor");
+      throw new Error("provider executor must not run");
+    }),
+    /EBAY_CREATE_SELL_SCOPES_REQUIRED/u,
+  );
+  assert.equal(events.includes("provider-fence"), false);
+  assert.equal(events.includes("provider-executor"), false);
+  assert.equal(events.includes("credential-fence"), false);
+  assert.equal(events.includes("credential-stage"), false);
+});
+
+test("eBay create rejects missing or tampered publication contract before credential, media, or provider execution", async () => {
+  for (const mutation of [
+    { publicationStateContract: undefined },
+    { publicationStateContract: "verified_remote_state_v0" },
+    { publicationIntent: "preview" },
+    { publicationExpectedFingerprint: "invalid" },
+    { publicationExpectedLocale: "ko-KR" },
+  ]) {
+    const job = genericClaim("ebay", "listing.create");
+    job.request = { arguments: {
+      sku: "SELLERPILOT-CONTRACT",
+      publicationStateContract: "verified_remote_state_v1",
+      publicationIntent: "safe_test",
+      publicationExpectedLocale: "en-US",
+      publicationExpectedFingerprint: "a".repeat(64),
+      publicationExpectedImageCount: 0,
+      inventoryItem: { product: { imageUrls: ["https://cdn.example.com/item.jpg"] } },
+      offer: {
+        marketplaceId: "EBAY_US",
+        listingPolicies: {
+          fulfillmentPolicyId: "fulfillment-1",
+          paymentPolicyId: "payment-1",
+          returnPolicyId: "return-1",
+        },
+        merchantLocationKey: "warehouse-1",
+      },
+      ...mutation,
+    } };
+    job.credential = {
+      access_token: "expired-access-token",
+      access_token_expires_at: "2000-01-01T00:00:00.000Z",
+      refresh_token: "refresh-token",
+    };
+    const events: string[] = [];
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = async () => {
+      events.push("provider-http");
+      throw new Error("provider HTTP must not run");
+    };
+    try {
+      await assert.rejects(
+        executeServerlessGatewayProviderJob({
+          job,
+          signal: new AbortController().signal,
+          hooks: {
+            assertLeaseHealthy: async () => { events.push("lease"); },
+            beginProviderMutation: async () => { events.push("provider-fence"); },
+            beginCredentialMutation: async () => { events.push("credential-fence"); },
+            stageCredentialRefresh: async () => { events.push("credential-stage"); },
+          },
+        }, async () => {
+          events.push("provider-executor");
+          throw new Error("provider executor must not run");
+        }),
+        /EBAY_CREATE_PUBLICATION_CONTRACT_INVALID/u,
+      );
+      assert.deepEqual(events, []);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  }
+});
+
+test("Coupang publication reverification never opens the provider mutation fence", async () => {
   const events: string[] = [];
   const job = {
-    ...genericClaim("qoo10", "listing.publication.verify"),
+    ...genericClaim("coupang", "listing.publication.verify"),
     request: {
       arguments: {
         remoteId: "remote-item-1",
@@ -351,7 +679,7 @@ test("publication reverification is allowlisted for the eight release channels a
     signal: new AbortController().signal,
     hooks: {
       assertLeaseHealthy: async () => { events.push("lease"); },
-      beginProviderMutation: async () => { events.push("mutation-fence"); },
+      beginProviderMutation: async () => { assert.fail("Coupang verifier must remain read-only"); },
       beginCredentialMutation: async () => { throw new Error("unexpected credential mutation"); },
       stageCredentialRefresh: async () => { throw new Error("unexpected credential stage"); },
     },
@@ -434,6 +762,8 @@ test("an exception after the provider fence is stored as reconciliation without 
         claims += 1;
         return { data: claims === 1 ? genericClaim("qoo10", "listing.stop") : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_begin_serverless_gateway_provider_mutation") {
         return { data: true, error: null };
@@ -493,7 +823,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
         orders: [{
           orderId: "order-1",
           buyer: { username: "private-buyer" },
-          lineItems: [{ title: "private-product", quantity: 2 }],
+          lineItems: [{ lineItemId: "order-line-1", title: "private-product", quantity: 2 }],
           pricingSummary: { total: { value: "17.50", currency: "USD" } },
           orderPaymentStatus: "PAID",
           orderFulfillmentStatus: "NOT_STARTED",
@@ -515,6 +845,8 @@ test("order sync normalizes with the fenced completion timestamp and stores only
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {
@@ -547,6 +879,7 @@ test("order sync normalizes with the fenced completion timestamp and stores only
     amountKrw: 0,
     status: "paid",
     orderedAt: "2026-08-28T02:03:04.000Z",
+    providerContext: { orderId: "order-1", lineItems: [{ lineItemId: "order-line-1", quantity: 2 }] },
   }]);
   assert.deepEqual(completion?.arguments_.p_response_payload, {
     ok: true,
@@ -596,6 +929,8 @@ test("successful OAuth completion keeps secrets only in credential staging", asy
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_begin_serverless_cs_credential_refresh") {
         return { data: true, error: null };
@@ -674,6 +1009,8 @@ test("failed provider diagnostics complete transport successfully and persist th
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {
@@ -730,6 +1067,8 @@ test("listing lineage uses its dedicated exact-claim completion instead of the g
         claims += 1;
         return { data: claims === 1 ? job : null, error: null };
       }
+      const rateBudget = rateBudgetRpc(name);
+      if (rateBudget) return rateBudget;
       if (name === "sellerpilot_touch_serverless_cs_job") return { data: "running", error: null };
       if (name === "sellerpilot_service_serverless_cs_completion_context") {
         return {

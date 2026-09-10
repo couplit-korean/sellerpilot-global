@@ -74,6 +74,41 @@ export function userFacingErrorMessage(input: unknown, fallback = defaultErrorMe
   const raw = normalize(messageText(input));
   if (!raw) return fallback;
 
+  if (/EBAY_EXISTING_INVENTORY_REQUIRES_UPDATE\b/.test(raw)) {
+    return "eBay에 같은 판매자 상품코드의 재고가 있습니다. 기존 상품과 오퍼번호를 확인한 뒤 상품 정보 변경으로 진행해 주세요.";
+  }
+  if (/EBAY_INVENTORY_ABSENCE_UNVERIFIED\b|QOO10_SELLER_CODE_ABSENCE_UNVERIFIED\b/.test(raw)) {
+    return "판매 채널의 기존 상품이 없다는 확인을 받지 못해 중복 등록을 중단했습니다. 계정 연결과 기존 상품코드를 먼저 조회해 주세요.";
+  }
+  if (/EBAY_CREATE_READBACK_MISMATCH\b/.test(raw)) {
+    return "eBay에 저장된 상품 정보가 등록 요청과 달라 발행을 중단했습니다. 상품코드·가격·수량·정책과 상세 내용을 확인한 뒤 기존 상품 변경으로 진행해 주세요.";
+  }
+  if (/NAVER_EXISTING_PRODUCT_REQUIRES_UPDATE\b/.test(raw)) {
+    return "스마트스토어에 같은 판매자 상품코드의 상품이 있습니다. 기존 상품번호를 확인한 뒤 상품 정보 변경으로 진행해 주세요.";
+  }
+  if (/NAVER_DUPLICATE_PREFLIGHT_FAILED\b|ELEVENST_IDEMPOTENCY_LOOKUP_UNVERIFIED\b/.test(raw)) {
+    return "판매 채널의 기존 상품 조회 결과를 확인하지 못했습니다. 중복 등록을 막기 위해 등록을 중단했습니다. 채널 연결과 기존 상품을 먼저 확인해 주세요.";
+  }
+  if (/SHOPEE_CREATE_(?:CONDITION_REQUIRED|STOCK_INVALID|STOCK_CONFLICT)\b/.test(raw)) {
+    return "Shopee 상품 상태와 재고를 확인해 주세요. 새 상품·중고 상품을 선택하고 총재고와 창고별 재고를 일치시켜 주세요.";
+  }
+
+  if (/EBAY_SHIPMENT_(?:EXISTING_CONFLICT|WRITE_UNCERTAIN|READBACK_UNAVAILABLE|READBACK_MISMATCH)\b/.test(raw)) {
+    return "eBay의 송장 반영 결과를 먼저 확인해 주세요. 판매자센터에서 운송사·송장번호·주문 품목과 수량을 대조하기 전에는 다시 전송하지 마세요.";
+  }
+  if (/QOO10_UPDATE_SHIPPING_UNVERIFIED\b/.test(raw)) {
+    return "Qoo10 상품의 현재 배송그룹을 확인하지 못해 수정을 중단했습니다. 상품번호·판매자 상품코드·배송정책을 확인한 뒤 다시 조회해 주세요.";
+  }
+  if (/COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED\b/.test(raw)) {
+    return "쿠팡 배송비 유형과 금액을 확인해 주세요. 무료배송·유료배송·조건부 무료배송 설정과 반품 배송비를 모두 맞춰야 등록할 수 있습니다.";
+  }
+  if (/SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED\b/.test(raw)) {
+    return "스마트스토어 배송방법·택배사·배송비와 출고지·반품지를 확인해 주세요. 판매자 계정의 실제 배송정보를 입력한 뒤 등록해 주세요.";
+  }
+  if (/LISTING_SHIPPING_CONFIRMATION_REQUIRED\b/.test(raw)) {
+    return "배송비·배송규칙·포장규칙과 채널별 배송정책을 확인해 주세요. ‘직접 입력 필요’ 항목을 채우고 적용할 배송정책을 확인해야 등록할 수 있습니다.";
+  }
+
   const operationSuccess = raw.match(/^(.+?)\s+((?:categories|listing|price|inventory|orders|shipment)\.[a-z]+)\s+작업이\s+정상\s+응답했습니다\.?$/i);
   if (operationSuccess) return `${operationSuccess[1]} ${operationLabel(operationSuccess[2])}이 완료됐습니다.`;
 
@@ -122,15 +157,18 @@ export function userFacingErrorMessage(input: unknown, fallback = defaultErrorMe
   return polished.slice(0, 240);
 }
 
-export function userNoticeTone(input: unknown): UserNoticeTone {
-  const message = userFacingErrorMessage(input);
+function noticeToneFromMessage(message: string): UserNoticeTone {
   if (isSuccessMessage(message)) return "success";
   if (/못했습니다|실패|오류|거절|맞지 않습니다|사용할 수 없습니다/.test(message)) return "error";
   if (/필요|확인해 주세요|늦어|지연|이미 처리|잠시 후|없습니다/.test(message)) return "warning";
   return "info";
 }
 
+export function userNoticeTone(input: unknown): UserNoticeTone {
+  return noticeToneFromMessage(userFacingErrorMessage(input));
+}
+
 export function userNotice(input: unknown, fallback?: string) {
   const message = userFacingErrorMessage(input, fallback);
-  return { message, tone: userNoticeTone(message) };
+  return { message, tone: noticeToneFromMessage(message) };
 }

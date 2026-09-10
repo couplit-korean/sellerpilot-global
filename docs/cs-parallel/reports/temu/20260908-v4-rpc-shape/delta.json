@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "submission": "20260908-v4-rpc-shape",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+  "branch": "codex/cs-temu-v1",
+  "previousSubmissionFrozen": "docs/cs-parallel/reports/temu/20260908-v3-replay/delta.json",
+  "files": [
+    {
+      "path": "docs/cs-parallel/proposals/temu/patches/temu-006-gateway-rpc-shape.patch",
+      "change": "add-layered-after-v3",
+      "beforeSha256": null,
+      "afterSha256": "cec4b456395cf16cef6bc1ef4262e049d4eeec2656ce3b80d36f78dd1f0d5b45",
+      "reason": "Preserve exact safe Temu retry release-blocker codes through the common gateway completion path."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/temu/tests/temu-006-gateway-rpc-shape.test.ts",
+      "change": "add-proposal-test",
+      "beforeSha256": null,
+      "afterSha256": "9966d39ffce74fefc528291351d4774ebfdcd920c8167f56e9b6735145230d2c",
+      "reason": "Exercise thrown and returned transport failures through the real private callRpc path and compare exact replay arguments."
+    }
+  ],
+  "expectedCommonTransition": {
+    "path": "lib/channels/serverless-gateway.ts",
+    "v3PatchedBeforeSha256": "71aca68aab1b50ab264308637533fd171cd3aa342d465e10555b640e1e8df894",
+    "v4PatchedAfterSha256": "8b857c6d4a7fb171cdb17b6bed75dc856e35c34071557dce5914c479367f4d20"
+  },
+  "verification": {
+    "gatewayRpcShapeTests": { "tests": 3, "passed": 3, "failed": 0 },
+    "proposalTestLint": "passed",
+    "isolatedPatchedIntegrationTypecheck": "passed",
+    "v3ThenV4PatchApplication": "passed"
+  },
+  "external": {
+    "providerApiListReads": 0,
+    "providerApiDetailReads": 0,
+    "providerMutations": 0,
+    "customerReplies": 0,
+    "productionDatabaseChanges": 0,
+    "buyerChatImplemented": false
+  }
+}

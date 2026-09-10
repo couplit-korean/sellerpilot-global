@@ -1,0 +1,126 @@
+{
+  "modules": [
+    {
+      "domain": "product",
+      "channel": "qoo10",
+      "path": "lib/product-registration/channels/qoo10.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "qoo10",
+      "path": "lib/cs/channels/qoo10/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "qoo10",
+      "path": "lib/shipping/channels/qoo10.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "shopee",
+      "path": "lib/product-registration/channels/shopee.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "shopee",
+      "path": "lib/cs/channels/shopee/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "shopee",
+      "path": "lib/shipping/channels/shopee.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "lazada",
+      "path": "lib/product-registration/channels/lazada.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "lazada",
+      "path": "lib/cs/channels/lazada/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "lazada",
+      "path": "lib/shipping/channels/lazada.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "coupang",
+      "path": "lib/product-registration/channels/coupang.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "coupang",
+      "path": "lib/cs/channels/coupang/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "coupang",
+      "path": "lib/shipping/channels/coupang.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "elevenst",
+      "path": "lib/product-registration/channels/elevenst.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "elevenst",
+      "path": "lib/cs/channels/elevenst/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "elevenst",
+      "path": "lib/shipping/channels/elevenst.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "smartstore",
+      "path": "lib/product-registration/channels/smartstore.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "smartstore",
+      "path": "lib/cs/channels/smartstore/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "smartstore",
+      "path": "lib/shipping/channels/smartstore.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "ebay",
+      "path": "lib/product-registration/channels/ebay.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "ebay",
+      "path": "lib/cs/channels/ebay/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "ebay",
+      "path": "lib/shipping/channels/ebay.ts"
+    },
+    {
+      "domain": "product",
+      "channel": "temu",
+      "path": "lib/product-registration/channels/temu.ts"
+    },
+    {
+      "domain": "cs",
+      "channel": "temu",
+      "path": "lib/cs/channels/temu/adapter.ts"
+    },
+    {
+      "domain": "shipping",
+      "channel": "temu",
+      "path": "lib/shipping/channels/temu.ts"
+    }
+  ],
+  "missing": [],
+  "crossChannelDependencies": []
+}

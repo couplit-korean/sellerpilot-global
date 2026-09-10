@@ -1,0 +1,21 @@
+# 공통 변경 요청 lazada-004
+
+- 목적: 빠진 리뷰·사후지원 표면을 공통 inventory에 노출하고, durable DB와 seller binding 배포 뒤에만 CS Bot Push를 활성화한다.
+- 요청 채널: lazada
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-lazada-supplemental-scope/1`
+- 수정할 공통 파일과 함수: `lib/cs/capability-inventory.ts`, 필요 시 공통 timeline/history registration; 운영 단계에서 Lazada CS Bot Push Mechanism
+- 현재 파일 SHA-256: `lib/cs/capability-inventory.ts=a0e72d200e7d7cc6ab22c47c74be31875b3c2a161672467cc53beca0b86f763e`, `app/cs/capability-inventory.tsx=51bb943d42c3ca389a9e5965f186618e991005dcbc025812db661f554033cc97`
+- DB 객체: review/after-sales 구현 시 별도 owner/account/scope ledger 필요. 기존 IM Push는 lazada-003 객체 선행
+- 기존 동작: 공통 Lazada inventory에는 `im`, `im_cards` 두 행만 있다. 앱 콘솔의 CS Bot Push 콜백은 비어 있고 7개 그룹이 모두 미선택이다. Commerce 앱에는 Reverse Order Management가 Active지만 Product Review permission group은 현재 화면에 보이지 않는다.
+- 문제를 재현하는 최소 입력: `csCapabilityInventory.lazada`를 읽으면 review/after-sales 행이 없다.
+- 원하는 동작: 전용 `lazadaSupplementalScopeInventory()`의 두 행을 공통 inventory에 표시한다. review는 permission_pending, reverse-order after-sales는 conditional/not_implemented로 남긴다. Push는 공개 route 배포, raw ledger, exact seller binding, signed Verify 200, 재전달 시험 후 Instant Messaging만 먼저 구독한다.
+- 전용 모듈 경로와 export: `lib/cs/channels/lazada/scope-inventory.ts`의 `lazadaSupplementalScopeInventory`
+- 기존/새 입력·출력 계약: 공통 inventory Lazada 행 2개에서 4개로 증가. 완료 분모에 미구현 두 행을 계속 포함
+- 최소 변경안: 전용 inventory import 후 UI 자동 렌더. review reply는 승인된 review ID/문구에만 허용하고 `/review/seller/reply/add`를 IM reply와 합치지 않는다. reverse cancel/return/refund/reject mutation은 CS read 범위에서 제외한다.
+- 다른 채널 영향: 총 capability 숫자만 증가. 다른 채널 행은 불변
+- 상품/주문/배송 mutation 영향: reverse-order mutation 명시적 제외
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-lazada-scope-inventory.test.ts tests/cs-capability-inventory.test.ts tests/lazada-im-app-binding.test.ts`
+- migration 선행/preimage/ACL 요구: Push 활성화는 lazada-001과 lazada-003 반영 및 운영 route readback 후 진행. 현재 공개 webhook 설정은 변경하지 않는다.
+- 우선순위: 첫 실제 읽기/웹 차단, 추가기능
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

@@ -214,7 +214,7 @@ export async function completeCsWorker({ serviceClient, tokenHash, job, completi
         }
         normalizedInquiries = normalizeChannelInquiries(
           job.channel as ActiveChannelKey,
-          inquiryResult,
+          inquiryResult as unknown as Parameters<typeof normalizeChannelInquiries>[1],
           normalizationTimestamp,
           {
             lazadaRawStorageReady: job.channel === "lazada",

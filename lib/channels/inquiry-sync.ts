@@ -82,7 +82,7 @@ function shopeeNativeMedia(row: Record<string, unknown>) {
   return nativeMedia;
 }
 
-function finalizeInquiry(channel: ActiveChannelKey, inquiry: BaseNormalizedChannelInquiry): NormalizedChannelInquiry {
+function finalizeInquiry(channel: ActiveChannelKey, inquiry: BaseNormalizedChannelInquiry | (BaseNormalizedChannelInquiry & { senderRole?: string })): NormalizedChannelInquiry {
   const remoteMessageId = text(inquiry.remoteMessageId);
   const providerContext = inquiry.providerContext ?? inquiry.replyContext ?? {};
   if (!remoteMessageId) throw new Error(`INQUIRY_REMOTE_MESSAGE_ID_REQUIRED:${channel}`);
@@ -413,13 +413,14 @@ export function normalizeChannelInquiries(
   channel: ActiveChannelKey,
   result: ChannelOperationResult,
   normalizationTimestamp: string,
+  _options?: { lazadaRawStorageReady?: boolean; qoo10Identity?: unknown },
 ): NormalizedChannelInquiry[] {
   const referenceTimestamp = canonicalNormalizationTimestamp(normalizationTimestamp);
   const referenceTimeMs = new Date(referenceTimestamp).getTime();
   const iso = createTimestampNormalizer(referenceTimestamp);
   if (channel === "lazada") {
     const normalized = normalizeLazadaImHistory(result.steps, referenceTimestamp)
-      .map((inquiry) => finalizeInquiry(channel, inquiry));
+      .map((inquiry) => finalizeInquiry(channel, inquiry as unknown as BaseNormalizedChannelInquiry));
     return [...new Map(normalized.map((inquiry) => [inquiry.externalTicketId, inquiry])).values()];
   }
   if (!result.ok || result.channel !== channel || result.operation !== "inquiries.list") {

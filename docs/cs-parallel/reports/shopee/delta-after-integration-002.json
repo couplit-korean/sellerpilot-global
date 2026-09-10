@@ -1,0 +1,75 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "shopee",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-shopee",
+  "createdAt": "2026-09-08T21:28:34+09:00",
+  "integrationBaseline": {
+    "description": "Initial Shopee delta, common gateway continuation, Returns projector connection and one-second history overlap are integrated. This supplemental delta does not modify the integrated workspace.",
+    "gatewayContractSha256": "9b16f3e8cd1b8c4163f45ebe8f248257cc180e35a975447ce6058b5661daa516",
+    "inquirySyncSha256": "c8d1caa1365246db9fbd500a9af97efdd82c630c40d098da13075aa81c24b464",
+    "historyPlanSha256": "ea999c70894a3f6bdfcf250fa885cefe299b46053ab3d1f093dc2f8f4697dd4d",
+    "returnDetailSha256": "f1432daeaaa2f775e55e869df6c75f4f8a4e24ff8db2c9c56e7dab793ea01e76"
+  },
+  "files": [
+    {
+      "path": "lib/channels/cs/shopee/history-progress.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "955d3e9d8f20c53ec43ccdcc5bd15ab50b2fe1417157a888dea34f224c69f63d",
+      "reason": "Project body-free page and interruption events into independent shop-kind scope status, checkpoints, remainder, and exact outcome counts."
+    },
+    {
+      "path": "lib/channels/cs/shopee/detail-revision-reconciliation.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0a5d301cdecf1ed07bbbaf9ce2a17b2d9e4f730254c1ec8668140ddc87cdcaef",
+      "reason": "Preserve stable return ticket identity while attesting legacy revisions and deciding append, duplicate, or reconciliation-required without enabling reply."
+    },
+    {
+      "path": "lib/cs/channels/shopee/history-progress.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "06569b52c709736bf7fef982e2d984f4de10de4163bcbb9f33800442df022eed",
+      "reason": "Provide the strict runtime read schema for the future authenticated API and UI connection."
+    },
+    {
+      "path": "tests/fixtures/cs/shopee/history-resume.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "e0e85f4af53863ace8763193e6fe8e683adbc736a24e06a982356064b6368675",
+      "reason": "Supply synthetic, customer-body-free review and Returns interruption/resume evidence with an independently expired shop."
+    },
+    {
+      "path": "tests/cs-shopee-history-progress.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1966c3cf0202f155868e186d9f6d7d0b3b500b766660fa985da4432be1340380",
+      "reason": "Verify shop isolation, 10-plus-1 detail resume, replay idempotence, same comment ID isolation, invalid continuation rejection, and revision reconciliation."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/shopee/shopee-004-history-progress-reconciliation-connection.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "bda8295f7feb44105934d8449bf804400aa03991b07a430ddf7a21f47dde6407",
+      "reason": "Specify exact common preimages and the minimal DB, API, UI, expired-token isolation, refresh CAS, and detailRevision connection."
+    },
+    {
+      "path": "docs/cs-parallel/reports/shopee/status.md",
+      "change": "modify",
+      "beforeSha256": "fa42c86b5d41d476caa1b1a58843c631884a0e4ab7be8b1320b71baf06786759",
+      "afterSha256": "99814310f5fa749e8478c74f7d1f62d6303b356820d9d250f49b8263523a8093",
+      "reason": "Separate supplemental code evidence from actual read, historical web, new receive, reply observation, and operations state."
+    }
+  ],
+  "testEvidence": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "focusedTests": "12/12 passed",
+    "eslint": "passed",
+    "typescriptNoEmit": "passed",
+    "diffCheck": "passed",
+    "providerReadPerformed": false,
+    "credentialRefreshPerformed": false,
+    "productionDatabaseMutation": false,
+    "customerReplyPerformed": false
+  }
+}

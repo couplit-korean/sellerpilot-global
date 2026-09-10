@@ -1,121 +1,31 @@
+import { completeShippingWorker, type ShippingWorkerCompletion } from "../../../../../lib/shipping/worker-completion";
+import { isShippingOperation } from "../../../../../lib/shipping/contracts";
+import { completeCsWorker, completeCsWorkerRetry, type CsWorkerCompletion } from "../../../../../lib/cs/operations/worker-completion";
+import { completeCommerceWorker } from "../../../../../lib/channels/commerce-worker-completion";
+import { isCsOperation } from "../../../../../lib/cs/operations/contracts";
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import {
-  gatewayJobCompletionStatusAtJobBoundary,
-  gatewayWorkerCompletionSchema,
-} from "../../../../../lib/channels/gateway-contract";
-import { normalizeChannelInquiries } from "../../../../../lib/channels/inquiry-sync";
-import { normalizeChannelOrders } from "../../../../../lib/channels/order-sync";
-import type { ActiveChannelKey } from "../../../../../lib/channels/catalog";
-import type { ChannelOperationResult } from "../../../../../lib/channels/operations";
+import { gatewayWorkerCompletionSchema } from "../../../../../lib/channels/gateway-contract";
 import { supabaseUrl } from "../../../../../lib/supabase/config";
-import { dispatchPendingPushNotifications } from "../../../../../lib/push-notifications";
-import {
-  createBoundedSupabaseFetch,
-  workerRpcErrorMessage,
-  workerRpcErrorStatus,
-} from "../../../../../lib/worker-rpc";
+import { createBoundedSupabaseFetch, workerRpcErrorMessage, workerRpcErrorStatus } from "../../../../../lib/worker-rpc";
 
 export const runtime = "nodejs";
 
-const listingLineageChannels = new Set(["qoo10", "shopee", "lazada", "ebay"]);
-const listingLineageCompletionSchema = z.object({
-  status: z.enum(["bound", "queued", "manual_required", "lease_lost"]),
-  job_id: z.string().uuid(),
-  listing_id: z.string().uuid().optional(),
-  reused: z.boolean().optional(),
-  reason: z.string().max(80).optional(),
-}).strip();
-
-type ListingLineageWorkerResult = {
-  ok: true;
-  channel: "qoo10" | "shopee" | "lazada" | "ebay";
-  operation: "listing.lineage.verify";
-  verificationStatus: "verified" | "manual_required";
-  evidence: {
-    expectedRemoteId: string;
-    verifiedRemoteId: string | null;
-    market: string;
-    targetId: string;
-    evidenceVersion: "provider_listing_readback_rebind_v1";
-    marketplaceSku?: string;
-    providerResourceId?: string;
-    shopeeAdoption?: {
-      contract: "sellerpilot_shopee_sg_existing_adoption_readback_v1";
-      itemId: "53717126190";
-      sku: "QA-20260823-CC-001";
-      merchantId: "5511564";
-      shopId: "1719148844";
-      market: "SG";
-      locale: "en-SG";
-      currency: "SGD";
-      price: number;
-      providerStatus: "UNLIST";
-      galleryImageCount: number;
-      detailImageCount: 8;
-      representativeImageVerified: true;
-      titleLanguageVerified: true;
-      descriptionLanguageVerified: true;
-      titleDigest: string;
-      descriptionDigest: string;
-    };
-    reasonCode?: "EBAY_MARKETPLACE_SKU_MISSING" | "EBAY_OFFER_AMBIGUOUS";
-  };
-};
-
-function listingLineageFailureReason(message: string) {
-  if (message.includes("PROVIDER_ACCOUNT_IDENTITY_MISSING")) return "legacy_main_reconnect_required";
-  if (/PROVIDER_ACCOUNT_IDENTITY_MISMATCH|ACCOUNT_IDENTITY_VERIFICATION_FAILED/.test(message)) return "provider_identity_mismatch";
-  if (/SHOP_NOT_AUTHORIZED|TARGET_MISMATCH/.test(message)) return "target_mismatch";
-  if (message.includes("MARKET_MISMATCH")) return "market_mismatch";
-  if (message.includes("MARKETPLACE_SKU_MISSING")) return "marketplace_sku_missing";
-  if (message.includes("PROVIDER_RESOURCE_MISSING")) return "provider_resource_missing";
-  if (message.includes("OFFER_AMBIGUOUS")) return "provider_resource_ambiguous";
-  if (message.includes("REMOTE_ID_MISMATCH")) return "remote_id_mismatch";
-  if (/NOT_FOUND|404/.test(message)) return "provider_not_found";
-  return "provider_readback_rejected";
+function completionPayloadBytes(value: unknown) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), "utf8");
+  } catch {
+    return null;
+  }
 }
 
-function listingLineageFailurePayload(channel: string, reason: string) {
-  return {
-    ok: false,
-    channel,
-    operation: "listing.lineage.verify",
-    evidenceVersion: "provider_listing_readback_v1",
-    reason,
-  };
-}
-
-function listingLineageSuccessPayload(result: ListingLineageWorkerResult) {
-  const evidence = result.evidence;
-  return {
-    ok: true,
-    channel: result.channel,
-    operation: result.operation,
-    evidenceVersion: "provider_listing_readback_v1",
-    expectedRemoteId: evidence.expectedRemoteId,
-    verifiedRemoteId: evidence.verifiedRemoteId,
-    market: evidence.market,
-    targetId: evidence.targetId,
-    verification: "exact_provider_readback",
-    ...(result.channel === "ebay" && evidence.marketplaceSku && evidence.providerResourceId
-      ? {
-        marketplaceSku: evidence.marketplaceSku,
-        providerResourceId: evidence.providerResourceId,
-      }
-      : {}),
-    ...(result.channel === "shopee" && evidence.shopeeAdoption
-      ? { shopeeAdoption: evidence.shopeeAdoption }
-      : {}),
-  };
-}
-
-function completionNormalizationTimestamp(value: unknown) {
-  if (typeof value !== "string" || !value.trim()) return null;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+function completionSchemaDiagnostics(error: z.ZodError) {
+  return error.issues.slice(0, 12).map((issue) => ({
+    path: issue.path,
+    code: issue.code,
+  }));
 }
 
 export async function POST(request: Request) {
@@ -132,14 +42,30 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
   }
-  const parsed = gatewayWorkerCompletionSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
+  const completionPayload = await request.json().catch(() => null);
+  const parsed = gatewayWorkerCompletionSchema.safeParse(completionPayload);
+  if (!parsed.success) {
+    console.error("channel gateway completion payload rejected", {
+      payloadBytes: completionPayloadBytes(completionPayload),
+      issues: completionSchemaDiagnostics(parsed.error),
+    });
+    return NextResponse.json({ message: "채널 작업 완료 형식이 올바르지 않습니다." }, { status: 400 });
+  }
 
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { fetch: createBoundedSupabaseFetch() },
   });
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
+
+  // The retry RPC authenticates the exact worker token/job/claim and owns the
+  // queued-state replay contract. Run it before the generic completion
+  // snapshot so a lost HTTP response can safely re-enter with the old claim.
+  if (parsed.data.status === "failed" && parsed.data.retryContinuation) {
+    const retryResponse = await completeCsWorkerRetry(serviceClient, tokenHash, parsed.data as CsWorkerCompletion);
+    if (retryResponse) return retryResponse;
+  }
+
   const { data: snapshot, error: snapshotError } = await serviceClient.rpc("sellerpilot_service_gateway_completion_context", {
     p_token_hash: tokenHash,
     p_job_id: parsed.data.jobId,
@@ -157,185 +83,8 @@ export async function POST(request: Request) {
   if (!job || (job.status !== "running" && job.status !== "completed_replay")) {
     return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
   }
-  const normalizationTimestamp = completionNormalizationTimestamp(job.normalization_timestamp);
-  const publicationVerificationBoundary = completionNormalizationTimestamp(
-    job.publication_verification_boundary,
-  );
-  const succeededResult = parsed.data.status === "succeeded" ? parsed.data.result : null;
-  const succeededResultRecord = succeededResult as unknown as Record<string, unknown> | null;
-  const effectiveCompletionStatus = gatewayJobCompletionStatusAtJobBoundary(
-    parsed.data.status,
-    succeededResultRecord,
-    publicationVerificationBoundary,
-  );
-  const effectiveCompletionError = effectiveCompletionStatus === "reconciliation_required"
-      && parsed.data.status === "succeeded"
-    ? "LISTING_REMOTE_STATE_PROVIDER_MUTATION_BOUNDARY_MISMATCH"
-    : parsed.data.status === "succeeded"
-      ? null
-      : parsed.data.error;
-
-  let storedResponse: Record<string, unknown> | null = null;
-  let normalizedOrders: ReturnType<typeof normalizeChannelOrders> | null = null;
-  let normalizedInquiries: ReturnType<typeof normalizeChannelInquiries> | null = null;
-  const completionResult = parsed.data.status === "succeeded"
-    ? parsed.data.result
-    : parsed.data.status === "reconciliation_required"
-      ? parsed.data.result
-      : undefined;
-  if (completionResult
-      && (job.channel !== completionResult.channel || job.operation !== completionResult.operation)) {
-    return NextResponse.json({ message: "채널 작업 결과가 요청과 일치하지 않습니다." }, { status: 409 });
-  }
-  const oauthResult = parsed.data.status === "succeeded" && parsed.data.result.operation === "oauth.exchange"
-    ? parsed.data.result
-    : null;
-  const credentialRefresh = parsed.data.credentialRefresh;
-  if (credentialRefresh
-      && job.channel !== "shopee"
-      && job.channel !== "lazada"
-      && job.channel !== "ebay") {
-    return NextResponse.json({ message: "이 채널에는 OAuth 인증값 갱신을 적용할 수 없습니다." }, { status: 409 });
-  }
-
-  if (parsed.data.status === "succeeded") {
-    if (parsed.data.result.operation === "orders.list") {
-      const orderResult = parsed.data.result as ChannelOperationResult;
-      if (orderResult.ok) {
-        if (!normalizationTimestamp) {
-          console.error("channel gateway order completion has no stable normalization timestamp");
-          return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
-        }
-        normalizedOrders = normalizeChannelOrders(
-          job.channel as ActiveChannelKey,
-          orderResult,
-          normalizationTimestamp,
-        );
-      }
-    }
-    if (parsed.data.result.operation === "inquiries.list") {
-      const inquiryResult = parsed.data.result as ChannelOperationResult;
-      if (inquiryResult.ok) {
-        if (!normalizationTimestamp) {
-          console.error("channel gateway inquiry completion has no stable normalization timestamp");
-          return NextResponse.json({ message: workerRpcErrorMessage(503) }, { status: 503 });
-        }
-        normalizedInquiries = normalizeChannelInquiries(
-          job.channel as ActiveChannelKey,
-          inquiryResult,
-          normalizationTimestamp,
-        );
-      }
-    }
-    storedResponse = oauthResult
-      ? { ok: true, channel: oauthResult.channel, operation: oauthResult.operation, safeMessage: oauthResult.safeMessage }
-      : parsed.data.result;
-  } else if (parsed.data.status === "reconciliation_required" && parsed.data.result) {
-    storedResponse = parsed.data.result;
-  }
-
-  if (job.operation === "listing.lineage.verify") {
-    if (!listingLineageChannels.has(String(job.channel))) {
-      return NextResponse.json({ message: "상품 계보 검증 채널이 현재 작업과 일치하지 않습니다." }, { status: 409 });
-    }
-
-    let lineageStatus: "succeeded" | "failed" | "retryable";
-    let lineagePayload: Record<string, unknown> | null;
-    let lineageError: string | null = null;
-    if (parsed.data.status === "succeeded") {
-      const lineageResult = parsed.data.result as ListingLineageWorkerResult;
-      if (lineageResult.operation !== "listing.lineage.verify"
-          || lineageResult.channel !== job.channel) {
-        return NextResponse.json({ message: "상품 계보 검증 결과가 현재 작업과 일치하지 않습니다." }, { status: 409 });
-      }
-      if (lineageResult.verificationStatus === "verified") {
-        lineageStatus = "succeeded";
-        lineagePayload = listingLineageSuccessPayload(lineageResult);
-      } else {
-        const reason = lineageResult.evidence.reasonCode === "EBAY_MARKETPLACE_SKU_MISSING"
-          ? "marketplace_sku_missing"
-          : "provider_resource_ambiguous";
-        lineageStatus = "failed";
-        lineagePayload = listingLineageFailurePayload(String(job.channel), reason);
-        lineageError = reason;
-      }
-    } else if (parsed.data.status === "reconciliation_required") {
-      lineageStatus = "retryable";
-      lineagePayload = null;
-      lineageError = "provider_readback_retryable";
-    } else {
-      const reason = listingLineageFailureReason(parsed.data.error);
-      lineageStatus = "failed";
-      lineagePayload = listingLineageFailurePayload(String(job.channel), reason);
-      lineageError = reason;
-    }
-
-    const { data: lineageData, error: lineageCompletionError } = await serviceClient.rpc(
-      "sellerpilot_complete_listing_lineage_verification",
-      {
-        p_token_hash: tokenHash,
-        p_job_id: parsed.data.jobId,
-        p_claim_token: parsed.data.claimToken,
-        p_status: lineageStatus,
-        p_response_payload: lineagePayload,
-        p_error_message: lineageError,
-      },
-    );
-    const lineageCompletion = listingLineageCompletionSchema.safeParse(lineageData);
-    if (lineageCompletionError || !lineageCompletion.success
-        || lineageCompletion.data.job_id !== parsed.data.jobId) {
-      const status = lineageCompletionError ? workerRpcErrorStatus(lineageCompletionError) : 503;
-      console.error("listing lineage verification completion RPC failed", {
-        code: lineageCompletionError?.code ?? "invalid_contract",
-        status,
-      });
-      return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
-    }
-    if (lineageCompletion.data.status === "lease_lost") {
-      return NextResponse.json({ message: "실행 중인 상품 계보 검증 claim이 만료됐습니다." }, { status: 409 });
-    }
-    return NextResponse.json({
-      message: lineageCompletion.data.status === "bound"
-        ? "원격 상품과 판매자 계정 계보를 정확히 확인해 결속했습니다."
-        : lineageCompletion.data.status === "queued"
-          ? "읽기 전용 상품 계보 검증을 안전하게 다시 대기열에 등록했습니다."
-          : "원격 상품 계보를 자동 확정하지 않고 수동 확인 상태로 보존했습니다.",
-    });
-  }
-
-  const diagnostic = parsed.data.status === "succeeded"
-    && parsed.data.result.operation === "diagnostic.test"
-    ? parsed.data.result.diagnostic
-    : null;
-  const { data, error } = await serviceClient.rpc("sellerpilot_service_complete_gateway_transaction", {
-    p_token_hash: tokenHash,
-    p_job_id: parsed.data.jobId,
-    p_claim_token: parsed.data.claimToken,
-    p_status: effectiveCompletionStatus,
-    p_response_payload: storedResponse,
-    p_error_message: effectiveCompletionError,
-    p_credential_refresh: credentialRefresh ?? null,
-    p_normalized_orders: normalizedOrders,
-    p_normalized_inquiries: normalizedInquiries,
-    p_diagnostic: diagnostic,
-  });
-  if (error) {
-    const status = workerRpcErrorStatus(error);
-    console.error("channel gateway final completion RPC failed", { code: error.code ?? "unknown", status });
-    return NextResponse.json({ message: workerRpcErrorMessage(status) }, { status });
-  }
-  const completion = data && typeof data === "object" && !Array.isArray(data)
-    ? data as Record<string, unknown>
-    : null;
-  if (completion?.status !== "completed") {
-    return NextResponse.json({ message: "실행 중인 채널 작업과 완료 요청이 일치하지 않습니다." }, { status: 409 });
-  }
-  if (job.operation === "orders.list" && parsed.data.status === "succeeded") {
-    await dispatchPendingPushNotifications(serviceClient).catch(() => null);
-  }
-  return NextResponse.json({
-    message: effectiveCompletionStatus === "reconciliation_required"
-      ? "채널 작업을 수동 확인 필요 상태로 안전하게 보존했습니다."
-      : "채널 작업 결과가 안전하게 저장됐습니다.",
-  });
+  return isCsOperation(String(job.operation))
+    ? completeCsWorker({ serviceClient, tokenHash, job, completion: parsed.data as CsWorkerCompletion })
+    : isShippingOperation(String(job.operation)) ? completeShippingWorker({ serviceClient, tokenHash, job, completion: parsed.data as ShippingWorkerCompletion })
+    : completeCommerceWorker({ serviceClient, tokenHash, job, completion: parsed.data });
 }

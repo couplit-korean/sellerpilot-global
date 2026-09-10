@@ -1,11 +1,43 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+
+test("Shopee inquiry gateway preserves review and return continuation boundaries", () => {
+  const accepts = (args: Record<string, unknown>, channel = "shopee", operation = "inquiries.list") => gatewayWorkerCompletionSchema.safeParse({
+    jobId: "00000000-0000-4000-8000-000000000001",
+    claimToken: "00000000-0000-4000-8000-000000000002",
+    status: "succeeded",
+    result: { ok: true, channel, operation, safeMessage: "next page",
+      steps: [{ name: "inquiries", ok: true, status: 200, data: {} }],
+      continuation: { reason: "page_cap_reached", arguments: { sellerpilotPaginationDepth: 1, ...args } } },
+  }).success;
+  const review = { kind: "product_review", cursor: "cursor-4", pageSize: 100 };
+  const returns = { kind: "return_refund", createTimeFrom: 1_700_000_000,
+    createTimeTo: 1_700_000_000 + 15 * 86_400, pageNo: 2, pageSize: 100 };
+  assert.equal(accepts(review), true);
+  assert.equal(accepts(returns), true);
+  assert.equal(accepts({ ...returns, returnQueue: ["RETURN_11"], nextPageNo: 2 }), true);
+  assert.equal(accepts({ ...returns, returnQueue: ["RETURN_11"] }), true);
+  for (const patch of [{ cursor: " " }, { cursor: "a".repeat(501) }, { pageSize: 101 },
+    { sellerpilotPaginationDepth: 51 }, { sellerpilotPaginationEpoch: -1 },
+    { sellerpilotPaginationTrail: ["invalid"] }]) {
+    assert.equal(accepts({ ...review, ...patch }), false);
+  }
+  for (const patch of [{ returnQueue: [] }, { returnQueue: ["a", "a"] },
+    { returnQueue: ["a"], nextPageNo: 3 }, { nextPageNo: 2 },
+    { createTimeTo: returns.createTimeTo + 1 }, { createTimeFrom: returns.createTimeTo },
+    { returnQueue: ["a", "b"], pageSize: 1 }, { pageNo: 0 }]) {
+    assert.equal(accepts({ ...returns, ...patch }), false);
+  }
+  assert.equal(accepts(review, "qoo10"), false);
+  assert.equal(accepts(review, "shopee", "inquiries.reply"), false);
+});
 import {
   gatewayClaimSchema,
   gatewayCredentialRefreshLifecycleSchema,
   gatewayJobCompletionStatus,
   gatewayJobCompletionStatusAtJobBoundary,
   gatewayResultHasObservedMutation,
+  gatewayResultRequiresAdditionalEvidence,
   gatewayWorkerCompletionSchema,
 } from "../lib/channels/gateway-contract";
 import {
@@ -114,6 +146,27 @@ test("eBay inventory PUT is treated as an observed listing update mutation", () 
     { name: "inventory-item-update", ok: true, status: 204 },
     { name: "offer-update", ok: false, status: 503 },
   ]), "reconciliation_required");
+});
+
+test("failed publication verification remains reconciliation-required for durable evidence", () => {
+  assert.equal(gatewayJobCompletionStatus("listing.publication.verify", false, [
+    { name: "seller-product-publication-reverification", ok: true, status: 200 },
+    { name: "publication-content-verification", ok: false, status: 422 },
+  ]), "reconciliation_required");
+});
+
+test("successful listing API results with missing evidence cannot complete the listing ledger", () => {
+  const steps = [{ name: "product-publication-readback", ok: true, status: 200,
+    data: { sellerpilotAdditionalEvidenceRequired: true } }];
+  for (const operation of ["listing.create", "listing.update", "listing.publication.verify"]) {
+    assert.equal(gatewayJobCompletionStatus(operation, true, steps), "reconciliation_required");
+  }
+  for (const operation of ["orders.list", "inquiries.list", "shipment.confirm"]) {
+    assert.equal(gatewayJobCompletionStatus(operation, true, steps), "succeeded");
+  }
+  assert.equal(gatewayResultRequiresAdditionalEvidence([null, [], { data: null }, { data: [] }]), false);
+  assert.equal(gatewayResultRequiresAdditionalEvidence([{ data: { sellerpilotAdditionalEvidenceRequired: "true" } }]), false);
+  assert.equal(gatewayJobCompletionStatus("listing.create", true, [{ ...steps[0], data: {} }]), "succeeded");
 });
 
 test("verified listing exposure remains attached to the reconciliation completion", () => {
@@ -700,6 +753,11 @@ test("successful listing completion is reconciled unless readback is at the prov
     result,
     "2026-08-29T20:00:00.000Z",
   ), "succeeded");
+  assert.equal(gatewayJobCompletionStatusAtJobBoundary(
+    "succeeded",
+    { ...result, steps: [{ data: { sellerpilotAdditionalEvidenceRequired: true } }] },
+    "2026-08-29T20:00:00.000Z",
+  ), "reconciliation_required", "fresh remote state cannot override remaining verification evidence");
   assert.equal(gatewayJobCompletionStatusAtJobBoundary(
     "succeeded",
     result,

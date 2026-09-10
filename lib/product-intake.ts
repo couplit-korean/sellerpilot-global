@@ -68,6 +68,96 @@ export const productEditSchema = z.object({
   stock: z.number().int().min(0, "실재고는 0개 이상이어야 합니다.").max(999_999),
 }).superRefine(refineProductIntake);
 
+const productIntakeDraftShape = {
+  researchInput: z.string().max(12_000),
+  productName: z.string().max(160),
+  sellerSku: z.string().max(100),
+  categoryHint: z.string().max(120),
+  brandName: z.string().max(120),
+  manufacturer: z.string().max(160),
+  countryOfOrigin: z.string().max(80),
+  material: z.string().max(500),
+  packageContents: z.string().max(500),
+  condition: z.enum(productConditions),
+  gtinStatus: z.enum(["HAS_GTIN", "NO_GTIN"]),
+  gtin: z.string().max(14),
+  sellingPrice: z.number().finite().min(0).max(1_000_000_000),
+  currency: z.enum(productCurrencies),
+  stock: z.number().int().min(0).max(999_999),
+  weightKg: z.number().finite().min(0).max(1_000),
+  packageLengthCm: z.number().finite().min(0).max(10_000),
+  packageWidthCm: z.number().finite().min(0).max(10_000),
+  packageHeightCm: z.number().finite().min(0).max(10_000),
+  shippingFeeKrw: z.number().finite().min(0).max(100_000_000),
+  shippingRule: z.string().max(1_000),
+  packagingRule: z.string().max(1_000),
+  description: z.string().max(4_000),
+  productUrl: z.string().max(1_000),
+  imageRightsConfirmed: z.boolean(),
+  productFactsConfirmed: z.boolean(),
+};
+
+/**
+ * Server draft validation deliberately accepts incomplete values. Publication and
+ * product creation must continue to use productIntakeSchema/productEditSchema.
+ */
+export const productIntakeDraftSchema = z.object(productIntakeDraftShape).strict();
+
+export const productIntakeDraftDecisionsSchema = z.object({
+  condition: z.boolean(),
+  gtinStatus: z.boolean(),
+  currency: z.boolean(),
+  shippingFeeKrw: z.boolean(),
+}).strict();
+
+export const emptyProductIntakeDraftDecisions = {
+  condition: false,
+  gtinStatus: false,
+  currency: false,
+  shippingFeeKrw: false,
+} as const;
+
+export function isProductIntakePublicationReady(
+  value: unknown,
+  decisions: ProductIntakeDraftDecisions,
+) {
+  return productIntakeSchema.safeParse(value).success
+    && decisions.condition
+    && decisions.gtinStatus
+    && decisions.currency
+    && decisions.shippingFeeKrw;
+}
+
+const productIntakeDraftFieldSchema = z.enum([
+  "researchInput", "productName", "sellerSku", "categoryHint", "brandName", "manufacturer",
+  "countryOfOrigin", "material", "packageContents", "condition", "gtinStatus", "gtin",
+  "sellingPrice", "currency", "stock", "weightKg", "packageLengthCm", "packageWidthCm",
+  "packageHeightCm", "shippingFeeKrw", "shippingRule", "packagingRule", "description", "productUrl",
+  "imageRightsConfirmed", "productFactsConfirmed",
+]);
+
+const productIntakeDraftImageSelectionSchema = z.object({
+  role: z.string().trim().min(1).max(40),
+  name: z.string().trim().min(1).max(240),
+  mediaType: z.string().trim().min(1).max(100),
+  bytes: z.number().int().min(1).max(maximumStudioSourceImageBytes),
+  originalWidth: z.number().int().min(1).max(maximumStudioSourceImageDimension),
+  originalHeight: z.number().int().min(1).max(maximumStudioSourceImageDimension),
+  uploadedPath: z.string().trim().min(1).max(400).refine(
+    (value) => !value.includes("..") && !/^(?:blob:|data:|https?:|\/)/i.test(value),
+    "업로드 원장 안의 상대 저장 경로만 초안에 보관할 수 있습니다.",
+  ).nullable(),
+}).strict();
+
+export const productRegistrationIntakeDraftSchema = z.object({
+  schemaVersion: z.literal(1),
+  intake: productIntakeDraftSchema,
+  decisions: productIntakeDraftDecisionsSchema,
+  userEditedFields: z.array(productIntakeDraftFieldSchema).max(productIntakeDraftFieldSchema.options.length),
+  imageSelections: z.array(productIntakeDraftImageSelectionSchema).max(100),
+  researchJobId: z.string().uuid().nullable(),
+}).strict();
+
 export const normalizedProductImageSpecSchema = z.object({
   name: z.string().trim().min(1).max(240),
   role: z.string().trim().min(1).max(40),
@@ -102,10 +192,9 @@ export const sourcePreservingProductImageSpecSchema = normalizedProductImageSpec
 export type ProductIntakeFields = z.infer<typeof productIntakeSchema>;
 export type NormalizedProductImageSpec = z.infer<typeof normalizedProductImageSpecSchema>;
 export type SourcePreservingProductImageSpec = z.infer<typeof sourcePreservingProductImageSpecSchema>;
-export type ProductIntakeDraft = Omit<ProductIntakeFields, "imageRightsConfirmed" | "productFactsConfirmed"> & {
-  imageRightsConfirmed: boolean;
-  productFactsConfirmed: boolean;
-};
+export type ProductIntakeDraft = z.infer<typeof productIntakeDraftSchema>;
+export type ProductIntakeDraftDecisions = z.infer<typeof productIntakeDraftDecisionsSchema>;
+export type ProductRegistrationIntakeDraft = z.infer<typeof productRegistrationIntakeDraftSchema>;
 
 export const emptyProductIntake: ProductIntakeDraft = {
   researchInput: "",

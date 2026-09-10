@@ -1,0 +1,62 @@
+{
+  "contract": "sellerpilot-lazada-local-verification/1",
+  "checkedAt": "2026-09-08T10:23:21.000Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "nodeVersion": "v22.23.2",
+    "port": 3216
+  },
+  "checks": [
+    {
+      "name": "focused Lazada tests plus supplemental scope",
+      "exitCode": 0,
+      "passed": 108,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 7993.500834
+    },
+    {
+      "name": "TypeScript noEmit",
+      "exitCode": 0,
+      "durationSeconds": 11.216418458
+    },
+    {
+      "name": "ESLint owned modified files",
+      "exitCode": 0,
+      "durationSeconds": 3.799308208
+    },
+    {
+      "name": "Next development UI on localhost:3216",
+      "exitCode": 0,
+      "httpStatus": 200,
+      "title": "SellerPilot | 멀티채널 커머스 운영센터",
+      "errorOverlayCount": 0,
+      "consoleErrorCount": 0,
+      "visibleState": "운영센터 로그인",
+      "authenticatedCsUiObserved": false,
+      "reason": "S0 correctly omitted environment secrets and no session was copied into the isolated browser."
+    }
+  ],
+  "intermediateRegressionFindings": [
+    {
+      "exitCode": 1,
+      "failureCount": 1,
+      "finding": "An official-session seller event still displayed a customer label.",
+      "resolution": "Seller account type now takes precedence over the official-session tag."
+    },
+    {
+      "exitCode": 1,
+      "failureCount": 1,
+      "finding": "The pre-existing seller-label expectation encoded the old customer label.",
+      "resolution": "The owned regression fixture now requires the seller label; the final focused and full runs pass."
+    }
+  ],
+  "vinextAttempt": {
+    "started": false,
+    "reason": "vite.config.ts imports .openai/hosting.json, which S0 intentionally omitted.",
+    "workaroundUsed": "Next.js 16.3.1 development server with webpack",
+    "sharedConfigModified": false
+  },
+  "serverStoppedAfterVerification": true
+}

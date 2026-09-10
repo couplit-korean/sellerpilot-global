@@ -13,10 +13,7 @@ import {
   listingPublicationLanguageVerified,
   normalizedListingPublicationText,
 } from "./listing-publication-content";
-import {
-  qoo10ExactLocalizationRecoveryIdentity,
-  qoo10ExactLocalizedUpdate,
-} from "./qoo10-exact-localization-recovery";
+
 
 export const qoo10S1ActivationContract = "qoo10_s1_activation_v1" as const;
 export const qoo10S1ActivationArgument = "sellerpilotQoo10S1Activation" as const;
@@ -153,41 +150,41 @@ export function qoo10S1ActivationBinding(argumentsValue: ActivationArguments): Q
     "originType", "originCode", "adultYn",
   ])) return null;
   if (marker.status !== "allowed"
-      || marker.contract !== qoo10S1ActivationContract
-      || marker.providerStatus !== "S1"
-      || !uuid(marker.listingId)
-      || !uuid(marker.sourceJobId)
-      || !uuid(marker.verifierJobId)
-      || !exactString(marker.remoteId, /^\d{9,10}$/u, 10)
-      || !sha256(marker.verifierResponseSha256)
-      || (marker.sourceRequestFingerprint !== undefined
-        && !sha256(marker.sourceRequestFingerprint))
-      || !isoTimestamp(marker.verifierCompletedAt)
-      || !exactString(expected.categoryCode, /^\d{9}$/u, 9)
-      || !positiveInteger(expected.retailPriceJpy, 999_999_999)
-      || !positiveInteger(expected.sellPriceJpy, 999_999_999)
-      || Number(expected.sellPriceJpy) > Number(expected.retailPriceJpy)
-      || !positiveInteger(expected.quantity, 99_999_999)
-      || !exactString(expected.shippingNo, /^\d{1,20}$/u, 20)
-      || !positiveInteger(expected.biContentsNo, Number.MAX_SAFE_INTEGER)
-      || Number(expected.biContentsNo) < 100_000
-      || !["1", "2", "3"].includes(String(expected.originType))
-      || !exactString(expected.originCode, /^[A-Za-z0-9_-]{1,80}$/u, 80)
-      || !["Y", "N"].includes(String(expected.adultYn))
-      || !exactString(marker.expectedTitle, /^.{1,100}$/u, 100)
-      || typeof marker.expectedKeyword !== "string"
-      || marker.expectedKeyword.length > 500
-      || typeof marker.expectedPromotionName !== "string"
-      || marker.expectedPromotionName.length > 100
-      || typeof marker.expectedIndustrialCode !== "string"
-      || marker.expectedIndustrialCode.length > 100
-      || !sha256(marker.expectedDetailHtmlSha256)
-      || !Array.isArray(images)
-      || images.length !== 8
-      || new Set(images).size !== images.length
-      || !images.every(safeHttpsUrl)
-      || (marker.expectedSellerCode !== undefined
-        && !exactString(marker.expectedSellerCode, /^.{1,100}$/u, 100))) return null;
+    || marker.contract !== qoo10S1ActivationContract
+    || marker.providerStatus !== "S1"
+    || !uuid(marker.listingId)
+    || !uuid(marker.sourceJobId)
+    || !uuid(marker.verifierJobId)
+    || !exactString(marker.remoteId, /^\d{9,10}$/u, 10)
+    || !sha256(marker.verifierResponseSha256)
+    || (marker.sourceRequestFingerprint !== undefined
+      && !sha256(marker.sourceRequestFingerprint))
+    || !isoTimestamp(marker.verifierCompletedAt)
+    || !exactString(expected.categoryCode, /^\d{9}$/u, 9)
+    || !positiveInteger(expected.retailPriceJpy, 999_999_999)
+    || !positiveInteger(expected.sellPriceJpy, 999_999_999)
+    || Number(expected.sellPriceJpy) > Number(expected.retailPriceJpy)
+    || !positiveInteger(expected.quantity, 99_999_999)
+    || !exactString(expected.shippingNo, /^\d{1,20}$/u, 20)
+    || !positiveInteger(expected.biContentsNo, Number.MAX_SAFE_INTEGER)
+    || Number(expected.biContentsNo) < 100_000
+    || !["1", "2", "3"].includes(String(expected.originType))
+    || !exactString(expected.originCode, /^[A-Za-z0-9_-]{1,80}$/u, 80)
+    || !["Y", "N"].includes(String(expected.adultYn))
+    || !exactString(marker.expectedTitle, /^.{1,100}$/u, 100)
+    || typeof marker.expectedKeyword !== "string"
+    || marker.expectedKeyword.length > 500
+    || typeof marker.expectedPromotionName !== "string"
+    || marker.expectedPromotionName.length > 100
+    || typeof marker.expectedIndustrialCode !== "string"
+    || marker.expectedIndustrialCode.length > 100
+    || !sha256(marker.expectedDetailHtmlSha256)
+    || !Array.isArray(images)
+    || images.length !== 8
+    || new Set(images).size !== images.length
+    || !images.every(safeHttpsUrl)
+    || (marker.expectedSellerCode !== undefined
+      && !exactString(marker.expectedSellerCode, /^.{1,100}$/u, 100))) return null;
   return structuredClone(marker) as Qoo10S1ActivationBinding;
 }
 
@@ -259,12 +256,12 @@ function qoo10RepresentativeImageMatchesContentId(value: unknown, expectedConten
   try {
     const url = new URL(value);
     if (url.protocol !== "https:"
-        || url.hostname !== "gd.image-qoo10.jp"
-        || url.port
-        || url.username
-        || url.password
-        || url.search
-        || url.hash) return false;
+      || url.hostname !== "gd.image-qoo10.jp"
+      || url.port
+      || url.username
+      || url.password
+      || url.search
+      || url.hash) return false;
     const match = url.pathname.match(
       /^\/li\/(\d{3})\/(\d{3})\/([1-9]\d{5,19})(?:\.g(?:_[a-z0-9-]+)*)?\.jpg$/u,
     );
@@ -391,14 +388,14 @@ export function qoo10ProviderKeywordMatches(
   if (providerKeyword === sourceKeyword) return true;
   const title = exactTitle.trim();
   if (!title
-      || sourceKeyword !== sourceKeyword.trim()
-      || providerKeyword !== providerKeyword.trim()) return false;
+    || sourceKeyword !== sourceKeyword.trim()
+    || providerKeyword !== providerKeyword.trim()) return false;
   const sourceTerms = sourceKeyword.split(",").map((term) => term.trim());
   const providerTerms = providerKeyword.split(",").map((term) => term.trim());
   if (sourceTerms.some((term) => !term)
-      || providerTerms.some((term) => !term)
-      || sourceTerms.join(",") !== sourceKeyword
-      || providerTerms.join(",") !== providerKeyword) return false;
+    || providerTerms.some((term) => !term)
+    || sourceTerms.join(",") !== sourceKeyword
+    || providerTerms.join(",") !== providerKeyword) return false;
   const titleIndexes = sourceTerms
     .map((term, index) => term === title ? index : -1)
     .filter((index) => index >= 0);
@@ -424,13 +421,7 @@ export function qoo10S1ActivationArgumentsValid(argumentsValue: ActivationArgume
   const binding = qoo10S1ActivationBinding(argumentsValue);
   const params = recordValue(argumentsValue.params);
   if (!binding || !params) return false;
-  if (binding.remoteId === qoo10ExactLocalizationRecoveryIdentity.remoteId) {
-    try {
-      if (!qoo10ExactLocalizedUpdate(argumentsValue, binding.remoteId)) return false;
-    } catch {
-      return false;
-    }
-  }
+
   const detailHtml = typeof params.ItemDescription === "string" ? params.ItemDescription : "";
   const sellerCode = typeof params.SellerCode === "string" ? params.SellerCode : "";
   const keyword = typeof params.Keyword === "string" ? params.Keyword : "";
@@ -494,13 +485,16 @@ export function verifyQoo10S1ActivationReadback(input: {
   if (!binding) {
     return {
       ok: false,
-      publication: { providerStatus: "", imageCount: 0, checks: {
-        identityVerified: false, statusVerified: false, sellerCodeVerified: false,
-        localeVerified: false, fingerprintVerified: false, imageCountVerified: false,
-        sellerAccountIdentityVerified: false, categoryVerified: false, titleVerified: false,
-        shippingVerified: false, priceQuantityVerified: false, representativeImageVerified: false,
-        detailImageDigestVerified: false,
-      } },
+      publication: {
+        providerStatus: "", imageCount: 0, checks: {
+          identityVerified: false, statusVerified: false, sellerCodeVerified: false,
+          localeVerified: false, fingerprintVerified: false, imageCountVerified: false,
+          sellerAccountIdentityVerified: false, categoryVerified: false, catalogVerified: false,
+          titleVerified: false,
+          shippingVerified: false, priceQuantityVerified: false, representativeImageVerified: false,
+          detailImageDigestVerified: false,
+        }
+      },
       checks: { markerVerified: false },
     };
   }
@@ -574,14 +568,14 @@ export function verifyQoo10S1ActivationReadback(input: {
   const checksVerified = Object.values(checks).every(Boolean);
   const boundRemoteState = publication.remoteState && checksVerified
     ? qoo10ExactRecoveryContentRemoteState({
-        remoteState: publication.remoteState,
-        title: binding.expectedTitle,
-        keyword: remoteKeyword,
-        detailHtml,
-        detailImageUrls: actualDetailImageUrls,
-        sourceJobId: binding.sourceJobId,
-        sourceOperation: "listing.update",
-      })
+      remoteState: publication.remoteState,
+      title: binding.expectedTitle,
+      keyword: remoteKeyword,
+      detailHtml,
+      detailImageUrls: actualDetailImageUrls,
+      sourceJobId: binding.sourceJobId,
+      sourceOperation: "listing.update",
+    })
     : undefined;
   return {
     ok: Boolean(boundRemoteState),

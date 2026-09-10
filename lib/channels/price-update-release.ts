@@ -50,9 +50,9 @@ const evidenceByChannel = {
   coupang: {
     writeImplemented: true,
     exactRemoteIdentity: true,
-    sameProductPriceCurrencyReadback: false,
-    failClosedOnMismatch: false,
-    reason: "Coupang vendor-item 가격 쓰기는 구현됐지만, 동일 vendorItemId의 실제 판매가 readback과 불일치 차단이 없습니다.",
+    sameProductPriceCurrencyReadback: true,
+    failClosedOnMismatch: true,
+    reason: "Coupang 가격 변경 뒤 동일 vendorItemId의 공식 수량·가격·상태 GET에서 KRW 판매가를 다시 읽고, ID나 가격이 다르면 성공으로 처리하지 않습니다.",
   },
   elevenst: {
     writeImplemented: false,

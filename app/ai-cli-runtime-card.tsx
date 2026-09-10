@@ -74,7 +74,7 @@ type ListingReleaseGate = {
   openedAt: string | null;
   updatedAt: string;
   openedRelease: string | null;
-  openedChannel: "qoo10" | null;
+  openedChannel: "qoo10" | "coupang" | "smartstore" | null;
   attestedRelease: string | null;
   activeRuntimeRelease: string | null;
   publicationAdaptersReady: number;
@@ -82,6 +82,7 @@ type ListingReleaseGate = {
   publicationReleaseConsistent: boolean;
   runtimeReleaseMatches: boolean;
   orphanPendingReviews: number;
+  listingMutationsRunning: number;
   queuedOrRunning: number;
   reconciliationRequired: number;
   qoo10AdapterReady: boolean;
@@ -92,6 +93,22 @@ type ListingReleaseGate = {
   qoo10QueuedOrRunning: number;
   qoo10ReconciliationRequired: number;
   qoo10EffectiveOpen: boolean;
+  coupangAdapterReady: boolean;
+  coupangAttestedRelease: string | null;
+  coupangReleaseConsistent: boolean;
+  coupangRuntimeReleaseMatches: boolean;
+  coupangReviewViolations: number;
+  coupangQueuedOrRunning: number;
+  coupangReconciliationRequired: number;
+  coupangEffectiveOpen: boolean;
+  smartstoreAdapterReady: boolean;
+  smartstoreAttestedRelease: string | null;
+  smartstoreReleaseConsistent: boolean;
+  smartstoreRuntimeReleaseMatches: boolean;
+  smartstoreReviewViolations: number;
+  smartstoreQueuedOrRunning: number;
+  smartstoreReconciliationRequired: number;
+  smartstoreEffectiveOpen: boolean;
 };
 
 type ListingReleasePayload = {
@@ -100,6 +117,8 @@ type ListingReleasePayload = {
   message?: string;
   readyForOpen?: boolean;
   readyForQoo10Open?: boolean;
+  readyForCoupangOpen?: boolean;
+  readyForSmartstoreOpen?: boolean;
   runtimeRelease?: {
     status: "valid" | "unavailable";
     currentRelease: string | null;
@@ -114,13 +133,15 @@ type ListingReleaseState = {
   gate: ListingReleaseGate | null;
   readyForOpen: boolean;
   readyForQoo10Open: boolean;
+  readyForCoupangOpen: boolean;
+  readyForSmartstoreOpen: boolean;
 };
 
 type ListingReleaseAction =
   | { action: "attest_adapter"; channel: ListingPublicationChannel }
   | { action: "attest_rechecker" }
   | { action: "open_gate" }
-  | { action: "open_channel_gate"; channel: "qoo10" }
+  | { action: "open_channel_gate"; channel: "qoo10" | "coupang" | "smartstore" }
   | { action: "close_gate" };
 
 type PendingConfirmation =
@@ -308,10 +329,11 @@ function confirmationCopy(pending: Exclude<PendingConfirmation, null>) {
     };
   }
   if (pending.request.action === "open_channel_gate") {
+    const channelLabel = listingPublicationChannelLabels[pending.request.channel];
     return {
-      title: "Qoo10 전용 게시 게이트 열기 준비",
-      detail: "현재 배포에서 검증된 Qoo10 상품 등록·수정·중지만 외부로 전달될 수 있습니다. 다른 7개 채널은 계속 차단됩니다.",
-      executeLabel: "Qoo10만 열기 실행",
+      title: `${channelLabel} 전용 게시 게이트 열기 준비`,
+      detail: `현재 열려 있는 다른 단일 채널 범위를 닫고, 검증된 ${channelLabel} 상품 등록·수정·중지만 외부로 전달합니다. 다른 7개 채널은 계속 차단됩니다.`,
+      executeLabel: `${channelLabel}만 열기 실행`,
       danger: true,
     };
   }
@@ -369,6 +391,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     gate: null,
     readyForOpen: false,
     readyForQoo10Open: false,
+    readyForCoupangOpen: false,
+    readyForSmartstoreOpen: false,
   });
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation>(null);
 
@@ -399,6 +423,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
           gate,
           readyForOpen: listingReleasePayload.readyForOpen === true,
           readyForQoo10Open: listingReleasePayload.readyForQoo10Open === true,
+          readyForCoupangOpen: listingReleasePayload.readyForCoupangOpen === true,
+          readyForSmartstoreOpen: listingReleasePayload.readyForSmartstoreOpen === true,
         };
       });
     };
@@ -572,6 +598,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         gate: payload.gate ?? current.gate,
         readyForOpen: payload.readyForOpen === true,
         readyForQoo10Open: payload.readyForQoo10Open === true,
+        readyForCoupangOpen: payload.readyForCoupangOpen === true,
+        readyForSmartstoreOpen: payload.readyForSmartstoreOpen === true,
       }));
       notify(message);
     } catch {
@@ -582,6 +610,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         message,
         readyForOpen: false,
         readyForQoo10Open: false,
+        readyForCoupangOpen: false,
+        readyForSmartstoreOpen: false,
       }));
       notify(message);
     }
@@ -602,7 +632,7 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     setWorkingJobId(job.id);
     setJobsError("");
     try {
-      const response = await authenticatedFetch("/api/operations/snapshot", {
+      const response = await authenticatedFetch("/api/admin/products/snapshot", {
         method: "POST",
         body: JSON.stringify({ action: "product_create", jobId: job.id }),
       });
@@ -651,8 +681,23 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
       && listingGate?.qoo10ReleaseConsistent
       && listingGate.qoo10AttestedRelease === listingRelease.currentRelease,
   );
+  const exactCoupangReleaseReady = Boolean(
+    listingRelease.currentRelease
+      && listingGate?.coupangReleaseConsistent
+      && listingGate.coupangRuntimeReleaseMatches
+      && listingGate.coupangAttestedRelease === listingRelease.currentRelease,
+  );
+  const exactSmartstoreReleaseReady = Boolean(
+    listingRelease.currentRelease
+      && listingGate?.smartstoreReleaseConsistent
+      && listingGate.smartstoreRuntimeReleaseMatches
+      && listingGate.smartstoreAttestedRelease === listingRelease.currentRelease,
+  );
   const anyListingGateEffective = Boolean(
-    listingGate?.effectiveOpen || listingGate?.qoo10EffectiveOpen,
+    listingGate?.effectiveOpen
+      || listingGate?.qoo10EffectiveOpen
+      || listingGate?.coupangEffectiveOpen
+      || listingGate?.smartstoreEffectiveOpen,
   );
 
   return <section className="cli-runtime-card">
@@ -685,23 +730,28 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
     <section className="cli-listing-release" aria-labelledby="listing-release-heading">
       <header>
         <div><ShieldCheck size={17} /><span><small>EXACT-SHA PUBLICATION CONTROL</small><h4 id="listing-release-heading">8개 채널 게시 릴리스 게이트</h4><p>서버가 확인한 현재 배포 SHA로만 어댑터와 재조회기를 기록합니다. 이 화면에서 SHA를 입력하거나 자동 게시하지 않습니다.</p></span></div>
-        <span className={`cli-listing-release-state ${anyListingGateEffective ? "open" : "closed"}`}><i />{listingGate?.effectiveOpen ? "8개 채널 게시 허용" : listingGate?.qoo10EffectiveOpen ? "Qoo10만 게시 허용" : listingGate?.open ? "조건 불일치 · 차단" : "외부 게시 차단"}</span>
+        <span className={`cli-listing-release-state ${anyListingGateEffective ? "open" : "closed"}`}><i />{listingGate?.effectiveOpen ? "8개 채널 게시 허용" : listingGate?.qoo10EffectiveOpen ? "Qoo10만 게시 허용" : listingGate?.coupangEffectiveOpen ? "쿠팡만 게시 허용" : listingGate?.smartstoreEffectiveOpen ? "스마트스토어만 게시 허용" : listingGate?.open ? "조건 불일치 · 차단" : "외부 게시 차단"}</span>
       </header>
 
       <div className="cli-listing-release-summary">
         <article><small>현재 서버 배포 SHA</small><code title={listingRelease.currentRelease ?? undefined}>{listingRelease.currentRelease ?? "확인 불가"}</code><em>{listingRelease.currentRelease ? "브라우저 입력 없이 서버에서 확인" : "attestation·게이트 열기 차단"}</em></article>
         <article><small>8개 게시 어댑터</small><b>{listingGate?.publicationAdaptersReady ?? 0} / {listingPublicationChannels.length}</b><em className={exactPublicationReleaseReady ? "ok" : "waiting"}>{exactPublicationReleaseReady ? "현재 SHA 일치" : "현재 SHA 확인 필요"}</em></article>
         <article><small>Qoo10 단일 채널</small><b>{listingGate?.qoo10AdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactQoo10ReleaseReady ? "ok" : "waiting"}>{exactQoo10ReleaseReady ? "현재 SHA 일치" : "Qoo10 SHA 확인 필요"}</em></article>
+        <article><small>쿠팡 단일 채널</small><b>{listingGate?.coupangAdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactCoupangReleaseReady ? "ok" : "waiting"}>{exactCoupangReleaseReady ? "현재 SHA 일치" : "쿠팡 SHA 확인 필요"}</em></article>
+        <article><small>스마트스토어 단일 채널</small><b>{listingGate?.smartstoreAdapterReady ? "어댑터 확인됨" : "확인 필요"}</b><em className={exactSmartstoreReleaseReady ? "ok" : "waiting"}>{exactSmartstoreReleaseReady ? "현재 SHA 일치" : "스마트스토어 SHA 확인 필요"}</em></article>
         <article><small>게시 결과 재조회기</small><b>{listingGate?.publicationRecheckerReady ? "확인됨" : "확인 필요"}</b><em className={listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "ok" : "waiting"}>{listingGate?.publicationRecheckerReady && exactPublicationReleaseReady ? "현재 SHA 일치" : "재조회 계약 확인 필요"}</em></article>
-        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "재검증 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
+        <article><small>활성 서버 런타임</small><b>{exactRuntimeReleaseReady ? "현재 SHA 일치" : "게시 기준·런타임 SHA 결속 확인 필요"}</b><em className={exactRuntimeReleaseReady ? "ok" : "waiting"}>{listingGate?.activeRuntimeRelease ?? "활성 릴리스 확인 불가"}</em></article>
       </div>
 
       <div className="cli-listing-release-blockers">
         <span className={(listingGate?.queuedOrRunning ?? 0) === 0 ? "ok" : "blocked"}>게시 작업 {listingGate?.queuedOrRunning ?? 0}건</span>
         <span className={(listingGate?.reconciliationRequired ?? 0) === 0 ? "ok" : "blocked"}>조정 필요 {listingGate?.reconciliationRequired ?? 0}건</span>
         <span className={(listingGate?.orphanPendingReviews ?? 0) === 0 ? "ok" : "blocked"}>고아 심사대기 {listingGate?.orphanPendingReviews ?? 0}건</span>
+        <span className={(listingGate?.listingMutationsRunning ?? 0) === 0 ? "ok" : "blocked"}>전체 게시 실행 중 {listingGate?.listingMutationsRunning ?? 0}건</span>
         <span className={listingRelease.readyForOpen ? "ok" : "blocked"}>{listingRelease.readyForOpen ? "게이트 개방 조건 충족" : "게이트 개방 조건 미충족"}</span>
         <span className={listingRelease.readyForQoo10Open ? "ok" : "blocked"}>{listingRelease.readyForQoo10Open ? "Qoo10 단일 개방 조건 충족" : "Qoo10 단일 개방 조건 미충족"}</span>
+        <span className={listingRelease.readyForCoupangOpen ? "ok" : "blocked"}>{listingRelease.readyForCoupangOpen ? "쿠팡 단일 개방 조건 충족" : "쿠팡 단일 개방 조건 미충족"}</span>
+        <span className={listingRelease.readyForSmartstoreOpen ? "ok" : "blocked"}>{listingRelease.readyForSmartstoreOpen ? "스마트스토어 단일 개방 조건 충족" : "스마트스토어 단일 개방 조건 미충족"}</span>
       </div>
 
       <div className="cli-listing-release-controls">
@@ -713,6 +763,8 @@ export function AiCliRuntimeCard({ notify }: { notify: (message: string) => void
         <div className="cli-listing-gate-controls">
           <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "attest_rechecker" } })} disabled={!listingRelease.currentRelease || listingReleaseBusy}>재조회기 확인 기록</button>
           <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "qoo10" } })} disabled={!listingRelease.readyForQoo10Open || listingReleaseBusy || listingGate?.qoo10EffectiveOpen === true}>Qoo10만 열기</button>
+          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "coupang" } })} disabled={!listingRelease.readyForCoupangOpen || listingReleaseBusy || listingGate?.coupangEffectiveOpen === true}>쿠팡만 열기</button>
+          <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_channel_gate", channel: "smartstore" } })} disabled={!listingRelease.readyForSmartstoreOpen || listingReleaseBusy || listingGate?.smartstoreEffectiveOpen === true}>스마트스토어만 열기</button>
           <button type="button" className="credential-primary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "open_gate" } })} disabled={!listingRelease.readyForOpen || listingReleaseBusy || listingGate?.effectiveOpen === true}>게시 게이트 열기</button>
           <button type="button" className="credential-secondary" onClick={() => setPendingConfirmation({ kind: "listing_release", request: { action: "close_gate" } })} disabled={listingReleaseBusy}>게시 게이트 닫기</button>
         </div>

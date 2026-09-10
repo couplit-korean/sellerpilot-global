@@ -1,0 +1,21 @@
+# 공통 변경 요청 lazada-003
+
+- 목적: 이미 준비된 Lazada raw/재처리/history/reply/attachment SQL을 exact preimage로 적용하고, system/official 및 recall revision을 고객 문의로 만들지 않는 저장 계약을 추가한다.
+- 요청 채널: lazada
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `lazada_ingest_v2`, `lazada-im-parser/2`
+- 수정할 공통 파일과 함수: 새 통합 migration, 공통 ingest dispatch, `app/api/channel-gateway/worker/complete/route.ts`, `lib/channels/serverless-gateway.ts`
+- 현재 파일 SHA-256: `worker complete=41435b65a23dc4d12a9c47a37f8ac20d572a81afe8af1fb9171d004edb0f7e64`, `serverless-gateway=07b99bea1c41a7d2cad259a06302f49f4654d599b1f4fb7197bc9f4ffb49896a`
+- DB 객체: `lazada_im_raw_inbox`, `lazada_im_raw_outcomes`, `cs_history_coverage`, `support_reply_deliveries` remote observation 열/RPC, attachment retention ledger, `cs_credential_capability_bindings`
+- 기존 동작: 운영 DB에는 위 객체와 `20260907210000/230000/231000/232000/234000/20260908000000`가 모두 없다. 기존 `lazada_ingest_v2`는 `senderRole=system`을 거부하고 downstream legacy ingest는 system을 customer로 하드코딩할 수 있다. 같은 native ID의 recall status revision도 기존 body와 충돌할 수 있다.
+- 문제를 재현하는 최소 입력: `tags:["official"]`, `from_account_type:1`, `template_id:200016`, 정상 native send time인 한 메시지. 채널 parser/2 출력은 `senderRole=system`, `status=resolved`, `providerContext.roleBasis=official_session_tag`다.
+- 원하는 동작: system/official은 timeline에는 저장하되 `latest_inbound_key`, waiting 분모, 답변 초안·해결 판단에 참여하지 않는다. `status:0 -> status:1` 동일 ID는 raw 양쪽 관측을 보존하면서 카드 projection을 recall revision으로 갱신한다. 그 외 같은 ID 본문·첨부 변경은 conflict/quarantine이다.
+- 전용 모듈 경로와 export: `lib/channels/lazada-im.ts`, `lib/channels/lazada-raw-reprocess.ts` (`LAZADA_IM_RAW_PARSER_VERSION=lazada-im-parser/2`)
+- 기존/새 입력·출력 계약: `LazadaImInquiry.senderRole`의 기존 system 값을 DB가 실제로 보존. customer/seller 처리 의미는 유지
+- 최소 변경안: S0 migration 집합을 dependency 순서로 격리 DB 재실행 후 새 forward-only migration에서 system 분기와 recall revision을 추가한다. raw 저장/ACK, 5,000행, 256KB, TTL, lease/claim ABI는 바꾸지 않는다.
+- 다른 채널 영향: generic support message role enum에는 이미 system이 있으나, Lazada 분기만 적용하도록 제한
+- 상품/주문/배송 mutation 영향: 없음
+- 재현·회귀 시험 명령: canonical Lazada 17-file command와 `tests/cs-reply-observation-db.test.mjs`, `tests/cs-attachment-retention-db.test.mjs`
+- migration 선행/preimage/ACL 요구: 각 기존 migration SHA-256은 `07210000=5fe53d61b06c094f101afd2cc814303b57ec29816d6e2e8ec6335b29d26fcc73`, `07230000=12083c82bbe8dbcd0b062d724a9611c45d699f34b2fa4d0d00f92ee138827b68`, `07231000=cf1f0941c7cc21b0604ca20d3b817914cb62c07659858d648e7e3e37fbc02c19`, `07232000=b1079308ccc2a01fc4985c98e62e3f3437cf8ebda1e9c405b5abe9c778a3acb5`, `07234000=8badc4bb83ff815cf8fbc156c8525462fe834e7805d20accc05759fe922e6eef`, `08000000=6f924b3b6d83257cb2c2e1ff08deaa0ef730480fc03154674eb5050f7d5a8f26`. 운영 적용 전 exact source hash, `security definer`, empty search_path, service-only mutation ACL 재검증 필수
+- 우선순위: 오연결·손실, 중복답변, 과거누락
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

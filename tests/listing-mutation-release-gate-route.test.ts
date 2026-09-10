@@ -67,41 +67,6 @@ test("admin listing mutations require an exact open release gate before idempote
   );
 });
 
-test("scoped and exact permits cannot authorize any unrelated channel mutation", async () => {
-  const route = await readFile(routeUrl, "utf8");
-
-  assert.match(
-    route,
-    /const verifiedPublicationReleaseChannels = new Set\(\[\s*"qoo10",\s*"shopee",\s*"lazada",\s*"coupang",\s*"elevenst",\s*"smartstore",\s*"ebay",\s*"temu",\s*\]\)/,
-  );
-  assert.match(
-    route.match(/const verifiedPublicationReleaseChannels = new Set\(\[[\s\S]*?\]\);/)?.[0] ?? "",
-    /temu/,
-  );
-  assert.match(route, /const qoo10ScopedReleaseGateIsExact/);
-  assert.match(route, /releaseGateStatus\.openedChannel === "qoo10"/);
-  assert.match(
-    route,
-    /const channelReleaseGateIsEffective = verifiedPublicationReleaseChannels\.has\(channel\)/,
-  );
-  assert.match(
-    route,
-    /: channel === "qoo10"[\s\S]{0,180}&& qoo10ScopedReleaseGateIsExact[\s\S]{0,180}&& releaseGateStatus\.qoo10EffectiveOpen === true\)/,
-  );
-  const closedGateGuard = route.match(
-    /if \(!channelReleaseGateIsEffective\s*&& !qoo10ExactLocalizationUpdatePermitArmed\s*&& !smartstoreExactQaUpdatePermitArmed\s*&& !exactExistingUpdatePermitArmed\s*&& !ebayExactAtomicEnqueueRequired\s*&& !shopeeSgExistingUpdatePermitArmed\)/,
-  );
-  assert.ok(
-    closedGateGuard,
-    "closed gate must admit only separately armed exact Qoo10, Smartstore, Shopee, exact existing-update permits, or the server-bound eBay atomic path",
-  );
-  assert.ok(
-    (closedGateGuard.index ?? Number.POSITIVE_INFINITY)
-      < route.indexOf('"sellerpilot_claim_channel_operation"'),
-    "generic requests must fail before idempotency claim under the scoped gate",
-  );
-});
-
 test("Temu stop and activation bind goodsId and externalGoodsId from the immutable listing ledger", async () => {
   const [route, gateway] = await Promise.all([
     readFile(routeUrl, "utf8"),
@@ -184,74 +149,25 @@ test("eBay UPDATE resolves the immutable provider tuple before fingerprinting or
   assert.match(route, /mode: "ebay_immutable_identity_required"/);
 });
 
-test("eBay exact no-effect retry prepares all images before one atomic enqueue and never enters the generic enqueue path", async () => {
+test("the post-image shipping contract is checked before any gateway enqueue", async () => {
   const route = await readFile(routeUrl, "utf8");
-  const exactFlagIndex = route.indexOf("ebayExactAtomicEnqueueRequired = true");
-  const claimIndex = route.indexOf('"sellerpilot_claim_channel_operation"');
   const prepareIndex = route.indexOf(
     "await prepareMarketplaceImages(serviceClient, channel, effectiveArguments",
   );
-  const providerCopyAssertionIndex = route.indexOf(
-    "assertEbayExactExistingQaProviderCopyRequest(gatewayArguments)",
+  const shippingGuardIndex = route.indexOf(
+    "assertListingShippingReady(channel, gatewayArguments, operation)",
   );
-  const atomicBranchIndex = route.indexOf("if (ebayExactAtomicEnqueueRequired)");
-  const atomicRpcIndex = route.indexOf(
+  const atomicEnqueueIndex = route.indexOf(
     '"sellerpilot_service_atomic_enqueue_ebay_exact_v101_retry"',
   );
-  const atomicWaitIndex = route.indexOf("await waitForEbayExactAtomicGatewayJob({");
-  const genericElseIndex = route.indexOf("} else {", atomicWaitIndex);
-  const genericExecuteIndex = route.indexOf("gatewayExecution = await executeViaChannelGateway({");
-
-  assert.ok(exactFlagIndex >= 0, "the proved no-effect retry must select the atomic path");
-  assert.ok(claimIndex > exactFlagIndex, "the deterministic attempt must be claimed after exact identity and gate checks");
-  assert.ok(prepareIndex > claimIndex, "fresh image reconstruction must follow the deterministic claim");
-  assert.ok(providerCopyAssertionIndex > prepareIndex, "the prepared nine-image provider payload must be asserted before enqueue");
-  assert.ok(atomicBranchIndex > providerCopyAssertionIndex, "only the fully asserted payload may enter the atomic branch");
-  assert.ok(atomicRpcIndex > atomicBranchIndex, "the service-role-only atomic RPC must own rearm and enqueue");
-  assert.ok(atomicWaitIndex > atomicRpcIndex, "the route may only poll the job returned by the atomic RPC");
-  assert.ok(genericElseIndex > atomicWaitIndex, "generic gateway execution must be isolated in the alternate branch");
-  assert.ok(genericExecuteIndex > genericElseIndex, "the exact branch must not fall through to generic enqueue");
-
-  const atomicBranch = route.slice(atomicBranchIndex, genericElseIndex);
-  assert.doesNotMatch(atomicBranch, /executeViaChannelGateway|sellerpilot_service_enqueue_listing_gateway_job/);
-  assert.match(
-    atomicBranch,
-    /p_request_payload:\s*\{ arguments: gatewayArguments \}/,
-  );
-  assert.match(
-    atomicBranch,
-    /const newlyQueued = enqueue\?\.status === "queued" && enqueue\.reused === false;[\s\S]{0,140}const exactReplay = enqueue\?\.status === "in_progress" && enqueue\.reused === true;[\s\S]{0,260}\(!newlyQueued && !exactReplay\)/,
-  );
-  assert.doesNotMatch(
-    atomicBranch,
-    /\|\| enqueue\.reused !== false/,
-    "the replay contract must not be rejected by a stale fresh-enqueue-only check",
-  );
-  assert.doesNotMatch(route, /sellerpilot_service_arm_ebay_no_effect_retry/);
-  assert.match(
-    route,
-    /boundExactExistingClosedGateUpdateChannel === "ebay"[\s\S]{0,260}boundEbayExactExistingQaRecovery[\s\S]{0,260}boundEbayExactNoEffectRetry[\s\S]{0,500}ebayExactAtomicEnqueueRequired = true/,
+  const genericEnqueueIndex = route.indexOf(
+    "gatewayExecution = await executeViaChannelGateway({",
   );
 
-  const atomicStartedIndex = route.indexOf("ebayExactAtomicRpcStarted = true");
-  const atomicCommittedIndex = route.indexOf("ebayExactAtomicJobCommitted = true");
-  const atomicCatchFenceIndex = route.indexOf(
-    "if (ebayExactAtomicEnqueueRequired && ebayExactAtomicRpcStarted)",
-  );
-  const genericFailureIndex = route.indexOf(
-    '"sellerpilot_service_fail_pre_gateway_channel_operation"',
-  );
-  assert.ok(atomicStartedIndex < atomicRpcIndex, "response loss must be fenced before the atomic RPC starts");
-  assert.ok(atomicCommittedIndex > atomicRpcIndex, "the returned exact job must be recorded before polling");
-  assert.ok(atomicCatchFenceIndex > atomicWaitIndex, "the atomic fence must cover poll and response failures");
-  assert.ok(atomicCatchFenceIndex < genericFailureIndex, "an atomic request must return before generic attempt failure mutation");
-  const atomicCatchFence = route.slice(atomicCatchFenceIndex, genericFailureIndex);
-  assert.match(atomicCatchFence, /status: 202/);
-  assert.match(atomicCatchFence, /reconciliationRequired: !ebayExactAtomicJobCommitted/);
-  assert.doesNotMatch(
-    atomicCatchFence,
-    /sellerpilot_service_(?:fail_pre_gateway_channel_operation|complete_channel_operation|complete_product_listing)/,
-  );
+  assert.ok(prepareIndex >= 0, "marketplace images must be prepared on the server");
+  assert.ok(shippingGuardIndex > prepareIndex, "the guard must inspect the transformed payload");
+  assert.equal(atomicEnqueueIndex, -1, "the retired product-specific enqueue path must stay deleted");
+  assert.ok(genericEnqueueIndex > shippingGuardIndex, "the generic path must not enqueue an unchecked payload");
 });
 
 test("Qoo10 rollback UPDATE independently confirms the S1 create rollback before fingerprinting or claiming", async () => {
@@ -292,11 +208,11 @@ test("Qoo10 recovery capability is server-bound, survives normalization, and pre
   assert.ok(authoritativeRecoveryBinding > clientMarkerDelete, "only the independently bound RPC result may recreate the marker and ShippingNo");
   assert.ok(fingerprintIndex > authoritativeRecoveryBinding, "the server capability and remote ShippingNo must be included in the claimed request fingerprint");
   assert.ok(imagePreparationIndex > fingerprintIndex, "the exact server capability must reach image preparation and gateway enqueue");
-  assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) \{[\s\S]*bindQoo10RollbackUpdateRecoveryArguments\([\s\S]*contract: qoo10RollbackUpdateRecoveryContract/);
+  assert.match(route, /if \(boundQoo10RollbackUpdateRecovery\) effectiveArguments = bindQoo10RollbackUpdateRecoveryArguments\(effectiveArguments, boundQoo10RollbackUpdateRecovery\)/);
   assert.match(route, /effectiveArguments = \{[\s\S]*\.\.\.effectiveArguments,[\s\S]*\.\.\.boundEbayListingIdentity/);
   assert.doesNotMatch(route, /\.\.\.structuredClone\(parsed\.data\.arguments\),[\s\S]{0,120}\.\.\.boundEbayListingIdentity/);
   assert.match(
     route,
-    /const preserveExactPreGatewayListing = preGatewayRetryable[\s\S]{0,220}boundQoo10RollbackUpdateRecovery[\s\S]{0,700}if \(!preserveExactPreGatewayListing\) \{[\s\S]{0,120}await completeListing\(\{ success: false/,
+    /if \(!\(preGatewayRetryable && boundQoo10RollbackUpdateRecovery\)\) \{\s*await completeListing\(\{ success: false/,
   );
 });

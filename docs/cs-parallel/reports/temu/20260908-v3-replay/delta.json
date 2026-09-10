@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 2,
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "submission": "20260908-v3-replay",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-temu",
+  "branch": "codex/cs-temu-v1",
+  "previousSubmissionPreserved": "docs/cs-parallel/reports/temu/20260908-v2-resume/delta.json",
+  "files": [
+    {
+      "path": "lib/channels/temu-inquiries.ts",
+      "change": "modify-after-v2",
+      "beforeSha256": "70662fbe54f66f4e20fbbbddf1dd70f49fc89960afeb4562d36910ee419bf57b",
+      "afterSha256": "1e1704237f3fb4e7862418a18616766a34b53c597c95bd6f58a9ca7ece157ba0",
+      "reason": "Replay previously successful summary identities so their details reach a later successful normalize and ingest batch."
+    },
+    {
+      "path": "tests/temu-after-sales-detail.test.ts",
+      "change": "modify-after-v2",
+      "beforeSha256": "619fe3fc4ae147ed1855e84540915bd180b5fe38b8527f48f9a09dd0d9b91253",
+      "afterSha256": "00638c735888294e4a233397ec7ac911b23444604cf971b9196b5529f0a9d58d",
+      "reason": "Prove the successful prefix is explicitly replayed and the 11th detail continues through the normal boundary."
+    },
+    {
+      "path": "lib/channels/cs/temu/retry-rpc.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0e8edfe6bbe11cc375bbb7300241f84f4aa4160acf256277aaa02a2621a0c7ec",
+      "reason": "Validate v2 retry receipts, fail closed on missing SQL and replay exactly once after an uncertain RPC response."
+    },
+    {
+      "path": "tests/cs-temu-retry-rpc.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "51108215f51ee207cbed83b607dc5bc6a6d0c0d408b8108076635647294f550a",
+      "reason": "Exercise receipt matching, schema-not-ready blocking, exact response-loss replay and the one-replay cap."
+    },
+    {
+      "path": "tests/cs-temu-retry-replay-e2e.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "56a6609c0041df6ed72d69c6bbba4ab227e7446bf218f85d5c0705f1522ccd7b",
+      "reason": "Prove 11 unique remote identities persist after a third-detail transient failure without re-reading the list."
+    },
+    {
+      "path": "tests/cs-temu-detail-retry-replay-db.test.mjs",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "8ff8ae2b34e0ccf19628fcca1502988049bb41db5619fc0578a85ae2dc6b2f58",
+      "reason": "Exercise same-job idempotency, claim and lease changes, credential revocation, queue lineage and retry exhaustion in PGlite."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/temu/sql/temu-005-detail-retry-replay-safety.sql",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d5a06aa35d4ad7a0f9e6ecc300a9ca5aef5acf453eadd09395e22408c8b1255a",
+      "reason": "Layer replay lineage, credential checks and exact committed-response receipt replay over the v2 retry ledger."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/temu/patches/temu-005-detail-retry-replay-safety.patch",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "367ae8cc0821273d884806d703302d3d33a067f4fc4727dfeebd98937e21358d",
+      "reason": "Supersede the v2 common retry patch with v2 RPC arguments, replay count and explicit failed HTTP 503 handling."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/temu/patches/temu-003-detail-revision.patch",
+      "change": "rebase-proposal",
+      "beforeSha256": null,
+      "afterSha256": "f47f89a3a57caef2098f358e75ea4c14954a38cdae45225b202478b0f4f2668f",
+      "reason": "Refresh only the import context for the current integrated inquiry normalizer preimage."
+    }
+  ],
+  "verification": {
+    "focusedTests": { "tests": 38, "passed": 38, "failed": 0 },
+    "lint": "passed",
+    "typecheck": "passed",
+    "commonPatchApplyCheck": "passed",
+    "isolatedPatchedIntegrationTypecheck": "passed",
+    "broadPatchedBaselineComparison": {
+      "patched": { "tests": 104, "passed": 102, "failed": 2 },
+      "unpatchedIntegratedBaseline": { "tests": 104, "passed": 102, "failed": 2 },
+      "newTemuRegression": false
+    }
+  },
+  "external": {
+    "providerApiListReads": 0,
+    "providerApiDetailReads": 0,
+    "providerMutations": 0,
+    "customerReplies": 0,
+    "productionDatabaseChanges": 0,
+    "buyerChatImplemented": false
+  }
+}

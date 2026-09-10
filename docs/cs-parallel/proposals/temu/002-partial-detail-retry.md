@@ -1,0 +1,21 @@
+# 공통 변경 요청 temu-002
+
+- 목적: 상세 10건 처리 중 1건이 실패해도 실패한 ID와 미시도 ID를 잃지 않고 durable retry로 정확히 재개한다.
+- 요청 채널: temu
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / `sellerpilot-channel-gateway-result/1`
+- 수정할 공통 파일과 함수: `lib/channels/operations.ts`의 `result`/`paginationResult`와 Temu `inquiries.list` dispatch, `lib/channels/gateway-contract.ts`의 result schema, `lib/channels/serverless-cs-gateway.ts`의 retry 처리, 공통 job 재queue DB 경로
+- 현재 파일 SHA-256: `lib/channels/operations.ts` `da653ed5fc9b66e03817603b850b8e6d091274453b86956f5ee59bd718ca1eab`; `lib/channels/gateway-contract.ts` `691471d01f84f79733cceb7b7e13d2ac70612b59188960bad5fba26fd5399b23`; `lib/channels/serverless-cs-gateway.ts` `81362d608f9e7f90b979e71c7a63aff2c57a6e31ddcd7649834e2a2fc5be30dd`
+- DB 객체(해당 시 이름과 signature): 현재 CS job requeue/complete 객체. 정확한 객체와 signature는 통합 담당 preimage 확인 후 지정한다.
+- 기존 동작: 전용 어댑터가 failure continuation을 반환해도 `result()`가 `ok && continuation`일 때만 continuation을 내보내고 gateway contract도 실패 result의 continuation을 금지한다. 따라서 실패 job은 원래 list range 전체를 재시도할 수는 있지만 실패 지점부터의 exact resume는 불가능하다.
+- 문제를 재현하는 최소 입력: list 11건, 상세 `AFTER-3`만 일시 503. 전용 반환 큐는 `AFTER-3`부터 9건이나 공통 operation 결과에는 continuation이 없다.
+- 원하는 동작: 성공 pagination과 구분된 `retryContinuation`을 read-only `inquiries.list` 실패에만 허용하고, 실패한 ID를 첫 항목으로 포함한 큐를 기존 job에 원자적으로 저장해 다음 claim이 그 큐부터 재개한다. 원격 실패 자체는 성공으로 바꾸지 않는다.
+- 전용 모듈 경로와 export: `lib/channels/temu-inquiries.ts`의 `executeTemuInquiry`가 실패 지점부터 `continuationArguments`를 반환한다.
+- 기존/새 입력·출력 계약: 기존 실패 `{ok:false,steps}` → 새 실패 `{ok:false,steps,retryContinuation:{reason:"retryable_read_failure",arguments}}`. 성공 continuation은 기존 계약을 유지한다.
+- 최소 변경안: (1) Temu dispatch에서 failed step과 전용 continuation을 `retryContinuation`으로 변환, (2) schema는 read-only Temu inquiry에만 필드 허용, (3) gateway가 provider 실패 telemetry를 보존하면서 args를 원자적으로 교체 후 retry, (4) failed ID를 큐에서 제거하는 것은 상세 성공 후에만 허용.
+- 다른 채널 영향: 기본 없음. 공통 타입을 쓰더라도 allowlist는 Temu read-only로 시작한다.
+- 상품/주문/배송 mutation 영향: 없음. write operation에는 `retryContinuation`을 schema에서 거부한다.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/temu-after-sales-detail.test.ts tests/serverless-cs-gateway.test.ts`
+- migration 선행/preimage/ACL 요구: 기존 retry RPC의 args 교체 가능 여부와 lease owner 검증 preimage가 필요하다. service role 외 execute를 금지하고 job owner/lease가 일치할 때만 원자 갱신한다.
+- 우선순위: 오연결·손실
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 미반영

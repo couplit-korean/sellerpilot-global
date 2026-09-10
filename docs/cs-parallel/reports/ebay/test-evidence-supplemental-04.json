@@ -1,0 +1,102 @@
+{
+  "contract": "sellerpilot_channel_test_evidence_supplement_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-03.json",
+  "capturedThrough": "2026-09-08T14:38:00Z",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "version": "22.23.2",
+    "database": "PGlite 0.3.16 with pgcrypto"
+  },
+  "diagnosticCorrections": [
+    {
+      "stage": "initial_durable_sql",
+      "observed": "4 tests failed while applying SQL because a composite row SELECT used invalid INTO placement",
+      "correction": "split job and credential row selections into valid claim-fenced SELECT INTO statements",
+      "final": "4/4 passed"
+    },
+    {
+      "stage": "strict_plan_validation",
+      "observed": "0/4 reached assertions after a validation-parenthesis edit produced end-of-input SQL syntax failure",
+      "correction": "closed the validation expression and reran the executable migration tests",
+      "final": "4/4 passed"
+    },
+    {
+      "stage": "eslint_after_missing_total_negative_case",
+      "observed": "ESLint rejected an unused destructured binding in the missing-total fixture",
+      "correction": "built the fixture with Object.entries filtering so no unused binding remains",
+      "final": "exit 0"
+    }
+  ],
+  "runs": [
+    {
+      "name": "durable_scheduler_gateway_sql_patch_contract",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-case-dispute-gateway.test.ts tests/cs-ebay-case-dispute-durable-collection-db.test.mjs tests/cs-ebay-case-dispute-durable-scheduler-patch.test.mjs",
+      "exitCode": 0,
+      "tests": 12,
+      "passed": 12,
+      "failed": 0,
+      "coverage": [
+        "one exact 18-month initial continuation lineage with <=31-day windows",
+        "provider page cursor before next resolution window",
+        "48-hour recent overlap deferred until initial completion",
+        "Payment Dispute exact pageNumber-to-offset continuation",
+        "claim token lease credential version and seller binding fencing",
+        "same-page replay dedupe and cross-page native-ID collision rejection",
+        "missing total and malformed plan rejection",
+        "resource-local 403 isolation and credential-rotation reset",
+        "service-role-only SQL functions and unfenced claim rejection",
+        "minimal shared patch with needsAttention and ok=false propagation",
+        "GET-only execution with no dispute business actions"
+      ]
+    },
+    {
+      "name": "current_integrated_hardened_ledger_compatibility",
+      "command": "SELLERPILOT_EBAY_HISTORY_LEDGER_SQL=/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908/supabase/migrations/20260908135249_ebay_case_dispute_history_ledger.sql /Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-case-dispute-durable-collection-db.test.mjs",
+      "exitCode": 0,
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "integratedLedgerSha256": "c271569f05a2aa83f907da4499bb845ac505eadcd0cdc538b290cccf8e9aed1f",
+      "limits": "Uses the current local integrated migration as the dependency and an isolated PGlite database; it does not apply or read the production database."
+    },
+    {
+      "name": "combined_case_dispute_supplemental_01_through_04",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes.test.ts tests/cs-ebay-cases-disputes-web.test.ts tests/cs-ebay-cases-disputes-route.test.ts tests/cs-ebay-cases-disputes-db.test.mjs tests/cs-ebay-cases-disputes-history-flow.test.ts tests/cs-ebay-case-dispute-gateway.test.ts tests/cs-ebay-case-dispute-durable-collection-db.test.mjs tests/cs-ebay-case-dispute-durable-scheduler-patch.test.mjs",
+      "exitCode": 0,
+      "tests": 37,
+      "passed": 37,
+      "failed": 0
+    },
+    {
+      "name": "typescript",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_04_eslint",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/eslint/bin/eslint.js <5 eBay supplemental 04 source and test files>",
+      "exitCode": 0
+    },
+    {
+      "name": "current_integrated_patch_apply_check",
+      "command": "git -C /Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908 apply --check --whitespace=error-all /Users/kimchangheemac/dev/sellerpilot-cs-ebay/docs/cs-parallel/proposals/ebay/cases-disputes-durable-scheduler.patch",
+      "exitCode": 0,
+      "serverlessGatewayBeforeSha256": "bbfd8b122b6dcf3f0d16f760ccd75f7a2db34fd14252c4d2ce1fec3a259d5286",
+      "ebayInquiriesBeforeSha256": "eeccbf6828667964b0c32b805a6893a1f2a3c590588588781c8162415d65af00",
+      "sharedFilesWritten": 0
+    }
+  ],
+  "mutations": {
+    "productionDatabaseWrites": 0,
+    "actualProviderReadsDuringSupplemental04": 0,
+    "providerReplies": 0,
+    "caseOrDisputeActions": 0,
+    "credentialRefreshes": 0,
+    "browserActions": 0,
+    "sharedSourceWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

@@ -1,4 +1,15 @@
+import { lazadaCreateSkuChecks } from "./lazada-create-preflight";
+import { shopeeCreateConditionValid, shopeeCreateStockValid } from "./shopee-create-preflight";
+import { temuCreateSkuChecks } from "./temu-create-preflight";
 import type { ActiveChannelKey } from "./catalog";
+import {
+  coupangCreateItems,
+  hasValidCoupangBrand,
+  hasValidCoupangProductIdentifier,
+  hasValidCoupangPurchaseOption,
+} from "../product-registration/coupang/create-required-fields";
+import { compileCoupangOptionItems } from "../product-registration/coupang/option-items";
+import { smartstoreIndicationUnits } from "./smartstore-unit-capacity";
 import {
   elevenstProcessedFoodCategoryId,
   elevenstProcessedFoodNotificationFields,
@@ -12,6 +23,8 @@ export type ListingRequirement = {
   source: "상품 정보" | "카테고리" | "판매자 계정";
   status: ListingRequirementStatus;
   manualPath?: string[];
+  inputType?: "boolean" | "number";
+  options?: string[];
   placeholder?: string;
   help?: string;
 };
@@ -131,6 +144,48 @@ function coupangNoticesConfirmed(draft: Record<string, unknown>) {
     || coupangNativeNoticesConfirmed(valueAt(draft, ["body", "items", 0, "notices"]));
 }
 
+function coupangEveryCreateItem(
+  draft: Record<string, unknown>,
+  predicate: (item: Record<string, unknown>) => boolean,
+) {
+  let body = valueAt(draft, ["body"]);
+  const facts = valueAt(draft, ["facts"]);
+  const hasOptionRows = Boolean(facts && typeof facts === "object" && !Array.isArray(facts)
+    && Object.hasOwn(facts as Record<string, unknown>, "coupangOptionRows"));
+  const optionRows = hasOptionRows
+    ? (facts as Record<string, unknown>).coupangOptionRows
+    : [];
+  if (!Array.isArray(optionRows)) return false;
+  if (optionRows.length
+    && body && typeof body === "object" && !Array.isArray(body)) {
+    try {
+      body = compileCoupangOptionItems(
+        body as Record<string, unknown>,
+        optionRows,
+        valueAt(draft, ["sellerpilotCoupangBaseSku"]),
+      );
+    } catch {
+      return false;
+    }
+  }
+  const items = coupangCreateItems(valueAt(body, ["items"]));
+  return Boolean(items && items.every(predicate));
+}
+
+function coupangBrandConfirmed(draft: Record<string, unknown>) {
+  const body = valueAt(draft, ["body"]);
+  return Boolean(body && typeof body === "object" && !Array.isArray(body)
+    && hasValidCoupangBrand(body as Record<string, unknown>));
+}
+
+function coupangProductIdentifiersConfirmed(draft: Record<string, unknown>) {
+  return coupangEveryCreateItem(draft, hasValidCoupangProductIdentifier);
+}
+
+function coupangPurchaseOptionsConfirmed(draft: Record<string, unknown>) {
+  return coupangEveryCreateItem(draft, hasValidCoupangPurchaseOption);
+}
+
 const sharedImage = (path: Array<string | number>): RequirementSpec => ({
   key: "images",
   label: "공개 상품 이미지",
@@ -158,6 +213,145 @@ const elevenstProcessedFoodRequirements: RequirementSpec[] = elevenstProcessedFo
     ? `추정하지 않습니다. 카테고리 속성 notification:${field.code}에 판매자가 확인한 확정값을 입력해 주세요.`
     : `카테고리 속성 notification:${field.code}에 확정값을 입력해 주세요.`,
 }));
+
+const smartstoreCapacityPath = ["body", "originProduct", "detailAttribute", "unitCapacity"];
+const smartstoreCapacityAmounts = ["totalCapacityValue", "unitCapacity", "indicationUnit"];
+function smartstoreCapacity(draft: Record<string, unknown>) {
+  const value = valueAt(draft, smartstoreCapacityPath);
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+const capacityAmountsApply = (draft: Record<string, unknown>) => {
+  const value = smartstoreCapacity(draft);
+  return value.unitPriceYn !== false || smartstoreCapacityAmounts.some((key) => Object.hasOwn(value, key));
+};
+
+export function isSmartstoreCapacityPath(path: string[]) {
+  return path.length === 5 && smartstoreCapacityPath.every((part, index) => path[index] === part)
+    && ["unitPriceYn", ...smartstoreCapacityAmounts].includes(path[4]);
+}
+
+/** Only these provider fields use typed inputs; other channels keep their existing setter contract. */
+export function setSmartstoreCapacityDraftValue(draft: Record<string, unknown>, path: string[], value: string) {
+  if (!isSmartstoreCapacityPath(path)) throw new Error("SMARTSTORE_CAPACITY_PATH_INVALID");
+  const clone = setListingDraftValue(draft, path, value);
+  const capacity = smartstoreCapacity(clone);
+  const key = path[4];
+  if (value === "") delete capacity[key];
+  else if (key === "unitPriceYn" && ["true", "false"].includes(value)) capacity[key] = value === "true";
+  else if (["totalCapacityValue", "unitCapacity"].includes(key) && /^\d+(?:\.\d+)?$/.test(value)) capacity[key] = Number(value);
+  return clone;
+}
+
+/** UI boundary: malformed JSON containers stay untouched and return an actionable message. */
+export function editSmartstoreCapacityDraftValue(draft: Record<string, unknown>, path: string[], value: string):
+  { ok: true; draft: Record<string, unknown> } | { ok: false; message: string } {
+  try {
+    return { ok: true, draft: setSmartstoreCapacityDraftValue(draft, path, value) };
+  } catch {
+    return { ok: false, message: "단위가격 JSON 구조를 확인해 주세요. ‘채널 공식 payload 최종 검토’에서 body.originProduct.detailAttribute.unitCapacity를 객체로 수정한 뒤 입력해 주세요. 기존 입력은 보존했습니다." };
+  }
+}
+
+export function isCoupangWeightPath(path: string[]) {
+  return path.length === 2 && path[0] === "facts" && path[1] === "weightAttribute";
+}
+
+/** Confirmed net weight never follows the shipping/package mass during common edits. */
+export function preserveCoupangWeightDraft(current: Record<string, unknown>, next: Record<string, unknown>) {
+  const facts = current.facts;
+  if (!facts || typeof facts !== "object" || Array.isArray(facts) || !Object.hasOwn(facts, "weightAttribute")) return next;
+  const clone = structuredClone(next);
+  if (!clone.facts || typeof clone.facts !== "object" || Array.isArray(clone.facts)) throw new Error("COUPANG_WEIGHT_CONTAINER_INVALID");
+  (clone.facts as Record<string, unknown>).weightAttribute = structuredClone((facts as Record<string, unknown>).weightAttribute);
+  return clone;
+}
+
+/** Preserve exact JSON types, including invalid values, so rebuilding never silently repairs an approval input. */
+export function preserveSmartstoreCapacityDraft(current: Record<string, unknown>, next: Record<string, unknown>) {
+  const currentDetail = valueAt(current, smartstoreCapacityPath.slice(0, -1));
+  if (!currentDetail || typeof currentDetail !== "object" || !Object.hasOwn(currentDetail, "unitCapacity")) return next;
+  const clone = structuredClone(next);
+  const nextDetail = valueAt(clone, smartstoreCapacityPath.slice(0, -1));
+  if (!nextDetail || typeof nextDetail !== "object" || Array.isArray(nextDetail)) throw new Error("SMARTSTORE_CAPACITY_CONTAINER_INVALID");
+  (nextDetail as Record<string, unknown>).unitCapacity = structuredClone((currentDetail as Record<string, unknown>).unitCapacity);
+  return clone;
+}
+
+const smartstoreCapacityRequirements: RequirementSpec[] = [
+  { key: "unit-price-enabled", label: "단위가격 표시 여부", source: "카테고리", inputType: "boolean",
+    manualPath: [...smartstoreCapacityPath, "unitPriceYn"],
+    test: (draft) => { const value = smartstoreCapacity(draft); return typeof value.unitPriceYn === "boolean"
+      && (value.unitPriceYn || !smartstoreCapacityAmounts.some((key) => Object.hasOwn(value, key))); },
+    help: "대상 여부를 확인해 선택하세요. 필수 카테고리는 비대상으로 전송할 수 없습니다. 비대상은 수량·단위를 비워야 합니다. 등록 직전 공식 카테고리로 다시 검증합니다." },
+  { key: "unit-total-capacity", label: "판매단위의 총용량", source: "상품 정보", inputType: "number",
+    manualPath: [...smartstoreCapacityPath, "totalCapacityValue"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).totalCapacityValue; return typeof value === "number" && Number.isFinite(value)
+      && value >= 0.001 && value <= 999_999_999 && /^\d+(?:\.\d{1,3})?$/.test(String(value)); },
+    help: "실제 판매 구성 전체의 용량을 입력하세요. 배송중량이나 묶음 수에서 추정하지 않습니다. 소수 셋째 자리까지 입력할 수 있습니다." },
+  { key: "unit-display-capacity", label: "단위가격 기준량", source: "카테고리", inputType: "number",
+    manualPath: [...smartstoreCapacityPath, "unitCapacity"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).unitCapacity; return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 999; },
+    help: "상품군에 적용되는 기준량을 확인해 입력하세요. 1~999의 정수이며 기본값을 자동 적용하지 않습니다." },
+  { key: "unit-indication", label: "용량 단위", source: "카테고리",
+    manualPath: [...smartstoreCapacityPath, "indicationUnit"], applies: capacityAmountsApply,
+    test: (draft) => { const value = smartstoreCapacity(draft).indicationUnit; return typeof value === "string" && (smartstoreIndicationUnits as readonly string[]).includes(value); },
+    help: `공식 단위 중 상품에 맞는 값을 입력하세요: ${smartstoreIndicationUnits.join(", ")}` },
+];
+
+const smartstoreCertificationPath = [
+  "body",
+  "originProduct",
+  "detailAttribute",
+  "certificationTargetExcludeContent",
+];
+const smartstoreCertificationRequirements: RequirementSpec[] = [
+  {
+    key: "certification-child-exclusion",
+    label: "어린이제품 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "childCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "childCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+  {
+    key: "certification-kc-exclusion",
+    label: "KC 상품 인증 대상 구분",
+    source: "카테고리",
+    options: ["FALSE", "KC_EXEMPTION_OBJECT", "TRUE"],
+    manualPath: [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"],
+    test: (draft) => ["FALSE", "KC_EXEMPTION_OBJECT", "TRUE"].includes(String(valueAt(draft, [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"]))),
+    help: "FALSE=인증 대상, TRUE=인증 대상 아님, KC_EXEMPTION_OBJECT=안전기준준수·구매대행·병행수입입니다.",
+  },
+  {
+    key: "certification-kc-type",
+    label: "KC 면제 대상 타입",
+    source: "카테고리",
+    options: ["OVERSEAS", "SAFE_CRITERION", "PARALLEL_IMPORT"],
+    manualPath: [...smartstoreCertificationPath, "kcExemptionType"],
+    applies: (draft) => valueAt(draft, [...smartstoreCertificationPath, "kcCertifiedProductExclusionYn"]) === "KC_EXEMPTION_OBJECT",
+    test: (draft) => ["OVERSEAS", "SAFE_CRITERION", "PARALLEL_IMPORT"].includes(String(valueAt(draft, [...smartstoreCertificationPath, "kcExemptionType"]))),
+    help: "KC_EXEMPTION_OBJECT를 선택한 경우에만 실제 유형을 직접 선택하세요.",
+  },
+  {
+    key: "certification-green-exclusion",
+    label: "친환경 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "greenCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "greenCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+  {
+    key: "certification-chemical-exclusion",
+    label: "생활화학/살생물제 인증 대상 제외 여부",
+    source: "카테고리",
+    inputType: "boolean",
+    manualPath: [...smartstoreCertificationPath, "chemicalCertifiedProductExclusionYn"],
+    test: (draft) => typeof valueAt(draft, [...smartstoreCertificationPath, "chemicalCertifiedProductExclusionYn"]) === "boolean",
+    help: "카테고리와 상품 증거를 확인해 예/아니요를 직접 선택하세요.",
+  },
+];
 
 const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
   qoo10: [
@@ -206,6 +400,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     },
   ],
   shopee: [
+    { key: "condition", label: "상품 상태 (NEW·USED)", source: "상품 정보", test: (draft) => shopeeCreateConditionValid(valueAt(draft, ["body", "condition"])), manualPath: ["body", "condition"], help: "2026-09-01 공식 변경: 글로벌 상품 등록에는 상품 상태가 필수입니다." },
     { key: "shop", label: "승인 Shop ID", source: "판매자 계정", path: ["shopId"] },
     { key: "category", label: "Shopee 말단 카테고리", source: "카테고리", path: ["body", "category_id"] },
     { key: "title", label: "글로벌 상품명", source: "상품 정보", path: ["body", "global_item_name"] },
@@ -213,7 +408,7 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "brand", "original_brand_name"] },
     sharedImage(["imageUrls"]),
     { key: "price", label: "글로벌 기준가", source: "상품 정보", test: positive(["body", "original_price"]) },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["body", "normal_stock"]) },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => shopeeCreateStockValid(valueAt(draft, ["body"])) },
     { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => positiveFields(draft, [["body", "weight"], ["body", "dimension", "package_length"], ["body", "dimension", "package_width"], ["body", "dimension", "package_height"]]) },
     { key: "logistics", label: "활성 물류 채널", source: "판매자 계정", runtime: true, help: "등록 직전 Shopee 계정의 활성 물류 채널을 자동 조회합니다." },
   ],
@@ -224,15 +419,17 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "description"] },
     { key: "brand", label: "브랜드", source: "상품 정보", path: ["request", "Request", "Product", "Attributes", "brand"] },
     sharedImage(["imageUrls"]),
-    { key: "sku", label: "판매자 SKU", source: "상품 정보", path: ["request", "Request", "Product", "Skus", "Sku", 0, "SellerSku"] },
-    { key: "price", label: "판매가", source: "상품 정보", test: positive(["request", "Request", "Product", "Skus", "Sku", 0, "price"]) },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["request", "Request", "Product", "Skus", "Sku", 0, "quantity"]) },
-    { key: "package", label: "포장 내용·중량·규격", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["request", "Request", "Product", "Skus", "Sku", 0, "package_content"])) && positiveFields(draft, [["request", "Request", "Product", "Skus", "Sku", 0, "package_weight"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_length"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_width"], ["request", "Request", "Product", "Skus", "Sku", 0, "package_height"]]) },
+    { key: "sku", label: "판매자 SKU", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).sku },
+    { key: "price", label: "판매가", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).price },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).stock },
+    { key: "package", label: "포장 내용·중량·규격", source: "상품 정보", test: (draft) => lazadaCreateSkuChecks(draft).package },
   ],
   coupang: [
     { key: "category", label: "쿠팡 노출 카테고리", source: "카테고리", path: ["body", "displayCategoryCode"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "sellerProductName"] },
-    { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "brand"] },
+    { key: "brand", label: "브랜드 또는 브랜드 ID", source: "상품 정보", test: coupangBrandConfirmed, manualPath: ["body", "brand"], help: "브랜드 ID가 없으면 공백·특수문자 없는 쿠팡 표준 브랜드명을 입력하세요." },
+    { key: "product-identifier", label: "모든 옵션의 GTIN 또는 실제 모델번호", source: "상품 정보", test: coupangProductIdentifiersConfirmed, manualPath: ["body", "items", "0", "modelNo"], help: "바코드가 있으면 유효한 GTIN이어야 합니다. 바코드가 없으면 미부여 사유와 브랜드가 부여한 실제 모델번호를 모든 옵션에 입력하세요. 내부 판매자 SKU는 모델번호 근거가 아닙니다." },
+    { key: "purchase-option", label: "모든 쿠팡 구매옵션", source: "카테고리", test: coupangPurchaseOptionsConfirmed, manualPath: ["body", "items", "0", "attributes", "0", "attributeValueName"], help: "모든 옵션에 카테고리 메타와 일치하는 노출 구매옵션 이름과 값을 한 개 이상 확인하세요." },
     { key: "manufacturer", label: "제조사·공급처", source: "상품 정보", path: ["facts", "manufacturer"] },
     { key: "origin", label: "원산지", source: "상품 정보", path: ["facts", "countryOfOrigin"] },
     { key: "material", label: "재질·성분", source: "상품 정보", path: ["facts", "material"] },
@@ -260,6 +457,15 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
       help: "카테고리 메타에서 필수 인증이 확인되면 판매자 확인 코드가 필요합니다. 문서화되지 않은 dataType은 면책이 아니며, 코드 없이 빈 인증을 만들지 않습니다.",
     },
     {
+      key: "weight-attribute",
+      label: "판매단위의 확정 순중량",
+      source: "상품 정보",
+      runtime: true,
+      manualPath: ["facts", "weightAttribute"],
+      placeholder: "포장에서 확인한 순중량과 단위",
+      help: "판매 구성의 순중량을 단위와 함께 입력하세요. 배송·포장 중량으로 추정하지 않습니다. 필수 여부는 공식 카테고리에서 확인하며, 정확한 중량을 모르면 입력하지 않습니다.",
+    },
+    {
       key: "quantity-attribute",
       label: "수량·구성 속성",
       source: "상품 정보",
@@ -285,8 +491,12 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "shipping", label: "배송·반품 설정", source: "판매자 계정", test: (draft) => meaningful(valueAt(draft, ["product", "dlvWyCd"])) && meaningful(valueAt(draft, ["product", "dlvCstInstBasiCd"])) && meaningful(valueAt(draft, ["product", "rtngExchDetail"])) },
   ],
   smartstore: [
+    ...smartstoreCapacityRequirements,
+    ...smartstoreCertificationRequirements,
     { key: "category", label: "스마트스토어 말단 카테고리", source: "카테고리", path: ["body", "originProduct", "leafCategoryId"] },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "originProduct", "name"] },
+    { key: "brand", label: "브랜드", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "naverShoppingSearchInfo", "brandName"] },
+    { key: "seller-code", label: "판매자 SKU", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "sellerCodeInfo", "sellerManagementCode"] },
     { key: "description", label: "상세 설명", source: "상품 정보", path: ["body", "originProduct", "detailContent"] },
     sharedImage(["imageUrls"]),
     { key: "price", label: "판매가", source: "상품 정보", test: positive(["body", "originProduct", "salePrice"]) },
@@ -295,25 +505,38 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "minor-purchasable", label: "미성년자 구매 가능 여부", source: "상품 정보", test: (draft) => typeof valueAt(draft, ["body", "originProduct", "detailAttribute", "minorPurchasable"]) === "boolean", help: "일반 상품은 true, 성인 카테고리 상품은 false가 필요합니다." },
     { key: "provided-notice", label: "상품정보제공고시", source: "상품 정보", path: ["body", "originProduct", "detailAttribute", "productInfoProvidedNotice", "productInfoProvidedNoticeType"], help: "상품군 유형과 필수 고시 항목을 채널 payload에 포함합니다." },
     { key: "display-status", label: "스마트스토어 전시 상태", source: "상품 정보", test: (draft) => ["ON", "SUSPENSION"].includes(String(valueAt(draft, ["body", "smartstoreChannelProduct", "channelProductDisplayStatusType"]))), help: "상품 등록에는 ON 또는 SUSPENSION만 허용됩니다." },
+    { key: "naver-shopping-registration", label: "네이버쇼핑 등록 여부", source: "상품 정보", test: (draft) => typeof valueAt(draft, ["body", "smartstoreChannelProduct", "naverShoppingRegistration"]) === "boolean" },
+    { key: "channel-title", label: "스토어 채널 상품명", source: "상품 정보", path: ["body", "smartstoreChannelProduct", "channelProductName"] },
     { key: "phone", label: "스토어 A/S 전화번호", source: "판매자 계정", runtime: true, help: "Vault의 실제 스마트스토어 A/S 번호를 등록 직전에 적용합니다." },
     { key: "uploaded-image", label: "네이버 이미지 업로드", source: "판매자 계정", runtime: true, help: "원본 이미지를 Commerce API로 업로드한 URL로 교체합니다." },
   ],
   temu: [
+    { key: "sku", label: "모든 옵션의 고유 SKU", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).sku },
+    { key: "sku-images", label: "모든 옵션의 이미지", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).images },
+    { key: "variations", label: "모든 옵션의 사양명·값", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).variations },
     {
       key: "category",
-      label: "Temu 말단 카테고리 ID",
+      label: "Temu 외부 카테고리명(선택)",
       source: "카테고리",
-      test: (draft) => /^[1-9]\d*$/u.test(String(valueAt(draft, ["body", "goodsBasic", "extCatName"]) ?? "").trim()),
-      help: "Temu V3가 추천 카테고리로 대체하지 않도록 확정된 말단 카테고리 ID를 전송합니다.",
+      test: (draft) => {
+        const goodsBasic = valueAt(draft, ["body", "goodsBasic"]);
+        if (!goodsBasic || typeof goodsBasic !== "object" || Array.isArray(goodsBasic)) return false;
+        if (!Object.hasOwn(goodsBasic, "extCatName")) return true;
+        const category = String((goodsBasic as Record<string, unknown>).extCatName ?? "").trim();
+        return meaningful(category) && !/^[1-9]\d*$/u.test(category);
+      },
+      help: "V3 extCatName은 외부 플랫폼의 카테고리명/경로입니다. 생략 시 Temu가 자동 추천하며 숫자 Temu leaf ID 지원은 공식 문서에 없습니다.",
     },
     {
       key: "shipping-template",
-      label: "Temu 배송 템플릿 ID 또는 이름",
+      label: "Temu 기본 배송 템플릿",
       source: "판매자 계정",
-      path: ["body", "goodsBasic", "costTemplate"],
-      manualPath: ["body", "goodsBasic", "costTemplate"],
-      placeholder: "Temu Seller Centre의 배송 템플릿 ID 또는 정확한 이름",
-      help: "비워 두면 스토어 기본 템플릿이 자동 적용되므로 exact QA 등록에서는 명시적으로 확인해야 합니다.",
+      test: (draft) => {
+        const goodsBasic = valueAt(draft, ["body", "goodsBasic"]);
+        return Boolean(goodsBasic && typeof goodsBasic === "object" && !Array.isArray(goodsBasic)
+          && !Object.hasOwn(goodsBasic, "costTemplate"));
+      },
+      help: "V3는 상품 서비스 정보를 판매자 입력으로 받지 않고 스토어 기본 배송 템플릿을 자동 적용하므로 costTemplate을 전송하지 않습니다.",
     },
     { key: "title", label: "상품명", source: "상품 정보", path: ["body", "goodsBasic", "goodsName"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["body", "goodsBasic", "goodsDesc"] },
@@ -323,17 +546,19 @@ const specs: Record<ActiveChannelKey, RequirementSpec[]> = {
     { key: "manufacturer", label: "제조사", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Manufacturer") },
     { key: "origin", label: "원산지", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Country of origin") },
     { key: "material", label: "재질·성분", source: "상품 정보", test: (draft) => itemHasAttribute(draft, "Material") },
-    { key: "price", label: "판매가·통화", source: "상품 정보", test: (draft) => meaningful(valueAt(draft, ["body", "skuList", 0, "price", "basePrice", "currency"])) && Number(valueAt(draft, ["body", "skuList", 0, "price", "basePrice", "amount"])) > 0 },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["body", "skuList", 0, "quantity"]) },
-    { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => positiveFields(draft, [["body", "skuList", 0, "packageInfo", "weight"], ["body", "skuList", 0, "packageInfo", "length"], ["body", "skuList", 0, "packageInfo", "width"], ["body", "skuList", 0, "packageInfo", "height"]]) },
+    { key: "price", label: "판매가·통화", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).price },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).stock },
+    { key: "package", label: "포장 중량·규격", source: "상품 정보", test: (draft) => temuCreateSkuChecks(valueAt(draft, ["body"])).package },
   ],
   ebay: [
-    { key: "category", label: "eBay 말단 카테고리", source: "카테고리", path: ["offer", "categoryId"] },
+    { key: "category", label: "eBay 말단 카테고리", source: "카테고리", test: (draft) => /^[1-9]\d{0,9}$/u.test(String(valueAt(draft, ["offer", "categoryId"]) ?? "").trim()) },
     { key: "title", label: "상품명", source: "상품 정보", path: ["inventoryItem", "product", "title"] },
     { key: "description", label: "상품 설명", source: "상품 정보", path: ["inventoryItem", "product", "description"] },
+    { key: "listing-description", label: "eBay 공개 본문", source: "상품 정보", path: ["offer", "listingDescription"] },
     sharedImage(["inventoryItem", "product", "imageUrls"]),
-    { key: "price", label: "판매가", source: "상품 정보", test: positive(["offer", "pricingSummary", "price", "value"]) },
-    { key: "stock", label: "재고", source: "상품 정보", test: positive(["offer", "availableQuantity"]) },
+    { key: "condition", label: "카테고리 허용 상품 상태", source: "카테고리", path: ["inventoryItem", "condition"], manualPath: ["inventoryItem", "condition"], help: "등록 직전 eBay Metadata API의 category condition policy와 다시 대조합니다." },
+    { key: "price", label: "USD 판매가", source: "상품 정보", test: (draft) => String(valueAt(draft, ["offer", "pricingSummary", "price", "currency"])).toUpperCase() === "USD" && Number(valueAt(draft, ["offer", "pricingSummary", "price", "value"])) > 0 },
+    { key: "stock", label: "재고", source: "상품 정보", test: (draft) => { const offer = Number(valueAt(draft, ["offer", "availableQuantity"])); const item = Number(valueAt(draft, ["inventoryItem", "availability", "shipToLocationAvailability", "quantity"])); return Number.isSafeInteger(offer) && offer > 0 && offer === item; } },
     { key: "fulfillment-policy", label: "배송 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "fulfillmentPolicyId"], manualPath: ["offer", "listingPolicies", "fulfillmentPolicyId"], placeholder: "Seller Hub fulfillmentPolicyId", help: "Seller Hub에서 이 상품에 적용할 배송 정책을 확인해 직접 입력해 주세요." },
     { key: "payment-policy", label: "결제 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "paymentPolicyId"], manualPath: ["offer", "listingPolicies", "paymentPolicyId"], placeholder: "Seller Hub paymentPolicyId", help: "Seller Hub에서 이 상품에 적용할 결제 정책을 확인해 직접 입력해 주세요." },
     { key: "return-policy", label: "반품 정책 ID", source: "판매자 계정", path: ["offer", "listingPolicies", "returnPolicyId"], manualPath: ["offer", "listingPolicies", "returnPolicyId"], placeholder: "Seller Hub returnPolicyId", help: "Seller Hub에서 이 상품에 적용할 반품 정책을 확인해 직접 입력해 주세요." },
@@ -348,7 +573,16 @@ export function inspectListingDraft(
 ) {
   const operationSpecs = channel === "ebay" && operation === "listing.update"
     ? specs[channel].filter((spec) => ["title", "description", "images"].includes(spec.key))
-    : specs[channel];
+    : channel === "smartstore" && operation === "listing.update"
+      ? specs[channel].filter((spec) => [
+        "category",
+        "title",
+        "description",
+        "images",
+        "origin",
+        "uploaded-image",
+      ].includes(spec.key))
+      : specs[channel];
   return operationSpecs
     .filter((spec) => !spec.applies || spec.applies(draft))
     .map<ListingRequirement>((spec) => ({
@@ -359,24 +593,60 @@ export function inspectListingDraft(
       ? "runtime"
       : (spec.test ? spec.test(draft) : meaningful(valueAt(draft, spec.path ?? []))) ? "ready" : "manual",
     manualPath: spec.manualPath,
+    inputType: spec.inputType,
+    options: spec.options,
     placeholder: spec.placeholder,
     help: spec.help,
   }));
 }
 
 export function setListingDraftValue(draft: Record<string, unknown>, path: string[], value: string) {
+  const invalid = () => { throw new Error("LISTING_DRAFT_PATH_INVALID"); };
+  const isRecord = (input: unknown): input is Record<string, unknown> => {
+    if (!input || typeof input !== "object" || Array.isArray(input)) return false;
+    const prototype = Object.getPrototypeOf(input);
+    return prototype === Object.prototype || prototype === null;
+  };
+  const isIndex = (part: string) => /^(0|[1-9]\d*)$/.test(part)
+    && Number.isSafeInteger(Number(part)) && Number(part) < 0xffff_ffff;
+  if (!isRecord(draft) || !Array.isArray(path) || !path.length) return invalid();
+  if (typeof value !== "string") throw new Error("LISTING_DRAFT_VALUE_INVALID");
+  // Validate the entire path before cloning or assigning. Never traverse an
+  // inherited property, prototype key, blank token or noncanonical index.
+  for (const part of path) {
+    if (typeof part !== "string" || !part.trim() || part !== part.trim()
+        || ["__proto__", "prototype", "constructor"].includes(part)
+        || (!Number.isNaN(Number(part)) && !isIndex(part))) return invalid();
+  }
   const clone = structuredClone(draft);
-  let current: Record<string, unknown> = clone;
-  path.forEach((part, index) => {
-    if (index === path.length - 1) {
-      current[part] = value;
-      return;
+  let current: Record<string, unknown> | unknown[] = clone;
+  for (let index = 0; index < path.length; index += 1) {
+    const part = path[index];
+    if (Array.isArray(current)) {
+      // Only existing indices or one contiguous append are supported. No sparse
+      // growth, array length mutation, or arbitrary named array properties.
+      if (!isIndex(part) || Number(part) > current.length
+          || (Number(part) < current.length && !Object.hasOwn(current, part))) return invalid();
+    } else if (!isRecord(current) || isIndex(part)) {
+      // A numeric-keyed object is not an array; do not silently repair/drop it.
+      return invalid();
     }
-    const next = current[part];
-    if (!next || typeof next !== "object" || Array.isArray(next)) current[part] = {};
-    current = current[part] as Record<string, unknown>;
-  });
-  return clone;
+    const container = current as Record<string, unknown>;
+    if (index === path.length - 1) {
+      container[part] = value;
+      return clone;
+    }
+    const nextMustBeArray = isIndex(path[index + 1]);
+    const next = Object.hasOwn(container, part) ? container[part] : undefined;
+    if (next === undefined || next === null) {
+      container[part] = nextMustBeArray ? [] : {};
+    } else if (nextMustBeArray ? !Array.isArray(next) : !isRecord(next)) {
+      // Refuse to erase a primitive, array or non-JSON container on descent.
+      return invalid();
+    }
+    current = container[part] as Record<string, unknown> | unknown[];
+  }
+  return invalid();
 }
 
 export function listingDraftValue(draft: Record<string, unknown>, path: string[]) {

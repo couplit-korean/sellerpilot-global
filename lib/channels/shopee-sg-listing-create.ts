@@ -1,13 +1,6 @@
 import { createHash } from "node:crypto";
-import {
-  listingPublicationLanguageVerified,
-  parseListingPublicationAssetBinding,
-} from "./listing-publication-content";
-import {
-  shopeeExactGlobalCategoryPath,
-  shopeeSgCableClipCategory,
-  type ShopeeExactCategoryPath,
-} from "./shopee-category-tree";
+import { listingPublicationLanguageVerified, parseListingPublicationAssetBinding } from "./listing-publication-content";
+import { shopeeExactGlobalCategoryPath, type ShopeeExactCategoryPath } from "./shopee-category-tree";
 
 export {
   shopeeExactGlobalCategoryPath,
@@ -19,17 +12,9 @@ export {
 type UnknownRecord = Record<string, unknown>;
 
 export const shopeeSgListingCreateContextContract =
-  "sellerpilot_shopee_sg_listing_create_context_v1" as const;
+  "sellerpilot_shopee_sg_listing_create_context_v2" as const;
 export const shopeeSgPreparedCreateEvidenceContract =
   "sellerpilot_shopee_sg_prepared_create_evidence_v1" as const;
-
-export const shopeeSgExactCreateIdentity = Object.freeze({
-  productId: "ddccde35-9c58-4856-b673-d7aa27ce4220",
-  sku: "QA-20260823-CC-001",
-  merchantId: "5511564",
-  shopId: "1719148844",
-  market: "SG",
-});
 
 export const coinbaseExchangeRateDocumentationUrl =
   "https://docs.cdp.coinbase.com/coinbase-app/track-apis/exchange-rates";
@@ -57,8 +42,10 @@ export type ShopeeSgListingCreateContext = {
   targetId: string;
   targetCurrency: "SGD";
   targetPriceSgd: number;
+  targetPriceSource: "stored_channel_price";
   globalCurrency: "USD";
   globalPriceUsd: number;
+  globalPriceSource: "stored_global_price";
   quantity: number;
   categoryId: string;
   categoryPath: string[];
@@ -126,13 +113,13 @@ function normalizedMoney(value: number) {
 
 export function shopeeSgdPriceFromKrw(sourcePriceKrw: number, krwPerSgd: number) {
   if (!Number.isFinite(sourcePriceKrw) || sourcePriceKrw <= 0
-      || !Number.isFinite(krwPerSgd) || krwPerSgd <= 0) return null;
+    || !Number.isFinite(krwPerSgd) || krwPerSgd <= 0) return null;
   return normalizedMoney(sourcePriceKrw / krwPerSgd);
 }
 
 export function shopeeUsdPriceFromKrw(sourcePriceKrw: number, krwPerUsd: number) {
   if (!Number.isFinite(sourcePriceKrw) || sourcePriceKrw <= 0
-      || !Number.isFinite(krwPerUsd) || krwPerUsd <= 0) return null;
+    || !Number.isFinite(krwPerUsd) || krwPerUsd <= 0) return null;
   return normalizedMoney(sourcePriceKrw / krwPerUsd);
 }
 
@@ -143,9 +130,9 @@ function parseRateEvidence(value: unknown): ShopeeKrwSgdUsdRateEvidence | null {
   const fetchedAt = exactIsoDate(rate.fetchedAt);
   const asOf = exactIsoDate(rate.asOf);
   if (krwPerSgd === null || krwPerUsd === null || !fetchedAt || !asOf
-      || rate.source !== "Coinbase Data API"
-      || rate.sourceUrl !== coinbaseExchangeRateDocumentationUrl
-      || rate.frequency !== "minute-market") return null;
+    || rate.source !== "Coinbase Data API"
+    || rate.sourceUrl !== coinbaseExchangeRateDocumentationUrl
+    || rate.frequency !== "minute-market") return null;
   return {
     krwPerSgd,
     krwPerUsd,
@@ -175,36 +162,22 @@ export function shopeeSgListingCreateContextFromArguments(
   const categoryConfirmedAt = exactIsoDate(value.categoryConfirmedAt);
   const rate = parseRateEvidence(value.rate);
   if (value.contract !== shopeeSgListingCreateContextContract
-      || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(productId)
-      || !sku || sku.length > 100
-      || value.sourceCurrency !== "KRW"
-      || value.market !== "SG"
-      || value.locale !== "en-SG"
-      || !/^[1-9][0-9]{0,31}$/u.test(targetId)
-      || value.targetCurrency !== "SGD"
-      || value.globalCurrency !== "USD"
-      || !/^[1-9][0-9]{0,31}$/u.test(categoryId)
-      || categoryPath.length < 2 || categoryPath.length > 12
-      || new Set(categoryPath).size !== categoryPath.length
-      || !categoryConfirmedAt || !rate
-      || sourcePriceKrw === null || targetPriceSgd === null
-      || globalPriceUsd === null || quantity === null) return null;
-  const declaredSgd = shopeeSgdPriceFromKrw(sourcePriceKrw, rate.krwPerSgd);
-  const declaredUsd = shopeeUsdPriceFromKrw(sourcePriceKrw, rate.krwPerUsd);
-  if (declaredSgd === null || declaredUsd === null
-      || Math.abs(declaredSgd - targetPriceSgd) > 0.000_001
-      || Math.abs(declaredUsd - globalPriceUsd) > 0.000_001) return null;
-  const exactCreateSignalled = productId === shopeeSgExactCreateIdentity.productId
-    || sku === shopeeSgExactCreateIdentity.sku;
-  if (exactCreateSignalled && (
-    productId !== shopeeSgExactCreateIdentity.productId
-    || sku !== shopeeSgExactCreateIdentity.sku
-    || targetId !== shopeeSgExactCreateIdentity.shopId
-    || sourcePriceKrw !== 5_000
-    || quantity !== 1
-    || categoryId !== shopeeSgCableClipCategory.id
-    || !sameOrderedValues(categoryPath, shopeeSgCableClipCategory.path)
-  )) return null;
+    || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(productId)
+    || !sku || sku.length > 100
+    || value.sourceCurrency !== "KRW"
+    || value.market !== "SG"
+    || value.locale !== "en-SG"
+    || !/^[1-9][0-9]{0,31}$/u.test(targetId)
+    || value.targetCurrency !== "SGD"
+    || value.targetPriceSource !== "stored_channel_price"
+    || value.globalCurrency !== "USD"
+    || value.globalPriceSource !== "stored_global_price"
+    || !/^[1-9][0-9]{0,31}$/u.test(categoryId)
+    || categoryPath.length < 2 || categoryPath.length > 12
+    || new Set(categoryPath).size !== categoryPath.length
+    || !categoryConfirmedAt || !rate
+    || sourcePriceKrw === null || targetPriceSgd === null
+    || globalPriceUsd === null || quantity === null) return null;
   return {
     contract: shopeeSgListingCreateContextContract,
     productId,
@@ -216,8 +189,10 @@ export function shopeeSgListingCreateContextFromArguments(
     targetId,
     targetCurrency: "SGD",
     targetPriceSgd,
+    targetPriceSource: "stored_channel_price",
     globalCurrency: "USD",
     globalPriceUsd,
+    globalPriceSource: "stored_global_price",
     quantity,
     categoryId,
     categoryPath,
@@ -232,35 +207,12 @@ export function shopeeSgListingCreateContextFromArguments(
  * those identifiers are read only from the credentials selected by the
  * gateway immediately before provider access.
  */
-export function assertShopeeSgExactCreateProviderBinding(input: {
-  expectation: ShopeeSgListingCreateExpectation;
-  merchantCredential: UnknownRecord;
-  shopCredential: UnknownRecord;
-}) {
+export function assertShopeeSgCreateProviderBinding(input: { expectation: ShopeeSgListingCreateExpectation; merchantCredential: UnknownRecord; shopCredential: UnknownRecord }) {
   const { context } = input.expectation;
-  const exactCreateSignalled = context.productId === shopeeSgExactCreateIdentity.productId
-    || context.sku === shopeeSgExactCreateIdentity.sku;
-  if (!exactCreateSignalled) return null;
-  if (context.productId !== shopeeSgExactCreateIdentity.productId
-      || context.sku !== shopeeSgExactCreateIdentity.sku
-      || context.market !== shopeeSgExactCreateIdentity.market
-      || context.targetId !== shopeeSgExactCreateIdentity.shopId
-      || exactText(input.merchantCredential.merchant_id)
-        !== shopeeSgExactCreateIdentity.merchantId
-      || exactText(input.shopCredential.shop_id) !== shopeeSgExactCreateIdentity.shopId) {
-    throw new Error("SHOPEE_SG_EXACT_CREATE_PROVIDER_BINDING_MISMATCH");
-  }
-  return shopeeSgExactCreateIdentity;
-}
-
-export function shopeeSgExactCreateRequested(argumentsValue: UnknownRecord) {
-  const context = recordValue(argumentsValue.sellerpilotShopeeSgCreateContext);
-  const body = recordValue(argumentsValue.body);
-  const publish = recordValue(argumentsValue.publish);
-  const item = recordValue(publish.item);
-  return exactText(context.productId).toLowerCase() === shopeeSgExactCreateIdentity.productId
-    || [context.sku, body.global_item_sku, item.item_sku]
-      .some((value) => exactText(value) === shopeeSgExactCreateIdentity.sku);
+  const merchantId = exactText(input.merchantCredential.merchant_id);
+  const shopId = exactText(input.shopCredential.shop_id);
+  if (!/^[1-9]\d*$/.test(merchantId) || shopId !== context.targetId || context.market !== "SG") throw new Error("SHOPEE_SG_CREATE_PROVIDER_BINDING_MISMATCH");
+  return { productId: context.productId, sku: context.sku, merchantId, shopId, market: context.market };
 }
 
 /**
@@ -335,6 +287,8 @@ export function buildShopeeSgListingCreateContext(input: {
   market: unknown;
   targetId: unknown;
   currency: unknown;
+  targetPrice?: unknown;
+  globalPrice?: unknown;
   rate: ShopeeKrwSgdUsdRateEvidence;
 }) {
   const productId = exactText(input.productId).toLowerCase();
@@ -354,8 +308,8 @@ export function buildShopeeSgListingCreateContext(input: {
   const sourcePriceKrw = finitePositive(manual.sellingPrice);
   const quantity = positiveInteger(product.onHand ?? manual.stock);
   if (!rate || sourcePriceKrw === null || quantity === null) return null;
-  const targetPriceSgd = shopeeSgdPriceFromKrw(sourcePriceKrw, rate.krwPerSgd);
-  const globalPriceUsd = shopeeUsdPriceFromKrw(sourcePriceKrw, rate.krwPerUsd);
+  const targetPriceSgd = finitePositive(input.targetPrice);
+  const globalPriceUsd = finitePositive(input.globalPrice);
   if (targetPriceSgd === null || globalPriceUsd === null) return null;
   return shopeeSgListingCreateContextFromArguments({
     sellerpilotShopeeSgCreateContext: {
@@ -369,8 +323,10 @@ export function buildShopeeSgListingCreateContext(input: {
       targetId: exactText(input.targetId),
       targetCurrency: exactText(input.currency).toUpperCase(),
       targetPriceSgd,
+      targetPriceSource: "stored_channel_price",
       globalCurrency: "USD",
       globalPriceUsd,
+      globalPriceSource: "stored_global_price",
       quantity,
       categoryId: assignment.categoryId,
       categoryPath,
@@ -438,7 +394,7 @@ function normalizedImage(value: unknown) {
       /^\/storage\/v1\/object\/public\/sellerpilot-marketplace\/(normalized\/([0-9a-f]{2})\/([0-9a-f]{64})\.jpg)$/u,
     );
     if (url.protocol !== "https:" || url.username || url.password || url.port
-        || url.search || url.hash || !match || match[2] !== match[3].slice(0, 2)) return null;
+      || url.search || url.hash || !match || match[2] !== match[3].slice(0, 2)) return null;
     return { url: url.toString(), digest: match[3] };
   } catch {
     return null;
@@ -616,11 +572,12 @@ export function assertShopeeSgCurrentPrice(input: {
   if (fetchedAtMs > nowMs + 60_000 || nowMs - fetchedAtMs > 10 * 60 * 1_000) {
     throw new Error("SHOPEE_KRW_SGD_RATE_STALE");
   }
-  const currentSgdValue = context.targetPriceSgd * input.authoritativeRate.krwPerSgd;
-  const currentUsdValue = context.globalPriceUsd * input.authoritativeRate.krwPerUsd;
-  const allowedKrwDrift = Math.max(1, context.sourcePriceKrw * 0.01);
-  if (Math.abs(currentSgdValue - context.sourcePriceKrw) > allowedKrwDrift
-      || Math.abs(currentUsdValue - context.sourcePriceKrw) > allowedKrwDrift) {
+  const sgdRateDrift = Math.abs(context.rate.krwPerSgd - input.authoritativeRate.krwPerSgd)
+    / input.authoritativeRate.krwPerSgd;
+  const usdRateDrift = Math.abs(context.rate.krwPerUsd - input.authoritativeRate.krwPerUsd)
+    / input.authoritativeRate.krwPerUsd;
+  if (!Number.isFinite(sgdRateDrift) || !Number.isFinite(usdRateDrift)
+      || sgdRateDrift > 0.01 || usdRateDrift > 0.01) {
     throw new Error("SHOPEE_KRW_SGD_AUTHORITATIVE_RATE_MISMATCH");
   }
   return context;
@@ -632,9 +589,7 @@ export function shopeeSgExpectedCategoryPathVerified(
 ) {
   const path = shopeeExactGlobalCategoryPath(remoteData, context.categoryId);
   if (!path || !sameOrderedValues(path.names, context.categoryPath)) return null;
-  if (context.sku === shopeeSgExactCreateIdentity.sku
-      && (!sameOrderedValues(path.ids, shopeeSgCableClipCategory.ids)
-        || !sameOrderedValues(path.names, shopeeSgCableClipCategory.path))) return null;
+
   return path;
 }
 

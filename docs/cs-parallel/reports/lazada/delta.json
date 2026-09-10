@@ -1,0 +1,153 @@
+{
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "channel": "lazada",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "sourceHead": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "files": [
+    {
+      "path": "lib/channels/lazada-inquiries.ts",
+      "change": "modify",
+      "beforeSha256": "1bf9e4bcf413197daf5b94114d388f1fc869000a39c2fe0950d595848bd103c1",
+      "afterSha256": "7b922d6f4a6a7f0d5f43032c6a7829086202ab50f22c32f4d44d3c97d9520afd",
+      "reason": "Preserve and bound provider session tags through historical bootstrap."
+    },
+    {
+      "path": "lib/channels/lazada-im.ts",
+      "change": "modify",
+      "beforeSha256": "de9b0a59a962e74408c3dd6a7169d34364bafc4d67c6dd0cfe9ac8febcc01454",
+      "afterSha256": "2330fbf480d8df15e4cd0bcfa6eb0d626b60f3e0b2ff56b7aea1bd4ed5914446",
+      "reason": "Classify official and unknown-template events conservatively, add documented cards, and converge recall revisions without accepting body or attachment edits."
+    },
+    {
+      "path": "lib/channels/lazada-raw-reprocess.ts",
+      "change": "modify",
+      "beforeSha256": "5f6d86639886a8ab411f40f7e664a953952b24ee42f9dfc70970bb934c443468",
+      "afterSha256": "6b977f8ff06b9ae51b47a05fb82d82538804a43742f62c96008f731b1d11f375",
+      "reason": "Version the reprocessor for the new official-session and recall projection semantics."
+    },
+    {
+      "path": "lib/cs/channels/lazada/scope-inventory.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "92e645973a561aa1275db29df8688f6666cf03185f14c011953c3623fff445c0",
+      "reason": "Keep product review and reverse-order after-sales visible as unfinished Lazada CS scope."
+    },
+    {
+      "path": "tests/lazada-im.test.ts",
+      "change": "modify",
+      "beforeSha256": "d2c295795f5fc8a343a0f88bc7d8b9ad6d41483132e18678d13d6b76655855e3",
+      "afterSha256": "fc8b601d941f27786e774e653b3f053b45c333c7b94f8a779ffe2708cb208217",
+      "reason": "Cover official-session role confusion and safe card metadata."
+    },
+    {
+      "path": "tests/lazada-history-completeness.test.ts",
+      "change": "modify",
+      "beforeSha256": "b8cf9483e087cf57cec735ae90e6cc9eb86e584413dc95f32aac2ac673ba211e",
+      "afterSha256": "3879a8e222e623676fb5963a25e79acbef9d330f1ef2ca7214792aea58d4c5ac",
+      "reason": "Cover official and unknown templates, recall convergence, and body or attachment conflicts."
+    },
+    {
+      "path": "tests/lazada-inquiry-sync.test.ts",
+      "change": "modify",
+      "beforeSha256": "d738c3c10c3b8e311197e582077eb120daaea545d08f847c81bab8be21efe299",
+      "afterSha256": "045291912cf0b336d891963fb174c150e599e1d6e2ff9d3387d808ca2974b29a",
+      "reason": "Verify bootstrap preserves official session tags."
+    },
+    {
+      "path": "tests/lazada-raw-reprocess.test.ts",
+      "change": "modify",
+      "beforeSha256": "4df3ed69d34f2ded950f54708a901039cd063c59c0fa51dc46d841f21dc61941",
+      "afterSha256": "4b33ede45074fe462e9954809c563d8981f0703ea452f29d1e67e4a637263b0d",
+      "reason": "Pin the new parser version in raw reprocess coverage."
+    },
+    {
+      "path": "tests/cs-lazada-scope-inventory.test.ts",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "0a84997882270a792f7713fc96d20442b33f37272429f4cadae71739fe6e78ab",
+      "reason": "Assert review permissions and after-sales mutation boundaries remain explicit."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/actual-grant.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "d123533d53cfb0de6107f06730537b94cd22da6b1554b3069f3d5e7030480369",
+      "reason": "Record masked actual CS Bot token grant and DB/web count evidence."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/message-reconciliation.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "af135cf75200f8581eb754278e35b4d0d1b281728b2c0154de8702d503f30fbe",
+      "reason": "Record the selected session's full remote ID count against DB and web counts without customer content."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/raw-reprocess-card-attachment.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "b359d245ab5a9c0adbd32058eb79cc904ddc6a5b622717a66111deb00e129788",
+      "reason": "Separate isolated raw, recovery, card, revision, role, limit, and attachment evidence from production state."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/reply-observation.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "1686118bb4a645b5289112ee955eaf16f2e9b0bd9bfed52a0abe149c70cdacb2",
+      "reason": "Record isolated reply readback semantics and the absence of an approved production send."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/local-verification.json",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "6dea425ba65d575cb7f4c907af9e376fb025027cc943084c81d07025803fe835",
+      "reason": "Record Node 22 tests, typecheck, lint, and port 3216 browser verification."
+    },
+    {
+      "path": "docs/cs-parallel/reports/lazada/status.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9195d856dc444ae638cbb7a165af82be91e417d65586e53f2bbe346dcdabcc2c",
+      "reason": "Report G1 through G8, scope denominators, official contracts, evidence boundaries, and next action."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-001-im-credential-lineage.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "171223446e814eca295566603a3a5f6bf1ff0d04514935ee6e7d9efe7fff3b46",
+      "reason": "Request shared IM-token and provider-certified seller/country binding."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-002-api-call-limit.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "47bf7e96d7d26a7b3d746003bc408be03a0bdd8bcb62d5ef0ab06edabf831cc0",
+      "reason": "Request exact ApiCallLimit handling with one safe GET retry."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-003-durable-im-ledger.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "02259627a5c27b9854814ad48194a4935105b9b336a672110dc0ee62040ae18c",
+      "reason": "Request shared SQL and ingest changes for durable raw, recall, system, retention, and observation ledgers."
+    },
+    {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-004-scope-and-push-activation.md",
+      "change": "add",
+      "beforeSha256": null,
+      "afterSha256": "9ebc8827b308f970c831bf9beacc388b8d215458ed977e65298913b9c1b14bb7",
+      "reason": "Request shared review and after-sales inventory plus safely sequenced Push activation."
+    }
+  ],
+  "sharedProposals": [
+    "lazada-001",
+    "lazada-002",
+    "lazada-003",
+    "lazada-004"
+  ],
+  "testEvidence": [
+    "docs/cs-parallel/reports/lazada/local-verification.json",
+    "docs/cs-parallel/reports/lazada/raw-reprocess-card-attachment.json",
+    "docs/cs-parallel/reports/lazada/reply-observation.json"
+  ]
+}

@@ -1,0 +1,4501 @@
+TAP version 13
+# Subtest: AI studio output schema keeps every object strict for structured output
+ok 1 - AI studio output schema keeps every object strict for structured output
+  ---
+  duration_ms: 4.327667
+  type: 'test'
+  ...
+# Subtest: AI studio contract accepts all 34 exact channel-market locales
+ok 2 - AI studio contract accepts all 34 exact channel-market locales
+  ---
+  duration_ms: 12.148958
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects conflicting health-functional-food classification
+ok 3 - AI studio contract rejects conflicting health-functional-food classification
+  ---
+  duration_ms: 6.16125
+  type: 'test'
+  ...
+# Subtest: health-functional-food negation recognizes common Korean legal-label wording
+ok 4 - health-functional-food negation recognizes common Korean legal-label wording
+  ---
+  duration_ms: 30.812833
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects negative health-functional-food evidence
+ok 5 - AI studio contract rejects negative health-functional-food evidence
+  ---
+  duration_ms: 2.521917
+  type: 'test'
+  ...
+# Subtest: AI studio contract keeps unknown classification in review state
+ok 6 - AI studio contract keeps unknown classification in review state
+  ---
+  duration_ms: 2.19575
+  type: 'test'
+  ...
+# Subtest: AI studio contract enforces classification status and value in both directions
+ok 7 - AI studio contract enforces classification status and value in both directions
+  ---
+  duration_ms: 5.063625
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects short or internally duplicated master detail pages
+ok 8 - AI studio contract rejects short or internally duplicated master detail pages
+  ---
+  duration_ms: 3.635334
+  type: 'test'
+  ...
+# Subtest: AI studio contract assigns each master detail image to one unique question
+ok 9 - AI studio contract assigns each master detail image to one unique question
+  ---
+  duration_ms: 1.80575
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects a mismatched market locale
+ok 10 - AI studio contract rejects a mismatched market locale
+  ---
+  duration_ms: 3.09825
+  type: 'test'
+  ...
+# Subtest: AI studio contract preserves classification status across locales
+ok 11 - AI studio contract preserves classification status across locales
+  ---
+  duration_ms: 1.340333
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects Korean residue in localized listings
+ok 12 - AI studio contract rejects Korean residue in localized listings
+  ---
+  duration_ms: 1.163
+  type: 'test'
+  ...
+# Subtest: terminal normalization repairs only Korean residue in localized evidence
+ok 13 - terminal normalization repairs only Korean residue in localized evidence
+  ---
+  duration_ms: 2.626708
+  type: 'test'
+  ...
+# Subtest: terminal normalization never hides Korean residue outside provenance fields
+ok 14 - terminal normalization never hides Korean residue outside provenance fields
+  ---
+  duration_ms: 1.896666
+  type: 'test'
+  ...
+# Subtest: AI studio contract validates the expected script in every localized detail field
+ok 15 - AI studio contract validates the expected script in every localized detail field
+  ---
+  duration_ms: 4.270084
+  type: 'test'
+  ...
+# Subtest: Latin-script locales validate distinctive language signals across the whole listing
+ok 16 - Latin-script locales validate distinctive language signals across the whole listing
+  ---
+  duration_ms: 5.956834
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects duplicated localized detail image roles
+ok 17 - AI studio contract rejects duplicated localized detail image roles
+  ---
+  duration_ms: 2.460958
+  type: 'test'
+  ...
+# Subtest: AI studio contract rejects disconnected keyword stuffing
+ok 18 - AI studio contract rejects disconnected keyword stuffing
+  ---
+  duration_ms: 2.118417
+  type: 'test'
+  ...
+# Subtest: general-food contract rejects invented efficacy and intake directions without exact label evidence
+ok 19 - general-food contract rejects invented efficacy and intake directions without exact label evidence
+  ---
+  duration_ms: 137.093458
+  type: 'test'
+  ...
+# Subtest: general-food contract accepts an exact label-backed intake amount and an explicit no-efficacy statement
+ok 20 - general-food contract accepts an exact label-backed intake amount and an explicit no-efficacy statement
+  ---
+  duration_ms: 42.492625
+  type: 'test'
+  ...
+# Subtest: general-food guard also rejects invented efficacy inside a localized section
+ok 21 - general-food guard also rejects invented efficacy inside a localized section
+  ---
+  duration_ms: 50.03975
+  type: 'test'
+  ...
+# Subtest: general-food guard rejects Korean digestion and weight-loss efficacy
+ok 22 - general-food guard rejects Korean digestion and weight-loss efficacy
+  ---
+  duration_ms: 90.302875
+  type: 'test'
+  ...
+# Subtest: general-food guard rejects vi, id, ms, and th efficacy claims but accepts explicit negation
+ok 23 - general-food guard rejects vi, id, ms, and th efficacy claims but accepts explicit negation
+  ---
+  duration_ms: 1564.807792
+  type: 'test'
+  ...
+# Subtest: a negated localized claim does not hide a later positive claim
+ok 24 - a negated localized claim does not hide a later positive claim
+  ---
+  duration_ms: 182.170833
+  type: 'test'
+  ...
+# Subtest: general-food guard allows ordinary localized taste, package, and net-weight descriptions
+ok 25 - general-food guard allows ordinary localized taste, package, and net-weight descriptions
+  ---
+  duration_ms: 50.098
+  type: 'test'
+  ...
+# Subtest: ACV package count after a completed sentence is not treated as a Korean intake direction
+ok 26 - ACV package count after a completed sentence is not treated as a Korean intake direction
+  ---
+  duration_ms: 284.342542
+  type: 'test'
+  ...
+# Subtest: ACV inline label directions survive unrelated net weight in the same factual body
+ok 27 - ACV inline label directions survive unrelated net weight in the same factual body
+  ---
+  duration_ms: 297.468959
+  type: 'test'
+  ...
+# Subtest: Lotte Thai non-health-product wording remains an explicit bounded negation
+ok 28 - Lotte Thai non-health-product wording remains an explicit bounded negation
+  ---
+  duration_ms: 303.134292
+  type: 'test'
+  ...
+# Subtest: localized daily intake requires the same measured amount in local label evidence
+ok 29 - localized daily intake requires the same measured amount in local label evidence
+  ---
+  duration_ms: 689.782334
+  type: 'test'
+  ...
+# Subtest: general-food safety normalization is immutable and removes only unsafe sentences
+ok 30 - general-food safety normalization is immutable and removes only unsafe sentences
+  ---
+  duration_ms: 272.936833
+  type: 'test'
+  ...
+# Subtest: general-food safety normalization preserves explicit negation and label-backed intake
+ok 31 - general-food safety normalization preserves explicit negation and label-backed intake
+  ---
+  duration_ms: 273.851416
+  type: 'test'
+  ...
+# Subtest: remaining marketplace languages remove positive claims and preserve clause-local negation
+ok 32 - remaining marketplace languages remove positive claims and preserve clause-local negation
+  ---
+  duration_ms: 5153.42325
+  type: 'test'
+  ...
+# Subtest: additive not-only wording remains a positive efficacy claim
+ok 33 - additive not-only wording remains a positive efficacy claim
+  ---
+  duration_ms: 1488.116792
+  type: 'test'
+  ...
+# Subtest: Japanese and Traditional Chinese efficacy guards cover both claim directions and common verbs
+ok 34 - Japanese and Traditional Chinese efficacy guards cover both claim directions and common verbs
+  ---
+  duration_ms: 1657.767625
+  type: 'test'
+  ...
+# Subtest: all 34 canonical listings enforce localized numeric daily intake evidence
+ok 35 - all 34 canonical listings enforce localized numeric daily intake evidence
+  ---
+  duration_ms: 905.025
+  type: 'test'
+  ...
+# Subtest: general-food normalization clears residual intake at detailSections[2].body for all 34 listings
+ok 36 - general-food normalization clears residual intake at detailSections[2].body for all 34 listings
+  ---
+  duration_ms: 603.450833
+  type: 'test'
+  ...
+# Subtest: general-food fallback restores only safety-shortened summaries and bodies across all 34 listings
+ok 37 - general-food fallback restores only safety-shortened summaries and bodies across all 34 listings
+  ---
+  duration_ms: 569.262625
+  type: 'test'
+  ...
+# Subtest: general-food body fallback preserves an exact evidence-backed intake sentence
+ok 38 - general-food body fallback preserves an exact evidence-backed intake sentence
+  ---
+  duration_ms: 599.954333
+  type: 'test'
+  ...
+# Subtest: general-food fallback does not repair summaries or bodies that were malformed before safety removal
+ok 39 - general-food fallback does not repair summaries or bodies that were malformed before safety removal
+  ---
+  duration_ms: 301.229042
+  type: 'test'
+  ...
+# Subtest: general-food safety normalization never invents replacement copy for an unsafe-only field
+ok 40 - general-food safety normalization never invents replacement copy for an unsafe-only field
+  ---
+  duration_ms: 375.99275
+  type: 'test'
+  ...
+# Subtest: general-food safety normalization drops unsafe array entries and leaves cardinality fail-closed
+ok 41 - general-food safety normalization drops unsafe array entries and leaves cardinality fail-closed
+  ---
+  duration_ms: 318.3775
+  type: 'test'
+  ...
+# Subtest: general-food public and image-prompt fields use exact validator paths
+ok 42 - general-food public and image-prompt fields use exact validator paths
+  ---
+  duration_ms: 444.813375
+  type: 'test'
+  ...
+# Subtest: health-functional-food results are never rewritten by the general-food normalizer
+ok 43 - health-functional-food results are never rewritten by the general-food normalizer
+  ---
+  duration_ms: 0.147917
+  type: 'test'
+  ...
+# Subtest: general-food validator covers localized keywords and buyer questions
+ok 44 - general-food validator covers localized keywords and buyer questions
+  ---
+  duration_ms: 50.94025
+  type: 'test'
+  ...
+# Subtest: AI studio warning limits are normalized deterministically before terminal validation
+ok 45 - AI studio warning limits are normalized deterministically before terminal validation
+  ---
+  duration_ms: 6.747958
+  type: 'test'
+  ...
+# Subtest: AI studio warning limits stop at the last complete sentence instead of a partial word
+ok 46 - AI studio warning limits stop at the last complete sentence instead of a partial word
+  ---
+  duration_ms: 0.52
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove ACV internal provenance without losing seller-facing product cautions
+ok 47 - AI studio warnings remove ACV internal provenance without losing seller-facing product cautions
+  ---
+  duration_ms: 0.484875
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove the repeated Lotte API suffix and keep the label caution
+ok 48 - AI studio warnings remove the repeated Lotte API suffix and keep the label caution
+  ---
+  duration_ms: 0.105125
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove appended model commentary without erasing the seller caution
+ok 49 - AI studio warnings remove appended model commentary without erasing the seller caution
+  ---
+  duration_ms: 0.266042
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove echoed prompt-injection instructions and keep the seller fact
+ok 50 - AI studio warnings remove echoed prompt-injection instructions and keep the seller fact
+  ---
+  duration_ms: 0.39225
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove Korean claim directives that precede an English injection marker
+ok 51 - AI studio warnings remove Korean claim directives that precede an English injection marker
+  ---
+  duration_ms: 0.3935
+  type: 'test'
+  ...
+# Subtest: AI studio warnings remove malformed model commentary after a complete Korean fact
+ok 52 - AI studio warnings remove malformed model commentary after a complete Korean fact
+  ---
+  duration_ms: 0.327334
+  type: 'test'
+  ...
+# Subtest: AI studio warning normalization collapses only adjacent duplicate sentences
+ok 53 - AI studio warning normalization collapses only adjacent duplicate sentences
+  ---
+  duration_ms: 3.051125
+  type: 'test'
+  ...
+# Subtest: studio section count normalization is immutable and limited to valid master lengths
+ok 54 - studio section count normalization is immutable and limited to valid master lengths
+  ---
+  duration_ms: 0.352375
+  type: 'test'
+  ...
+# Subtest: terminal normalization deterministically restores a missing story role without changing detail content
+ok 55 - terminal normalization deterministically restores a missing story role without changing detail content
+  ---
+  duration_ms: 8.111125
+  type: 'test'
+  ...
+# Subtest: required section coverage normalization fails closed when no semantic replacement exists
+ok 56 - required section coverage normalization fails closed when no semantic replacement exists
+  ---
+  duration_ms: 4.167375
+  type: 'test'
+  ...
+# Subtest: a shared detail-feature asset does not relabel a pure benefit section as comparison
+ok 57 - a shared detail-feature asset does not relabel a pure benefit section as comparison
+  ---
+  duration_ms: 0.336291
+  type: 'test'
+  ...
+# Subtest: required section coverage finds a deterministic global assignment for ambiguous missing roles
+ok 58 - required section coverage finds a deterministic global assignment for ambiguous missing roles
+  ---
+  duration_ms: 0.47625
+  type: 'test'
+  ...
+# Subtest: AI studio warning truncation never leaves an unpaired UTF-16 surrogate
+ok 59 - AI studio warning truncation never leaves an unpaired UTF-16 surrogate
+  ---
+  duration_ms: 2.051666
+  type: 'test'
+  ...
+# Subtest: AI studio keyword coverage repair derives only a bounded phrase from the existing localized title
+ok 60 - AI studio keyword coverage repair derives only a bounded phrase from the existing localized title
+  ---
+  duration_ms: 2.827166
+  type: 'test'
+  ...
+# Subtest: AI studio keyword coverage repair leaves already connected localized copy unchanged
+ok 61 - AI studio keyword coverage repair leaves already connected localized copy unchanged
+  ---
+  duration_ms: 0.325875
+  type: 'test'
+  ...
+# Subtest: product research contract distinguishes Vercel server results from legacy CLI results
+ok 62 - product research contract distinguishes Vercel server results from legacy CLI results
+  ---
+  duration_ms: 4.193583
+  type: 'test'
+  ...
+# Subtest: server product research preflight requires one complete six-asset lineage set
+ok 63 - server product research preflight requires one complete six-asset lineage set
+  ---
+  duration_ms: 3.3215
+  type: 'test'
+  ...
+# Subtest: product research search locales stay aligned across Zod and worker JSON schema
+ok 64 - product research search locales stay aligned across Zod and worker JSON schema
+  ---
+  duration_ms: 1.025125
+  type: 'test'
+  ...
+# Subtest: AI studio request requires seller facts and normalized listing images
+ok 65 - AI studio request requires seller facts and normalized listing images
+  ---
+  duration_ms: 2.523875
+  type: 'test'
+  ...
+# Subtest: AI studio request accepts only bounded verified same-product price evidence
+ok 66 - AI studio request accepts only bounded verified same-product price evidence
+  ---
+  duration_ms: 1.050125
+  type: 'test'
+  ...
+# Subtest: AI studio request canonicalizes HTTP 11st evidence before the second stage
+ok 67 - AI studio request canonicalizes HTTP 11st evidence before the second stage
+  ---
+  duration_ms: 0.301166
+  type: 'test'
+  ...
+# Subtest: AI studio request accepts four providers and fences marketplace web evidence to official product URLs
+ok 68 - AI studio request accepts four providers and fences marketplace web evidence to official product URLs
+  ---
+  duration_ms: 1.684417
+  type: 'test'
+  ...
+# Subtest: AI studio request accepts free-text research without a source URL
+ok 69 - AI studio request accepts free-text research without a source URL
+  ---
+  duration_ms: 0.336
+  type: 'test'
+  ...
+# Subtest: AI studio request rejects missing rights confirmation and non-square output
+ok 70 - AI studio request rejects missing rights confirmation and non-square output
+  ---
+  duration_ms: 0.374958
+  type: 'test'
+  ...
+# Subtest: AI worker completion requires the full thumbnail and detail-image set
+ok 71 - AI worker completion requires the full thumbnail and detail-image set
+  ---
+  duration_ms: 8.93
+  type: 'test'
+  ...
+# Subtest: AI worker completion accepts a product research result without generated images
+ok 72 - AI worker completion accepts a product research result without generated images
+  ---
+  duration_ms: 0.411667
+  type: 'test'
+  ...
+# Subtest: AI worker completion accepts exactly the regenerated image path
+ok 73 - AI worker completion accepts exactly the regenerated image path
+  ---
+  duration_ms: 0.139458
+  type: 'test'
+  ...
+# Subtest: support reply CLI contract requires a supported locale and reviewable draft
+ok 74 - support reply CLI contract requires a supported locale and reviewable draft
+  ---
+  duration_ms: 1.612041
+  type: 'test'
+  ...
+# Subtest: concise studio accepts eight short image sections and preserves publication role agreement
+ok 75 - concise studio accepts eight short image sections and preserves publication role agreement
+  ---
+  duration_ms: 9.214125
+  type: 'test'
+  ...
+# Subtest: Shopee inquiry gateway preserves review and return continuation boundaries
+ok 76 - Shopee inquiry gateway preserves review and return continuation boundaries
+  ---
+  duration_ms: 6.628542
+  type: 'test'
+  ...
+# Subtest: gateway canonicalizes PostgreSQL timezone offsets before credential staging
+ok 77 - gateway canonicalizes PostgreSQL timezone offsets before credential staging
+  ---
+  duration_ms: 1.208916
+  type: 'test'
+  ...
+# Subtest: OAuth completion accepts and canonicalizes a timezone offset
+ok 78 - OAuth completion accepts and canonicalizes a timezone offset
+  ---
+  duration_ms: 0.675625
+  type: 'test'
+  ...
+# Subtest: channel gateway accepts the full Shopee asynchronous verification trail
+ok 79 - channel gateway accepts the full Shopee asynchronous verification trail
+  ---
+  duration_ms: 0.383833
+  type: 'test'
+  ...
+# Subtest: channel gateway reconciliation can preserve a structured partial-write result
+ok 80 - channel gateway reconciliation can preserve a structured partial-write result
+  ---
+  duration_ms: 1.915208
+  type: 'test'
+  ...
+# Subtest: eBay inventory PUT is treated as an observed listing update mutation
+ok 81 - eBay inventory PUT is treated as an observed listing update mutation
+  ---
+  duration_ms: 0.122666
+  type: 'test'
+  ...
+# Subtest: failed publication verification remains reconciliation-required for durable evidence
+ok 82 - failed publication verification remains reconciliation-required for durable evidence
+  ---
+  duration_ms: 0.095542
+  type: 'test'
+  ...
+# Subtest: verified listing exposure remains attached to the reconciliation completion
+ok 83 - verified listing exposure remains attached to the reconciliation completion
+  ---
+  duration_ms: 0.58425
+  type: 'test'
+  ...
+# Subtest: channel gateway accepts sanitized 11st competitor search candidates
+ok 84 - channel gateway accepts sanitized 11st competitor search candidates
+  ---
+  duration_ms: 0.577708
+  type: 'test'
+  ...
+# Subtest: channel gateway accepts a staged eBay OAuth completion
+ok 85 - channel gateway accepts a staged eBay OAuth completion
+  ---
+  duration_ms: 0.358833
+  type: 'test'
+  ...
+# Subtest: OAuth completion rejects credentials in response payload or a missing terminal stage
+ok 86 - OAuth completion rejects credentials in response payload or a missing terminal stage
+  ---
+  duration_ms: 0.715417
+  type: 'test'
+  ...
+# Subtest: channel gateway preserves a known credential refresh for failed
+ok 87 - channel gateway preserves a known credential refresh for failed
+  ---
+  duration_ms: 0.274833
+  type: 'test'
+  ...
+# Subtest: channel gateway preserves a known credential refresh for reconciliation_required
+ok 88 - channel gateway preserves a known credential refresh for reconciliation_required
+  ---
+  duration_ms: 0.081666
+  type: 'test'
+  ...
+# Subtest: inquiry reply provider uncertainty is never classified as safely retryable
+ok 89 - inquiry reply provider uncertainty is never classified as safely retryable
+  ---
+  duration_ms: 0.07125
+  type: 'test'
+  ...
+# Subtest: new successful listing writes require a verified remote state
+ok 90 - new successful listing writes require a verified remote state
+  ---
+  duration_ms: 0.740125
+  type: 'test'
+  ...
+# Subtest: publication intent cannot be satisfied by an unsafe or unknown visibility
+ok 91 - publication intent cannot be satisfied by an unsafe or unknown visibility
+  ---
+  duration_ms: 0.409125
+  type: 'test'
+  ...
+# Subtest: legacy listing successes fail closed while non-listing results remain compatible
+ok 92 - legacy listing successes fail closed while non-listing results remain compatible
+  ---
+  duration_ms: 0.146792
+  type: 'test'
+  ...
+# Subtest: gateway claims reject malformed publication intent but preserve legacy queued writes
+ok 93 - gateway claims reject malformed publication intent but preserve legacy queued writes
+  ---
+  duration_ms: 2.737792
+  type: 'test'
+  ...
+# Subtest: pending provider review is known but does not fulfill either publication intent
+ok 94 - pending provider review is known but does not fulfill either publication intent
+  ---
+  duration_ms: 0.578834
+  type: 'test'
+  ...
+# Subtest: listing stop requires verified non-public readback without a publication intent
+ok 95 - listing stop requires verified non-public readback without a publication intent
+  ---
+  duration_ms: 1.218208
+  type: 'test'
+  ...
+# Subtest: persisted duplicate listing results require exact verified state
+ok 96 - persisted duplicate listing results require exact verified state
+  ---
+  duration_ms: 0.521417
+  type: 'test'
+  ...
+# Subtest: remote publication schema stays byte-compatible with the DB bounds
+ok 97 - remote publication schema stays byte-compatible with the DB bounds
+  ---
+  duration_ms: 0.813125
+  type: 'test'
+  ...
+# Subtest: route-facing publication verification binds intent, remote ID, and create image evidence
+ok 98 - route-facing publication verification binds intent, remote ID, and create image evidence
+  ---
+  duration_ms: 0.428625
+  type: 'test'
+  ...
+# Subtest: publication reverification accepts exact terminal states but fulfills only a live readback
+ok 99 - publication reverification accepts exact terminal states but fulfills only a live readback
+  ---
+  duration_ms: 0.543459
+  type: 'test'
+  ...
+# Subtest: successful listing completion is reconciled unless readback is at the provider-mutation boundary or later
+ok 100 - successful listing completion is reconciled unless readback is at the provider-mutation boundary or later
+  ---
+  duration_ms: 0.121666
+  type: 'test'
+  ...
+# Subtest: 11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증 발송 작업을 분리한다
+ok 101 - 11번가 검증된 상품 등록·전체 원본 기반 수정과 미검증 발송 작업을 분리한다
+  ---
+  duration_ms: 0.507959
+  type: 'test'
+  ...
+# Subtest: 문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다
+ok 102 - 문의·배송 UI가 구현되지 않은 외부 쓰기를 실행 가능으로 노출하지 않는다
+  ---
+  duration_ms: 0.264292
+  type: 'test'
+  ...
+# Subtest: 상품 전체 수정은 원격 식별값과 readback 경로가 검증된 채널만 연다
+ok 103 - 상품 전체 수정은 원격 식별값과 readback 경로가 검증된 채널만 연다
+  ---
+  duration_ms: 0.06625
+  type: 'test'
+  ...
+# Subtest: 게시 상태 재검증은 출시 대상 8개 채널에 연다
+ok 104 - 게시 상태 재검증은 출시 대상 8개 채널에 연다
+  ---
+  duration_ms: 0.04775
+  type: 'test'
+  ...
+# Subtest: 실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로 표시한다
+ok 105 - 실발송 후보가 0건이면 검증 완료가 아니라 대상 부재로 표시한다
+  ---
+  duration_ms: 10.686459
+  type: 'test'
+  ...
+# Subtest: 채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼동하지 않는다
+ok 106 - 채널 지원 표는 문서상 API와 실제 출시 가능 상태를 혼동하지 않는다
+  ---
+  duration_ms: 0.241167
+  type: 'test'
+  ...
+# Subtest: 24 channel entry modules exist and cannot transitively import a different channel directory
+ok 107 - 24 channel entry modules exist and cannot transitively import a different channel directory
+  ---
+  duration_ms: 830.502541
+  type: 'test'
+  ...
+# Subtest: PRODUCT registry covers exactly the eight supported channels
+ok 108 - PRODUCT registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.137167
+  type: 'test'
+  ...
+# Subtest: PRODUCT/qoo10 rejects the wrong channel before credentials or transport
+ok 109 - PRODUCT/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.678666
+  type: 'test'
+  ...
+# Subtest: PRODUCT/shopee rejects the wrong channel before credentials or transport
+ok 110 - PRODUCT/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.448417
+  type: 'test'
+  ...
+# Subtest: PRODUCT/lazada rejects the wrong channel before credentials or transport
+ok 111 - PRODUCT/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.234375
+  type: 'test'
+  ...
+# Subtest: PRODUCT/coupang rejects the wrong channel before credentials or transport
+ok 112 - PRODUCT/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.386459
+  type: 'test'
+  ...
+# Subtest: PRODUCT/elevenst rejects the wrong channel before credentials or transport
+ok 113 - PRODUCT/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.42275
+  type: 'test'
+  ...
+# Subtest: PRODUCT/smartstore rejects the wrong channel before credentials or transport
+ok 114 - PRODUCT/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.303708
+  type: 'test'
+  ...
+# Subtest: PRODUCT/ebay rejects the wrong channel before credentials or transport
+ok 115 - PRODUCT/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.514291
+  type: 'test'
+  ...
+# Subtest: PRODUCT/temu rejects the wrong channel before credentials or transport
+ok 116 - PRODUCT/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 1.660417
+  type: 'test'
+  ...
+# Subtest: CS registry covers exactly the eight supported channels
+ok 117 - CS registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.102583
+  type: 'test'
+  ...
+# Subtest: CS/qoo10 rejects the wrong channel before credentials or transport
+ok 118 - CS/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.101625
+  type: 'test'
+  ...
+# Subtest: CS/shopee rejects the wrong channel before credentials or transport
+ok 119 - CS/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.046417
+  type: 'test'
+  ...
+# Subtest: CS/lazada rejects the wrong channel before credentials or transport
+ok 120 - CS/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.03725
+  type: 'test'
+  ...
+# Subtest: CS/coupang rejects the wrong channel before credentials or transport
+ok 121 - CS/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.033583
+  type: 'test'
+  ...
+# Subtest: CS/elevenst rejects the wrong channel before credentials or transport
+ok 122 - CS/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.034959
+  type: 'test'
+  ...
+# Subtest: CS/smartstore rejects the wrong channel before credentials or transport
+ok 123 - CS/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.066375
+  type: 'test'
+  ...
+# Subtest: CS/ebay rejects the wrong channel before credentials or transport
+ok 124 - CS/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.036333
+  type: 'test'
+  ...
+# Subtest: CS/temu rejects the wrong channel before credentials or transport
+ok 125 - CS/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.037667
+  type: 'test'
+  ...
+# Subtest: SHIPPING registry covers exactly the eight supported channels
+ok 126 - SHIPPING registry covers exactly the eight supported channels
+  ---
+  duration_ms: 0.063541
+  type: 'test'
+  ...
+# Subtest: SHIPPING/qoo10 rejects the wrong channel before credentials or transport
+ok 127 - SHIPPING/qoo10 rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.051375
+  type: 'test'
+  ...
+# Subtest: SHIPPING/shopee rejects the wrong channel before credentials or transport
+ok 128 - SHIPPING/shopee rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.085667
+  type: 'test'
+  ...
+# Subtest: SHIPPING/lazada rejects the wrong channel before credentials or transport
+ok 129 - SHIPPING/lazada rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.164666
+  type: 'test'
+  ...
+# Subtest: SHIPPING/coupang rejects the wrong channel before credentials or transport
+ok 130 - SHIPPING/coupang rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.085041
+  type: 'test'
+  ...
+# Subtest: SHIPPING/elevenst rejects the wrong channel before credentials or transport
+ok 131 - SHIPPING/elevenst rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.040875
+  type: 'test'
+  ...
+# Subtest: SHIPPING/smartstore rejects the wrong channel before credentials or transport
+ok 132 - SHIPPING/smartstore rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.079542
+  type: 'test'
+  ...
+# Subtest: SHIPPING/ebay rejects the wrong channel before credentials or transport
+ok 133 - SHIPPING/ebay rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.077
+  type: 'test'
+  ...
+# Subtest: SHIPPING/temu rejects the wrong channel before credentials or transport
+ok 134 - SHIPPING/temu rejects the wrong channel before credentials or transport
+  ---
+  duration_ms: 0.157875
+  type: 'test'
+  ...
+# Subtest: Shopee order sync follows the official next_cursor until more is false
+ok 135 - Shopee order sync follows the official next_cursor until more is false
+  ---
+  duration_ms: 12.535125
+  type: 'test'
+  ...
+# Subtest: Shopee order sync rejects a provider page from another shop credential lineage
+ok 136 - Shopee order sync rejects a provider page from another shop credential lineage
+  ---
+  duration_ms: 0.820208
+  type: 'test'
+  ...
+# Subtest: Lazada order sync returns one complete page and advances by continuation
+ok 137 - Lazada order sync returns one complete page and advances by continuation
+  ---
+  duration_ms: 1.771
+  type: 'test'
+  ...
+# Subtest: Coupang order sync follows nextToken while inquiry sync follows one-page continuations
+ok 138 - Coupang order sync follows nextToken while inquiry sync follows one-page continuations
+  ---
+  duration_ms: 7.034209
+  type: 'test'
+  ...
+# Subtest: Smartstore order checkpoints are exhausted while inquiry pages use continuations
+ok 139 - Smartstore order checkpoints are exhausted while inquiry pages use continuations
+  ---
+  duration_ms: 798.980917
+  type: 'test'
+  ...
+# Subtest: Smartstore customer inquiries use the exact current query and one-page continuation
+ok 140 - Smartstore customer inquiries use the exact current query and one-page continuation
+  ---
+  duration_ms: 529.566583
+  type: 'test'
+  ...
+# Subtest: eBay order sync advances the numeric offset until total is reached
+ok 141 - eBay order sync advances the numeric offset until total is reached
+  ---
+  duration_ms: 0.454417
+  type: 'test'
+  ...
+# Subtest: Shopee page cap returns a durable cursor and the next execution advances
+ok 142 - Shopee page cap returns a durable cursor and the next execution advances
+  ---
+  duration_ms: 2.965292
+  type: 'test'
+  ...
+# Subtest: Lazada keeps every item detail within one 100-order page before continuing
+ok 143 - Lazada keeps every item detail within one 100-order page before continuing
+  ---
+  duration_ms: 20.147917
+  type: 'test'
+  ...
+# Subtest: Coupang page cap persists nextToken and inquiry jobs advance one page
+ok 144 - Coupang page cap persists nextToken and inquiry jobs advance one page
+  ---
+  duration_ms: 2.484292
+  type: 'test'
+  ...
+# Subtest: Smartstore cap persists exact more token and inquiry jobs advance one page
+ok 145 - Smartstore cap persists exact more token and inquiry jobs advance one page
+  ---
+  duration_ms: 1035.755625
+  type: 'test'
+  ...
+# Subtest: eBay and Temu cap continuations start at the first unprocessed page
+ok 146 - eBay and Temu cap continuations start at the first unprocessed page
+  ---
+  duration_ms: 3.698791
+  type: 'test'
+  ...
+# Subtest: Temu after-sales rejects fractional and out-of-range pagination before provider access
+ok 147 - Temu after-sales rejects fractional and out-of-range pagination before provider access
+  ---
+  duration_ms: 0.141375
+  type: 'test'
+  ...
+# Subtest: large Shopee CS history rotates a bounded continuation generation without losing its cursor
+ok 148 - large Shopee CS history rotates a bounded continuation generation without losing its cursor
+  ---
+  duration_ms: 0.536416
+  type: 'test'
+  ...
+# Subtest: order and inquiry normalizers consume every successful provider page
+ok 149 - order and inquiry normalizers consume every successful provider page
+  ---
+  duration_ms: 4.86025
+  type: 'test'
+  ...
+# Subtest: gateway completion accepts only bounded provider-specific continuations
+ok 150 - gateway completion accepts only bounded provider-specific continuations
+  ---
+  duration_ms: 1.693709
+  type: 'test'
+  ...
+# Subtest: continuation depth safety stop fails before another provider request
+ok 151 - continuation depth safety stop fails before another provider request
+  ---
+  duration_ms: 0.235834
+  type: 'test'
+  ...
+# Subtest: Coupang CEA authorization signs the documented canonical value
+ok 152 - Coupang CEA authorization signs the documented canonical value
+  ---
+  duration_ms: 1.333459
+  type: 'test'
+  ...
+# Subtest: Naver client secret signature is a bcrypt hash wrapped in Base64
+ok 153 - Naver client secret signature is a bcrypt hash wrapped in Base64
+  ---
+  duration_ms: 124.4775
+  type: 'test'
+  ...
+# Subtest: Naver seller data token rejects SELLER without account_id
+ok 154 - Naver seller data token rejects SELLER without account_id
+  ---
+  duration_ms: 0.322583
+  type: 'test'
+  ...
+# Subtest: Naver self-store token uses SELF without account_id
+ok 155 - Naver self-store token uses SELF without account_id
+  ---
+  duration_ms: 249.799083
+  type: 'test'
+  ...
+# Subtest: Naver token failure 403 is reduced to NAVER_IP_NOT_ALLOWED
+ok 156 - Naver token failure 403 is reduced to NAVER_IP_NOT_ALLOWED
+  ---
+  duration_ms: 252.792458
+  type: 'test'
+  ...
+# Subtest: Naver token failure 401 is reduced to NAVER_AUTH_FAILED
+ok 157 - Naver token failure 401 is reduced to NAVER_AUTH_FAILED
+  ---
+  duration_ms: 240.661333
+  type: 'test'
+  ...
+# Subtest: Naver token failure 503 is reduced to NAVER_PROVIDER_UNAVAILABLE
+ok 158 - Naver token failure 503 is reduced to NAVER_PROVIDER_UNAVAILABLE
+  ---
+  duration_ms: 239.06575
+  type: 'test'
+  ...
+# Subtest: Naver token failure 400 is reduced to NAVER_TOKEN_EXCHANGE_FAILED
+ok 159 - Naver token failure 400 is reduced to NAVER_TOKEN_EXCHANGE_FAILED
+  ---
+  duration_ms: 239.274958
+  type: 'test'
+  ...
+# Subtest: Qoo10 uses current QAPI endpoint and qualified method name
+ok 160 - Qoo10 uses current QAPI endpoint and qualified method name
+  ---
+  duration_ms: 0.327209
+  type: 'test'
+  ...
+# Subtest: 11st fixed-IP diagnostic calls ProductSearch and returns only safe XML metadata
+ok 161 - 11st fixed-IP diagnostic calls ProductSearch and returns only safe XML metadata
+  ---
+  duration_ms: 1.228583
+  type: 'test'
+  ...
+# Subtest: Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state
+ok 162 - Qoo10 periodic order sync uses the documented Japan-time parameters for every shipping state
+  ---
+  duration_ms: 0.485875
+  type: 'test'
+  ...
+# Subtest: Coupang cancellation sync uses the documented minute range with the Korean UTC offset
+ok 163 - Coupang cancellation sync uses the documented minute range with the Korean UTC offset
+  ---
+  duration_ms: 0.081209
+  type: 'test'
+  ...
+# Subtest: 11st periodic windows keep stable dedupe keys while advancing provider dates
+ok 164 - 11st periodic windows keep stable dedupe keys while advancing provider dates
+  ---
+  duration_ms: 0.081791
+  type: 'test'
+  ...
+# Subtest: Qoo10 inquiry sync covers every documented state with disjoint periodic identities
+ok 165 - Qoo10 inquiry sync covers every documented state with disjoint periodic identities
+  ---
+  duration_ms: 0.239
+  type: 'test'
+  ...
+# Subtest: eBay inquiry sync schedules ASQ, mailbox and Commerce Message with separate durable identities
+ok 166 - eBay inquiry sync schedules ASQ, mailbox and Commerce Message with separate durable identities
+  ---
+  duration_ms: 0.105417
+  type: 'test'
+  ...
+# Subtest: Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys
+ok 167 - Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys
+  ---
+  duration_ms: 0.058792
+  type: 'test'
+  ...
+# Subtest: Coupang inquiry sync separates product, call-center and all three after-sales queues
+ok 168 - Coupang inquiry sync separates product, call-center and all three after-sales queues
+  ---
+  duration_ms: 0.173125
+  type: 'test'
+  ...
+# Subtest: periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight
+ok 169 - periodic Korean customer inquiry boundaries use Seoul calendar dates before UTC midnight
+  ---
+  duration_ms: 0.050833
+  type: 'test'
+  ...
+# Subtest: inquiry history refresh is bounded to verified provider windows
+ok 170 - inquiry history refresh is bounded to verified provider windows
+  ---
+  duration_ms: 0.802458
+  type: 'test'
+  ...
+# Subtest: Temu order and after-sales sync use the documented update checkpoints
+ok 171 - Temu order and after-sales sync use the documented update checkpoints
+  ---
+  duration_ms: 0.052875
+  type: 'test'
+  ...
+# Subtest: shipment drafts map carrier and tracking fields without changing internal order state
+ok 172 - shipment drafts map carrier and tracking fields without changing internal order state
+  ---
+  duration_ms: 0.190542
+  type: 'test'
+  ...
+# Subtest: shipment acknowledgement and readback use the same provider-specific order identity
+ok 173 - shipment acknowledgement and readback use the same provider-specific order identity
+  ---
+  duration_ms: 0.085
+  type: 'test'
+  ...
+# Subtest: Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode
+ok 174 - Shopee shipping preflight preserves shop identity and only accepts an explicit non-integrated mode
+  ---
+  duration_ms: 0.195584
+  type: 'test'
+  ...
+# Subtest: shipment drafts fail closed for incomplete marketplace-specific data
+ok 175 - shipment drafts fail closed for incomplete marketplace-specific data
+  ---
+  duration_ms: 0.203
+  type: 'test'
+  ...
+# Subtest: Qoo10 category inspection requires one exact Japanese leaf before DB confirmation
+ok 176 - Qoo10 category inspection requires one exact Japanese leaf before DB confirmation
+  ---
+  duration_ms: 1.714417
+  type: 'test'
+  ...
+# Subtest: Qoo10 product creation uses SetNewGoods v1.1 and records GdNo
+ok 177 - Qoo10 product creation uses SetNewGoods v1.1 and records GdNo
+  ---
+  duration_ms: 2.130541
+  type: 'test'
+  ...
+# Subtest: listing create never succeeds when the provider omits the remote identity
+ok 178 - listing create never succeeds when the provider omits the remote identity
+  ---
+  duration_ms: 0.364875
+  type: 'test'
+  ...
+# Subtest: Qoo10 pauses a created item when detail-image readback is incomplete
+ok 179 - Qoo10 pauses a created item when detail-image readback is incomplete
+  ---
+  duration_ms: 4505.024791
+  type: 'test'
+  ...
+# Subtest: Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period
+ok 180 - Qoo10 draft helpers keep internal catalog codes numeric and use a one-year sale period
+  ---
+  duration_ms: 0.343959
+  type: 'test'
+  ...
+# Subtest: Qoo10 provider errors are useful without exposing remote URLs or tokens
+ok 181 - Qoo10 provider errors are useful without exposing remote URLs or tokens
+  ---
+  duration_ms: 0.335541
+  type: 'test'
+  ...
+# Subtest: eBay consent URL separates sandbox and production and includes CSRF state
+ok 182 - eBay consent URL separates sandbox and production and includes CSRF state
+  ---
+  duration_ms: 0.193
+  type: 'test'
+  ...
+# Subtest: eBay Sell requests override the runtime Accept-Language wildcard
+ok 183 - eBay Sell requests override the runtime Accept-Language wildcard
+  ---
+  duration_ms: 0.293208
+  type: 'test'
+  ...
+# Subtest: Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state
+ok 184 - Shopee authorization URL uses the current auth endpoint and preserves SellerPilot CSRF state
+  ---
+  duration_ms: 0.145708
+  type: 'test'
+  ...
+# Subtest: Shopee MediaSpace partner signature excludes shop authorization dimensions
+ok 185 - Shopee MediaSpace partner signature excludes shop authorization dimensions
+  ---
+  duration_ms: 0.063792
+  type: 'test'
+  ...
+# Subtest: all eight active channels define every normalized capability
+ok 186 - all eight active channels define every normalized capability
+  ---
+  duration_ms: 0.058083
+  type: 'test'
+  ...
+# Subtest: Shopee operation routing signs the shop request and uses v2 order detail
+ok 187 - Shopee operation routing signs the shop request and uses v2 order detail
+  ---
+  duration_ms: 0.573125
+  type: 'test'
+  ...
+# Subtest: Shopee main-account code exchange uses main_account_id and returns the authorized shop lists
+ok 188 - Shopee main-account code exchange uses main_account_id and returns the authorized shop lists
+  ---
+  duration_ms: 0.25375
+  type: 'test'
+  ...
+# Subtest: Shopee operation token selection projects the requested authorized shop without exposing another shop token
+ok 189 - Shopee operation token selection projects the requested authorized shop without exposing another shop token
+  ---
+  duration_ms: 0.501375
+  type: 'test'
+  ...
+# Subtest: Shopee merchant token and GlobalProduct category request use the merchant signature dimension
+ok 190 - Shopee merchant token and GlobalProduct category request use the merchant signature dimension
+  ---
+  duration_ms: 0.971166
+  type: 'test'
+  ...
+# Subtest: Shopee global category validation requires one exact provider leaf and returns its full ancestry
+ok 191 - Shopee global category validation requires one exact provider leaf and returns its full ancestry
+  ---
+  duration_ms: 0.456834
+  type: 'test'
+  ...
+# Subtest: Lazada product create serializes the structured request as official XML and reads the item back
+ok 192 - Lazada product create serializes the structured request as official XML and reads the item back
+  ---
+  duration_ms: 2.129834
+  type: 'test'
+  ...
+# Subtest: Lazada request retries once after the provider frequency-limit window
+ok 193 - Lazada request retries once after the provider frequency-limit window
+  ---
+  duration_ms: 251.852875
+  type: 'test'
+  ...
+# Subtest: Lazada order sync enriches actionable orders with official order item details
+ok 194 - Lazada order sync enriches actionable orders with official order item details
+  ---
+  duration_ms: 0.685166
+  type: 'test'
+  ...
+# Subtest: Lazada order sync also enriches ready-to-ship orders needed by fulfillment
+ok 195 - Lazada order sync also enriches ready-to-ship orders needed by fulfillment
+  ---
+  duration_ms: 0.302292
+  type: 'test'
+  ...
+# Subtest: Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters
+ok 196 - Lazada shipment confirmation uses Pack then ReadyToShip with the official JSON parameters
+  ---
+  duration_ms: 0.97075
+  type: 'test'
+  ...
+# Subtest: Lazada inventory update uses SkuId and verifies the resulting quantity
+ok 197 - Lazada inventory update uses SkuId and verifies the resulting quantity
+  ---
+  duration_ms: 0.57775
+  type: 'test'
+  ...
+# Subtest: Lazada category suggestion forwards the mandatory product image URL
+ok 198 - Lazada category suggestion forwards the mandatory product image URL
+  ---
+  duration_ms: 0.26975
+  type: 'test'
+  ...
+# Subtest: Coupang operation routing uses the documented item price endpoint
+ok 199 - Coupang operation routing uses the documented item price endpoint
+  ---
+  duration_ms: 1.012625
+  type: 'test'
+  ...
+# Subtest: Coupang price update fails closed when the exact vendor item readback has another price
+ok 200 - Coupang price update fails closed when the exact vendor item readback has another price
+  ---
+  duration_ms: 0.68225
+  type: 'test'
+  ...
+# Subtest: Coupang category recommendation sends the official product context payload
+ok 201 - Coupang category recommendation sends the official product context payload
+  ---
+  duration_ms: 0.188791
+  type: 'test'
+  ...
+# Subtest: Coupang category list uses the required root or parent category path segment
+ok 202 - Coupang category list uses the required root or parent category path segment
+  ---
+  duration_ms: 0.221584
+  type: 'test'
+  ...
+# Subtest: Coupang product creation is only successful after seller-product readback matches
+ok 203 - Coupang product creation is only successful after seller-product readback matches
+  ---
+  duration_ms: 0.356417
+  type: 'test'
+  ...
+# Subtest: Coupang listing resume waits for SAVED before requesting approval without creating a duplicate
+ok 204 - Coupang listing resume waits for SAVED before requesting approval without creating a duplicate
+  ---
+  duration_ms: 1503.488542
+  type: 'test'
+  ...
+# Subtest: Coupang approval readback trusts the seller-product state when nested items remain SAVED
+ok 205 - Coupang approval readback trusts the seller-product state when nested items remain SAVED
+  ---
+  duration_ms: 754.565292
+  type: 'test'
+  ...
+# Subtest: Coupang product update reads first, preserves remote policy fields, and verifies requested content
+ok 206 - Coupang product update reads first, preserves remote policy fields, and verifies requested content
+  ---
+  duration_ms: 1.58825
+  type: 'test'
+  ...
+# Subtest: Naver order detail routing exchanges a token and uses the official batch query
+ok 207 - Naver order detail routing exchanges a token and uses the official batch query
+  ---
+  duration_ms: 251.737667
+  type: 'test'
+  ...
+# Subtest: Naver seller request refreshes once after GW.AUTHN
+ok 208 - Naver seller request refreshes once after GW.AUTHN
+  ---
+  duration_ms: 517.39125
+  type: 'test'
+  ...
+# Subtest: Naver category preflight loads the category, attributes, values, and standard options
+ok 209 - Naver category preflight loads the category, attributes, values, and standard options
+  ---
+  duration_ms: 265.78525
+  type: 'test'
+  ...
+# Subtest: Naver category preflight accepts an official NOT_FOUND response as empty optional metadata
+ok 210 - Naver category preflight accepts an official NOT_FOUND response as empty optional metadata
+  ---
+  duration_ms: 267.619666
+  type: 'test'
+  ...
+# Subtest: Naver product creation is only successful after the origin product readback succeeds
+ok 211 - Naver product creation is only successful after the origin product readback succeeds
+  ---
+  duration_ms: 272.245625
+  type: 'test'
+  ...
+# Subtest: Naver product creation reconciles an existing seller management code without creating a duplicate
+ok 212 - Naver product creation reconciles an existing seller management code without creating a duplicate
+  ---
+  duration_ms: 283.434666
+  type: 'test'
+  ...
+# Subtest: eBay listing workflow creates inventory, creates an offer, then publishes
+ok 213 - eBay listing workflow creates inventory, creates an offer, then publishes
+  ---
+  duration_ms: 5.148583
+  type: 'test'
+  ...
+# Subtest: eBay listing rejects server-managed policies before any provider request
+ok 214 - eBay listing rejects server-managed policies before any provider request
+  ---
+  duration_ms: 0.220375
+  type: 'test'
+  ...
+# Subtest: eBay listing rejects a server-managed inventory location instead of creating one
+ok 215 - eBay listing rejects a server-managed inventory location instead of creating one
+  ---
+  duration_ms: 0.382
+  type: 'test'
+  ...
+# Subtest: eBay preserves an accepted offer marker when create omits offerId and reconciliation misses
+ok 216 - eBay preserves an accepted offer marker when create omits offerId and reconciliation misses
+  ---
+  duration_ms: 1.662042
+  type: 'test'
+  ...
+# Subtest: provider listing errors expose a sanitized actionable message
+ok 217 - provider listing errors expose a sanitized actionable message
+  ---
+  duration_ms: 1.419125
+  type: 'test'
+  ...
+# Subtest: eBay listing retry reconciles an existing SKU offer and returns its published listing
+ok 218 - eBay listing retry reconciles an existing SKU offer and returns its published listing
+  ---
+  duration_ms: 1.710417
+  type: 'test'
+  ...
+# Subtest: eBay stops before offer creation when the inventory image readback loses detail images
+ok 219 - eBay stops before offer creation when the inventory image readback loses detail images
+  ---
+  duration_ms: 0.678708
+  type: 'test'
+  ...
+# Subtest: Temu signs compact request values in ASCII key order
+ok 220 - Temu signs compact request values in ASCII key order
+  ---
+  duration_ms: 0.209833
+  type: 'test'
+  ...
+# Subtest: Temu order and after-sales operations paginate provider result arrays
+ok 221 - Temu order and after-sales operations paginate provider result arrays
+  ---
+  duration_ms: 2.231
+  type: 'test'
+  ...
+# Subtest: Temu shipment confirmation resolves warehouse and carrier then verifies tracking readback
+ok 222 - Temu shipment confirmation resolves warehouse and carrier then verifies tracking readback
+  ---
+  duration_ms: 1.334958
+  type: 'test'
+  ...
+# Subtest: Temu V3 product creation requires an external-id readback match
+ok 223 - Temu V3 product creation requires an external-id readback match
+  ---
+  duration_ms: 4.043292
+  type: 'test'
+  ...
+# Subtest: Temu preserves an accepted create marker when goodsId and reconciliation are both missing
+ok 224 - Temu preserves an accepted create marker when goodsId and reconciliation are both missing
+  ---
+  duration_ms: 1.229792
+  type: 'test'
+  ...
+# Subtest: Temu create preflight blocks an existing external ID without issuing a provider write
+ok 225 - Temu create preflight blocks an existing external ID without issuing a provider write
+  ---
+  duration_ms: 0.627209
+  type: 'test'
+  ...
+# Subtest: Temu listing fails verification when processed detail images are missing
+ok 226 - Temu listing fails verification when processed detail images are missing
+  ---
+  duration_ms: 1.477208
+  type: 'test'
+  ...
+# Subtest: eBay does not invent a domestic-style order acknowledgement step
+ok 227 - eBay does not invent a domestic-style order acknowledgement step
+  ---
+  duration_ms: 0.337375
+  type: 'test'
+  ...
+# Subtest: eBay refreshes an expired two-hour access token before a live operation
+ok 228 - eBay refreshes an expired two-hour access token before a live operation
+  ---
+  duration_ms: 1.51375
+  type: 'test'
+  ...
+# Subtest: Shopee refresh rotates both the four-hour access token and thirty-day refresh token
+ok 229 - Shopee refresh rotates both the four-hour access token and thirty-day refresh token
+  ---
+  duration_ms: 0.888583
+  type: 'test'
+  ...
+# Subtest: missing provider order and inquiry timestamps use the immutable completion timestamp
+ok 230 - missing provider order and inquiry timestamps use the immutable completion timestamp
+  ---
+  duration_ms: 2.616958
+  type: 'test'
+  ...
+# Subtest: direct synchronization captures a sensible observation timestamp instead of persisting Unix epoch
+ok 231 - direct synchronization captures a sensible observation timestamp instead of persisting Unix epoch
+  ---
+  duration_ms: 0.254833
+  type: 'test'
+  ...
+# Subtest: Shopee normalized orders preserve the credential-certified shop and merchant context
+ok 232 - Shopee normalized orders preserve the credential-certified shop and merchant context
+  ---
+  duration_ms: 0.082084
+  type: 'test'
+  ...
+# Subtest: Smartstore product Q&A and customer inquiries keep disjoint provider identities
+ok 233 - Smartstore product Q&A and customer inquiries keep disjoint provider identities
+  ---
+  duration_ms: 0.7315
+  type: 'test'
+  ...
+# Subtest: Temu deadline priority is identical across exact completion replays
+ok 234 - Temu deadline priority is identical across exact completion replays
+  ---
+  duration_ms: 0.702208
+  type: 'test'
+  ...
+# Subtest: Temu after-sales identity advances only for a trusted provider revision
+ok 235 - Temu after-sales identity advances only for a trusted provider revision
+  ---
+  duration_ms: 7.614
+  type: 'test'
+  ...
+# Subtest: Lazada history with no provider time stays unverified without fabricating a timestamp
+ok 236 - Lazada history with no provider time stays unverified without fabricating a timestamp
+  ---
+  duration_ms: 0.67075
+  type: 'test'
+  ...
+# Subtest: Commerce snapshot runs without any CS tables or functions and preserves shared-admin sales, stock, asset and settlement facts
+ok 237 - Commerce snapshot runs without any CS tables or functions and preserves shared-admin sales, stock, asset and settlement facts
+  ---
+  duration_ms: 724.563083
+  type: 'test'
+  ...
+# Subtest: Commerce RPC denies anon and non-admin sessions
+ok 238 - Commerce RPC denies anon and non-admin sessions
+  ---
+  duration_ms: 481.606167
+  type: 'test'
+  ...
+# Subtest: archive route requires authentication before parsing or calling the DB
+ok 239 - archive route requires authentication before parsing or calling the DB
+  ---
+  duration_ms: 11.717625
+  type: 'test'
+  ...
+# Subtest: archive route validates impossible dates, channels, scope and cursor fields
+ok 240 - archive route validates impossible dates, channels, scope and cursor fields
+  ---
+  duration_ms: 6.76225
+  type: 'test'
+  ...
+# Subtest: archive route uses owner-authenticated RPC with exact filters and no cached response
+ok 241 - archive route uses owner-authenticated RPC with exact filters and no cached response
+  ---
+  duration_ms: 0.75375
+  type: 'test'
+  ...
+# Subtest: archive route hides database errors and rejects malformed pages
+ok 242 - archive route hides database errors and rejects malformed pages
+  ---
+  duration_ms: 1.473584
+  type: 'test'
+  ...
+# Subtest: every release channel lists all known CS surfaces without hiding blocked work
+ok 243 - every release channel lists all known CS surfaces without hiding blocked work
+  ---
+  duration_ms: 1.211917
+  type: 'test'
+  ...
+# Subtest: Coupang contact-center target follows the newest inbound, not provider array order
+ok 244 - Coupang contact-center target follows the newest inbound, not provider array order
+  ---
+  duration_ms: 1.527292
+  type: 'test'
+  ...
+# Subtest: Coupang contact-center target fails closed for multiple parents, stale parents and closed inquiries
+ok 245 - Coupang contact-center target fails closed for multiple parents, stale parents and closed inquiries
+  ---
+  duration_ms: 0.305458
+  type: 'test'
+  ...
+# Subtest: Coupang contact-center normalization binds the exact latest inbound parent only
+ok 246 - Coupang contact-center normalization binds the exact latest inbound parent only
+  ---
+  duration_ms: 1.828625
+  type: 'test'
+  ...
+# Subtest: Coupang single-inquiry readback uses the documented vendor-bound GET and normalizes one row
+ok 247 - Coupang single-inquiry readback uses the documented vendor-bound GET and normalizes one row
+  ---
+  duration_ms: 14.929584
+  type: 'test'
+  ...
+# Subtest: Coupang call-center detail readback produces an exact common reply observation
+ok 248 - Coupang call-center detail readback produces an exact common reply observation
+  ---
+  duration_ms: 0.373667
+  type: 'test'
+  ...
+# Subtest: Coupang seller history never inherits a newer actionable parent
+ok 249 - Coupang seller history never inherits a newer actionable parent
+  ---
+  duration_ms: 0.335583
+  type: 'test'
+  ...
+# Subtest: Coupang call-center observation without provider parent stays unbound
+ok 250 - Coupang call-center observation without provider parent stays unbound
+  ---
+  duration_ms: 0.313458
+  type: 'test'
+  ...
+# Subtest: Coupang contact-center list never exceeds the documented 30-row page cap
+ok 251 - Coupang contact-center list never exceeds the documented 30-row page cap
+  ---
+  duration_ms: 0.629208
+  type: 'test'
+  ...
+# Subtest: verification RPC rejects null kind and null limit instead of widening the read
+ok 252 - verification RPC rejects null kind and null limit instead of widening the read
+  ---
+  duration_ms: 680.918
+  type: 'test'
+  ...
+# Subtest: isolated DB flows through the authenticated Coupang route with exact IDs and conversation
+ok 253 - isolated DB flows through the authenticated Coupang route with exact IDs and conversation
+  ---
+  duration_ms: 554.043583
+  type: 'test'
+  ...
+# Subtest: web route authenticates first and rejects invalid ranges without a DB read
+ok 254 - web route authenticates first and rejects invalid ranges without a DB read
+  ---
+  duration_ms: 473.480958
+  type: 'test'
+  ...
+# Subtest: verification RPC is authenticated-admin only and exact-credential scoped
+ok 255 - verification RPC is authenticated-admin only and exact-credential scoped
+  ---
+  duration_ms: 410.114333
+  type: 'test'
+  ...
+# Subtest: web route rejects mismatched RPC scope and internally inconsistent counts
+ok 256 - web route rejects mismatched RPC scope and internally inconsistent counts
+  ---
+  duration_ms: 469.06975
+  type: 'test'
+  ...
+# Subtest: Coupang 30-day recovery creates five fixed windows and all eight scopes
+ok 257 - Coupang 30-day recovery creates five fixed windows and all eight scopes
+  ---
+  duration_ms: 2.2725
+  type: 'test'
+  ...
+# Subtest: Coupang seven-day recovery remains one complete eight-scope unit
+ok 258 - Coupang seven-day recovery remains one complete eight-scope unit
+  ---
+  duration_ms: 0.126625
+  type: 'test'
+  ...
+# Subtest: Coupang recovery rejects invalid dates and unsupported history lengths
+ok 259 - Coupang recovery rejects invalid dates and unsupported history lengths
+  ---
+  duration_ms: 0.521584
+  type: 'test'
+  ...
+# Subtest: Coupang recovery advances only a fully successful fixed batch
+ok 260 - Coupang recovery advances only a fully successful fixed batch
+  ---
+  duration_ms: 0.378875
+  type: 'test'
+  ...
+# Subtest: Coupang interrupted or failed recovery replays the identical end date
+ok 261 - Coupang interrupted or failed recovery replays the identical end date
+  ---
+  duration_ms: 0.318584
+  type: 'test'
+  ...
+# Subtest: Coupang recovery rejects inconsistent job ledgers
+ok 262 - Coupang recovery rejects inconsistent job ledgers
+  ---
+  duration_ms: 0.169375
+  type: 'test'
+  ...
+# Subtest: same call-center window is replay-stable while a new re-inquiry adds exactly one event
+ok 263 - same call-center window is replay-stable while a new re-inquiry adds exactly one event
+  ---
+  duration_ms: 2.978042
+  type: 'test'
+  ...
+# Subtest: same product window dedupes old seller history and adds only the late answer
+ok 264 - same product window dedupes old seller history and adds only the late answer
+  ---
+  duration_ms: 0.819
+  type: 'test'
+  ...
+# Subtest: actual sync GET keeps failed history on the same window and advances only all-success jobs
+ok 265 - actual sync GET keeps failed history on the same window and advances only all-success jobs
+  ---
+  duration_ms: 23.331375
+  type: 'test'
+  ...
+# Subtest: actual sync GET rejects cross-run responses and inconsistent job counts before display
+ok 266 - actual sync GET rejects cross-run responses and inconsistent job counts before display
+  ---
+  duration_ms: 11.376833
+  type: 'test'
+  ...
+# Subtest: actual sync POST verifies the requested channel, dates and initial scopes in the returned receipt
+ok 267 - actual sync POST verifies the requested channel, dates and initial scopes in the returned receipt
+  ---
+  duration_ms: 11.059625
+  type: 'test'
+  ...
+# Subtest: Coupang order binding selects only the same credential incarnation and vendor
+ok 268 - Coupang order binding selects only the same credential incarnation and vendor
+  ---
+  duration_ms: 0.664209
+  type: 'test'
+  ...
+# Subtest: Coupang order binding rejects another vendor and legacy order-number-only rows
+ok 269 - Coupang order binding rejects another vendor and legacy order-number-only rows
+  ---
+  duration_ms: 0.087375
+  type: 'test'
+  ...
+# Subtest: Coupang order binding rejects missing credential evidence and duplicate exact rows
+ok 270 - Coupang order binding rejects missing credential evidence and duplicate exact rows
+  ---
+  duration_ms: 0.05825
+  type: 'test'
+  ...
+# Subtest: CS binding fingerprints the app, token, and every target without retaining secrets
+ok 271 - CS binding fingerprints the app, token, and every target without retaining secrets
+  ---
+  duration_ms: 0.506875
+  type: 'test'
+  ...
+# Subtest: CS binding is absent when the app, token, or target cannot be proved
+ok 272 - CS binding is absent when the app, token, or target cannot be proved
+  ---
+  duration_ms: 0.058875
+  type: 'test'
+  ...
+# Subtest: Actual CS admin API -> isolated SQL queue -> actual worker API -> draft runner -> SQL completion -> admin readback
+ok 273 - Actual CS admin API -> isolated SQL queue -> actual worker API -> draft runner -> SQL completion -> admin readback
+  ---
+  duration_ms: 771.417083
+  type: 'test'
+  ...
+# Subtest: CS-only DB queue executes with shared admin, own claim, immutable replay, and no product tables
+ok 274 - CS-only DB queue executes with shared admin, own claim, immutable replay, and no product tables
+  ---
+  duration_ms: 708.4955
+  type: 'test'
+  ...
+# Subtest: Expired claims, revoked tokens, changed customer generation and cancellation cannot save drafts
+ok 275 - Expired claims, revoked tokens, changed customer generation and cancellation cannot save drafts
+  ---
+  duration_ms: 529.402
+  type: 'test'
+  ...
+# Subtest: CS draft queue rejects unauthorized admins and recalled Lazada messages
+ok 276 - CS draft queue rejects unauthorized admins and recalled Lazada messages
+  ---
+  duration_ms: 446.597334
+  type: 'test'
+  ...
+# Subtest: Migration adopts existing CS jobs and revokes only their old leases without changing a running product job
+ok 277 - Migration adopts existing CS jobs and revokes only their old leases without changing a running product job
+  ---
+  duration_ms: 420.603292
+  type: 'test'
+  ...
+# Subtest: CS prompt keeps customer instructions inside escaped data and needs no product context
+ok 278 - CS prompt keeps customer instructions inside escaped data and needs no product context
+  ---
+  duration_ms: 1.042875
+  type: 'test'
+  ...
+# Subtest: Lost completion receipt retries identical payload without generating another draft
+ok 279 - Lost completion receipt retries identical payload without generating another draft
+  ---
+  duration_ms: 0.767417
+  type: 'test'
+  ...
+# Subtest: Wrong-locale output fails in the CS queue and never reaches a product endpoint
+ok 280 - Wrong-locale output fails in the CS queue and never reaches a product endpoint
+  ---
+  duration_ms: 0.171209
+  type: 'test'
+  ...
+# Subtest: Lease loss aborts generation and cannot persist a completion
+ok 281 - Lease loss aborts generation and cannot persist a completion
+  ---
+  duration_ms: 5.620208
+  type: 'test'
+  ...
+# Subtest: in-process serverless completion records the dedicated page before generic completion creates its child
+ok 282 - in-process serverless completion records the dedicated page before generic completion creates its child
+  ---
+  duration_ms: 79.54325
+  type: 'test'
+  ...
+# Subtest: external worker completion POST records the dedicated page before generic completion creates its child
+ok 283 - external worker completion POST records the dedicated page before generic completion creates its child
+  ---
+  duration_ms: 143.8965
+  type: 'test'
+  ...
+# Subtest: unavailable dedicated evidence survives both completion entrypoints without becoming zero inquiries
+ok 284 - unavailable dedicated evidence survives both completion entrypoints without becoming zero inquiries
+  ---
+  duration_ms: 3.284625
+  type: 'test'
+  ...
+# Subtest: scheduler plan chains one exact 18-month backfill, a 48-hour overlap, and a payment cursor root
+ok 285 - scheduler plan chains one exact 18-month backfill, a 48-hour overlap, and a payment cursor root
+  ---
+  duration_ms: 2.742958
+  type: 'test'
+  ...
+# Subtest: resolution collection advances provider pages before moving to the next 31-day window
+ok 286 - resolution collection advances provider pages before moving to the next 31-day window
+  ---
+  duration_ms: 16.008208
+  type: 'test'
+  ...
+# Subtest: payment dispute continuation preserves the exact provider offset through pageNumber
+ok 287 - payment dispute continuation preserves the exact provider offset through pageNumber
+  ---
+  duration_ms: 1.258667
+  type: 'test'
+  ...
+# Subtest: common executor pagination metadata is accepted and exact on the next dedicated page
+ok 288 - common executor pagination metadata is accepted and exact on the next dedicated page
+  ---
+  duration_ms: 2.198875
+  type: 'test'
+  ...
+# Subtest: dedicated validation rejects a repeated common cursor digest
+ok 289 - dedicated validation rejects a repeated common cursor digest
+  ---
+  duration_ms: 2.318209
+  type: 'test'
+  ...
+# Subtest: one unavailable resource is observed through its claim fence without inventing counts
+ok 290 - one unavailable resource is observed through its claim fence without inventing counts
+  ---
+  duration_ms: 1.813917
+  type: 'test'
+  ...
+# Subtest: collection arguments reject cross-resource ranges and action-shaped input before provider access
+ok 291 - collection arguments reject cross-resource ranges and action-shaped input before provider access
+  ---
+  duration_ms: 0.598666
+  type: 'test'
+  ...
+# Subtest: normalized provider page flows through ledger ingest, owner API, and UI client without raw customer fields
+ok 292 - normalized provider page flows through ledger ingest, owner API, and UI client without raw customer fields
+  ---
+  duration_ms: 831.54475
+  type: 'test'
+  ...
+# Subtest: history ingest refuses unavailable pages and unchecked seller identity before any RPC
+ok 293 - history ingest refuses unavailable pages and unchecked seller identity before any RPC
+  ---
+  duration_ms: 0.33125
+  type: 'test'
+  ...
+# Subtest: history sync preserves local 404/403 fixtures as unavailable and never records them
+ok 294 - history sync preserves local 404/403 fixtures as unavailable and never records them
+  ---
+  duration_ms: 0.785541
+  type: 'test'
+  ...
+# Subtest: history read v2 uses an observed-at plus event-id cursor without gaps
+ok 295 - history read v2 uses an observed-at plus event-id cursor without gaps
+  ---
+  duration_ms: 558.64925
+  type: 'test'
+  ...
+# Subtest: history routes and UI expose provider GET collection plus ledger storage, never dispute business actions
+ok 296 - history routes and UI expose provider GET collection plus ledger storage, never dispute business actions
+  ---
+  duration_ms: 0.439292
+  type: 'test'
+  ...
+# Subtest: history clients reject valid-shaped responses for a different account or resource
+ok 297 - history clients reject valid-shaped responses for a different account or resource
+  ---
+  duration_ms: 1.829958
+  type: 'test'
+  ...
+# Subtest: actual GET route runs real authenticateAdminRequest for anonymous and expired sessions
+ok 298 - actual GET route runs real authenticateAdminRequest for anonymous and expired sessions
+  ---
+  duration_ms: 6.039875
+  type: 'test'
+  ...
+# Subtest: actual GET route excludes another owner's credential and uncertified or mismatched sellers before provider access
+ok 299 - actual GET route excludes another owner's credential and uncertified or mismatched sellers before provider access
+  ---
+  duration_ms: 4.501
+  type: 'test'
+  ...
+# Subtest: isolated UI client calls the actual authenticated GET route and preserves payment-dispute 404 as unknown
+ok 300 - isolated UI client calls the actual authenticated GET route and preserves payment-dispute 404 as unknown
+  ---
+  duration_ms: 3.953917
+  type: 'test'
+  ...
+# Subtest: isolated UI client keeps a provider 403 blocked and never converts it to an empty readable page
+ok 301 - isolated UI client keeps a provider 403 blocked and never converts it to an empty readable page
+  ---
+  duration_ms: 2.234542
+  type: 'test'
+  ...
+# Subtest: web query contract requires exact account, range, and page alignment
+ok 302 - web query contract requires exact account, range, and page alignment
+  ---
+  duration_ms: 2.515333
+  type: 'test'
+  ...
+# Subtest: web schemas accept normalized provider fixtures without buyer text
+ok 303 - web schemas accept normalized provider fixtures without buyer text
+  ---
+  duration_ms: 13.457708
+  type: 'test'
+  ...
+# Subtest: web schema never turns provider-unavailable into an empty successful result
+ok 304 - web schema never turns provider-unavailable into an empty successful result
+  ---
+  duration_ms: 0.219333
+  type: 'test'
+  ...
+# Subtest: eBay cases web route and component expose reads only
+ok 305 - eBay cases web route and component expose reads only
+  ---
+  duration_ms: 0.527541
+  type: 'test'
+  ...
+# Subtest: case and payment-dispute support stays GET-only and separate from CS replies
+ok 306 - case and payment-dispute support stays GET-only and separate from CS replies
+  ---
+  duration_ms: 0.710541
+  type: 'test'
+  ...
+# Subtest: payment dispute pages preserve missing total and follow only the exact next offset
+ok 307 - payment dispute pages preserve missing total and follow only the exact next offset
+  ---
+  duration_ms: 12.49025
+  type: 'test'
+  ...
+# Subtest: payment dispute 404 is availability-unknown evidence, never an empty collection
+ok 308 - payment dispute 404 is availability-unknown evidence, never an empty collection
+  ---
+  duration_ms: 0.327042
+  type: 'test'
+  ...
+# Subtest: known dispute detail/activity and known resolution case use isolated GET paths
+ok 309 - known dispute detail/activity and known resolution case use isolated GET paths
+  ---
+  duration_ms: 2.321166
+  type: 'test'
+  ...
+# Subtest: resolution case search and known-case reads are sandbox unsupported without requests
+ok 310 - resolution case search and known-case reads are sandbox unsupported without requests
+  ---
+  duration_ms: 0.242208
+  type: 'test'
+  ...
+# Subtest: resolution case search normalizes exact page fields and strips buyer identity
+ok 311 - resolution case search normalizes exact page fields and strips buyer identity
+  ---
+  duration_ms: 0.483542
+  type: 'test'
+  ...
+# Subtest: resolution case pages preserve empty-with-more and missing totals
+ok 312 - resolution case pages preserve empty-with-more and missing totals
+  ---
+  duration_ms: 1.388916
+  type: 'test'
+  ...
+# Subtest: resolution case search rejects another unredacted seller and ranges over 31 days
+ok 313 - resolution case search rejects another unredacted seller and ranges over 31 days
+  ---
+  duration_ms: 0.353958
+  type: 'test'
+  ...
+# Subtest: malformed summaries and hostile or repeated cursors fail closed
+ok 314 - malformed summaries and hostile or repeated cursors fail closed
+  ---
+  duration_ms: 0.561625
+  type: 'test'
+  ...
+# Subtest: supplement04 review: common executor continuation completes page two
+ok 315 - supplement04 review: common executor continuation completes page two
+  ---
+  duration_ms: 17.616209
+  type: 'test'
+  ...
+# Subtest: 11st Alimi adapter uses the official GET-only path and follows the explicit parser readiness marker
+ok 316 - 11st Alimi adapter uses the official GET-only path and follows the explicit parser readiness marker
+  ---
+  duration_ms: 16.619875
+  type: 'test'
+  ...
+# Subtest: 11st Alimi adapter rejects over-30-day, invalid status and order-without-status inputs
+ok 317 - 11st Alimi adapter rejects over-30-day, invalid status and order-without-status inputs
+  ---
+  duration_ms: 0.285375
+  type: 'test'
+  ...
+# Subtest: 11st common Alimi parser and inquiry projection preserve safe exact identifiers
+ok 318 - 11st common Alimi parser and inquiry projection preserve safe exact identifiers
+  ---
+  duration_ms: 13.033375
+  type: 'test'
+  ...
+# Subtest: 11st common Alimi parser rejects 5001 rows as incomplete instead of truncating to success
+ok 319 - 11st common Alimi parser rejects 5001 rows as incomplete instead of truncating to success
+  ---
+  duration_ms: 9.054542
+  type: 'test'
+  ...
+# Subtest: 11st history planner partitions 30 days into the existing five exact Q&A windows
+ok 320 - 11st history planner partitions 30 days into the existing five exact Q&A windows
+  ---
+  duration_ms: 3.918125
+  type: 'test'
+  ...
+# Subtest: 11st Product Q&A result 500 is a business error, never a zero-row success
+ok 321 - 11st Product Q&A result 500 is a business error, never a zero-row success
+  ---
+  duration_ms: 0.196791
+  type: 'test'
+  ...
+# Subtest: 11st capability inventory keeps Q&A, alimi, seller talk and reviews separate
+ok 322 - 11st capability inventory keeps Q&A, alimi, seller talk and reviews separate
+  ---
+  duration_ms: 0.229041
+  type: 'test'
+  ...
+# Subtest: 11st alimi normalization separates reply requests from notices and excludes member IDs
+ok 323 - 11st alimi normalization separates reply requests from notices and excludes member IDs
+  ---
+  duration_ms: 0.582417
+  type: 'test'
+  ...
+# Subtest: 11st Product Q&A remote echo requires exact board, product, body and answer date
+ok 324 - 11st Product Q&A remote echo requires exact board, product, body and answer date
+  ---
+  duration_ms: 0.354959
+  type: 'test'
+  ...
+# Subtest: 11st alimi ACK codes are action-specific and still require readback
+ok 325 - 11st alimi ACK codes are action-specific and still require readback
+  ---
+  duration_ms: 0.168541
+  type: 'test'
+  ...
+# Subtest: 11st isolated DB accepts only an explicit disposable loopback database
+ok 326 - 11st isolated DB accepts only an explicit disposable loopback database
+  ---
+  duration_ms: 0.923291
+  type: 'test'
+  ...
+# Subtest: 11st isolated DB rejects remote Supabase, production runtime and ambiguous local targets
+ok 327 - 11st isolated DB rejects remote Supabase, production runtime and ambiguous local targets
+  ---
+  duration_ms: 0.291333
+  type: 'test'
+  ...
+# Subtest: 11st SellerTalk remains session-only with a finite retention boundary
+ok 328 - 11st SellerTalk remains session-only with a finite retention boundary
+  ---
+  duration_ms: 0.661541
+  type: 'test'
+  ...
+# Subtest: 11st reviews remain export-preview only without fabricated read or reply support
+ok 329 - 11st reviews remain export-preview only without fabricated read or reply support
+  ---
+  duration_ms: 0.082542
+  type: 'test'
+  ...
+# Subtest: 11st Product Q&A business code 500 is projected as unknown remote count, never zero
+ok 330 - 11st Product Q&A business code 500 is projected as unknown remote count, never zero
+  ---
+  duration_ms: 0.687125
+  type: 'test'
+  ...
+# Subtest: 11st Alimi code 0 with parsed zero rows is a confirmed empty read
+ok 331 - 11st Alimi code 0 with parsed zero rows is a confirmed empty read
+  ---
+  duration_ms: 0.115208
+  type: 'test'
+  ...
+# Subtest: 11st Alimi unparsed or negative-code responses cannot become empty success
+ok 332 - 11st Alimi unparsed or negative-code responses cannot become empty success
+  ---
+  duration_ms: 0.087125
+  type: 'test'
+  ...
+# Subtest: 11st read projection rejects a seller mismatch and invalid counters
+ok 333 - 11st read projection rejects a seller mismatch and invalid counters
+  ---
+  duration_ms: 0.310167
+  type: 'test'
+  ...
+# Subtest: 11st read observation preserves Q&A business errors without claiming an empty result
+ok 334 - 11st read observation preserves Q&A business errors without claiming an empty result
+  ---
+  duration_ms: 9.666416
+  type: 'test'
+  ...
+# Subtest: 11st read observation binds accepted Alimi evidence to the exact normalized row count
+ok 335 - 11st read observation binds accepted Alimi evidence to the exact normalized row count
+  ---
+  duration_ms: 0.670542
+  type: 'test'
+  ...
+# Subtest: 11st read observation maps every over-limit Alimi response to explicit 5001 incomplete evidence
+ok 336 - 11st read observation maps every over-limit Alimi response to explicit 5001 incomplete evidence
+  ---
+  duration_ms: 0.304208
+  type: 'test'
+  ...
+# Subtest: 11st read observation rejects a mismatched surface, invalid window and non-UTC timestamp
+ok 337 - 11st read observation rejects a mismatched surface, invalid window and non-UTC timestamp
+  ---
+  duration_ms: 0.280166
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'elevenst',
+#   operation: 'inquiries.list',
+#   reason: 'serverless_cs_execution_failed'
+# }
+# Subtest: 11st runOne preserves a Product Q&A business failure as a body-free read observation
+ok 338 - 11st runOne preserves a Product Q&A business failure as a body-free read observation
+  ---
+  duration_ms: 11.226958
+  type: 'test'
+  ...
+# Subtest: 11st runOne does not invent provider read evidence for a transport exception
+ok 339 - 11st runOne does not invent provider read evidence for a transport exception
+  ---
+  duration_ms: 0.927083
+  type: 'test'
+  ...
+# Subtest: 11st runOne retries a lost observation RPC response after durable job completion
+ok 340 - 11st runOne retries a lost observation RPC response after durable job completion
+  ---
+  duration_ms: 0.678833
+  type: 'test'
+  ...
+# Subtest: failed completion evidence is accepted only for the exact 11st inquiry read
+ok 341 - failed completion evidence is accepted only for the exact 11st inquiry read
+  ---
+  duration_ms: 0.417625
+  type: 'test'
+  ...
+# Subtest: actual worker failure payload keeps only safe 11st Product Q&A business-500 evidence
+ok 342 - actual worker failure payload keeps only safe 11st Product Q&A business-500 evidence
+  ---
+  duration_ms: 1.411709
+  type: 'test'
+  ...
+# Subtest: other channels, operations, provider statuses and transport failures never attach a result
+ok 343 - other channels, operations, provider statuses and transport failures never attach a result
+  ---
+  duration_ms: 0.170584
+  type: 'test'
+  ...
+# Subtest: the 11st safe result addition preserves Temu retry continuation without attaching its provider result
+ok 344 - the 11st safe result addition preserves Temu retry continuation without attaching its provider result
+  ---
+  duration_ms: 0.135708
+  type: 'test'
+  ...
+# Subtest: the provider-result branch uses the safe builder while the transport catch remains result-free
+ok 345 - the provider-result branch uses the safe builder while the transport catch remains result-free
+  ---
+  duration_ms: 0.341042
+  type: 'test'
+  ...
+# Subtest: external worker and serverless failed reads converge on the same normalized stored response
+ok 346 - external worker and serverless failed reads converge on the same normalized stored response
+  ---
+  duration_ms: 0.34125
+  type: 'test'
+  ...
+# Subtest: past history route authenticates and rejects invalid or detached dates before any database call
+ok 347 - past history route authenticates and rejects invalid or detached dates before any database call
+  ---
+  duration_ms: 31.393
+  type: 'test'
+  ...
+# Subtest: past date uses the authenticated v4 RPC and preserves the selected period in its response
+ok 348 - past date uses the authenticated v4 RPC and preserves the selected period in its response
+  ---
+  duration_ms: 1.957792
+  type: 'test'
+  ...
+# Subtest: past window egress failures show the requested dates and never enqueue
+ok 349 - past window egress failures show the requested dates and never enqueue
+  ---
+  duration_ms: 11.813375
+  type: 'test'
+  ...
+# Subtest: current-window clients also use the v4 RPC contract
+ok 350 - current-window clients also use the v4 RPC contract
+  ---
+  duration_ms: 1.863208
+  type: 'test'
+  ...
+# Subtest: 11st history is accepted as an isolated channel and mixed history requests fail closed
+ok 351 - 11st history is accepted as an isolated channel and mixed history requests fail closed
+  ---
+  duration_ms: 2.04625
+  type: 'test'
+  ...
+# Subtest: import requires authentication before reading or touching a batch
+ok 352 - import requires authentication before reading or touching a batch
+  ---
+  duration_ms: 15.661917
+  type: 'test'
+  ...
+# Subtest: begin preserves a cancelled durable batch without staging rows
+ok 353 - begin preserves a cancelled durable batch without staging rows
+  ---
+  duration_ms: 10.81525
+  type: 'test'
+  ...
+# Subtest: begin preserves a committed durable batch without staging rows
+ok 354 - begin preserves a committed durable batch without staging rows
+  ---
+  duration_ms: 5.855792
+  type: 'test'
+  ...
+# Subtest: begin preserves a committing durable batch without staging rows
+ok 355 - begin preserves a committing durable batch without staging rows
+  ---
+  duration_ms: 3.176042
+  type: 'test'
+  ...
+# Subtest: begin returns the first missing durable row and rejects unknown database state
+ok 356 - begin returns the first missing durable row and rejects unknown database state
+  ---
+  duration_ms: 5.004625
+  type: 'test'
+  ...
+# Subtest: one upload chunk is server-normalized and bound to the exact batch source digest
+ok 357 - one upload chunk is server-normalized and bound to the exact batch source digest
+  ---
+  duration_ms: 16.527958
+  type: 'test'
+  ...
+# Subtest: an inconsistent stage receipt cannot claim preview readiness
+ok 358 - an inconsistent stage receipt cannot claim preview readiness
+  ---
+  duration_ms: 1.985125
+  type: 'test'
+  ...
+# Subtest: oversized upload chunks are rejected before database access
+ok 359 - oversized upload chunks are rejected before database access
+  ---
+  duration_ms: 6.102959
+  type: 'test'
+  ...
+# Subtest: commit progress stays resumable and terminal receipts are validated
+ok 360 - commit progress stays resumable and terminal receipts are validated
+  ---
+  duration_ms: 7.229542
+  type: 'test'
+  ...
+# Subtest: preview GET validates its query before calling the database
+ok 361 - preview GET validates its query before calling the database
+  ---
+  duration_ms: 3.045292
+  type: 'test'
+  ...
+# Subtest: preview GET returns only a validated no-store database page
+ok 362 - preview GET returns only a validated no-store database page
+  ---
+  duration_ms: 4.972375
+  type: 'test'
+  ...
+# Subtest: the same normalized source is idempotent regardless of object key order
+ok 363 - the same normalized source is idempotent regardless of object key order
+  ---
+  duration_ms: 7.984833
+  type: 'test'
+  ...
+# Subtest: ID-less similar rows never share an automatic merge identity
+ok 364 - ID-less similar rows never share an automatic merge identity
+  ---
+  duration_ms: 0.351708
+  type: 'test'
+  ...
+# Subtest: provider-specific exports remain visibly blocked until an exact sample is verified
+ok 365 - provider-specific exports remain visibly blocked until an exact sample is verified
+  ---
+  duration_ms: 0.066542
+  type: 'test'
+  ...
+# Subtest: UTF-8 provider context and complete normalized row obey database byte limits
+ok 366 - UTF-8 provider context and complete normalized row obey database byte limits
+  ---
+  duration_ms: 1.428125
+  type: 'test'
+  ...
+# Subtest: large Korean rows split below PostgreSQL batch bytes without losing row order
+ok 367 - large Korean rows split below PostgreSQL batch bytes without losing row order
+  ---
+  duration_ms: 248.775292
+  type: 'test'
+  ...
+# Subtest: CS snapshot works with no product or order tables and preserves another administrator's seller-owned tickets
+ok 368 - CS snapshot works with no product or order tables and preserves another administrator's seller-owned tickets
+  ---
+  duration_ms: 648.51225
+  type: 'test'
+  ...
+# Subtest: CS snapshot rejects unauthenticated and non-administrator sessions
+ok 369 - CS snapshot rejects unauthenticated and non-administrator sessions
+  ---
+  duration_ms: 436.23725
+  type: 'test'
+  ...
+# Subtest: Lazada review and after-sales remain visible outside the IM completion denominator
+ok 370 - Lazada review and after-sales remain visible outside the IM completion denominator
+  ---
+  duration_ms: 0.503875
+  type: 'test'
+  ...
+# Subtest: review reply is approval-bound and reverse-order mutations stay out of CS reads
+ok 371 - review reply is approval-bound and reverse-order mutations stay out of CS reads
+  ---
+  duration_ms: 0.099583
+  type: 'test'
+  ...
+# Subtest: CS URL filters reject unknown channels and statuses
+ok 372 - CS URL filters reject unknown channels and statuses
+  ---
+  duration_ms: 0.830167
+  type: 'test'
+  ...
+# Subtest: CS filters keep open, resolved, urgent and reconciliation queues distinct
+ok 373 - CS filters keep open, resolved, urgent and reconciliation queues distinct
+  ---
+  duration_ms: 0.131958
+  type: 'test'
+  ...
+# Subtest: CS deep links preserve exact channel, queue and ticket without noisy defaults
+ok 374 - CS deep links preserve exact channel, queue and ticket without noisy defaults
+  ---
+  duration_ms: 0.127
+  type: 'test'
+  ...
+# Subtest: CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+ok 375 - CS and commerce modules cannot reach one another through imports, aliases, re-exports, or type imports
+  ---
+  duration_ms: 3.008416
+  type: 'test'
+  ...
+# Subtest: CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+ok 376 - CS executor cannot reach the legacy dispatcher, commerce executor, or mixed gateway
+  ---
+  duration_ms: 0.087625
+  type: 'test'
+  ...
+# Subtest: CS workspace owns its state without importing the product shell or its snapshot hook
+ok 377 - CS workspace owns its state without importing the product shell or its snapshot hook
+  ---
+  duration_ms: 0.071583
+  type: 'test'
+  ...
+# Subtest: dependency traversal never stops at a shared execution boundary
+ok 378 - dependency traversal never stops at a shared execution boundary
+  ---
+  duration_ms: 0.05175
+  type: 'test'
+  ...
+# Subtest: Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+ok 379 - Standalone CS page and its entire import graph cannot load product UI, product data or worker code
+  ---
+  duration_ms: 0.185042
+  type: 'test'
+  ...
+# Subtest: Concurrent CS and commerce requests own independent budgets and cancellation signals
+ok 380 - Concurrent CS and commerce requests own independent budgets and cancellation signals
+  ---
+  duration_ms: 20.261833
+  type: 'test'
+  ...
+# Subtest: Each local provider handler rejects the other domain before starting a lease
+ok 381 - Each local provider handler rejects the other domain before starting a lease
+  ---
+  duration_ms: 0.909167
+  type: 'test'
+  ...
+# Subtest: CS local reply with an uncertain accepted write stays in reconciliation and never becomes a failed retry
+ok 382 - CS local reply with an uncertain accepted write stays in reconciliation and never becomes a failed retry
+  ---
+  duration_ms: 0.519875
+  type: 'test'
+  ...
+# Subtest: Qoo10 S1/S2/S3 list contract accepts only exact Japan-time fields
+ok 383 - Qoo10 S1/S2/S3 list contract accepts only exact Japan-time fields
+  ---
+  duration_ms: 1.4225
+  type: 'test'
+  ...
+# Subtest: Qoo10 reply contract enforces documented lineage and 4000-character content limit
+ok 384 - Qoo10 reply contract enforces documented lineage and 4000-character content limit
+  ---
+  duration_ms: 0.255125
+  type: 'test'
+  ...
+# Subtest: Qoo10 history splits every selected day and every state without declaring capped data complete
+ok 385 - Qoo10 history splits every selected day and every state without declaring capped data complete
+  ---
+  duration_ms: 1.377417
+  type: 'test'
+  ...
+# Subtest: Qoo10 reply guard rejects stale, completed, mismatched and unapproved targets
+ok 386 - Qoo10 reply guard rejects stale, completed, mismatched and unapproved targets
+  ---
+  duration_ms: 0.519667
+  type: 'test'
+  ...
+# Subtest: Qoo10 review capability stays explicit about the seller UI export gap
+ok 387 - Qoo10 review capability stays explicit about the seller UI export gap
+  ---
+  duration_ms: 0.071791
+  type: 'test'
+  ...
+# Subtest: Qoo10 history requests carry stable resume keys for all daily inquiry and claim windows
+ok 388 - Qoo10 history requests carry stable resume keys for all daily inquiry and claim windows
+  ---
+  duration_ms: 2.752708
+  type: 'test'
+  ...
+# Subtest: Qoo10 saturated inquiry and claim windows refine day to hour to minute to second
+ok 389 - Qoo10 saturated inquiry and claim windows refine day to hour to minute to second
+  ---
+  duration_ms: 1.266583
+  type: 'test'
+  ...
+# Subtest: Qoo10 history runtime reaches the native QAPI read path and returns hourly work for a saturated day
+ok 390 - Qoo10 history runtime reaches the native QAPI read path and returns hourly work for a saturated day
+  ---
+  duration_ms: 13.018625
+  type: 'test'
+  ...
+# Subtest: Qoo10 history runtime never completes an empty page with a positive provider total
+ok 391 - Qoo10 history runtime never completes an empty page with a positive provider total
+  ---
+  duration_ms: 0.290417
+  type: 'test'
+  ...
+# Subtest: Qoo10 one-second saturation remains an irreducible coverage gap
+ok 392 - Qoo10 one-second saturation remains an irreducible coverage gap
+  ---
+  duration_ms: 0.357708
+  type: 'test'
+  ...
+# Subtest: Qoo10 inquiry reconciliation keeps sequence collisions separate and resolves duplicate status observations
+ok 393 - Qoo10 inquiry reconciliation keeps sequence collisions separate and resolves duplicate status observations
+  ---
+  duration_ms: 6.648458
+  type: 'test'
+  ...
+# Subtest: Qoo10 reply guard preserves legacy tickets and accepts only attested v2 aliases
+ok 394 - Qoo10 reply guard preserves legacy tickets and accepts only attested v2 aliases
+  ---
+  duration_ms: 0.819375
+  type: 'test'
+  ...
+# Subtest: Qoo10 guarded reply keeps arguments.params through enqueue and the native adapter
+ok 395 - Qoo10 guarded reply keeps arguments.params through enqueue and the native adapter
+  ---
+  duration_ms: 0.772041
+  type: 'test'
+  ...
+# Subtest: Qoo10 S3 readback blocks resend for absent, wrong-sequence, and nonterminal observations
+ok 396 - Qoo10 S3 readback blocks resend for absent, wrong-sequence, and nonterminal observations
+  ---
+  duration_ms: 0.794458
+  type: 'test'
+  ...
+# Subtest: Qoo10 S3 readback executor uses only GetInquiryMessage with the fixed target period
+ok 397 - Qoo10 S3 readback executor uses only GetInquiryMessage with the fixed target period
+  ---
+  duration_ms: 0.757833
+  type: 'test'
+  ...
+# Subtest: Qoo10 S3 gateway readback keeps the delivery binding through the native list adapter
+ok 398 - Qoo10 S3 gateway readback keeps the delivery binding through the native list adapter
+  ---
+  duration_ms: 0.642834
+  type: 'test'
+  ...
+# Subtest: actual Qoo10 runOne stores sealed status rows before recording status, with no general inquiry ingestion
+ok 399 - actual Qoo10 runOne stores sealed status rows before recording status, with no general inquiry ingestion
+  ---
+  duration_ms: 6.584833
+  type: 'test'
+  ...
+# Subtest: actual Qoo10 runOne keeps a wrong reply sequence incomplete
+ok 400 - actual Qoo10 runOne keeps a wrong reply sequence incomplete
+  ---
+  duration_ms: 0.630584
+  type: 'test'
+  ...
+# Subtest: actual Qoo10 runOne never invents provider rows after transport failure
+ok 401 - actual Qoo10 runOne never invents provider rows after transport failure
+  ---
+  duration_ms: 0.604125
+  type: 'test'
+  ...
+# Subtest: actual Qoo10 runOne does not record status when common completion loses ownership
+ok 402 - actual Qoo10 runOne does not record status when common completion loses ownership
+  ---
+  duration_ms: 0.373792
+  type: 'test'
+  ...
+# Subtest: reads the same marker from remote completion context and serverless job request
+ok 403 - reads the same marker from remote completion context and serverless job request
+  ---
+  duration_ms: 0.714792
+  type: 'test'
+  ...
+# Subtest: stores only exact question identity/status fields and verifies exact S3
+ok 404 - stores only exact question identity/status fields and verifies exact S3
+  ---
+  duration_ms: 0.334083
+  type: 'test'
+  ...
+# Subtest: preserves wrong-sequence evidence without retaining bodies
+ok 405 - preserves wrong-sequence evidence without retaining bodies
+  ---
+  duration_ms: 0.068375
+  type: 'test'
+  ...
+# Subtest: empty result is pending, provider rejection is incomplete, and absent result is transport failure
+ok 406 - empty result is pending, provider rejection is incomplete, and absent result is transport failure
+  ---
+  duration_ms: 0.068875
+  type: 'test'
+  ...
+# Subtest: malformed successful provider rows fail closed and RPC arguments never permit content or resend claims
+ok 407 - malformed successful provider rows fail closed and RPC arguments never permit content or resend claims
+  ---
+  duration_ms: 0.134542
+  type: 'test'
+  ...
+# Subtest: recovery matrix names every required failure and keeps two daily observations
+ok 408 - recovery matrix names every required failure and keeps two daily observations
+  ---
+  duration_ms: 0.314708
+  type: 'test'
+  ...
+# Subtest: readiness contract cannot call a missing drill complete
+ok 409 - readiness contract cannot call a missing drill complete
+  ---
+  duration_ms: 1.464709
+  type: 'test'
+  ...
+# Subtest: reply drafts remain scoped to their source ticket across filter and tab selection changes
+ok 410 - reply drafts remain scoped to their source ticket across filter and tab selection changes
+  ---
+  duration_ms: 0.466959
+  type: 'test'
+  ...
+# Subtest: ticket selection uses the internal source id even when external ticket ids collide
+ok 411 - ticket selection uses the internal source id even when external ticket ids collide
+  ---
+  duration_ms: 0.174417
+  type: 'test'
+  ...
+# Subtest: server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts
+ok 412 - server-gated marketplace reply channels use one gateway while unsupported channels keep internal drafts
+  ---
+  duration_ms: 0.79375
+  type: 'test'
+  ...
+# Subtest: channel verification separates inquiry receiving from remote reply capability
+ok 413 - channel verification separates inquiry receiving from remote reply capability
+  ---
+  duration_ms: 0.475
+  type: 'test'
+  ...
+# Subtest: CS attention count deduplicates channels and includes blocked or unverified outcomes
+ok 414 - CS attention count deduplicates channels and includes blocked or unverified outcomes
+  ---
+  duration_ms: 0.241417
+  type: 'test'
+  ...
+# Subtest: CS sync queues only inquiries and never reads, normalizes, or enqueues orders
+ok 415 - CS sync queues only inquiries and never reads, normalizes, or enqueues orders
+  ---
+  duration_ms: 87.665625
+  type: 'test'
+  ...
+# Subtest: CS sync denial performs no DB work
+ok 416 - CS sync denial performs no DB work
+  ---
+  duration_ms: 37.344375
+  type: 'test'
+  ...
+# Subtest: CS ticket status calls only its ticket RPC with the exact inbound generation
+ok 417 - CS ticket status calls only its ticket RPC with the exact inbound generation
+  ---
+  duration_ms: 7.298333
+  type: 'test'
+  ...
+# Subtest: CS ticket status preserves INQUIRY_CONTEXT_STALE as conflict
+ok 418 - CS ticket status preserves INQUIRY_CONTEXT_STALE as conflict
+  ---
+  duration_ms: 5.304583
+  type: 'test'
+  ...
+# Subtest: CS ticket status preserves CS_DELIVERY_LOCKED as conflict
+ok 419 - CS ticket status preserves CS_DELIVERY_LOCKED as conflict
+  ---
+  duration_ms: 4.690959
+  type: 'test'
+  ...
+# Subtest: CS ticket status preserves REMOTE_REPLY_SUCCESS_REQUIRED as conflict
+ok 420 - CS ticket status preserves REMOTE_REPLY_SUCCESS_REQUIRED as conflict
+  ---
+  duration_ms: 5.012375
+  type: 'test'
+  ...
+# Subtest: CS ticket status preserves LAZADA_IM_LATEST_MESSAGE_NOT_ACTIONABLE as conflict
+ok 421 - CS ticket status preserves LAZADA_IM_LATEST_MESSAGE_NOT_ACTIONABLE as conflict
+  ---
+  duration_ms: 5.123084
+  type: 'test'
+  ...
+# Subtest: CS ticket endpoint rejects commerce-shaped payloads before DB access
+ok 422 - CS ticket endpoint rejects commerce-shaped payloads before DB access
+  ---
+  duration_ms: 5.522708
+  type: 'test'
+  ...
+# Subtest: both executors reject a wrong-domain operation before reaching a provider
+ok 423 - both executors reject a wrong-domain operation before reaching a provider
+  ---
+  duration_ms: 0.565
+  type: 'test'
+  ...
+# Subtest: 401 and 403 history failures become exact shop-local authorization codes
+ok 424 - 401 and 403 history failures become exact shop-local authorization codes
+  ---
+  duration_ms: 0.325
+  type: 'test'
+  ...
+# Subtest: ordinary Shopee pulls and non-authorization failures retain their current behavior
+ok 425 - ordinary Shopee pulls and non-authorization failures retain their current behavior
+  ---
+  duration_ms: 0.059583
+  type: 'test'
+  ...
+# Subtest: review evidence binds the page, duplicate comment revisions, and continuation
+ok 426 - review evidence binds the page, duplicate comment revisions, and continuation
+  ---
+  duration_ms: 7.918417
+  type: 'test'
+  ...
+# Subtest: return evidence keeps a 10-detail page and the eleventh item as checkpoint remainder
+ok 427 - return evidence keeps a 10-detail page and the eleventh item as checkpoint remainder
+  ---
+  duration_ms: 1.014625
+  type: 'test'
+  ...
+# Subtest: 401 and 403 become shop-local authorization interruptions
+ok 428 - 401 and 403 become shop-local authorization interruptions
+  ---
+  duration_ms: 0.264042
+  type: 'test'
+  ...
+# Subtest: Shopee history progress resumes without scope loss and keeps shop authorization isolated
+ok 429 - Shopee history progress resumes without scope loss and keeps shop authorization isolated
+  ---
+  duration_ms: 13.456334
+  type: 'test'
+  ...
+# Subtest: Shopee Returns projects exact 10 plus 1 detail resume and remaining windows
+ok 430 - Shopee Returns projects exact 10 plus 1 detail resume and remaining windows
+  ---
+  duration_ms: 0.546833
+  type: 'test'
+  ...
+# Subtest: same Shopee comment ID is shop-bound before it reaches a coverage ledger
+ok 431 - same Shopee comment ID is shop-bound before it reaches a coverage ledger
+  ---
+  duration_ms: 0.069291
+  type: 'test'
+  ...
+# Subtest: Shopee history projection rejects an empty review page with next cursor and a repeated cursor
+ok 432 - Shopee history projection rejects an empty review page with next cursor and a repeated cursor
+  ---
+  duration_ms: 0.303208
+  type: 'test'
+  ...
+# Subtest: new Shopee detailRevision appends to the stable ticket and rerun adds nothing
+ok 433 - new Shopee detailRevision appends to the stable ticket and rerun adds nothing
+  ---
+  duration_ms: 0.296917
+  type: 'test'
+  ...
+# Subtest: unattested legacy revision requires reconciliation and shop mismatch is rejected
+ok 434 - unattested legacy revision requires reconciliation and shop mismatch is rejected
+  ---
+  duration_ms: 0.185
+  type: 'test'
+  ...
+# Subtest: Shopee history date parsing rejects normalized invalid dates and future KST dates
+ok 435 - Shopee history date parsing rejects normalized invalid dates and future KST dates
+  ---
+  duration_ms: 0.461958
+  type: 'test'
+  ...
+# Subtest: today in KST ends at the current instant instead of a future 23:59:59
+ok 436 - today in KST ends at the current instant instead of a future 23:59:59
+  ---
+  duration_ms: 0.092792
+  type: 'test'
+  ...
+# Subtest: past end dates remain inclusive through 23:59:59 KST
+ok 437 - past end dates remain inclusive through 23:59:59 KST
+  ---
+  duration_ms: 0.047084
+  type: 'test'
+  ...
+# Subtest: historyRunId is derived from and must match the request UUID
+ok 438 - historyRunId is derived from and must match the request UUID
+  ---
+  duration_ms: 0.469292
+  type: 'test'
+  ...
+# Subtest: Shopee return projection preserves operational evidence and drops all contact/address branches
+ok 439 - Shopee return projection preserves operational evidence and drops all contact/address branches
+  ---
+  duration_ms: 0.969167
+  type: 'test'
+  ...
+# Subtest: Shopee return projection revision changes when the reassessed reason or media changes
+ok 440 - Shopee return projection revision changes when the reassessed reason or media changes
+  ---
+  duration_ms: 0.178666
+  type: 'test'
+  ...
+# Subtest: Shopee review history is one independent cursor corpus per actual shop
+ok 441 - Shopee review history is one independent cursor corpus per actual shop
+  ---
+  duration_ms: 0.438083
+  type: 'test'
+  ...
+# Subtest: Shopee Returns history uses bounded progressing windows with a real one-second overlap
+ok 442 - Shopee Returns history uses bounded progressing windows with a real one-second overlap
+  ---
+  duration_ms: 0.290042
+  type: 'test'
+  ...
+# Subtest: Shopee Returns 15-day-plus-one-second edge neither exceeds the cap nor strands a boundary second
+ok 443 - Shopee Returns 15-day-plus-one-second edge neither exceeds the cap nor strands a boundary second
+  ---
+  duration_ms: 0.1405
+  type: 'test'
+  ...
+# Subtest: Shopee history planning rejects duplicate, invalid and more-than-eight shop scopes
+ok 444 - Shopee history planning rejects duplicate, invalid and more-than-eight shop scopes
+  ---
+  duration_ms: 0.213084
+  type: 'test'
+  ...
+# Subtest: Shopee target refresh merges into the latest payload and preserves the other seven shops
+ok 445 - Shopee target refresh merges into the latest payload and preserves the other seven shops
+  ---
+  duration_ms: 9.3195
+  type: 'test'
+  ...
+# Subtest: same-target stale refresh is rejected before it can overwrite a newer rotation
+ok 446 - same-target stale refresh is rejected before it can overwrite a newer rotation
+  ---
+  duration_ms: 0.525583
+  type: 'test'
+  ...
+# Subtest: an already-applied target rotation is idempotent and creates no next version
+ok 447 - an already-applied target rotation is idempotent and creates no next version
+  ---
+  duration_ms: 0.357459
+  type: 'test'
+  ...
+# Subtest: a candidate that changes any non-target shop is rejected
+ok 448 - a candidate that changes any non-target shop is rejected
+  ---
+  duration_ms: 0.1825
+  type: 'test'
+  ...
+# Subtest: questionId and inquiryNo remain distinct even when their numeric values collide
+ok 449 - questionId and inquiryNo remain distinct even when their numeric values collide
+  ---
+  duration_ms: 0.976459
+  type: 'test'
+  ...
+# Subtest: customer order binding uses exactly one productOrderId and never substitutes parent orderId
+ok 450 - customer order binding uses exactly one productOrderId and never substitutes parent orderId
+  ---
+  duration_ms: 0.460584
+  type: 'test'
+  ...
+# Subtest: latest customer text and historical seller answers keep separate immutable observations
+ok 451 - latest customer text and historical seller answers keep separate immutable observations
+  ---
+  duration_ms: 0.656
+  type: 'test'
+  ...
+# Subtest: product and customer history requests enforce fixed 30-day windows and exact continuations
+ok 452 - product and customer history requests enforce fixed 30-day windows and exact continuations
+  ---
+  duration_ms: 11.395792
+  type: 'test'
+  ...
+# Subtest: reply execution rejects cross-kind identifiers before provider access
+ok 453 - reply execution rejects cross-kind identifiers before provider access
+  ---
+  duration_ms: 0.610083
+  type: 'test'
+  ...
+# Subtest: the integrated route compiles and exports GET and POST
+ok 454 - the integrated route compiles and exports GET and POST
+  ---
+  duration_ms: 15.542292
+  type: 'test'
+  ...
+# Subtest: the integrated UI submits the selected SmartStore history dates to the authenticated resume route
+ok 455 - the integrated UI submits the selected SmartStore history dates to the authenticated resume route
+  ---
+  duration_ms: 17.769958
+  type: 'test'
+  ...
+# Subtest: GET invokes authenticateAdminRequest and reads the exact checkpoint without enqueue
+ok 456 - GET invokes authenticateAdminRequest and reads the exact checkpoint without enqueue
+  ---
+  duration_ms: 9.581
+  type: 'test'
+  ...
+# Subtest: anonymous, expired, and non-admin fixtures fail before credential or checkpoint RPCs
+ok 457 - anonymous, expired, and non-admin fixtures fail before credential or checkpoint RPCs
+  ---
+  duration_ms: 6.75
+  type: 'test'
+  ...
+# Subtest: invalid dates fail closed after authentication and before any database RPC
+ok 458 - invalid dates fail closed after authentication and before any database RPC
+  ---
+  duration_ms: 11.347917
+  type: 'test'
+  ...
+# Subtest: multiple active production SmartStore credentials fail closed
+ok 459 - multiple active production SmartStore credentials fail closed
+  ---
+  duration_ms: 1.725292
+  type: 'test'
+  ...
+# Subtest: inconsistent completion, wrong total window count and cross-window receipts never enqueue
+ok 460 - inconsistent completion, wrong total window count and cross-window receipts never enqueue
+  ---
+  duration_ms: 10.810625
+  type: 'test'
+  ...
+# Subtest: a completed checkpoint returns 200 and enqueues zero jobs
+ok 461 - a completed checkpoint returns 200 and enqueues zero jobs
+  ---
+  duration_ms: 1.676333
+  type: 'test'
+  ...
+# Subtest: a one-day next window passes exact RPC dates and returns 202 accepted-not-completed
+ok 462 - a one-day next window passes exact RPC dates and returns 202 accepted-not-completed
+  ---
+  duration_ms: 2.014583
+  type: 'test'
+  ...
+# Subtest: enqueue rejection returns 409 and never converts acceptance into completion
+ok 463 - enqueue rejection returns 409 and never converts acceptance into completion
+  ---
+  duration_ms: 2.048
+  type: 'test'
+  ...
+# Subtest: backward history plan uses exact inclusive 30-day windows and resumes idempotently
+ok 464 - backward history plan uses exact inclusive 30-day windows and resumes idempotently
+  ---
+  duration_ms: 1.822167
+  type: 'test'
+  ...
+# Subtest: full live denominator regenerates the same 46-window deterministic plan
+ok 465 - full live denominator regenerates the same 46-window deterministic plan
+  ---
+  duration_ms: 0.239959
+  type: 'test'
+  ...
+# Subtest: Smartstore provider and ledger order states project to explicit safe UI states
+ok 466 - Smartstore provider and ledger order states project to explicit safe UI states
+  ---
+  duration_ms: 0.270333
+  type: 'test'
+  ...
+# Subtest: de-identified live-zero fixture reconciles scoped data but never upgrades auth claims to evidence
+ok 467 - de-identified live-zero fixture reconciles scoped data but never upgrades auth claims to evidence
+  ---
+  duration_ms: 6.558541
+  type: 'test'
+  ...
+# Subtest: duplicate provider observations dedupe while missing ledger or web IDs remain visible
+ok 468 - duplicate provider observations dedupe while missing ledger or web IDs remain visible
+  ---
+  duration_ms: 0.92325
+  type: 'test'
+  ...
+# Subtest: a different seller, credential, shop or environment cannot satisfy ledger provenance
+ok 469 - a different seller, credential, shop or environment cannot satisfy ledger provenance
+  ---
+  duration_ms: 0.981167
+  type: 'test'
+  ...
+# Subtest: Temu runtime readiness blocks inactive, missing permission, region and seller mismatches
+ok 470 - Temu runtime readiness blocks inactive, missing permission, region and seller mismatches
+  ---
+  duration_ms: 1.296542
+  type: 'test'
+  ...
+# Subtest: Temu Buyer Chat remains unavailable without its own official contract and permission
+ok 471 - Temu Buyer Chat remains unavailable without its own official contract and permission
+  ---
+  duration_ms: 0.270709
+  type: 'test'
+  ...
+# Subtest: Temu fixed history plan uses closed KST day windows by status and verified provider range
+ok 472 - Temu fixed history plan uses closed KST day windows by status and verified provider range
+  ---
+  duration_ms: 1.565125
+  type: 'test'
+  ...
+# Subtest: Temu 14-day and 30-day history boundaries retain every KST calendar day and status
+ok 473 - Temu 14-day and 30-day history boundaries retain every KST calendar day and status
+  ---
+  duration_ms: 0.43475
+  type: 'test'
+  ...
+# Subtest: Temu detail-only timestamp and content changes produce distinct revisions
+ok 474 - Temu detail-only timestamp and content changes produce distinct revisions
+  ---
+  duration_ms: 0.649667
+  type: 'test'
+  ...
+# Subtest: Temu after-sales webhook milliseconds project to second-based detail polling without PII
+ok 475 - Temu after-sales webhook milliseconds project to second-based detail polling without PII
+  ---
+  duration_ms: 0.638916
+  type: 'test'
+  ...
+# Subtest: Temu retry replay re-reads and persists successful prefix details before advancing
+ok 476 - Temu retry replay re-reads and persists successful prefix details before advancing
+  ---
+  duration_ms: 713.437792
+  type: 'test'
+  ...
+# Subtest: Temu retry receipt accepts the atomic first-write and idempotent replay forms
+ok 477 - Temu retry receipt accepts the atomic first-write and idempotent replay forms
+  ---
+  duration_ms: 0.353625
+  type: 'test'
+  ...
+# Subtest: Temu retry receipt fails closed when the proposal SQL RPC is not installed
+ok 478 - Temu retry receipt fails closed when the proposal SQL RPC is not installed
+  ---
+  duration_ms: 0.173542
+  type: 'test'
+  ...
+# Subtest: Temu retry receipt rejects transport loss and mismatched durable state
+ok 479 - Temu retry receipt rejects transport loss and mismatched durable state
+  ---
+  duration_ms: 0.08825
+  type: 'test'
+  ...
+# Subtest: Temu retry RPC replays one exact call after response loss
+ok 480 - Temu retry RPC replays one exact call after response loss
+  ---
+  duration_ms: 0.068292
+  type: 'test'
+  ...
+# Subtest: Temu retry RPC does not replay deterministic missing-schema failures
+ok 481 - Temu retry RPC does not replay deterministic missing-schema failures
+  ---
+  duration_ms: 0.130125
+  type: 'test'
+  ...
+# Subtest: Temu retry RPC stops after one uncertain-response replay
+ok 482 - Temu retry RPC stops after one uncertain-response replay
+  ---
+  duration_ms: 0.055167
+  type: 'test'
+  ...
+# Subtest: eBay impossible shipment date 2026-02-29T03:04:05Z fails both draft and readback
+ok 483 - eBay impossible shipment date 2026-02-29T03:04:05Z fails both draft and readback
+  ---
+  duration_ms: 1.455958
+  type: 'test'
+  ...
+# Subtest: eBay impossible shipment date 2026-02-30T03:04:05Z fails both draft and readback
+ok 484 - eBay impossible shipment date 2026-02-30T03:04:05Z fails both draft and readback
+  ---
+  duration_ms: 0.089333
+  type: 'test'
+  ...
+# Subtest: eBay impossible shipment date 2026-04-31T03:04:05Z fails both draft and readback
+ok 485 - eBay impossible shipment date 2026-04-31T03:04:05Z fails both draft and readback
+  ---
+  duration_ms: 0.049875
+  type: 'test'
+  ...
+# Subtest: eBay impossible shipment date 2026-09-06T24:00:00Z fails both draft and readback
+ok 486 - eBay impossible shipment date 2026-09-06T24:00:00Z fails both draft and readback
+  ---
+  duration_ms: 0.044417
+  type: 'test'
+  ...
+# Subtest: eBay valid UTC precision and leap dates remain supported without requiring retry timestamp equality
+ok 487 - eBay valid UTC precision and leap dates remain supported without requiring retry timestamp equality
+  ---
+  duration_ms: 0.30225
+  type: 'test'
+  ...
+# Subtest: eBay order sync preserves line item identities and quantities for the exact shipment draft
+ok 488 - eBay order sync preserves line item identities and quantities for the exact shipment draft
+  ---
+  duration_ms: 2.19675
+  type: 'test'
+  ...
+# Subtest: eBay FULFILLED orders are shipped rather than delivered or newly paid
+ok 489 - eBay FULFILLED orders are shipped rather than delivered or newly paid
+  ---
+  duration_ms: 0.273958
+  type: 'test'
+  ...
+# Subtest: eBay submits one exact full-order shipment and requires carrier, tracking, line items, quantity and shipped date readback
+ok 490 - eBay submits one exact full-order shipment and requires carrier, tracking, line items, quantity and shipped date readback
+  ---
+  duration_ms: 9.090833
+  type: 'test'
+  ...
+# Subtest: eBay existing exact fulfillment returns verified without a duplicate POST even after order fulfillment
+ok 491 - eBay existing exact fulfillment returns verified without a duplicate POST even after order fulfillment
+  ---
+  duration_ms: 0.363209
+  type: 'test'
+  ...
+# Subtest: eBay a cancelled or refunded remote order cannot be returned as successful shipment from an old fulfillment
+ok 492 - eBay a cancelled or refunded remote order cannot be returned as successful shipment from an old fulfillment
+  ---
+  duration_ms: 0.568792
+  type: 'test'
+  ...
+# Subtest: eBay rejects another order or a subset quantity before the shipment mutation
+ok 493 - eBay rejects another order or a subset quantity before the shipment mutation
+  ---
+  duration_ms: 1.218541
+  type: 'test'
+  ...
+# Subtest: eBay unpaid, cancellation requested, already allocated and missing status orders cannot be shipped
+ok 494 - eBay unpaid, cancellation requested, already allocated and missing status orders cannot be shipped
+  ---
+  duration_ms: 0.900792
+  type: 'test'
+  ...
+# Subtest: eBay an existing different or duplicate allocation requires reconciliation with zero POSTs
+ok 495 - eBay an existing different or duplicate allocation requires reconciliation with zero POSTs
+  ---
+  duration_ms: 0.432584
+  type: 'test'
+  ...
+# Subtest: eBay malformed or unavailable existing shipment readback never permits POST
+ok 496 - eBay malformed or unavailable existing shipment readback never permits POST
+  ---
+  duration_ms: 0.786459
+  type: 'test'
+  ...
+# Subtest: eBay accepted POST without an exact readback remains reconciliation-required
+ok 497 - eBay accepted POST without an exact readback remains reconciliation-required
+  ---
+  duration_ms: 1.908083
+  type: 'test'
+  ...
+# Subtest: eBay explicit shipment rejection remains failed without a readback or automatic second POST
+ok 498 - eBay explicit shipment rejection remains failed without a readback or automatic second POST
+  ---
+  duration_ms: 0.279875
+  type: 'test'
+  ...
+# Subtest: eBay HTTP 503 after a POST keeps uncertainty until one exact readback resolves it
+ok 499 - eBay HTTP 503 after a POST keeps uncertainty until one exact readback resolves it
+  ---
+  duration_ms: 0.233
+  type: 'test'
+  ...
+# Subtest: eBay lost POST response is recovered only from exact GET and is never resubmitted
+ok 500 - eBay lost POST response is recovered only from exact GET and is never resubmitted
+  ---
+  duration_ms: 0.324084
+  type: 'test'
+  ...
+# Subtest: Lazada missing response keeps the order visible but fails shipment closed
+ok 501 - Lazada missing response keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 2.225666
+  type: 'test'
+  ...
+# Subtest: Lazada non-array response keeps the order visible but fails shipment closed
+ok 502 - Lazada non-array response keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.243292
+  type: 'test'
+  ...
+# Subtest: Lazada empty response keeps the order visible but fails shipment closed
+ok 503 - Lazada empty response keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.073709
+  type: 'test'
+  ...
+# Subtest: Lazada missing identity keeps the order visible but fails shipment closed
+ok 504 - Lazada missing identity keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.090667
+  type: 'test'
+  ...
+# Subtest: Lazada invalid row type keeps the order visible but fails shipment closed
+ok 505 - Lazada invalid row type keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.168042
+  type: 'test'
+  ...
+# Subtest: Lazada primitive row keeps the order visible but fails shipment closed
+ok 506 - Lazada primitive row keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.068958
+  type: 'test'
+  ...
+# Subtest: Lazada duplicate identity keeps the order visible but fails shipment closed
+ok 507 - Lazada duplicate identity keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.056667
+  type: 'test'
+  ...
+# Subtest: Lazada numeric duplicate keeps the order visible but fails shipment closed
+ok 508 - Lazada numeric duplicate keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.052709
+  type: 'test'
+  ...
+# Subtest: Lazada truncated count keeps the order visible but fails shipment closed
+ok 509 - Lazada truncated count keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.497458
+  type: 'test'
+  ...
+# Subtest: Lazada wrong order keeps the order visible but fails shipment closed
+ok 510 - Lazada wrong order keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.301458
+  type: 'test'
+  ...
+# Subtest: Lazada wrong order metadata keeps the order visible but fails shipment closed
+ok 511 - Lazada wrong order metadata keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.105084
+  type: 'test'
+  ...
+# Subtest: Lazada different delivery modes keeps the order visible but fails shipment closed
+ok 512 - Lazada different delivery modes keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.064
+  type: 'test'
+  ...
+# Subtest: Lazada over adapter limit keeps the order visible but fails shipment closed
+ok 513 - Lazada over adapter limit keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.082167
+  type: 'test'
+  ...
+# Subtest: Lazada over storage limit keeps the order visible but fails shipment closed
+ok 514 - Lazada over storage limit keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.109375
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity null keeps the order visible but fails shipment closed
+ok 515 - Lazada invalid identity null keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.0395
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity undefined keeps the order visible but fails shipment closed
+ok 516 - Lazada invalid identity undefined keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.041333
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity  keeps the order visible but fails shipment closed
+ok 517 - Lazada invalid identity  keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.04025
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity   keeps the order visible but fails shipment closed
+ok 518 - Lazada invalid identity   keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.037875
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity [object Object] keeps the order visible but fails shipment closed
+ok 519 - Lazada invalid identity [object Object] keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.039167
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity  keeps the order visible but fails shipment closed
+ok 520 - Lazada invalid identity  keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.036791
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity false keeps the order visible but fails shipment closed
+ok 521 - Lazada invalid identity false keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.034958
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity 0 keeps the order visible but fails shipment closed
+ok 522 - Lazada invalid identity 0 keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.040709
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity -1 keeps the order visible but fails shipment closed
+ok 523 - Lazada invalid identity -1 keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.034917
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity 1.5 keeps the order visible but fails shipment closed
+ok 524 - Lazada invalid identity 1.5 keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.037917
+  type: 'test'
+  ...
+# Subtest: Lazada invalid identity 9007199254740992 keeps the order visible but fails shipment closed
+ok 525 - Lazada invalid identity 9007199254740992 keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.040458
+  type: 'test'
+  ...
+# Subtest: Lazada JSONB separator storage expansion keeps the order visible but fails shipment closed
+ok 526 - Lazada JSONB separator storage expansion keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.169125
+  type: 'test'
+  ...
+# Subtest: Lazada sparse response keeps the order visible but fails shipment closed
+ok 527 - Lazada sparse response keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.034916
+  type: 'test'
+  ...
+# Subtest: Lazada failed detail keeps the order visible but fails shipment closed
+ok 528 - Lazada failed detail keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.031542
+  type: 'test'
+  ...
+# Subtest: Lazada ambiguous detail responses keeps the order visible but fails shipment closed
+ok 529 - Lazada ambiguous detail responses keeps the order visible but fails shipment closed
+  ---
+  duration_ms: 0.03725
+  type: 'test'
+  ...
+# Subtest: Lazada valid single, multi-item and multi-order responses preserve exact identities
+ok 530 - Lazada valid single, multi-item and multi-order responses preserve exact identities
+  ---
+  duration_ms: 0.653625
+  type: 'test'
+  ...
+# Subtest: invalid Lazada details cannot contaminate the header's product name or quantity
+ok 531 - invalid Lazada details cannot contaminate the header's product name or quantity
+  ---
+  duration_ms: 0.628833
+  type: 'test'
+  ...
+# Subtest: one item claimed by different Lazada orders blocks every owner across all pages without blocking unrelated orders
+ok 532 - one item claimed by different Lazada orders blocks every owner across all pages without blocking unrelated orders
+  ---
+  duration_ms: 0.571292
+  type: 'test'
+  ...
+# Subtest: actual provider_context storage RPC replaces stale valid identities with fail-closed context before fulfillment readback
+ok 533 - actual provider_context storage RPC replaces stale valid identities with fail-closed context before fulfillment readback
+  ---
+  duration_ms: 726.337917
+  type: 'test'
+  ...
+# Subtest: Lazada pack and RTS each require a fresh begin bracketed by lease checks
+ok 534 - Lazada pack and RTS each require a fresh begin bracketed by lease checks
+  ---
+  duration_ms: 3.995334
+  type: 'test'
+  ...
+# Subtest: Lazada ownership rejection or lease loss after pack permits zero RTS calls
+ok 535 - Lazada ownership rejection or lease loss after pack permits zero RTS calls
+  ---
+  duration_ms: 0.966083
+  type: 'test'
+  ...
+# Subtest: missing or rejected shipment hooks cannot reach pack; read and failed-pack paths are unchanged
+ok 536 - missing or rejected shipment hooks cannot reach pack; read and failed-pack paths are unchanged
+  ---
+  duration_ms: 1.624959
+  type: 'test'
+  ...
+# Subtest: serverless passes Lazada per-write hooks without consuming a whole-operation fence
+ok 537 - serverless passes Lazada per-write hooks without consuming a whole-operation fence
+  ---
+  duration_ms: 0.880584
+  type: 'test'
+  ...
+# Subtest: local shipping worker and serverless share uncached Lazada write fences
+ok 538 - local shipping worker and serverless share uncached Lazada write fences
+  ---
+  duration_ms: 4.708334
+  type: 'test'
+  ...
+# Subtest: unordered seller push preserves original body and refuses an old database before ingest
+ok 539 - unordered seller push preserves original body and refuses an old database before ingest
+  ---
+  duration_ms: 2.215666
+  type: 'test'
+  ...
+# Subtest: normalization retains quarantine marker and prefers confirmed duplicate evidence
+ok 540 - normalization retains quarantine marker and prefers confirmed duplicate evidence
+  ---
+  duration_ms: 2.694208
+  type: 'test'
+  ...
+# Subtest: both worker completion boundaries check quarantine readiness before committing
+ok 541 - both worker completion boundaries check quarantine readiness before committing
+  ---
+  duration_ms: 6.405166
+  type: 'test'
+  ...
+# Subtest: webhook never acknowledges V3 partial quarantine as complete
+ok 542 - webhook never acknowledges V3 partial quarantine as complete
+  ---
+  duration_ms: 0.375959
+  type: 'test'
+  ...
+# Subtest: final normalization preserves both conflict originals and excludes either from answered state
+ok 543 - final normalization preserves both conflict originals and excludes either from answered state
+  ---
+  duration_ms: 6.836541
+  type: 'test'
+  ...
+# Subtest: remote shipment success is only complete when the order ledger RPC returns true without an error
+ok 544 - remote shipment success is only complete when the order ledger RPC returns true without an error
+  ---
+  duration_ms: 0.706167
+  type: 'test'
+  ...
+# Subtest: reconciliation-required shipments are never counted as full success or remote failure
+ok 545 - reconciliation-required shipments are never counted as full success or remote failure
+  ---
+  duration_ms: 0.826667
+  type: 'test'
+  ...
+# Subtest: fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure
+ok 546 - fulfillment route preserves a stable resource-bound gateway write and defers 202 without false failure
+  ---
+  duration_ms: 9.741166
+  type: 'test'
+  ...
+# Subtest: TracX delivery webhook bounds Supabase calls and classifies RPC auth separately from transient failures
+ok 547 - TracX delivery webhook bounds Supabase calls and classifies RPC auth separately from transient failures
+  ---
+  duration_ms: 1.886292
+  type: 'test'
+  ...
+# Subtest: Qoo10 pause actions use controllable in-app confirmations
+ok 548 - Qoo10 pause actions use controllable in-app confirmations
+  ---
+  duration_ms: 5.0255
+  type: 'test'
+  ...
+# Subtest: inline channel write confirmations move focus without claiming modal isolation
+ok 549 - inline channel write confirmations move focus without claiming modal isolation
+  ---
+  duration_ms: 1.357792
+  type: 'test'
+  ...
+# Subtest: Temu contained QA has one explicit immutable final activation confirmation
+ok 550 - Temu contained QA has one explicit immutable final activation confirmation
+  ---
+  duration_ms: 1.18625
+  type: 'test'
+  ...
+# Subtest: FINAL registration binds live intent and independently schedules confirmed channels
+ok 551 - FINAL registration binds live intent and independently schedules confirmed channels
+  ---
+  duration_ms: 1.403583
+  type: 'test'
+  ...
+# Subtest: HTTP 202 publication review is visible and cannot fall through as success
+ok 552 - HTTP 202 publication review is visible and cannot fall through as success
+  ---
+  duration_ms: 1.277916
+  type: 'test'
+  ...
+# Subtest: create and content update both require all eight localized detail images
+ok 553 - create and content update both require all eight localized detail images
+  ---
+  duration_ms: 0.875583
+  type: 'test'
+  ...
+# Subtest: Coupang listing preflight never creates an unconfirmed shipping place
+ok 554 - Coupang listing preflight never creates an unconfirmed shipping place
+  ---
+  duration_ms: 1.413417
+  type: 'test'
+  ...
+# Subtest: eBay market listings use one market-specific SKU for inventory and offer
+ok 555 - eBay market listings use one market-specific SKU for inventory and offer
+  ---
+  duration_ms: 0.92525
+  type: 'test'
+  ...
+# Subtest: Lazada listings publish active with localized package content
+ok 556 - Lazada listings publish active with localized package content
+  ---
+  duration_ms: 0.861417
+  type: 'test'
+  ...
+# Subtest: eBay material aspects translate common Korean source values to English
+ok 557 - eBay material aspects translate common Korean source values to English
+  ---
+  duration_ms: 1.282292
+  type: 'test'
+  ...
+# Subtest: listing image normalization binds every uploaded asset to its claimed attempt and product
+ok 558 - listing image normalization binds every uploaded asset to its claimed attempt and product
+  ---
+  duration_ms: 0.711833
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'transport_error'
+# }
+# Subtest: serverless CS derivation matches the Supabase HMAC bootstrap contract
+ok 559 - serverless CS derivation matches the Supabase HMAC bootstrap contract
+  ---
+  duration_ms: 1.11075
+  type: 'test'
+  ...
+# Subtest: a missing publication review RPC is reported even while other reads continue
+ok 560 - a missing publication review RPC is reported even while other reads continue
+  ---
+  duration_ms: 8.015125
+  type: 'test'
+  ...
+# Subtest: derived wake authentication fails before any database claim
+ok 561 - derived wake authentication fails before any database claim
+  ---
+  duration_ms: 0.1895
+  type: 'test'
+  ...
+# Subtest: retry-safe provider reads stay below one minute while mutations retain the full lease window
+ok 562 - retry-safe provider reads stay below one minute while mutations retain the full lease window
+  ---
+  duration_ms: 0.111416
+  type: 'test'
+  ...
+# Subtest: authenticated canary validates the route without claiming or executing a job
+ok 563 - authenticated canary validates the route without claiming or executing a job
+  ---
+  duration_ms: 0.214125
+  type: 'test'
+  ...
+# Subtest: authenticated canary exposes only a validated Vercel commit identity
+ok 564 - authenticated canary exposes only a validated Vercel commit identity
+  ---
+  duration_ms: 0.535584
+  type: 'test'
+  ...
+# Subtest: live drain rejects a runtime whose release does not match the active database release
+ok 565 - live drain rejects a runtime whose release does not match the active database release
+  ---
+  duration_ms: 0.134709
+  type: 'test'
+  ...
+# Subtest: canary mode still rejects missing or wrong wake authentication before database access
+ok 566 - canary mode still rejects missing or wrong wake authentication before database access
+  ---
+  duration_ms: 0.366334
+  type: 'test'
+  ...
+# Subtest: an unknown explicit drain mode fails closed without claiming
+ok 567 - an unknown explicit drain mode fails closed without claiming
+  ---
+  duration_ms: 0.271875
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'coupang',
+#   operation: 'inquiries.list'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'temu',
+#   operation: 'inquiries.list'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# Subtest: normal drain enqueues only current supported inquiries before bounded concurrent claims
+ok 568 - normal drain enqueues only current supported inquiries before bounded concurrent claims
+  ---
+  duration_ms: 18.889334
+  type: 'test'
+  ...
+# Subtest: missing generic claim RPC falls back to the inquiries-only compatibility claimant
+ok 569 - missing generic claim RPC falls back to the inquiries-only compatibility claimant
+  ---
+  duration_ms: 1.140958
+  type: 'test'
+  ...
+# Subtest: Smartstore and Coupang current reads require explicit static egress
+ok 570 - Smartstore and Coupang current reads require explicit static egress
+  ---
+  duration_ms: 0.132583
+  type: 'test'
+  ...
+# Subtest: explicit Temu static egress enables its current inquiry read
+ok 571 - explicit Temu static egress enables its current inquiry read
+  ---
+  duration_ms: 0.862417
+  type: 'test'
+  ...
+# Subtest: explicit 11st static egress enables the exact Product Q&A current read
+ok 572 - explicit 11st static egress enables the exact Product Q&A current read
+  ---
+  duration_ms: 0.426917
+  type: 'test'
+  ...
+# Subtest: daily repair pass rechecks Qoo10, Shopee and Temu returns, retained eBay history and Smartstore while rotating one bounded Coupang window
+ok 573 - daily repair pass rechecks Qoo10, Shopee and Temu returns, retained eBay history and Smartstore while rotating one bounded Coupang window
+  ---
+  duration_ms: 1.477333
+  type: 'test'
+  ...
+# Subtest: 11st daily repair offers five disjoint seven-day-or-smaller Product Q&A windows
+ok 574 - 11st daily repair offers five disjoint seven-day-or-smaller Product Q&A windows
+  ---
+  duration_ms: 0.333083
+  type: 'test'
+  ...
+# Subtest: configured repair enqueues use a daily cooldown with hourly catch-up offers
+ok 575 - configured repair enqueues use a daily cooldown with hourly catch-up offers
+  ---
+  duration_ms: 1.479958
+  type: 'test'
+  ...
+# Subtest: fixed-egress claims fail closed before provider execution without runtime attestation
+ok 576 - fixed-egress claims fail closed before provider execution without runtime attestation
+  ---
+  duration_ms: 1.428125
+  type: 'test'
+  ...
+# Subtest: Temu claims also fail closed before provider execution without runtime attestation
+ok 577 - Temu claims also fail closed before provider execution without runtime attestation
+  ---
+  duration_ms: 0.686125
+  type: 'test'
+  ...
+# Subtest: blocked price updates are terminally failed before serverless provider execution
+ok 578 - blocked price updates are terminally failed before serverless provider execution
+  ---
+  duration_ms: 0.557375
+  type: 'test'
+  ...
+# Subtest: one enqueue failure is safely aggregated and does not block an existing queued job
+ok 579 - one enqueue failure is safely aggregated and does not block an existing queued job
+  ---
+  duration_ms: 1.993708
+  type: 'test'
+  ...
+# Subtest: a total enqueue transport outage is visible as 503 after bounded drain attempts
+ok 580 - a total enqueue transport outage is visible as 503 after bounded drain attempts
+  ---
+  duration_ms: 0.557625
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.update',
+#   reason: 'GATEWAY_PROVIDER_MUTATION_NOT_STARTED'
+# }
+# serverless CS gateway failed {
+#   stage: 'ownership',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.update'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.update',
+#   reason: 'GATEWAY_PROVIDER_MUTATION_STATE_UNCERTAIN'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'inquiries.list',
+#   reason: 'LISTING_PUBLICATION_LOCALIZED_CONTENT_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'LISTING_SHIPPING_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'LISTING_SHIPPING_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'QOO10_UPDATE_SHIPPING_UNVERIFIED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.create',
+#   reason: 'QOO10_UPDATE_SHIPPING_UNVERIFIED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'smartstore',
+#   operation: 'inquiries.list',
+#   reason: 'NAVER_IP_NOT_ALLOWED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'smartstore',
+#   operation: 'inquiries.list',
+#   reason: 'NAVER_AUTH_FAILED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'smartstore',
+#   operation: 'inquiries.list',
+#   reason: 'NAVER_PROVIDER_UNAVAILABLE'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 503,
+#   channel: 'smartstore',
+#   operation: 'inquiries.list',
+#   reason: 'NAVER_TOKEN_EXCHANGE_FAILED'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# Subtest: two fenced jobs run concurrently within configured drain capacity
+ok 581 - two fenced jobs run concurrently within configured drain capacity
+  ---
+  duration_ms: 7.757583
+  type: 'test'
+  ...
+# Subtest: inquiry list completion normalizes provider data in the atomic transaction
+ok 582 - inquiry list completion normalizes provider data in the atomic transaction
+  ---
+  duration_ms: 1.899166
+  type: 'test'
+  ...
+# Subtest: Smartstore customer inquiry arguments and reply lineage survive direct execution and atomic completion
+ok 583 - Smartstore customer inquiry arguments and reply lineage survive direct execution and atomic completion
+  ---
+  duration_ms: 2.374208
+  type: 'test'
+  ...
+# Subtest: 11st Product Q&A crosses the fixed-egress executor and reaches sanitized atomic ingestion
+ok 584 - 11st Product Q&A crosses the fixed-egress executor and reaches sanitized atomic ingestion
+  ---
+  duration_ms: 10.084917
+  type: 'test'
+  ...
+# Subtest: Qoo10 inquiry list keeps the verified one-call contract and stores only normalized PII
+ok 585 - Qoo10 inquiry list keeps the verified one-call contract and stores only normalized PII
+  ---
+  duration_ms: 1.157041
+  type: 'test'
+  ...
+# Subtest: Qoo10 inquiry list reconciliation also strips every raw customer field
+ok 586 - Qoo10 inquiry list reconciliation also strips every raw customer field
+  ---
+  duration_ms: 1.910041
+  type: 'test'
+  ...
+# Subtest: direct Qoo10 reply keeps the existing provider arguments behind the mutation fence
+ok 587 - direct Qoo10 reply keeps the existing provider arguments behind the mutation fence
+  ---
+  duration_ms: 0.197833
+  type: 'test'
+  ...
+# Subtest: direct Smartstore customer reply crosses the mutation fence before operation dispatch
+ok 588 - direct Smartstore customer reply crosses the mutation fence before operation dispatch
+  ---
+  duration_ms: 0.100459
+  type: 'test'
+  ...
+# Subtest: ebay inquiry reply crosses the exact mutation fence before execution
+ok 589 - ebay inquiry reply crosses the exact mutation fence before execution
+  ---
+  duration_ms: 1.051542
+  type: 'test'
+  ...
+# Subtest: coupang inquiry reply crosses the exact mutation fence before execution
+ok 590 - coupang inquiry reply crosses the exact mutation fence before execution
+  ---
+  duration_ms: 0.709875
+  type: 'test'
+  ...
+# Subtest: elevenst inquiry reply crosses the exact mutation fence before execution
+ok 591 - elevenst inquiry reply crosses the exact mutation fence before execution
+  ---
+  duration_ms: 0.74675
+  type: 'test'
+  ...
+# Subtest: smartstore inquiry reply crosses the exact mutation fence before execution
+ok 592 - smartstore inquiry reply crosses the exact mutation fence before execution
+  ---
+  duration_ms: 0.566834
+  type: 'test'
+  ...
+# Subtest: qoo10 inquiry reply crosses the exact mutation fence before execution
+ok 593 - qoo10 inquiry reply crosses the exact mutation fence before execution
+  ---
+  duration_ms: 0.524291
+  type: 'test'
+  ...
+# Subtest: a denied provider fence with live ownership completes as a safe pre-provider failure
+ok 594 - a denied provider fence with live ownership completes as a safe pre-provider failure
+  ---
+  duration_ms: 0.327041
+  type: 'test'
+  ...
+# Subtest: a denied provider fence with lost ownership remains 409 without completion
+ok 595 - a denied provider fence with lost ownership remains 409 without completion
+  ---
+  duration_ms: 0.157166
+  type: 'test'
+  ...
+# Subtest: a denied provider fence with an existing mutation marker reconciles without redispatch
+ok 596 - a denied provider fence with an existing mutation marker reconciles without redispatch
+  ---
+  duration_ms: 0.195
+  type: 'test'
+  ...
+# Subtest: eBay credential mutation is fenced and staged before atomic completion
+ok 597 - eBay credential mutation is fenced and staged before atomic completion
+  ---
+  duration_ms: 1.31325
+  type: 'test'
+  ...
+# Subtest: an error after the reply fence completes as reconciliation without leaking diagnostics
+ok 598 - an error after the reply fence completes as reconciliation without leaking diagnostics
+  ---
+  duration_ms: 0.611875
+  type: 'test'
+  ...
+# Subtest: a pre-provider localized listing failure keeps its exact safe remediation code
+ok 599 - a pre-provider localized listing failure keeps its exact safe remediation code
+  ---
+  duration_ms: 0.438458
+  type: 'test'
+  ...
+# Subtest: shipping setup LISTING_SHIPPING_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+ok 600 - shipping setup LISTING_SHIPPING_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+  ---
+  duration_ms: 0.493542
+  type: 'test'
+  ...
+# Subtest: shipping setup LISTING_SHIPPING_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+ok 601 - shipping setup LISTING_SHIPPING_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+  ---
+  duration_ms: 0.412792
+  type: 'test'
+  ...
+# Subtest: shipping setup COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+ok 602 - shipping setup COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+  ---
+  duration_ms: 0.781
+  type: 'test'
+  ...
+# Subtest: shipping setup COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+ok 603 - shipping setup COUPANG_SHIPPING_FEE_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+  ---
+  duration_ms: 0.408
+  type: 'test'
+  ...
+# Subtest: shipping setup SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+ok 604 - shipping setup SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED keeps remediation and mutation boundary false
+  ---
+  duration_ms: 0.434542
+  type: 'test'
+  ...
+# Subtest: shipping setup SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+ok 605 - shipping setup SMARTSTORE_SHIPPING_POLICY_CONFIRMATION_REQUIRED keeps remediation and mutation boundary true
+  ---
+  duration_ms: 0.423417
+  type: 'test'
+  ...
+# Subtest: shipping setup QOO10_UPDATE_SHIPPING_UNVERIFIED keeps remediation and mutation boundary false
+ok 606 - shipping setup QOO10_UPDATE_SHIPPING_UNVERIFIED keeps remediation and mutation boundary false
+  ---
+  duration_ms: 0.370916
+  type: 'test'
+  ...
+# Subtest: shipping setup QOO10_UPDATE_SHIPPING_UNVERIFIED keeps remediation and mutation boundary true
+ok 607 - shipping setup QOO10_UPDATE_SHIPPING_UNVERIFIED keeps remediation and mutation boundary true
+  ---
+  duration_ms: 0.366708
+  type: 'test'
+  ...
+# Subtest: Smartstore safe token failure NAVER_IP_NOT_ALLOWED survives completion without provider details
+ok 608 - Smartstore safe token failure NAVER_IP_NOT_ALLOWED survives completion without provider details
+  ---
+  duration_ms: 0.450375
+  type: 'test'
+  ...
+# Subtest: Smartstore safe token failure NAVER_AUTH_FAILED survives completion without provider details
+ok 609 - Smartstore safe token failure NAVER_AUTH_FAILED survives completion without provider details
+  ---
+  duration_ms: 0.481833
+  type: 'test'
+  ...
+# Subtest: Smartstore safe token failure NAVER_PROVIDER_UNAVAILABLE survives completion without provider details
+ok 610 - Smartstore safe token failure NAVER_PROVIDER_UNAVAILABLE survives completion without provider details
+  ---
+  duration_ms: 0.391208
+  type: 'test'
+  ...
+# Subtest: Smartstore safe token failure NAVER_TOKEN_EXCHANGE_FAILED survives completion without provider details
+ok 611 - Smartstore safe token failure NAVER_TOKEN_EXCHANGE_FAILED survives completion without provider details
+  ---
+  duration_ms: 0.364958
+  type: 'test'
+  ...
+# Subtest: atomic completion retries the exact same payload once after an uncertain response
+ok 612 - atomic completion retries the exact same payload once after an uncertain response
+  ---
+  duration_ms: 1.315125
+  type: 'test'
+  ...
+# Subtest: request deadline composition is isolated across concurrent provider executions
+ok 613 - request deadline composition is isolated across concurrent provider executions
+  ---
+  duration_ms: 39.393125
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'complete',
+#   status: 503,
+#   channel: 'lazada',
+#   operation: 'inquiries.list'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'lazada',
+#   operation: 'shipment.confirm',
+#   reason: 'GATEWAY_PROVIDER_MUTATION_NOT_STARTED'
+# }
+# Subtest: bounded drain route is direct, uses configured capacity, is Node-only, and excludes child workers
+ok 614 - bounded drain route is direct, uses configured capacity, is Node-only, and excludes child workers
+  ---
+  duration_ms: 1.893167
+  type: 'test'
+  ...
+# Subtest: Lazada partial V3 ingestion does not complete a gateway job; complete retries avoid double ingestion
+ok 615 - Lazada partial V3 ingestion does not complete a gateway job; complete retries avoid double ingestion
+  ---
+  duration_ms: 2.247125
+  type: 'test'
+  ...
+# Subtest: Lazada shipment repeats the durable fence before every write: second allowed=true
+ok 616 - Lazada shipment repeats the durable fence before every write: second allowed=true
+  ---
+  duration_ms: 0.387042
+  type: 'test'
+  ...
+# Subtest: Lazada shipment repeats the durable fence before every write: second allowed=false
+ok 617 - Lazada shipment repeats the durable fence before every write: second allowed=false
+  ---
+  duration_ms: 0.391791
+  type: 'test'
+  ...
+# Subtest: non-shipment operations retain their existing one-time provider fence
+ok 618 - non-shipment operations retain their existing one-time provider fence
+  ---
+  duration_ms: 0.380958
+  type: 'test'
+  ...
+# Subtest: a denied provider rate reservation is durably deferred before execution
+ok 619 - a denied provider rate reservation is durably deferred before execution
+  ---
+  duration_ms: 0.160875
+  type: 'test'
+  ...
+# Subtest: the first HTTP request consumes the job reservation and later requests reserve individually
+ok 620 - the first HTTP request consumes the job reservation and later requests reserve individually
+  ---
+  duration_ms: 0.347125
+  type: 'test'
+  ...
+# Subtest: a retry-safe 429 is requeued through the durable rate ledger without completion
+ok 621 - a retry-safe 429 is requeued through the durable rate ledger without completion
+  ---
+  duration_ms: 0.339
+  type: 'test'
+  ...
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'coupang',
+#   operation: 'listing.stop'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'smartstore',
+#   operation: 'listing.stop'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'elevenst',
+#   operation: 'listing.stop'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'claim_scope',
+#   status: 503,
+#   channel: 'temu',
+#   operation: 'listing.stop'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'rate_budget',
+#   status: 503,
+#   channel: 'shopee',
+#   operation: 'listing.stop'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'execute',
+#   status: 409,
+#   channel: 'qoo10',
+#   operation: 'listing.stop',
+#   reason: 'serverless_cs_execution_failed'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# serverless CS gateway failed {
+#   stage: 'publication_review_enqueue',
+#   status: 503,
+#   code: 'unexpected_rpc'
+# }
+# Subtest: generic serverless operation matrix permits only the readback-verified Coupang price path
+ok 622 - generic serverless operation matrix permits only the readback-verified Coupang price path
+  ---
+  duration_ms: 0.80375
+  type: 'test'
+  ...
+# Subtest: periodic Shopee comment reads persist each OAuth-authorized shop in a separate continuation
+ok 623 - periodic Shopee comment reads persist each OAuth-authorized shop in a separate continuation
+  ---
+  duration_ms: 1.830417
+  type: 'test'
+  ...
+# Subtest: periodic Shopee return reads finish a shop detail queue before advancing to the next authorized shop
+ok 624 - periodic Shopee return reads finish a shop detail queue before advancing to the next authorized shop
+  ---
+  duration_ms: 0.588583
+  type: 'test'
+  ...
+# Subtest: a bounded provider write crosses the mutation fence and rechecks its lease
+ok 625 - a bounded provider write crosses the mutation fence and rechecks its lease
+  ---
+  duration_ms: 0.81325
+  type: 'test'
+  ...
+# Subtest: generic eBay listing update remains closed without the exact server-owned recovery marker
+ok 626 - generic eBay listing update remains closed without the exact server-owned recovery marker
+  ---
+  duration_ms: 0.250416
+  type: 'test'
+  ...
+# Subtest: exact eBay update rejects a job whose credential differs from the current bound lineage
+ok 627 - exact eBay update rejects a job whose credential differs from the current bound lineage
+  ---
+  duration_ms: 0.249875
+  type: 'test'
+  ...
+# Subtest: Temu safe-test requires the approved localized asset binding before its mutation fence
+ok 628 - Temu safe-test requires the approved localized asset binding before its mutation fence
+  ---
+  duration_ms: 0.172
+  type: 'test'
+  ...
+# Subtest: legacy eBay diagnostic stages immutable GetUser identity before privilege read
+ok 629 - legacy eBay diagnostic stages immutable GetUser identity before privilege read
+  ---
+  duration_ms: 4.201792
+  type: 'test'
+  ...
+# Subtest: Coupang publication reverification never opens the provider mutation fence
+ok 630 - Coupang publication reverification never opens the provider mutation fence
+  ---
+  duration_ms: 1.705791
+  type: 'test'
+  ...
+# Subtest: coupang generic writes fail before provider execution without static-egress attestation
+ok 631 - coupang generic writes fail before provider execution without static-egress attestation
+  ---
+  duration_ms: 4.503959
+  type: 'test'
+  ...
+# Subtest: smartstore generic writes fail before provider execution without static-egress attestation
+ok 632 - smartstore generic writes fail before provider execution without static-egress attestation
+  ---
+  duration_ms: 1.347917
+  type: 'test'
+  ...
+# Subtest: elevenst generic writes fail before provider execution without static-egress attestation
+ok 633 - elevenst generic writes fail before provider execution without static-egress attestation
+  ---
+  duration_ms: 1.419917
+  type: 'test'
+  ...
+# Subtest: temu generic writes fail before provider execution without static-egress attestation
+ok 634 - temu generic writes fail before provider execution without static-egress attestation
+  ---
+  duration_ms: 1.599125
+  type: 'test'
+  ...
+# Subtest: shopee generic writes fail before provider execution without static-egress attestation
+ok 635 - shopee generic writes fail before provider execution without static-egress attestation
+  ---
+  duration_ms: 1.705875
+  type: 'test'
+  ...
+# Subtest: an exception after the provider fence is stored as reconciliation without private details
+ok 636 - an exception after the provider fence is stored as reconciliation without private details
+  ---
+  duration_ms: 1.974542
+  type: 'test'
+  ...
+# Subtest: order sync normalizes with the fenced completion timestamp and stores only a safe summary
+ok 637 - order sync normalizes with the fenced completion timestamp and stores only a safe summary
+  ---
+  duration_ms: 3.751583
+  type: 'test'
+  ...
+# Subtest: successful OAuth completion keeps secrets only in credential staging
+ok 638 - successful OAuth completion keeps secrets only in credential staging
+  ---
+  duration_ms: 2.698584
+  type: 'test'
+  ...
+# Subtest: failed provider diagnostics complete transport successfully and persist the diagnostic atomically
+ok 639 - failed provider diagnostics complete transport successfully and persist the diagnostic atomically
+  ---
+  duration_ms: 1.78325
+  type: 'test'
+  ...
+# Subtest: listing lineage uses its dedicated exact-claim completion instead of the generic ledger
+ok 640 - listing lineage uses its dedicated exact-claim completion instead of the generic ledger
+  ---
+  duration_ms: 2.702084
+  type: 'test'
+  ...
+# Subtest: Shopee global stock correction is fenced and a failed final readback lowers the result
+ok 641 - Shopee global stock correction is fenced and a failed final readback lowers the result
+  ---
+  duration_ms: 0.851458
+  type: 'test'
+  ...
+# Subtest: OAuth validates inputs before opening a credential mutation fence
+ok 642 - OAuth validates inputs before opening a credential mutation fence
+  ---
+  duration_ms: 0.160833
+  type: 'test'
+  ...
+# Subtest: test-only provider result fixtures stay within channel operation contracts
+ok 643 - test-only provider result fixtures stay within channel operation contracts
+  ---
+  duration_ms: 0.053667
+  type: 'test'
+  ...
+# Subtest: Shopee category suggest uses a still-valid token without starting credential refresh
+ok 644 - Shopee category suggest uses a still-valid token without starting credential refresh
+  ---
+  duration_ms: 2.008292
+  type: 'test'
+  ...
+# Subtest: Shopee category suggest does not fence the channel when the stored token is expired
+ok 645 - Shopee category suggest does not fence the channel when the stored token is expired
+  ---
+  duration_ms: 0.151292
+  type: 'test'
+  ...
+# Subtest: Lazada shipment preserves all valid item identities without mutating the source
+ok 646 - Lazada shipment preserves all valid item identities without mutating the source
+  ---
+  duration_ms: 1.648125
+  type: 'test'
+  ...
+# Subtest: Lazada shipment rejects a malformed line instead of silently dropping or stringifying it
+ok 647 - Lazada shipment rejects a malformed line instead of silently dropping or stringifying it
+  ---
+  duration_ms: 0.48025
+  type: 'test'
+  ...
+# Subtest: Lazada shipment rejects duplicate identities before the adapter can silently deduplicate
+ok 648 - Lazada shipment rejects duplicate identities before the adapter can silently deduplicate
+  ---
+  duration_ms: 0.123709
+  type: 'test'
+  ...
+# Subtest: Lazada shipment refuses more than the adapter's 100-item bound instead of allowing truncation
+ok 649 - Lazada shipment refuses more than the adapter's 100-item bound instead of allowing truncation
+  ---
+  duration_ms: 0.197958
+  type: 'test'
+  ...
+# Subtest: Lazada shipment keeps missing item lists and wrong order identity blocked
+ok 650 - Lazada shipment keeps missing item lists and wrong order identity blocked
+  ---
+  duration_ms: 0.198167
+  type: 'test'
+  ...
+# Subtest: actual shipping API and gateway use the order resource transaction, with no product binding
+ok 651 - actual shipping API and gateway use the order resource transaction, with no product binding
+  ---
+  duration_ms: 95.249875
+  type: 'test'
+  ...
+# Subtest: shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+ok 652 - shipping API rejects product/CS requests and unconfirmed shipping before enqueue
+  ---
+  duration_ms: 42.42225
+  type: 'test'
+  ...
+# Subtest: pending and duplicate shipping receipts never create a second provider job
+ok 653 - pending and duplicate shipping receipts never create a second provider job
+  ---
+  duration_ms: 21.468667
+  type: 'test'
+  ...
+# Subtest: shipping provider rejects both other domains before lease or transport
+ok 654 - shipping provider rejects both other domains before lease or transport
+  ---
+  duration_ms: 0.53625
+  type: 'test'
+  ...
+# Subtest: shipping completion preserves the stable normalization boundary and strips raw order content
+ok 655 - shipping completion preserves the stable normalization boundary and strips raw order content
+  ---
+  duration_ms: 1.413375
+  type: 'test'
+  ...
+# Subtest: local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+ok 656 - local shipping worker preserves uncertain mutation and lease ownership without retrying provider
+  ---
+  duration_ms: 0.449791
+  type: 'test'
+  ...
+# Subtest: three business domains have zero transitive imports in every direction and independent page roots
+ok 657 - three business domains have zero transitive imports in every direction and independent page roots
+  ---
+  duration_ms: 720.971333
+  type: 'test'
+  ...
+# Subtest: product registration read model runs with shipping and CS tables absent
+ok 658 - product registration read model runs with shipping and CS tables absent
+  ---
+  duration_ms: 601.960042
+  type: 'test'
+  ...
+# Subtest: shipping snapshot and sales run with product registration and CS tables absent
+ok 659 - shipping snapshot and sales run with product registration and CS tables absent
+  ---
+  duration_ms: 381.149
+  type: 'test'
+  ...
+# Subtest: all new read models reject anonymous and non-admin sessions
+ok 660 - all new read models reject anonymous and non-admin sessions
+  ---
+  duration_ms: 387.130292
+  type: 'test'
+  ...
+# Subtest: shipping replay RPC only returns the exact credential/channel/operation attempt
+ok 661 - shipping replay RPC only returns the exact credential/channel/operation attempt
+  ---
+  duration_ms: 342.524958
+  type: 'test'
+  ...
+# Subtest: fresh remote-state reconciliation is readable without claiming a successful provider write
+ok 662 - fresh remote-state reconciliation is readable without claiming a successful provider write
+  ---
+  duration_ms: 14.292
+  type: 'test'
+  ...
+# Subtest: browser repair request accepts only an explicit approved-content confirmation
+ok 663 - browser repair request accepts only an explicit approved-content confirmation
+  ---
+  duration_ms: 0.462125
+  type: 'test'
+  ...
+# Subtest: repair state contract keeps repair, mutation, and strict verification phases distinct
+ok 664 - repair state contract keeps repair, mutation, and strict verification phases distinct
+  ---
+  duration_ms: 1.325208
+  type: 'test'
+  ...
+# Subtest: repair completion contract cannot call a successful provider write verified
+ok 665 - repair completion contract cannot call a successful provider write verified
+  ---
+  duration_ms: 0.418625
+  type: 'test'
+  ...
+# Subtest: POST enqueues one server-derived repair and GET uses the short RPC name
+ok 666 - POST enqueues one server-derived repair and GET uses the short RPC name
+  ---
+  duration_ms: 1.742042
+  type: 'test'
+  ...
+# Subtest: API returns 200 only for repair-required identity proof or final strict verification
+ok 667 - API returns 200 only for repair-required identity proof or final strict verification
+  ---
+  duration_ms: 1.637417
+  type: 'test'
+  ...
+# Subtest: uncertain mutation and strict readback never become automatic retry or verified
+ok 668 - uncertain mutation and strict readback never become automatic retry or verified
+  ---
+  duration_ms: 3.636875
+  type: 'test'
+  ...
+# Subtest: an expired pre-mutation permit gives a safe explicit re-enqueue instruction
+ok 669 - an expired pre-mutation permit gives a safe explicit re-enqueue instruction
+  ---
+  duration_ms: 3.119084
+  type: 'test'
+  ...
+# Subtest: invalid browser input and backend failures are bounded and no-store
+ok 670 - invalid browser input and backend failures are bounded and no-store
+  ---
+  duration_ms: 2.159875
+  type: 'test'
+  ...
+# Subtest: generic update endpoints reject browser repair markers and transmission evidence
+ok 671 - generic update endpoints reject browser repair markers and transmission evidence
+  ---
+  duration_ms: 4.124084
+  type: 'test'
+  ...
+# Subtest: worker completion routes exact repair evidence to the dedicated atomic RPC before generic completion
+ok 672 - worker completion routes exact repair evidence to the dedicated atomic RPC before generic completion
+  ---
+  duration_ms: 0.418042
+  type: 'test'
+  ...
+# Subtest: SmartStore adoption marker is exact and the operation stays in the local read lane
+ok 673 - SmartStore adoption marker is exact and the operation stays in the local read lane
+  ---
+  duration_ms: 1.589584
+  type: 'test'
+  ...
+# Subtest: SmartStore adoption completion accepts only eight distinct read-only image observations
+ok 674 - SmartStore adoption completion accepts only eight distinct read-only image observations
+  ---
+  duration_ms: 3.555042
+  type: 'test'
+  ...
+# Subtest: the Mac worker uses the dedicated collector without opening a provider mutation fence
+ok 675 - the Mac worker uses the dedicated collector without opening a provider mutation fence
+  ---
+  duration_ms: 5.720208
+  type: 'test'
+  ...
+# Subtest: only transient SmartStore read failures can reuse the bounded job
+ok 676 - only transient SmartStore read failures can reuse the bounded job
+  ---
+  duration_ms: 0.502083
+  type: 'test'
+  ...
+# Subtest: official 429/5xx readback responses are transient while provider rejection is terminal
+ok 677 - official 429/5xx readback responses are transient while provider rejection is terminal
+  ---
+  duration_ms: 7.081125
+  type: 'test'
+  ...
+# Subtest: the completion route sends full readback only to the dedicated atomic RPC
+ok 678 - the completion route sends full readback only to the dedicated atomic RPC
+  ---
+  duration_ms: 0.676458
+  type: 'test'
+  ...
+# Subtest: the generic serverless lineage completer rejects the SmartStore readback contract
+ok 679 - the generic serverless lineage completer rejects the SmartStore readback contract
+  ---
+  duration_ms: 0.285584
+  type: 'test'
+  ...
+# Subtest: TracX order list keeps the official date fields and optional filters
+ok 680 - TracX order list keeps the official date fields and optional filters
+  ---
+  duration_ms: 0.635167
+  type: 'test'
+  ...
+# Subtest: TracX inquiry operations normalize official status and reply fields
+ok 681 - TracX inquiry operations normalize official status and reply fields
+  ---
+  duration_ms: 0.106458
+  type: 'test'
+  ...
+# Subtest: TracX rejects oversized date windows before sending provider data
+ok 682 - TracX rejects oversized date windows before sending provider data
+  ---
+  duration_ms: 0.150667
+  type: 'test'
+  ...
+# Subtest: TracX request uses the official qualified TxAPI path and JSON body
+ok 683 - TracX request uses the official qualified TxAPI path and JSON body
+  ---
+  duration_ms: 9.338958
+  type: 'test'
+  ...
+# Subtest: TracX treats the provider's empty-list Not Found response as a successful read
+ok 684 - TracX treats the provider's empty-list Not Found response as a successful read
+  ---
+  duration_ms: 0.278583
+  type: 'test'
+  ...
+# Subtest: TracX diagnostic performs a read-only one-day order query
+ok 685 - TracX diagnostic performs a read-only one-day order query
+  ---
+  duration_ms: 0.775458
+  type: 'test'
+  ...
+# Subtest: TracX webhook signatures bind the raw body to a fresh timestamp
+ok 686 - TracX webhook signatures bind the raw body to a fresh timestamp
+  ---
+  duration_ms: 0.48
+  type: 'test'
+  ...
+1..686
+# tests 686
+# suites 0
+# pass 686
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 33835.16575

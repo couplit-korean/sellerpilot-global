@@ -1,0 +1,111 @@
+{
+  "contract": "sellerpilot_channel_test_evidence_supplement_v1",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseDelta": "docs/cs-parallel/reports/ebay/delta-supplemental-01.json",
+  "capturedThrough": "2026-09-08T13:11:49Z",
+  "runtime": {
+    "node": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node",
+    "version": "22.23.2",
+    "database": "PGlite 0.3.16 with pgcrypto"
+  },
+  "runs": [
+    {
+      "name": "actual_route_auth_and_isolated_ui_client",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes-route.test.ts",
+      "exitCode": 0,
+      "tests": 4,
+      "passed": 4,
+      "failed": 0,
+      "coverage": [
+        "exported GET route",
+        "full authenticateAdminRequest implementation",
+        "anonymous session",
+        "expired session",
+        "another owner's credential exclusion",
+        "uncertified seller",
+        "seller account key mismatch",
+        "payment-dispute 404 remains total null",
+        "resolution-case 403 remains authorization required",
+        "UI client authenticatedFetch to actual GET route"
+      ],
+      "limits": "Supabase SDK Auth/RPC and provider reads are fixtures; this is not a production Auth, browser, database, or provider read."
+    },
+    {
+      "name": "executable_history_sql_initial_attempt",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --test tests/cs-ebay-cases-disputes-db.test.mjs",
+      "exitCode": 1,
+      "tests": 3,
+      "passed": 0,
+      "failed": 3,
+      "cause": "COALESCE is SQL syntax and cannot be qualified as pg_catalog.coalesce",
+      "correction": "replace pg_catalog.coalesce with coalesce in the proposal SQL"
+    },
+    {
+      "name": "executable_history_sql_after_correction",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --test tests/cs-ebay-cases-disputes-db.test.mjs",
+      "exitCode": 0,
+      "tests": 3,
+      "passed": 3,
+      "failed": 0,
+      "coverage": [
+        "safe resolution-case and payment-dispute append",
+        "idempotent duplicate",
+        "state-change history",
+        "buyer and raw field rejection",
+        "nested address rejection",
+        "native ID and seller key binding",
+        "service-role-only record RPC",
+        "authenticated owner-admin read RPC",
+        "other owner and direct table access denial"
+      ]
+    },
+    {
+      "name": "combined_case_dispute_supplemental_suite",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node --import tsx --test tests/cs-ebay-cases-disputes.test.ts tests/cs-ebay-cases-disputes-web.test.ts tests/cs-ebay-cases-disputes-route.test.ts tests/cs-ebay-cases-disputes-db.test.mjs",
+      "exitCode": 0,
+      "tests": 20,
+      "passed": 20,
+      "failed": 0
+    },
+    {
+      "name": "typescript",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/typescript/bin/tsc --noEmit",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_02_eslint",
+      "command": "/Users/kimchangheemac/.nvm/versions/node/v22.23.2/bin/node node_modules/eslint/bin/eslint.js <5 eBay supplemental 02 source and test files>",
+      "exitCode": 0
+    },
+    {
+      "name": "supplemental_02_hash_scope_json_whitespace_audit",
+      "exitCode": 0,
+      "filesChecked": 9,
+      "hashMismatches": 0,
+      "sharedFilesModified": 0,
+      "baseDeltaManifestsModified": 0,
+      "priorVersionFilesAdvanced": 4,
+      "jsonAndWhitespaceValidation": "passed"
+    },
+    {
+      "name": "current_integrated_shared_patch_hash_refresh",
+      "exitCode": 0,
+      "appPageBeforeSha256": "153db8ff7e77c428acefbe560f03f0d4d2be3f4e6e4a5c1dcbb4f9d65943ba96",
+      "appPageExpectedAfterSha256": "c3cd23b008082769ab1d38d82f48b51a7007e0a0e735ea0ba8ed750c516b44f6",
+      "capabilityInventoryCurrentIntegratedBeforeSha256": "4627ecd29c07121ac050ed5e45ec02f7e23031eef3a2f99ad8dc8df244f68df5",
+      "capabilityInventoryExpectedAfterSha256": "12eb4660e8ff1be4b318fe61acb33ddbfe5cf003ca51e42cb5f901b2032503bd",
+      "sharedFilesWritten": 0
+    }
+  ],
+  "mutations": {
+    "productionDatabaseWrites": 0,
+    "providerReadsDuringRouteTests": 0,
+    "providerReplies": 0,
+    "caseOrDisputeActions": 0,
+    "credentialRefreshes": 0,
+    "sharedSourceWrites": 0,
+    "commits": 0,
+    "pushes": 0,
+    "deployments": 0
+  }
+}

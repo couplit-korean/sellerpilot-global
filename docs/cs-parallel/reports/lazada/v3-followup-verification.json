@@ -1,0 +1,66 @@
+{
+  "contract": "sellerpilot-lazada-ingest-v3-followup-verification/1",
+  "checkedAt": "2026-09-08T22:18:37+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "baseV3DeltaSha256": "0a02b66ae1b7feef010044e956b589d757b434ab48ef9370a657066a34c6dabf",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "node": "v22.23.2",
+  "artifacts": {
+    "sqlDraft": {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "beforeSha256": "1c30844981e8713accc9573944dbd19f22a64c05d1f8c64b6a97c0974d3d277a",
+      "afterSha256": "b67d6901906ea6022471ba124520ae3a83a17e0708866ede8ab706dd9ddbeed7"
+    },
+    "pgliteTest": {
+      "path": "tests/cs-lazada-ingest-v3-db.test.mjs",
+      "beforeSha256": "5e79cb44f97a41478dea6f4706ce9a854df420a35a96c012458deb9cc2db99bb",
+      "afterSha256": "f201017b757d9e10ef71892226f756e56bff565630fa2a89cbf97c478cd8df8a"
+    },
+    "reviewBasis": {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-006-v3-ledger-and-pending-hardening.md",
+      "sha256": "e5baf85fcf60b93d5ea930942c1247508a7cdce646c024e4c158e5096a89b9fa"
+    }
+  },
+  "runs": [
+    {
+      "command": "node --test tests/cs-lazada-ingest-v3-db.test.mjs",
+      "environment": "PGlite isolated database",
+      "tests": 8,
+      "passed": 8,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 3207.638958
+    },
+    {
+      "command": "node --import tsx --test tests/lazada-im.test.ts tests/lazada-history-completeness.test.ts tests/lazada-im-app-binding.test.ts tests/lazada-inquiry-sync.test.ts tests/lazada-unordered-quarantine.test.ts tests/lazada-raw-reprocess.test.ts tests/cs-lazada-ingest-v3-db.test.mjs tests/cs-lazada-runtime-v3-patch.test.mjs",
+      "environment": "local parser fixtures plus PGlite isolated database",
+      "tests": 60,
+      "passed": 60,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 3372.632625
+    },
+    {
+      "command": "eslint tests/cs-lazada-ingest-v3-db.test.mjs",
+      "environment": "Node 22 existing repository dependencies",
+      "exitCode": 0
+    }
+  ],
+  "verified": {
+    "revisionLedgerUsesScalarAllowlist": true,
+    "unknownTopLevelMetadataIsOmitted": true,
+    "nestedBodyAndUrlMetadataIsOmitted": true,
+    "invalidAllowlistedMetadataTypeOrLengthCreatesNoProjection": true,
+    "pendingFingerprintMismatchSkipsIngest": true,
+    "expiredPendingReceiptSkipsIngest": true,
+    "mismatchAndExpiryPreserveTicketMessageRevisionAndJobPayload": true,
+    "completedReplayRequiresReceiptBoundJobClaimAndToken": true,
+    "completedReplayIgnoresDifferentPayloadWithoutMutation": true,
+    "completedReplayDoesNotClaimPayloadDigestEquality": true
+  },
+  "productionMutation": false,
+  "commitOrPush": false
+}

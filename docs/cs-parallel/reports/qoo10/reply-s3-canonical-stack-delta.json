@@ -1,0 +1,138 @@
+{
+  "reviewRequest": "qoo10-reply-s3-canonical-stack-terminal-token-ledger-workspace",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "snapshotManifestVerified": {
+    "expectedFiles": 1628,
+    "checkedFiles": 1628,
+    "sha256Mismatches": 0,
+    "evidence": "docs/cs-parallel/reports/qoo10/verification.md"
+  },
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-qoo10",
+  "branch": "codex/cs-qoo10-v1",
+  "head": "3cb72144e991626fae98a30cf51022d9a1aa6b0b",
+  "sourceDelegatedTaskId": "01a077b1-61db-7c20-a4a3-ae00dbbbef19",
+  "files": [
+    {
+      "path": "tests/cs-qoo10-reply-s3-canonical-stack.test.mjs",
+      "beforeSha256": null,
+      "afterSha256": "e805ef07bb14fe4ac26641b6e0343e683f4162ef04a2ed51e8ffe817d765d3a7",
+      "change": "Reuse the central canonical PGlite migration harness through the pre-existing Shopee blocker, install the exact Qoo10 dependency migrations, and exercise provider-accepted reply through child receipt, immutable seal, exact S3 status, replay, and authenticated delivery readback."
+    },
+    {
+      "path": "docs/cs-parallel/reports/qoo10/reply-s3-canonical-stack-followup.md",
+      "beforeSha256": null,
+      "afterSha256": "7f4c91e1c8518d3bb821ff5999caa7c1ce302d1e79ff1fdf4a36e05dfb18a0d6",
+      "change": "Record the canonical-stack evidence, direct central full-suite blocker, fail-closed fixture corrections, exact hashes, and operational boundary."
+    }
+  ],
+  "readOnlyInputs": [
+    {
+      "path": "tests/supabase-migrations.test.mjs",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "6d0eca2bc32d9278a40d3e3df41657349aa792438178d250ca03ee2b923f7c41"
+    },
+    {
+      "path": "supabase/migrations/20260904211500_allow_local_shopee_category_and_diagnostic_claims.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "392aa64544e05945e050162081ade6b4358bc802e928060410692da9adc2d954",
+      "purpose": "Pre-existing non-Qoo10 migration preimage blocker that bounds the canonical base used by the focused test."
+    },
+    {
+      "path": "supabase/migrations/20260908153341_cs_qoo10_reply_s3_actual_completion.sql",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "1b6a391f392a12622b6d6f76bd5b95502f4e250b25e8d7890f552e70b6e3e827"
+    },
+    {
+      "path": "lib/channels/serverless-gateway.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf"
+    },
+    {
+      "path": "app/api/channel-gateway/worker/complete/route.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383"
+    },
+    {
+      "path": "lib/channels/cs/qoo10/reply-readback-completion.ts",
+      "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-integrated-20260908",
+      "sha256": "580e3f67b05dfba6bc030364817e5c08518edab93f44aeb8bbfcdce928a227d2"
+    }
+  ],
+  "verification": [
+    {
+      "command": "Node 22.23.2 --test tests/cs-qoo10-reply-s3-canonical-stack.test.mjs with SELLERPILOT_QOO10_INTEGRATED_ROOT",
+      "exitCode": 0,
+      "result": "2/2 passed"
+    },
+    {
+      "command": "Node 22.23.2 --import tsx --test existing actual-receipt-flow plus canonical-stack",
+      "exitCode": 0,
+      "result": "11/11 passed"
+    },
+    {
+      "command": "Node 22.23.2 --import tsx --test eleven Qoo10 contract, history, runtime, ledger, reply, status, seal, common-path, canonical-stack, and claim files",
+      "exitCode": 0,
+      "result": "62/62 passed"
+    },
+    {
+      "command": "Node 22.23.2 node_modules/eslint/bin/eslint.js tests/cs-qoo10-reply-s3-canonical-stack.test.mjs",
+      "exitCode": 0,
+      "result": "passed with no output"
+    },
+    {
+      "command": "Node 22.23.2 --test integrated/tests/supabase-migrations.test.mjs without source edits",
+      "exitCode": 1,
+      "result": "8/20 passed; one stale strict migration-list failure and eleven pre-existing Shopee 11820 preimage failures"
+    }
+  ],
+  "failedAttempts": [
+    {
+      "result": "Missing delivery verification columns",
+      "cause": "The selected Qoo10 status migration depends on the canonical CS remote-observation migration.",
+      "resolution": "Apply the exact central 20260907232000 dependency first in the isolated fixture."
+    },
+    {
+      "result": "support ticket credential lineage mismatch",
+      "cause": "The canonical credential trigger derives its own credential-incarnation seller account key.",
+      "resolution": "Read the canonical derived key and use it consistently for the synthetic ticket and reply job."
+    },
+    {
+      "result": "Reply terminalized as reconciliation_required for fingerprint mismatch",
+      "cause": "The placeholder fingerprint did not equal the SHA-256 of the synthetic reply body.",
+      "resolution": "Use the exact synthetic body fingerprint."
+    },
+    {
+      "result": "Reply terminalized as reconciliation_required for ticket ledger mismatch",
+      "cause": "The synthetic ticket was not bound to the reply gateway job as the real enqueue path requires.",
+      "resolution": "Bind reply_gateway_job_id and the sending state before canonical completion."
+    },
+    {
+      "result": "QOO10_REPLY_S3_READBACK_ARGUMENT_INVALID",
+      "cause": "The status RPC was called with a non-canonical reason literal.",
+      "resolution": "Use exact_s3_status_observed and retain the database-derived evidence comparison."
+    }
+  ],
+  "behavior": {
+    "canonicalTerminalDefinitionUsed": true,
+    "canonicalTokenGateDefinitionUsed": true,
+    "canonicalReplyLedgerDefinitionUsed": true,
+    "canonicalWorkspaceDefinitionUsed": true,
+    "parentProviderAcceptanceReceiptCreated": true,
+    "deliveryBoundS3ChildCreated": true,
+    "serverlessCompletionReceiptCreated": true,
+    "immutableResponseSealCreated": true,
+    "completionReplayIdempotent": true,
+    "statusReplayIdempotent": true,
+    "authenticatedDeliveryReadbackVerified": true,
+    "replyContentObserved": false,
+    "automaticResendAllowed": false,
+    "fullCanonicalMigrationStackProven": false,
+    "storesCustomerBodyOrBuyerPii": false
+  },
+  "existingCanonicalReportsOrDeltasModified": false,
+  "commonFilesModified": false,
+  "productionChanges": false,
+  "providerMutations": false,
+  "customerRepliesSent": false,
+  "commitPushDeploy": false
+}

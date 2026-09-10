@@ -1,0 +1,96 @@
+{
+  "recordedAt": "2026-09-08T20:53:01.896122+00:00",
+  "baseCommit": "7071dd4c0473438b36b9819ad0e3fd24a14bc100",
+  "scope": "Qoo10/eBay product registration continuation; no live channel success claimed",
+  "checks": [
+    {
+      "name": "all-typescript",
+      "command": "node --import tsx --test --test-concurrency=4 tests/*.test.ts",
+      "exitCode": 0,
+      "tests": 3000,
+      "pass": 3000,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "fullLocalLog": "/tmp/remaining-all-tests.tap",
+      "fullLocalLogSha256": "f43c829d1cb42aa9b3a1ae10e43b92149b4fa865e8059a8e439feab2331d1d8c",
+      "committedSummary": "all-typescript-summary.tap"
+    },
+    {
+      "name": "domain-isolation",
+      "command": "npm run test:domain-isolation",
+      "exitCode": 0,
+      "tests": 40,
+      "pass": 40,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "fullLocalLog": "/tmp/remaining-domain.tap",
+      "fullLocalLogSha256": "dc66bb98ba3c41969d2a656090f8865bb51e0b1ef5e7877167dbaa3f4ec60c56",
+      "committedSummary": "domain-isolation-summary.tap"
+    },
+    {
+      "name": "channel-isolation",
+      "command": "npm run test:channel-isolation",
+      "exitCode": 0,
+      "tests": 28,
+      "pass": 28,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "todo": 0,
+      "fullLocalLog": "/tmp/remaining-channel.tap",
+      "fullLocalLogSha256": "3fe714ea1ef6600f8929eb8164d0f6cf5d82f5ea3528bf98efc3fc59d3c84332",
+      "committedSummary": "channel-isolation-summary.tap"
+    },
+    {
+      "name": "build",
+      "command": "npm run build:vercel",
+      "exitCode": 0,
+      "log": "build.log",
+      "sha256": "9a0634adea3cb87f342fd802dfc03ad468360dce0fd4d3e63eac9be3b6eed8e9",
+      "fullLocalLogSha256": "58fbcd60e2582069ea3dab8cef1c362270b11967917479ee450bb20cb45caca0",
+      "fullLocalLog": "/tmp/remaining-build.log",
+      "committedLogNormalization": "strip terminal trailing whitespace and blank EOF only"
+    },
+    {
+      "name": "eslint",
+      "command": "node node_modules/eslint/bin/eslint.js <8 changed source/test files>",
+      "exitCode": 0,
+      "log": "eslint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "newRegressionCases": 34,
+  "overlappingTestSuites": true,
+  "sourceSha256": {
+    "lib/channels/ebay-create-preflight.ts": "c26e3039eb4b1371d8b01e5828cd9a905574acf2d98aa09e227db187f91d38e9",
+    "lib/channels/qoo10-listing-create-preflight.ts": "7460fe49951b6b2860bcdb865d0d8e279c8d9443fbefbac3769728faf484f781",
+    "lib/product-registration/channels/ebay.ts": "04ed5b99a9c1616d25f181506c0d195cd713cf4f471cb706184bab5c5bfa7c54",
+    "lib/user-facing-errors.ts": "423b7e1ec050f2b3bb6df90c4e0e8a501d102777ea95985868c990d2c0e36a72",
+    "tests/ebay-create-preflight.test.ts": "e0054a1b90230dd3d26a57e654689801c7d288a398afe426b0b338a93a279ba4",
+    "tests/qoo10-listing-create-preflight.test.ts": "3ee65f911c844574b6e20851bbb502ca369b4dfa2c70ae46d0bd189fa49c2738",
+    "tests/channel-protocols.test.ts": "892585fc5e93adfb18a42bcfb9f3aa106264ff795acd2828d0a21c91dc36a988",
+    "tests/channel-listing-publication-readback.test.ts": "d5cc1b9c282958f9a028b2735b2be2fb6509a51a6a5209660bdba49973e072cc"
+  },
+  "liveEvidence": {
+    "chromeState": "CUA getState timed out at 20s; no current profiles or tabs available",
+    "supabase": "prior sqaoqucxakebqkiygdxb CLI 403 unresolved; not retried this turn",
+    "providerMutations": 0,
+    "productionDbMutations": 0,
+    "customerMessages": 0,
+    "actualNewListingCompletions": 0,
+    "vercelDeployments": 0,
+    "liveCompletionClaimed": false
+  },
+  "gitDelivery": {
+    "destination": "private origin integration-aside",
+    "vercelRemoteWrite": false,
+    "vercelRefsBefore": {
+      "integration-aside": "957db34238f64ad3d6f54c61adb0a5c970900aef",
+      "main": "8109499b59b13456676f6b36ec8b2117c9945e0e"
+    }
+  }
+}

@@ -204,3 +204,32 @@ test("job polling validates the exact research result before signing the six ima
   assert.match(route, /status: "failed"[\s\S]{0,180}productResearchFailureMessage\("gateway_result_invalid"\)/);
   assert.ok(route.indexOf("delete result.asset_storage_paths", signing) > signing);
 });
+
+
+test("multi-photo lineage preserves every original digest and rejects mixed source sets", () => {
+  const result = {
+    ...researchResult(),
+    sourcePhotoEvidence: ["main", "extra-1", "extra-2", "extra-3"].map((inputRole, index) => ({
+      sourceIndex: index, sourceSha256: index === 0 ? sourcePhotoSha256 : String(index).repeat(64),
+      inputRole, resolvedRole: ["main", "left", "label", "back"][index], confidence: 0.99,
+      imageAssets: [], detailAssets: [], facts: [], warnings: [],
+    })),
+  };
+  for (const [index, asset] of Object.values(result.preflightAssetLineage).entries()) {
+    Object.assign(asset, { sourceSha256: result.sourcePhotoEvidence[index % 4].sourceSha256 });
+  }
+  const validate = (value: unknown) => validateSucceededProductResearchPreflight({ expectedJobId: researchJobId,
+    expectedResearchInputSha256: researchInputSha256, expectedSourcePhotoSha256: sourcePhotoSha256, data: succeededResearchJob(value) });
+  const valid = validate(result);
+  assert.equal(valid.valid, true);
+  if (valid.valid) assert.deepEqual(valid.preflight.sourcePhotoEvidence, result.sourcePhotoEvidence);
+  const reordered = structuredClone(result);
+  reordered.sourcePhotoEvidence.reverse();
+  assert.equal(validate(reordered).valid, false);
+  const replaced = structuredClone(result);
+  replaced.sourcePhotoEvidence[1].sourceSha256 = "f".repeat(64);
+  assert.equal(validate(replaced).valid, false);
+  const missingDigest = structuredClone(result);
+  Reflect.deleteProperty(missingDigest.preflightAssetLineage.portrait, "sourceSha256");
+  assert.equal(validate(missingDigest).valid, false);
+});

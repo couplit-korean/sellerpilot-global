@@ -1,0 +1,21 @@
+# 공통 변경 요청 elevenst-002
+
+- 목적: 공식 OPEN API를 확인하지 못한 11톡과 리뷰를 자동연동으로 오표시하지 않고, 검토된 캡처/Excel만 공통 import staging으로 받는다.
+- 요청 채널: elevenst
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / channel capability contract 1
+- 수정할 공통 파일과 함수: `lib/cs/import-staging.ts`, `app/api/admin/cs/import/route.ts`, `app/cs/import-staging.tsx`, `app/cs/capability-inventory.tsx`
+- 현재 파일 SHA-256: import staging `556570c1a6a63c4d97f1ac691189f06f1f1272a87e735ec056303fc571dd90a1`; import route `3670fa3e7369c2b90b17edccc0b790da748fecc4a3e8b32e89dacafad7d28e4a`; import UI `4c8d043a55c8cb882ccbf102d6570ab11722f0bb2bbafbe48af26eea9b9ba439`; capability UI `51bb943d42c3ca389a9e5965f186618e991005dcbc025812db661f554033cc97`
+- DB 객체(해당 시 이름과 signature): 기존 import staging 객체를 재사용하고 channel/kind provenance와 reviewed-at를 필수화한다.
+- 기존 동작: 11톡/리뷰 전용 공식 API 또는 검증된 importer가 없다.
+- 문제를 재현하는 최소 입력: `channel=elevenst`, `kind=seller_talk` 브라우저 캡처 manifest 또는 `kind=review` Seller Office Excel 파일.
+- 원하는 동작: 11톡은 seller identity, 캡처 시각, 최대 90일 보존 경고, 검토자 증거가 없으면 거절한다. 리뷰는 Seller Office Excel provenance와 실제 열 검증 전 preview-only로 둔다. 두 kind 모두 provider 자동답변을 false로 표시한다.
+- 전용 모듈 경로와 export: `lib/channels/cs/elevenst/contracts.ts::elevenstCsCapabilities`
+- 기존/새 입력·출력 계약: 새 입력은 파일/캡처 원문이 아니라 import staging upload와 provenance metadata다. preview 결과에는 accepted/rejected row count, missing columns, duplicate external IDs, unverified comment capability를 포함한다.
+- 최소 변경안: capability inventory에 `seller_office_session_only`, `seller_office_export_only` 상태를 추가하고 import route에서 11번가 두 kind를 preview-only allowlist로 받는다. 실제 샘플 파일 열을 확인하기 전 parser를 활성화하지 않는다.
+- 다른 채널 영향: 공통 import 상태 enum만 확장한다. 다른 채널의 지원 상태는 바꾸지 않는다.
+- 상품/주문/배송 mutation 영향: 없음. 외부 답변/댓글/상품 변경을 실행하지 않는다.
+- 재현·회귀 시험 명령: 전용 capability 시험과 공통 import preview/route 시험에 11번가 preview-only 반례를 추가한다.
+- migration 선행/preimage/ACL 요구: 원문 접근은 admin-only, 미리보기와 실제 반영을 분리하고 고객 원문을 Git/공유 로그에 저장하지 않는다.
+- 우선순위: 과거누락 / 추가기능
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 없음

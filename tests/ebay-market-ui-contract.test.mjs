@@ -30,9 +30,10 @@ function readTargetRows(source) {
 }
 
 test("publish and category workbenches expose the same 15 eBay markets", async () => {
-  const [publish, category] = await Promise.all([
+  const [publish, category, attributeField] = await Promise.all([
     readFile(new URL("../app/product-publish-workbench.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/category-classification-workbench.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/category-attribute-field.tsx", import.meta.url), "utf8"),
   ]);
   assert.deepEqual(readTargetRows(publish), expectedEbayMarkets);
   assert.deepEqual(readTargetRows(category), expectedEbayMarkets);
@@ -45,6 +46,6 @@ test("publish and category workbenches expose the same 15 eBay markets", async (
   assert.match(category, /binding: currentState\.ebayCategoryTreeBinding/);
   assert.match(category, /bootstrap: \(args\) => operation\(channel, "categories\.suggest", args\)/);
   assert.doesNotMatch(category, /categoryTreeId: "0"/);
-  assert.match(category, /const acceptsFreeText = attribute\.mode === "FREE_TEXT"/);
-  assert.match(category, /attribute\.values\.length && !acceptsFreeText \? <select/);
+  assert.match(attributeField, /attribute\.inputKind === "single_select"/);
+  assert.match(attributeField, /<input list=\{attribute\.values\.length \? listId : undefined\}/);
 });

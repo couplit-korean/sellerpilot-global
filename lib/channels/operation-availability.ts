@@ -5,7 +5,7 @@ import {
   type CapabilityMode,
   type ChannelCapabilityKey,
 } from "./catalog";
-import type { ChannelOperationName } from "./operations";
+import type { ChannelOperationName } from "./operation-names";
 import { channelPriceUpdateRelease } from "./price-update-release";
 
 const operationCapabilities: Record<ChannelOperationName, ChannelCapabilityKey> = {
@@ -38,6 +38,8 @@ const elevenstImplementedOperations = new Set<ChannelOperationName>([
   "listing.stop",
   "listing.publication.verify",
   "orders.list",
+  "inquiries.list",
+  "inquiries.reply",
 ]);
 
 const publicationVerificationChannels = new Set<ActiveChannelKey>([
@@ -145,10 +147,7 @@ export function channelOperationRelease(
   if (operation === "price.update") {
     return channelPriceUpdateRelease(channel);
   }
-  if (channel === "shopee" && operation === "inquiries.list") {
-    return { available: false, mode: "release_verification_required", reason: "Shopee Chat API 권한과 실제 메시지 readback이 확인되지 않아 차단했습니다." };
-  }
-  if (operation === "inquiries.reply" && !["qoo10", "lazada", "coupang", "smartstore", "ebay"].includes(channel)) {
+  if (operation === "inquiries.reply" && !["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay"].includes(channel)) {
     return { available: false, mode: "release_verification_required", reason: "이 채널은 현재 공식 문의 답변 API가 검증되지 않아 원격 전송을 차단했습니다." };
   }
   if (["ebay", "temu"].includes(channel) && operation === "shipment.acknowledge") {

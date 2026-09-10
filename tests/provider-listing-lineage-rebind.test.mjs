@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { listMigrationSourceFiles as readdir } from "./migration-source-files.mjs";
 import test from "node:test";
 import { PGlite } from "@electric-sql/pglite";
 

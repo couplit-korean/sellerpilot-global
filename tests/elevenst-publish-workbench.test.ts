@@ -38,6 +38,7 @@ function publishContext(input: {
       gtinStatus: "NO_GTIN",
       gtin: "",
       sellingPrice: 10_000,
+      shippingFeeKrw: 0,
       currency: "KRW",
       stock: 2,
       weightKg: 0.2,

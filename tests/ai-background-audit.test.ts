@@ -387,7 +387,7 @@ test("corresponding food slots preserve room recognition while exposing product-
 });
 
 test("worker runs the independent semantic audit inside every background retry without product references", async () => {
-  const worker = await readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8");
+  const worker = await readFile(new URL("../scripts/product-ai-worker.mjs", import.meta.url), "utf8");
   assert.match(worker, /backgroundSemanticAuditSchema/);
   assert.match(worker, /auditGeneratedIdentityBackground\(\{/);
   assert.match(worker, /--sandbox", "read-only"/);

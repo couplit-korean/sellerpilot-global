@@ -1,0 +1,87 @@
+{
+  "checkedAt": "2026-09-08T20:53:01.896122+00:00",
+  "qoo10": {
+    "guide": "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/Document/QAPIGuideIndex.aspx",
+    "documentationEndpoint": "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/swe_DynamicDataService.asmx/ExecuteToDataTable",
+    "documentOnlyMethods": [
+      "QAPI.GetQAPIMethodList",
+      "QAPI.GetQAPIMethodParamList",
+      "QAPI.GetQAPIMethodReturnCodeList",
+      "QAPI.GetQAPIMethodNoticeInfo"
+    ],
+    "method": {
+      "m_no": 10007,
+      "service_nm": "ItemsLookup",
+      "method_name": "GetItemDetailInfo",
+      "version": "1.2",
+      "chg_dt": "2025-04-23 17:03:26"
+    },
+    "parameters": [
+      {
+        "key": "ItemCode",
+        "description": "Qoo10 Item Code\n* Required Input : 1 Item Code; either Qoo10 Item Code or Seller Item code",
+        "maxLength": "9"
+      },
+      {
+        "key": "SellerCode",
+        "description": "This is the item code managed by the seller. \nUsing this code, you can search or edit the information of the item after registering it. ",
+        "maxLength": "Max 100"
+      }
+    ],
+    "activeCodes": [
+      {
+        "return_code": 0,
+        "en_description": "Success"
+      },
+      {
+        "return_code": -10000,
+        "en_description": "Please check the Seller Authorization Key."
+      },
+      {
+        "return_code": -10001,
+        "en_description": "Fail to find Item information with 'ItemCode','SellerCode'."
+      },
+      {
+        "return_code": -90001,
+        "en_description": "The API does not exist"
+      },
+      {
+        "return_code": -90002,
+        "en_description": "You are not authorized for this."
+      },
+      {
+        "return_code": -90003,
+        "en_description": "You are not authorized for this."
+      },
+      {
+        "return_code": -90004,
+        "en_description": "Seller authorization key is expired. Use a new key."
+      },
+      {
+        "return_code": -90005,
+        "en_description": "Seller authorization key is expired. Use a new key."
+      }
+    ],
+    "rawDocumentSha256": {
+      "qoo10-method-doc.json": "f4a150e0cc53d856161c9a6991e154422b22909aa354e26c468eec204bfa9721",
+      "QAPI.GetQAPIMethodParamList.json": "4c9a3c51dc4923695b193eabd80859c3d7a0dd1e95225bfff345819c6cde1f4c",
+      "QAPI.GetQAPIMethodReturnCodeList.json": "21b993d7962d2e699138d416202fa3966d11c25a93f15648f6b7ea2bef9fdcdd",
+      "QAPI.GetQAPIMethodNoticeInfo.json": "8ed050adf305b1f0e189c710067bcb4977462cacf2bae948daeafcb2f3127474"
+    }
+  },
+  "ebay": {
+    "references": [
+      "https://developer.ebay.com/api-docs/sell/inventory/resources/inventory_item/methods/getInventoryItem",
+      "https://developer.ebay.com/api-docs/sell/static/inventory/pbse-phase1-rest-workflows.html",
+      "https://developer.ebay.com/support/knowledge-base/5210",
+      "https://developer.ebay.com/api-docs/sell/static/inventory/publishing-offers.html"
+    ],
+    "absenceErrorDomain": "API_INVENTORY",
+    "absenceErrorIds": [
+      25702,
+      25710
+    ],
+    "limitation": "Inventory API absence does not prove absence of manual/Trading listings.",
+    "openapiSchemaDownload": "HTTP 403; not used as verified schema evidence"
+  }
+}

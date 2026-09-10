@@ -1,0 +1,27 @@
+{
+  "verifiedAt": "2026-09-09T07:28:53.225258+00:00",
+  "channel": "ebay",
+  "ownedSha": "4b806d4101421cb8e71e47ce251567b3037ea53f",
+  "common": [
+    "ebay-common-001-r2",
+    "ebay-common-001-r3"
+  ],
+  "currentFlowTests": {
+    "passed": 349,
+    "total": 349,
+    "files": 30
+  },
+  "broadTestsBeforeFixtureFix": {
+    "passed": 354,
+    "total": 359
+  },
+  "retiredTestCleanupPending": true,
+  "domainTests": 40,
+  "channelTests": 28,
+  "typescript": "passed",
+  "eslint": "passed",
+  "localBuild": "passed",
+  "centralBaselineChannels": 7,
+  "liveCompletedChannels": 0,
+  "externalWrites": 0
+}

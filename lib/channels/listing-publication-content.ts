@@ -1,3 +1,4 @@
+import { externalDetailChannelPayloadMatches } from "../server-external-detail-channel";
 import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog";
 import { marketplaceChannelDetailImageCount } from "./marketplace-image-contract";
@@ -563,6 +564,32 @@ function sameOrderedValues(left: readonly string[], right: readonly string[]) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+const coupangSourceImageUrl = /^https:\/\/sqaoqucxakebqkiygdxb\.supabase\.co\/storage\/v1\/object\/public\/sellerpilot-marketplace\/normalized\/([0-9a-f]{2})\/([0-9a-f]{64})\.jpg$/u;
+const coupangProviderImagePath = /^vendor_inventory\/([0-9a-f]{4})\/([0-9a-f]{60})\.jpg$/u;
+
+function coupangDetailImageContentIdentity(value: string) {
+  const providerPath = coupangProviderImagePath.exec(value);
+  if (providerPath) return `sha256:${providerPath[1]}${providerPath[2]}`;
+
+  const sourceUrl = coupangSourceImageUrl.exec(value);
+  if (!sourceUrl || sourceUrl[1] !== sourceUrl[2].slice(0, 2)) return value;
+  return `sha256:${sourceUrl[2]}`;
+}
+
+function comparableDetailImageIdentities(
+  channel: PublicationChannel,
+  identities: readonly string[],
+) {
+  return channel === "coupang"
+    ? identities.map(coupangDetailImageContentIdentity)
+    : [...identities];
+}
+
+function approvedSourceObjectPath(value: string) {
+  return /^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(value)
+    || /^external-detail\/(?:[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\/){4}[0-9a-f]{64}\.png$/iu.test(value);
+}
+
 function parseAssetIdentities(
   value: unknown,
   allowGalleryRole = false,
@@ -598,7 +625,7 @@ function parseAssetIdentities(
   };
   if (identities.some((item) =>
     ((!allowGalleryRole || item.role !== "gallery-representative") && !/^detail-[a-z0-9-]+$/u.test(item.role))
-    || (requireApprovedObjectPath && !/^results\/[0-9a-f-]+\/claims\/[0-9a-f-]+\/[^/]+\.png$/iu.test(item.approvedObjectPath ?? ""))
+    || (requireApprovedObjectPath && !approvedSourceObjectPath(item.approvedObjectPath ?? ""))
     || (requireApprovedObjectPath && !/^[a-f0-9]{64}$/u.test(item.approvedSourceSha256 ?? ""))
     || !canonicalStorageUrl(item)
     || !/^normalized\/[0-9a-f]{2}\/[0-9a-f]{64}\.jpg$/u.test(item.objectPath)
@@ -876,6 +903,7 @@ export function verifyListingPublicationContent(input: {
   expectedLocale: string;
   expectedImageCount: number;
   remoteId: string;
+  sourceJobId?: string;
   sourceArguments: UnknownRecord;
   sourceResponsePayload?: UnknownRecord;
   sourceRemotePayload: UnknownRecord;
@@ -904,7 +932,8 @@ export function verifyListingPublicationContent(input: {
 
   const binding = parseListingPublicationAssetBinding(input.sourceArguments.sellerpilotPublicationAssetBinding);
   const responseState = recordValue((input.sourceResponsePayload ?? {}).remoteState);
-  const providerEvidence = parseProviderAssetEvidence(recordValue(responseState.evidence).publicationAssetBinding);
+  const responseEvidence = recordValue(responseState.evidence);
+  const providerEvidence = parseProviderAssetEvidence(responseEvidence.publicationAssetBinding);
   const sourceAssetProjectionVerified = Boolean(binding
     && source.detailImageIdentities.length === 8
     && sameOrderedValues(
@@ -951,17 +980,51 @@ export function verifyListingPublicationContent(input: {
       && providerEvidence.providerRepresentativeImageIdentity
       && providerEvidence.providerRepresentativeImageIdentity === sourceReadback.representativeImageIdentity
       && providerEvidence.providerRepresentativeImageIdentity === remote.representativeImageIdentity);
+  const comparableProviderIdentities = comparableDetailImageIdentities(
+    input.channel,
+    providerIdentities,
+  );
+  const comparableSourceReadbackIdentities = comparableDetailImageIdentities(
+    input.channel,
+    sourceReadback.detailImageIdentities,
+  );
+  const comparableRemoteIdentities = comparableDetailImageIdentities(
+    input.channel,
+    remote.detailImageIdentities,
+  );
   const detailImageCountVerified = input.expectedImageCount === 8
     && sourceReadback.detailImageCount === 8 && remote.detailImageCount === 8
-    && new Set(sourceReadback.detailImageIdentities).size === 8
-    && new Set(remote.detailImageIdentities).size === 8
-    && sameOrderedValues(providerIdentities, sourceReadback.detailImageIdentities)
-    && sameOrderedValues(providerIdentities, remote.detailImageIdentities);
+    && new Set(comparableProviderIdentities).size === 8
+    && new Set(comparableSourceReadbackIdentities).size === 8
+    && new Set(comparableRemoteIdentities).size === 8
+    && sameOrderedValues(comparableProviderIdentities, comparableSourceReadbackIdentities)
+    && sameOrderedValues(comparableProviderIdentities, comparableRemoteIdentities);
 
   const sourceResources = canonicalRemoteResources(input.channel, responseState.resources);
   const remoteResources = canonicalRemoteResources(input.channel, input.remoteResources);
   const declaredResources = sourceDeclaredRemoteResources(input.channel, input.sourceArguments, input.remoteId);
-  const sourceIdentityVerified = Object.keys(sourceResources).length > 0 && digest(sourceResources) === digest(remoteResources);
+  const descendantIdentityBinding = recordValue(
+    responseEvidence.providerAssignedDescendantIdentityBinding,
+  );
+  const normalizedSourceJobId = exactText(input.sourceJobId);
+  const sourceVendorItemIds = sourceResources.vendorItemIds;
+  const remoteVendorItemIds = remoteResources.vendorItemIds;
+  const coupangProviderAssignedDescendantsVerified = input.channel === "coupang"
+    && descendantIdentityBinding.contract === "coupang_provider_assigned_vendor_items_v1"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(normalizedSourceJobId)
+    && exactText(descendantIdentityBinding.sourceJobId) === normalizedSourceJobId
+    && exactText(descendantIdentityBinding.sellerProductId) === input.remoteId
+    && sourceResources.sellerProductId === input.remoteId
+    && Array.isArray(sourceVendorItemIds)
+    && sourceVendorItemIds.length === 0
+    && remoteResources.sellerProductId === input.remoteId
+    && Array.isArray(remoteVendorItemIds)
+    && remoteVendorItemIds.length > 0
+    && remoteVendorItemIds.every((value) => /^[1-9]\d*$/u.test(value))
+    && new Set(remoteVendorItemIds).size === remoteVendorItemIds.length;
+  const sourceIdentityVerified = Object.keys(sourceResources).length > 0
+    && (digest(sourceResources) === digest(remoteResources)
+      || coupangProviderAssignedDescendantsVerified);
   const sourceDeclaredIdentityVerified = declaredResourcesMatch(
     input.channel,
     declaredResources,
@@ -970,13 +1033,13 @@ export function verifyListingPublicationContent(input: {
   const sourceProjection = {
     titleParts: source.titleParts,
     description: source.description,
-    resources: sourceResources,
+    resources: coupangProviderAssignedDescendantsVerified ? remoteResources : sourceResources,
     approvedManifestDigest: binding?.approvedManifestDigest ?? "",
     providerImageSurface: verifiedProviderImageSurface,
     ...(representativeRequired
       ? { representativeImage: providerEvidence?.providerRepresentativeImageIdentity ?? "" }
       : {}),
-    detailImages: providerIdentities,
+    detailImages: comparableProviderIdentities,
   };
   const remoteProjection = {
     titleParts: remote.titleParts,
@@ -987,14 +1050,15 @@ export function verifyListingPublicationContent(input: {
     ...(representativeRequired
       ? { representativeImage: remote.representativeImageIdentity ?? "" }
       : {}),
-    detailImages: remote.detailImageIdentities,
+    detailImages: comparableRemoteIdentities,
   };
   const sourceContentDigest = digest(sourceProjection);
   const remoteContentDigest = digest(remoteProjection);
-  const sourceImageDigest = digest(providerIdentities);
-  const remoteImageDigest = digest(remote.detailImageIdentities);
+  const sourceImageDigest = digest(comparableProviderIdentities);
+  const remoteImageDigest = digest(comparableRemoteIdentities);
   const contentDigestVerified = sourceContentDigest === remoteContentDigest;
   const mismatchFields = [
+    ...(externalDetailChannelPayloadMatches(input.sourceArguments) ? [] : ["externalApprovedCopy"]),
     ...(titleVerified ? [] : ["title"]),
     ...(descriptionVerified ? [] : ["description"]),
     ...(titleLanguageVerified ? [] : ["titleLanguage"]),

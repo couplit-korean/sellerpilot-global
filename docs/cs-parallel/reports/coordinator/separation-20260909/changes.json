@@ -1,0 +1,567 @@
+[
+  {
+    "path": "app/_notifications/operation-event-notifications.ts",
+    "before": "a321da4ef0971ae9f2eccb8b1e0df90eb61dcd96b0e1d5dad70ac1087600d450",
+    "after": "a7ea4c9ef0f577ce18eddd44da557a7bc2daadf8b28b48e23278f055cd78d468"
+  },
+  {
+    "path": "app/_publishing/competitor-price-v3-ui.tsx",
+    "before": "7eb13201aea636672cdc3a0ada753a30532567d22c66634a21c28cfd60f87862",
+    "after": "7fe55a36f8849895092910398d54fd2b2a4d76396c11938c0a1db4a30e424922"
+  },
+  {
+    "path": "app/api/admin/channel-operations/route.ts",
+    "before": "d3ef3a223a7e467f04027514ab5465c1cbb7187e84e4a4e6fc3c4eaf33dce72a",
+    "after": "8f1f69ab1fcddc85a68b691359f42554ece4f76210bda509666cd8f0d50db931"
+  },
+  {
+    "path": "app/api/admin/cs/drafts/route.ts",
+    "before": null,
+    "after": "41e328422b9ac9251dc80939114ce1f64902ab8387f968d0b4d19c3036f518c1"
+  },
+  {
+    "path": "app/api/admin/cs/reply/route.ts",
+    "before": "505c25ad45974728de50a487076fe4a19cd792ec3464c1d097cc677ef71aba5d",
+    "after": "81c008763bc953281b48a5645f49f8ec2d4695fa3b1a9454ed3b7bfa3326b538"
+  },
+  {
+    "path": "app/api/admin/cs/snapshot/route.ts",
+    "before": null,
+    "after": "539922b8cf5264a9d3fad48288868e9a40c5acf7dbb4a22d1245429e21c56d6f"
+  },
+  {
+    "path": "app/api/admin/cs/sync/route.ts",
+    "before": null,
+    "after": "361c1f66445b3d52428b5ff1b98db581ebd8887e60bb3cc537a34ab22edd4458"
+  },
+  {
+    "path": "app/api/admin/cs/ticket-status/route.ts",
+    "before": null,
+    "after": "4646a59b910c738968800764f9e4ca5aea2a35b462be399b73d484bcb0d49707"
+  },
+  {
+    "path": "app/api/ai/support-reply/route.ts",
+    "before": "46254b6a6845876d8283a180f5eb8feff2e7dfd925cef9f841efff98a5594188",
+    "after": "bd391023b9833c2a31535e4c0d3e744e710510430556ec6675dfb1b4e7abc14e"
+  },
+  {
+    "path": "app/api/ai/worker/claim/route.ts",
+    "before": "6c415b77eb0e4682aef108cef2d36f06aed1164a9d741519465e00020a86733d",
+    "after": "c6bc3a14d1dcb0fd135ac01c5afcb35dda6032f8211761253fbace191f51801b"
+  },
+  {
+    "path": "app/api/channel-gateway/worker/complete/route.ts",
+    "before": "b9a1a5056557e8bf6ef204727af13492e078d8d4b2fd18ff5f1705224f466383",
+    "after": "3e94cee1c0ba39b612db37ba2d44fbc5b982077c42ba3584995d0851a7751977"
+  },
+  {
+    "path": "app/api/cs/worker/drafts/route.ts",
+    "before": null,
+    "after": "9fce9ecc2d247a67d2a0ad866822f5b3e48f079583e416f417a28323d8c59b39"
+  },
+  {
+    "path": "app/api/operations/snapshot/route.ts",
+    "before": "f947667347beb6ff78cca91d7b0d0d8d4ce251304f68c6d898ca5a17f1dd4efb",
+    "after": "cf5e36137be6ce71b1adf17e0fe1e4296f9661de3284c8fb0222a980336fddba"
+  },
+  {
+    "path": "app/api/operations/sync/route.ts",
+    "before": "6ab9d352e415aff23a6a186266bdb6eb5f4a69116a48f31c247e475093a3fa20",
+    "after": "194d311ee5fee9873f7afc788417f55f151d21e7ffe00e3d315d93b6001df1dc"
+  },
+  {
+    "path": "app/channel-connections.tsx",
+    "before": "70e469cdadc2a666a1e78d3ec7b0237a77c27ff02a0d95398e975be0c7900859",
+    "after": "1688503cccdf68abf246ae0ad28858df5d43be50b3a50e614b801cc4b4131565"
+  },
+  {
+    "path": "app/channel-readiness.tsx",
+    "before": "3c9da39f3e462ba73e992a304415a8b0ade88c81035b6188311e7a54f76b6ae1",
+    "after": "718864e304b89edb254750a33cef8bcc36a5c36c5d32ccbc10ac5cfc3b2737bb"
+  },
+  {
+    "path": "app/cs/display-tickets.ts",
+    "before": null,
+    "after": "0da50c292d65f1303b4f03c09ed92d728d513a069a4a502e8bb2ffc772a0e62d"
+  },
+  {
+    "path": "app/cs/event-notifications.ts",
+    "before": null,
+    "after": "8043945ffd68dc9f9868ddd922592ad7b20f467674ed517022e47a277e9036c5"
+  },
+  {
+    "path": "app/cs/page.tsx",
+    "before": null,
+    "after": "728c5bc72228eaa944a6330b83c089c8a0eb8f92700da814c3c640c37c423b12"
+  },
+  {
+    "path": "app/cs/standalone-workspace.module.css",
+    "before": null,
+    "after": "6b4c62e025425079053609c7ae1ba30a1ffd7d69073a4e566ff791ab28078ade"
+  },
+  {
+    "path": "app/cs/standalone-workspace.tsx",
+    "before": null,
+    "after": "ca9a5433a99a06f8e555dac42155b3db64af0073720cfc1ead1ce67659626e65"
+  },
+  {
+    "path": "app/cs/use-workspace.ts",
+    "before": null,
+    "after": "f09b4299ee6e4093d6819afa582269651290d7ce3be3744ad42d8defa90f0ddf"
+  },
+  {
+    "path": "app/cs/workspace-contracts.ts",
+    "before": null,
+    "after": "9ba73c1c7a2dcbf94dc9beab660c8f0b7df5c942da7bc0b8c4f845841a9e63d9"
+  },
+  {
+    "path": "app/cs/workspace.tsx",
+    "before": null,
+    "after": "5f909f7b67def6f829ee254e8b74cb02719040d2dd3359cf04c1c948ae29f655"
+  },
+  {
+    "path": "app/page.tsx",
+    "before": "ccab9d1c2858389df6c61fd77dcee1521b0c5e2f764bc986b0e4af2a7165374a",
+    "after": "ec5b4b576ee523c7a3dc049f07a69d0dcd4b019078bce7d95deed51152726f23"
+  },
+  {
+    "path": "app/use-operations-snapshot.ts",
+    "before": "86102cca0ea64d971ffa517a05bd3f6b77af924808e642ce3519e535f28961aa",
+    "after": "5694c587a8eb072b26505f47316629c4eccce0935a15d5ce5306163328dac6ee"
+  },
+  {
+    "path": "docs/cs-parallel/reports/coordinator/cs-commerce-separation-20260909.md",
+    "before": null,
+    "after": "1a616179575b76285838221193e7bdb518cb02fb0ec12662783abb8e8225bf26"
+  },
+  {
+    "path": "docs/현재상태.md",
+    "before": "a5069036a125aeca13bf67b8c0adc429d696a209a793765fb15b59a77bb58d24",
+    "after": "186b19142ee76debc931c5288c83744cd1638ce28e7b1dc1a6981a08d69de610"
+  },
+  {
+    "path": "lib/ai-cli-contract.ts",
+    "before": "dc027a91587d4167f8a682ad4341e2c636f4da1abdf56b9ff62a67f8d67b92c9",
+    "after": "c24db31f17ccd3d268ace75d3eaaf1657051f23dd2417b0767e55c0ae87eca72"
+  },
+  {
+    "path": "lib/authenticated-fetch.ts",
+    "before": null,
+    "after": "c954f878299260d30c370d66097d77577409db13b3f8292ccc7b7cef9468b5f7"
+  },
+  {
+    "path": "lib/channels/commerce-completion.ts",
+    "before": null,
+    "after": "38cfefeab23ac4f2d05c87fe943cc225a5f13fba54c7bb3d50695447e90a9cda"
+  },
+  {
+    "path": "lib/channels/commerce-operations.ts",
+    "before": null,
+    "after": "a54190a87f69d314af7e2f25552f07075f0885f4ee1e26b7d5b23198f5b97c7d"
+  },
+  {
+    "path": "lib/channels/commerce-provider.ts",
+    "before": null,
+    "after": "46b373966e3e5813e66be8f20d76e4bbb6fb45150cf28df4b098ae854d61c0c7"
+  },
+  {
+    "path": "lib/channels/commerce-worker-completion.ts",
+    "before": null,
+    "after": "d3f9f91807e7216422e28c23b428becd0729f6b77cb08af3b75031830a367c3c"
+  },
+  {
+    "path": "lib/channels/cs-credential-binding.ts",
+    "before": "bf7e4db7ad408677b55b9c0d714f5a339521480fe4253139f9bb6fd09cf0c024",
+    "after": "35a94dabac5110717984c8a78190b7dc77e98225046dad47696f13b73dc4f16c"
+  },
+  {
+    "path": "lib/channels/cs/elevenst/worker-completion.ts",
+    "before": "e2677956574e94a91eee94f3090df79de990e42f3a3387a176cc46708bd44566",
+    "after": "c60e44542bfdd046e640c809ed69c2b17e23c58b7636eb5a99bd795b0d3f4fd2"
+  },
+  {
+    "path": "lib/channels/cs/qoo10/reply-readback-completion.ts",
+    "before": "580e3f67b05dfba6bc030364817e5c08518edab93f44aeb8bbfcdce928a227d2",
+    "after": "05788cbcabd8c5261a5b0e65a9d788fe96e14d65d1295b83c953a592ad1f76d0"
+  },
+  {
+    "path": "lib/channels/cs/shopee/history-event-evidence.ts",
+    "before": "a621faa42e4ca4c17b189a93235348d2e2a05d366dc311f64cd6a2a74f343ef4",
+    "after": "1417983d74fc1b5e92f4674f893c34bdc6e3b6351cfffbf748eef73cf660d5ea"
+  },
+  {
+    "path": "lib/channels/elevenst-inquiries.ts",
+    "before": "061cb787c826a46a6fec7639a3ebafb52ee28188c8016c99871b7afbecd5c2ee",
+    "after": "b0543d2cdd70fe53c6ccd93fc67fe1d3f5f5647d6e1307f77701894f29f3a6ad"
+  },
+  {
+    "path": "lib/channels/elevenst-xml.ts",
+    "before": null,
+    "after": "d18f1e999ec079c2e8caa777af5587b92abb54294f9db0bf357f042fcd9d0fed"
+  },
+  {
+    "path": "lib/channels/gateway-completion-runtime.ts",
+    "before": null,
+    "after": "af380bfadc7ab7fcba9241051198325c97b14b9be4492bd2cf5c8095b7db6855"
+  },
+  {
+    "path": "lib/channels/gateway-contract.ts",
+    "before": "d371180e2a132da711cd8dcff3996673cbd198c681bfa1158365c4e92709b5d4",
+    "after": "a8a1ba1135bfd1026610460a9c23ed1435c4611014154a515cce8bf753d8209a"
+  },
+  {
+    "path": "lib/channels/gateway.ts",
+    "before": "45c41f147131ca1ca0c9a8a298718ec23f995f083465fc1c108162ab11a882c1",
+    "after": "a18c634d2c69a17824b2c088bfd32e74eb7b5b77ae38fee34a7b933748b8358f"
+  },
+  {
+    "path": "lib/channels/inquiry-coverage.ts",
+    "before": "c2dcb994c2852d7701f357a8f622eaa1541e574d638b5b49d1a4b0c89b8988fe",
+    "after": "ec424fc7cc18694937c4e54cd0827573d1b9b64ec9d6171aec4274f35361a0de"
+  },
+  {
+    "path": "lib/channels/inquiry-sync.ts",
+    "before": "d639c2c857f04b09383b08f846a05f53cf1c987737ceb776edc83c6bbddfbf02",
+    "after": "79a51cbdd56769a452fd4416b4e8f766202c8f9bd456168357abfa6b481f29ef"
+  },
+  {
+    "path": "lib/channels/listing-publication-verification.ts",
+    "before": "7a9e1e07b19e2bc4765afd52ea2deaddcdb666100ce1f3efd6369553488bb4de",
+    "after": "f894e394273dbffb10361319ab0c0c9ddfbdfdb3903b0bc189c4d79004c552e4"
+  },
+  {
+    "path": "lib/channels/listing-remediation.ts",
+    "before": "ac23f7f8fcc086ba24c8cc0226cf38436f4e029d66e25be1fb6354b806fc59ff",
+    "after": "60527867166b8134d21aad232a8877692687618dcfd88741d47b2de9bec696c4"
+  },
+  {
+    "path": "lib/channels/operation-availability.ts",
+    "before": "b67829201afc79c7b59a6939c219322c0053ea55e30a3399e8db1b1770129511",
+    "after": "a95fd49ae94322bedad6ed36b91ec7e74d431f8a38e791be90b68d11ff21ce31"
+  },
+  {
+    "path": "lib/channels/operation-names.ts",
+    "before": null,
+    "after": "ed1c7e19d3e2d312fa686f13f841afdde9c03a3d906b569f72178385b6977098"
+  },
+  {
+    "path": "lib/channels/operations.ts",
+    "before": "60c28c74078efddfeebee9742d42251824416a261e4ff42c3560292ba5ecfad7",
+    "after": "1849e198bd204c8d04e298729cbcac8af9a1c8e66fa1147e27fa2106428b5612"
+  },
+  {
+    "path": "lib/channels/order-sync.ts",
+    "before": "9a8f5bb5513ff7c84330341517057bcb591b3b063696410396d7027581c8e177",
+    "after": "456cf75a518241bdc0eb92eb48043e2c80e9f5dedf7119e05d297bfd35dc9ab6"
+  },
+  {
+    "path": "lib/channels/protocols.ts",
+    "before": "61994bf808a5e5aad0298d6c5b70a730005f0cedc4c723110b8ad69f70b755af",
+    "after": "2750c1e16e04b7363edaabeb05db05701129371f032b6844dea544f4d9244586"
+  },
+  {
+    "path": "lib/channels/provider-execution-contract.ts",
+    "before": null,
+    "after": "0885d0918c4ba6938268c5101c3b8c26b2358ccaf4ca9ca1bd0b949767999137"
+  },
+  {
+    "path": "lib/channels/provider-shopee-post-publish-runtime.ts",
+    "before": "097d3a5144ce694299272a27b6b42bd8bc0acfc67f317ab760c0b7725eb013d2",
+    "after": "f214e9d6293ae7d1dd738481192c5bc3101b2c7da2c1b98c67184de42d480aa5"
+  },
+  {
+    "path": "lib/channels/reply-verification.ts",
+    "before": "80c67ac824fc065b8b69ffdbcd75a5bc327e08d49c7f5404b1267c809314808c",
+    "after": "5621c6def0bdc6abad636f419cf068e35de62a19a65a6a06423fc7aff4178977"
+  },
+  {
+    "path": "lib/channels/serverless-gateway-provider.ts",
+    "before": "da25a6e330dd5d72428e63b7b39996d486051498d9ab7732643a816956a37bf9",
+    "after": "55c35fc8b2eb6a1a5c5c569e86798ecc3bd9980568576618a9df9459acb82207"
+  },
+  {
+    "path": "lib/channels/serverless-gateway.ts",
+    "before": "faedb5761704ff3f01fa4f42c892d3077777688f1d468bb95ce7a252dff945bf",
+    "after": "efc9bc04b02dd491caf7cde411018a7ea822260aa31d575cd4703a4b854cd022"
+  },
+  {
+    "path": "lib/channels/write-resource.ts",
+    "before": "ab4b71277e6eabe3246de87e3c11f9ebc1e291bd1be6ae7c933b1b035634ca9c",
+    "after": "e56187db69fbf71522505149ec2a19dfaea23966ca6fb31dd5b5f1c95617b22c"
+  },
+  {
+    "path": "lib/cs/channels/elevenst/read-observation.ts",
+    "before": "34bb41dfa927cf1f84f75af000b1635c3c775f3a1f51d8fb385624935a48a99e",
+    "after": "4e727e778a4574bb48c498c16ef0135ab1662ea369c2db2c7793c3ea5a0fdcef"
+  },
+  {
+    "path": "lib/cs/channels/elevenst/xml-request.ts",
+    "before": null,
+    "after": "64e459d0dcc2e21a828dd367b5f89354c59ceaac168f962e964218bc94cd07df"
+  },
+  {
+    "path": "lib/cs/draft-contract.ts",
+    "before": null,
+    "after": "a09c82bc4de9c3397521ae3bab98f308a1546f1eb66a4cd6ed2d9266312863ee"
+  },
+  {
+    "path": "lib/cs/operations/complete.ts",
+    "before": null,
+    "after": "ef410d50a878b73a5b4139e854f4f7108c3f10f9c7893002749d32fcb27d5d29"
+  },
+  {
+    "path": "lib/cs/operations/completion-status.ts",
+    "before": null,
+    "after": "13885f4df7d0df76b9d863f70ebd7dd18b6032857806b56aef6f5b4e13564815"
+  },
+  {
+    "path": "lib/cs/operations/contracts.ts",
+    "before": null,
+    "after": "b64499265003fcedc7fe848ad0dafa61217e0a6ca75d8ece4c0e1d74a655e68a"
+  },
+  {
+    "path": "lib/cs/operations/enqueue-reply.ts",
+    "before": null,
+    "after": "210e20a5ff1eb37c733fd762334299caa41497fec9b3c98bdedfcfc5e4c6c1f8"
+  },
+  {
+    "path": "lib/cs/operations/execute.ts",
+    "before": null,
+    "after": "4b36149080dc13355cd6862d91c418128dbee1bcd0ae9f425cf112cf3166ef2a"
+  },
+  {
+    "path": "lib/cs/operations/failed-completion.ts",
+    "before": null,
+    "after": "cb51050d557dacf0fe962666cae12fb009d13a8f84ce5275096c116029e7c733"
+  },
+  {
+    "path": "lib/cs/operations/provider.ts",
+    "before": null,
+    "after": "e1ff55a2391463e8ec8509923bd5c5ffb90dcd6d4492bbd285d377da7475f3db"
+  },
+  {
+    "path": "lib/cs/operations/schedule.ts",
+    "before": null,
+    "after": "9f6189d643bf95874a904cf4c65c4839e18386dd597f9e06b224ce85e26a0e3c"
+  },
+  {
+    "path": "lib/cs/operations/worker-completion.ts",
+    "before": null,
+    "after": "89eb1d228231f053d6ae26901b60ed0861526fa5803854b92b4ef208706cf10d"
+  },
+  {
+    "path": "lib/cs/snapshot.ts",
+    "before": null,
+    "after": "15e07f7da11ccec554195a16e4b0f8db37c04f555e782190b8e438dd92189a38"
+  },
+  {
+    "path": "lib/product-margin-scenario-contract.ts",
+    "before": null,
+    "after": "351fc55f126a16ac4ac8b1a852a3accadd596c136ea1402fd14e01d41d403169"
+  },
+  {
+    "path": "package.json",
+    "before": "b63ca00ee2912e959b25d05d49753910c8ea8c18175fe0ebc64a4c77effbada9",
+    "after": "d5c0f6eb1007d9c71c7eeb18637e831238229b2f1fd9a68b5590cb0df96ad016"
+  },
+  {
+    "path": "scripts/ai-cli-worker.mjs",
+    "before": "9174bd48ea554318dc9500021004fa2fd27b1669edef2ec8abc5f4cebaaac102",
+    "after": "2d7c4aefa4dbe69c7d078de654b30f1347829d6cf9d34f5dd00976a3ce918ef9"
+  },
+  {
+    "path": "scripts/audit-cs-commerce-boundaries.mjs",
+    "before": null,
+    "after": "3c73a039f972afaf019bba61c0a2bd433a4c68270055e96af760aa2029a94b22"
+  },
+  {
+    "path": "scripts/channel-gateway-worker.mjs",
+    "before": null,
+    "after": "fad3a304b0a4dbc74cfa671a433509f43a5e1c4355c581877a620d0123e03890"
+  },
+  {
+    "path": "scripts/commerce-gateway-job.mjs",
+    "before": null,
+    "after": "6591856e5d513a87c88a95a24a33da24ffde340e3d063ef34e9870472a062c31"
+  },
+  {
+    "path": "scripts/cs-draft-worker.mjs",
+    "before": null,
+    "after": "84627f9c9b4cbf64b9f2f1adc839c918716abb5b238beae5f932cb023deb713e"
+  },
+  {
+    "path": "scripts/cs-gateway-job.mjs",
+    "before": null,
+    "after": "6ddba161ada23e8d23f1a063ee77ee8b5344f73a8b7a26070e8322c22cffdf75"
+  },
+  {
+    "path": "scripts/product-ai-worker.mjs",
+    "before": null,
+    "after": "f6be4bf033abab634860bb033fb90db0833671bf99be387b88e093afd745a8b8"
+  },
+  {
+    "path": "supabase/migrations/20260908170140_isolate_cs_workspace_snapshot.sql",
+    "before": null,
+    "after": "ed9a68d2149a9d7e29ecfb9cd5f44433509bbe6e914e2d2a6dbaf4aed2aac342"
+  },
+  {
+    "path": "supabase/migrations/20260908171055_isolate_commerce_workspace_snapshot.sql",
+    "before": null,
+    "after": "417035d3025984a3d9d0ed9e0885070b54737306cd1ef8f4e3bc57c6aeb5a233"
+  },
+  {
+    "path": "supabase/migrations/20260908172414_isolate_cs_reply_draft_queue.sql",
+    "before": null,
+    "after": "1b681a655e24fb53f7f91deb89438eb40efdb10b12e38c6a663234b6dde27b9e"
+  },
+  {
+    "path": "tests/ai-cli-contract.test.ts",
+    "before": "17cb660d2e3e783f65be1bcbeaf27e5643fb8592d0d21c3f9376be44c6d43924",
+    "after": "11308303bed4bf32a64e18701105aa1c2e3e8a58589b95ed26f645898a2944f5"
+  },
+  {
+    "path": "tests/commerce-independent-snapshot-db.test.mjs",
+    "before": null,
+    "after": "b392a79aebe35e3148a0d1ce55f405d1e9fde102fe418274cd85b42cb49a94ce"
+  },
+  {
+    "path": "tests/cs-coupang-integrated-history-route.test.ts",
+    "before": "0add935b48780a528d90534ae8083b224e551ce13597e0299a22486403697438",
+    "after": "9813d7ce233c5f64249d45ca9a606239e868408bd2cf5eace75346ccc918da12"
+  },
+  {
+    "path": "tests/cs-draft-api-flow.test.mjs",
+    "before": null,
+    "after": "f491d0d59e5e7b7e306aa3bfadb48ee85d9e75f4f42bf8c554d013c24ebb0963"
+  },
+  {
+    "path": "tests/cs-draft-queue-db.test.mjs",
+    "before": null,
+    "after": "8e8c718ac084413adcecefd2fdaa009546bffd743450a4d8b59d1dd9b2298492"
+  },
+  {
+    "path": "tests/cs-draft-worker.test.mjs",
+    "before": null,
+    "after": "4ab9c6417834951f7188f238726284ef62150ed6abc06d9b847d9496624e939c"
+  },
+  {
+    "path": "tests/cs-ebay-supplement04-integration-review.test.ts",
+    "before": "363aef01a2f30d4e581eb86b003f3379a2528f16ce7c6225774f0d1acc97c669",
+    "after": "d737cc9cf2c945db6aea0650c1b857a69db80d3c523ec34aee0cc347d876a867"
+  },
+  {
+    "path": "tests/cs-elevenst-worker-failed-completion.test.ts",
+    "before": "632d86abfcb6fd9f276ed1e5cf3c8e20f18fbd176c19db90d1979d63d6b3bc99",
+    "after": "33c926a764bb1989a5d6b91f7141ed425471d9443c5a63f854a143fe3fd389ba"
+  },
+  {
+    "path": "tests/cs-history-window-route.test.ts",
+    "before": "e1ba91f91d70e034d1ec3ef718dab4d26fe2969da017a27f9fbf908984e6bad6",
+    "after": "17766616a06941cf18239ef6bc0e733bbd09beb1a1c9eb2a51a963473133aa29"
+  },
+  {
+    "path": "tests/cs-independent-snapshot-db.test.mjs",
+    "before": null,
+    "after": "e5181a1268f5084cdcd995b2fa67c77ca59f81957d3244753fc42a5e50c5c919"
+  },
+  {
+    "path": "tests/cs-navigation-contract.test.mjs",
+    "before": "84a18907c9f0327cca30f0f869ad2e74c219df2d7a8440d93b322d443eca6a56",
+    "after": "7685914a5e96aac3debde359a810b1e6253cde8427a2af4c5ee2043ab8645910"
+  },
+  {
+    "path": "tests/cs-product-registration-boundary.test.mjs",
+    "before": "f475e8ae227df633c5c41309846ef9ef625632b1e710c837a818ffb23bc254c9",
+    "after": "1b1cbceae829f846a01c41c45ab9bfe45f7ba9fa5920f6dae0301b6e6c119a14"
+  },
+  {
+    "path": "tests/cs-provider-isolation.test.ts",
+    "before": null,
+    "after": "e1551ef98b9c6547ec4a7095269f07c3d429c8d86387dfca379ddf30a5a7ceaa"
+  },
+  {
+    "path": "tests/cs-qoo10-history-runtime.test.ts",
+    "before": "629e73cbd226c66277dd3fbad4007b1ce9b4f0366fcdb773c8fad15627058569",
+    "after": "7c52574e8e4a067f95402db0be18939512b6532eb6c5105daa9868e1e1ccf741"
+  },
+  {
+    "path": "tests/cs-reply-route-context.test.mjs",
+    "before": "517ecaafbc1e22598916fa95c32a78a32a5d4304782ba93b0ae04401793c5620",
+    "after": "e969df33fbd0e94c3e2b9d6e22f9285ce519722774f8a753bd2412b8fe4de32b"
+  },
+  {
+    "path": "tests/cs-separated-routes.test.ts",
+    "before": null,
+    "after": "d2ed6d3954030a8be1b8b66ab0fb71fb117d294a9a68a2ba6caedb0394a35d3b"
+  },
+  {
+    "path": "tests/cs-smartstore-history-resume-v5-route.test.ts",
+    "before": "cf3f6922f6ea6b359b3693f7adeb39f67e43e6fbbf53dff0671df564e1908bd2",
+    "after": "1346e6c821982b70107209278104f015adc0facecc32749769c885ad97d93ed6"
+  },
+  {
+    "path": "tests/ebay-listing-configuration.test.ts",
+    "before": "b03dc4a287c75d6dfb49248f19abe4ad4cbd5522b3fa425e45b815fced870e2c",
+    "after": "8c0a45c2e92911a1409ac45c1235ce5390a4431002f9fec387c8c7e1778dc067"
+  },
+  {
+    "path": "tests/ebay-serverless-listing-update.test.mjs",
+    "before": "67b33d2dfdd3068c7fac22358473e3beaa358e8a5c6c6286ddf590ed9d2626b8",
+    "after": "d6e7431676177782bfc873fb2991bfbd937136e7d7cf7c3110723f12715d5102"
+  },
+  {
+    "path": "tests/elevenst-update-gates.test.mjs",
+    "before": "7609e8fb0f30e8744174369ae4844e2064185f695eaaa66e613ae40d24fc73da",
+    "after": "e6d58e59b1bfc4740074dd66ba60d74f02454f42163fb3a7c1917045df3b9299"
+  },
+  {
+    "path": "tests/inventory-products-bridge-db.test.mjs",
+    "before": "fca262bd4242638c6d3688f3da3752c24bd70c6ddb1e12eb0d0b7954df2cb808",
+    "after": "1acc88b635d76e9b0c661a19e18e0cc617cd58845c47772a83c51f5056e4b2a8"
+  },
+  {
+    "path": "tests/lazada-unordered-quarantine.test.ts",
+    "before": "be55f5e4c3194e2300e5148554c13fc8c72c46e8ecc265376f080e6225618512",
+    "after": "aac6fe1ea340c82c5b6667fe05703f05efed422f9037a5f5a0e0268df196306a"
+  },
+  {
+    "path": "tests/mobile-interaction-layers.test.mjs",
+    "before": "b3c4ec895e31c9a9b86ff9b6130b2fd60102c0d2093192a38b4fb2fc308aaaa4",
+    "after": "dbbc1c442a2fd3a67f1c55fc33ee01db6f021c1fcb66ee763109258615c301de"
+  },
+  {
+    "path": "tests/product-publish-confirmation.test.mjs",
+    "before": "a1958b6718c2018b07eb63168906f381a977af249ccd00955f0c759861a925fb",
+    "after": "1082276f883d33859bed64c869c71d682596d1732d71b565326b9e7d1e413d49"
+  },
+  {
+    "path": "tests/rendered-html.test.mjs",
+    "before": "f19165c4baa5e4568c4c78e1fb01f1b194d02c9d5e773f558017aa8a53526a9d",
+    "after": "82223787d1d63a3b854d07361aa8f9cf27a3fc9610a481487e091a5832868125"
+  },
+  {
+    "path": "tests/serverless-cs-gateway.test.ts",
+    "before": "65e61e1dddf3245b5b34cce43f44dec7dcc3be2a44f8a0306d8c843935bc5199",
+    "after": "72e28b862ab0e37af3118cea47b6c5727472d639a337a449fddacfd2a56d058f"
+  },
+  {
+    "path": "tests/shopee-sg-existing-update.test.ts",
+    "before": "92b0ed368dec206792266edffc2d85fc693818d04f8e0f9a36d86510db07b832",
+    "after": "ba680dc29005573d1c8270c693738dfa16fdefcd46eb36dcece426e1cac3d425"
+  },
+  {
+    "path": "tests/smartstore-content-repair-api.test.ts",
+    "before": "dadc9e390d9b231df3cca7c94620bc0876061c4eef15872dafefea480a0abd81",
+    "after": "46e6d919d890fdadaae1c9d30a07cffa03f9edc4ced75890106f2baf56e03166"
+  },
+  {
+    "path": "tests/smartstore-manual-adoption-fixed-gateway.test.ts",
+    "before": "1b00db9913ea1951608bdee60a44a0bd9b1db6a939edc7edd8c1b4ec37b56bfa",
+    "after": "52050d8c58dff74f2ca73dc5136407498999e22330d97c76c212c0622bb6a845"
+  },
+  {
+    "path": "tests/supabase-migrations.test.mjs",
+    "before": "8aeaebc5e08768ce55a4c585d907fc89a45a22602f7936640c26ba6e7e5e5a93",
+    "after": "e6a64bd1c86b4ce197c55148e51e3efaeaf3b9094462b352d20cd26b3ab2b279"
+  }
+]

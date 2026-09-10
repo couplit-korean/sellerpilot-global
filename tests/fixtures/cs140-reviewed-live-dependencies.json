@@ -1,0 +1,14 @@
+[
+  {
+    "acl": "{postgres=X/postgres}",
+    "md5": "d3329d1c2c396ff786c4029d706a77cc",
+    "signature": "sellerpilot_0902_ingest_inquiries_unsafe(uuid,text,jsonb)",
+    "sha256": "72180765dd0c713a5147cd7d2c384896c904199396fbb403e4109c8ddafd9617"
+  },
+  {
+    "acl": "{postgres=X/postgres}",
+    "md5": "d8e07d2f9c82149f92f05bb6cffcaffe",
+    "signature": "sellerpilot_private.support_deletion_fingerprint(uuid,text,text)",
+    "sha256": "bfb013b036577f29cc4a2b55bafbdd521e81df8e7f81f8ada0223403f1cd2546"
+  }
+]

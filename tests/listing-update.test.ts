@@ -9,6 +9,7 @@ import {
   listingUpdateRemoteIdentity,
   listingWriteOperation,
   mergeCoupangListingUpdateBody,
+  mergeListingUpdatePatch,
   prepareListingUpdateArguments,
   qoo10RollbackListingUpdateCandidate,
   qoo10RollbackUpdateRecoveryArgument,
@@ -17,6 +18,7 @@ import {
   verifyListingUpdateReadback,
 } from "../lib/channels/listing-update";
 import { assertListingPublicationSourceLocalized } from "../lib/channels/listing-publication-content";
+
 
 const listing = {
   status: "published",
@@ -367,15 +369,45 @@ test("published listing update drafts bind the immutable remote product identity
     { body: { sellerProductName: "수정 상품", sellerProductId: 123456789 } },
   );
   assert.deepEqual(
-    prepareListingUpdateArguments("smartstore", { body: { originProduct: { name: "수정 상품", salePrice: 1000 }, smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "ON" } } }, listing),
+    prepareListingUpdateArguments("smartstore", { body: { originProduct: { name: "수정 상품", salePrice: 1000, stockQuantity: 3 }, smartstoreChannelProduct: { channelProductName: "수정 상품", channelProductDisplayStatusType: "ON" } } }, listing),
     {
       body: {
-        originProduct: { name: "수정 상품", salePrice: 1000 },
+        originProduct: { name: "수정 상품" },
         smartstoreChannelProduct: { channelProductName: "수정 상품" },
       },
       originProductNo: "123456789",
     },
   );
+});
+
+test("Smartstore content patch keeps current provider capacity, price and stock in the final full document", () => {
+  const current = {
+    originProduct: {
+      name: "기존 상품",
+      salePrice: 3190,
+      stockQuantity: 1,
+      detailAttribute: {
+        unitCapacity: { unitPriceYn: true, totalCapacityValue: 315, unitCapacity: 10, indicationUnit: "g" },
+      },
+    },
+    smartstoreChannelProduct: { channelProductName: "기존 상품" },
+  };
+  const patch = prepareListingUpdateArguments("smartstore", {
+    body: {
+      originProduct: { name: "수정 상품", salePrice: 99_990, stockQuantity: 999 },
+      smartstoreChannelProduct: { channelProductName: "수정 상품" },
+    },
+  }, listing).body;
+  const merged = mergeListingUpdatePatch(current, patch) as typeof current;
+  assert.equal(merged.originProduct.name, "수정 상품");
+  assert.equal(merged.originProduct.salePrice, 3190);
+  assert.equal(merged.originProduct.stockQuantity, 1);
+  assert.deepEqual(merged.originProduct.detailAttribute.unitCapacity, {
+    unitPriceYn: true,
+    totalCapacityValue: 315,
+    unitCapacity: 10,
+    indicationUnit: "g",
+  });
 });
 
 test("the server-side update identity reader rejects missing or conflicting remote IDs", () => {
@@ -527,15 +559,12 @@ test("normalized update readback rejects unchanged requested mutable fields", ()
   }), { ok: true, mismatches: [] });
   assert.deepEqual(verifyListingUpdateReadback("smartstore", argumentsValue, {
     originProduct: { name: "수정 상품", detailContent: "<p>새 설명</p>", salePrice: 55_000 },
-  }), { ok: false, mismatches: ["originProduct.salePrice"] });
+  }), { ok: true, mismatches: [] });
   const mismatch = verifyListingUpdateReadback("smartstore", argumentsValue, {
     originProduct: { name: "기존 상품", detailContent: "<p>새 설명</p>", salePrice: 55_000 },
   });
   assert.equal(mismatch.ok, false);
-  assert.deepEqual(mismatch.mismatches, [
-    "originProduct.name",
-    "originProduct.salePrice",
-  ]);
+  assert.deepEqual(mismatch.mismatches, ["originProduct.name"]);
 });
 
 test("Lazada update keeps the verified XML request and adds a readback identity", () => {
@@ -573,13 +602,15 @@ test("Lazada MY QA update retains the exact category and requested single-SKU pr
             description: "Penerangan produk dalam Bahasa Melayu.",
           },
           Images: { Image: ["https://cdn.example.com/representative.jpg"] },
-          Skus: { Sku: [{
-            SellerSku: "QA-20260823-CC-001-MY",
-            price: "14.29",
-            quantity: "1",
-            package_weight: "0.1",
-            Status: "active",
-          }] },
+          Skus: {
+            Sku: [{
+              SellerSku: "QA-20260823-CC-001-MY",
+              price: "14.29",
+              quantity: "1",
+              package_weight: "0.1",
+              Status: "active",
+            }]
+          },
         },
       },
     },
@@ -609,11 +640,13 @@ test("Lazada MY QA update retains the exact category and requested single-SKU pr
           description: "Penerangan produk dalam Bahasa Melayu.",
         },
         Images: { Image: ["https://cdn.example.com/representative.jpg"] },
-        Skus: { Sku: [{
-          SellerSku: "QA-20260823-CC-001-MY",
-          price: "14.29",
-          quantity: "1",
-        }] },
+        Skus: {
+          Sku: [{
+            SellerSku: "QA-20260823-CC-001-MY",
+            price: "14.29",
+            quantity: "1",
+          }]
+        },
       },
     },
   });

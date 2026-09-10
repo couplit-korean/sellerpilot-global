@@ -1,0 +1,37 @@
+{
+  "baseCommit": "b4dbddfc63",
+  "integratedOwnedCommits": [
+    "2558ae2e6d0f0cdceca38d80e0500cf6b3e7f008",
+    "284d91d445eadded6dbdbff26c132db6b1d1550b"
+  ],
+  "commonProposal": "elevenst-product-common-001-r2",
+  "reviews": {
+    "shopee": "r1 submission read; owned d5ff613 + common route/protocol/runtime patch queued for sequential review. Login needed per worker; no mutation assigned.",
+    "lazada": "r1 held: supply_price mode conflicts with executor price-only check; missing publication context bypasses new preflight. Corrective work sent.",
+    "temu": "r2 official field correction read; invalid URL filtering and malformed continuation handling need strict rejection. Worker resumed with concrete counterexamples.",
+    "smartstore": "001r2/002r1 read; requested applicable common patches and invalid/missing marker CREATE zero-write checks; worker resumed.",
+    "coupang": "r3 reviewed; request executable current-base preflight/8 fixture replacements in scratch with passing shared tests. Worker resumed.",
+    "elevenst": "284d91d4 + common r2 integrated locally; combined362/362, type/lint, domain40/channel28 and local build passed. Additional-evidence UI/ledger propagation review assigned.",
+    "qoo10": "2558ae2 supplemental integrated; r4 patch hash equals already applied r3, no duplicate application. Live credentials/approved tuple unresolved.",
+    "ebay": "Previous corrective work still active; new ready correction not yet collected."
+  },
+  "statusSnapshotIds": {
+    "shopee": "cc8aa01f96f1200d13656a30e8718564bd904f6b7239bfac058b40e7bfda4fe1",
+    "lazada": "1decaf4e3a6e85195329a7cb33a456559b33ace3e016749db95c285bfc992fc9",
+    "temu": "30e73819e78cbf31ef593421f6ad559b3154346aa2f7f94c2d858a151bcef0c6",
+    "smartstore": "341e30a5dc970fec56daa652e6350e7e6d114c89976a16744e294573f7b0d18b",
+    "coupang": "25a86106bc53004df910b16b5efe3d4dcbbc907ef14cfd7c0711e6e0758c5478",
+    "qoo10": "74988826300dda3cef1bcfad74ddd58236421fe66521c93b7306229e7a51b9bf"
+  },
+  "validation": {
+    "combined": "362/362",
+    "domain": "40/40",
+    "channel": "28/28",
+    "typecheck": "passed",
+    "lint": "passed",
+    "localBuild": "passed"
+  },
+  "providerWrites": 0,
+  "productionDbWrites": 0,
+  "deployments": 0
+}

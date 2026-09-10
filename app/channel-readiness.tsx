@@ -33,6 +33,7 @@ import {
   type ReadinessState,
 } from "./channel-readiness-data";
 import { channelCapabilityReleasePresentation } from "../lib/channels/operation-availability";
+import type { CsSyncStatus } from "./cs/workspace-contracts";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
 
 const stateLabels: Record<ReadinessState, string> = {
@@ -59,7 +60,7 @@ function ReadinessBadge({ state }: { state: ReadinessState }) {
 export function ChannelReadinessPage({ embedded = false, channelMetrics = [], syncStatus = [], onOpenCs }: {
   embedded?: boolean;
   channelMetrics?: OperationsSnapshot["channelMetrics"];
-  syncStatus?: OperationsSnapshot["syncStatus"];
+  syncStatus?: Array<OperationsSnapshot["syncStatus"][number] | CsSyncStatus[number]>;
   onOpenCs?: (channel: OperationsSnapshot["channelMetrics"][number]["channelKey"]) => void;
 }) {
   const capabilityKeys = Object.keys(capabilityLabels) as ChannelCapabilityKey[];

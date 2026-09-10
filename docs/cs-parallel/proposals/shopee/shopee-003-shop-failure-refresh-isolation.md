@@ -1,0 +1,21 @@
+# 공통 변경 요청 shopee-003
+
+- 목적: 한 Shopee shop의 401/403/refresh 실패가 뒤 shop의 수집 성공을 가리지 않게 하고 target별 token refresh를 중복·lost-update 없이 저장
+- 요청 채널: Shopee
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / serverless gateway current
+- 수정할 공통 파일과 함수: `lib/channels/serverless-gateway-provider.ts`의 `executeAllShopeeShopInquiries`, `lib/channels/protocols.ts`의 Shopee refresh staging 호출부, 공통 enqueue/completion/scope-health SQL
+- 현재 파일 SHA-256: `serverless-gateway-provider.ts` `ad651326e01f0c993adbb390def46e3ca8153a8aba5645caa1ee747b41de1b90`; `protocols.ts` `8f2bbead6f2c6935c64ecd79cb5e27c1e22132a115f6a05b2d9277f68bf0ec1a`
+- DB 객체: credential refresh begin/prepare/complete RPC와 shop scope health. 실제 migration 번호는 통합 담당 배정.
+- 기존 동작: 다중 shop wrapper는 target index를 순서대로 처리하지만 현재 shop 결과가 `ok=false`이면 즉시 반환한다(`serverless-gateway-provider.ts:250`). 그러면 다음 shop continuation이 생성되지 않는다. 같은 공유 credential 안의 shop token refresh는 credential payload 전체를 재저장하므로 병렬 target refresh가 version CAS/merge 없이 진행되면 다른 target의 새 token을 덮을 위험이 있다.
+- 문제를 재현하는 최소 입력: shop 0의 `get_comment`가 403, shop 1이 200인 2shop credential. 현행은 shop 1 provider call이 0회다. 또는 동일 credential version에서 두 target refresh가 동시에 서로 다른 `shopee_targets` 배열을 stage한다.
+- 원하는 동작: shop 0은 명시적 failed/authorization_required scope로 남고 shop 1은 독립 실행·저장된다. 전체 성공으로 합치지 않는다. refresh는 `(credential_id, base_version, target_type, target_id)` 단위 단일 writer/CAS로 시작하고, 저장 시 최신 payload에 해당 target만 병합한 뒤 remote readback한다.
+- 전용 모듈 경로와 export: 전용 GET-only 스크립트는 예외 격리를 구현했으나 운영 orchestration은 공통 소유다.
+- 기존/새 입력·출력 계약: 추천은 최초 enqueue에서 실제 shop ID별 독립 `inquiries.list` job을 만들고 요청에 `shopId`를 고정하는 방식이다. 대안으로 기존 wrapper를 유지한다면 failed scope를 별도 ledger에 원자 기록한 뒤 다음 target continuation을 생성할 수 있는 partial-completion 계약이 필요하다.
+- 최소 변경안: shop별 deterministic periodic key와 job, shop credential projection, target refresh CAS+merge RPC, shop별 health/readback. one-job 전체 credential refresh를 여러 executor가 동시에 수행하지 못하게 한다.
+- 다른 채널 영향: Shopee job fan-out에 한정. 공통 credential RPC는 기존 채널 signature를 유지하고 Shopee target merge variant를 추가한다.
+- 상품/주문/배송 mutation 영향: refresh credential은 상품/주문과 공유되므로 기존 target 배열을 보존하고 version/readback이 맞지 않으면 CS provider GET 전 실패한다. listing/order operation은 실행하지 않는다.
+- 재현·회귀 시험 명령: 2shop 403/200에서 두 provider call과 분리 상태, 동일 target 동시 refresh 1회, 서로 다른 target 동시 refresh 병합, stale version reject, refresh 후 다른 target 불변, 중단 재개 누락 0을 PGlite+provider fixture로 검증한다.
+- migration 선행/preimage/ACL 요구: 현재 credential version/fingerprint, refresh in-flight, recovery vault, begin/prepare/complete signature와 grants를 고정하고 service role 외 실행 금지.
+- 우선순위: 첫 실제 읽기/웹 차단 / 오연결·손실
+- 통합 담당 처리 상태: 미반영
+- 반영된 통합 소스 hash와 검증: 대기

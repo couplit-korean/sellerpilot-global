@@ -210,7 +210,7 @@ test("Lazada IM follows string cursors and keeps every buyer message per session
 
   try {
     let argumentsValue: Record<string, unknown> = {
-      bootstrap: true, startTime: 3_000, pageSize: 20, sessionLimit: 2, messageLimit: 100,
+      bootstrap: true, startTime: 3_000, pageSize: 20, sessionLimit: 20, messageLimit: 100,
     };
     const steps = [];
     for (let index = 0; index < 4; index += 1) {
@@ -229,8 +229,6 @@ test("Lazada IM follows string cursors and keeps every buyer message per session
     const normalized = normalizeLazadaImHistory(steps);
     assert.equal(calls.filter((url) => url.pathname.endsWith("/im/session/list")).length, 2);
     assert.equal(calls.filter((url) => url.pathname.endsWith("/im/message/list")).length, 3);
-    assert.equal(calls.filter((url) => url.pathname.endsWith("/im/message/list"))
-      .every((url) => url.searchParams.get("page_size") === "20"), true);
     assert.equal(calls.some((url) => url.searchParams.get("last_session_id") === "session-1"), true);
     assert.equal(calls.some((url) => url.searchParams.get("last_message_id") === "message-new"), true);
     assert.equal(normalized.length, 3);

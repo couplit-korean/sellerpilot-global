@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "evidenceType": "isolated_database_to_authenticated_web",
+  "recordedAt": "2026-09-08T12:50:01Z",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "environment": "local_test_only",
+  "database": {
+    "engine": "PGlite",
+    "storage": "memory",
+    "fixtureSetupWrites": 1,
+    "authenticatedRouteReads": 1,
+    "applicationWrites": 0,
+    "productionWrites": 0
+  },
+  "web": {
+    "runtime": "Next.js 16 dev server",
+    "host": "127.0.0.1",
+    "port": 3214,
+    "method": "GET",
+    "path": "/api/admin/cs/channels/elevenst/read-state",
+    "cacheControl": "private, no-store, max-age=0"
+  },
+  "authentication": {
+    "implementation": "lib/admin-api.ts::authenticateAdminRequest",
+    "upstream": "loopback Supabase Auth and PostgREST contract double",
+    "testBypassUsed": false,
+    "missingBearerStatus": 401,
+    "invalidBearerStatus": 401,
+    "validEphemeralBearerStatus": 200,
+    "productionUserAuthenticationVerified": false,
+    "tokenRecorded": false
+  },
+  "projection": {
+    "contractVersion": "sellerpilot-elevenst-authenticated-read-state/1",
+    "sellerId": "couplit",
+    "sellerName": "커플릿",
+    "productQna": {
+      "providerState": "business_error",
+      "remoteCount": null,
+      "emptyConfirmed": false
+    },
+    "urgentAlimi": {
+      "providerState": "empty",
+      "remoteCount": 0,
+      "emptyConfirmed": true
+    },
+    "readOnly": true
+  },
+  "externalMutations": {
+    "providerWrites": 0,
+    "sellerOfficeWrites": 0,
+    "customerReplies": 0,
+    "productionDatabaseWrites": 0
+  },
+  "limitations": [
+    "The authentication upstream is an isolated loopback contract double, not the production Supabase account.",
+    "The production RPC sellerpilot_read_elevenst_cs_read_state_v1 is proposed but not applied.",
+    "This does not resolve the live Product Q&A business resultCode 500."
+  ]
+}

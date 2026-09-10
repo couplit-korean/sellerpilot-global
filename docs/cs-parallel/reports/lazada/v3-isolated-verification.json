@@ -1,0 +1,79 @@
+{
+  "contract": "sellerpilot-lazada-ingest-v3-isolated-verification/1",
+  "checkedAt": "2026-09-08T22:06:22+09:00",
+  "snapshotId": "S0-20260908-decaba426812a3ba",
+  "workspace": "/Users/kimchangheemac/dev/sellerpilot-cs-lazada",
+  "branch": "codex/cs-lazada-v1",
+  "node": "v22.23.2",
+  "artifacts": {
+    "sqlDraft": {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-ingest-v3.sql",
+      "sha256": "1c30844981e8713accc9573944dbd19f22a64c05d1f8c64b6a97c0974d3d277a",
+      "appliedToProduction": false
+    },
+    "runtimePatch": {
+      "path": "docs/cs-parallel/proposals/lazada/lazada-005-runtime-v3.patch",
+      "sha256": "8e6c7d84f7dbbf2e7b11d1d31fa54c5b7843a317c28ed2c06bb43ca9894e1d56",
+      "appliedToIntegrationSource": false
+    }
+  },
+  "runs": [
+    {
+      "command": "node --import tsx --test tests/lazada-im.test.ts tests/lazada-history-completeness.test.ts tests/lazada-im-app-binding.test.ts tests/lazada-inquiry-sync.test.ts tests/lazada-unordered-quarantine.test.ts tests/lazada-raw-reprocess.test.ts tests/cs-lazada-ingest-v3-db.test.mjs tests/cs-lazada-runtime-v3-patch.test.mjs",
+      "environment": "local parser fixtures plus PGlite isolated database",
+      "tests": 59,
+      "passed": 59,
+      "failed": 0,
+      "skipped": 0,
+      "exitCode": 0,
+      "durationMs": 2890.079
+    },
+    {
+      "command": "eslint lib/channels/lazada-im.ts tests/lazada-im.test.ts tests/lazada-history-completeness.test.ts tests/lazada-inquiry-sync.test.ts tests/cs-lazada-ingest-v3-db.test.mjs tests/cs-lazada-runtime-v3-patch.test.mjs",
+      "environment": "Node 22 existing repository dependencies",
+      "exitCode": 0
+    },
+    {
+      "command": "apply lazada-005-runtime-v3.patch in an isolated APFS copy, then tsc --noEmit --incremental false",
+      "environment": "ephemeral local copy with source node_modules symlink",
+      "patchExitCode": 0,
+      "typecheckExitCode": 0
+    }
+  ],
+  "verified": {
+    "readinessFailsClosedForMissingOrAmbiguousAppLineage": true,
+    "serviceOnlyRpcAndRevisionTableAcl": true,
+    "officialSystemEventDoesNotChangeCustomerGeneration": true,
+    "olderSellerEchoDoesNotResolveNewCustomerGeneration": true,
+    "normalToRecallPreservesTwoRevisionKinds": true,
+    "bodyOrAttachmentConflictIsQuarantined": true,
+    "revisionLedgerOmitsNativeBodyAndAttachmentPayload": true,
+    "differentCertifiedSellerIsRejected": true,
+    "gatewayClaimOwnershipIsPreserved": true,
+    "runtimePatchMatchesExactParser2Preimages": true,
+    "allIngestEntrypointsCheckCredentialSpecificReadiness": true
+  },
+  "runtimePatchPreimages": {
+    "lib/channels/lazada-im-webhook.ts": "407e6b0114d6fda8d51e90bc82619c766667966dd856346bdf972bb5e57de2d3",
+    "app/api/webhooks/lazada-im/route.ts": "195573905df95ac6305d89507b4735898ed2fb59f7a28b74951158bd85b0f8b1",
+    "app/api/channel-gateway/worker/complete/route.ts": "41435b65a23dc4d12a9c47a37f8ac20d572a81afe8af1fb9171d004edb0f7e64",
+    "lib/channels/serverless-gateway.ts": "07b99bea1c41a7d2cad259a06302f49f4654d599b1f4fb7197bc9f4ffb49896a",
+    "lib/channels/lazada-raw-reprocess.ts": "abb5ee158fbc4bd47e35561949fa2ce33d76c55ce55ee1099ebd08c67f0e45e6"
+  },
+  "notProven": [
+    "production database migration",
+    "production runtime transition",
+    "signed provider Push delivery and redelivery",
+    "remote-to-database-to-authenticated-web reconciliation after ingest",
+    "approved real reply provider acceptance and seller echo"
+  ],
+  "mutationsExcluded": [
+    "commit",
+    "push",
+    "deployment",
+    "production database",
+    "production webhook configuration",
+    "credential or token refresh",
+    "real customer reply"
+  ]
+}

@@ -6,6 +6,7 @@ import {
   lazadaAuthorizationUrl,
   lazadaCountryFromOAuthState,
   lazadaOAuthState,
+  lazadaOAuthClaimedCredential,
   resolveLazadaCredentialCountry,
   lazadaTargetCountry,
   lazadaTargetMarketCode,
@@ -98,6 +99,27 @@ test("Lazada OAuth state, authorize URL, callback and gateway request are fixed 
     incomingCountry: "",
     previousCountry: "sg",
   }), "sg");
+});
+
+test("Lazada OAuth callback requires one claimed credential matching its cookie", () => {
+  assert.equal(lazadaOAuthClaimedCredential(credentialId, credentialId), credentialId);
+  assert.equal(lazadaOAuthClaimedCredential(credentialId, null), "", "a consumed state cannot fall back to its cookie");
+  assert.equal(lazadaOAuthClaimedCredential(credentialId, "22222222-2222-4222-8222-222222222222"), "");
+  assert.equal(lazadaOAuthClaimedCredential("not-a-credential", credentialId), "");
+});
+
+test("Lazada OAuth rejects cookie mismatch before consuming its one-time state", async () => {
+  const source = await readFile(
+    new URL("../app/api/admin/channel-credentials/lazada/authorize/route.ts", import.meta.url),
+    "utf8",
+  );
+  const cookieGate = source.indexOf("if (!cookieValid)");
+  const claim = source.indexOf('sellerpilot_service_claim_channel_oauth_state');
+  const claimedGate = source.indexOf("if (!persistedCredentialId)", claim);
+  const exchange = source.indexOf("exchangeOAuthViaChannelGateway", claim);
+  assert.ok(cookieGate > 0 && cookieGate < claim);
+  assert.ok(claimedGate > claim && claimedGate < exchange);
+  assert.doesNotMatch(source, /persistedCredentialId\s*\|\|\s*cookieCredentialId/u);
 });
 
 test("Lazada OAuth stages only a provider-attested MY seller identity", async () => {

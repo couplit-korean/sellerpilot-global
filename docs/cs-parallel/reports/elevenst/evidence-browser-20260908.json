@@ -1,0 +1,51 @@
+{
+  "capturedAt": "2026-09-08T10:35:00+09:00",
+  "browserProfile": "CHANGHEE",
+  "browserLoginEmail": "k931103@gmail.com",
+  "sellerId": "couplit",
+  "sellerName": "커플릿",
+  "sellerIdentityMatched": true,
+  "productQna": {
+    "currentSevenDays": {
+      "from": "2026-09-02",
+      "to": "2026-09-08",
+      "timezone": "Asia/Seoul",
+      "counts": { "all": 0, "answered": 0, "unanswered": 0 }
+    },
+    "firstThirtyDaysAllStatus": [
+      { "from": "2026-08-10", "to": "2026-08-16", "count": 0 },
+      { "from": "2026-08-17", "to": "2026-08-23", "count": 0 },
+      { "from": "2026-08-24", "to": "2026-08-30", "count": 0 },
+      { "from": "2026-08-31", "to": "2026-09-06", "count": 0 },
+      { "from": "2026-09-07", "to": "2026-09-08", "count": 0 }
+    ],
+    "apiReconciled": false,
+    "reason": "provider_api_returned_business_error_500"
+  },
+  "sellerOfficeHome": {
+    "urgentInquiry": 0,
+    "urgentNotice": 0,
+    "sellerTalkInquiry": 0,
+    "productQna": 0
+  },
+  "sellerTalk": {
+    "chatRoomsVisible": 0,
+    "friendsVisible": 0,
+    "responseRateAvailable": false,
+    "retentionLimitDays": 90,
+    "officialOpenApiSearchTermsWithNoResult": ["11톡", "셀러톡"],
+    "access": "signed_seller_office_session_bridge",
+    "tokensRecorded": false
+  },
+  "reviews": {
+    "from": "2026-09-01",
+    "to": "2026-09-08",
+    "visibleCount": 0,
+    "excelDownloadVisible": true,
+    "commentStatusColumnVisible": true,
+    "commentWriteVerified": false,
+    "officialOpenApiSearchTermsWithNoResult": ["리뷰"]
+  },
+  "rawCustomerContentRecorded": false,
+  "passwordOrTokenRecorded": false
+}

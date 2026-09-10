@@ -1,0 +1,21 @@
+# 공통 변경 요청 qoo10-004
+
+- 목적: Review와 Buyer Chat을 QAPI 문의 완료 분모와 분리하고 실제 export/공식 계약이 생길 때만 수입한다.
+- 요청 채널: qoo10
+- S0 ID / 현재 인터페이스 버전: `S0-20260908-decaba426812a3ba` / capability inventory 현행
+- 수정할 공통 파일과 함수: `app/channel-readiness-data.ts`, CS capability inventory/coverage 표시, 추후 검증된 export import route
+- 현재 파일 SHA-256: `channel-readiness-data.ts=9d0bdb4dc824a5b024985f593c006fb2cfaa8734f53c8c027c473541d4eda5ac`; `capability-inventory.tsx=51bb943d42c3ca389a9e5965f186618e991005dcbc025812db661f554033cc97`
+- DB 객체: 없음. 실제 export 계약 확보 후 integration owner가 source-specific staging 객체를 배정.
+- 기존 동작: QAPI 공식 method 목록에 Review/Buyer Chat 전용 history·reply method가 없고, QSM Review 화면만 최대 30일 검색과 Excel 동작을 제공한다.
+- 문제를 재현하는 최소 입력: Review 30일 검색 결과 0행에서는 Excel이 파일을 만들지 않아 실제 column/encoding/ID 계약을 확인할 수 없다.
+- 원하는 동작: Review=`seller_ui_export_required`, Buyer Chat=`official_contract_unavailable`, 각각 별도 분모/gap 표시. 실제 Excel 표본을 확보한 뒤에만 parser fixture와 staging→ledger reconcile을 추가한다.
+- 전용 모듈 경로와 export: `lib/channels/cs/qoo10/review.ts`의 `qoo10ReviewCapability`
+- 기존/새 입력·출력 계약: 자동 API 수신으로 합산하지 않는다. export는 파일 hash, seller/shop, 검색 from/to, row count, stable review ID, import/reject counts를 모두 제공해야 완료 후보가 된다.
+- 최소 변경안: capability 데이터와 UI 문구만 먼저 반영. 비공개 web method 직접 호출·HTML scraping·추정 column parser는 금지.
+- 다른 채널 영향: 없음.
+- 상품/주문/배송 mutation 영향: 없음.
+- 재현·회귀 시험 명령: `node --import tsx --test tests/cs-qoo10-contracts.test.ts`
+- migration 선행/preimage/ACL 요구: 실제 export를 받기 전 없음. 이후 파일 원문은 Git 금지, staging ACL과 보존기간 별도 승인.
+- 우선순위: 추가기능
+- 통합 담당 처리 상태: 외부 자료/공식 계약 대기
+- 반영된 통합 소스 hash와 검증: 없음

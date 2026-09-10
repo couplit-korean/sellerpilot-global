@@ -1,0 +1,355 @@
+diff --git a/scripts/temu-operator-attestation-once.mjs b/scripts/temu-operator-attestation-once.mjs
+new file mode 100644
+index 0000000..01f1261
+--- /dev/null
++++ b/scripts/temu-operator-attestation-once.mjs
+@@ -0,0 +1,349 @@
++#!/usr/bin/env node
++import {
++  createHash,
++} from "node:crypto";
++import { execFileSync } from "node:child_process";
++import { readFile, realpath } from "node:fs/promises";
++import { homedir } from "node:os";
++import { dirname, resolve } from "node:path";
++import { fileURLToPath, pathToFileURL } from "node:url";
++
++import {
++  canonicalTemuCollectorAttestation,
++  temuCollectorAttestationSchema,
++} from "../lib/product-registration/temu/operator-app-observation.ts";
++export { temuCollectorUiContractV1 } from
++  "../lib/product-registration/temu/operator-ui-contract.ts";
++import { temuCollectorUiContractSha256, temuCollectorUiContractV1 } from
++  "../lib/product-registration/temu/operator-ui-contract.ts";
++
++const SECKEY_HELPER = resolve(dirname(fileURLToPath(import.meta.url)),
++  "temu-operator-seckey-helper.swift");
++const EXPECTED_PROFILE_NAME = "CHANGHEE";
++const EXPECTED_PROFILE_LOGIN = "k931103@gmail.com";
++const EXPECTED_CHROME_BINARY = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
++const TRUSTED_CHROME_ROOT = resolve(homedir(), "Library/Application Support/Google/Chrome");
++const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
++
++class CollectorError extends Error {
++  constructor(code) { super(code); this.name = "TemuOperatorCollectorError"; this.code = code; }
++}
++const fail = (code) => { throw new CollectorError(code); };
++
++function command(program, args, options = {}) {
++  return execFileSync(program, args, {
++    encoding: "utf8",
++    stdio: ["ignore", "pipe", "pipe"],
++    ...options,
++  }).trim();
++}
++
++export function initializeCollectorKeychain(dependencies = {}) {
++  const run = dependencies.command ?? command;
++  try {
++    const value = JSON.parse(run("/usr/bin/xcrun", ["--sdk", "macosx", "swift",
++      SECKEY_HELPER, dependencies.rotate ? "rotate" : "initialize"]));
++    if (!/^temu-p256-[a-f0-9]{20}$/u.test(value.keyId)
++      || typeof value.publicKeyPem !== "string"
++      || !value.publicKeyPem.startsWith("-----BEGIN PUBLIC KEY-----")) {
++      fail("COLLECTOR_SECKEY_INITIALIZE_INVALID");
++    }
++    return value;
++  } catch (error) {
++    if (error instanceof CollectorError) throw error;
++    fail("COLLECTOR_SECKEY_INITIALIZE_INVALID");
++  }
++}
++
++export function signCollectorEnvelope(keyId, canonicalBytes, dependencies = {}) {
++  if (!/^temu-(?:ed25519|p256)-[a-f0-9]{20}$/u.test(keyId)
++    || typeof canonicalBytes !== "string" || !canonicalBytes) fail("COLLECTOR_SECKEY_SIGN_INVALID");
++  const run = dependencies.command ?? command;
++  try {
++    const value = JSON.parse(run("/usr/bin/xcrun", ["--sdk", "macosx", "swift",
++      SECKEY_HELPER, "sign", keyId], { input: canonicalBytes, stdio: ["pipe", "pipe", "pipe"] }));
++    if (value.keyId !== keyId || !/^[A-Za-z0-9+/]{86}==$/u.test(value.signature)) {
++      fail("COLLECTOR_SECKEY_SIGN_INVALID");
++    }
++    return value.signature;
++  } catch (error) {
++    if (error instanceof CollectorError) throw error;
++    fail("COLLECTOR_SECKEY_SIGN_INVALID");
++  }
++}
++
++export function revokeCollectorKey(keyId, dependencies = {}) {
++  if (!/^temu-p256-[a-f0-9]{20}$/u.test(keyId)) fail("COLLECTOR_KEY_ID_INVALID");
++  const run = dependencies.command ?? command;
++  const value = JSON.parse(run("/usr/bin/xcrun", ["--sdk", "macosx", "swift",
++    SECKEY_HELPER, "revoke", keyId]));
++  if (value.ok !== true || value.revokedKeyId !== keyId) fail("COLLECTOR_SECKEY_REVOKE_INVALID");
++  return value;
++}
++
++function commandLineValue(argumentsValue, name) {
++  const prefix = `--${name}=`;
++  const matches = argumentsValue.filter((item) => item.startsWith(prefix));
++  return matches.length === 1 ? matches[0].slice(prefix.length) : null;
++}
++
++export function verifyChromeProfileBinding(input) {
++  const profileDirectory = commandLineValue(input.commandLineArguments, "profile-directory");
++  const userDataDirectory = commandLineValue(input.commandLineArguments, "user-data-dir")
++    ?? TRUSTED_CHROME_ROOT;
++  const profile = input.localState?.profile?.info_cache?.[profileDirectory ?? ""];
++  if (input.commandLineArguments[0] !== EXPECTED_CHROME_BINARY
++    || input.trustedUserDataDirectory !== TRUSTED_CHROME_ROOT
++    || userDataDirectory !== TRUSTED_CHROME_ROOT
++    || !profileDirectory || !/^Profile [1-9][0-9]*$/u.test(profileDirectory) || !profile
++    || profile.name !== EXPECTED_PROFILE_NAME
++    || profile.user_name !== EXPECTED_PROFILE_LOGIN) {
++    fail("CHROME_PROFILE_BINDING_MISMATCH");
++  }
++  return { profileDirectory, userDataDirectory };
++}
++
++function exactKeys(value, keys) {
++  return value && typeof value === "object" && !Array.isArray(value)
++    && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...keys].sort());
++}
++
++export function validateCollectorConfig(value) {
++  if (!exactKeys(value, ["contract", "sellerpilotOrigin", "pages"])
++    || JSON.stringify(value) !== JSON.stringify(temuCollectorUiContractV1)) {
++    fail("COLLECTOR_UI_CONTRACT_NOT_PINNED");
++  }
++  return structuredClone(temuCollectorUiContractV1);
++}
++
++export function validateLoopbackCdpUrl(value) {
++  const url = new URL(value);
++  if (url.protocol !== "http:" || !["127.0.0.1", "[::1]"].includes(url.hostname)
++    || !url.port || (url.pathname !== "/" && url.pathname !== "")
++    || url.username || url.password || url.search || url.hash) fail("COLLECTOR_CDP_NOT_LOOPBACK");
++  return url.origin;
++}
++
++async function exactText(page, selector, optional = false) {
++  if (!selector && optional) return "";
++  const locator = page.locator(selector);
++  if (await locator.count() !== 1) fail("COLLECTOR_SELECTOR_NOT_EXACT");
++  const value = (await locator.innerText()).trim();
++  if (!value && !optional) fail("COLLECTOR_OBSERVATION_EMPTY");
++  return value;
++}
++
++function exactEnum(value, values, code) {
++  const matches = values.filter((candidate) => candidate.toLowerCase() === value.toLowerCase());
++  if (matches.length !== 1) fail(code);
++  return matches[0].toLowerCase();
++}
++
++function verifiedBoolean(value) {
++  return exactEnum(value, ["verified", "yes", "enabled", "true"],
++    "COLLECTOR_BOOLEAN_NOT_VERIFIED") !== "";
++}
++
++async function exactPage(context, prefix) {
++  const matches = context.pages().filter((page) => page.url() === prefix);
++  if (matches.length !== 1) fail("COLLECTOR_TAB_NOT_EXACT");
++  const url = new URL(matches[0].url());
++  if (url.protocol !== "https:" || !(url.hostname === "temu.com" || url.hostname.endsWith(".temu.com"))) {
++    fail("COLLECTOR_TEMU_ORIGIN_INVALID");
++  }
++  return matches[0];
++}
++
++export async function observeTemuPartnerSession(context, config) {
++  const appPage = await exactPage(context, config.pages.app.urlPrefix);
++  const shippingPage = await exactPage(context, config.pages.shipping.urlPrefix);
++  const egressPage = await exactPage(context, config.pages.egress.urlPrefix);
++  const appName = await exactText(appPage, config.pages.app.appNameSelector);
++  if (appName !== "SellerPilot") fail("COLLECTOR_APP_ID_MISMATCH");
++  const appId = await exactText(appPage, config.pages.app.appIdSelector);
++  const accountRaw = await exactText(appPage, config.pages.app.accountSubjectSelector);
++  const partnerAccountSubject = `temu-account:sha256:${createHash("sha256")
++    .update(accountRaw, "utf8").digest("hex")}`;
++  const appState = exactEnum(await exactText(appPage, config.pages.app.appStateSelector),
++    ["active", "inactive", "unknown"], "COLLECTOR_APP_STATE_INVALID");
++  const complianceState = exactEnum(
++    await exactText(appPage, config.pages.app.complianceStateSelector),
++    ["approved", "rejected", "reviewing", "unknown"],
++    "COLLECTOR_COMPLIANCE_STATE_INVALID",
++  );
++  const rejectionReasonRaw = await exactText(appPage,
++    config.pages.app.rejectionReasonSelector, true);
++  return {
++    partnerAccountSubject,
++    appId,
++    appState,
++    complianceState,
++    rejectionReason: rejectionReasonRaw || null,
++    mallId: await exactText(appPage, config.pages.app.mallIdSelector),
++    regionId: await exactText(appPage, config.pages.app.regionIdSelector),
++    shipping: {
++      defaultTemplateId: await exactText(shippingPage,
++        config.pages.shipping.defaultTemplateIdSelector),
++      warehouseVerified: verifiedBoolean(await exactText(shippingPage,
++        config.pages.shipping.warehouseVerifiedSelector)),
++      feeRuleVerified: verifiedBoolean(await exactText(shippingPage,
++        config.pages.shipping.feeRuleVerifiedSelector)),
++      returnPolicyVerified: verifiedBoolean(await exactText(shippingPage,
++        config.pages.shipping.returnPolicyVerifiedSelector)),
++    },
++    egress: {
++      state: exactEnum(await exactText(egressPage, config.pages.egress.stateSelector),
++        ["static_ip_verified", "provider_confirmed_no_allowlist",
++          "blocked_until_stable_ip", "unknown"], "COLLECTOR_EGRESS_STATE_INVALID"),
++      verificationMethod: exactEnum(await exactText(egressPage,
++        config.pages.egress.verificationMethodSelector),
++        ["temu_allowlist_readback", "temu_provider_policy_readback",
++          "temu_global_endpoint_probe"], "COLLECTOR_EGRESS_METHOD_INVALID"),
++    },
++  };
++}
++
++async function sameOriginJson(page, origin, path, init = {}) {
++  if (new URL(page.url()).origin !== origin) fail("SELLERPILOT_SESSION_ORIGIN_MISMATCH");
++  return page.evaluate(async ({ pathValue, initValue }) => {
++    const response = await fetch(pathValue, {
++      ...initValue,
++      credentials: "same-origin",
++      redirect: "error",
++      headers: { "content-type": "application/json", ...(initValue.headers ?? {}) },
++    });
++    return { status: response.status, body: await response.json().catch(() => null) };
++  }, { pathValue: path, initValue: init });
++}
++
++export async function collectAndSubmitTemuAttestation(input, dependencies = {}) {
++  if (!UUID.test(input.productId) || !UUID.test(input.credentialId)) fail("COLLECTOR_SCOPE_INVALID");
++  const config = validateCollectorConfig(input.config);
++  const cdpUrl = validateLoopbackCdpUrl(input.cdpUrl);
++  const keyId = input.keyId;
++  if (!/^temu-(?:ed25519|p256)-[a-f0-9]{20}$/u.test(keyId ?? "")) fail("COLLECTOR_SECKEY_KEY_ID_REQUIRED");
++  const chromium = dependencies.chromium ?? (await import("playwright-core")).chromium;
++  const browser = dependencies.browser ?? await chromium.connectOverCDP(cdpUrl);
++  const contexts = browser.contexts();
++  if (contexts.length !== 1 || contexts[0].pages().length < 1) fail("CHROME_CONTEXT_NOT_EXACT");
++  const context = contexts[0];
++  const probePage = context.pages()[0];
++  const session = await context.newCDPSession(probePage);
++  const [commandLine, version] = await Promise.all([
++    session.send("Browser.getBrowserCommandLine"), session.send("Browser.getVersion"),
++  ]);
++  if (!String(version.product ?? "").startsWith("Chrome/")) fail("CHROME_BINARY_NOT_TRUSTED");
++  const userDataDirectory = commandLineValue(commandLine.arguments, "user-data-dir")
++    ?? resolve(homedir(), "Library/Application Support/Google/Chrome");
++  const trustedRoot = await (dependencies.realpath ?? realpath)(TRUSTED_CHROME_ROOT);
++  if (trustedRoot !== TRUSTED_CHROME_ROOT || userDataDirectory !== trustedRoot) {
++    fail("CHROME_PROFILE_ROOT_NOT_TRUSTED");
++  }
++  const localState = JSON.parse(await (dependencies.readFile ?? readFile)(
++    resolve(trustedRoot, "Local State"), "utf8"));
++  verifyChromeProfileBinding({ commandLineArguments: commandLine.arguments, localState,
++    trustedUserDataDirectory: trustedRoot });
++
++  const sellerpilotPages = context.pages().filter((page) => {
++    try { return new URL(page.url()).origin === config.sellerpilotOrigin; } catch { return false; }
++  });
++  if (sellerpilotPages.length !== 1) fail("SELLERPILOT_SESSION_TAB_NOT_EXACT");
++  const sellerpilotPage = sellerpilotPages[0];
++  const observed = await observeTemuPartnerSession(context, config);
++  const query = new URLSearchParams({ productId: input.productId,
++    credentialId: input.credentialId });
++  const challenge = await sameOriginJson(sellerpilotPage, config.sellerpilotOrigin,
++    `/api/admin/temu/operator-app-observation?${query}`);
++  if (challenge.status !== 200 || !challenge.body
++    || challenge.body.contract !== "temu_collector_challenge_v1"
++    || challenge.body.keyId !== keyId
++    || typeof challenge.body.receiptKeyId !== "string"
++    || !challenge.body.receiptKeyId
++    || challenge.body.expectedAppId !== observed.appId
++    || !UUID.test(String(challenge.body.ownerId ?? ""))) fail("COLLECTOR_CHALLENGE_INVALID");
++  const attestation = temuCollectorAttestationSchema.parse({
++    contract: "temu_operator_collector_attestation_v1",
++    uiContractSha256: temuCollectorUiContractSha256,
++    keyId,
++    receiptKeyId: challenge.body.receiptKeyId,
++    challengeId: challenge.body.challengeId,
++    nonce: challenge.body.nonce,
++    ownerId: challenge.body.ownerId,
++    productId: input.productId,
++    credentialId: input.credentialId,
++    credentialVersion: challenge.body.credentialVersion,
++    credentialFingerprint: challenge.body.credentialFingerprint,
++    credentialVaultSecretId: challenge.body.credentialVaultSecretId,
++    productRevisionFingerprint: challenge.body.productRevisionFingerprint,
++    ...observed,
++    observedAt: new Date().toISOString(),
++  });
++  const canonicalBytes = canonicalTemuCollectorAttestation(attestation);
++  const signature = dependencies.signEnvelope
++    ? await dependencies.signEnvelope(keyId, canonicalBytes)
++    : signCollectorEnvelope(keyId, canonicalBytes);
++  const posted = await sameOriginJson(sellerpilotPage, config.sellerpilotOrigin,
++    "/api/admin/temu/operator-app-observation", {
++      method: "POST", body: JSON.stringify({ attestation, signature }),
++    });
++  if (posted.status !== 200 || posted.body?.ok !== true
++    || posted.body.source !== "service_verified_signed_local_collector_v1"
++    || posted.body.verifiedSourceReadback !== true
++    || !UUID.test(String(posted.body.attestationId ?? ""))
++    || posted.body.appState !== attestation.appState
++    || posted.body.complianceState !== attestation.complianceState) {
++    fail("COLLECTOR_SIGNED_POST_READBACK_MISMATCH");
++  }
++  return {
++    ok: true,
++    source: posted.body.source,
++    attestationId: posted.body.attestationId,
++    status: posted.body.status,
++    appState: posted.body.appState,
++    complianceState: posted.body.complianceState,
++    verifiedSourceReadback: true,
++  };
++}
++
++function parseArgs(argv) {
++  const [commandName, ...values] = argv;
++  const options = {};
++  for (let index = 0; index < values.length; index += 2) {
++    const name = values[index];
++    const value = values[index + 1];
++    if (!name?.startsWith("--") || value === undefined) fail("COLLECTOR_ARGUMENT_INVALID");
++    options[name.slice(2)] = value;
++  }
++  return { commandName, options };
++}
++
++async function main() {
++  const { commandName, options } = parseArgs(process.argv.slice(2));
++  if (commandName === "init-key" || commandName === "rotate-key") {
++    process.stdout.write(`${JSON.stringify({ ok: true,
++      ...initializeCollectorKeychain({ rotate: commandName === "rotate-key" }) })}\n`);
++    return;
++  }
++  if (commandName === "revoke-key" && options["key-id"]
++    && Object.keys(options).length === 1) {
++    process.stdout.write(`${JSON.stringify(revokeCollectorKey(options["key-id"]))}\n`);
++    return;
++  }
++  if (commandName !== "collect"
++    || !options["product-id"] || !options["credential-id"] || !options["key-id"]
++    || !options.config || !options.cdp) fail("COLLECTOR_ARGUMENT_INVALID");
++  const config = JSON.parse(await readFile(resolve(options.config), "utf8"));
++  const result = await collectAndSubmitTemuAttestation({
++    productId: options["product-id"], credentialId: options["credential-id"],
++    config, cdpUrl: options.cdp, keyId: options["key-id"],
++  });
++  process.stdout.write(`${JSON.stringify(result)}\n`);
++}
++
++if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
++  main().catch((error) => {
++    const code = error instanceof CollectorError ? error.code : "COLLECTOR_FAILED";
++    process.stderr.write(`${JSON.stringify({ ok: false, code })}\n`);
++    process.exitCode = 1;
++  });
++}

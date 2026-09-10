@@ -112,7 +112,7 @@ test("Qoo10 listing.update still assembles a ledger payload when localization is
   assert.equal(draft.sellerpilotAssets.draftLocalization, "missing");
   assert.equal(draft.params.SecondSubCat, "300000536");
   assert.equal(draft.params.ItemTitle, "洋菓子の販売者確認済み商品");
-  assert.equal(draft.params.ShippingNo, "0");
+  assert.equal(draft.params.ShippingNo, "SERVER_MANAGED");
   assert.equal(draft.params.AvailableDateType, "0");
   assert.equal(draft.params.AvailableDateValue, "3");
   assert.equal(draft.params.ProductionPlaceType, "2");
