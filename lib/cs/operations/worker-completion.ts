@@ -726,12 +726,5 @@ export async function completeCsWorkerRetry(serviceClient: SupabaseClient, token
     }
   }
 
- return null;
-}
-"Temu detail retry completion RPC failed", { code });
-      return NextResponse.json({ message: workerRpcErrorMessage(503), code }, { status: 503 });
-    }
-  }
-
- return null;
+  return null;
 }
