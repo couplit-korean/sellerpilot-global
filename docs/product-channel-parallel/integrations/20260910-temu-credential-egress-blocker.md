@@ -94,3 +94,20 @@ launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.sellerpilot.channel-
 plist의 `WorkingDirectory`는 이미 `/Users/kimchangheemac/dev/sellerpilot-merge-line-20260910`(통합 트리)로 바꿔 뒀다. 이걸 다시 읽히면 Temu·Lazada 읽기 진단이 함께 처리된다.
 
 정리: 이번 시도에서 띄운 임시 워커가 남아 있으면 `pkill -f sellerpilot-worker-merged-20260910`로 종료한다(8085 포트).
+
+## 읽기 진단이 막힌 마지막 원인 (2026-09-10 22:35 KST)
+
+테무 자격증명은 등록됐고(운영 키 8/8), 워커도 통합 코드(`8fff9291`)로 정상 동작한다. 그런데 `연결 검사`는 계속 실패하고 작업은 `queued`로 남는다.
+
+- 일반 lane: `sellerpilot_private.serverless_gateway_job_allowed`가 **(coupang, temu) x (orders.list, inquiries.list, diagnostic.test)** 를 명시적으로 `false`로 막고 있다. 즉 테무 진단은 일반 lane으로 절대 받을 수 없다.
+- 고정 IP lane: `local_channel_executor_routes`의 제약이 `coupang`/`smartstore` 몇 개 작업만 허용했다. 그래서 운영 DB에서 제약을 넓히는 마이그레이션(`supabase/migrations/20260910230000_widen_local_executor_read_checks.sql`)을 만들고 적용했고, 테무 `diagnostic.test` route 행도 승인 형태로 넣었다.
+- 그럼에도 고정 IP lane claim은 계속 `401 {"message":"작업자 토큰이 유효하지 않습니다."}` 를 반환한다. 워커 토큰은 scope `gateway`, status `active`인데, lane의 hydration attestation이 이 토큰을 인정하지 않는다. 인스톨러가 발급하는 scope는 `ai`/`gateway`/`scheduler` 뿐이라 이 lane 전용 identity 발급 경로가 없다.
+
+### 결론
+
+읽기 진단 2건(테무·라자다)은 자격증명 문제가 아니라 **lane 설계 공백**이다. 둘 중 하나를 정해야 한다.
+
+1. `serverless_gateway_job_allowed`에서 (temu, lazada) x `diagnostic.test`를 고정 IP 워커가 받을 수 있게 허용한다(읽기 전용 검사만).
+2. 고정 IP lane이 gateway scope 토큰으로 읽기 전용 작업을 claim하도록 허용한다.
+
+두 방법 모두 앱 코드/DB 변경이므로, 다음 작업에서 1번(읽기 전용 한정)으로 좁혀 적용한다.
