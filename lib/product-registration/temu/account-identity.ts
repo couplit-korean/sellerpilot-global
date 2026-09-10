@@ -19,6 +19,15 @@ export const temuCreateRequiredApiScopes = [
   "temu.local.goods.sku.stock.query",
 ] as const;
 
+export const temuCategoryRequiredApiScopes = [
+  "bg.local.goods.category.recommend",
+] as const;
+
+export const temuCredentialReadinessRequiredApiScopes = [
+  ...temuCreateRequiredApiScopes,
+  ...temuCategoryRequiredApiScopes,
+] as const;
+
 export const temuSafeTestRequiredApiScopes = [
   ...temuCreateRequiredApiScopes,
   "bg.local.goods.sale.status.set",
@@ -186,6 +195,26 @@ export function readTemuAccountIdentityBinding(
     regionId,
     mallType,
     semiUniqueId: semiUniqueId.value,
+  };
+}
+
+export function resolveTemuCreateAccountTarget(input: {
+  payload: SecretPayload;
+  market: string;
+  requestedTargetId: string;
+}) {
+  const binding = readTemuAccountIdentityBinding(input.payload);
+  const market = input.market.trim().toUpperCase();
+  const requestedTargetId = input.requestedTargetId.trim();
+  if (!binding) throw new Error("TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED");
+  if (market !== "KR") throw new Error("TEMU_CREATE_ACCOUNT_MARKET_MISMATCH");
+  if (requestedTargetId && requestedTargetId !== binding.mallId) {
+    throw new Error("TEMU_CREATE_TARGET_MALL_MISMATCH");
+  }
+  return {
+    market,
+    targetId: binding.mallId,
+    regionId: binding.regionId,
   };
 }
 
@@ -361,7 +390,7 @@ export async function attestTemuCredentialIdentityForSave(input: {
     payload,
     response: remote.data,
     responseText: remote.text,
-    requiredScopes: temuCreateRequiredApiScopes,
+    requiredScopes: temuCredentialReadinessRequiredApiScopes,
     nowSeconds: input.nowSeconds,
   });
   if (!verification.ok) throw new Error(verification.verification);

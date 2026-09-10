@@ -3,6 +3,7 @@ import {
   readProviderAccountIdentity,
 } from "../../channels/provider-account-identity";
 import { channelMarket } from "../../channels/markets";
+import { activeProductionShopeeCredentialEnvelope } from "../../channels/shopee-target-lineage";
 import { shopeeShopTargetIds, type ChannelTargetRecord } from "../../channels/target-records";
 
 type JsonRecord = Record<string, unknown>;
@@ -11,14 +12,40 @@ export type CredentialBoundShopeeTarget = ChannelTargetRecord & {
   credentialId: string;
 };
 
+export type VersionBoundShopeeTarget = CredentialBoundShopeeTarget & {
+  credentialVersion: number;
+};
+
+export const shopeeSgCreateExecutionLineageArgument =
+  "sellerpilotShopeeSgCreateExecutionLineage" as const;
+export const shopeeSgCreateExecutionLineageContract =
+  "shopee_sg_create_execution_lineage_v1" as const;
+
+export type ShopeeSgCreateExecutionLineage = {
+  contract: typeof shopeeSgCreateExecutionLineageContract;
+  credentialId: string;
+  credentialVersion: number;
+  targetId: string;
+  marketCode: "SG";
+};
+
 export type ShopeeCredentialSnapshot = {
   credentialId: string;
   version: number;
   secretPayload: JsonRecord;
 };
 
+export function shopeeCredentialSnapshot(value: unknown): ShopeeCredentialSnapshot | null {
+  const row = record(value);
+  const envelope = row ? activeProductionShopeeCredentialEnvelope(row) : null;
+  const version = row?.credential_version;
+  return envelope && Number.isSafeInteger(version) && Number(version) > 0
+    ? { ...envelope, version: Number(version) }
+    : null;
+}
+
 export type ExactShopeeCachedTargetResult =
-  | { status: "ready"; target: CredentialBoundShopeeTarget }
+  | { status: "ready"; target: VersionBoundShopeeTarget }
   | {
     status: "blocked";
     reason:
@@ -31,6 +58,16 @@ export type ExactShopeeCachedTargetResult =
       | "SHOPEE_TARGET_CACHE_ACCESS_NOT_FRESH"
       | "SHOPEE_TARGET_CACHE_AMBIGUOUS"
       | "SHOPEE_TARGET_CACHE_INCOMPLETE";
+  };
+
+export type ExactShopeeListingPrepareResult =
+  | { status: "ready"; target: VersionBoundShopeeTarget }
+  | {
+    status: "blocked";
+    reason:
+      | "SHOPEE_LISTING_PREPARE_REQUEST_INVALID"
+      | "SHOPEE_LISTING_PREPARE_CREDENTIAL_CHANGED"
+      | Extract<ExactShopeeCachedTargetResult, { status: "blocked" }>["reason"];
   };
 
 function record(value: unknown): JsonRecord | null {
@@ -57,7 +94,7 @@ function credentialId(value: unknown) {
     : "";
 }
 
-function completeTarget(target: CredentialBoundShopeeTarget) {
+function completeTarget(target: VersionBoundShopeeTarget) {
   return Boolean(
     target.targetId.trim()
     && target.displayName.trim()
@@ -119,7 +156,11 @@ export function exactShopeeCachedTargetForActiveCredential(input: {
   if (!Number.isFinite(accessExpiresAt) || accessExpiresAt <= nowMs + accessBufferMs) {
     return { status: "blocked", reason: "SHOPEE_TARGET_CACHE_ACCESS_NOT_FRESH" };
   }
-  const target = { ...versionBound[0], credentialId: activeCredentialId };
+  const target: VersionBoundShopeeTarget = {
+    ...versionBound[0],
+    credentialId: activeCredentialId,
+    credentialVersion: activeCredentialVersion,
+  };
   if (!completeTarget(target)
       || target.locale !== market.locale
       || target.language !== market.language
@@ -127,6 +168,89 @@ export function exactShopeeCachedTargetForActiveCredential(input: {
     return { status: "blocked", reason: "SHOPEE_TARGET_CACHE_INCOMPLETE" };
   }
   return { status: "ready", target };
+}
+
+export function exactShopeeListingPrepareReadiness(input: {
+  requestedCredentialId: string;
+  requestedCredentialVersion: number;
+  requestedTargetId: string;
+  requestedMarketCode: string;
+  activeCredential: unknown;
+  activeSnapshot: ShopeeCredentialSnapshot | null;
+  cachedTargets: Array<ChannelTargetRecord & { credentialId?: string; credentialVersion?: number }>;
+  nowMs?: number;
+  accessBufferMs?: number;
+}): ExactShopeeListingPrepareResult {
+  const requestedCredentialId = credentialId(input.requestedCredentialId);
+  const requestedCredentialVersion = input.requestedCredentialVersion;
+  const requestedTargetId = numericId(input.requestedTargetId);
+  const requestedMarketCode = text(input.requestedMarketCode).toUpperCase();
+  const activeCredential = record(input.activeCredential);
+  const activeCredentialId = credentialId(activeCredential?.id);
+  const activeCredentialVersion = activeCredential?.version;
+  const activeSnapshot = input.activeSnapshot;
+  if (!requestedCredentialId
+      || !Number.isSafeInteger(requestedCredentialVersion)
+      || requestedCredentialVersion < 1
+      || !requestedTargetId
+      || requestedMarketCode !== "SG") {
+    return { status: "blocked", reason: "SHOPEE_LISTING_PREPARE_REQUEST_INVALID" };
+  }
+  if (!activeCredentialId
+      || activeCredentialId !== requestedCredentialId
+      || activeCredential?.channel !== "shopee"
+      || activeCredential?.environment !== "production"
+      || activeCredential?.status !== "active"
+      || activeCredentialVersion !== requestedCredentialVersion
+      || !activeSnapshot
+      || activeSnapshot.credentialId !== requestedCredentialId
+      || activeSnapshot.version !== requestedCredentialVersion) {
+    return { status: "blocked", reason: "SHOPEE_LISTING_PREPARE_CREDENTIAL_CHANGED" };
+  }
+  return exactShopeeCachedTargetForActiveCredential({
+    cachedTargets: input.cachedTargets,
+    activeCredentialId: requestedCredentialId,
+    activeCredentialVersion: requestedCredentialVersion,
+    activeCredentialSecret: activeSnapshot.secretPayload,
+    targetId: requestedTargetId,
+    marketCode: requestedMarketCode,
+    nowMs: input.nowMs,
+    accessBufferMs: input.accessBufferMs,
+  });
+}
+
+export function shopeeSgCreateExecutionLineage(
+  readiness: Extract<ExactShopeeListingPrepareResult, { status: "ready" }>,
+): ShopeeSgCreateExecutionLineage {
+  const target = readiness.target;
+  const boundCredentialId = credentialId(target.credentialId);
+  const boundTargetId = numericId(target.targetId);
+  if (!boundCredentialId
+      || !Number.isSafeInteger(target.credentialVersion)
+      || target.credentialVersion < 1
+      || !boundTargetId
+      || target.marketCode.trim().toUpperCase() !== "SG") {
+    throw new Error("SHOPEE_SG_CREATE_EXECUTION_LINEAGE_INVALID");
+  }
+  return {
+    contract: shopeeSgCreateExecutionLineageContract,
+    credentialId: boundCredentialId,
+    credentialVersion: target.credentialVersion,
+    targetId: boundTargetId,
+    marketCode: "SG",
+  };
+}
+
+export function bindShopeeSgCreateExecutionLineage(
+  argumentsValue: JsonRecord,
+  lineage: ShopeeSgCreateExecutionLineage,
+) {
+  const next = structuredClone(argumentsValue);
+  delete next[shopeeSgCreateExecutionLineageArgument];
+  return {
+    ...next,
+    [shopeeSgCreateExecutionLineageArgument]: structuredClone(lineage),
+  };
 }
 
 function profileValue(payload: unknown, ...keys: string[]) {
