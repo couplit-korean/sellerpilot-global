@@ -1905,6 +1905,39 @@ export async function ensureEbayAccessToken(
   return refresh;
 }
 
+export async function elevenstSellerXmlTransport(input: {
+  payload: SecretPayload;
+  method: "GET" | "POST" | "PUT";
+  path: string;
+  body?: string;
+}) {
+  assertProviderReadOnlyTransport(input.method);
+  const apiKey = textValue(input.payload, "api_key");
+  if (!apiKey) throw new Error("ELEVENST_CREDENTIALS_MISSING");
+  if (!input.path.startsWith("/rest/")) throw new Error("ELEVENST_PATH_INVALID");
+  const response = await fetch(`https://api.11st.co.kr${input.path}`, {
+    method: input.method,
+    cache: "no-store",
+    signal: boundedChannelRequestSignal(20_000),
+    headers: {
+      accept: "application/xml,text/xml;q=0.9,*/*;q=0.8",
+      "content-type": "text/xml;charset=UTF-8",
+      openapikey: apiKey,
+      "user-agent": "SellerPilot-11st-SellerAPI-Connector/1.0",
+    },
+    body: input.body,
+  });
+  const bytes = await response.arrayBuffer();
+  let xml = "";
+  try {
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    xml = new TextDecoder(/charset\s*=\s*["']?utf-?8/.test(contentType) ? "utf-8" : "euc-kr").decode(bytes);
+  } catch {
+    xml = new TextDecoder().decode(bytes);
+  }
+  return { response, xml, bytes };
+}
+
 export async function elevenstSellerXmlRequest(input: {
   payload: SecretPayload;
   method: "GET" | "POST" | "PUT";
