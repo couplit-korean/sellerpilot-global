@@ -112,3 +112,19 @@ macOS Gatekeeper가 Next.js 네이티브 바이너리를 차단한다. 실제로
   - 상품 등록 센터: 3단계 워크플로 렌더
   - CS 통합함: 정상 렌더
   - 즉 CS와 상품이 **한 앱**에서 함께 동작한다. 별도 프로젝트로 분리하지 않았다.
+
+## DB 정리 실측 (추가 조치 불필요 판정)
+
+새 상품 증거 테이블은 삭제 기반 prune을 **하면 안 되게** 설계돼 있다.
+
+- `coupang_create_transmissions`: `id` PK + `unique (attempt_id)`
+- `coupang_create_provider_body_seals`: `id` PK + `unique (job_id)`
+- `coupang_create_reconciliation_receipts`: `source_job_id` PK + `verifier_job_id unique`
+- 위 테이블들에는 `before update or delete` **불변 트리거**가 걸려 있어 수정·삭제가 차단된다(감사 증거)
+
+즉 재시도해도 행이 중복 누적되지 않고(고유 제약), 증거는 불변이라 삭제 prune 대상이 아니다.
+운영 DB에서 확인한 기존 정리 경로:
+- `public.sellerpilot_service_prune_runtime_noise(timestamptz)` → 있음
+- `public.sellerpilot_service_reap_stale_channel_gateway_jobs(integer)` → 있음
+
+따라서 상품 기능이 DB를 무한히 키우는 경로는 고유 제약으로 막혀 있고, 실제 정리는 위 두 RPC(런타임 노이즈·죽은 게이트웨이 job)로 수행한다. 추가 prune 마이그레이션은 만들지 않는다. 남은 조치는 이 두 RPC가 상품 job 종류까지 포함하는지 주기 실행에서 확인하는 것이다.
