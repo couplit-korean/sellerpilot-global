@@ -149,7 +149,8 @@ revert 후 `/.well-known/assetlinks.json`은 404가 되고, 기존 앱은 주소
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | Vercel Production 배포 확인 | **완료** | `/.well-known/assetlinks.json` 200 · 지문 일치 |
-| DB runtime release SHA 대조 | 미확인 | 배포 SHA가 바뀌므로 기존 attested release와 대조 필요 |
+| 서명 키 오프사이트 백업 | **미완** | 저장소 밖 2차 사본만 생성(같은 D드라이브) |
+| DB runtime release SHA 대조 | 미확인 | 11장 참조. 관리자 인증·팀 Vercel 권한 필요 |
 | 웹 푸시 VAPID 키 설정 | 미확인 | 미설정 시 앱에 "푸시 키 설정 대기" 상태로 표시 |
 | 실기기 설치 검증 | 미실시 | 이 PC에 Android 기기 미연결 |
 | `integration-aside` 반영 여부 | 보류 | 운영 배포는 `main` 기준으로만 했다 |
@@ -189,3 +190,54 @@ git push couplit main
 # 4) 배포 확인
 Invoke-WebRequest -Uri "https://sellerpilot-global.vercel.app/.well-known/assetlinks.json"
 ```
+
+---
+
+## 11. 재검증 (2026-09-10 21:04 KST)
+
+기록된 값을 산출물에서 다시 추출해 대조했다. **TWA 사슬(서명 지문 → APK → assetlinks)은 전부 일치**한다.
+
+| 검증 항목 | 방법 | 결과 |
+|---|---|---|
+| 키스토어 SHA-256 | `keytool -list -v -alias sellerpilot` | `EE:EE:23:C2:B5:B5:...:78:95:41` → 3장 값과 일치 |
+| APK 서명 지문 | `apksigner verify --print-certs` | `eeee23c2b5b5...de2789541` → 동일 지문 |
+| 배포 APK 해시 | `Get-FileHash -Algorithm SHA256` | `E6354EDD41ACA962...8EC1839D7A` |
+| `/.well-known/assetlinks.json` | HTTPS GET | **200 · `application/json` · 지문 일치** |
+| TWA 필수 자산 | `/`, manifest, `sw.js`, 아이콘 3종, `start_url` | 전부 **200** |
+
+TWA 필수 자산이 모두 200이라는 것은 이후 8채널·Temu 배포가 이 설치 경로를
+깨뜨리지 않았다는 뜻이다. `assetlinks.json`은 여전히 운영 응답에 살아 있다.
+
+### 정정 — 이 문서가 기록한 "최종 SHA"는 더 이상 최신이 아니다
+
+`cba26642`가 검증 시점의 HEAD였지만, 이후 **다른 작업** 커밋이 같은 `main`에 올라갔다.
+이 문서의 배포 사실 자체는 유효하고, 바뀐 것은 "무엇이 HEAD인가"뿐이다.
+
+### 경고 — `SELLERPILOT_RELEASE_SHA` 결합
+
+`lib/internal-scheduler-auth.ts`의 `resolveRuntimeReleaseIdentity()`는
+`SELLERPILOT_RELEASE_SHA`와 `VERCEL_GIT_COMMIT_SHA`가 다르면 `conflict`를 반환한다.
+`docs/현재상태.md`에 "드레인이 죽어 있던 이유"로 같은 사례가 기록돼 있다.
+
+`main`이 전진했으므로 Vercel Production에서 두 값을 같은 SHA로 맞춰야 한다.
+**이 대조는 팀 `couplitofficial-4206` Vercel 접근이 필요해 이 PC에서 불가능했다**
+(`vercel whoami` = `esk931103-4382`, 해당 scope 조회 시 "scope does not exist").
+
+### 서명 키 2차 사본
+
+```
+D:\AndroidWebDev\Backups\sellerpilot-signing-key-20260910-210211.zip   (4,609 B)
+  ├ sellerpilot-release.keystore   (4,402 B)
+  └ password.txt                   (28 B)
+```
+
+압축 해제 후 해시를 대조해 원본과 완전 일치함을 확인했다. 다만 같은 D드라이브이므로
+**2차 사본**일 뿐이며, USB·클라우드 등 **다른 물리 매체에 한 부 더** 옮겨야 실제 백업이 된다.
+키스토어와 비밀번호는 이 저장소에 커밋하지 않았다.
+
+### 재검증에서 하지 못한 것
+
+- 실기기 설치: `adb devices` 결과 기기 0대
+- Vercel 배포 SHA·환경변수 조회: 팀 접근 권한 없음
+- DB runtime release SHA 대조: `/api/admin/serverless-runtime-release` 관리자 인증 필요
+- 웹 푸시 VAPID 설정 확인: `/api/admin/push-subscriptions` GET 관리자 인증 필요
