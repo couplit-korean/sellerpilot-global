@@ -373,6 +373,8 @@ export async function attestTemuCredentialIdentityForSave(input: {
     type: "bg.open.accesstoken.info.get",
   });
   if (!remote.response.ok) {
+    console.error("[temu-identity] read not ok", remote.response.status,
+      Object.keys(remote.data ?? {}).join(","));
     throw new Error("TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED");
   }
   const identity = normalizeTemuAccessTokenIdentity({
@@ -380,6 +382,20 @@ export async function attestTemuCredentialIdentityForSave(input: {
     responseText: remote.text,
   });
   if (!identity) {
+    const result = (remote.data?.result ?? {}) as Record<string, unknown>;
+    console.error("[temu-identity] normalize failed",
+      remote.response.status,
+      JSON.stringify({
+        keys: Object.keys(remote.data ?? {}).join(","),
+        success: remote.data?.success === true,
+        mallId: Boolean(result.mallId),
+        regionId: Boolean(result.regionId),
+        mallType: Boolean(result.mallType),
+        expiredTime: Boolean(result.expiredTime),
+        scopes: Array.isArray(result.apiScopeList)
+          ? result.apiScopeList.length
+          : "none",
+      }));
     throw new Error("TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED");
   }
   const payload: SecretPayload = {
