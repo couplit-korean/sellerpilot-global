@@ -335,7 +335,7 @@ function normalizeElevenst(data: Record<string, unknown>) {
   });
 }
 
-function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number) {
+function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer, referenceTimeMs: number): BaseNormalizedChannelInquiry[] {
   const response = object(data.response);
   const context = object(data.sellerpilotProviderContext);
   if (context.kind === "return_refund") {
@@ -349,7 +349,7 @@ function normalizeShopee(data: Record<string, unknown>, iso: TimestampNormalizer
       customerName: text(object(response.user).username, "Shopee 고객"),
       subject: `Shopee 반품·환불 · ${returnSn}`,
       message: originalMessageBody(response.text_reason) || `Shopee 반품·환불 요청 · ${text(response.reason)}`,
-      status: terminal.has(status) ? "resolved" : "waiting",
+      status: terminal.has(status) ? "resolved" as const : "waiting" as const,
       priority: 2,
       receivedAt: iso(response.create_time),
       remoteMessageId: `${shopId}:${returnSn}:${createHash("sha256").update(status + String(referenceTimeMs)).digest("hex")}`,
