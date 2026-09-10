@@ -176,3 +176,102 @@ $lazada_oauth_claim_guard$;
 -- claimant carries the Lazada OAuth fence logic, and pinning Lazada to the Mac
 -- gateway made a queued authorization unclaimable. Routing is therefore left
 -- unchanged for Lazada.
+
+-- The claim-side blocker returns null while either fenced legacy failure is
+-- still queued in reconciliation_required, so the serverless claimant skips
+-- the freshly authorized exchange. Exclude exactly those two rows here too.
+do $lazada_oauth_claim_blocker$
+declare
+  v_def text;
+  v_marker text :=
+    '          and other_oauth.id <> oauth.id' || chr(10) ||
+    '          and other_oauth.id is distinct from' || chr(10) ||
+    '                sellerpilot_private.safe_lazada_oauth_refresh_blocker(oauth.id)';
+  v_replacement text :=
+    '          and other_oauth.id <> oauth.id' || chr(10) ||
+    '          and other_oauth.id is distinct from' || chr(10) ||
+    '                sellerpilot_private.safe_lazada_oauth_refresh_blocker(oauth.id)' || chr(10) ||
+    '          and other_oauth.id not in (' || chr(10) ||
+    '            ''faee01e1-2d68-4f99-951c-15684822fc43''::uuid,' || chr(10) ||
+    '            ''d917f08b-1283-456e-930a-6042ec0b24a7''::uuid' || chr(10) ||
+    '          )';
+  v_already_patched text := 'and other_oauth.id not in (';
+  v_count integer;
+begin
+  select pg_catalog.pg_get_functiondef(procedure.oid)
+    into v_def
+    from pg_catalog.pg_proc procedure
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = procedure.pronamespace
+   where namespace.nspname = 'sellerpilot_private'
+     and procedure.proname = 'safe_lazada_oauth_claim_blocker';
+
+  if v_def is null then
+    raise exception 'Lazada OAuth claim blocker not found' using errcode = '55000';
+  end if;
+  if pg_catalog.strpos(v_def, v_already_patched) > 0 then
+    return;
+  end if;
+
+  v_count := (
+    pg_catalog.length(v_def)
+    - pg_catalog.length(pg_catalog.replace(v_def, v_marker, ''))
+  ) / pg_catalog.length(v_marker);
+  if v_count <> 1 then
+    raise exception 'Lazada OAuth claim blocker preimage mismatch (%)', v_count
+      using errcode = '55000';
+  end if;
+
+  v_def := pg_catalog.replace(v_def, v_marker, v_replacement);
+  execute v_def;
+end;
+$lazada_oauth_claim_blocker$;
+
+-- The source-identity check accepted only one of the two fenced legacy rows as
+-- an eligible blocker, so the fresh authorization resolved to the other row and
+-- was rejected with "source identity required". Both rows describe the same
+-- legacy unattested credential, so both are accepted.
+do $lazada_oauth_source_identity$
+declare
+  v_def text;
+  v_marker text :=
+    '           p_blocker_job_id =' || chr(10) ||
+    '             ''faee01e1-2d68-4f99-951c-15684822fc43''::uuid';
+  v_replacement text :=
+    '           p_blocker_job_id in (' || chr(10) ||
+    '             ''faee01e1-2d68-4f99-951c-15684822fc43''::uuid,' || chr(10) ||
+    '             ''d917f08b-1283-456e-930a-6042ec0b24a7''::uuid' || chr(10) ||
+    '           )';
+  v_already_patched text :=
+    '           p_blocker_job_id in (' || chr(10) ||
+    '             ''faee01e1-2d68-4f99-951c-15684822fc43''::uuid,';
+  v_count integer;
+begin
+  select pg_catalog.pg_get_functiondef(procedure.oid)
+    into v_def
+    from pg_catalog.pg_proc procedure
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = procedure.pronamespace
+   where namespace.nspname = 'sellerpilot_private'
+     and procedure.proname = 'safe_lazada_oauth_reauthorization_source_identity';
+
+  if v_def is null then
+    raise exception 'Lazada source identity guard not found' using errcode = '55000';
+  end if;
+  if pg_catalog.strpos(v_def, v_already_patched) > 0 then
+    return;
+  end if;
+
+  v_count := (
+    pg_catalog.length(v_def)
+    - pg_catalog.length(pg_catalog.replace(v_def, v_marker, ''))
+  ) / pg_catalog.length(v_marker);
+  if v_count <> 1 then
+    raise exception 'Lazada source identity preimage mismatch (%)', v_count
+      using errcode = '55000';
+  end if;
+
+  v_def := pg_catalog.replace(v_def, v_marker, v_replacement);
+  execute v_def;
+end;
+$lazada_oauth_source_identity$;
