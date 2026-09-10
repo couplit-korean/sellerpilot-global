@@ -88,7 +88,7 @@ function relativeTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(new Date(value));
 }
 
-function channelLiveCaption(channelKey: string, state: { status?: string | null; last_succeeded_at?: string | null; last_error?: string | null } | null) {
+function channelLiveCaption(channelKey: string, state: { status?: string | null; last_succeeded_at?: string | null; last_error?: string | null } | null | undefined) {
   if (channelKey === "lazada" && /permission/i.test(state?.last_error ?? "")) {
     return "Lazada IM Open API 권한이 없습니다. 셀러센터 Chat은 별도입니다.";
   }
