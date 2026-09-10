@@ -186,36 +186,22 @@ test("11st periodic windows keep stable dedupe keys while advancing provider dat
   assert.notDeepEqual(first.map((request) => request.arguments), second.map((request) => request.arguments));
 });
 
-test("Qoo10 unanswered inquiry sync uses the current CSCenter parameter names", () => {
-  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [{
-    params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" },
-  }]);
+test("Qoo10 inquiry sync covers unanswered, in-progress, and completed CSCenter statuses", () => {
+  assert.deepEqual(inquirySyncArguments("qoo10", new Date("2026-08-20T07:00:00.000Z")), [
+    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" } },
+    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S2" } },
+    { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S3" } },
+  ]);
 });
 
 test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {
-  assert.deepEqual(inquirySyncArguments("smartstore", new Date("2026-08-20T07:00:00.000Z")), [{
-    kind: "product",
-    query: {
-      fromDate: "2026-08-14T07:00:00.000Z",
-      toDate: "2026-08-20T07:00:00.000Z",
-      answered: false,
-      page: 1,
-      size: 100,
-    },
-  }, {
-    kind: "customer",
-    query: {
-      startSearchDate: "2026-08-14",
-      endSearchDate: "2026-08-20",
-      answered: false,
-      page: 1,
-      size: 200,
-    },
-  }]);
-  assert.deepEqual(
-    inquirySyncRequests("smartstore", new Date("2026-08-20T07:00:00.000Z")).map((request) => request.periodicKey),
-    ["inquiries:product", "inquiries:customer"],
-  );
+  const requests = inquirySyncRequests("smartstore", new Date("2026-08-20T07:00:00.000Z"));
+  assert.deepEqual(requests.map((request) => request.periodicKey), [
+    "inquiries:product:unanswered",
+    "inquiries:product:answered",
+    "inquiries:customer:unanswered",
+    "inquiries:customer:answered",
+  ]);
 });
 
 test("Coupang inquiry sync separates product, unanswered call-center, and transferred call-center queues", () => {

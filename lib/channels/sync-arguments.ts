@@ -153,34 +153,33 @@ export function inquirySyncArguments(
   const toDate = koreaCalendarDate(now);
   if (channel === "coupang") return [
     { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } },
+    { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "ALL", pageNum: 1, pageSize: 50 } },
     { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 } },
     { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 } },
   ];
   if (channel === "smartstore") return [
     {
       kind: "product",
-      query: {
-        fromDate: from.toISOString(),
-        toDate: now.toISOString(),
-        answered: false,
-        page: 1,
-        size: 100,
-      },
+      query: { fromDate: from.toISOString(), toDate: now.toISOString(), answered: false, page: 1, size: 100 },
+    },
+    {
+      kind: "product",
+      query: { fromDate: from.toISOString(), toDate: now.toISOString(), answered: true, page: 1, size: 100 },
     },
     {
       kind: "customer",
-      query: {
-        startSearchDate: fromDate,
-        endSearchDate: toDate,
-        answered: false,
-        page: 1,
-        size: 200,
-      },
+      query: { startSearchDate: fromDate, endSearchDate: toDate, answered: false, page: 1, size: 200 },
+    },
+    {
+      kind: "customer",
+      query: { startSearchDate: fromDate, endSearchDate: toDate, answered: true, page: 1, size: 200 },
     },
   ];
-  if (channel === "qoo10") return [{
-    params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: "S1" },
-  }];
+  if (channel === "qoo10") {
+    return (["S1", "S2", "S3"] as const).map((proc_status) => ({
+      params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status },
+    }));
+  }
   if (channel === "temu") {
     const temuFrom = new Date(now.getTime() - 14 * 86_400_000);
     return [{
@@ -206,7 +205,10 @@ function inquiryRequestKey(channel: ActiveChannelKey, argumentsValue: Record<str
     const status = String(query.answeredType ?? query.partnerCounselingStatus ?? "all").trim().toLowerCase();
     return `inquiries:${kind || "product"}:${status || "all"}`;
   }
-  if (channel === "smartstore") return `inquiries:${kind || "product"}`;
+  if (channel === "smartstore") {
+    const answered = query.answered === true ? "answered" : "unanswered";
+    return `inquiries:${kind || "product"}:${answered}`;
+  }
   return `inquiries:${index}`;
 }
 
