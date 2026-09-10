@@ -115,3 +115,64 @@ begin
   execute v_def;
 end;
 $lazada_oauth_guard_dedicated$;
+
+-- The Mac gateway claimant is fenced by the same two rows, so the freshly
+-- queued authorization exchange never runs. Allow exactly the Lazada
+-- oauth.exchange candidate to be claimed while only those two preimage-fixed
+-- failures remain unresolved. Ordinal Lazada reads and writes stay fenced.
+do $lazada_oauth_claim_guard$
+declare
+  v_def text;
+  v_marker text :=
+    '          and (' || chr(10) ||
+    '            unresolved.credential_refresh_in_flight' || chr(10) ||
+    '            or unresolved.credential_refresh_recovery_vault_id is not null';
+  v_replacement text :=
+    '          and not (' || chr(10) ||
+    '            j.channel = ''lazada''' || chr(10) ||
+    '            and j.operation = ''oauth.exchange''' || chr(10) ||
+    '            and unresolved.id in (' || chr(10) ||
+    '              ''faee01e1-2d68-4f99-951c-15684822fc43''::uuid,' || chr(10) ||
+    '              ''d917f08b-1283-456e-930a-6042ec0b24a7''::uuid' || chr(10) ||
+    '            )' || chr(10) ||
+    '          )' || chr(10) ||
+    '          and (' || chr(10) ||
+    '            unresolved.credential_refresh_in_flight' || chr(10) ||
+    '            or unresolved.credential_refresh_recovery_vault_id is not null';
+  v_already_patched text := 'and j.operation = ''oauth.exchange''' || chr(10) || '            and unresolved.id in (';
+  v_count integer;
+begin
+  select pg_catalog.pg_get_functiondef(procedure.oid)
+    into v_def
+    from pg_catalog.pg_proc procedure
+    join pg_catalog.pg_namespace namespace
+      on namespace.oid = procedure.pronamespace
+   where namespace.nspname = 'public'
+     and procedure.proname = 'sellerpilot_11820_claim_gateway_unsafe';
+
+  if v_def is null then
+    raise exception 'Lazada local claim guard not found' using errcode = '55000';
+  end if;
+
+  if pg_catalog.strpos(v_def, v_already_patched) > 0 then
+    return;
+  end if;
+
+  v_count := (
+    pg_catalog.length(v_def)
+    - pg_catalog.length(pg_catalog.replace(v_def, v_marker, ''))
+  ) / pg_catalog.length(v_marker);
+  if v_count <> 1 then
+    raise exception 'Lazada local claim guard preimage mismatch (%)', v_count
+      using errcode = '55000';
+  end if;
+
+  v_def := pg_catalog.replace(v_def, v_marker, v_replacement);
+  execute v_def;
+end;
+$lazada_oauth_claim_guard$;
+
+-- Lazada authorization stays on the serverless claim path: the serverless
+-- claimant carries the Lazada OAuth fence logic, and pinning Lazada to the Mac
+-- gateway made a queued authorization unclaimable. Routing is therefore left
+-- unchanged for Lazada.
