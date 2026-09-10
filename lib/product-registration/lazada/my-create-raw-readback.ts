@@ -409,7 +409,7 @@ export function assertLazadaMyCreateGetRecoveryReceipt(input: {
   }
   if (text(receipt.path) === "/products/get"
       || text(receipt.method) === "POST"
-      || receipt.receiptKind === "post_create"
+      || String(receipt.receiptKind) === "post_create"
       || "sku_list" in receipt
       || "createResponse" in receipt
       || "synthesizedCreateResponse" in receipt) {

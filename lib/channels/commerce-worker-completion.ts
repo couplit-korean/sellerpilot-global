@@ -322,7 +322,10 @@ export async function completeCommerceWorker({ serviceClient, tokenHash, job, co
     }
     try {
       const completion = await completeSmartstoreListingCreate({
-        rpc: (name, argumentsValue) => serviceClient.rpc(name, argumentsValue),
+        rpc: async (name, argumentsValue) => {
+          const result = await serviceClient.rpc(name, argumentsValue);
+          return { data: result.data, error: result.error };
+        },
         tokenHash,
         jobId: parsed.data.jobId,
         claimToken: parsed.data.claimToken,

@@ -57,7 +57,10 @@ export async function POST(request: Request) {
   const tokenHash = createHash("sha256").update(workerToken).digest("hex");
   try {
     const completion = await completeSmartstoreListingCreate({
-      rpc: (name, argumentsValue) => serviceClient.rpc(name, argumentsValue),
+      rpc: async (name, argumentsValue) => {
+        const result = await serviceClient.rpc(name, argumentsValue);
+        return { data: result.data, error: result.error };
+      },
       tokenHash,
       jobId: parsed.data.jobId,
       claimToken: parsed.data.claimToken,
@@ -72,7 +75,11 @@ export async function POST(request: Request) {
     const unavailable = error instanceof Error
       && error.message === "SMARTSTORE_CREATE_COMPLETION_UNAVAILABLE";
     return NextResponse.json(
-      { message: workerRpcErrorMessage(unavailable ? 503 : 409) },
+      {
+        message: unavailable
+          ? workerRpcErrorMessage(503)
+          : "스마트스토어 등록 완료를 저장하지 못했습니다.",
+      },
       { status: unavailable ? 503 : 409 },
     );
   }

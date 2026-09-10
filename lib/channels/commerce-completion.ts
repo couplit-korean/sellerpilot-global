@@ -250,8 +250,8 @@ export async function completeCommerceClaim(
       result: parsed.data.result,
       argumentsValue: lazadaGatewayCreateArgumentsFromJobRequest(job.request),
       jobId: job.id,
-      listingId: typeof (job as { listing_id?: unknown }).listing_id === "string"
-        ? (job as { listing_id: string }).listing_id
+      listingId: typeof (job as unknown as { listing_id?: unknown }).listing_id === "string"
+        ? (job as unknown as { listing_id: string }).listing_id
         : undefined,
     });
     if (!gated.ok) return "unavailable";

@@ -13,6 +13,7 @@ export const runtime = "nodejs";
 
 const requestSchema = z.object({
   credentialId: z.string().uuid().optional(),
+  credentialVersion: z.number().int().positive().optional(),
   channel: z.enum(["qoo10", "coupang", "elevenst", "smartstore", "temu", "tracx"]),
   environment: z.enum(["sandbox", "production"]),
   secretPayload: z.record(z.string(), z.string().trim().max(8_000)),

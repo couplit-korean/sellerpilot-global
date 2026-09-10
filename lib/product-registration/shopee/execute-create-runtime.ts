@@ -476,7 +476,9 @@ export async function executeShopeeSgCreateRuntime(
             signal,
             {
               assertLeaseHealthy: hooks.assertLeaseHealthy,
-              beginProviderMutation: () => beginStage(stage),
+              beginProviderMutation: async () => {
+                await beginStage(stage);
+              },
             },
             scene,
           );
