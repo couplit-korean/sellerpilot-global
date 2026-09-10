@@ -159,7 +159,10 @@ export function elevenstCreateRecoveryWorkerRpc(
         return { data: null, error: { code: "invalid_claim" } };
       }
       if (response.status === 401) return { data: null, error: { code: "42501" } };
-      return { data: {}, error: null };
+      // A slow or failing recovery endpoint is a transport problem, not a
+      // malformed claim. Returning an error keeps the optional recovery lane
+      // idle so ordinary gateway claims are not skipped for minutes.
+      return { data: null, error: { code: `http_${response.status}` } };
     }
     if (name === ELEVENST_CREATE_RECOVERY_FINISH_RPC) {
       const response = await request(ELEVENST_CREATE_RECOVERY_WORKER_PATH, {
