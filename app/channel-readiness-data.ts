@@ -308,16 +308,22 @@ function liveCheckTimestamp(value: string | null) {
 
 function liveCredentialProjection(metric: ChannelReadinessLiveMetric) {
   const checkedAt = liveCheckTimestamp(metric.credentialLastCheckedAt);
+  const integration = channelIntegrationStatus({
+    credentialStatus: metric.credentialStatus,
+    credentialLastCheckStatus: metric.credentialLastCheckStatus,
+    credentialLastCheckedAt: metric.credentialLastCheckedAt,
+  });
   const passed = metric.credentialStatus === "active" && metric.credentialLastCheckStatus === "passed";
   if (passed) {
+    const freshness = integration.tone === "stale" ? " · 재확인 필요" : "";
     return {
       state: "verified" as const,
       apiReadPassed: true,
-      appState: `운영 DB 실시간 · Vault 키 등록 · API 읽기 진단 통과 · ${checkedAt}`,
-      evidence: `현재 운영 Vault 자격증명의 읽기 진단 통과 · ${checkedAt}`,
-      summary: `현재 운영 DB에서 유효한 자격증명과 API 읽기 진단 통과를 확인했습니다. 읽기 진단 통과는 상품 발행이나 CS 전체 연결과 같지 않습니다. 마지막 콘솔 스냅샷과 별개인 실시간 운영 근거입니다.`,
+      appState: `운영 DB 실시간 · Vault 키 등록 · API 읽기 진단 통과${freshness} · ${checkedAt}`,
+      evidence: `현재 운영 Vault 자격증명의 읽기 진단 통과${freshness} · ${checkedAt}`,
+      summary: `현재 운영 DB에서 유효한 자격증명과 API 읽기 진단 통과를 확인했습니다. 읽기 진단 통과는 상품 발행이나 CS 전체 연결과 같지 않습니다.${integration.tone === "stale" ? ` 마지막 검사가 ${integration.ageText}이므로 지금 상태를 다시 확인해야 합니다.` : ""} 마지막 콘솔 스냅샷과 별개인 실시간 운영 근거입니다.`,
       blocker: null,
-      nextAction: "현재 읽기 진단 유지",
+      nextAction: integration.tone === "stale" ? "읽기 진단 재확인" : "현재 읽기 진단 유지",
     };
   }
   if (metric.credentialStatus !== "missing") {
