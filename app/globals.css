@@ -186,6 +186,21 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .demo-data-badge { display: inline-flex; min-height: 31px; align-items: center; gap: 5px; padding: 0 9px; border: 1px solid #dcdef8; border-radius: 8px; color: var(--primary); background: #f5f5ff; white-space: nowrap; }
 .demo-data-badge b { font-size: 8px; }
 .demo-data-badge small { color: #858ca3; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
+
+/* Global channel integration strip: every page shows the verified 8-channel
+   link state from the same live snapshot the connection page uses. */
+.channel-connection-strip { display: inline-flex; min-height: 31px; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #dcdef8; border-radius: 8px; background: #f5f5ff; color: var(--primary); white-space: nowrap; cursor: pointer; }
+.channel-connection-strip.all-connected { border-color: #bfd8d1; background: #e8f2ef; color: #0f6b52; }
+.channel-connection-strip.has-attention { border-color: #f0d9b5; background: #fdf4e7; color: #8a5a12; }
+.channel-connection-strip .strip-summary { display: inline-flex; align-items: center; gap: 4px; }
+.channel-connection-strip .strip-summary b { font-size: 8px; }
+.channel-connection-strip .strip-marks { display: inline-flex; align-items: center; gap: 3px; }
+.channel-connection-strip .strip-mark { display: inline-flex; padding: 1px; border: 1px solid transparent; border-radius: 6px; }
+.channel-connection-strip .strip-mark.connected { border-color: #62b48f; }
+.channel-connection-strip .strip-mark.check { border-color: #e0a63c; }
+.channel-connection-strip .strip-mark.pending { border-color: #d7b25e; border-style: dashed; }
+.channel-connection-strip .strip-mark.missing { border-color: #d88b8b; }
+@media (max-width: 720px) { .channel-connection-strip .strip-summary b { font-size: 7px; } .channel-connection-strip .strip-marks { gap: 2px; } }
 .global-search { display: flex; width: 228px; height: 36px; align-items: center; gap: 8px; padding: 0 9px; border: 1px solid var(--line); border-radius: 9px; color: #9aa2b1; background: #f8f9fb; text-align: left; font-size: 9px; }
 .global-search span { flex: 1; }
 .global-search kbd { display: inline-flex; align-items: center; gap: 2px; padding: 3px 5px; border: 1px solid #dfe2e9; border-radius: 5px; color: #777f91; background: white; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
