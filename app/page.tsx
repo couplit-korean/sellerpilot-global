@@ -6570,12 +6570,3 @@ export default function Home() {
     ? <DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} oauthToastMessage={oauthToastMessage} onOAuthToastQueued={clearOAuthToastMessage} />
     : <LoginScreen onLogin={login} onPasswordReset={resetPassword} notice={loginNotice} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
 }
-이 지연되고 있습니다.</h2><p>{accessErrorMessage || "인증 서버 응답을 받지 못했습니다."} 잠시 후 현재 세션으로 다시 확인해 주세요.</p><button type="button" className="login-submit" onClick={() => { setAccessErrorMessage(""); setAccessState("checking"); setAccessRetryKey((current) => current + 1); }}><RefreshCw size={16} />현재 세션 다시 확인</button></div></section></main>;
-  }
-  if (accessState === "forbidden") {
-    return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;
-  }
-  return accessState === "admin"
-    ? <DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} oauthToastMessage={oauthToastMessage} onOAuthToastQueued={clearOAuthToastMessage} />
-    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} notice={loginNotice} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
-}
