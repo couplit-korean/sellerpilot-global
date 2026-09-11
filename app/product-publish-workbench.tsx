@@ -17,6 +17,7 @@ import { centralProductEditFieldSupport, channelProductEditFieldSupport, listing
 import { marketplaceListingCurrency, marketplaceListingPrice, normalizeEbayAspects } from "../lib/channels/listing-normalization";
 import { buildLazadaKrwMyrPricePolicy, lazadaKrwMyrPricePolicyFromArguments, type LazadaKrwMyrRateEvidence } from "../lib/channels/lazada-price-policy";
 import { currentMarketListingHandoff, ebayListingHandoffFromDraft, fetchStoredListingHandoff, listingHandoffPersistenceStatus, listingHandoffStatusLabel, saveStoredListingHandoff, type StoredListingHandoff } from "../lib/channel-listing-handoff";
+import { bootstrapEbayAccount, buildEbayAccountBootstrapRequest, ebayAccountBootstrapResolvedFields, emptyEbayAccountBootstrapFormValues, type EbayAccountBootstrapFormValues } from "../lib/channels/ebay-account-bootstrap-client";
 import type { StudioResultQuality } from "../lib/studio-result-quality";
 import { inspectListingDraft, listingDraftValue, setListingDraftValue, isSmartstoreCapacityPath, editSmartstoreCapacityDraftValue, preserveSmartstoreCapacityDraft, isCoupangWeightPath, preserveCoupangWeightDraft } from "../lib/channels/listing-preflight";
 import { coupangShippingFeeDraft, listingShippingDraftSource, listingShippingRequirements, listingShippingSourceChanged, shippingRequirementDependsOnSource, smartstoreShippingDraft, type ListingShippingSource } from "../lib/channels/listing-shipping";
@@ -84,6 +85,55 @@ type ChannelTarget = {
   currency: string;
   status?: string;
 };
+function ebayBootstrapFieldVisible(
+  field: { visibleWhen?: "paidShipping" | "acceptedReturns" },
+  form: EbayAccountBootstrapFormValues,
+) {
+  if (field.visibleWhen === "paidShipping") return form.shippingFreeShipping === "false";
+  if (field.visibleWhen === "acceptedReturns") return form.returnsAccepted === "true";
+  return true;
+}
+
+// Operator input for the eBay account bootstrap. Nothing here is prefilled: policy
+// names, shipping services, return terms and the warehouse address are decisions the
+// operator has to make, and the route rejects anything it has to guess.
+const ebayBootstrapFormFields: Array<{
+  key: keyof EbayAccountBootstrapFormValues;
+  label: string;
+  kind?: "number";
+  options?: Array<{ value: string; label: string }>;
+  visibleWhen?: "paidShipping" | "acceptedReturns";
+}> = [
+  { key: "fulfillmentName", label: "배송 정책 이름" },
+  { key: "fulfillmentHandlingTime", label: "처리 시간(일)", kind: "number" },
+  { key: "fulfillmentHandlingTimeUnit", label: "처리 시간 단위", options: [{ value: "BUSINESS_DAY", label: "영업일" }, { value: "DAY", label: "일반일" }] },
+  { key: "shippingOptionType", label: "배송 옵션 유형(DOMESTIC 등)" },
+  { key: "shippingCostType", label: "배송비 유형(FLAT_RATE 등)" },
+  { key: "shippingCarrierCode", label: "배송사 코드" },
+  { key: "shippingServiceCode", label: "배송 서비스 코드" },
+  { key: "shippingFreeShipping", label: "무료 배송 여부", options: [{ value: "true", label: "무료 배송" }, { value: "false", label: "유료 배송" }] },
+  { key: "shippingCostValue", label: "배송비 금액", visibleWhen: "paidShipping" },
+  { key: "shippingCostCurrency", label: "배송비 통화(3자리)", visibleWhen: "paidShipping" },
+  { key: "paymentName", label: "결제 정책 이름" },
+  { key: "paymentMethodType", label: "결제 수단 유형(CREDIT_CARD 등)" },
+  { key: "returnName", label: "반품 정책 이름" },
+  { key: "returnsAccepted", label: "반품 수락 여부", options: [{ value: "true", label: "반품 수락" }, { value: "false", label: "반품 불가" }] },
+  { key: "returnPeriodValue", label: "반품 기간", kind: "number", visibleWhen: "acceptedReturns" },
+  { key: "returnPeriodUnit", label: "반품 기간 단위", options: [{ value: "DAY", label: "일" }, { value: "MONTH", label: "개월" }], visibleWhen: "acceptedReturns" },
+  { key: "returnShippingCostPayer", label: "반품 배송비 부담(BUYER 등)", visibleWhen: "acceptedReturns" },
+  { key: "refundMethod", label: "환불 방식(MONEY_BACK 등, 선택)" },
+  { key: "returnMethod", label: "반품 방식(REPLACEMENT 등, 선택)" },
+  { key: "merchantLocationKey", label: "창고 위치 키" },
+  { key: "locationName", label: "창고 이름" },
+  { key: "locationAddressLine1", label: "창고 주소 1" },
+  { key: "locationAddressLine2", label: "창고 주소 2(선택)" },
+  { key: "locationCity", label: "창고 도시" },
+  { key: "locationStateOrProvince", label: "창고 주·도" },
+  { key: "locationPostalCode", label: "창고 우편번호" },
+  { key: "locationCountry", label: "창고 국가 코드(2자리)" },
+  { key: "locationPhone", label: "창고 전화(선택)" },
+];
+
 const ebayMarketplaceTargets: ChannelTarget[] = [
   { targetId: "EBAY_US", displayName: "United States", marketCode: "US", locale: "en-US", language: "English", currency: "USD" },
   { targetId: "EBAY_GB", displayName: "United Kingdom", marketCode: "GB", locale: "en-GB", language: "English", currency: "GBP" },
@@ -1139,6 +1189,10 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
   const [ebayListingHandoff, setEbayListingHandoff] = useState<StoredListingHandoff | null>(null);
   const [ebayHandoffError, setEbayHandoffError] = useState<string | null>(null);
   const [ebayHandoffSaving, setEbayHandoffSaving] = useState(false);
+  const [ebayBootstrapForm, setEbayBootstrapForm] = useState<EbayAccountBootstrapFormValues>(() => emptyEbayAccountBootstrapFormValues());
+  const [ebayBootstrapRunning, setEbayBootstrapRunning] = useState(false);
+  const [ebayBootstrapError, setEbayBootstrapError] = useState<string | null>(null);
+  const [ebayBootstrapResolved, setEbayBootstrapResolved] = useState<StoredListingHandoff | null>(null);
   const priceRef = useRef(price);
   const globalBaseUsdPriceRef = useRef(globalBaseUsdPrice);
   const lazadaMyrRateRef = useRef<LazadaKrwMyrRateEvidence | null>(lazadaMyrRate);
@@ -1246,6 +1300,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
 
       setEbayListingHandoff(null);
       setEbayHandoffError(null);
+      setEbayBootstrapResolved(null);
+      setEbayBootstrapError(null);
       setLoading(false);
       return;
     }
@@ -1844,6 +1900,72 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify(message);
     } finally {
       if (mountedRef.current) setEbayHandoffSaving(false);
+    }
+  };
+  const setEbayBootstrapField = (key: keyof EbayAccountBootstrapFormValues, value: string) => {
+    setEbayBootstrapForm((current) => {
+      const next: EbayAccountBootstrapFormValues = { ...current };
+      next[key] = value as never;
+      return next;
+    });
+  };
+  const resolveEbayAccountFromOperatorTerms = async () => {
+    if (!productId || !context) return;
+    const target = selectedTargets.ebay ?? ebayMarketplaceTargets[0];
+    if (!target) return;
+    const built = buildEbayAccountBootstrapRequest(ebayBootstrapForm, {
+      productId,
+      environment: "production",
+      market: target.marketCode,
+    });
+    if (!built.ok) {
+      setEbayBootstrapError(built.message);
+      notify(built.message);
+      return;
+    }
+    setEbayBootstrapRunning(true);
+    setEbayBootstrapError(null);
+    try {
+      const accessToken = (await createClient().auth.getSession()).data.session?.access_token;
+      if (!accessToken) throw new Error("eBay 판매 정책을 확보하려면 다시 로그인해 주세요.");
+      const outcome = await bootstrapEbayAccount(built.request, accessToken);
+      if (!mountedRef.current || sessionProductIdRef.current !== productId) return;
+      if (!outcome.ok) {
+        setEbayBootstrapError(`${outcome.code} · ${outcome.message}`);
+        notify(`eBay 판매 정책 확보 실패 · ${outcome.message}`);
+        return;
+      }
+      // The route already resolved and persisted the ids. Re-save through the
+      // existing listing handoff path so this screen keeps one save route and
+      // shows the stored values eBay just confirmed.
+      const stored = await saveStoredListingHandoff({
+        productId,
+        channel: "ebay",
+        environment: "production",
+        market: target.marketCode,
+        marketplaceId: outcome.handoff.marketplaceId,
+        fulfillmentPolicyId: outcome.handoff.fulfillmentPolicyId,
+        paymentPolicyId: outcome.handoff.paymentPolicyId,
+        returnPolicyId: outcome.handoff.returnPolicyId,
+        merchantLocationKey: outcome.handoff.merchantLocationKey,
+      }, accessToken);
+      if (!mountedRef.current || sessionProductIdRef.current !== productId) return;
+      listingHandoffRef.current = stored;
+      setEbayListingHandoff(stored);
+      setEbayBootstrapResolved(stored);
+      setEbayHandoffError(null);
+      setEbayBootstrapError(null);
+      synchronizeCommonDrafts(context);
+      notify(outcome.bootstrap.providerWrites
+        ? `eBay에 판매 정책·창고 위치를 새로 만들고 저장했습니다. (${outcome.bootstrap.providerWrites}건 생성)`
+        : "기존 eBay 판매 정책·창고 위치를 확인해 저장했습니다.");
+    } catch (error) {
+      if (!mountedRef.current || sessionProductIdRef.current !== productId) return;
+      const message = error instanceof Error ? error.message : "eBay 판매 정책을 확보하지 못했습니다.";
+      setEbayBootstrapError(message);
+      notify(message);
+    } finally {
+      if (mountedRef.current) setEbayBootstrapRunning(false);
     }
   };
   const executeChannel = async (channel: ActiveChannelKey, options: {
@@ -2731,6 +2853,20 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
                 catch { notify("입력값의 구조를 확인해 주세요. 기존 값은 유지했습니다."); }
               }} />
               {channel === "ebay" && ebayHandoffStatus && requirements.some((item) => item.manualPath) && <div className="publish-required-head"><button type="button" className="credential-secondary" disabled={ebayHandoffSaving || !ebayDraftHandoff || ebayHandoffStatus === "saved"} onClick={() => void saveEbayListingHandoff()}>{ebayHandoffSaving ? <LoaderCircle className="spin" size={14} /> : <ShieldCheck size={14} />}정책 저장</button><small role="status">{listingHandoffStatusLabel(ebayHandoffStatus)}{ebayHandoffError ? ` · ${ebayHandoffError}` : ""}</small></div>}
+              {channel === "ebay" && <div className="publish-required-head">
+                <button type="button" className="credential-secondary" disabled={registrationHasIssues || ebayHandoffSaving || ebayBootstrapRunning || !productId} title="입력한 조건으로 eBay에서 배송·결제·반품 정책과 창고 위치를 확인하고, 없으면 만든 뒤 정책 ID와 위치 키를 저장합니다." onClick={() => void resolveEbayAccountFromOperatorTerms()}>{ebayBootstrapRunning ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}eBay 정책·창고 자동 확보</button>
+                <small role="status">{ebayBootstrapError ?? (ebayBootstrapResolved ? "eBay가 확인한 값을 저장했습니다." : "아래 조건을 입력한 뒤 실행하세요.")}</small>
+              </div>}
+              {channel === "ebay" && <details>
+                <summary><ShieldCheck size={14} />eBay 판매 정책·창고 위치 조건 입력</summary>
+                <div className="publish-manual-fields">
+                  {ebayBootstrapFormFields.filter((field) => ebayBootstrapFieldVisible(field, ebayBootstrapForm)).map((field) => <label key={field.key}><span>{field.label}</span>{field.options
+                    ? <select value={ebayBootstrapForm[field.key]} onChange={(event) => setEbayBootstrapField(field.key, event.target.value)}><option value="">확인 후 선택</option>{field.options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+                    : <input type={field.kind === "number" ? "number" : "text"} min={field.kind === "number" ? 0 : undefined} step={field.kind === "number" ? 1 : undefined} value={ebayBootstrapForm[field.key]} onChange={(event) => setEbayBootstrapField(field.key, event.target.value)} />}</label>)}
+                </div>
+                <small>정책 이름·배송 서비스·반품 조건·창고 주소는 모두 운영자 입력값입니다. 이 화면은 기본값을 채우지 않으며, eBay에 이미 있는 값은 다시 만들지 않고 재사용합니다.</small>
+              </details>}
+              {channel === "ebay" && ebayBootstrapResolved && <div className="publish-source-proof">{ebayAccountBootstrapResolvedFields(ebayBootstrapResolved).map((field) => <span key={field.label}><Check size={12} /><b>{field.label}</b>{field.value}</span>)}</div>}
             </div>}
             {assignment && <small className="publish-category-path">{assignment.categoryPath.join(" › ")} · {assignment.categoryId}</small>}
             {listing?.status === "failed" && listing.lastError && <p className={`publish-result ${listing.failureClass === "external_action" && !recoverableExternalActionUpdate ? "blocked" : "failed"}`}><b>{recoverableExternalActionUpdate ? "원격 식별값 재검증 준비" : listing.failureClass === "external_action" ? "수동 확인 필요" : "이전 등록 실패"}</b> · {recoverableExternalActionUpdate ? recoveryReadyMessage : listing.lastError}</p>}
