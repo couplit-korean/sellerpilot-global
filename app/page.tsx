@@ -514,10 +514,85 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge ${tone}`}><i />{status}</span>;
 }
 
-function credentialConnectionLabel(status: string | undefined) {
-  if (status === "active") return "읽기 진단 통과";
+function credentialConnectionLabel(
+  status: string | undefined,
+  lastCheckStatus?: "passed" | "failed" | "manual" | null,
+) {
+  if (status === "active") {
+    // An active credential is not the same as a passed read diagnostic. Report
+    // the last recorded read check so the badge never overstates the link.
+    if (lastCheckStatus === "passed") return "읽기 진단 통과";
+    if (lastCheckStatus === "failed") return "읽기 진단 실패 · 재확인 필요";
+    return "키 등록됨 · 읽기 진단 필요";
+  }
   if (status === "unverified") return "키 등록됨 · 진단 필요";
   return "API 키 등록 필요";
+}
+
+/**
+ * One channel integration state, derived from the same live snapshot the
+ * connection page uses. `connected` means the operating key is active AND the
+ * stored read diagnostic passed, so the badge cannot overstate the link.
+ */
+function channelIntegrationState(metric: {
+  credentialStatus?: string | null;
+  credentialLastCheckStatus?: "passed" | "failed" | "manual" | null;
+}): "connected" | "check" | "pending" | "missing" {
+  const lastCheck = metric.credentialLastCheckStatus ?? null;
+  if (metric.credentialStatus === "active") return lastCheck === "passed" ? "connected" : "check";
+  if (metric.credentialStatus === "unverified") return "pending";
+  return "missing";
+}
+
+/**
+ * Global channel integration strip. Rendered in the app shell so every page
+ * shows the same, verified 8-channel link state without omissions.
+ */
+function ChannelConnectionStrip({
+  metrics,
+  onOpenConnections,
+}: {
+  metrics: Array<{
+    channelKey: string;
+    channelCode: string;
+    name: string;
+    credentialStatus: string;
+    credentialLastCheckStatus: "passed" | "failed" | "manual" | null;
+  }>;
+  onOpenConnections: () => void;
+}) {
+  const connected = metrics.filter((metric) => channelIntegrationState(metric) === "connected").length;
+  const attention = metrics.length - connected;
+  return (
+    <button
+      type="button"
+      className={`channel-connection-strip ${attention === 0 ? "all-connected" : "has-attention"}`}
+      onClick={onOpenConnections}
+      aria-label={`채널 연동 상태 ${connected}/${metrics.length} 연동 완료${attention ? ` · ${attention}개 확인 필요` : ""}`}
+      title={metrics
+        .map((metric) => `${metric.name}: ${credentialConnectionLabel(metric.credentialStatus, metric.credentialLastCheckStatus)}`)
+        .join("\n")}
+    >
+      <span className="strip-summary">
+        <Activity size={12} />
+        <b>채널 연동 {connected}/{metrics.length}</b>
+      </span>
+      <span className="strip-marks">
+        {metrics.map((metric) => {
+          const state = channelIntegrationState(metric);
+          return (
+            <span
+              key={metric.channelKey}
+              className={`strip-mark ${state}`}
+              title={`${metric.name} · ${credentialConnectionLabel(metric.credentialStatus, metric.credentialLastCheckStatus)}`}
+            >
+              <ChannelMark code={metric.channelCode} size="sm" />
+            </span>
+          );
+        })}
+      </span>
+    </button>
+  );
 }
 
 function LoginScreen({
@@ -817,7 +892,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channelOverviewHealthLabel(channel)}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus, channel.credentialLastCheckStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channelOverviewHealthLabel(channel)}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -5637,6 +5712,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
         : aiRecovery?.expiredCount ? `장기 AI 분석 ${aiRecovery.expiredCount}건 자동 종료` : "Supabase 운영 원장";
   const operationsBadgeNeedsAttention = view === "cs" ? Boolean(cs.error) : operations.state === "unavailable" || productReadinessState === "unavailable" || aiRecovery?.status === "failed";
   const operationsBadgeTitle = view === "cs" ? operationsBadgeDetail : [operations.message, productReadinessMessage, aiRecovery?.message].filter(Boolean).join(" · ") || operationsBadgeDetail;
+  const shellChannelMetrics = activeChannelKeys.flatMap((key) => {
+    const metric = channelMetrics.find((item) => item.channelKey === key);
+    return metric ? [metric] : [];
+  });
   const openOperationsAttention = () => {
     if (view === "cs") { void cs.reload(); return; }
     if (productReadinessState === "unavailable") navigate("products");
@@ -5678,7 +5757,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
           </div>}
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}>{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}><ChannelConnectionStrip metrics={shellChannelMetrics} onOpenConnections={() => navigate("connections")} />{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
