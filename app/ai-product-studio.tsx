@@ -571,7 +571,7 @@ const detailPresets = aiGeneratedAssetSpecs
 
 const generatedPreviewPresets = [...thumbnailPresets, ...detailPresets];
 
-export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, firstDraftReviewed, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady }: {
+export function AiProductStudio({ mainPhoto, photos, manualFields, competitorContext, requestId, sourceResearchJobId, sourcePhotoFingerprint, sourceResearchLineageReceipt, firstDraftReviewed, submissionMode, workerReadiness, onRunningChange, notify, onJobQueued, onResultReady, onManualResultReady, onGeneratedAssets }: {
   mainPhoto: StudioPhoto | null;
   photos: StudioPhoto[];
   manualFields: ProductIntakeDraft;
@@ -597,6 +597,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     jobId: string,
     submittedIntake: ProductIntakeDraft,
   ) => void;
+  onGeneratedAssets?: (images: Array<{ id: string; url: string | null }>) => void;
 }) {
   const [result, setResult] = useState<ProductStudioResult | null>(null);
   const [thumbnails, setThumbnails] = useState<AutoThumbnail[]>([]);
@@ -743,6 +744,9 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         setSavedDetailData(null);
         setDetailPageVersion(null);
       }
+      // 같은 자산 id(portrait·wide·detail-*)의 고품질 생성 결과를 1차 이미지 자리에도
+      // 반영해, 1차 6장이 상세페이지와 같은 파이프라인 결과로 갱신되게 한다.
+      onGeneratedAssets?.(generatedImages ?? []);
       const { response: productResponse, payload: productPayload } = await fetchJsonWithStudioJobTimeout("/api/admin/products/snapshot", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${accessToken}` },

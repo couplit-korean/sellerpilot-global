@@ -2769,6 +2769,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [researchResult, setResearchResult] = useState<ProductResearchUiResult | null>(null);
   const [firstDraftImages, setFirstDraftImages] = useState<FirstDraftGeneratedImage[]>([]);
   const [firstDraftReviewed, setFirstDraftReviewed] = useState(false);
+  // 1차 6장은 서버 초안(원본 사진 크롭)이므로, 1차가 끝나면 상세페이지와 동일한
+  // 카테고리 매칭·설정샷 프롬프트를 쓰는 생성 작업을 자동으로 시작해 같은 6개
+  // 자산을 고품질 결과로 교체한다.
+  const [studioDraftRunStarted, setStudioDraftRunStarted] = useState(false);
+  const [studioDraftImagesMerged, setStudioDraftImagesMerged] = useState(false);
+  const studioDraftRunStartedRef = useRef(false);
   const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
   const [competitorFetchedAt, setCompetitorFetchedAt] = useState<string | null>(null);
@@ -3416,6 +3422,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setResearchResult(result);
     setFirstDraftImages(generatedFirstDraftImages);
     setFirstDraftReviewed(false);
+    // 1차 6장은 서버 초안이므로, 1차가 끝난 자리에서 상세페이지와 동일한
+    // 카테고리 매칭·설정샷 프롬프트를 쓰는 생성 작업을 바로 시작한다.
+    autoStartStudioDraftGeneration();
     setUploadError("");
     setProductResearchError("");
     setResearchCompetitors([]);
@@ -4070,7 +4079,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     invalidateImageRightsConfirmation();
   };
 
-  const startAutomation = () => {
+  const startAutomation = (options?: { automatic?: boolean }) => {
     if (running || automationStartInFlightRef.current) return;
     const aiReady = isStudioExecutionReady(studioWorkerReadiness);
     if (!aiReady) {
@@ -4104,7 +4113,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       notify(message);
       return;
     }
-    if (!firstDraftReviewed) {
+    if (!firstDraftReviewed && !options?.automatic) {
       const message = "1차 상품정보와 이미지 6개를 확인한 뒤 검토 확인란을 선택해 주세요.";
       setUploadError(message);
       notify(message);
@@ -4145,7 +4154,9 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setUploadError("");
     setStudioSubmissionMode("ai");
     setActiveStage(2);
-    notify(`검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 후속 자산을 제작합니다. 외부 채널 업로드는 아직 시작하지 않습니다.`);
+    notify(options?.automatic
+      ? `1차 결과로 설정샷 6장을 상세페이지와 같은 카테고리 매칭 프롬프트로 다시 생성합니다. 완성되면 1차 이미지 자리에 그대로 표시됩니다.`
+      : `검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 후속 자산을 제작합니다. 외부 채널 업로드는 아직 시작하지 않습니다.`);
     setStudioRequestId((current) => current + 1);
   };
 
@@ -4160,6 +4171,25 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     && Boolean(sourceResearchLineageReceipt)
     && firstDraftImages.length === coreFirstDraftAssetIds.length;
   const firstDraftReady = firstDraftContentReady && firstDraftReviewed;
+  const mergeStudioDraftImages = (generated?: Array<{ id: string; url: string | null }>) => {
+    const urls = new Map((generated ?? [])
+      .filter((image) => typeof image.url === "string" && image.url)
+      .map((image) => [image.id, image.url as string]));
+    if (!urls.size) return;
+    setStudioDraftImagesMerged(true);
+    setFirstDraftImages((current) => current.map((image) => {
+      const url = urls.get(image.id);
+      return url && url !== image.url ? { ...image, url } : image;
+    }));
+  };
+  const autoStartStudioDraftGeneration = () => {
+    if (studioDraftRunStartedRef.current) return;
+    if (!isStudioExecutionReady(studioWorkerReadiness)) return;
+    if (!publishingMountedRef.current) return;
+    studioDraftRunStartedRef.current = true;
+    setStudioDraftRunStarted(true);
+    startAutomation({ automatic: true });
+  };
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
@@ -4324,7 +4354,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
             {firstDraftImages.length > 0 && <section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
-              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>상세페이지 제작 전에 사람이 확인하는 서버 결과입니다.</small></span><em>{firstDraftImages.length} / 6장</em></header>
+              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
               <div>{firstDraftImages.map((image) => <figure key={image.id}><span><Image src={image.url} alt={firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized /></span><figcaption>{firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]}</figcaption></figure>)}</div>
             </section>}
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
@@ -4369,7 +4399,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
 
           {firstDraftGenerated && <div className="first-draft-review"><AlertTriangle size={15} /><span><b>수정한 1차 정보와 이미지 6개를 최종 확인하세요.</b><small>위 판매자 필수 입력값을 실물 기준으로 수정하고 이미지 6장을 확인한 뒤 상세페이지 제작을 승인하세요.</small><label htmlFor="first-draft-reviewed"><input id="first-draft-reviewed" aria-label="1차 상품정보와 이미지 6개 검토 확인" type="checkbox" checked={firstDraftReviewed} disabled={!firstDraftContentReady} onChange={(event) => setFirstDraftReviewed(event.target.checked)} /><span><b>수정한 1차 상품정보와 이미지 6개를 모두 확인했습니다.</b><small>이 확인 이후 입력이나 사진을 바꾸면 승인과 기존 채널 업로드 준비가 해제됩니다.</small></span></label></span></div>}
 
-          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !recoveringProductResearch && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {mainPhoto ? 1 : 0}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 정보·이미지 {firstDraftContentReady ? "6장 완료" : "미완료"} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{recoveringProductResearch ? "완료된 1차 작업의 원본사진과 결과를 확인하고 있습니다." : !firstDraftContentReady ? "먼저 사진과 설명으로 1차 정보와 이미지 6개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 6개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={startAutomation} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || recoveringProductResearch || photoSelectionsProcessing || Boolean(queuedJobId)} title={!firstDraftContentReady ? "1차 정보와 이미지 6개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·6장 생성 중</> : recoveringProductResearch ? <><LoaderCircle className="spin" size={17} />완료 작업 복구 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
+          <div className={`analysis-start-bar ${intakeReady && mainPhoto && registrationExecutionAvailable && firstDraftReady && !researchingProduct && !recoveringProductResearch && !photoSelectionsProcessing ? "ready" : "not-ready"}`}><span><b>1차 입력 {mainPhoto ? 1 : 0}장</b> · 상세페이지용 포함 전체 {totalPhotoCount}장 보존 · 1차 정보·이미지 {firstDraftContentReady ? "6장 완료" : "미완료"} · 사람 검토 {firstDraftReviewed ? "완료" : "미완료"} · 필수정보 {intakeReady ? "완료" : "미완료"}{photoSelectionsProcessing ? " · 선택한 사진 확인 중" : ""}{competitorResearchBlocksAnalysis ? " · 동일상품 가격은 별도 확인 중(상세페이지 제작 가능)" : ""}<br /><small role="status">{recoveringProductResearch ? "완료된 1차 작업의 원본사진과 결과를 확인하고 있습니다." : !firstDraftContentReady ? "먼저 사진과 설명으로 1차 정보와 이미지 6개를 생성해 주세요." : !firstDraftReviewed ? "1차 정보와 이미지 6개를 확인한 뒤 검토 확인란을 선택해 주세요." : studioWorkerReadiness?.message ?? "상세페이지 제작 서버 상태를 확인하고 있습니다."}</small></span><button type="button" onClick={() => startAutomation()} disabled={!registrationExecutionAvailable || !firstDraftReady || running || researchingProduct || recoveringProductResearch || photoSelectionsProcessing || Boolean(queuedJobId)} title={!firstDraftContentReady ? "1차 정보와 이미지 6개 생성을 먼저 완료해 주세요." : !firstDraftReviewed ? "사람 검토 확인이 필요합니다." : !registrationExecutionAvailable ? studioWorkerReadiness?.message ?? "서버 등록 상태 확인 중" : undefined}>{running ? <><LoaderCircle className="spin" size={17} />상세페이지 제작 중</> : researchingProduct ? <><LoaderCircle className="spin" size={17} />1차 정보·6장 생성 중</> : recoveringProductResearch ? <><LoaderCircle className="spin" size={17} />완료 작업 복구 중</> : photoSelectionsProcessing ? <><LoaderCircle className="spin" size={17} />사진 확인 중</> : queuedJobId ? <><CheckCircle2 size={17} />상세 제작 큐 접수됨</> : !studioWorkerReadiness ? <><LoaderCircle className="spin" size={17} />서버 상태 확인 중</> : <><WandSparkles size={17} />상세페이지 제작 시작</>}</button></div>
         </article>
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
@@ -4390,7 +4420,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         sourceResearchJobId={sourceResearchJobId}
         sourcePhotoFingerprint={sourceResearchPhotoSha256}
         sourceResearchLineageReceipt={sourceResearchLineageReceipt}
-        firstDraftReviewed={firstDraftReviewed}
+        firstDraftReviewed={firstDraftReviewed || studioDraftRunStarted}
         requestId={studioRequestId}
         submissionMode={studioSubmissionMode}
         workerReadiness={studioWorkerReadiness}
@@ -4404,6 +4434,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
           setActiveStage(2);
           window.sessionStorage.removeItem(draftStorageKey);
         }}
+        onGeneratedAssets={mergeStudioDraftImages}
         onResultReady={(studioResult, productId, _jobId, submittedIntake) => {
           setAnalyzedProductName(studioResult.product.name);
           setAnalyzedProductId(productId);
