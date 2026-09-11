@@ -1,5 +1,6 @@
 import { shippingCompletionStatus } from "../lib/shipping/completion-status.ts";
 import { executeShippingProviderJob } from "../lib/shipping/provider.ts";
+import { providerExecutionFailureError } from "../lib/channels/provider-execution-failure.ts";
 import { createGatewayMutationBoundary } from "./gateway-mutation-boundary.mjs";
 import {
   GATEWAY_COMPLETION_TRANSIENT_GRACE_MS,
@@ -151,7 +152,16 @@ export async function processShippingGatewayJob(
         status: externalWriteStarted ? "reconciliation_required" : "failed",
         error: externalWriteStarted
           ? "SHIPPING_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
-          : "SHIPPING_PROVIDER_EXECUTION_FAILED",
+          :
+            // The wrapper code stays the prefix for existing matchers, and the
+            // inner provider failure (its own error code plus a shortened
+            // message) is appended so the operator can tell what the channel
+            // rejected. Never a token, signature, URL or raw payload.
+            providerExecutionFailureError(
+              "SHIPPING_PROVIDER_EXECUTION_FAILED",
+              caught,
+              error,
+            ),
         ...(!credentialMutationInFlight && credentialRefresh
           ? { credentialRefresh }
           : {}),
