@@ -30,6 +30,7 @@ import {
 } from "./channels/qoo10-japanese-title";
 import { unapprovedLocalizationReviewMarker } from "./channels/listing-update";
 import { evaluateImageLabelFidelityReport } from "./image-label-fidelity";
+import { studioSourceDimensionsMatch } from "./studio-source-integrity";
 import {
   buildDuplicateRetryGuidance,
   buildDifferenceHash,
@@ -1614,9 +1615,15 @@ export async function loadStudioSources(
       throw new ServerProductStudioError("source_image_size_invalid", true);
     }
     const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata();
-    if (!metadata.width || !metadata.height
-      || metadata.width !== spec.originalWidth
-      || metadata.height !== spec.originalHeight) {
+    // Declared dimensions come from the browser, which applies EXIF rotation, while
+    // sharp reports the stored grid: accept either spelling, matching the upload gate.
+    if (!studioSourceDimensionsMatch(
+      metadata.format,
+      metadata.width,
+      metadata.height,
+      spec.originalWidth,
+      spec.originalHeight,
+    )) {
       throw new ServerProductStudioError("source_image_metadata_mismatch", true);
     }
     return {

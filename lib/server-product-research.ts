@@ -30,6 +30,7 @@ import {
   runtimeStatusMatchesCurrentRelease,
 } from "./internal-scheduler-auth";
 import { sourcePreservingProductImageSpecSchema } from "./product-intake";
+import { studioSourceDimensionsMatch } from "./studio-source-integrity";
 import {
   analyzeServerStudioSources,
   loadStudioSources,
@@ -808,9 +809,17 @@ async function loadPreflightMainSource(
     .catch(() => {
       throw new ProductResearchPreflightError("preflight_source_image_invalid");
     });
-  if (!metadata.width || !metadata.height
-      || metadata.width !== sourceSpec.originalWidth
-      || metadata.height !== sourceSpec.originalHeight) {
+  // The browser reports the dimensions it renders, which for JPEG sources includes
+  // EXIF rotation, while sharp reports the stored pixel grid. Both spellings describe
+  // the same verified upload, so accept the rotated reading exactly like the upload
+  // gate (verifyOriginalStudioImages) and the worker already do.
+  if (!studioSourceDimensionsMatch(
+    metadata.format,
+    metadata.width,
+    metadata.height,
+    sourceSpec.originalWidth,
+    sourceSpec.originalHeight,
+  )) {
     throw new ProductResearchPreflightError("preflight_source_image_invalid");
   }
   const digest = createHash("sha256").update(bytes).digest("hex");

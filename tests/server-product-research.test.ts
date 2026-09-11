@@ -647,6 +647,54 @@ test("source-photo digest drift fails before image generation and clears canonic
   assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
 });
 
+test("an EXIF-rotated JPEG source is accepted with the dimensions the browser reported", async () => {
+  // A portrait phone photo is stored as a landscape pixel grid plus an EXIF rotation.
+  // The browser reports the rotated reading (480x600) while sharp reads the stored grid
+  // (600x480). The upload gate already accepted that pair, so the research preflight
+  // must not reject the very same verified upload.
+  const source = await sharp({
+    create: { width: 600, height: 480, channels: 3, background: { r: 210, g: 190, b: 170 } },
+  }).jpeg({ quality: 80 }).withMetadata({ orientation: 6 }).toBuffer();
+  const removed: string[][] = [];
+  let segmented = false;
+  let uploaded = false;
+  const claim = preflightClaim("f".repeat(64), source.byteLength);
+  await assert.rejects(
+    generateServerProductResearchPreflightAssets({
+      jobId: JOB_ID,
+      claimToken: CLAIM_TOKEN,
+      request: {
+        ...claim.request,
+        image_specs: [{
+          ...claim.request.image_specs[0],
+          originalMediaType: "image/jpeg" as const,
+          originalWidth: 480,
+          originalHeight: 600,
+        }],
+      },
+      signal: AbortSignal.timeout(30_000),
+      dependencies: {
+        preflightImageMode: "gateway-composite",
+        download: async () => new Uint8Array(source),
+        upload: async () => {
+          uploaded = true;
+          return "uploaded";
+        },
+        remove: async (paths) => { removed.push(paths); },
+        segmentSource: async () => {
+          segmented = true;
+          throw new Error("must not be called");
+        },
+      },
+    }),
+    // The rotated pair passes the dimension gate, so the run continues to the digest check.
+    /preflight_source_photo_mismatch/,
+  );
+  assert.equal(segmented, false);
+  assert.equal(uploaded, false);
+  assert.deepEqual(removed, [Object.values(validPreflightResult().asset_storage_paths)]);
+});
+
 test("a corrupt source photo remains a hard failure and never reaches image-model fallback", async () => {
   const source = Buffer.from("not-a-decodable-product-image", "utf8");
   const digest = createHash("sha256").update(source).digest("hex");
