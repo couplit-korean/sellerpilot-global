@@ -6371,7 +6371,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>{enabledSalesChannelCount}개 판매채널 · 연동 확인 {integrationSummary.ok + integrationSummary.stale}</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>{integrationInsight || "키 만료일·OAuth·갱신 주기 관리"}</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>{enabledSalesChannelCount}개 판매채널 · 연동 확인 {integrationSummary.ok}</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>{integrationInsight || "키 만료일·OAuth·갱신 주기 관리"}</small></div>
         <div className="sidebar-foot"><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
