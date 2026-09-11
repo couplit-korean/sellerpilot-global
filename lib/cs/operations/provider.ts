@@ -184,7 +184,10 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
           status: accessTokenInfo.response.status,
           data: accessTokenInfo.data,
         },
-        expectedSellerAccountKey: input.job.credential_binding_context?.sellerAccountKey,
+        // The claim payload carries the credential's certified seller account key;
+        // use it when no explicit binding context was provided.
+        expectedSellerAccountKey: input.job.credential_binding_context?.sellerAccountKey
+          ?? (typeof input.job.seller_account_key === "string" ? input.job.seller_account_key : undefined),
       });
       if (evidence.status !== "verified") {
         throw new Error(`TEMU_CS_ACCOUNT_BINDING_UNAVAILABLE:${evidence.blocker}`);

@@ -47,6 +47,9 @@ export const gatewayClaimSchema = z.object({
   attempt_count: z.number().int().min(1).max(6),
   ebay_publication_reconciliation:
     ebayPublicationReconciliationBindingSchema.optional(),
+  // The worker needs the credential's certified seller account key to verify
+  // channel identity readbacks (Temu) without a separate lookup.
+  seller_account_key: z.string().nullable().optional(),
 }).superRefine((value, context) => {
   const ebayRecovery = value.ebay_publication_reconciliation;
   if (ebayRecovery && (

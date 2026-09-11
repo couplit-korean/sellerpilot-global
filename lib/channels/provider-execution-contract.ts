@@ -41,6 +41,8 @@ export type ProviderJob = {
   operation: string; environment: "production" | "sandbox";
   request: Record<string, unknown>; credential: Record<string, unknown>; attempt_count: number;
   credential_binding_context?: { status?: string; sellerAccountKey?: string } | null;
+  // Certified seller account key delivered with the claim payload.
+  seller_account_key?: string | null;
   temu_buyer_chat_readiness_context?: { status?: string; blocker?: string } | null;
 };
 export type ProviderExecutionInput = { job: ProviderJob; signal: AbortSignal; hooks: ServerlessGatewayExecutionHooks };
