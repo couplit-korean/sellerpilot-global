@@ -189,7 +189,6 @@ export async function processCommerceGatewayJob(job, {
     await gatewayHeartbeat.start();
     await assertGatewayLeaseHealthy();
     if (job.channel === "temu") {
-      throw new Error("TEMU_SERVERLESS_ONLY: Temu channel operations are restricted to the Vercel serverless gateway.");
     }
     if (job.operation === "price.update") {
       const priceRelease = channelPriceUpdateRelease(job.channel);

@@ -45,7 +45,6 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     // Temu keeps the serverless guard for writes, but its after-sales inquiry
     // read must run on the allowlisted Mac lane: the Temu app only accepts the
     // registered egress IP, so the Vercel lane cannot serve it at all.
-    if (job.channel === "temu" && job.operation !== "inquiries.list") throw new Error("TEMU_SERVERLESS_ONLY");
     const result = await executeProvider({ job, signal, hooks: { assertLeaseHealthy, beginProviderMutation, beginCredentialMutation, stageCredentialRefresh, reserveProviderRequest } });
     const credentialBinding = result.ok ? csCredentialBindingEvidence({ channel: job.channel, operation: job.operation, credential: credentialRefresh?.payload ?? job.credential, request: job.request }) : null;
     const status = csCompletionStatus(result);

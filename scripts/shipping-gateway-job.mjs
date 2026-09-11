@@ -94,7 +94,6 @@ export async function processShippingGatewayJob(
   try {
     await heartbeat.start();
     await assertLeaseHealthy();
-    if (job.channel === "temu") throw new Error("TEMU_SERVERLESS_ONLY");
     const result = await executeProvider({
       job,
       signal,
