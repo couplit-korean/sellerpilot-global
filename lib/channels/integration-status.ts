@@ -131,9 +131,10 @@ export function summarizeChannelIntegrations(
   return summary;
 }
 
-/** "8/8 · 재확인 필요 3" honest form of the old "읽기 진단 8 / 8". */
+/** "8/8 · 재확인 필요 3" honest form of the old "읽기 진단 8 / 8". The lead
+ * count matches the shell integration strip: only a recent passed check counts. */
 export function integrationRailText(summary: ChannelIntegrationSummary, total: number) {
-  const base = `읽기 진단 ${summary.ok + summary.stale} / ${total}`;
+  const base = `읽기 진단 ${summary.ok} / ${total}`;
   const notes: string[] = [];
   if (summary.stale) notes.push(`재확인 필요 ${summary.stale}`);
   if (summary.pending) notes.push(`진단 필요 ${summary.pending}`);
