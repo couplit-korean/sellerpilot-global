@@ -60,10 +60,17 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     try { await stop(); } catch (stopError) { error = stopError; }
     const lost = error instanceof WorkerRequestTerminalError && [401, 404, 409].includes(error.status);
     if (lost) return; // The expired worker cannot modify the next owner's job.
+    // Keep the real provider reason on the job. A bare code made every CS failure
+    // look identical in the ledger, so the cause could not be diagnosed.
+    const reason = String(error?.message ?? error ?? "")
+      .replace(/\s+/g, " ")
+      .slice(0, 300);
     await persist("/api/channel-gateway/worker/complete", {
       jobId: job.id, claimToken,
       status: externalWriteStarted ? "reconciliation_required" : "failed",
-      error: externalWriteStarted ? "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION" : "CS_PROVIDER_EXECUTION_FAILED",
+      error: externalWriteStarted
+        ? "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+        : `CS_PROVIDER_EXECUTION_FAILED:${reason || "unknown"}`,
       ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
     }, "CS 실패 결과 저장 실패");
   }
