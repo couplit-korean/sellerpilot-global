@@ -3422,7 +3422,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     setResearchResult(result);
     setFirstDraftImages(generatedFirstDraftImages);
     setFirstDraftReviewed(false);
-    autoStartStudioDraftGeneration(generatedFirstDraftImages);
     setUploadError("");
     setProductResearchError("");
     setResearchCompetitors([]);
@@ -4181,23 +4180,21 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     }));
   };
   // 1차 6장은 서버 초안(원본 크롭)이고 상세페이지 자산은 카테고리 매칭 프롬프트로
-  // 맥 Codex가 생성하므로, 1차가 끝나는 즉시 같은 파이프라인을 자동으로 시작한다.
-  // 상태 반영 타이밍에 걸리지 않도록 방금 생성한 6장을 인자로 받는다.
-  const autoStartStudioDraftGeneration = (draftImages: FirstDraftGeneratedImage[]) => {
+  // 맥 Codex가 생성하므로, 1차 결과가 화면에 반영되는 즉시 같은 파이프라인을 자동 시작한다.
+  // 어느 완료 경로로 들어와도 동작하도록 상태 기준으로 판단한다.
+  useEffect(() => {
     if (studioDraftRunStartedRef.current) return;
-    if (!publishingMountedRef.current) return;
-    if (draftImages.length !== coreFirstDraftAssetIds.length) return;
-    if (!isStudioExecutionReady(studioWorkerReadiness)) return;
+    if (!firstDraftContentReady || firstDraftReviewed) return;
+    if (running || queuedJobId || researchingProduct || recoveringProductResearch || photoSelectionsProcessing) return;
+    if (!mainPhoto || !registrationExecutionAvailable) return;
     studioDraftRunStartedRef.current = true;
-    setStudioDraftRunStarted(true);
-    automationStartInFlightRef.current = true;
-    setRunning(true);
-    setUploadError("");
-    setStudioSubmissionMode("ai");
-    setActiveStage(2);
-    notify("1차 결과로 설정샷 6장을 상세페이지와 같은 카테고리 매칭 프롬프트로 다시 생성합니다. 완성되면 1차 이미지 자리에 그대로 표시됩니다.");
-    setStudioRequestId((current) => current + 1);
-  };
+    window.setTimeout(() => {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setStudioDraftRunStarted(true);
+      startAutomation({ automatic: true });
+    }, 0);
+  }, [firstDraftContentReady, firstDraftReviewed, running, queuedJobId, researchingProduct, recoveringProductResearch, photoSelectionsProcessing, mainPhoto, registrationExecutionAvailable]);
+
   const intakeReady = productIntakeSchema.safeParse(intake).success;
   const intakeCompletionItems = [
     intake.researchInput.trim().length >= 2,
