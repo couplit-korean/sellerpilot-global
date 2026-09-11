@@ -4077,6 +4077,59 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     invalidateImageRightsConfirmation();
   };
 
+  const studioEnqueuePollRef = useRef<number | null>(null);
+  const pollStudioJobAssets = (jobId: string) => {
+    if (studioEnqueuePollRef.current !== null) window.clearInterval(studioEnqueuePollRef.current);
+    studioEnqueuePollRef.current = window.setInterval(() => {
+      void (async () => {
+        try {
+          const session = await createSupabaseClient().auth.getSession();
+          const accessToken = session.data.session?.access_token;
+          if (!accessToken) return;
+          const response = await fetch(`/api/ai/jobs/${jobId}`, { headers: { authorization: `Bearer ${accessToken}` }, cache: 'no-store' });
+          if (!response.ok) return;
+          const payload = await response.json() as { status?: string; generatedImages?: Array<{ id: string; url: string | null }> };
+          if (payload.generatedImages?.length) mergeStudioDraftImages(payload.generatedImages);
+          if (payload.status && payload.status !== 'queued' && payload.status !== 'running') {
+            if (studioEnqueuePollRef.current !== null) window.clearInterval(studioEnqueuePollRef.current);
+            studioEnqueuePollRef.current = null;
+            setRunning(false);
+            if (payload.status === 'succeeded') notify('상세페이지 이미지 생성이 끝났습니다. 1차 이미지 자리에 반영했습니다.');
+          }
+        } catch {
+          // keep polling: a transient read must not stop the running job
+        }
+      })();
+    }, 15_000);
+  };
+  const enqueueStudioFromServer = async (options?: { automatic?: boolean }) => {
+    const accessToken = (await createSupabaseClient().auth.getSession()).data.session?.access_token;
+    if (!accessToken) { notify('로그인이 필요합니다.'); setRunning(false); return; }
+    try {
+      const response = await fetch('/api/admin/product-studio-enqueue', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ sourceResearchJobId, manualFields: intakeRef.current }),
+      });
+      const payload = await response.json().catch(() => ({})) as { jobId?: string; message?: string };
+      if (!response.ok || !payload.jobId) {
+        const message = payload.message ?? '상세페이지 제작 작업을 등록하지 못했습니다.';
+        setUploadError(message);
+        notify(message);
+        setRunning(false);
+        return;
+      }
+      setQueuedJobId(payload.jobId);
+      setActiveStage(2);
+      notify(options?.automatic
+        ? '1차 결과로 상세페이지와 설정샷을 같은 파이프라인으로 생성합니다. 완료되면 1차 이미지 자리에 반영됩니다.'
+        : '상세페이지 제작 작업을 접수했습니다. 생성이 끝나면 1차 이미지 자리에 반영됩니다.');
+      pollStudioJobAssets(payload.jobId);
+    } catch {
+      setUploadError('상세페이지 제작 작업을 등록하지 못했습니다.');
+      setRunning(false);
+    }
+  };
   const startAutomation = (options?: { automatic?: boolean }) => {
     // A previous attempt can die before it reports back, leaving the in-flight
     // flag set. That used to swallow every later press with no message at all.
@@ -4156,6 +4209,8 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     automationStartInFlightRef.current = true;
     setRunning(true);
     setUploadError("");
+    void enqueueStudioFromServer(options);
+    return;
     setStudioSubmissionMode("ai");
     setActiveStage(2);
     notify(options?.automatic
