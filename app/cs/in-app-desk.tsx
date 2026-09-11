@@ -3,6 +3,7 @@ import styles from "./desk.module.css";
 import { activeChannelKeys } from "../../lib/channels/catalog";
 import { channels } from "../channel-config";
 import { type CsChannelFilter, type CsStatusFilter } from "../cs-navigation";
+import { csChannelDeskHint } from "../cs-release-state";
 import { CsPage } from "./workspace";
 import type { DisplayTicket, InquiryHistoryBackfill, OperationTicketDelivery, ReplyQueueResult, SupportLocale, CsSyncStatus } from "./workspace-contracts";
 
