@@ -61,21 +61,41 @@ export async function POST(request: Request) {
     }, { status: source.reason === "read_failed" ? 503 : 409, headers: noStore });
   }
 
-  const jobRow = record(readback.data);
-  const jobRequest = record(jobRow?.request_payload ?? jobRow?.request);
-  const jobResult = record(jobRow?.result_payload ?? jobRow?.result);
-  const sourceImagePaths = Array.isArray(jobRequest?.image_paths)
-    ? jobRequest!.image_paths.filter((value): value is string => typeof value === "string" && value.length > 0)
-    : [];
-  const sourceImageSpecs = Array.isArray(jobRequest?.image_specs)
-    ? jobRequest!.image_specs.filter((value) => record(value) !== null) as Array<Record<string, unknown>>
-    : [];
+  const jobResult = record(record(readback.data)?.result);
   const sourcePhotoSha256 = typeof jobResult?.sourcePhotoSha256 === "string" ? jobResult.sourcePhotoSha256 : "";
-  if (!sourceImagePaths.length || sourceImagePaths.length !== sourceImageSpecs.length || !/^[a-f0-9]{64}$/.test(sourcePhotoSha256)) {
-    return NextResponse.json({
-      message: "1차 자동생성에 사용한 사진 정보를 확인하지 못했습니다. 1차 자동생성을 다시 실행해 주세요.",
-    }, { status: 409, headers: noStore });
+  const userId = admin.user.id;
+  const inputPath = `${userId}/${sourceResearchJobId}/input/001.jpg`;
+  const originalPath = `${userId}/${sourceResearchJobId}/original/001.source`;
+  const [inputObject, originalObject] = await Promise.all([
+    admin.serviceClient.storage.from(storageBucket).download(inputPath),
+    admin.serviceClient.storage.from(storageBucket).download(originalPath),
+  ]);
+  if (inputObject.error || originalObject.error || !inputObject.data || !originalObject.data) {
+    return NextResponse.json({ message: "1차 자동생성에 사용한 사진을 찾지 못했습니다. 1차 자동생성을 다시 실행해 주세요." }, { status: 409, headers: noStore });
   }
+  const sharp = (await import("sharp")).default;
+  const inputBytes = new Uint8Array(await inputObject.data.arrayBuffer());
+  const originalBytes = new Uint8Array(await originalObject.data.arrayBuffer());
+  const inputMeta = await sharp(inputBytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata().catch(() => null);
+  const originalMeta = await sharp(originalBytes, { failOn: "warning", limitInputPixels: 16_000_000 }).metadata().catch(() => null);
+  if (!inputMeta?.width || !originalMeta?.width || !/^[a-f0-9]{64}$/.test(sourcePhotoSha256)) {
+    return NextResponse.json({ message: "1차 사진 규격을 확인하지 못했습니다. 1차 자동생성을 다시 실행해 주세요." }, { status: 409, headers: noStore });
+  }
+  const sourceImageSpecs: Array<Record<string, unknown>> = [{
+    name: "001.jpg",
+    role: "main",
+    bytes: inputBytes.byteLength,
+    width: inputMeta.width,
+    height: inputMeta.height,
+    mediaType: "image/jpeg",
+    originalName: "001.source",
+    originalPath,
+    originalBytes: originalBytes.byteLength,
+    originalWidth: originalMeta.width,
+    originalHeight: originalMeta.height,
+    originalMediaType: "image/jpeg",
+    fit: "contain",
+  }];
 
   const preflight = validateSucceededProductResearchPreflight({
     expectedJobId: sourceResearchJobId,
@@ -107,19 +127,17 @@ export async function POST(request: Request) {
   const jobId = randomUUID();
   const imagePaths: string[] = [];
   const imageSpecs: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < sourceImagePaths.length; index += 1) {
-    const nextPath = rewriteJobPath(sourceImagePaths[index], sourceResearchJobId, jobId);
-    const spec = sourceImageSpecs[index];
-    const nextOriginalPath = rewriteJobPath(spec.originalPath, sourceResearchJobId, jobId);
+  for (const spec of sourceImageSpecs) {
+    const nextPath = rewriteJobPath(inputPath, sourceResearchJobId, jobId);
+    const nextOriginalPath = rewriteJobPath(String(spec.originalPath), sourceResearchJobId, jobId);
     if (!nextPath || !nextOriginalPath) {
       return NextResponse.json({ message: "1차 사진 경로를 옮기지 못했습니다." }, { status: 409, headers: noStore });
     }
     const copies = await Promise.all([
-      admin.serviceClient.storage.from(storageBucket).copy(sourceImagePaths[index], nextPath),
-      admin.serviceClient.storage.from(storageBucket).copy(String(spec.originalPath), nextOriginalPath),
+      admin.serviceClient.storage.from(storageBucket).copy(inputPath, nextPath),
+      admin.serviceClient.storage.from(storageBucket).copy(originalPath, nextOriginalPath),
     ]);
-    const failed = copies.find((result) => result.error);
-    if (failed?.error) {
+    if (copies.some((result) => result.error)) {
       return NextResponse.json({
         message: "1차 사진을 상세페이지 작업 경로로 복사하지 못했습니다.",
         code: "STUDIO_PHOTO_COPY_FAILED",
