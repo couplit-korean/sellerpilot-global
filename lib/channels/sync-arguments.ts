@@ -39,6 +39,10 @@ function elevenstCalendarDate(value: Date) {
   return koreaCalendarDate(value).replaceAll("-", "");
 }
 
+function secondsEpoch(value: Date) {
+  return Math.floor(value.getTime() / 1000);
+}
+
 export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()): Record<string, unknown> | null {
   const from = new Date(now.getTime() - 14 * 86_400_000);
   if (channel === "coupang") return { query: { createdAtFrom: coupangDailyDate(from), createdAtTo: coupangDailyDate(now), status: "ACCEPT", maxPerPage: 50 } };
@@ -61,8 +65,9 @@ export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()):
   if (channel === "temu") return {
     pageNumber: 1,
     pageSize: 100,
-    updateAtStart: from.getTime(),
-    updateAtEnd: now.getTime(),
+    // Temu expects epoch seconds (10 digits); milliseconds are rejected as a type error.
+    updateAtStart: secondsEpoch(from),
+    updateAtEnd: secondsEpoch(now),
     sortby: "updateTime",
   };
   return null;
@@ -189,8 +194,8 @@ export function inquirySyncArguments(
     return [{
       pageNo: 1,
       pageSize: 200,
-      updateAtStart: temuFrom.getTime(),
-      updateAtEnd: now.getTime(),
+      updateAtStart: secondsEpoch(temuFrom),
+      updateAtEnd: secondsEpoch(now),
     }];
   }
   if (channel === "elevenst") return [{
