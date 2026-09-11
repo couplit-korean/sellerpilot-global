@@ -23,6 +23,7 @@ import {
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
+import { channelIntegrationStatus } from "../lib/channels/integration-status";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey, type ChannelDefinition } from "../lib/channels/catalog";
 import { channelOperationAvailable } from "../lib/channels/operation-availability";
 import { resolveShopeeConnectionStatus, type ShopeeConnectionStatus as ResolvedShopeeConnectionStatus } from "../lib/channels/shopee-connection-status";
@@ -405,7 +406,28 @@ export function ApiCredentialCenter({ notify, embedded = false }: { notify: (mes
           const shopeeStatusUnavailable = channel.key === "shopee"
             && credential?.connection_status === "status_unavailable";
           return <article className={`credential-card ${channel.key}`} key={channel.key}>
-            <header><span className="credential-channel-code">{channel.mark}</span><div><small>{channel.market}</small><h3>{channel.name}</h3></div><span className={`connection-state ${needsOAuthReconnect || shopeeStatusUnavailable ? "reconnect" : credential ? "connected" : "empty"}`}><i />{needsOAuthReconnect ? "OAuth 재연동 필요" : shopeeStatusUnavailable ? "상태 확인 필요" : credential ? "키 등록됨" : "등록 필요"}</span></header>
+            <header><span className="credential-channel-code">{channel.mark}</span><div><small>{channel.market}</small><h3>{channel.name}</h3></div>{(() => {
+              const state = channelIntegrationStatus({
+                credentialStatus: credential ? "active" : "missing",
+                credentialLastCheckStatus: credential?.last_check_status ?? null,
+                credentialLastCheckedAt: credential?.last_checked_at ?? null,
+              });
+              const tone = needsOAuthReconnect || shopeeStatusUnavailable
+                ? "reconnect"
+                : state.tone === "ok"
+                  ? "connected"
+                  : state.tone === "missing"
+                    ? "empty"
+                    : "pending";
+              const text = needsOAuthReconnect
+                ? "OAuth 재연동 필요"
+                : shopeeStatusUnavailable
+                  ? "상태 확인 필요"
+                  : !credential
+                    ? "등록 필요"
+                    : state.label;
+              return <span className={`connection-state ${tone}`} title={state.label}><i />{text}</span>;
+            })()}</header>
             <div className="credential-policy"><Clock3 size={13} />{channel.credentialPolicy}</div>
             <div className="credential-source-links">{channel.officialDocs.slice(0, 2).map((doc) => <a href={doc.url} target="_blank" rel="noreferrer" key={doc.url}>{doc.label}</a>)}</div>
             <div className="credential-lifecycle">

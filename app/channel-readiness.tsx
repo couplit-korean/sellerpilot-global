@@ -35,6 +35,7 @@ import {
 import { channelCapabilityReleasePresentation } from "../lib/channels/operation-availability";
 import type { CsSyncStatus } from "./cs/workspace-contracts";
 import type { OperationsSnapshot } from "./use-operations-snapshot";
+import { channelIntegrationStatus } from "../lib/channels/integration-status";
 
 const stateLabels: Record<ReadinessState, string> = {
   verified: "확인 완료",
@@ -75,6 +76,13 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
     ? channelMetrics.filter((metric) => metric.credentialStatus !== "missing").length
     : resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
   const apiReadPassed = resolvedReadiness.filter((channel) => channel.apiReadPassed).length;
+  // Live metrics win: the static console flags are a dated snapshot and must not
+  // be presented as the current read state when the API returns real values.
+  const liveStates = channelMetrics.map((metric) => channelIntegrationStatus(metric));
+  const liveReadPassed = liveStates.filter((state) => state.tone === "ok" || state.tone === "stale").length;
+  const liveStale = liveStates.filter((state) => state.tone === "stale").length;
+  const liveFailed = liveStates.filter((state) => state.tone === "failed").length;
+  const readPassedCount = hasLiveMetrics ? liveReadPassed : apiReadPassed;
   const verifiedChecks = resolvedReadiness.flatMap((channel) => channel.checks).filter((check) => check.state === "verified").length;
   const blockerCount = resolvedReadiness.reduce((total, channel) => total + channel.blockers.length, 0);
 
@@ -94,10 +102,10 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
 
       <section className="readiness-summary" aria-label="채널 연동 준비 상태 요약">
         <article><span>판매채널 실콘솔</span><strong>{consoleVerifiedChannels.length} / {resolvedReadiness.length}</strong><small>{channelReadinessObservedAt} 마지막 스냅샷</small></article>
-        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {resolvedReadiness.length}</strong><small>현재 운영 DB 실시간 집계</small></article>
+        <article><span>Vault 운영 키</span><strong>{registeredCredentials} / {resolvedReadiness.length}</strong><small>{hasLiveMetrics ? "현재 운영 DB 실시간 집계" : `${channelReadinessObservedAt} 정적 스냅샷 기준 · 실시간 집계 없음`}</small></article>
         <article><span>확인된 근거</span><strong>{verifiedChecks}</strong><small>문서·코드·화면 증거</small></article>
         <article className="warning"><span>현재 차단 요인</span><strong>{blockerCount}</strong><small>키·승인·고정 IP·Partner 앱</small></article>
-        <article className="danger"><span>인증 키 읽기 통과</span><strong>{apiReadPassed} / {resolvedReadiness.length}</strong><small>게이트웨이 진행·조정 상태와 별도 판정</small></article>
+        <article className="danger"><span>인증 키 읽기 통과</span><strong>{readPassedCount} / {resolvedReadiness.length}</strong><small>{hasLiveMetrics ? `${liveStale ? `재확인 필요 ${liveStale}` : "최근 확인"}${liveFailed ? ` · 실패 ${liveFailed}` : ""} · 저장된 진단 시각 기준` : `${channelReadinessObservedAt} 정적 스냅샷 기준`}</small></article>
       </section>
 
       <section className="readiness-channel-grid">
