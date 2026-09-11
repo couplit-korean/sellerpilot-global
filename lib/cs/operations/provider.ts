@@ -7,7 +7,11 @@ import {
   runWithPreparedEbayAsqReplyReadback,
   type EbayAsqReplyBaseline,
 } from "../../channels/ebay-asq-reply-readback";
-import { temuCsAccountBindingEvidence, type TemuCsAccountBindingEvidence } from "../../channels/cs/temu/account-binding";
+import {
+  temuCsAccountBindingEvidence,
+  temuCsAccountBindingFailureDetail,
+  type TemuCsAccountBindingEvidence,
+} from "../../channels/cs/temu/account-binding";
 import { isTemuBuyerChatInput, temuBuyerChatDispatchGuard } from "../../channels/cs/temu/buyer-chat-dispatch";
 import { shopeeShopTargetIds } from "../../channels/target-records";
 import { shopeeHistoryAuthorizationError } from "../../channels/cs/shopee/history-authorization";
@@ -185,12 +189,22 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
           data: accessTokenInfo.data,
         },
         // The claim payload carries the credential's certified seller account key;
-        // use it when no explicit binding context was provided.
+        // use it when no explicit binding context was provided. The provenance
+        // travels with it so a credential-incarnation key is never compared to
+        // the provider-derived digest.
         expectedSellerAccountKey: input.job.credential_binding_context?.sellerAccountKey
           ?? (typeof input.job.seller_account_key === "string" ? input.job.seller_account_key : undefined),
+        expectedSellerAccountKeySource: input.job.credential_binding_context?.sellerAccountKeySource
+          ?? (typeof input.job.seller_account_key_source === "string" ? input.job.seller_account_key_source : undefined),
       });
       if (evidence.status !== "verified") {
-        throw new Error(`TEMU_CS_ACCOUNT_BINDING_UNAVAILABLE:${evidence.blocker}`);
+        // The compared shapes travel with the failure so an operator can see
+        // which side mismatched without any secret leaving the lane.
+        throw new Error([
+          "TEMU_CS_ACCOUNT_BINDING_UNAVAILABLE",
+          evidence.blocker,
+          temuCsAccountBindingFailureDetail(evidence),
+        ].join(":"));
       }
       temuBinding = evidence;
     }

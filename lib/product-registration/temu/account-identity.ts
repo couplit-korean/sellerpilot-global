@@ -9,6 +9,7 @@ import {
   classifyTemuEgressAllowlistFailure,
   TemuEgressIpNotAllowlistedError,
 } from "./egress-allowlist-failure";
+import { temuSellerAccountKeyFromMallId } from "./seller-account-key";
 
 export const temuAccountIdentityContract =
   "temu_access_token_identity_v1" as const;
@@ -448,9 +449,16 @@ export async function attestTemuCredentialIdentityForSave(input: {
     egress: input.egress,
   });
   if (!verification.ok) throw new Error(verification.verification);
+  // The certified seller-account key is derived only from the mall identity the
+  // provider just attested, so a caller can persist it (idempotently) without
+  // ever being able to write a key the provider did not attest. A rejected
+  // attestation throws above and returns no seller account at all.
+  const sellerAccount = temuSellerAccountKeyFromMallId(identity.mallId);
+  if (!sellerAccount) throw new Error("TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED");
   return {
     payload,
     identity,
+    sellerAccount,
     requestId: typeof remote.data.requestId === "string"
       ? remote.data.requestId.trim().slice(0, 160)
       : undefined,

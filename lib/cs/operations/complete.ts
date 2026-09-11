@@ -520,6 +520,8 @@ export async function completeCsClaim(
       operation: job.operation,
       credential: job.credential,
       request: job.request,
+      providerResult: parsed.data.result,
+      credentialBindingContext: job.credential_binding_context ?? null,
     });
     if (job.channel === "temu" && job.operation === "inquiries.list" && !bindingEvidence) {
       return "unavailable";
