@@ -68,6 +68,10 @@ const codexExecutionGate = createConcurrencyGate(codexConcurrencyLimit);
 const nonProductCodexExecutionGate = createConcurrencyGate(2);
 const imageLabelFidelityGate = createConcurrencyGate(2);
 const codexBin = process.env.CODEX_BIN?.trim() || "/Applications/ChatGPT.app/Contents/Resources/codex";
+// Some hosts cannot apply the CLI sandbox helper (nested sandbox), so the mode is
+// configurable instead of hard-coded.
+const codexSandboxMode = process.env.SELLERPILOT_CODEX_SANDBOX?.trim() || "workspace-write";
+const codexReadSandboxMode = process.env.SELLERPILOT_CODEX_READ_SANDBOX?.trim() || "read-only";
 const studioSchemaPath = resolve("scripts/ai-studio-output.schema.json");
 const researchSchemaPath = resolve("scripts/ai-product-research-output.schema.json");
 const backgroundAuditSchemaPath = resolve("scripts/ai-background-audit-output.schema.json");
@@ -1253,7 +1257,7 @@ async function researchProduct(job, jobDir, leaseSignal) {
         "exec",
         "--model", model,
         "--config", 'model_reasoning_effort="medium"',
-        "--sandbox", "read-only",
+        "--sandbox", codexReadSandboxMode,
         "--skip-git-repo-check",
         "--ephemeral",
         "--output-schema", researchSchemaPath,
@@ -1402,7 +1406,7 @@ async function auditGeneratedIdentityBackground({ outputFile, preset, expectedEn
         "exec",
         "--model", model,
         "--config", 'model_reasoning_effort="low"',
-        "--sandbox", "read-only",
+        "--sandbox", codexReadSandboxMode,
         "--skip-git-repo-check",
         "--ephemeral",
         "--output-schema", backgroundAuditSchemaPath,
@@ -2164,7 +2168,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                 "exec",
                 "--model", model,
                 "--enable", "image_generation",
-                "--sandbox", "workspace-write",
+                "--sandbox", codexSandboxMode,
                 "--skip-git-repo-check",
                 "--ephemeral",
                 "--cd", dirname(outputFile),
@@ -2742,7 +2746,7 @@ async function invokeStudioSegment({ jobDir, schema, segmentId, prompt, imageFil
         "--model", model,
     ]);
     const argsAfterReasoning = Object.freeze([
-        "--sandbox", "read-only",
+        "--sandbox", codexReadSandboxMode,
         "--skip-git-repo-check",
         "--ephemeral",
         "--output-schema", schemaFile,
@@ -3346,6 +3350,9 @@ async function processJob(job) {
                 effectiveError = heartbeatError;
                 leaseStateUncertain = true;
             }
+        }
+        if (process.env.SELLERPILOT_LOG_RAW_FAILURE === "1") {
+            console.error("[RAW_JOB_FAILURE]", String(effectiveError && effectiveError.stack ? effectiveError.stack : effectiveError).slice(0, 1200));
         }
         const message = sellerSafeAiJobFailure(effectiveError);
         const preserveRemoteState = completionPersistenceStarted
