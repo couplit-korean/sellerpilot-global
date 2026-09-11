@@ -10,6 +10,12 @@ import { verifiedListingRemoteStateSchema } from "./listing-publication-state";
 import { executeChannelOperation, writeChannelOperations, type ChannelOperationName, type ChannelOperationResult } from "./commerce-operations";
 import { listingPublicationVerificationSourceSchema } from "./listing-publication-verification";
 import { assertShopeeShopProfileTarget, readProviderAccountIdentity } from "./provider-account-identity";
+import {
+  sameShopeeShopIdentity,
+  shopeeShopIdentityForShop,
+  shopeeShopIdentityFromVerifiedProfile,
+  withShopeeShopIdentity,
+} from "./shopee-shop-identity";
 import { ensureEbayAccessToken, ensureLazadaAccessToken, ensureShopeeAccessToken, ensureShopeeMerchantAccessToken, fetchNaverAccessToken, lazadaRequest, readStoredNaverAccessToken, runWithProviderReadOnlyTransport, runWithProviderTransportContext, runWithChannelRequestSignal, shopeeRequest, textValue, type SecretPayload } from "./protocols";
 import { executeProviderOAuthExchange, type ProviderOAuthClaim, type ProviderOAuthResult } from "./provider-oauth-runtime";
 import { prepareMarketplaceListingArguments } from "./provider-listing-runtime";
@@ -281,6 +287,43 @@ async function executeDiagnostic(input: ServerlessGatewayProviderExecutionInput)
     safeMessage: diagnostic.message,
   };
 }
+/**
+ * A successful verified discovery is the only place that observes the shop's market
+ * and display name. Persisting that identity on the credential payload keeps the SG
+ * listing fences usable after later token rotations, which the discovery ledger
+ * (bound to one credential version) cannot do on its own.
+ *
+ * Fail-closed: nothing is written unless the provider returned a supported market and
+ * a display name, and the credential already carries an attested provider subject that
+ * the credential refresh RPCs require. A failed write never hides a successful read.
+ */
+async function persistShopeeShopIdentity(
+  input: ServerlessGatewayProviderExecutionInput,
+  evidence: { payload: SecretPayload; profile: unknown; shopId: string },
+) {
+  const identity = shopeeShopIdentityFromVerifiedProfile({
+    profile: evidence.profile,
+    shopId: evidence.shopId,
+    verifiedAt: new Date().toISOString(),
+  });
+  if (!identity) return;
+  try {
+    if (!readProviderAccountIdentity(evidence.payload, "shopee")) return;
+    if (sameShopeeShopIdentity(shopeeShopIdentityForShop(evidence.payload, identity.shopId), identity)) return;
+    await input.hooks.beginCredentialMutation();
+    await input.hooks.stageCredentialRefresh({
+      payload: withShopeeShopIdentity(evidence.payload, identity),
+      expiresAt: textValue(evidence.payload, "authorization_expires_at") || null,
+    });
+  } catch (error) {
+    console.error("shopee shop identity persist failed", {
+      code: error instanceof Error ? error.message : "unknown",
+      shopId: identity.shopId,
+      marketCode: identity.marketCode,
+    });
+  }
+}
+
 async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInput) {
   if (input.job.channel === "shopee") {
     const shopId = String(input.job.request.shopId ?? "").trim();
@@ -296,7 +339,11 @@ async function executeShopDiscovery(input: ServerlessGatewayProviderExecutionInp
     await input.hooks.assertLeaseHealthy();
     const providerError = textValue(remote.data, "error");
     const ok = remote.response.ok && !providerError;
-    if (ok) assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
+    if (ok) {
+      assertShopeeShopProfileTarget(remote.data, shopId, { acceptSignedRequestBinding: true });
+      await persistShopeeShopIdentity(input, { payload: ensured.payload, profile: remote.data, shopId });
+      await input.hooks.assertLeaseHealthy();
+    }
     return {
       ok,
       channel: "shopee" as const,

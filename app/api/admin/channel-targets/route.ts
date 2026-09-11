@@ -22,6 +22,10 @@ import {
   lineageBoundShopeeTargets,
 } from "../../../../lib/channels/shopee-target-lineage";
 import { isCompleteChannelTarget, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import {
+  mergeShopeeChannelTargets,
+  shopeeIdentityChannelTargets,
+} from "../../../../lib/channels/shopee-shop-identity";
 import { readProviderAccountIdentity } from "../../../../lib/channels/provider-account-identity";
 import { lazadaMySellerModeEvidenceFromGatewayResult, lazadaSellerProfileFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import {
@@ -309,6 +313,32 @@ export async function GET(request: Request) {
           status: textValue(row.remote_status),
         };
         if (targetId && isCompleteChannelTarget("shopee", candidate)) merged.set(targetId, candidate);
+      }
+      targets = [...merged.values()];
+    }
+  }
+
+  // A verified discovery also records the shop identity on the credential payload,
+  // which stays bound to the active credential version across token rotations. Read it
+  // alongside the ledger so a shop synchronized once resolves without another OAuth round.
+  if (channel.data === "shopee") {
+    const identityTargets = shopeeIdentityChannelTargets({
+      secret,
+      credentialId: credential.id,
+      credentialVersion: numberValue("version" in credential ? credential.version : 0),
+    });
+    if (identityTargets.length) {
+      const merged = new Map(targets.map((target) => [target.targetId, target]));
+      for (const target of mergeShopeeChannelTargets([], identityTargets)) {
+        merged.set(target.targetId, {
+          targetId: target.targetId,
+          displayName: target.displayName,
+          marketCode: target.marketCode,
+          locale: target.locale,
+          language: target.language,
+          currency: target.currency,
+          status: target.status ?? "",
+        });
       }
       targets = [...merged.values()];
     }

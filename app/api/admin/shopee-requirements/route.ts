@@ -16,6 +16,7 @@ import {
   activeProductionShopeeCredentialId,
 } from "../../../../lib/channels/shopee-target-lineage";
 import { shopeeShopTargetIds, type ChannelTargetRecord } from "../../../../lib/channels/target-records";
+import { mergeShopeeChannelTargets, shopeeIdentityChannelTargets } from "../../../../lib/channels/shopee-shop-identity";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
 
 export const runtime = "nodejs";
@@ -112,7 +113,17 @@ export async function POST(request: Request) {
     : [];
   // This SG request depends only on its own authorized target, not all eight markets.
   const authorizedShopIds = new Set(shopeeShopTargetIds(envelope.secretPayload));
-  const matches = normalizedTargets.filter((target) =>
+  // The verified discovery ledger and the credential payload identity are both
+  // provider-attested reads of the same shop. Accept either one so a shop that has been
+  // synchronized once can resolve its SG requirements without another OAuth round.
+  const identityTargets = shopeeIdentityChannelTargets({
+    secret: envelope.secretPayload,
+    credentialId: envelope.credentialId,
+  });
+  const matches = mergeShopeeChannelTargets(
+    normalizedTargets,
+    identityTargets,
+  ).filter((target) =>
     target.targetId === parsed.data.shopId && target.marketCode === "SG"
     && target.locale === "en-SG" && target.currency === "SGD"
     && authorizedShopIds.has(target.targetId));

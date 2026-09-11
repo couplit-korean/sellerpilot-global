@@ -5,6 +5,7 @@ import {
 import { prepareElevenstNewProductCreateBeforeClaimFromRpc } from "../../../../lib/product-registration/elevenst/new-product-input-source-rpc";
 import { bindShopeeSgCreateExecutionLineage, exactShopeeListingPrepareReadiness, shopeeCredentialSnapshot, shopeeSgCreateExecutionLineage, shopeeSgCreateExecutionLineageArgument, type ShopeeSgCreateExecutionLineage } from "../../../../lib/product-registration/shopee/target-lineage-readiness";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../lib/channels/lazada-price-policy";
+import { mergeShopeeChannelTargets, shopeeIdentityChannelTargets } from "../../../../lib/channels/shopee-shop-identity";
 import { bindLazadaMyListingCreateContext, buildLazadaMyListingCreateContext, lazadaMySellerModeEvidenceFromGatewayResult } from "../../../../lib/product-registration/lazada/listing-create-context";
 import { lazadaRequestedUpdateQuantity } from "../../../../lib/channels/lazada-listing-update";
 import { bindCoupangCreateSourceIdentity } from "../../../../lib/channels/coupang-create-source-identity";
@@ -549,14 +550,27 @@ export async function POST(request: NextRequest) {
       credentialId: typeof target.credential_id === "string" ? target.credential_id : "",
       credentialVersion: typeof target.credential_version === "number" ? target.credential_version : Number.NaN,
     })) : [];
+    const readinessShopeeSnapshot = activeCredentialError ? null : shopeeCredentialSnapshot(activeCredentialData);
+    const identityTargets = readinessShopeeSnapshot
+      ? shopeeIdentityChannelTargets({
+        secret: readinessShopeeSnapshot.secretPayload,
+        credentialId: readinessShopeeSnapshot.credentialId,
+        credentialVersion: readinessShopeeSnapshot.version,
+      })
+      : [];
     const readiness = exactShopeeListingPrepareReadiness({
       requestedCredentialId: parsed.data.credentialId,
       requestedCredentialVersion: parsed.data.credentialVersion ?? 0,
       requestedTargetId: parsed.data.targetId,
       requestedMarketCode: parsed.data.market,
       activeCredential: credentialMetadata,
-      activeSnapshot: activeCredentialError ? null : shopeeCredentialSnapshot(activeCredentialData),
-      cachedTargets: cachedTargetError ? [] : cachedTargets,
+      activeSnapshot: readinessShopeeSnapshot,
+      // The verified discovery ledger and the credential payload identity are both
+      // provider-attested reads of the same shop. Either one is enough once the shop
+      // has been synchronized, so a rotated credential version does not re-open the fence.
+      cachedTargets: cachedTargetError
+        ? identityTargets
+        : mergeShopeeChannelTargets(cachedTargets, identityTargets),
     });
     if (activeCredentialError || cachedTargetError || readiness.status !== "ready") {
       return NextResponse.json({

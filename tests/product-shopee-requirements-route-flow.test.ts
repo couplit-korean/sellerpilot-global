@@ -6,6 +6,7 @@ import ts from "typescript";
 import { z } from "zod";
 import * as protocols from "../lib/channels/protocols";
 import * as lineage from "../lib/channels/shopee-target-lineage";
+import * as shopeeShopIdentity from "../lib/channels/shopee-shop-identity";
 import * as targets from "../lib/channels/target-records";
 import * as candidates from "../lib/product-registration/shopee/provider-requirements";
 import { shopeeSgRequirementSnapshotContract } from "../lib/product-registration/shopee/requirement-view-model";
@@ -50,6 +51,7 @@ async function run(options: {
       if (name === "zod") return { z };
       if (name.endsWith("/protocols")) return protocols;
       if (name.endsWith("/shopee-target-lineage")) return lineage;
+      if (name.endsWith("/shopee-shop-identity")) return shopeeShopIdentity;
       if (name.endsWith("/target-records")) return targets;
       if (name.endsWith("/provider-requirements")) return candidates;
       if (name.endsWith("/requirement-view-model")) return { shopeeSgRequirementSnapshotContract };
