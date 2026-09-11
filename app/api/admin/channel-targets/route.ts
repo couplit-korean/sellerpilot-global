@@ -255,7 +255,7 @@ export async function GET(request: Request) {
     if (error || !data || typeof data !== "object" || Array.isArray(data)) return NextResponse.json({ message: "채널 대상을 안전하게 불러오지 못했습니다." }, { status: 500 });
     secret = data as Record<string, unknown>;
   }
-  const targets = channel.data === "shopee"
+  let targets = channel.data === "shopee"
     ? objectRows(secret.shopee_targets).filter((target) => target.type === "shop").map((target) => {
       const marketCode = textValue(target.region || target.market).toUpperCase();
       const market = channelMarket("shopee", marketCode);
@@ -286,6 +286,33 @@ export async function GET(request: Request) {
       });
       return [];
     })();
+
+  // The OAuth flow stores shop tokens without the shop's country/language, while a
+  // verified discovery persists that identity in the market-target ledger. Prefer the
+  // persisted identity instead of failing closed and asking for another OAuth round.
+  if (channel.data === "shopee" && (!targets.length || targets.some((target) => !isCompleteChannelTarget("shopee", target)))) {
+    const { data: storedTargets } = await serviceClient.rpc("sellerpilot_list_channel_market_targets_v2", { p_channel: "shopee" });
+    const storedRows = objectRows(storedTargets);
+    if (storedRows.length) {
+      const merged = new Map(targets.map((target) => [target.targetId, target]));
+      for (const row of storedRows) {
+        const targetId = textValue(row.target_id);
+        const marketCode = textValue(row.market_code).toUpperCase();
+        const market = channelMarket("shopee", marketCode);
+        const candidate = {
+          targetId,
+          displayName: textValue(row.display_name),
+          marketCode,
+          locale: textValue(row.locale) || (market?.locale ?? ""),
+          language: textValue(row.language) || (market?.language ?? ""),
+          currency: textValue(row.currency) || (market?.currency ?? ""),
+          status: textValue(row.remote_status),
+        };
+        if (targetId && isCompleteChannelTarget("shopee", candidate)) merged.set(targetId, candidate);
+      }
+      targets = [...merged.values()];
+    }
+  }
 
   if (!targets.length || targets.some((target) => !isCompleteChannelTarget(channel.data, target))) {
     return NextResponse.json({
