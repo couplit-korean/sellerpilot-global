@@ -187,6 +187,19 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .demo-data-badge b { font-size: 8px; }
 .demo-data-badge small { color: #858ca3; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
 
+/* Registration long-job UX: while a first-draft or detail-page job runs the
+   screen blurs and states what is happening, and the shell keeps a 작업 중 badge
+   so the state is visible after navigating away. */
+.publishing-page.publishing-busy > :not(.publishing-busy-overlay) { filter: blur(3px); pointer-events: none; user-select: none; }
+.publishing-busy-overlay { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; padding: 20px; background: rgba(10, 22, 19, 0.42); }
+.publishing-busy-card { display: grid; justify-items: center; gap: 10px; max-width: 460px; padding: 26px 30px; border-radius: 16px; background: #fff; box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); text-align: center; }
+.publishing-busy-card b { font-size: 15px; color: #14302a; }
+.publishing-busy-card small { font-size: 12px; line-height: 1.5; color: #55655f; }
+.publishing-busy-card em { font-size: 11px; line-height: 1.5; color: #7d8a85; font-style: normal; }
+.publishing-busy-badge { display: inline-flex; align-items: center; gap: 5px; min-height: 31px; max-width: 260px; padding: 0 9px; border: 1px solid #f0d9b5; border-radius: 8px; background: #fdf4e7; color: #8a5a12; white-space: nowrap; overflow: hidden; }
+.publishing-busy-badge b { font-size: 8px; }
+.publishing-busy-badge small { font-size: 7px; color: #9a6a24; overflow: hidden; text-overflow: ellipsis; }
+
 /* Unified channel link badge. The product-registration area renders this one
    component everywhere a channel link is reported, so wording and icons cannot
    disagree between cards. */

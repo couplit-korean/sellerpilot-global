@@ -4190,8 +4190,49 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const connectedChannelEntries = uploadChannelEntries.filter(([key]) => connectedChannelKeys.includes(key));
   const unavailableChannelEntries = uploadChannelEntries.filter(([key]) => !connectedChannelKeys.includes(key));
 
+  // One explicit busy state for the whole registration screen. The operator
+  // could not tell whether the first-draft or the detail-page job had actually
+  // started, so the screen now blurs and states what is running until the server
+  // side job finishes. The state is mirrored to local storage so leaving this
+  // screen still shows 작업 중 in the shell.
+  const publishBusy = running
+    ? { title: "상세페이지와 이미지 자산을 제작하고 있습니다.", detail: "모델 호출과 이미지 생성이 끝날 때까지 이 화면에 결과가 표시되지 않습니다." }
+    : researchingProduct
+      ? { title: "1차 정보와 이미지 6개를 생성하고 있습니다.", detail: "상품 링크·설명과 대표사진을 분석해 1차 정보와 이미지 6장을 만듭니다." }
+      : recoveringProductResearch
+        ? { title: "접수한 1차 작업 상태를 확인하고 있습니다.", detail: "서버에 접수된 작업의 진행 상황을 다시 읽고 있습니다." }
+        : photoSelectionsProcessing
+          ? { title: "선택한 사진을 확인하고 있습니다.", detail: "업로드한 사진의 저장·검증이 끝나면 자동으로 다음 단계가 진행됩니다." }
+          : queuedJobId
+            ? { title: "상세페이지 제작이 큐에서 진행 중입니다.", detail: `작업 ID ${queuedJobId.slice(0, 8)} · 완료되면 이 화면에 결과가 표시됩니다.` }
+            : null;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const key = "sellerpilot:publishing-busy";
+    try {
+      if (publishBusy) {
+        window.localStorage.setItem(key, JSON.stringify({ title: publishBusy.title, productId: resolvedProductId ?? "", startedAt: Date.now() }));
+      } else {
+        window.localStorage.removeItem(key);
+      }
+    } catch {
+      // local storage is only a mirror of the server state; ignore failures
+    }
+  }, [publishBusy?.title, resolvedProductId]);
+
   return (
-    <div className="page-stack publishing-page">
+    <div className={`page-stack publishing-page${publishBusy ? " publishing-busy" : ""}`} aria-busy={publishBusy ? true : undefined}>
+      {publishBusy && (
+        <div className="publishing-busy-overlay" role="alert" aria-live="polite">
+          <div className="publishing-busy-card">
+            <LoaderCircle className="spin" size={34} />
+            <b>{publishBusy.title}</b>
+            <small>{publishBusy.detail}</small>
+            <em>이 화면을 벗어나거나 창을 닫아도 서버에서 계속 진행됩니다. 완료되면 등록 진행 · 히스토리와 알림에서 확인할 수 있습니다.</em>
+          </div>
+        </div>
+      )}
       <section className="publishing-workflow-header">
         <div className="publishing-workflow-copy">{existingProductEdit ? <><span className="eyebrow dark"><RefreshCw size={14} /> 채널 상품 수정</span><h2>저장된 상품 원장으로 채널별 콘텐츠를 확인하세요.</h2><p>신규상품 입력을 다시 시작하지 않습니다. 저장된 상품정보·승인 이미지·채널별 초안을 아래 편집기에서 불러오고, 채널마다 지원 범위를 확인한 뒤 별도로 반영합니다.</p></> : <><span className="eyebrow dark"><Sparkles size={14} /> 상품 등록 워크플로</span><h2>사진과 설명으로 1차 정보·이미지 6개를 함께 만드세요.</h2><p>1차 생성에서 상품정보와 핵심 이미지 6개를 동시에 준비합니다. 사람이 사실정보와 이미지를 확인·수정한 뒤 상세페이지를 제작하고, 상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다.</p></>}</div>
         <ol className="publishing-steps" aria-label={existingProductEdit ? "채널 상품 수정 단계" : "상품 등록 단계"}>
@@ -6361,6 +6402,30 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const metric = channelMetrics.find((item) => item.channelKey === key);
     return metric ? [metric] : [];
   });
+  // Mirror of the publishing screen's busy state, so an operator who navigates
+  // away or closes the screen still sees that a long job is running.
+  const [publishingBusy, setPublishingBusy] = useState<{ title: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const read = () => {
+      try {
+        const raw = window.localStorage.getItem("sellerpilot:publishing-busy");
+        if (!raw) { setPublishingBusy(null); return; }
+        const parsed = JSON.parse(raw) as { title?: string; startedAt?: number };
+        if (!parsed?.startedAt || Date.now() - parsed.startedAt > 6 * 60 * 60 * 1000) {
+          window.localStorage.removeItem("sellerpilot:publishing-busy");
+          setPublishingBusy(null);
+          return;
+        }
+        setPublishingBusy({ title: parsed.title ?? "상품 작업 진행 중" });
+      } catch {
+        setPublishingBusy(null);
+      }
+    };
+    read();
+    const timer = window.setInterval(read, 4000);
+    return () => window.clearInterval(timer);
+  }, []);
   const openOperationsAttention = () => {
     if (productReadinessState === "unavailable") navigate("products");
     else if (aiRecovery?.status === "failed") navigate("registration-activity", "failed");
@@ -6395,7 +6460,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
-          <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}><ChannelConnectionStrip metrics={shellChannelMetrics} onOpenConnections={() => navigate("connections")} />{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
+          <div className={`topbar-actions ${operationsBadgeNeedsAttention ? "has-operations-attention" : ""}`.trim()}>{publishingBusy && <button type="button" className="publishing-busy-badge" onClick={() => navigate("publishing")} title={publishingBusy.title} aria-label={`상품 작업 진행 중: ${publishingBusy.title}`}><LoaderCircle size={13} className="spin" /><b>작업 중</b><small>{publishingBusy.title}</small></button>}<ChannelConnectionStrip metrics={shellChannelMetrics} onOpenConnections={() => navigate("connections")} />{operationsBadgeNeedsAttention ? <button type="button" className="demo-data-badge attention" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`} onClick={openOperationsAttention}><AlertTriangle size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></button> : <span className={`demo-data-badge ${operations.state === "database" ? "database" : ""}`} role="status" title={operationsBadgeTitle} aria-label={`${operationsBadgeLabel}: ${operationsBadgeDetail}`}><Activity size={13} /><b>{operationsBadgeLabel}</b><small>{operationsBadgeDetail}</small></span>}<button className="global-search" aria-label="통합 검색 열기" onClick={openSearch}><Search size={16} /><span>상품, 주문, 문의 검색</span><kbd><Command size={11} />K</kbd></button><div className="notification-wrap" ref={notificationRef}><button ref={notificationButtonRef} className="top-icon-button" aria-label="알림" aria-expanded={notificationsOpen} aria-controls="sellerpilot-notifications" onClick={() => { if (notificationsOpen) closeNotifications(true); else setNotificationsOpen(true); }}><Bell size={18} />{notificationItems.length > 0 && <i />}</button>{notificationsOpen && <div id="sellerpilot-notifications" className="notification-popover" role="region" aria-label="실시간 알림"><div><h4>실시간 알림 <small>{notificationItems.length}</small></h4><span><button type="button" onClick={() => setDismissedNotifications(new Set(notificationItems.map((item) => item.key)))}>전체 닫기</button><button type="button" aria-label="알림창 닫기" onClick={() => closeNotifications(true)}><X size={14} /></button></span></div>{notificationItems.map((item) => { const openItem = () => { if (item.view === "cs" && item.csStatus) openCs("all", item.csStatus); else navigate(item.view, item.registrationStatus); closeNotifications(false); }; return <div className="notification-item" key={item.key}><button type="button" className="notification-item-open" onClick={openItem}><span className={`alert-icon ${item.tone}`}><item.icon size={15} /></span><span><b>{item.title}</b><small>{item.detail}</small></span></button><button type="button" className="notification-item-dismiss" aria-label={`${item.title} 알림 닫기`} onClick={() => setDismissedNotifications((current) => new Set([...current, item.key]))}><X size={13} /></button></div>; })}{notificationItems.length === 0 && <div className="notification-empty"><CheckCircle2 size={20} /><span><b>확인할 새 알림이 없습니다.</b><small>새 상태 변화가 생기면 다시 표시됩니다.</small></span></div>}</div>}</div><button className="user-menu" onClick={() => { setCredentialMessage(""); setNewAdminPassword(""); setAccountOpen(true); }} aria-label="관리자 계정 설정 열기"><span className="user-avatar">관</span><span><b>{userEmail.split("@")[0]}</b><small>보안 관리자</small></span><ChevronDown size={14} /></button></div>
           </header>
         </div>
         <MobilePushManager authenticatedFetch={operations.authenticatedFetch} />
