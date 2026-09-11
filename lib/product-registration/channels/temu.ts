@@ -47,6 +47,10 @@ import {
   verifyTemuAccountIdentity,
 } from "../temu/account-identity";
 import { inspectTemuReviewAndCreatePrewrite } from "../temu/create-readiness-adapter";
+import {
+  classifyTemuEgressAllowlistFailure,
+  temuEgressAllowlistStepData,
+} from "../temu/egress-allowlist-failure";
 export function temuResultObject(data: Record<string, unknown>) {
   const value = data.result;
   return value && typeof value === "object" && !Array.isArray(value)
@@ -173,6 +177,10 @@ export async function executeTemu(input: ExecuteInput) {
       "temu-category-account-identity-read",
       identityRemote,
     );
+    const identityEgressAllowlist = classifyTemuEgressAllowlistFailure({
+      status: identityRemote.response.status,
+      data: identityRemote.data,
+    });
     const identityVerification = verifyTemuAccountIdentity({
       payload: input.payload,
       response: identityRemote.data,
@@ -189,7 +197,10 @@ export async function executeTemu(input: ExecuteInput) {
       data: {
         sellerpilotVerification: identityTransportStep.ok
           ? identityVerification.verification
-          : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+          : identityEgressAllowlist.notAllowlisted
+            ? "TEMU_EGRESS_IP_NOT_ALLOWLISTED"
+            : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+        ...temuEgressAllowlistStepData(identityEgressAllowlist),
         ...(!(identityTransportStep.ok && identityVerification.ok)
           ? { sellerpilotNoWriteConfirmed: true }
           : {}),
@@ -580,6 +591,10 @@ export async function executeTemu(input: ExecuteInput) {
       "temu-account-identity-read",
       accountIdentityRemote,
     );
+    const accountIdentityEgressAllowlist = classifyTemuEgressAllowlistFailure({
+      status: accountIdentityRemote.response.status,
+      data: accountIdentityRemote.data,
+    });
     const accountIdentityVerification = verifyTemuAccountIdentity({
       payload: input.payload,
       response: accountIdentityRemote.data,
@@ -615,7 +630,10 @@ export async function executeTemu(input: ExecuteInput) {
               ? "TEMU_CREATE_TARGET_MALL_MISMATCH"
               : "TEMU_CREATE_ACCOUNT_LINEAGE_BINDING_REQUIRED"
             : accountIdentityVerification.verification
-          : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+          : accountIdentityEgressAllowlist.notAllowlisted
+            ? "TEMU_EGRESS_IP_NOT_ALLOWLISTED"
+            : "TEMU_ACCOUNT_IDENTITY_READ_UNVERIFIED",
+        ...temuEgressAllowlistStepData(accountIdentityEgressAllowlist),
         ...(!(accountIdentityTransportStep.ok
           && accountIdentityVerification.ok
           && accountIdentityLineageVerified)

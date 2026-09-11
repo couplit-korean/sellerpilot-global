@@ -5,6 +5,10 @@ import {
   type RemoteResponse,
   type SecretPayload,
 } from "../../channels/protocols";
+import {
+  classifyTemuEgressAllowlistFailure,
+  TemuEgressIpNotAllowlistedError,
+} from "./egress-allowlist-failure";
 
 export const temuAccountIdentityContract =
   "temu_access_token_identity_v1" as const;
@@ -57,7 +61,8 @@ export type TemuAccountIdentityVerification = {
     | "TEMU_ACCOUNT_IDENTITY_CLOCK_INVALID"
     | "TEMU_ACCOUNT_IDENTITY_TOKEN_EXPIRED"
     | "TEMU_ACCOUNT_IDENTITY_MISMATCH"
-    | "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING";
+    | "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING"
+    | "TEMU_EGRESS_IP_NOT_ALLOWLISTED";
   identity?: TemuAccessTokenIdentity;
   missingScopes?: string[];
 };
@@ -294,12 +299,26 @@ export function verifyTemuAccountIdentity(input: {
   responseText?: string;
   requiredScopes: readonly string[];
   nowSeconds?: number;
+  egress?: unknown;
 }): TemuAccountIdentityVerification {
   const expected = readTemuAccountIdentityBinding(input.payload);
   if (!expected) {
     return {
       ok: false,
       verification: "TEMU_ACCOUNT_IDENTITY_BINDING_REQUIRED",
+    };
+  }
+  // A whitelist rejection is a transport-egress outcome, not an identity or
+  // scope outcome. Classify it before any identity normalization so it is not
+  // reported as an unverified read.
+  const egressAllowlist = classifyTemuEgressAllowlistFailure({
+    data: input.response,
+    egress: input.egress,
+  });
+  if (egressAllowlist.notAllowlisted) {
+    return {
+      ok: false,
+      verification: "TEMU_EGRESS_IP_NOT_ALLOWLISTED",
     };
   }
   const identity = normalizeTemuAccessTokenIdentity(input);
@@ -366,12 +385,28 @@ export async function attestTemuCredentialIdentityForSave(input: {
   payload: SecretPayload;
   nowSeconds?: number;
   request?: TemuIdentityRequest;
+  egress?: unknown;
 }) {
   const unboundPayload = withoutTemuAccountIdentityFields(input.payload);
   const remote = await (input.request ?? temuRequest)({
     payload: unboundPayload,
     type: "bg.open.accesstoken.info.get",
   });
+  const egressAllowlist = classifyTemuEgressAllowlistFailure({
+    status: remote.response.status,
+    data: remote.data,
+    egress: input.egress,
+  });
+  if (egressAllowlist.notAllowlisted) {
+    console.error("[temu-identity] egress ip not allowlisted",
+      remote.response.status,
+      egressAllowlist.providerErrorCode ?? "unknown",
+      egressAllowlist.egress.prefix ?? "unknown-prefix");
+    throw new TemuEgressIpNotAllowlistedError({
+      providerErrorCode: egressAllowlist.providerErrorCode,
+      egress: egressAllowlist.egress,
+    });
+  }
   if (!remote.response.ok) {
     console.error("[temu-identity] read not ok", remote.response.status,
       Object.keys(remote.data ?? {}).join(","));
@@ -410,6 +445,7 @@ export async function attestTemuCredentialIdentityForSave(input: {
     responseText: remote.text,
     requiredScopes: temuCredentialReadinessRequiredApiScopes,
     nowSeconds: input.nowSeconds,
+    egress: input.egress,
   });
   if (!verification.ok) throw new Error(verification.verification);
   return {

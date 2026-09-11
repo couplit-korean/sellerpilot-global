@@ -7,6 +7,11 @@ import {
   type SecretPayload,
 } from "../../channels/protocols";
 import { readTemuAccountIdentityBinding } from "./account-identity";
+import {
+  classifyTemuEgressAllowlistFailure,
+  resolveTemuEgressFingerprint,
+  temuEgressAllowlistMessage,
+} from "./egress-allowlist-failure";
 import type {
   TemuAuthoritativeClock,
   TemuAuthoritativeReadDependencies,
@@ -35,15 +40,33 @@ export type TemuAuthoritativePreparationErrorCode =
   | "TEMU_AUTHORITATIVE_APP_SOURCE_UNAVAILABLE"
   | "TEMU_AUTHORITATIVE_APP_SOURCE_INVALID"
   | "TEMU_AUTHORITATIVE_SHIPPING_SOURCE_UNAVAILABLE"
-  | "TEMU_AUTHORITATIVE_SHIPPING_SOURCE_INVALID";
+  | "TEMU_AUTHORITATIVE_SHIPPING_SOURCE_INVALID"
+  // Shared with the other Temu read paths: the provider refused the caller
+  // egress IP before any credential, scope or response evaluation.
+  | "TEMU_EGRESS_IP_NOT_ALLOWLISTED";
 
 export class TemuAuthoritativePreparationError extends Error {
   readonly code: TemuAuthoritativePreparationErrorCode;
+  readonly providerErrorCode: string | null;
+  readonly egressSha256: string | null;
+  readonly egressSha256Prefix: string | null;
 
-  constructor(code: TemuAuthoritativePreparationErrorCode) {
-    super(code);
+  constructor(
+    code: TemuAuthoritativePreparationErrorCode,
+    details: {
+      providerErrorCode?: string | null;
+      egress?: unknown;
+    } = {},
+  ) {
+    super(code === "TEMU_EGRESS_IP_NOT_ALLOWLISTED"
+      ? temuEgressAllowlistMessage(details.egress)
+      : code);
     this.name = "TemuAuthoritativePreparationError";
     this.code = code;
+    this.providerErrorCode = details.providerErrorCode ?? null;
+    const egress = resolveTemuEgressFingerprint(details.egress);
+    this.egressSha256 = egress.sha256;
+    this.egressSha256Prefix = egress.prefix;
   }
 }
 
@@ -121,6 +144,10 @@ export type CreateTemuAuthoritativePreparationReadAdapterInput = {
   readCurrentShippingSnapshot: TemuServiceSnapshotReader<TemuSellerShippingServiceSnapshot>;
   request?: TemuPreparationSignedRequest;
   clock: TemuAuthoritativeClock;
+  // Optional egress fingerprint for the lane that performs the read. When it is
+  // absent the local operator worker measurement is used, and when that is also
+  // absent the failure reports an explicit null fingerprint.
+  egress?: unknown;
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -251,7 +278,21 @@ function validateCategoryPlan(plan: TemuCategoryPreparationPlan) {
   return { categoryId, parentCategoryId };
 }
 
-function assertTransport(remote: RemoteResponse) {
+function assertTransport(remote: RemoteResponse, egress?: unknown) {
+  const egressAllowlist = classifyTemuEgressAllowlistFailure({
+    status: remote.response.status,
+    data: remote.data,
+    egress,
+  });
+  if (egressAllowlist.notAllowlisted) {
+    throw new TemuAuthoritativePreparationError(
+      "TEMU_EGRESS_IP_NOT_ALLOWLISTED",
+      {
+        providerErrorCode: egressAllowlist.providerErrorCode,
+        egress: egressAllowlist.egress,
+      },
+    );
+  }
   if (remote.response.ok) return;
   if (remote.response.status === 401 || remote.response.status === 403) {
     throw new TemuAuthoritativePreparationError(
@@ -270,8 +311,8 @@ function boundedFailure(error: unknown): never {
   );
 }
 
-function resultRecord(remote: RemoteResponse) {
-  assertTransport(remote);
+function resultRecord(remote: RemoteResponse, egress?: unknown) {
+  assertTransport(remote, egress);
   const result = record(remote.data.result);
   if (remote.data.success !== true || !result) {
     throw new TemuAuthoritativePreparationError(
@@ -430,7 +471,7 @@ export function createTemuAuthoritativePreparationReadAdapter(
           type,
           ...(args ? { arguments: args } : {}),
         }));
-      return resultRecord(remote);
+      return resultRecord(remote, input.egress);
     } catch (error) {
       return boundedFailure(error);
     }

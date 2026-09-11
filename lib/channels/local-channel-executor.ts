@@ -95,6 +95,22 @@ export function egressIpSha256(value: unknown) {
     : null;
 }
 
+// The operator worker measures its own egress address before claiming a local
+// executor job. Recording that measurement lets a provider rejection name the
+// egress fingerprint that was actually used, instead of inferring one.
+let observedLocalEgressSha256Value: string | null = null;
+
+export function recordObservedLocalEgressSha256(value: unknown) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  observedLocalEgressSha256Value = digestPattern.test(normalized)
+    ? normalized
+    : null;
+}
+
+export function observedLocalEgressSha256() {
+  return observedLocalEgressSha256Value;
+}
+
 export function vercelForwardedClientIp(headers: Headers) {
   const raw = headers.get("x-vercel-forwarded-for");
   if (!raw || raw.includes(",")) return null;

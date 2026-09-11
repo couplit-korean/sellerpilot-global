@@ -41,7 +41,7 @@ function load(source, modules) {
   return context.exports;
 }
 
-function fixture({ attestFailure = null } = {}) {
+function fixture({ attestFailure = null, attestError = null } = {}) {
   const rotateCalls = [];
   const attestCalls = [];
   const oldSecret = {
@@ -61,6 +61,7 @@ function fixture({ attestFailure = null } = {}) {
   );
   const attest = async ({ payload }) => {
     attestCalls.push(structuredClone(payload));
+    if (attestError) throw attestError;
     if (attestFailure) throw new Error(attestFailure);
     assert.equal(hasIdentity(payload), false);
     return {
@@ -131,6 +132,21 @@ function fixture({ attestFailure = null } = {}) {
       hasTemuAccountIdentityFields: hasIdentity,
       withoutTemuAccountIdentityFields: withoutIdentity,
     },
+    // The allowlist helper is stubbed at the contract level: the route only
+    // relies on the stable code carried by the failure.
+    "../../../../../lib/product-registration/temu/egress-allowlist-failure": {
+      isTemuEgressIpNotAllowlistedError: (error) => Boolean(error)
+        && typeof error === "object"
+        && error.code === "TEMU_EGRESS_IP_NOT_ALLOWLISTED",
+    },
+    "../../../../../lib/product-registration/temu/credential-identity-attestation": {
+      temuCredentialIdentityEnvelopeSchema: z.record(
+        z.string(),
+        z.unknown(),
+      ),
+      temuCredentialPayloadFingerprintSha256: () => "0".repeat(64),
+      verifyTemuCredentialIdentityAttestation: () => false,
+    },
     "../../../../../lib/supabase/config": {
       supabasePublishableKey: "fixture-public",
       supabaseUrl: "https://fixture.invalid",
@@ -200,4 +216,28 @@ test("Temu rotate never calls Vault rotation when fresh signed identity fails", 
   assert.equal(result.body.code, "TEMU_ACCOUNT_IDENTITY_SCOPE_MISSING");
   assert.equal(f.attestCalls.length, 1);
   assert.equal(f.rotateCalls.length, 0);
+});
+
+test("Temu rotate reports the egress allowlist code without touching the Vault", async () => {
+  const egressError = Object.assign(new Error(
+    "TEMU_EGRESS_IP_NOT_ALLOWLISTED · Temu가 현재 송신 IP를 허용 목록에서 거부했습니다",
+  ), {
+    name: "TemuEgressIpNotAllowlistedError",
+    code: "TEMU_EGRESS_IP_NOT_ALLOWLISTED",
+    providerErrorCode: "5000003",
+    egressSha256: "c".repeat(64),
+    egressSha256Prefix: "c".repeat(11),
+  });
+  const f = fixture({ attestError: egressError });
+  const result = await rotate(f.POST, { access_token: "new-token" });
+  assert.equal(result.response.status, 422);
+  assert.equal(result.body.code, "TEMU_EGRESS_IP_NOT_ALLOWLISTED");
+  assert.equal(result.body.providerErrorCode, "5000003");
+  assert.equal(result.body.egressSha256Prefix, "c".repeat(11));
+  assert.equal(result.body.egressSha256, "c".repeat(64));
+  assert.match(result.body.message, /허용 목록/u);
+  // Identity attestation never became a Vault rotation.
+  assert.equal(f.attestCalls.length, 1);
+  assert.equal(f.rotateCalls.length, 0);
+  assert.equal(JSON.stringify(result.body).includes("fixture-secret"), false);
 });

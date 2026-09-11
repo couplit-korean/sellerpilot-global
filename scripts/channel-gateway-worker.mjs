@@ -11,6 +11,7 @@ import { canRunGatewayClaim, canRunPeriodicChannelSync, isWorkerTokenConfigured,
 import { createGatewayWorkerHealth, resolveGatewayHealthPort, resolveGatewayPolling, resolveGatewayReadinessStaleMs, startGatewayWorkerHealthServer } from "./persistent-worker-health.mjs";
 import { attachEbayCreateClaimIncarnation } from "../lib/channels/ebay-create-claim.ts";
 import { isLocalGatewayRecoveryAllowedTuple, LOCAL_GATEWAY_RECOVERY_CLAIM_MODE } from "../lib/channels/local-gateway-recovery-lane.ts";
+import { recordObservedLocalEgressSha256 } from "../lib/channels/local-channel-executor.ts";
 import { EBAY_PUBLICATION_RECONCILIATION_CLAIM_MODE } from "../lib/channels/ebay-publication-reconciliation-contract.ts";
 import { runWithProviderTransportContext } from "../lib/channels/protocols.ts";
 const localRecoveryOnly = process.argv.includes("--local-recovery-only");
@@ -120,6 +121,10 @@ async function captureLocalChannelExecutorAttestation() {
 const localChannelExecutorAttestation = gatewayWorkerConfigured && !localRecoveryOnly
     ? await captureLocalChannelExecutorAttestation()
     : null;
+// The measured value is the only honest source for attributing a provider
+// allowlist rejection to the egress this process actually used.
+if (localChannelExecutorAttestation)
+    recordObservedLocalEgressSha256(localChannelExecutorAttestation.egressIpSha256);
 const workerVersion = localChannelExecutorAttestation
     ? `sellerpilot-cli-worker/1.61+${localChannelExecutorAttestation.releaseSha}.${localChannelExecutorAttestation.egressIpSha256.slice(0, 11)}`
     : "sellerpilot-cli-worker/1.61";

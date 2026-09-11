@@ -12,6 +12,9 @@ import {
   withoutTemuAccountIdentityFields,
 } from "../../../../../lib/product-registration/temu/account-identity";
 import {
+  isTemuEgressIpNotAllowlistedError,
+} from "../../../../../lib/product-registration/temu/egress-allowlist-failure";
+import {
   temuCredentialIdentityEnvelopeSchema,
   temuCredentialPayloadFingerprintSha256,
   verifyTemuCredentialIdentityAttestation,
@@ -157,6 +160,18 @@ export async function POST(request: NextRequest) {
         }
       }
       if (!attestedLocally) {
+        if (isTemuEgressIpNotAllowlistedError(error)) {
+          console.error("[temu-credential] egress ip not allowlisted",
+            error.providerErrorCode ?? "unknown",
+            error.egressSha256Prefix ?? "unknown-prefix");
+          return NextResponse.json({
+            code: error.code,
+            providerErrorCode: error.providerErrorCode,
+            egressSha256: error.egressSha256,
+            egressSha256Prefix: error.egressSha256Prefix,
+            message: error.message,
+          }, { status: 422, headers: { "cache-control": "no-store, max-age=0" } });
+        }
         const errorMessage = error
           && typeof error === "object"
           && "message" in error
