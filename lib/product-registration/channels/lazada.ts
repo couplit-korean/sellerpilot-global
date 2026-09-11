@@ -24,6 +24,7 @@ import {
   type LazadaPublicationReadbackVerification,
 } from "../../channels/provider-lazada-publication-readback";
 import { uploadChannelNativeImages } from "../../channels/native-image-upload";
+import { annotateProviderListingFailureStep } from "../../channels/provider-listing-failure";
 import { assertLazadaMyListingCreateContext } from "../lazada/listing-create-context";
 import {
   attachLazadaGatewayReceiptToStep,
@@ -563,7 +564,18 @@ export async function executeLazada(input: ExecuteInput) {
       ? lazadaListingRemoteIdFromArguments(effectiveArguments)
       : "";
   const remoteId = requestedItemId || responseRemoteId;
-  const writeStep = step(path, remote);
+  // A provider rejection of an exact create/update must carry a stable reason.
+  // Lazada returns some business errors with an HTTP 200 transport response and
+  // a non-success body code, so the normalized reason cannot be derived from the
+  // transport status alone.
+  const providerWriteStep = step(path, remote);
+  const writeStep =
+    input.operation === "listing.create" || input.operation === "listing.update"
+      ? annotateProviderListingFailureStep(providerWriteStep, {
+        channel: "lazada",
+        operation: input.operation,
+      })
+      : providerWriteStep;
   if (
     verifiedPublicationRequested &&
     requestedItemId &&

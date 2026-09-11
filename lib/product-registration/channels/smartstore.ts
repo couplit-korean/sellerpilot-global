@@ -56,6 +56,7 @@ import {
   type SmartstoreCategoryAttributeMappingResult,
 } from "../../channels/smartstore-category-attribute-mapping";
 import { assertSmartstoreCreateSourceMatchesBody } from "../../server-smartstore-listing-create-binding";
+import { annotateProviderListingFailureStep } from "../../channels/provider-listing-failure";
 
 export type SmartstoreOptionStockExpectation = {
   kind: "combination" | "standard";
@@ -536,7 +537,12 @@ export async function executeSmartstore(input: ExecuteInput) {
         stage: input.arguments[smartstoreCreateTransportStageArgument],
       }).bodyText,
     });
-    const steps = [step("product-create", createRemote)];
+    const steps = [
+      annotateProviderListingFailureStep(step("product-create", createRemote), {
+        channel: "smartstore",
+        operation: "listing.create",
+      }),
+    ];
     let createIdentity = smartstoreCreateIdentity(createRemote.data);
     if (!createIdentity) {
       const recoverySearch = await request({
@@ -719,7 +725,10 @@ export async function executeSmartstore(input: ExecuteInput) {
       path: `/v2/products/origin-products/${originProductNo}`,
       body: mergedBody,
     });
-    const updateStep = step("product-update", remote);
+    const updateStep = annotateProviderListingFailureStep(
+      step("product-update", remote),
+      { channel: "smartstore", operation: "listing.update" },
+    );
     if (!updateStep.ok)
       return result(
         input,

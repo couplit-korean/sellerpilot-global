@@ -321,6 +321,10 @@ export function safeProviderError(data: Record<string, unknown>) {
     "error_msg",
     "errormessage",
     "error_message",
+    // Seller-facing reason produced by the Lazada/Smartstore create/update
+    // failure normalizer. It is a fixed template plus the provider status and a
+    // sanitized provider error code, never raw provider payload text.
+    "sellerpilotverificationmessage",
     "message",
     "resultmessage",
     "authmessage",
