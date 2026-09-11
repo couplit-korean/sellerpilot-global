@@ -4078,7 +4078,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   };
 
   const startAutomation = (options?: { automatic?: boolean }) => {
-    if (running || automationStartInFlightRef.current) return;
+    // A previous attempt can die before it reports back, leaving the in-flight
+    // flag set. That used to swallow every later press with no message at all.
+    if (automationStartInFlightRef.current && !running) automationStartInFlightRef.current = false;
+    if (running || automationStartInFlightRef.current) {
+      notify("이미 상세페이지 제작이 진행 중입니다. 끝난 뒤 다시 시도해 주세요.");
+      return;
+    }
     const aiReady = isStudioExecutionReady(studioWorkerReadiness);
     if (!aiReady) {
       const message = studioWorkerReadiness?.message
