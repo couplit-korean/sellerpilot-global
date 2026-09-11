@@ -15,10 +15,11 @@ type SmartstoreAccountPayload = {
   message?: string;
 };
 
-export function CsHistoryWindow({ authenticatedFetch, onBackfill, disabled }: {
+export function CsHistoryWindow({ authenticatedFetch, onBackfill, disabled, channel }: {
   authenticatedFetch: (input: string, init?: RequestInit) => Promise<Response>;
   onBackfill: (channel: "coupang" | "elevenst", endDate?: string) => Promise<void>;
   disabled: boolean;
+  channel?: "coupang" | "elevenst" | "smartstore";
 }) {
   const [today] = useState(() => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10));
   const [endDate, setEndDate] = useState(today);
@@ -115,6 +116,7 @@ export function CsHistoryWindow({ authenticatedFetch, onBackfill, disabled }: {
   return <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }} disabled={disabled}>
     <legend className="sr-only">이전 기간의 문의 가져오기</legend>
     <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+      {(!channel || channel === "smartstore") ? <>
       <label>스마트스토어 시작일 <input type="date" min="2000-01-01" max={endDate} value={floorDate} disabled={smartstoreBusy} onChange={event => setFloorDate(event.target.value)} /></label>
       <label>스마트스토어 계정 <select aria-label="스마트스토어 계정" value={smartstoreCredentialId}
         disabled={smartstoreBusy || smartstoreAccountsLoading || !smartstoreAccounts.length}
@@ -129,10 +131,11 @@ export function CsHistoryWindow({ authenticatedFetch, onBackfill, disabled }: {
         {!smartstoreAccountsLoading && !smartstoreAccounts.length ? <option value="">활성 계정 없음</option> : null}
         {smartstoreAccounts.map(account => <option key={account.credentialId} value={account.credentialId}>{account.label}</option>)}
       </select></label>
+      </> : null}
       <label>이력 종료일 <input disabled={smartstoreBusy} aria-label="과거 문의 종료일" type="date" min="2000-01-30" max={today} value={endDate} onChange={(event) => setEndDate(event.target.value)} onInput={(event) => setEndDate(event.currentTarget.value)} /></label>
-      <button className="filter-button" type="button" disabled={!smartstoreValid || !smartstoreCredentialId || smartstoreBusy || smartstoreAccountsLoading} onClick={() => void resumeSmartstore()}>{smartstoreBusy ? "스마트스토어 접수 중" : "스마트스토어 다음 구간"}</button>
-      <button className="filter-button" type="button" disabled={!valid} onClick={() => void onBackfill("coupang", endDate)}>쿠팡 30일</button>
-      <button className="filter-button" type="button" disabled={!valid} onClick={() => void onBackfill("elevenst", endDate)}>11번가 Q&A 30일</button>
+      {(!channel || channel === "smartstore") ? <button className="filter-button" type="button" disabled={!smartstoreValid || !smartstoreCredentialId || smartstoreBusy || smartstoreAccountsLoading} onClick={() => void resumeSmartstore()}>{smartstoreBusy ? "스마트스토어 접수 중" : "스마트스토어 다음 구간"}</button> : null}
+      {(!channel || channel === "coupang") ? <button className="filter-button" type="button" disabled={!valid} onClick={() => void onBackfill("coupang", endDate)}>쿠팡 30일</button> : null}
+      {(!channel || channel === "elevenst") ? <button className="filter-button" type="button" disabled={!valid} onClick={() => void onBackfill("elevenst", endDate)}>11번가 Q&A 30일</button> : null}
     </div>
     <small>{valid ? `${startDate}~${endDate} · 채널에서 조회 가능한 이력만 가져옵니다.` : "종료일을 선택해 주세요."}</small>
     {smartstoreMessage ? <small role="status" aria-live="polite">{smartstoreMessage}</small> : null}

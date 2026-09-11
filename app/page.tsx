@@ -382,7 +382,7 @@ const navGroups = [
       { id: "registration-activity" as View, label: "등록 진행 · 히스토리", icon: Clock3 },
       { id: "margin" as View, label: "마진 계산", icon: Calculator },
       { id: "orders" as View, label: "주문 · 판매", icon: ShoppingCart },
-      { id: "cs" as View, label: "CS 통합함", icon: Headphones },
+      { id: "cs" as View, label: "CS", icon: Headphones },
       { id: "connections" as View, label: "채널 연결 · 상태", icon: ShieldCheck },
       { id: "platform-usage" as View, label: "서버 사용량", icon: ServerCog },
       { id: "templates" as View, label: "템플릿 설정", icon: FileText },
@@ -424,7 +424,7 @@ const pageMeta: Record<View, { title: string; description: string }> = {
   "style-learning": { title: "스타일 학습 검증", description: "6개 문안 카테고리, 9개 설정샷 상품군, 8개 채널의 국가·언어별 제작 규칙을 확인합니다." },
   margin: { title: "마진 계산", description: "원가와 채널 비용을 반영해 순이익과 목표 마진 판매가를 계산합니다." },
   orders: { title: "주문 · 판매", description: "전체 채널의 주문과 배송 흐름을 한곳에서 처리합니다." },
-  cs: { title: "CS 통합함", description: "언어와 채널이 달라도 하나의 상담함에서 응대합니다." },
+  cs: { title: "CS", description: "한 채널씩 문의에 답합니다. 화면이 열려 있으면 1분마다 그 채널을 조회합니다." },
   connections: { title: "채널 연결 · 상태", description: "판매채널 연결 상태, API 인증과 차단 요인을 한곳에서 관리합니다." },
   "platform-usage": { title: "서버 사용량", description: "Vercel과 Supabase가 공식 API로 제공하는 현재 사용량과 연결 상태를 확인합니다." },
   templates: { title: "템플릿 설정", description: "자주 쓰는 배송비, 포장과 배송 규칙을 저장해 상품 등록에 즉시 적용합니다." },
@@ -5664,6 +5664,34 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     }
   }, [authenticatedOperationsFetch, csRoute.channel, notify, reloadOperations]);
 
+  const startCsHistoryBackfill = useCallback(async (channel: "coupang" | "elevenst" | "smartstore", endDate?: string) => {
+    if (syncingCsRef.current) return;
+    syncingCsRef.current = true;
+    setSyncingOrders(true);
+    try {
+      const response = await authenticatedOperationsFetch("/api/admin/cs/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          channels: [channel],
+          historyDays: 30,
+          ...(endDate ? { historyEndDate: endDate } : {}),
+        }),
+      });
+      const payload = await response.json().catch(() => ({ message: "과거 문의 응답을 읽지 못했습니다." })) as { message?: string; historyBackfill?: unknown };
+      const parsedBackfill = parseInquiryHistoryBackfill(payload.historyBackfill);
+      if (parsedBackfill) setInquiryHistoryBackfill(parsedBackfill);
+      if (!response.ok) throw new Error(payload.message ?? "과거 문의 읽기를 시작하지 못했습니다.");
+      notify(payload.message ?? "선택한 채널의 과거 문의 읽기를 시작했습니다.");
+      window.setTimeout(() => void reloadOperations(), 3_000);
+      window.setTimeout(() => void reloadOperations(), 12_000);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "과거 문의 읽기를 시작하지 못했습니다.");
+    } finally {
+      syncingCsRef.current = false;
+      setSyncingOrders(false);
+    }
+  }, [authenticatedOperationsFetch, notify, reloadOperations]);
+
   const refreshInquiryHistoryBackfill = useCallback(async (runId: string | null = null) => {
     const params = runId ? `?runId=${encodeURIComponent(runId)}` : "";
     try {
@@ -5734,11 +5762,12 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     const notificationKey = `${inquiryHistoryBackfill.runId}:${inquiryHistoryBackfill.status}`;
     if (notifiedInquiryHistoryRunsRef.current.has(notificationKey)) return;
     notifiedInquiryHistoryRunsRef.current.add(notificationKey);
+    const historyChannels = inquiryHistoryBackfill.channels.join("·");
     notify(inquiryHistoryBackfill.status === "succeeded"
-      ? `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 ${inquiryHistoryBackfill.succeededJobs}개 작업을 모두 반영했습니다.`
+      ? `${historyChannels} ${inquiryHistoryBackfill.historyDays}일 문의 이력 ${inquiryHistoryBackfill.succeededJobs}개 작업을 모두 반영했습니다.`
       : inquiryHistoryBackfill.status === "blocked"
-        ? "쿠팡·스마트스토어 문의 조회에는 Vercel 고정 egress 설정이 필요합니다. 작업을 자동 재시도하지 않습니다."
-        : `쿠팡·스마트스토어 ${inquiryHistoryBackfill.historyDays}일 문의 이력 중 ${inquiryHistoryBackfill.failedJobs}개 작업은 실패해 완료 처리하지 않았습니다.`);
+        ? "채널 송신 경로가 확인될 때까지 과거 문의 작업을 접수하지 않았습니다."
+        : `${historyChannels} ${inquiryHistoryBackfill.historyDays}일 문의 이력 중 ${inquiryHistoryBackfill.failedJobs}개 작업은 실패해 완료 처리하지 않았습니다.`);
     void reloadOperations();
   }, [inquiryHistoryBackfill, notify, reloadOperations]);
 
@@ -6212,7 +6241,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view === "style-learning") return <StyleLearningCenter />;
     if (view === "margin") return <MarginCalculatorPage notify={notify} scenarios={Array.isArray(operations.data?.marginScenarios) ? operations.data.marginScenarios : []} scenarioState={operations.data?.marginScenarioState ?? "checking"} scenarioMessage={operations.data?.marginScenarioMessage ?? null} products={operations.data?.products ?? []} onChanged={() => void operations.reload()} />;
     if (view === "orders") return <OrdersPage key={`orders-${targetedSearch?.kind === "order" ? targetedSearch.id : "all"}`} notify={notify} displayOrders={displayOrders} onFulfill={fulfillOrders} syncStatus={operations.data?.syncStatus ?? []} initialQuery={targetedSearch?.kind === "order" ? targetedSearch.query : ""} initialOrderId={targetedSearch?.kind === "order" ? targetedSearch.id : null} />;
-    if (view === "cs") return <CsInAppDesk notify={notify} displayTickets={displayTickets} authenticatedFetch={operations.authenticatedFetch} snapshotGeneratedAt={operations.data?.generatedAt ?? null} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncCsInquiries} onBackfill={() => syncOrders(false, 30)} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
+    if (view === "cs") return <CsInAppDesk notify={notify} displayTickets={displayTickets} authenticatedFetch={operations.authenticatedFetch} snapshotGeneratedAt={operations.data?.generatedAt ?? null} onSend={saveTicketReply} onDeliveryStatus={getTicketDeliveryStatus} onDraft={generateSupportReply} onStatus={updateTicketStatus} onSync={syncCsInquiries} onBackfill={startCsHistoryBackfill} syncing={syncingOrders} syncStatus={operations.data?.syncStatus ?? []} historyBackfill={inquiryHistoryBackfill} initialQuery={targetedSearch?.kind === "inquiry" ? targetedSearch.query : ""} initialTicketId={csRoute.ticketId ?? (targetedSearch?.kind === "inquiry" ? targetedSearch.id : null)} initialChannel={csRoute.channel} initialStatus={csRoute.status} onFilterChange={changeCsRoute} />;
     if (view === "connections") return <ChannelConnectionsPage notify={notify} channelMetrics={channelMetrics} syncStatus={operations.data?.syncStatus ?? []} onOpenCs={(channel) => openCs(csChannelFilterFromValue(channel), "open")} />;
     if (view === "platform-usage") return <PlatformUsagePage />;
     if (view === "templates") return <TemplatesPage authenticatedFetch={operations.authenticatedFetch} notify={notify} />;
@@ -6533,6 +6562,15 @@ export default function Home() {
   }
   if (accessState === "error") {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한 확인이 지연되고 있습니다.</h2><p>{accessErrorMessage || "인증 서버 응답을 받지 못했습니다."} 잠시 후 현재 세션으로 다시 확인해 주세요.</p><button type="button" className="login-submit" onClick={() => { setAccessErrorMessage(""); setAccessState("checking"); setAccessRetryKey((current) => current + 1); }}><RefreshCw size={16} />현재 세션 다시 확인</button></div></section></main>;
+  }
+  if (accessState === "forbidden") {
+    return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;
+  }
+  return accessState === "admin"
+    ? <DashboardShell onLogout={logout} onIdleLogout={idleLogout} userEmail={userEmail} userId={userId} freshLogin={Boolean(userId && freshLoginUserId === userId)} oauthToastMessage={oauthToastMessage} onOAuthToastQueued={clearOAuthToastMessage} />
+    : <LoginScreen onLogin={login} onPasswordReset={resetPassword} notice={loginNotice} sessionCleanupState={accountSwitchCleanup} onRetrySessionCleanup={retryAccountSwitchCleanup} />;
+}
+이 지연되고 있습니다.</h2><p>{accessErrorMessage || "인증 서버 응답을 받지 못했습니다."} 잠시 후 현재 세션으로 다시 확인해 주세요.</p><button type="button" className="login-submit" onClick={() => { setAccessErrorMessage(""); setAccessState("checking"); setAccessRetryKey((current) => current + 1); }}><RefreshCw size={16} />현재 세션 다시 확인</button></div></section></main>;
   }
   if (accessState === "forbidden") {
     return <main className="login-shell"><section className="login-form-panel"><div className="login-card"><AlertTriangle size={26} /><h2>관리자 권한이 필요합니다.</h2><p>{userEmail || "현재 계정"}은 SellerPilot 관리자 명단에 없습니다. Supabase의 <b>sellerpilot_private.admin_users</b> 승인 후 접근할 수 있습니다.</p><button type="button" className="login-submit" onClick={() => void logout()}><LogOut size={16} />다른 계정으로 로그인</button></div></section></main>;
