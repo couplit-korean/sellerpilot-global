@@ -7,6 +7,7 @@ import { activeChannelKeys } from "../../lib/channels/catalog";
 import { Inbox, Clock3, BadgeCheck, Bot, ChevronDown, LoaderCircle, RefreshCw, CheckCircle2, AlertCircle, Search, MessageCircleMore, ArrowLeft, Package, AlertTriangle, Sparkles, Languages, FileText, Send, X } from "lucide-react";
 import { channels } from "../channel-config";
 import { CsHistoryWindow } from "./history-window";
+import { CsChannelSlot } from "./channel-slot";
 import { ConversationTimeline } from "./conversation-timeline";
 import type { DisplayTicket, ReplyQueueResult, SupportLocale, InquiryHistoryBackfill, OperationTicketDelivery, CsSyncStatus } from "./workspace-contracts";
 
