@@ -35,8 +35,9 @@ export type CredentialRow = {
   channel: ActiveChannelKey;
   environment: "sandbox" | "production";
   status: string;
-  /** Last recorded read diagnostic; required to report the link state truthfully. */
+  /** Last recorded read diagnostic and its time; required to report the link state truthfully. */
   last_check_status?: string | null;
+  last_checked_at?: string | null;
 };
 
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
@@ -1657,7 +1658,7 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
           <span>{definition.mark}</span>
           <div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div>
           <ChannelLinkBadge
-            input={{ credentialStatus: credential ? "active" : "missing", credentialLastCheckStatus: credential?.last_check_status ?? null }}
+            input={{ credentialStatus: credential ? "active" : "missing", credentialLastCheckStatus: credential?.last_check_status ?? null, credentialLastCheckedAt: credential?.last_checked_at ?? null }}
             loading={loadingCredentials}
           />
         </header>

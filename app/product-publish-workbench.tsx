@@ -41,8 +41,9 @@ type CredentialRow = {
   environment: "sandbox" | "production";
   status: string;
   version?: number;
-  /** Last recorded read diagnostic; required to report the link state truthfully. */
+  /** Last recorded read diagnostic and its time; required to report the link state truthfully. */
   last_check_status?: string | null;
+  last_checked_at?: string | null;
 };
 
 type Assignment = {
