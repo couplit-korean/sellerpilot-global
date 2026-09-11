@@ -187,6 +187,16 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 3px
 .demo-data-badge b { font-size: 8px; }
 .demo-data-badge small { color: #858ca3; font-family: var(--font-geist-mono), monospace; font-size: 7px; }
 
+/* Unified channel link badge. The product-registration area renders this one
+   component everywhere a channel link is reported, so wording and icons cannot
+   disagree between cards. */
+.channel-link-badge { display: inline-flex; align-items: center; gap: 4px; border-radius: 999px; padding: 4px 8px; font-size: 10px; font-weight: 800; white-space: nowrap; }
+.channel-link-badge.ok { background: #e4f2ed; color: #17644f; }
+.channel-link-badge.stale { background: #fdf4e7; color: #8a5a12; }
+.channel-link-badge.pending { background: #fff4ec; color: #a05221; }
+.channel-link-badge.failed { background: #fff0ef; color: #9a3b34; }
+.channel-link-badge.missing { background: #fff0ef; color: #9a3b34; }
+
 /* Global channel integration strip: every page shows the verified 8-channel
    link state from the same live snapshot the connection page uses. */
 .channel-connection-strip { display: inline-flex; min-height: 31px; align-items: center; gap: 8px; padding: 0 10px; border: 1px solid #dcdef8; border-radius: 8px; background: #f5f5ff; color: var(--primary); white-space: nowrap; cursor: pointer; }

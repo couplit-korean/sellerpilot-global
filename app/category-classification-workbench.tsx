@@ -4,6 +4,7 @@ import { AlertTriangle, BadgeCheck, Check, ChevronRight, LoaderCircle, RefreshCw
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { channelMarket } from "../lib/channels/markets";
+import { ChannelLinkBadge } from "./channel-link-badge";
 import { shopeeGlobalLeafCategoryPaths } from "../lib/channels/shopee-category-tree";
 import {
   elevenstProcessedFoodCategoryId,
@@ -34,6 +35,8 @@ export type CredentialRow = {
   channel: ActiveChannelKey;
   environment: "sandbox" | "production";
   status: string;
+  /** Last recorded read diagnostic; required to report the link state truthfully. */
+  last_check_status?: string | null;
 };
 
 type OperationStep = { name: string; ok: boolean; status: number; data: Record<string, unknown> };
@@ -1653,7 +1656,10 @@ export function CategoryClassificationWorkbench({ productId, productName, descri
         <header>
           <span>{definition.mark}</span>
           <div><small>{target ? `${target.marketCode} · ${target.language}` : definition.market}</small><h4>{definition.name}</h4></div>
-          <em className={credential ? "connected" : "missing"}>{loadingCredentials ? "확인 중" : credential ? "실키 연결" : "키 필요"}</em>
+          <ChannelLinkBadge
+            input={{ credentialStatus: credential ? "active" : "missing", credentialLastCheckStatus: credential?.last_check_status ?? null }}
+            loading={loadingCredentials}
+          />
         </header>
         {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (targets[channel]?.length ?? 0) > 0 && <label className="category-market-select">
           <span>등록 국가·언어</span>

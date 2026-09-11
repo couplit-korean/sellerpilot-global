@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { activeChannelKeys, channelCatalog, type ActiveChannelKey } from "../lib/channels/catalog";
 import { categoryScalar, coupangCategoryInputs, shopeeCategoryAttributes } from "../lib/channel-category-values";
 import { ChannelRegistrationFields } from "./channel-registration-fields";
+import { ChannelLinkBadge } from "./channel-link-badge";
+import { channelIntegrationStatus } from "../lib/channels/integration-status";
 import { getProductRegistrationDraft, putProductRegistrationDraft, ProductRegistrationDraftClientError } from "../lib/product-registration-draft-client";
 import { editableCommonFacts, preserveChannelRegistrationEdits, publishRegistrationDataSchema, publishRegistrationIdentity, restoreChannelRegistrationPatches, type PublishRegistrationData } from "../lib/publish-registration-draft";
 import { registrationIdentityIssue, registrationPatches, setRegistrationValue } from "../lib/channel-registration-form";
@@ -39,6 +41,8 @@ type CredentialRow = {
   environment: "sandbox" | "production";
   status: string;
   version?: number;
+  /** Last recorded read diagnostic; required to report the link state truthfully. */
+  last_check_status?: string | null;
 };
 
 type Assignment = {
@@ -2575,8 +2579,12 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       <div className="publish-channel-cards">{visibleChannels.map((channel) => {
         const definition = channelCatalog[channel];
         const credential = activeCredentials.get(channel);
-
-
+        // One link state per channel, shared by the card badge and the readiness row
+        // so the same channel cannot read as linked and unlinked at once.
+        const linkInput = {
+          credentialStatus: credential ? "active" : "missing",
+          credentialLastCheckStatus: credential?.last_check_status ?? null,
+        } as const;
         const target = selectedTargets[channel];
         const channelAssignment = context.assignments.find((item) => item.channel === channel && (!target || item.market === target.marketCode));
         const assignment = context.assignments.find((item) => item.channel === channel && item.status === "confirmed" && (!target || item.market === target.marketCode));
@@ -2667,7 +2675,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         const temuActivationLocked = result.operation === "listing.activate"
           && ["queued", "running", "pending_review", "blocked", "succeeded"].includes(result.phase);
         return <article key={channel} className={`publish-channel-card ${result.phase}`}>
-          <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? studioBlocked ? "재제작 필요" : "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : displayedBlockingCount ? `필수 보완 ${displayedBlockingCount}` : studioBlocked ? "재제작 필요" : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : "키 필요"}</em></header>
+          <header><span style={{ background: channels[channel].color }}>{definition.mark}</span><div><small>{definition.market}</small><h4>{definition.name}</h4></div><ChannelLinkBadge input={linkInput} /><em>{temuActivationLedgerEligible ? "QA 비공개 · 최종 공개 준비" : remoteUpdate ? operationAvailable ? listing?.remoteId ? studioBlocked ? "재제작 필요" : "콘텐츠 수정 준비" : "원격 ID 필요" : "등록 완료 · 수정 미지원" : credential ? assignment ? invalidDraft ? "JSON 확인 필요" : displayedBlockingCount ? `필수 보완 ${displayedBlockingCount}` : studioBlocked ? "재제작 필요" : "등록 준비" : channelAssignment?.status === "rejected" ? "카테고리 권한 필요" : "카테고리 필요" : channelIntegrationStatus(linkInput).short}</em></header>
           {(channel === "shopee" || channel === "lazada" || channel === "ebay") && (availableTargets[channel]?.length ?? 0) > 0 && <label className="publish-market-select"><span>판매 국가·계정</span><select disabled={registrationHasIssues || registrationSaveStatus === "saving" || ebayHandoffSaving} value={target ? channelTargetOptionValue(target) : ""} onChange={(event) => { const nextTarget = availableTargets[channel]?.find((item) => channelTargetOptionValue(item) === event.target.value); if (!nextTarget) return; changeChannelTarget(channel, nextTarget); }}>{availableTargets[channel]?.map((item) => <option value={channelTargetOptionValue(item)} key={channelTargetOptionValue(item)}>{item.marketCode} · {item.displayName || item.language} · {item.currency}</option>)}</select>{channel === "ebay" ? <small>eBay 제약상 국가별 SKU로 분리 등록합니다.</small> : null}</label>}
           {!operationAvailable && !temuActivationLedgerEligible && <div className="publish-blocked" id={`${channel}-remote-blocked-reason`}><AlertTriangle size={18} /><b>{remoteUpdate ? "중앙 저장 · 외부채널 수동 반영 필요" : "판매자 상세 명세 승인 필요"}</b><small>{remoteUpdate ? `${operationRelease.reason} ${remotePlan?.message ?? ""}` : capability.note}</small></div>}
           {editFieldSupport && <section className="product-edit-support-section" aria-label={`${definition.name} 원격 상품 수정 지원 범위`}>
@@ -2678,7 +2686,7 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           </section>}
           {remoteUpdate && !operationAvailable && !temuActivationLedgerEligible && <button type="button" className="publish-execute product-edit-blocked-action" disabled aria-describedby={`${channel}-remote-blocked-reason`}><ShieldCheck size={15} />{"원격 반영 차단 · 판매자센터 수동 수정"}</button>}
           {operationAvailable && <>
-            <div className="publish-readiness"><span className={credential ? "ok" : "missing"}>{credential ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? `원본 저장 · 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
+            <div className="publish-readiness"><span className={channelIntegrationStatus(linkInput).tone === "ok" ? "ok" : "missing"} title={channelIntegrationStatus(linkInput).label}>{channelIntegrationStatus(linkInput).tone === "ok" ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{channelIntegrationStatus(linkInput).short} · 운영 키</span><span className={assignment ? "ok" : "missing"}>{assignment ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}말단 카테고리</span><span className={context.sourceImages[0]?.url ? "ok" : "missing"}>{context.sourceImages[0]?.url ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}원본 대표사진</span><span className={imagePackageReady ? "ok" : "missing"}>{imagePackageReady ? <CircleCheck size={14} /> : <AlertTriangle size={14} />}{manualMvp ? `원본 저장 · 상세 ${marketplaceChannelDetailImageCount}장 필요` : `대표+상세 ${marketplaceChannelDetailImageCount}장`}</span></div>
             {channelAssignment?.status === "rejected" && <div className="publish-blocked"><AlertTriangle size={18} /><b>현재 카테고리는 이 판매자 계정에서 등록할 수 없습니다.</b><small>권한을 먼저 승인받거나, 상품과 정확히 일치하면서 판매 권한이 있는 말단 카테고리를 다시 검색·확정해야 합니다. 다른 상품군으로 위장 등록하지 않습니다.</small></div>}
             {nativeMissing.length > 0 && <div className="publish-blocked"><AlertTriangle size={18} /><b>{remoteUpdate ? "수정" : "등록"} 전에 자동 생성·필수값 보완이 필요합니다.</b><small>{nativeMissing.join(", ")}</small></div>}
             {invalidDraft ? <div className="publish-blocked"><AlertTriangle size={18} /><b>{typeof draftObject?.sellerpilotDraftError === "string" ? "채널 payload 조립 실패" : "채널 JSON 형식 확인 필요"}</b><small>{typeof draftObject?.sellerpilotDraftError === "string" ? String(draftObject.sellerpilotDraftError) : "아래 공식 payload를 올바른 JSON으로 수정해야 필수값 검사가 다시 실행됩니다."}</small></div> : <div className="publish-required-fields">
