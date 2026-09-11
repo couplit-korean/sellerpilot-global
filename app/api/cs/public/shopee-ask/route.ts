@@ -29,13 +29,12 @@ export async function POST(request: Request) {
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  const snapshot = await serviceClient.rpc("sellerpilot_get_cs_snapshot");
-  const ownerId = typeof snapshot.data?.owner_id === "string"
-    ? snapshot.data.owner_id
-    : typeof snapshot.data?.ownerId === "string"
-      ? snapshot.data.ownerId
-      : null;
-  if (snapshot.error || !ownerId) {
+  // The storefront form is unauthenticated, so the admin-only cs snapshot cannot
+  // resolve the ledger owner here. Use the dedicated service-role resolver, which
+  // follows the same ownership rule as the channel ingest functions.
+  const owner = await serviceClient.rpc("sellerpilot_public_cs_ledger_owner");
+  const ownerId = typeof owner.data === "string" ? owner.data : null;
+  if (owner.error || !ownerId) {
     return NextResponse.json({ message: "쇼피 CS 원장 소유자를 확인하지 못했습니다." }, { status: 503 });
   }
   const inserted = await serviceClient.schema("sellerpilot_private").from("support_tickets").insert({
