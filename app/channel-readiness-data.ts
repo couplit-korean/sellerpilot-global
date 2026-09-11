@@ -1,3 +1,5 @@
+import { channelIntegrationStatus } from "../lib/channels/integration-status";
+
 export type ReadinessState = "verified" | "partial" | "blocked" | "not_configured";
 
 export type ReadinessCheck = {
@@ -57,6 +59,8 @@ export type ChannelGatewayActivity = {
  * 분리합니다. 앱 키, 시크릿, 판매자 식별자와 일회성 코드는 포함하지 않습니다.
  */
 export const channelReadinessObservedAt = "2026.08.24";
+// Static console snapshot. It is only a fallback: whenever live channel metrics
+// exist the UI must use them and label this data as a dated snapshot.
 
 export const channelReadiness: ChannelReadiness[] = [
   {
@@ -545,12 +549,14 @@ export function resolveChannelReadiness(
 export function channelOverviewHealthLabel(metric: {
   credentialStatus?: string | null;
   failedAttemptCount?: number | null;
+  credentialLastCheckStatus?: string | null;
+  credentialLastCheckedAt?: string | null;
 }): string {
   const failed = metric.failedAttemptCount ?? 0;
   if (failed > 0) return `오류 ${failed}`;
-  if (metric.credentialStatus === "active") return "읽기 진단 통과";
-  if (metric.credentialStatus === "unverified") return "진단 필요";
-  return "키 필요";
+  // A stored pass is not a live connection; the freshness helper keeps this
+  // label honest when the last real read is days or weeks old.
+  return channelIntegrationStatus(metric).short;
 }
 
 export function channelStepSelectionLabel(selectedCount: number): string {

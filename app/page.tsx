@@ -1,6 +1,7 @@
 "use client";
 
 import Image from "next/image";
+import { channelIntegrationStatus, integrationRailText, summarizeChannelIntegrations, type ChannelIntegrationTone } from "../lib/channels/integration-status";
 import {
   Activity,
   AlertCircle,
@@ -111,6 +112,7 @@ import {
   type OperationTicketDelivery,
   type SalesRange,
 } from "./use-operations-snapshot";
+import { OPERATIONS_REFRESH_MINUTES } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
@@ -762,10 +764,18 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`status-badge ${tone}`}><i />{status}</span>;
 }
 
-function credentialConnectionLabel(status: string | undefined) {
-  if (status === "active") return "읽기 진단 통과";
-  if (status === "unverified") return "키 등록됨 · 진단 필요";
-  return "API 키 등록 필요";
+function integrationCellClass(tone: ChannelIntegrationTone) {
+  if (tone === "ok") return "connected";
+  if (tone === "missing") return "";
+  return "pending";
+}
+
+function credentialConnectionLabel(metric: {
+  credentialStatus?: string | null;
+  credentialLastCheckStatus?: string | null;
+  credentialLastCheckedAt?: string | null;
+} | undefined) {
+  return channelIntegrationStatus(metric ?? {}).label;
 }
 
 function LoginScreen({
@@ -1060,7 +1070,7 @@ function OverviewPage({ onNavigate, onOpenCs, onOpenProduct, displayProducts, op
         <article className="panel channel-performance">
           <div className="panel-heading"><div><span className="panel-kicker">실계정 운영 상태</span><h3>채널별 실데이터</h3></div><span className="live-label"><i />LIVE</span></div>
           <div className="channel-list">
-            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={channel.credentialStatus === "active" ? "connected" : channel.credentialStatus === "unverified" ? "pending" : ""}><i />{credentialConnectionLabel(channel.credentialStatus)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channel.credentialStatus === "active" ? 100 : channel.credentialStatus === "unverified" ? 55 : 0}%` }} /></span><b>{channelOverviewHealthLabel(channel)}</b></div><ChevronRight size={16} /></button>)}
+            {activeMetrics.map((channel) => <button className="channel-row" key={channel.channelKey} onClick={() => onNavigate(channel.channelKey as View)}><ChannelMark code={channel.channelCode} /><div className="channel-name"><strong>{channel.name}</strong><span className={integrationCellClass(channelIntegrationStatus(channel).tone)} title={channelIntegrationStatus(channel).label}><i />{credentialConnectionLabel(channel)}</span></div><div className="channel-metric channel-revenue"><small>선택 기간 매출</small><b>{formatCompactWon(channel.revenue30dKrw)}</b></div><div className="channel-metric channel-orders"><small>실주문</small><b>{channel.orderCount.toLocaleString()}</b></div><div className="channel-progress"><span><i style={{ width: `${channelIntegrationStatus(channel).progress}%` }} /></span><b>{channelOverviewHealthLabel(channel)}</b></div><ChevronRight size={16} /></button>)}
           </div>
         </article>
 
@@ -4255,7 +4265,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         <aside className="panel publishing-settings"><div className="panel-heading"><div><span className="panel-kicker">등록 준비 상태</span><h3>입력·채널 사전 점검</h3></div><span className={`completion-ring ${intakeReady && mainPhoto ? "complete" : ""}`} style={{ "--progress": `${intakeProgress * 3.6}deg` } as React.CSSProperties}><b>{intakeProgress}</b><small>%</small></span></div>
           <div className="publishing-readiness-card"><div><span>대표사진</span><b className={mainPhoto ? "done" : ""}>{mainPhoto ? "완료" : "필수"}</b></div><div><span>필수정보</span><b className={intakeReady ? "done" : ""}>{intakeCompletedCount} / {intakeCompletionItems.length}</b></div><div><span>등록 방식</span><b>상품별 병렬 큐</b></div></div>
           <div className="channel-selection-heading"><div><b>등록 채널</b><small>운영 읽기 진단을 통과한 채널만 선택할 수 있습니다. 실제 업로드에는 3단계 공식 검증과 게시 게이트 통과가 추가로 필요합니다.</small></div><em>{selectedChannels.length}개 선택</em></div>
-          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · 읽기 진단 통과 · 3단계 검증 필요</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
+          <div className="publish-channel-list active-channels">{connectedChannelEntries.map(([key, channel]) => { const selected = selectedChannels.includes(key); return <label key={channel.letter}><ChannelMark code={channel.letter} /><span><b>{channel.name}</b><small>{channel.market} · {channelIntegrationStatus(channelMetrics.find((metric) => metric.channelKey === key)).short} · 3단계 검증 필요</small></span><input type="checkbox" checked={selected} onChange={(event) => setChannelSelection((current) => ({ ...current, [key]: event.target.checked }))} aria-label={`${channel.name} API 검증 ${selected ? "선택됨" : "선택 가능"}`} /><i><Check size={12} /></i></label>; })}</div>
           <section className="channel-rule-handoff" aria-label="전체 채널별 후속 필수 확인"><header><b>8개 채널 규칙은 3단계에서 확정</b><small>1차는 공통 상품 사실만 저장합니다. 계정 정책과 공식 카테고리 값은 자동 조회 후 확인하며 추측하지 않습니다.</small></header><div>{activeChannelKeys.map((key) => { const selected = selectedChannels.includes(key); const credentialStatus = channelMetrics.find((metric) => metric.channelKey === key)?.credentialStatus; return <article key={key}><ChannelMark code={channels[key].letter} size="sm" /><span><b>{channels[key].name}</b><small>{channelRuleHandoffs[key]}</small></span><em>{selected ? "3단계" : credentialStatus === "unverified" ? "진단 필요" : "키 필요"}</em></article>; })}</div></section>
           <details className="unavailable-channels"><summary><span>연결 대기 채널 {unavailableChannelEntries.length}개</span><ChevronDown size={15} /></summary><div>{unavailableChannelEntries.map(([key, channel]) => { const credentialStatus = channelMetrics.find((metric) => metric.channelKey === key)?.credentialStatus; return <span key={channel.letter}><ChannelMark code={channel.letter} size="sm" /><b>{channel.name}</b><em>{!channel.enabled ? "준비중" : credentialStatus === "unverified" ? "진단 필요" : "키 필요"}</em></span>; })}</div></details>
           <div className="auto-options"><h4>등록 실행 조건</h4><div className="automation-requirement"><span><b>상품 원장 저장</b><small>서버 AI 분석 또는 판매자 확인 원본으로 저장</small></span><em>필수</em></div><div className="automation-requirement"><span><b>상품별 병렬 처리</b><small>이전 상품 처리 중에도 다음 상품을 큐에 추가</small></span><em>동시</em></div><div className="automation-requirement"><span><b>공식 카테고리 확정</b><small>말단 카테고리와 필수 속성 저장 필요</small></span><em>필수</em></div><div className="automation-requirement"><span><b>쓰기 전 최종 확인</b><small>가격·재고·배송 정보 검토 뒤 API 실행</small></span><em>필수</em></div></div>
@@ -4845,17 +4855,18 @@ function ChannelPage({ channelKey, onNavigate, onOpenCs, metric, displayProducts
   displayProducts: DisplayProduct[];
 }) {
   const channel = channels[channelKey];
-  const connected = metric?.credentialStatus === "active";
   const credentialRegistered = Boolean(metric && metric.credentialStatus !== "missing");
+  // A stored read check is not a live connection: always show the last check time.
+  const integration = channelIntegrationStatus(metric ?? undefined);
   const channelProducts = displayProducts.filter((product) => product.channels.includes(channel.letter)).sort((a, b) => b.sales - a.sales);
   const revenue = metric?.revenue30dKrw ?? 0;
   const orderCount = metric?.orderCount ?? 0;
   const averageOrder = orderCount > 0 ? revenue / orderCount : 0;
   return (
     <div className="page-stack">
-      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={connected ? "connected" : credentialRegistered ? "pending" : ""}><i />{connected ? "운영 API 키 · 읽기 진단 통과" : credentialRegistered ? "운영 API 키 등록 · 읽기 진단 필요" : "운영 API 키 등록 필요"}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
+      <section className="channel-hero" style={{ "--channel-color": channel.color } as React.CSSProperties}><div><ChannelMark code={channel.letter} size="lg" /><span><small>{channel.market} 판매 채널</small><h2>{channel.name}</h2><em className={integrationCellClass(integration.tone)} title={integration.label}><i />{integration.label}</em></span></div><div><button className="filter-button" onClick={() => onNavigate("connections")}><KeyRound size={15} />연결 관리</button><a className="primary-button channel-console-link" href={channel.sellerCenterUrl} target="_blank" rel="noreferrer"><ExternalLink size={15} />실제 판매자센터 열기</a></div></section>
       <section className="metric-grid channel-metrics"><MetricCard label="30일 매출" value={formatCompactWon(revenue)} detail="실제 게시 상품 매출" icon={CircleDollarSign} tone="violet" /><MetricCard label="주문" value={orderCount.toLocaleString()} detail={`출고대기 ${metric?.readyToShipCount ?? 0}건`} icon={ShoppingBag} tone="blue" /><MetricCard label="판매 상품" value={(metric?.publishedCount ?? 0).toLocaleString()} detail={`관리 상품 ${metric?.productCount ?? 0}개`} icon={Package} tone="green" /><MetricCard label="미처리 CS" value={(metric?.openTicketCount ?? 0).toLocaleString()} detail="해당 채널 문의 열기" icon={Headphones} tone="orange" onClick={() => onOpenCs(channelKey, "open")} /></section>
-      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${connected ? "connected" : credentialRegistered ? "pending" : ""}`}>{connected ? "ON" : credentialRegistered ? "CHECK" : "OFF"}</span></div>{[{ label: "운영 자격증명", score: credentialRegistered ? "키 등록됨" : "키 필요" }, { label: "읽기 진단", score: connected ? "통과" : credentialRegistered ? "확인 필요" : "미실행" }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
+      <section className="channel-detail-grid"><article className="panel"><div className="panel-heading"><div><span className="panel-kicker">LIVE PERFORMANCE</span><h3>최근 30일 운영 집계</h3></div><span className="live-label"><i />DB</span></div><div className="channel-live-summary"><div><small>판매량</small><b>{(metric?.sold30d ?? 0).toLocaleString()}개</b></div><div><small>평균 주문금액</small><b>{formatCompactWon(averageOrder)}</b></div><div><small>실주문</small><b>{orderCount.toLocaleString()}건</b></div><div><small>최근 API 오류</small><b>{metric?.failedAttemptCount ?? 0}건</b></div></div></article><article className="panel store-health"><div className="panel-heading"><div><span className="panel-kicker">CONNECTION</span><h3>채널 연결 상태</h3></div><span className={`score-grade ${integration.tone === "ok" ? "connected" : integration.tone === "missing" ? "" : "pending"}`}>{integration.tone === "ok" ? "ON" : integration.tone === "missing" ? "OFF" : "CHECK"}</span></div>{[{ label: "운영 자격증명", score: credentialRegistered ? "키 등록됨" : "키 필요" }, { label: "읽기 진단", score: integration.short }, { label: "마지막 진단 시각", score: integration.ageText ?? (integration.tone === "missing" ? "미실행" : "기록 없음") }, { label: "등록 상품", score: `${metric?.publishedCount ?? 0}개` }, { label: "출고 대기", score: `${metric?.readyToShipCount ?? 0}건` }, { label: "실패 작업", score: `${metric?.failedAttemptCount ?? 0}건` }].map((item) => <div className="health-row" key={item.label}><span>{item.label}</span><b>{item.score}</b></div>)}</article></section>
       <section className="panel data-panel"><div className="panel-heading table-title"><div><span className="panel-kicker">LIVE PRODUCTS</span><h3>채널 내 판매 상품</h3></div><button className="ghost-button" onClick={() => onNavigate("products")}>전체 상품<ChevronRight size={15} /></button></div><div className="table-wrap"><table className="data-table"><thead><tr><th>순위</th><th>상품</th><th>30일 판매</th><th>30일 매출</th><th>재고</th><th>상태</th></tr></thead><tbody>{channelProducts.slice(0, 10).map((product, index) => <tr key={product.id}><td><b className="rank-number">{String(index + 1).padStart(2, "0")}</b></td><td><div className="product-cell"><div className="product-thumb"><ProductVisual src={product.image} size="52px" /></div><span><b>{product.name}</b><small>{product.sku}</small></span></div></td><td><b>{product.sales}</b>개</td><td><b>{product.revenue}</b></td><td><b>{product.stock}</b>개</td><td><StatusBadge status={product.status} /></td></tr>)}</tbody></table></div>{channelProducts.length === 0 && <div className="live-empty-state table-empty"><PackageSearch size={28} /><b>이 채널의 실상품이 없습니다.</b><small>API 키 연결 후 상품 동기화 또는 신규 등록을 실행하세요.</small></div>}</section>
     </div>
   );
@@ -5113,6 +5124,14 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const syncingCsRef = useRef(false);
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
+  const integrationSummary = useMemo(() => summarizeChannelIntegrations(channelMetrics), [channelMetrics]);
+  const integrationRail = integrationRailText(integrationSummary, enabledSalesChannelCount);
+  const integrationInsight = [
+    integrationSummary.stale ? `재확인 필요 ${integrationSummary.stale}` : null,
+    integrationSummary.pending ? `진단 필요 ${integrationSummary.pending}` : null,
+    integrationSummary.failed ? `진단 실패 ${integrationSummary.failed}` : null,
+    integrationSummary.missing ? `키 필요 ${integrationSummary.missing}` : null,
+  ].filter(Boolean).join(" · ");
   const pipeline = operations.data?.pipeline ?? null;
   const registrationActivities = useMemo(() => operations.data?.registrationActivities ?? [], [operations.data]);
   const aiRecovery = operations.data?.aiRecovery ?? null;
@@ -6281,7 +6300,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
           const isDisabled = "disabled" in item && item.disabled;
           return <button key={item.id} className={`${isActive ? "active" : ""} ${isDisabled ? "channel-disabled" : ""}`.trim()} onClick={() => { if (!isDisabled) navigate(item.id); }} disabled={isDisabled} aria-label={isDisabled ? `${item.label} 연동 준비 중` : item.label}>{Icon ? <Icon size={17} /> : <ChannelMark code={(item as { channel: string }).channel} size="sm" />}<span>{item.label}</span>{isDisabled ? <em>준비중</em> : isActive ? <ChevronRight size={14} /> : null}</button>;
         })}</div>)}</nav>
-        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>{enabledSalesChannelCount}개 판매채널</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>키 만료일·OAuth·갱신 주기 관리</small></div>
+        <div className="sidebar-insight"><div><Activity size={15} /><span>채널 연결 현황</span><em>LIVE</em></div><p><b>{enabledSalesChannelCount}개 판매채널 · 연동 확인 {integrationSummary.ok + integrationSummary.stale}</b> 인증과 기능 차이를<br />보안 저장소에서 관리합니다.</p><span><i /></span><small>{integrationInsight || "키 만료일·OAuth·갱신 주기 관리"}</small></div>
         <div className="sidebar-foot"><button onClick={() => void onLogout()}><LogOut size={17} /><span>로그아웃</span></button></div>
       </aside>
       {sidebarOpen && <button className="sidebar-scrim" aria-label="메뉴 닫기" onClick={() => setSidebarOpen(false)} />}
@@ -6292,10 +6311,10 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
             <strong>통합 판매관리</strong>
             <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 데이터 원장 연결" : "판매 데이터 확인 중"}</span>
             <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `운영 키 ${operationSummary?.registeredCredentialCount ?? 0} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "운영 키 확인 중" : "운영 키 확인 실패"}</span>
-            <span><i className={operations.state === "database" && operationSummary?.activeCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `읽기 진단 ${operationSummary?.activeCredentialCount ?? 0} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "읽기 진단 확인 중" : "읽기 진단 확인 실패"}</span>
+            <span title={integrationRail}><i className={operations.state === "database" && integrationSummary.ok + integrationSummary.stale ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? integrationRail : operations.state === "loading" ? "읽기 진단 확인 중" : "읽기 진단 확인 실패"}</span>
             <span><i className={workerConnected ? "rail-ok" : "rail-pending"} />자동 동기화 {workerConnected ? "실행 중" : "확인 필요"}</span>
-            <span><i className="rail-ok" />인증정보 암호화 보관</span>
-            <em>{operations.state === "database" ? "실제 연결 상태 1분 자동 갱신" : operations.state === "loading" ? "연결 상태 확인 중" : "운영 DB 연결 오류"}</em>
+            <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? (operationSummary?.registeredCredentialCount ? "인증정보 암호화 보관" : "인증정보 미등록") : "인증정보 확인 중"}</span>
+            <em>{operations.state === "database" ? `실제 연결 상태 ${OPERATIONS_REFRESH_MINUTES}분 자동 갱신 · 진단 시각은 마지막 확인 기준` : operations.state === "loading" ? "연결 상태 확인 중" : "운영 DB 연결 오류"}</em>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>

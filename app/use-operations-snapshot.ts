@@ -15,6 +15,8 @@ import {
 } from "./operations-snapshot-request-coordinator";
 
 const DATA_REFRESH_INTERVAL_MS = 5 * 60_000;
+// Exported so the shell can state the real refresh cadence instead of guessing.
+export const OPERATIONS_REFRESH_MINUTES = Math.round(DATA_REFRESH_INTERVAL_MS / 60_000);
 const RETRY_INTERVAL_MS = 30_000;
 const PRODUCT_IMAGE_REFRESH_INTERVAL_MS = 45 * 60_000;
 const PRODUCT_IMAGE_CLIENT_CACHE_MS = 55 * 60_000;
