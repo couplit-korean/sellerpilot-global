@@ -50,6 +50,7 @@ export function CsInAppDesk(props: {
             return <button type="button" key={channelKey} onClick={() => openChannel(channelKey)}>
               <strong>{channels[channelKey].name}</strong>
               <span>{openCount}건 미처리 · {channels[channelKey].market}</span>
+              <small>{csChannelDeskHint(channelKey)}</small>
             </button>;
           })}
         </div>

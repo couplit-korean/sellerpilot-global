@@ -145,6 +145,14 @@
   border-radius: 14px;
   border: 1px solid #ead7d7;
 }
+.pick small {
+  display: block;
+  margin-top: 6px;
+  color: #66758c;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+}
 .pick {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));

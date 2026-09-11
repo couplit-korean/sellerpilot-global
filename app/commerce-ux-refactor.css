@@ -2501,6 +2501,10 @@ button.demo-data-badge.attention {
 .cs-history-counts .failed, .cs-history-counts .failed b { color: #a94d32; }
 .cs-history-counts > small { min-width: 0; margin-left: auto; color: #7b8795; font-size: 8px; line-height: 1.45; text-align: right; overflow-wrap: anywhere; }
 
+.cs-history-controls { padding: 14px 18px; }
+.cs-channel-slot { display: grid; gap: 12px; padding: 16px 18px; }
+.cs-channel-slot-lead { margin: 0; color: #152033; font-size: 13px; font-weight: 650; }
+.cs-channel-slot > small { color: #66758c; font-size: 12px; line-height: 1.45; }
 .cs-channel-verification { padding: 18px 20px; }
 .cs-channel-verification-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .cs-channel-verification-grid article { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 1px solid #e7eaee; border-radius: 8px; padding: 11px; }

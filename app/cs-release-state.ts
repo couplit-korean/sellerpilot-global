@@ -85,6 +85,10 @@ export type CsChannelVerification = {
 
 const POLLING_FRESHNESS_LIMIT_MS = 15 * 60 * 1_000;
 
+export function csChannelDeskHint(channelKey: ActiveChannelKey) {
+  return channelReadCapabilities[channelKey].subject;
+}
+
 export function csChannelHistoryCoverageLabel(channelKey: ActiveChannelKey) {
   const labels: Record<ActiveChannelKey, string> = {
     qoo10: "과거 범위: 일반 문의 최근 7일 상태별 조회 + 클레임 현재 6일·매일 최근 30일 자동 재검사 · QSM 리뷰는 별도 수동 확인",
