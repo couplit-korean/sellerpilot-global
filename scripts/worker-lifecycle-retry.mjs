@@ -53,6 +53,18 @@ export async function requestWithTransientRetry({
     if (response && !isTransientWorkerResponseStatus(lastStatus)) {
       throw new Error(`${label} · HTTP ${lastStatus}`);
     }
+    if (attempt === 0 && response && isTransientWorkerResponseStatus(lastStatus)) {
+      // Keep the server's own reason. A bare 503 hid why a completion was
+      // rejected, so a failing channel could not be diagnosed from the logs.
+      try {
+        const body = await response.clone().text();
+        if (body) {
+          console.error(`${label} 서버 응답 · HTTP ${lastStatus} · ${body.replace(/\s+/g, " ").slice(0, 300)}`);
+        }
+      } catch {
+        // Body inspection is best effort only.
+      }
+    }
 
     const elapsedMs = Math.max(0, now() - startedAt);
     const remainingMs = graceMs - elapsedMs;
