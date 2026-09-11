@@ -5741,8 +5741,13 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       const payload = await response.json().catch(() => ({ message: "문의 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 문의 동기화를 시작하지 못했습니다.");
       notify(payload.message ?? "이 채널 문의 조회를 시작했습니다.");
+      // The read is picked up by the Mac worker within seconds. Reload a few
+      // times after the enqueue so a new inquiry appears on the same minute
+      // instead of waiting for the next 60s cycle.
       window.setTimeout(() => void reloadOperations(), 3_000);
-      window.setTimeout(() => void reloadOperations(), 12_000);
+      window.setTimeout(() => void reloadOperations(), 10_000);
+      window.setTimeout(() => void reloadOperations(), 20_000);
+      window.setTimeout(() => void reloadOperations(), 35_000);
     } catch (error) {
       notify(error instanceof Error ? error.message : "판매채널 문의 동기화를 시작하지 못했습니다.");
     } finally {
