@@ -609,6 +609,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   const [detailPageVersion, setDetailPageVersion] = useState<number | null>(null);
   const [detailSaving, setDetailSaving] = useState(false);
   const [lastError, setLastError] = useState("");
+  const [submissionTrace, setSubmissionTrace] = useState("");
   const [sourceJobId, setSourceJobId] = useState("");
   const [sourceProductId, setSourceProductId] = useState<string | null>(null);
   const [regeneratingAssetId, setRegeneratingAssetId] = useState("");
@@ -830,8 +831,10 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
   }, [announceOwnJob, finishStudioJob, notify, releaseOwnJob]);
 
   const generate = useCallback(async () => {
+    setSubmissionTrace("진입 확인중");
     if (!mainPhoto) {
       setLastError("대표사진이 없어 상세페이지 제작을 시작할 수 없습니다.");
+      setSubmissionTrace("거부: 대표사진 없음");
       onRunningChange(false);
       return;
     }
@@ -843,6 +846,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
         || !/^[a-f0-9]{64}$/.test(normalizedSourcePhotoFingerprint)
         || !normalizedSourceResearchLineageReceipt
         || !firstDraftReviewed)) {
+      setSubmissionTrace("거부: 1차 검토/원본 확인값 부족");
       const message = "먼저 1차 상품정보와 이미지 6개를 생성하고 사람이 확인한 뒤 상세페이지 제작을 시작해 주세요.";
       setLastError(message);
       notify(message);
@@ -850,6 +854,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       return;
     }
     if (!manualMvp && !isStudioExecutionReady(workerReadiness)) {
+      setSubmissionTrace("거부: 작업자 연결 상태");
       const message = workerReadiness?.message
         ?? "AI 제작 작업자 연결 상태를 확인하고 있습니다. 확인이 끝난 뒤 다시 시도해 주세요.";
       setLastError(message);
@@ -861,11 +866,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     // active operation, so its parent busy state must remain true.
     if (generating || generateInFlightRef.current) {
       setLastError("이미 상세페이지 제작이 진행 중입니다. 끝난 뒤 다시 시도해 주세요.");
+      setSubmissionTrace("거부: 진행 중 플래그");
       notify("이미 상세페이지 제작이 진행 중입니다.");
       return;
     }
     if (queuedOwnJobId || queuedOwnJobIdRef.current) {
       setLastError("이미 접수된 상세페이지 작업이 있습니다. 등록 진행 중·히스토리에서 상태를 확인해 주세요.");
+      setSubmissionTrace("거부: 기존 큐 작업 보유");
       // PublishingPage sets its own busy flag before incrementing requestId.
       // Release only a stale outer flag when this child already owns an exact
       // server job and no local submission is still running.
@@ -875,6 +882,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     const lifecycleController = lifecycleControllerRef.current;
     if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) {
       setLastError("화면 상태가 준비되지 않아 상세페이지 제작을 시작하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+      setSubmissionTrace("거부: 화면 수명주기 미준비");
       onRunningChange(false);
       return;
     }
@@ -1471,6 +1479,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
           <div className="detail-preview-scroll">{result && currentImageUrl ? <div className="detail-preview-canvas"><ProductDetailRender result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} /></div> : <div className="studio-empty-preview"><ImageIcon size={34} /><b>실제 상세페이지 결과가 아직 없습니다.</b><small>대표사진과 상품 정보를 분석한 뒤 서버 AI 결과를 표시합니다.</small></div>}</div>
         </article>
       </div>
+      {submissionTrace && <div className="studio-warning"><b>TRACE</b><p>{submissionTrace}</p></div>}
       {lastError && <div className="studio-warning error"><b>{submissionPhase === "uncertain" || uncertainRegenerationJobId ? "접수 상태 확인 필요" : "실제 AI 작업 실패"}</b><p>{lastError}</p><small>{uncertainRegenerationJobId ? `새 재제작을 만들지 않고 기존 이미지 작업 ID ${uncertainRegenerationJobId}를 잠근 상태입니다. 등록 진행 중·히스토리에서 확인해 주세요.` : submissionPhase === "uncertain" ? `새 작업을 만들지 않고 기존 작업 ID ${queuedOwnJobId}를 잠근 상태입니다.` : "예시 결과로 대체하지 않았습니다. 작업 이력에서 재시도하거나 서버 AI 연결 상태를 확인해 주세요."}</small>{submissionPhase === "uncertain" && queuedOwnJobId && <button type="button" className="asset-regenerate" onClick={() => void retryOwnJobStatus()} disabled={generating}><RefreshCw size={13} />기존 작업 상태 다시 확인</button>}</div>}
       {result && result.warnings.length > 0 && <div className="studio-warning"><b>AI 검수 메모</b><ul>{result.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul></div>}
       {editorOpen && result && <ProductDetailEditor result={result} imageUrl={currentImageUrl} assetUrls={studioAssetUrls} data={savedDetailData} saving={detailSaving} onSave={saveDetailPage} onClose={() => { if (!detailSaving) setEditorOpen(false); }} />}
