@@ -112,7 +112,16 @@ type CoreFirstDraftAssetSpec = Extract<(typeof aiGeneratedAssetSpecs)[number], {
 type PreflightAuditMode = "segmented-source-composite" | "source-photo-catalog";
 export type ProductResearchPreflightImageMode = "source-photo-catalog" | "gateway-composite";
 
+function preflightImageDegradationReason(error: unknown) {
+  if (error instanceof ProductResearchPreflightError) return error.safeReason;
+  if (error instanceof ServerProductStudioError) return error.safeReason;
+  return "gateway_request_failed";
+}
+
 type ProductResearchPreflightResult = {
+  // Carried only inside one invocation so the caller can record an operator
+  // visible warning when generated scenes degrade to source-photo crops.
+  imageFallbackReason?: string;
   sourcePhotoEvidence?: z.infer<typeof serverProductResearchResultSchema>["sourcePhotoEvidence"];
   asset_storage_paths: Record<CoreFirstDraftAssetId, string>;
   preflightAssetLineage: Record<CoreFirstDraftAssetId, {
@@ -984,6 +993,10 @@ export async function generateServerProductResearchPreflightAssets(input: {
     let auditMode: PreflightAuditMode = input.dependencies.preflightImageMode === "gateway-composite"
       ? "segmented-source-composite"
       : "source-photo-catalog";
+    // Operators cannot see why the first-draft images degraded from generated
+    // scenes to crops of the source photo unless the reason is recorded. Keep it
+    // and surface it as a warning instead of staying silent.
+    let imageFallbackReason: string | null = null;
     let cutout: Uint8Array | null = null;
     let segmented: Awaited<ReturnType<NonNullable<ServerProductResearchDependencies["segmentSource"]>>> | null = null;
     if (auditMode === "segmented-source-composite" && sources.length === 1) {
@@ -994,6 +1007,8 @@ export async function generateServerProductResearchPreflightAssets(input: {
         );
       } catch (error) {
         if (!imageModelFailureAllowsSourcePhotoFallback(error, input.signal)) throw error;
+        imageFallbackReason = preflightImageDegradationReason(error);
+        console.warn("product research preflight image degraded", { stage: "segmentation", reason: imageFallbackReason });
         auditMode = "source-photo-catalog";
       }
       if (segmented) {
@@ -1001,6 +1016,8 @@ export async function generateServerProductResearchPreflightAssets(input: {
           cutout = new Uint8Array(await buildPortableProductCutout(segmented));
         } catch (error) {
           if (!segmentationAllowsSourcePhotoFallback(error)) throw error;
+          imageFallbackReason = preflightImageDegradationReason(error);
+          console.warn("product research preflight image degraded", { stage: "cutout", reason: imageFallbackReason });
           auditMode = "source-photo-catalog";
         }
       }
@@ -1038,6 +1055,8 @@ export async function generateServerProductResearchPreflightAssets(input: {
       // from the same authoritative source photo. Mixing modes would make the
       // lineage ambiguous and could leave fewer than six assets after a
       // mid-batch provider failure.
+      imageFallbackReason = "gateway_image_generation_failed";
+      console.warn("product research preflight image degraded", { stage: "background", reason: imageFallbackReason });
       auditMode = "source-photo-catalog";
       generated = await generateAll(auditMode);
     }
@@ -1079,6 +1098,9 @@ export async function generateServerProductResearchPreflightAssets(input: {
       asset_storage_paths: productResearchPreflightStoragePathsSchema.parse(paths),
       preflightAssetLineage: productResearchPreflightLineageSchema.parse(lineage),
       ...(sources.length > 1 ? { sourcePhotoEvidence: studioSourceCoverage(sources, sourcePlan).map(item => ({ ...item, sourceSha256: createHash("sha256").update(sources[item.sourceIndex].bytes).digest("hex") })) } : {}),
+      // Not part of the stored result contract: the caller turns it into an
+      // operator-visible warning before the payload is validated.
+      ...(imageFallbackReason ? { imageFallbackReason } : {}),
     };
   } catch (error) {
     await input.dependencies.remove(Object.values(paths)).catch(() => undefined);
@@ -1274,6 +1296,14 @@ export async function runOneServerProductResearch(
       throw new ProductResearchPreflightError("preflight_result_invalid");
     }
     preflightPaths = preflight ? Object.values(preflight.asset_storage_paths) : [];
+    const imageFallbackReason = (preflight as { imageFallbackReason?: string } | null)?.imageFallbackReason;
+    if (imageFallbackReason) {
+      const usedCatalog = Object.values(preflight!.preflightAssetLineage)
+        .every((entry) => entry.auditMode === "source-photo-catalog");
+      researchOutcome.value.warnings = [...researchOutcome.value.warnings, usedCatalog
+        ? `1차 이미지 6장은 AI 생성 대신 원본 사진 기준으로 만들어졌습니다(사유: ${imageFallbackReason}). 배경이 정리되고 제품이 잘리지 않은 사진을 쓰면 생성 이미지로 대체됩니다.`
+        : `1차 이미지 생성 중 일부 단계가 원본 사진 기준으로 대체되었습니다(사유: ${imageFallbackReason}).`].slice(0, 10);
+    }
     result = serverProductResearchResultSchema.parse({
       ...researchOutcome.value,
       ...(preflight ? {
