@@ -29,40 +29,20 @@ export async function POST(request: Request) {
   const serviceClient = createClient(supabaseUrl, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
-  // The storefront form is unauthenticated, so the admin-only cs snapshot cannot
-  // resolve the ledger owner here. Use the dedicated service-role resolver, which
-  // follows the same ownership rule as the channel ingest functions.
-  const owner = await serviceClient.rpc("sellerpilot_public_cs_ledger_owner");
-  const ownerId = typeof owner.data === "string" ? owner.data : null;
-  if (owner.error || !ownerId) {
-    return NextResponse.json({ message: "쇼피 CS 원장 소유자를 확인하지 못했습니다." }, { status: 503 });
-  }
-  const inserted = await serviceClient.schema("sellerpilot_private").from("support_tickets").insert({
-    owner_id: ownerId,
-    external_ticket_id: externalTicketId,
-    channel_key: "shopee",
-    customer_name: parsed.data.customerName,
-    subject: parsed.data.itemId ? `Shopee 상세 문의 · ${parsed.data.itemId}` : "Shopee 상세 문의",
-    message: parsed.data.inquiry,
-    status: "waiting",
-    priority: 3,
-    received_at: receivedAt,
-    demo: false,
-    updated_at: receivedAt,
-    provider_status: "waiting",
-    provider_status_updated_at: receivedAt,
-    latest_inbound_key: inboundKey,
-    provider_context: {
-      kind: "storefront_form",
-      itemId: parsed.data.itemId,
-      orderSn: parsed.data.orderSn,
-    },
-    reply_context: {},
-    external_order_reference: parsed.data.orderSn || null,
-    ticket_kind: "conversation",
-  }).select("id").maybeSingle();
-  if (inserted.error || !inserted.data) {
+  // PostgREST does not expose sellerpilot_private, so the ledger write goes
+  // through a public SECURITY DEFINER RPC that resolves the owner itself.
+  const inserted = await serviceClient.rpc("sellerpilot_public_shopee_storefront_inquiry", {
+    p_external_ticket_id: externalTicketId,
+    p_inbound_key: inboundKey,
+    p_customer_name: parsed.data.customerName,
+    p_subject: parsed.data.itemId ? `Shopee 상세 문의 · ${parsed.data.itemId}` : "Shopee 상세 문의",
+    p_message: parsed.data.inquiry,
+    p_received_at: receivedAt,
+    p_item_id: parsed.data.itemId,
+    p_order_sn: parsed.data.orderSn,
+  });
+  if (inserted.error || typeof inserted.data !== "string") {
     return NextResponse.json({ message: "문의 원장 저장이 거절됐습니다." }, { status: 503 });
   }
-  return NextResponse.json({ ok: true, ticketId: inserted.data.id });
+  return NextResponse.json({ ok: true, ticketId: inserted.data });
 }
