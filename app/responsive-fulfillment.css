@@ -1,0 +1,369 @@
+/*
+ * Fulfillment fit layer: Orders + CS.
+ *
+ * Owns one contract for the order ledger, the bulk fulfillment bar, the
+ * shipment / reply-review dialogs and the 3-column CS workspace:
+ *   - vertical scrolling is expected and allowed
+ *   - horizontal panning is never required at 360 / 414 / 720 / 768 / 900 /
+ *     1024 / 1181 / 1280 / 1440
+ *
+ * Pairs with responsive-fit.css, which cardifies the wide tables. Import this
+ * file after the existing mobile/ops sheets so the workspace column caps and
+ * the toolbar wrap win over the older fixed-track rules.
+ */
+
+/* ------------------------------------------------------------------ *
+ * 0. Shared fit floor (every viewport)
+ * ------------------------------------------------------------------ */
+
+.cs-workspace,
+.cs-workspace > *,
+.ticket-list,
+.ticket-list-header,
+.ticket-item,
+.ticket-item > div,
+.conversation,
+.conversation > header,
+.conversation-body,
+.customer-panel,
+.customer-profile,
+.customer-facts,
+.detail-section,
+.reply-composer,
+.ai-draft-head,
+.ai-draft-head > span,
+.order-context,
+.order-context-meta,
+.cs-live-heading,
+.cs-filter-actions,
+.cs-summary,
+.order-summary-grid,
+.bulk-order-bar,
+.bulk-order-bar > *,
+.bulk-order-selection,
+.tab-toolbar,
+.tab-toolbar > *,
+.cs-channel-verification-grid,
+.shipment-dialog,
+.shipment-dialog > header,
+.shipment-dialog > footer,
+.cs-reply-review-dialog,
+.cs-reply-review-dialog > header,
+.cs-reply-review-dialog > footer,
+.order-detail-ledger > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Identifiers and free text wrap instead of widening their column. */
+.order-detail-link,
+.order-product-button,
+.tracking-fact,
+.order-context b,
+.order-context small,
+.conversation > header small,
+.mini-order b,
+.detail-section dd,
+.cs-summary strong,
+.order-summary-grid strong,
+.cs-reply-review-facts dd,
+.cs-reply-review-copy p {
+  overflow-wrap: anywhere;
+}
+
+.reply-composer textarea,
+.shipment-dialog input,
+.shipment-dialog select,
+.shipment-dialog textarea,
+.cs-reply-review-dialog input,
+.cs-reply-review-dialog select,
+.cs-reply-review-dialog textarea {
+  max-width: 100%;
+}
+
+/* The order ledger itself stays owned by responsive-fit.css (cardified) and
+   mobile-optimization.css (sticky edges below 900px). This sheet deliberately
+   never touches `.table-wrap` overflow. */
+
+/* ------------------------------------------------------------------ *
+ * 1. PC (> 1360): the CS workspace keeps three fluid columns
+ * ------------------------------------------------------------------ */
+
+@media (min-width: 1361px) {
+  .cs-workspace {
+    grid-template-columns: minmax(0, 252px) minmax(0, 1fr) minmax(0, 232px);
+  }
+
+  .customer-panel {
+    display: grid;
+    grid-column: auto;
+    align-content: start;
+    border-top: 0;
+    border-left: 1px solid var(--line);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. Narrow desktop (1181-1360): two columns + stacked customer panel.
+ *     Tablet (721-1180) and phone stack all three panes in one column.
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 1360px) {
+  .customer-panel {
+    display: grid !important;
+    grid-column: 1 / -1;
+    align-content: start;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    border-top: 1px solid var(--line);
+    border-left: 0;
+  }
+
+  .conversation-empty {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (min-width: 1181px) and (max-width: 1360px) {
+  .cs-workspace {
+    grid-template-columns: minmax(0, 240px) minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 1180px) {
+  /* Tablet: the three panes stack (list, conversation, customer panel) so the
+     conversation keeps the full column instead of a squeezed centre track. */
+  .cs-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* A long ticket list must not push the conversation off the first screen. */
+  .ticket-list {
+    max-height: min(60svh, 420px);
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* Orders toolbar: wrap the tab strip and the action cluster. */
+  .tab-toolbar {
+    flex-wrap: wrap;
+    align-items: center;
+    row-gap: 8px;
+    min-height: 0;
+    padding: 10px 12px;
+  }
+
+  .tab-toolbar > div:first-child {
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: center;
+    overflow-x: visible !important;
+  }
+
+  .tab-toolbar > div:first-child button {
+    flex: 0 0 auto;
+    min-height: 40px;
+  }
+
+  .tab-toolbar .search-field {
+    width: auto;
+    min-width: 0;
+    flex: 1 1 220px;
+    margin-left: 0;
+  }
+
+  .tab-toolbar .search-field input {
+    min-width: 0;
+  }
+
+  .tab-toolbar .paid-orders-export-button,
+  .tab-toolbar .automatic-sync-label {
+    white-space: normal;
+  }
+
+  /* CS heading + filters. */
+  .cs-live-heading {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .cs-filter-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .cs-filter-actions > * {
+    flex: 0 1 auto;
+  }
+
+  /* Bulk fulfillment bar. */
+  .bulk-order-bar {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+  }
+
+  .bulk-order-bar > .bulk-order-selection {
+    min-height: 44px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Phone (<= 720): single column, full-width filters, 44px targets
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+  .cs-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ticket-list-header {
+    flex-wrap: wrap;
+  }
+
+  .ticket-list-header .search-field {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .conversation {
+    min-height: 0;
+  }
+
+  .conversation > header {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .conversation > header > div:last-child,
+  .cs-ticket-status-control,
+  .cs-ticket-status-control .filter-select {
+    width: 100%;
+  }
+
+  .cs-ticket-status-control .filter-select {
+    min-height: 44px;
+  }
+
+  .customer-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .order-context {
+    flex-wrap: wrap;
+  }
+
+  .order-context-meta {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+
+  /* Filters own the full row on phones. */
+  .cs-filter-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .cs-filter-actions > *,
+  .cs-filter-actions .filter-select,
+  .cs-filter-actions .filter-button {
+    width: 100%;
+  }
+
+  /* Reply composer stacks: tools, then the send action. */
+  .ai-draft-head {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .reply-composer > div:last-child {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .reply-composer > div:last-child > span {
+    flex-wrap: wrap;
+  }
+
+  .reply-tool-select {
+    width: 100%;
+  }
+
+  .send-button {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Phone tap targets. */
+  .ticket-tabs button,
+  .ticket-item,
+  .tab-toolbar > div:first-child button,
+  .table-action,
+  .icon-only-button,
+  .send-button,
+  .ai-draft-head button,
+  .reply-tool-select,
+  .reply-tool-select select,
+  .bulk-order-bar > button:not(.table-action),
+  .bulk-order-selection,
+  .cs-filter-actions .filter-button,
+  .cs-filter-actions .filter-select,
+  .cs-summary > button,
+  .order-summary-grid > article,
+  .cs-reply-review-dialog > footer button,
+  .shipment-dialog > footer button {
+    min-height: 44px;
+  }
+
+  .table-action,
+  .icon-only-button {
+    min-width: 44px;
+  }
+
+  /* The reply-review modal joins the shipment dialog as a bottom sheet. */
+  .cs-reply-review-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .cs-reply-review-dialog {
+    width: 100%;
+    max-height: 92dvh;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .cs-reply-review-dialog > footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+    padding-bottom: calc(14px + env(safe-area-inset-bottom));
+  }
+
+  .cs-reply-review-dialog > footer button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Small phone (<= 480)
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 480px) {
+  .cs-reply-review-facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .conversation > header > div:first-child > span:last-child {
+    min-width: 0;
+  }
+
+  .conversation > header > div:first-child > span:last-child b,
+  .conversation > header > div:first-child > span:last-child small {
+    overflow-wrap: anywhere;
+  }
+}

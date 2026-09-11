@@ -1,0 +1,1076 @@
+/*
+ * responsive-publish.css
+ * Fit contract for the publishing surfaces: 상품 등록 워크벤치(product-publish-workbench),
+ * AI 상세·썸네일 스튜디오(ai-product-studio), 카테고리 워크벤치(category-classification-workbench),
+ * 경쟁사 가격(competitor-price-v3-ui), 등록 큐(queue), PDP 미리보기(.pdp-*), Puck 편집기(.puck-editor-*).
+ *
+ * Targets: phone <=720, tablet 721-1180, PC >=1181. Vertical scroll is allowed,
+ * horizontal scrolling is not.
+ *
+ * Rules honored in this file:
+ *  - overflow-x hidden/clip appears only on containers whose children were already
+ *    reflowed (single column / wrapped toolbars) in the same or a larger breakpoint.
+ *  - no overflow-x: auto anywhere.
+ *  - no min-width larger than 100% / 100vw (min-width: max-content is neutralized).
+ *  - every flexible track uses minmax(0, 1fr); toolbars use flex-wrap;
+ *    identifiers and messages use overflow-wrap: anywhere.
+ *  - images capped with max-width: 100%, intrinsic/host aspect ratios kept
+ *    (no `svg { height: auto }`, no forced width+height pairs).
+ *  - 44px minimum tap targets on phones.
+ *
+ * Import order: this sheet must be linked after mobile-optimization.css and
+ * responsive-fit.css. It has to out-order their `!important` collapsed-column
+ * rules, and a few of its own overrides use `!important` for the same reason
+ * (they only ever re-widen a gallery that was already reflowed).
+ */
+
+/* ==========================================================================
+   1. Shared box contract - nothing in these surfaces may exceed its column.
+   ========================================================================== */
+
+.publishing-layout,
+.upload-panel,
+.publishing-settings,
+.queue-panel,
+.product-publish-workbench,
+.product-publish-workbench > *,
+.publish-workbench-head,
+.publish-workbench-head > *,
+.publish-head-actions,
+.publish-head-actions > *,
+.publish-common-fields,
+.publish-common-fields > *,
+.publish-source-proof,
+.publish-source-proof > *,
+.publish-channel-cards,
+.publish-channel-card,
+.publish-channel-card > *,
+.publish-channel-card > header,
+.publish-channel-card > header > *,
+.publish-channel-list,
+.publish-channel-list > label,
+.publish-channel-list > label > *,
+.publish-required-fields,
+.publish-required-head,
+.publish-required-head > *,
+.publish-required-list,
+.publish-required-item,
+.publish-required-item > *,
+.publish-manual-fields,
+.publish-manual-fields > *,
+.publish-market-select,
+.publish-market-select > *,
+.publish-readiness,
+.publish-readiness > *,
+.publish-write-confirmation,
+.publish-write-confirmation > *,
+.publish-bulk-confirm-list,
+.publish-bulk-confirm-list > *,
+.registration-steps,
+.registration-steps > *,
+.registration-steps li,
+.registration-steps li > *,
+.registration-draft-bar,
+.registration-draft-bar > *,
+.registration-draft-actions,
+.registration-draft-actions > *,
+.registration-form-toolbar,
+.registration-form-toolbar > *,
+.registration-field-grid,
+.registration-field,
+.registration-field > *,
+.registration-field-title,
+.registration-notice-form,
+.registration-notice-form > *,
+.registration-shipping-form,
+.registration-shipping-form > *,
+.registration-notice-row,
+.registration-notice-row > *,
+.registration-channel-form,
+.registration-channel-form > *,
+.ai-product-studio,
+.ai-product-studio > *,
+.studio-heading,
+.studio-heading > *,
+.studio-source-row,
+.studio-source-row > *,
+.studio-workspace,
+.studio-workspace > *,
+.creative-rail,
+.creative-rail > *,
+.creative-rail-head,
+.creative-rail-head > *,
+.thumbnail-grid,
+.thumbnail-grid > *,
+.thumbnail-card,
+.thumbnail-card > *,
+.detail-preview-panel,
+.detail-preview-panel > *,
+.detail-preview-toolbar,
+.detail-preview-toolbar > *,
+.detail-preview-scroll,
+.detail-preview-canvas,
+.studio-warning,
+.studio-warning > *,
+.category-workbench,
+.category-workbench > *,
+.category-workbench-head,
+.category-workbench-head > *,
+.category-query,
+.category-query > *,
+.category-channel-grid,
+.category-channel-card,
+.category-channel-card > *,
+.category-channel-card > header,
+.category-channel-card > header > *,
+.category-suggestions,
+.category-suggestions > *,
+.category-suggestions-toolbar,
+.category-suggestions-toolbar > *,
+.category-inspection,
+.category-proof,
+.category-proof > *,
+.category-manual-fallback,
+.category-manual-fallback > *,
+.category-attribute-list,
+.category-attribute-list > *,
+.competitor-price-panel,
+.competitor-price-panel > *,
+.competitor-query-row,
+.competitor-query-row > *,
+.competitor-market-groups,
+.competitor-market-groups > section,
+.competitor-price-grid,
+.competitor-price-grid > *,
+.competitor-observation-card,
+.competitor-observation-card > *,
+.competitor-lowest-summary,
+.competitor-lowest-summary > *,
+.competitor-price-follow,
+.competitor-price-follow > *,
+.competitor-provider-summary,
+.competitor-provider-summary > *,
+.competitor-price-components,
+.competitor-price-components > *,
+.competitor-price-provenance,
+.competitor-price-provenance > *,
+.competitor-match-evidence,
+.competitor-match-evidence > *,
+.competitor-retry,
+.competitor-retry > *,
+.competitor-rejected-list,
+.competitor-rejected-list > *,
+.competitor-review-grid,
+.competitor-review-grid > *,
+.competitor-review-dialog,
+.competitor-review-dialog > *,
+.competitor-review-dialog-body,
+.competitor-review-dialog-body > *,
+.competitor-review-decision,
+.competitor-review-reasons,
+.competitor-review-note,
+.competitor-review-note > *,
+.queue-table,
+.queue-header,
+.queue-row,
+.queue-header > *,
+.queue-row > *,
+.queue-live-summary,
+.queue-live-summary > *,
+.puck-editor-modal,
+.puck-editor-top,
+.puck-editor-top > *,
+.puck-editor-body,
+.puck-editor-body > * {
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Images and embedded frames never push a column wider than itself. */
+.ai-product-studio img,
+.detail-preview-canvas img,
+.thumbnail-card img,
+.upload-panel img,
+.option-photo-slot img,
+.extra-photo-list img,
+.category-workbench img,
+.competitor-price-panel img,
+.publish-channel-card img,
+.pdp-hero-visual img,
+.pdp-image-story-visual img,
+.puck-editor-body img,
+.publish-write-confirmation iframe {
+  max-width: 100%;
+}
+
+/* The PDP story visual is a full-bleed cover: keep its cover ratio, do not squash. */
+.pdp-image-story-visual img {
+  height: 100%;
+}
+
+/* ==========================================================================
+   2. Text that must wrap instead of widening the box.
+   ========================================================================== */
+
+.publish-workbench-head p,
+.publish-bulk-execute,
+.publish-bulk-confirm-list li,
+.publish-blocked b,
+.publish-blocked small,
+.publish-result,
+.publish-result small,
+.publish-remote-id,
+.publish-required-head small,
+.publish-required-item b,
+.publish-required-item small,
+.publish-required-item em,
+.publish-channel-card > header h4,
+.publish-channel-card > header small,
+.publish-channel-card summary,
+.publish-channel-card textarea,
+.publish-market-select small,
+.publish-write-confirmation b,
+.publish-write-confirmation small,
+.registration-steps b,
+.registration-steps small,
+.registration-draft-bar b,
+.registration-draft-bar small,
+.registration-field > small,
+.registration-field-title b,
+.registration-value-source,
+.registration-notice-form legend,
+.registration-shipping-form legend,
+.category-error,
+.category-manual-fallback b,
+.category-manual-fallback small,
+.category-channel-card > header h4,
+.category-channel-card > header small,
+.competitor-observation-card b,
+.competitor-observation-card small,
+.competitor-observation-card em,
+.competitor-price-grid b,
+.competitor-price-grid small,
+.competitor-price-empty b,
+.competitor-provider-summary > span,
+.competitor-lowest-summary em,
+.competitor-total-price strong,
+.competitor-total-price em,
+.competitor-price-components dd small,
+.competitor-match-evidence li,
+.competitor-rejected-list li,
+.competitor-rejected-list article b,
+.competitor-legacy-section article b,
+.competitor-retry b,
+.competitor-retry small,
+.competitor-review-dialog p,
+.competitor-review-source small,
+.competitor-review-error,
+.studio-heading h3,
+.studio-heading p,
+.studio-source-row b,
+.studio-source-row small,
+.studio-warning b,
+.studio-warning li,
+.thumbnail-card > b,
+.thumbnail-card > small,
+.detail-preview-toolbar b,
+.detail-preview-toolbar small,
+.creative-rail-head small,
+.queue-product b,
+.queue-row,
+.queue-row small,
+.queue-row em {
+  overflow-wrap: anywhere;
+}
+
+/* Long-form PDP copy inside the preview canvas. */
+.pdp-hero-copy h1,
+.pdp-hero-copy p,
+.pdp-image-story-copy h2,
+.pdp-image-story-copy p,
+.pdp-image-story-copy li,
+.pdp-story-block h2,
+.pdp-story-block p,
+.pdp-story-block li,
+.pdp-benefit-block > p,
+.pdp-benefit-block b,
+.pdp-cta-block p,
+.pdp-verification-cell b,
+.pdp-section-evidence b {
+  overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   3. PC (>=1181): fluid tracks, wrapping toolbars, no max-content widths.
+   ========================================================================== */
+
+.publishing-layout {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.7fr);
+}
+
+.publish-head-actions {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.publish-workbench-head,
+.publish-channel-card > header,
+.publish-required-head,
+.publish-channel-card summary,
+.publish-source-proof,
+.studio-heading,
+.studio-heading > div:last-child,
+.creative-rail-head,
+.detail-preview-toolbar,
+.category-suggestions-toolbar,
+.competitor-retry,
+.competitor-review-source,
+.competitor-observation-card > header,
+.category-channel-card > header,
+.queue-product,
+.puck-editor-top {
+  flex-wrap: wrap;
+}
+
+/* Grids reflow by available space instead of fixed column counts. */
+.publish-common-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 145px), 1fr));
+}
+
+.publish-channel-cards {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+}
+
+.publish-required-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+
+.publish-manual-fields {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.registration-steps {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+}
+
+.registration-field-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
+.registration-notice-row {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 180px);
+}
+
+.product-edit-handoff ol {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+}
+
+.remote-edit-support {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+.studio-source-row {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.thumbnail-grid {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.option-photo-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.extra-photo-list {
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+}
+
+.category-channel-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+}
+
+.competitor-price-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+}
+
+.competitor-market-groups .competitor-price-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+
+.competitor-review-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+}
+
+.competitor-price-components {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+.queue-header,
+.queue-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.6fr) minmax(0, 0.8fr) minmax(0, 0.5fr) minmax(0, 0.65fr);
+}
+
+.queue-live-summary {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+}
+
+/* PDP blocks: proportional tracks that may also shrink below their content. */
+.pdp-hero-block {
+  grid-template-columns: minmax(0, 1.03fr) minmax(0, 0.97fr);
+}
+
+.pdp-hero-block.editorial {
+  grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
+}
+
+.pdp-image-story {
+  grid-template-columns: minmax(0, 1.04fr) minmax(0, 0.96fr);
+}
+
+.pdp-image-story.editorial {
+  grid-template-columns: minmax(0, 0.82fr) minmax(0, 1.18fr);
+}
+
+.pdp-story-block {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: clamp(18px, 3.4vw, 44px);
+}
+
+.pdp-story-block.full-bleed,
+.pdp-story-block.editorial {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
+
+.pdp-benefit-block > div {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+}
+
+.pdp-hero-copy,
+.pdp-image-story-copy,
+.pdp-image-story-visual,
+.pdp-benefit-block,
+.pdp-story-block,
+.pdp-cta-block,
+.pdp-verification-ribbon,
+.pdp-verification-cell {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Puck editor: the modal is an inset overlay, keep its body scrolling vertically. */
+.puck-editor-modal {
+  max-width: 100vw;
+  max-height: 100dvh;
+}
+
+.puck-editor-body,
+.puck-editor-body > div {
+  max-width: 100%;
+}
+
+.puck-editor-body {
+  overflow-x: hidden;
+}
+
+.puck-editor-top small,
+.puck-editor-top b {
+  overflow-wrap: anywhere;
+}
+
+/* ==========================================================================
+   4. Tablet (<=1180): stack the wide panes and reflow the ledgers.
+   ========================================================================== */
+
+@media (max-width: 1180px) {
+  .publishing-layout,
+  .publish-channel-cards,
+  .category-channel-grid,
+  .competitor-market-groups .competitor-price-grid,
+  .competitor-review-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .extra-photo-list {
+    grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+  }
+
+  /* Keep multi-tile galleries multi-column on tablets: earlier sheets collapse
+     these to a single column at <=900px, which would blow each tile up. */
+  .option-photo-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .studio-source-row {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .publish-channel-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .product-edit-handoff ol {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .publish-head-actions,
+  .publish-head-actions > * {
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .queue-table {
+    overflow-x: hidden !important;
+  }
+
+  .queue-header,
+  .queue-row {
+    min-width: 0 !important;
+    grid-template-columns: minmax(0, 1.5fr) minmax(0, 0.7fr) minmax(0, 0.8fr) minmax(0, 0.6fr);
+    gap: 8px;
+  }
+
+  .queue-row {
+    align-items: start;
+    min-height: 0;
+    padding: 10px;
+  }
+
+  .queue-live-summary {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+  }
+
+  /* Studio workspace: drop the hard 240px/440px floors that forced overflow. */
+  .studio-workspace {
+    grid-template-columns: minmax(0, 0.62fr) minmax(0, 1.38fr);
+    min-height: 0;
+  }
+
+  .detail-preview-scroll {
+    height: min(640px, 68vh);
+    overflow-x: hidden;
+    padding: 12px;
+  }
+
+  .category-attribute-list {
+    overflow-x: hidden;
+  }
+
+  .competitor-review-dialog-body {
+    overflow-x: hidden;
+  }
+
+  .competitor-query-row {
+    grid-template-columns: minmax(0, 1fr) auto auto;
+  }
+
+  /* Toolbars wrap instead of pushing the panel wider. */
+  .publish-workbench-head,
+  .category-workbench-head,
+  .studio-heading,
+  .detail-preview-toolbar,
+  .category-suggestions-toolbar,
+  .competitor-retry,
+  .competitor-review-source,
+  .competitor-lowest-summary,
+  .competitor-price-follow,
+  .competitor-rejected-list article,
+  .competitor-legacy-section article {
+    flex-wrap: wrap;
+  }
+
+  .competitor-retry-actions,
+  .competitor-provider-summary > span,
+  .competitor-review-grid {
+    min-width: 0;
+  }
+
+  /* Titles that were clipped with nowrap now reflow. */
+  .publish-required-item b,
+  .publish-category-path,
+  .category-suggestions b,
+  .category-suggestions small,
+  .competitor-price-grid b,
+  .competitor-price-empty b,
+  .competitor-observation-card > header b,
+  .thumbnail-card > b,
+  .registration-field-title small {
+    white-space: normal;
+    overflow: visible;
+    text-overflow: clip;
+  }
+
+  .publish-channel-card textarea {
+    min-height: 220px;
+  }
+
+  .pdp-hero-block,
+  .pdp-image-story,
+  .pdp-story-block,
+  .pdp-image-story.full-bleed,
+  .pdp-image-story.editorial,
+  .pdp-story-block.full-bleed,
+  .pdp-story-block.editorial {
+    min-height: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .pdp-image-story.reverse .pdp-image-story-visual {
+    order: initial;
+  }
+
+  .pdp-image-story-visual,
+  .pdp-image-story.full-bleed .pdp-image-story-visual {
+    min-height: clamp(260px, 42vw, 460px);
+  }
+
+  .pdp-image-story.full-bleed {
+    display: grid;
+  }
+
+  .pdp-image-story.full-bleed .pdp-image-story-copy {
+    position: static;
+    width: auto;
+    max-width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .pdp-verification-ribbon {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pdp-story-block.cards,
+  .pdp-story-block.spec-grid,
+  .pdp-image-story.cards,
+  .pdp-image-story.spec-grid {
+    align-items: stretch;
+  }
+}
+
+/* ==========================================================================
+   5. Phone (<=720): one column everywhere, no carousels, 44px targets.
+   ========================================================================== */
+
+@media (max-width: 720px) {
+  .publishing-layout,
+  .product-publish-workbench,
+  .publish-channel-cards,
+  .publish-common-fields,
+  .publish-required-list,
+  .publish-manual-fields,
+  .registration-steps,
+  .registration-field-grid,
+  .registration-notice-row,
+  .category-channel-grid,
+  .studio-workspace,
+  .competitor-price-grid,
+  .competitor-market-groups .competitor-price-grid,
+  .competitor-review-grid,
+  .competitor-lowest-summary,
+  .competitor-price-follow,
+  .competitor-rejected-list article,
+  .competitor-legacy-section article,
+  .queue-header,
+  .queue-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Small multi-item galleries keep two columns so tiles stay tappable. */
+  .option-photo-grid,
+  .thumbnail-grid,
+  .studio-source-row,
+  .queue-live-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .extra-photo-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .competitor-price-components {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .competitor-provider-summary {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .competitor-provider-summary > span {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .competitor-provider-summary > span small {
+    grid-column: 1;
+  }
+
+  .competitor-lowest-summary > small,
+  .competitor-price-follow em {
+    text-align: left;
+  }
+
+  .competitor-price-provenance > span {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .upload-panel,
+  .publishing-settings,
+  .queue-panel,
+  .publish-channel-card,
+  .category-workbench-head,
+  .category-query,
+  .category-channel-card > header,
+  .competitor-price-panel {
+    padding: 13px;
+  }
+
+  .publish-head-actions,
+  .publish-head-actions > *,
+  .publish-bulk-execute {
+    width: 100%;
+    min-width: 0 !important;
+  }
+
+  .publish-head-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  /* Queue: the old markup forced min-width: 720px on every row. */
+  .queue-table {
+    overflow-x: hidden !important;
+  }
+
+  .queue-header {
+    display: none;
+  }
+
+  .queue-header,
+  .queue-row {
+    min-width: 0 !important;
+    max-width: 100%;
+    gap: 4px;
+    padding: 9px 4px;
+  }
+
+  .queue-row {
+    align-items: start;
+    min-height: 0;
+    row-gap: 5px;
+  }
+
+  /* Competitor price cards: wrap as a list instead of a horizontal carousel. */
+  .competitor-market-groups .competitor-price-grid {
+    display: grid !important;
+    grid-auto-flow: row !important;
+    grid-auto-columns: auto !important;
+    gap: 8px;
+    overflow-x: hidden !important;
+    overflow-y: visible !important;
+    padding: 0 !important;
+    scroll-snap-type: none !important;
+    touch-action: pan-y;
+  }
+
+  .competitor-price-grid > a,
+  .competitor-price-empty {
+    grid-template-columns: 52px minmax(0, 1fr) auto;
+    min-height: 0;
+    scroll-snap-align: none;
+  }
+
+  /* Registration + publish toolbars stack in order. */
+  .publish-workbench-head,
+  .registration-draft-bar,
+  .registration-form-toolbar,
+  .category-workbench-head,
+  .studio-heading,
+  .detail-preview-toolbar,
+  .competitor-review-source,
+  .competitor-review-dialog > header,
+  .competitor-retry,
+  .competitor-observation-card > header,
+  .puck-editor-top {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .publish-workbench-head > *,
+  .registration-draft-bar > *,
+  .registration-form-toolbar > *,
+  .studio-heading > *,
+  .detail-preview-toolbar > *,
+  .competitor-review-dialog > header > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .publish-channel-card > header {
+    align-items: flex-start;
+    row-gap: 6px;
+  }
+
+  .publish-channel-card > header em {
+    margin-left: 0;
+  }
+
+  .publish-channel-card textarea {
+    min-height: 170px;
+    font-size: 11px;
+  }
+
+  .publish-required-item {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
+    min-height: 44px;
+  }
+
+  .publish-required-item > span {
+    align-items: flex-start;
+  }
+
+  .publish-required-item small,
+  .publish-required-item em {
+    text-align: left;
+  }
+
+  /* Confirmation dialogs: text first, action buttons full width below. */
+  .publish-write-confirmation,
+  .publish-write-confirmation.channel {
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: start;
+    row-gap: 8px;
+  }
+
+  .publish-write-confirmation > button,
+  .publish-write-confirmation.channel > button,
+  .publish-write-confirmation > button:nth-of-type(1),
+  .publish-write-confirmation > button:nth-of-type(2),
+  .publish-write-confirmation.channel > button:nth-of-type(1),
+  .publish-write-confirmation.channel > button:nth-of-type(2) {
+    width: 100%;
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+
+  .publish-write-confirmation iframe {
+    height: min(420px, 62vh) !important;
+    max-width: 100%;
+  }
+
+  /* Studio preview: the canvas is the only thing that may scroll. */
+  .detail-preview-scroll {
+    height: min(560px, 62vh);
+    overflow-x: hidden;
+    padding: 9px;
+  }
+
+  .creative-rail {
+    padding: 12px;
+  }
+
+  .thumbnail-card.ai {
+    max-width: 100%;
+  }
+
+  .studio-warning ul {
+    padding-left: 16px;
+  }
+
+  /* Category workbench: suggestion rows and attribute fields stack. */
+  .category-query,
+  .category-manual-fallback,
+  .category-inspection {
+    padding: 12px;
+  }
+
+  .publish-channel-card > header > span {
+    flex: 0 0 auto;
+  }
+
+  .category-suggestions button {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 3px;
+  }
+
+  .category-suggestions button > svg {
+    display: none;
+  }
+
+  .category-attribute-list {
+    max-height: none;
+    overflow-x: hidden;
+    overflow-y: visible;
+  }
+
+  /* Competing evidence lists keep their labels above the value. */
+  .competitor-price-provenance > span {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .competitor-review-dialog {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .competitor-review-dialog-body {
+    overflow-x: hidden;
+  }
+
+  .puck-editor-modal {
+    max-width: 100vw;
+  }
+
+  /* 44px touch targets on every publishing control. */
+  .publish-bulk-execute,
+  .publish-execute,
+  .publish-confirm-execute,
+  .publish-common-fields button,
+  .publish-common-fields input,
+  .publish-manual-fields input,
+  .publish-manual-fields select,
+  .publish-channel-card summary,
+  .publish-channel-card > button,
+  .publish-write-confirmation .credential-secondary,
+  .publish-market-select select,
+  .registration-draft-bar button,
+  .registration-form-toolbar button,
+  .registration-notice-form button,
+  .registration-notice-form input,
+  .registration-notice-form select,
+  .registration-shipping-form input,
+  .registration-shipping-form select,
+  .registration-channel-form input,
+  .registration-channel-form select,
+  .registration-field input,
+  .registration-field select,
+  .registration-field textarea,
+  .category-empty button,
+  .category-confirm,
+  .category-query input,
+  .category-market-select select,
+  .category-suggestions .category-suggestions-toolbar button,
+  .category-manual-fallback input,
+  .category-attribute-list input,
+  .category-attribute-list select,
+  .competitor-query-row input,
+  .competitor-retry button,
+  .competitor-review-open,
+  .competitor-review-dialog > header button,
+  .competitor-review-source a,
+  .competitor-review-decision label,
+  .competitor-review-reasons label,
+  .studio-heading button,
+  .detail-preview-toolbar button,
+  .asset-regenerate,
+  .pdp-hero-copy button,
+  .pdp-cta-block button,
+  .pdp-visual-cta {
+    min-height: 44px;
+  }
+
+  .competitor-observation-card > header > a,
+  .competitor-rejected-list article a,
+  .competitor-legacy-section article a {
+    display: inline-flex;
+    min-width: 44px;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .publish-execute,
+  .publish-confirm-execute,
+  .publish-bulk-execute,
+  .publish-channel-card summary {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    line-height: 1.35;
+  }
+
+  .competitor-retry button,
+  .competitor-retry-actions button {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .competitor-retry-actions {
+    display: grid;
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+
+/* ==========================================================================
+   5b. Compact phone (<=480): single-column galleries, one field per row.
+   ========================================================================== */
+
+@media (max-width: 480px) {
+  .thumbnail-grid,
+  .studio-source-row,
+  .queue-live-summary,
+  .competitor-price-components {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .extra-photo-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .publish-source-proof span,
+  .publish-readiness span,
+  .category-proof span {
+    white-space: normal;
+  }
+
+  .pdp-image-story-visual,
+  .pdp-image-story.full-bleed .pdp-image-story-visual {
+    min-height: clamp(220px, 58vw, 340px);
+  }
+}
+
+/* ==========================================================================
+   6. Small phone (<=400) and very narrow windows (<=360).
+   ========================================================================== */
+
+@media (max-width: 400px) {
+  .pdp-benefit-block,
+  .pdp-cta-block,
+  .pdp-story-block,
+  .pdp-image-story-copy,
+  .pdp-hero-copy {
+    padding: clamp(18px, 7vw, 40px);
+  }
+}
+
+@media (max-width: 360px) {
+  .competitor-price-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .extra-photo-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .option-photo-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .publish-channel-card,
+  .category-channel-card > header {
+    padding: 10px;
+  }
+
+  .publish-write-confirmation,
+  .publish-write-confirmation.channel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .publish-write-confirmation > svg {
+    display: none;
+  }
+}

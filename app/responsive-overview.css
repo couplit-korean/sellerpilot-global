@@ -1,0 +1,1184 @@
+/* ============================================================================
+ * responsive-overview.css
+ *
+ * Last-layer fit contract for:
+ *   - OverviewPage dashboard (toolbar, exchange widget, KPI grid, revenue,
+ *     channel ledger, ranking ledger)
+ *   - ProductsPage summary strip + data toolbar + sales range control
+ *   - RevenueCalendar / SalesRangeControl
+ *   - NotificationsPage, TemplatesPage, StoryboardPage
+ *   - shell leftovers (topbar, service rail, popovers)
+ *
+ * Rules of this file:
+ *   1. No horizontal pan. `overflow-x: auto` is never introduced here.
+ *      Columns are dropped or content wraps/shrinks instead.
+ *   2. Nothing may declare a min-width that can exceed the viewport.
+ *   3. Phone views keep >= 44px tap targets.
+ *
+ * Load order: import AFTER globals.css, operations-system.css,
+ * commerce-ux-refactor.css and mobile-optimization.css (same place
+ * responsive-fit.css is imported) so these rules win.
+ * ========================================================================== */
+
+/* ---------------------------------------------------------------------------
+ * 0. Fit contract
+ * ------------------------------------------------------------------------- */
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+img,
+video,
+canvas,
+iframe,
+table {
+  max-width: 100%;
+}
+
+.app-shell,
+.app-main,
+.app-header-stack,
+.app-content,
+.page-stack,
+.page-stack > *,
+.panel,
+.panel-heading,
+.topbar,
+.topbar-title,
+.topbar-actions,
+.commerce-service-rail {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Numbers stay on one line (breaking a currency mid-digit is worse than
+   shrinking it), so every numeric display gets a clamp instead. */
+.metric-card,
+.metric-copy,
+.channel-name,
+.channel-metric,
+.ranking-product,
+.ranking-sales,
+.summary-strip > div,
+.exchange-rate,
+.pipeline-list > div,
+.sales-calendar-breakdown {
+  min-width: 0;
+}
+
+.metric-copy strong,
+.channel-metric b,
+.ranking-sales b,
+.summary-strip > div strong,
+.exchange-rate strong,
+.pipeline-list strong {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-copy span,
+.metric-foot small,
+.channel-metric small,
+.ranking-product b,
+.ranking-product small,
+.summary-strip > div span,
+.exchange-title > small,
+.notification-preference-grid small,
+.template-card-grid dd,
+.story-scene p {
+  overflow-wrap: anywhere;
+}
+
+/* ---------------------------------------------------------------------------
+ * 1. Overview toolbar: exchange widget + date controls
+ *    Both children must be allowed to wrap and shrink; the widget is a
+ *    fixed 4-rate row on desktop and a 2-column grid once space is short.
+ * ------------------------------------------------------------------------- */
+
+.overview-toolbar {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 12px;
+}
+
+.overview-toolbar > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.exchange-widget {
+  min-width: 0 !important;
+  max-width: 100%;
+  flex: 1 1 420px;
+  flex-wrap: wrap;
+  overflow: visible; /* kills the <=720px `overflow-x: auto` pan */
+  gap: 10px 14px;
+}
+
+.exchange-title {
+  min-width: 0 !important;
+  flex: 1 1 190px !important;
+}
+
+.exchange-title > span {
+  white-space: normal;
+}
+
+.exchange-title > small {
+  max-width: 100%;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.exchange-rate-list {
+  min-width: 0;
+  flex: 1 1 300px;
+  flex-wrap: wrap;
+}
+
+.exchange-rate {
+  min-width: 0 !important;
+  flex: 1 1 92px;
+  padding-inline: clamp(8px, 1.2vw, 20px);
+}
+
+.exchange-rate small,
+.exchange-rate strong,
+.exchange-rate em {
+  white-space: normal;
+}
+
+.exchange-refresh {
+  flex: 0 0 auto;
+}
+
+.overview-date-actions {
+  display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex: 1 1 320px;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.overview-date-actions > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sales-range-control {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.selected-date-range,
+.custom-date-range {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.custom-date-range label {
+  min-width: 0;
+  flex: 1 1 132px;
+}
+
+.custom-date-range input[type="date"] {
+  width: 100%;
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 2. Overview KPI grid + summary strip
+ * ------------------------------------------------------------------------- */
+
+.metric-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.metric-card,
+.metric-card-button {
+  min-width: 0;
+  overflow: hidden;
+  text-align: left;
+}
+
+/* flex strip: 4 tiles + CTA cannot fit beside a fixed sidebar at 901-1180 */
+@media (min-width: 901px) {
+  .summary-strip {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .summary-strip > div {
+    min-width: 0 !important;
+    flex: 1 1 148px;
+  }
+
+  .summary-strip .primary-button {
+    flex: 0 0 auto;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 3. Revenue panel, calendar, and dashboard grids
+ * ------------------------------------------------------------------------- */
+
+.dashboard-main-grid,
+.dashboard-lower-grid,
+.dashboard-bottom-grid,
+.dashboard-cs-pair,
+.dashboard-product-readiness-grid {
+  min-width: 0;
+}
+
+.live-channel-bars,
+.channel-list,
+.alert-list,
+.quick-action-grid,
+.pipeline-list {
+  min-width: 0;
+}
+
+.live-channel-bars button,
+.alert-list > button,
+.quick-action-grid button,
+.pipeline-list > div {
+  min-width: 0;
+}
+
+.live-channel-bars button > span,
+.live-channel-bars button > b,
+.live-channel-bars button > em {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* Calendar: 7 equal tracks that can actually shrink to zero. */
+.sales-calendar-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.sales-calendar-meta,
+.sales-calendar-pager,
+.sales-calendar-scroll {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.sales-calendar-pager {
+  grid-template-columns: 34px minmax(0, 1fr) 34px;
+}
+
+.sales-calendar-pager > span {
+  min-width: 0;
+}
+
+.sales-calendar-pager b,
+.sales-calendar-pager small {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.sales-calendar-weekdays,
+.sales-calendar-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.sales-calendar-grid article,
+.sales-calendar-grid .calendar-blank {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sales-calendar-grid .sales-calendar-total {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sales-calendar-breakdown small {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.sales-calendar-breakdown em {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+/* ---------------------------------------------------------------------------
+ * 4. Products toolbar + product table chrome
+ * ------------------------------------------------------------------------- */
+
+.product-data-panel {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.product-sales-range {
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.product-sales-range > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.data-toolbar {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  row-gap: 8px;
+  overflow: visible;
+}
+
+.data-toolbar .search-field,
+.data-toolbar .filter-select {
+  min-width: 0;
+}
+
+.data-toolbar .search-field input,
+.data-toolbar .filter-select select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.toolbar-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.toolbar-menu-popover {
+  max-width: calc(100vw - 32px);
+}
+
+/* ---------------------------------------------------------------------------
+ * 5. Channel ledger + ranking ledger
+ *    Extra columns are dropped band by band. No band may keep a column
+ *    whose min-width no longer fits.
+ * ------------------------------------------------------------------------- */
+
+.channel-row,
+.ranking-row {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.channel-row > *,
+.ranking-row > * {
+  min-width: 0;
+}
+
+/* Tablet / small laptop beside the fixed sidebar: one ledger card per row,
+   progress + chevron dropped, only the two money columns kept.
+   (Below 721px the phone layout from mobile-optimization.css keeps its own
+   stacked card shape, so this band stops there on purpose.) */
+@media (min-width: 721px) and (max-width: 1180px) {
+  .channel-list {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .channel-list .channel-row {
+    grid-template-columns: auto minmax(0, 1fr) auto auto !important;
+  }
+
+  .channel-list .channel-row .channel-progress,
+  .channel-list .channel-row > svg:last-child,
+  .channel-row .channel-progress {
+    display: none !important;
+  }
+
+  .ranking-row,
+  .ranking-row.podium {
+    grid-template-columns: 28px 42px minmax(0, 1fr) auto !important;
+  }
+
+  .ranking-row .ranking-channels {
+    display: none !important;
+  }
+
+  .ranking-sales {
+    min-width: 64px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * 6. Notifications page
+ * ------------------------------------------------------------------------- */
+
+.notifications-settings-page,
+.notification-preferences,
+.kakao-connect-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.kakao-connect-card {
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.kakao-connect-card > div {
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.notification-preference-grid,
+.notification-preference-grid > label {
+  min-width: 0;
+}
+
+.notification-preference-grid > label > span {
+  min-width: 0;
+}
+
+.notification-preferences > footer {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.settings-load-error {
+  flex-wrap: wrap;
+}
+
+.settings-load-error > span {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 7. Templates page
+ * ------------------------------------------------------------------------- */
+
+.templates-page,
+.template-editor,
+.template-list-panel {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.template-form-grid,
+.template-form-grid label,
+.template-card-grid {
+  min-width: 0;
+}
+
+.template-form-grid input:not([type="checkbox"]),
+.template-form-grid select,
+.template-form-grid textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.template-card-grid article {
+  min-width: 0;
+}
+
+.template-card-grid dl > div {
+  grid-template-columns: 48px minmax(0, 1fr);
+}
+
+.inline-destructive-confirm {
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * 8. Storyboard page
+ * ------------------------------------------------------------------------- */
+
+.storyboard-page,
+.storyboard-intro,
+.storyboard-intro > div,
+.story-flow,
+.story-scene,
+.information-architecture,
+.ia-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.storyboard-intro {
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, .7fr);
+  overflow: hidden;
+}
+
+.storyboard-intro h2 {
+  overflow-wrap: anywhere;
+}
+
+.oss-card {
+  min-width: 0;
+}
+
+.story-flow {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.story-scene p {
+  min-width: 0;
+}
+
+.ia-grid {
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.ia-grid > div {
+  min-width: 0;
+}
+
+/* ---------------------------------------------------------------------------
+ * 9. Shell leftovers: topbar, service rail, popovers
+ * ------------------------------------------------------------------------- */
+
+.commerce-service-rail {
+  flex-wrap: wrap;
+  row-gap: 2px;
+  column-gap: 12px;
+  max-width: 100%;
+}
+
+.commerce-service-rail > * {
+  min-width: 0;
+}
+
+.notification-popover {
+  max-width: min(340px, calc(100vw - 24px));
+}
+
+.notification-popover .notification-item,
+.notification-popover .notification-item-open {
+  min-width: 0;
+}
+
+.notification-popover .notification-item-open > span {
+  min-width: 0;
+}
+
+.account-security-overlay > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ---------------------------------------------------------------------------
+ * 10. Breakpoints
+ * ------------------------------------------------------------------------- */
+
+/* Small laptop / large tablet: the fixed sidebar leaves < 900px of content. */
+@media (max-width: 1360px) and (min-width: 1181px) {
+  .overview-toolbar {
+    align-items: stretch;
+  }
+
+  .exchange-title {
+    flex: 0 1 168px !important;
+  }
+}
+
+@media (max-width: 1180px) {
+  /* Toolbar stacks; widget and date controls take the full row. */
+  .overview-toolbar {
+    flex-direction: column !important;
+    align-items: stretch;
+  }
+
+  .exchange-widget,
+  .overview-date-actions {
+    width: 100% !important;
+    flex: 0 0 auto !important;
+  }
+
+  .exchange-title {
+    flex: 1 1 160px !important;
+  }
+
+  /* Rates drop from 4 inline cells to a 2-column grid. */
+  .exchange-rate-list {
+    display: grid !important;
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+    align-items: stretch;
+  }
+
+  .exchange-rate {
+    border-left: 1px solid #e7e9f1;
+  }
+
+  .exchange-rate:first-child {
+    border-left: 0;
+  }
+
+  /* KPI grid: 2 columns, tracks that can shrink to zero. */
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .panel-heading {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Calendar: smaller cells instead of a wider grid. */
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    padding: 5px;
+  }
+
+  .sales-calendar-grid .sales-calendar-total {
+    font-size: 9px;
+  }
+
+  .sales-calendar-breakdown small {
+    font-size: 7px;
+  }
+
+  .data-toolbar {
+    padding: 10px 12px;
+  }
+
+  .data-toolbar .search-field {
+    width: auto;
+    min-height: 40px;
+    flex: 1 1 100%;
+  }
+
+  .data-toolbar .filter-select {
+    flex: 1 1 calc(50% - 6px);
+  }
+
+  .data-toolbar .toolbar-spacer {
+    display: none;
+  }
+
+  .template-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .template-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .notification-preference-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .story-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ia-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  /* Shell: the topbar cannot hold search + strip + badge + bell + account
+     beside the 244px sidebar, so it wraps instead of pushing the page. */
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 6px;
+    padding-inline: 18px;
+  }
+
+  .topbar-actions {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 6px;
+  }
+
+  .topbar-actions > * {
+    min-width: 0;
+  }
+
+  .channel-connection-strip,
+  .global-search,
+  .demo-data-badge,
+  .publishing-busy-badge {
+    max-width: 100%;
+    overflow: hidden;
+  }
+}
+
+@media (max-width: 1024px) {
+  .overview-toolbar {
+    gap: 10px;
+  }
+
+  .metric-grid {
+    gap: 10px;
+  }
+
+  .ia-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .storyboard-intro {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 26px 22px;
+  }
+
+  .publishing-busy-badge {
+    display: none;
+  }
+
+  .notification-preference-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .overview-toolbar {
+    flex-direction: column !important;
+  }
+
+  .exchange-widget {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) 44px !important;
+    align-items: center;
+    gap: 10px !important;
+    min-height: 0 !important;
+    padding: 12px !important;
+    overflow: visible !important;
+  }
+
+  .exchange-title {
+    grid-column: 1;
+    min-width: 0 !important;
+    flex: none !important;
+    padding: 0;
+  }
+
+  .exchange-refresh {
+    grid-column: 2;
+    grid-row: 1;
+    width: 44px;
+    height: 44px;
+  }
+
+  .exchange-rate-list {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    grid-column: 1 / -1;
+    width: 100%;
+    gap: 0;
+    border-top: 1px solid #e7e9f1;
+    border-bottom: 1px solid #e7e9f1;
+  }
+
+  .exchange-rate {
+    min-width: 0 !important;
+    flex: none;
+    padding: 8px 10px !important;
+    border-left: 0;
+    border-top: 1px solid #e7e9f1;
+  }
+
+  .exchange-rate:nth-child(-n + 2) {
+    border-top: 0;
+  }
+
+  .exchange-rate:nth-child(even) {
+    border-left: 1px solid #e7e9f1;
+  }
+
+  .sales-range-control {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .sales-range-control .segmented-control {
+    min-width: 0;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .sales-range-control .segmented-control button {
+    min-width: 0;
+    padding-inline: 4px;
+  }
+
+  .overview-date-actions {
+    justify-content: flex-start;
+    align-items: stretch;
+  }
+
+  .summary-strip {
+    flex-wrap: wrap;
+  }
+
+  /* Calendar keeps shrinking: shorter rows, denser type. */
+  .sales-calendar-panel {
+    padding: 14px 12px;
+  }
+
+  .sales-calendar-pager {
+    grid-template-columns: 40px minmax(0, 1fr) 40px;
+  }
+
+  .sales-calendar-pager > button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    min-height: 72px;
+    padding: 4px;
+  }
+
+  .sales-calendar-grid time {
+    width: 20px;
+    height: 20px;
+    line-height: 20px;
+  }
+
+  .sales-calendar-grid .sales-calendar-total {
+    font-size: 8px;
+  }
+
+  .sales-calendar-breakdown small {
+    display: block;
+    font-size: 7px;
+  }
+
+  .template-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .template-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ia-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .kakao-connect-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .kakao-connect-card > div:last-child {
+    justify-content: flex-start;
+  }
+
+  .channel-connection-strip {
+    flex: 0 1 auto;
+  }
+}
+
+/* Phone: single column for every wide grid + 44px tap targets. */
+@media (max-width: 720px) {
+  .page-stack,
+  .page-stack > * {
+    max-width: 100%;
+  }
+
+  .overview-toolbar {
+    gap: 10px;
+  }
+
+  .exchange-widget {
+    grid-template-columns: minmax(0, 1fr) 44px !important;
+  }
+
+  .exchange-widget,
+  .exchange-rate-list {
+    overflow-x: clip !important;
+  }
+
+  .metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .metric-card,
+  .metric-card-button {
+    padding: 14px 13px 12px;
+  }
+
+  .metric-copy strong {
+    font-size: clamp(15px, 5.2vw, 23px);
+  }
+
+  .metric-copy span,
+  .metric-foot small {
+    font-size: 9px;
+  }
+
+  /* Ledgers keep their phone card shape from mobile-optimization.css and only
+     lose the columns that no longer fit. */
+  .ranking-row,
+  .ranking-row.podium {
+    grid-template-columns: 26px 40px minmax(0, 1fr) auto !important;
+  }
+
+  .ranking-row .ranking-channels,
+  .ranking-sales small {
+    display: none !important;
+  }
+
+  .dashboard-main-grid,
+  .dashboard-lower-grid,
+  .dashboard-bottom-grid,
+  .dashboard-product-readiness-grid,
+  .live-channel-bars,
+  .quick-action-grid,
+  .notification-preference-grid,
+  .template-form-grid,
+  .template-card-grid,
+  .ia-grid,
+  .story-flow {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .template-form-grid .template-wide {
+    grid-column: 1 / -1;
+  }
+
+  .channel-list .channel-row {
+    min-height: 44px;
+  }
+
+  .ranking-row {
+    min-height: 56px;
+  }
+
+  .sales-calendar-panel {
+    padding: 14px 10px;
+  }
+
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    min-height: 64px;
+    padding: 3px;
+  }
+
+  .sales-calendar-grid .sales-calendar-total {
+    font-size: 7.5px;
+    letter-spacing: -.02em;
+  }
+
+  .sales-calendar-breakdown small {
+    font-size: 6.5px;
+    line-height: 1.25;
+  }
+
+  .sales-calendar-grid article.today::after {
+    display: none;
+  }
+
+  /* Tap targets */
+  .sales-calendar-pager > button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .sales-range-control .segmented-control,
+  .segmented-control {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .segmented-control button,
+  .sales-range-control .segmented-control button {
+    min-height: 44px;
+    font-size: 11px;
+  }
+
+  .data-toolbar {
+    align-items: stretch;
+    padding: 10px;
+  }
+
+  .data-toolbar .search-field {
+    min-height: 44px;
+    flex: 1 1 100%;
+  }
+
+  .data-toolbar .filter-select {
+    display: grid;
+    min-height: 44px;
+    flex: 1 1 calc(50% - 5px);
+    grid-template-columns: 18px minmax(0, 1fr) 14px;
+    align-items: center;
+  }
+
+  .data-toolbar .filter-select select {
+    width: 100%;
+    appearance: none;
+  }
+
+  .data-toolbar .icon-text-button,
+  .data-toolbar .icon-only-button,
+  .summary-strip .primary-button,
+  .product-sales-range .credential-secondary,
+  .notification-preference-grid > label,
+  .kakao-connect-card button,
+  .template-form-grid input:not([type="checkbox"]),
+  .template-form-grid select,
+  .story-scene > button,
+  .exchange-refresh {
+    min-height: 44px;
+  }
+
+  .icon-only-button {
+    width: 44px;
+  }
+
+  .notification-preference-grid input,
+  .master-notification-toggle input,
+  .template-default input {
+    width: 22px;
+    height: 22px;
+  }
+
+  .master-notification-toggle,
+  .template-default,
+  .notification-preference-grid > label {
+    min-height: 44px;
+  }
+
+  .notification-preferences > footer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .template-card-grid article > div > button {
+    width: 44px;
+    height: 44px;
+  }
+
+  .inline-destructive-confirm {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .inline-destructive-confirm > div {
+    width: 100%;
+  }
+
+  .inline-destructive-confirm > div > button {
+    flex: 1;
+    min-height: 44px;
+  }
+
+  .storyboard-intro {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 20px 16px;
+  }
+
+  .story-scene {
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .story-scene > button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+
+  .notification-popover {
+    max-width: calc(100vw - 24px);
+  }
+}
+
+@media (max-width: 480px) {
+  .metric-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .exchange-rate-list {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .exchange-rate,
+  .exchange-rate:nth-child(even) {
+    border-left: 0;
+    border-top: 1px solid #e7e9f1;
+  }
+
+  .exchange-rate:first-child {
+    border-top: 0;
+  }
+
+  .data-toolbar .filter-select {
+    flex: 1 1 100%;
+  }
+
+  .summary-strip > div {
+    min-width: 0 !important;
+    flex: 1 1 100%;
+  }
+
+  .kakao-connect-card > div:last-child {
+    flex-wrap: wrap;
+  }
+
+  .template-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Very small phones: the numbers shrink before anything can push the page. */
+@media (max-width: 380px) {
+  .metric-copy strong {
+    font-size: clamp(14px, 6vw, 19px);
+  }
+
+  .summary-strip strong {
+    font-size: 15px;
+  }
+
+  .sales-calendar-grid .sales-calendar-total {
+    font-size: 7px;
+  }
+
+  .sales-calendar-breakdown small {
+    font-size: 6px;
+  }
+
+  .channel-metric b,
+  .ranking-sales b {
+    font-size: 9px;
+  }
+
+  .topbar-actions {
+    gap: 4px;
+  }
+}
+
+/* Landscape phones can be wider than 900px but only ~350px tall. */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 900px) {
+  .exchange-rate-list {
+    grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+  }
+
+  .exchange-rate {
+    border-top: 0;
+    border-left: 1px solid #e7e9f1;
+  }
+
+  .exchange-rate:first-child {
+    border-left: 0;
+  }
+
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    min-height: 56px;
+  }
+}

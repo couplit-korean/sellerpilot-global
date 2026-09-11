@@ -146,7 +146,7 @@ export function ChannelReadinessPage({ embedded = false, channelMetrics = [], sy
             <thead><tr><th>기능</th>{activeChannelKeys.map((key) => <th key={key}>{channelCatalog[key].name}</th>)}</tr></thead>
             <tbody>{capabilityKeys.map((capability) => <tr key={capability}><td><b>{capabilityLabels[capability]}</b></td>{activeChannelKeys.map((key) => {
               const item = channelCapabilityReleasePresentation(key, capability);
-              return <td key={key}><span className={`capability-mode ${item.mode}`}>{item.label}</span><small>{item.note}</small></td>;
+              return <td key={key} data-label={channelCatalog[key].name}><span className={`capability-mode ${item.mode}`}>{item.label}</span><small>{item.note}</small></td>;
             })}</tr>)}</tbody>
           </table>
         </div>

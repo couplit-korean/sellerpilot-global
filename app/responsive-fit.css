@@ -1,0 +1,963 @@
+/*
+ * Last-layer fit contract: every viewport keeps its width.
+ * Vertical scroll is allowed. Horizontal pan is not.
+ * Imported after the existing mobile/ops stylesheets so these rules win.
+ */
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+body {
+  min-width: 0;
+}
+
+img,
+video,
+canvas,
+iframe {
+  max-width: 100%;
+  height: auto;
+}
+
+.app-shell,
+.app-main,
+.app-content,
+.app-header-stack,
+.page-stack,
+.page-stack > *,
+.panel,
+.login-shell,
+.privacy-page,
+.password-page {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.app-content,
+.page-stack,
+.panel,
+.panel-heading,
+.topbar,
+.topbar-title,
+.topbar-actions,
+.commerce-service-rail {
+  min-width: 0;
+}
+
+/* Never let tables or ledgers invent a wider page. */
+.table-wrap,
+.style-learning-table-wrap,
+.capability-table-wrap,
+.queue-table,
+.acceptance-items,
+.integration-gate-list,
+.data-toolbar,
+.tab-toolbar,
+.margin-channel-tabs,
+.style-category-tabs,
+.commerce-service-rail {
+  max-width: 100%;
+  overflow-x: hidden !important;
+}
+
+.data-table,
+.product-table,
+.order-table,
+.margin-table,
+.capability-table,
+.style-learning-table,
+.qoo10-field-map table {
+  width: 100%;
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+.product-cell,
+.product-cell-button,
+.margin-channel-cell,
+.order-product-button,
+.order-detail-link,
+.queue-header,
+.queue-row {
+  min-width: 0 !important;
+  max-width: 100%;
+}
+
+.capability-table th:not(:first-child),
+.capability-table td:not(:first-child) {
+  width: auto;
+}
+
+/* Desktop: keep table chrome, wrap cells instead of forcing a min-width pan. */
+@media (min-width: 1181px) {
+  .data-table,
+  .product-table,
+  .order-table,
+  .margin-table,
+  .capability-table,
+  .style-learning-table,
+  .qoo10-field-map table {
+    table-layout: fixed;
+  }
+
+  .data-table th,
+  .data-table td,
+  .product-table th,
+  .product-table td,
+  .order-table th,
+  .order-table td,
+  .margin-table th,
+  .margin-table td,
+  .capability-table th,
+  .capability-table td,
+  .style-learning-table th,
+  .style-learning-table td,
+  .qoo10-field-map th,
+  .qoo10-field-map td {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+  }
+
+  .capability-table-wrap {
+    overflow: visible;
+    max-height: none;
+  }
+}
+
+/* Login: drop the 960px floor so the two panes can shrink, then stack. */
+.login-shell {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+}
+
+.login-brand-panel,
+.login-form-panel,
+.login-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+@media (max-width: 1024px) {
+  .login-shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .login-brand-panel {
+    display: none;
+  }
+
+  .login-form-panel {
+    min-height: 100svh;
+    padding: 34px 24px;
+  }
+
+  .mobile-brand {
+    display: block;
+    margin-bottom: 48px;
+  }
+}
+
+/* Header: wrap instead of panning the rail or action cluster. */
+.commerce-service-rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  max-width: 100%;
+  white-space: normal;
+}
+
+.commerce-service-rail strong {
+  margin-left: 0;
+}
+
+.topbar {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.topbar-title,
+.topbar-actions {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.topbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.channel-connection-strip {
+  max-width: 100%;
+  white-space: normal;
+  flex-wrap: wrap;
+}
+
+.publishing-busy-badge,
+.demo-data-badge {
+  max-width: 100%;
+}
+
+.notification-popover {
+  max-width: min(310px, calc(100vw - 24px));
+}
+
+.account-security-dialog,
+.command-dialog,
+.shipment-dialog,
+.credential-modal {
+  width: min(430px, calc(100vw - 24px));
+  max-width: calc(100vw - 24px);
+}
+
+/* Wide workspaces: never ask for more than the content column. */
+.daily-briefing,
+.dashboard-main-grid,
+.dashboard-lower-grid,
+.dashboard-bottom-grid,
+.publishing-layout,
+.channel-detail-grid,
+.product-detail-hero,
+.product-detail-grid,
+.margin-workspace,
+.studio-workspace,
+.cs-workspace,
+.storyboard-intro,
+.showcase-intro,
+.showcase-detail-summary {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.daily-briefing {
+  grid-template-columns: minmax(0, .9fr) minmax(0, 1.55fr) minmax(0, .68fr);
+}
+
+.dashboard-main-grid {
+  grid-template-columns: minmax(0, 1.65fr) minmax(0, .8fr);
+}
+
+.dashboard-lower-grid {
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, .75fr);
+}
+
+.dashboard-bottom-grid {
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, .7fr);
+}
+
+.publishing-layout,
+.channel-detail-grid {
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, .55fr);
+}
+
+.publishing-workflow-header,
+.upload-panel {
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: minmax(0, .85fr) minmax(0, 1.15fr);
+}
+
+.product-detail-hero {
+  grid-template-columns: minmax(0, .78fr) minmax(0, 1.22fr);
+}
+
+.product-detail-grid {
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, .75fr);
+}
+
+.margin-workspace {
+  grid-template-columns: minmax(0, .92fr) minmax(0, 1.08fr);
+}
+
+.studio-workspace {
+  grid-template-columns: minmax(0, .64fr) minmax(0, 1.36fr);
+}
+
+.cs-workspace {
+  grid-template-columns: minmax(0, 240px) minmax(0, 1fr) minmax(0, 220px);
+}
+
+.queue-header,
+.queue-row {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, .6fr) minmax(0, .8fr) minmax(0, .5fr) minmax(0, .65fr);
+}
+
+.saved-margin-list > article {
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, .9fr) auto;
+}
+
+.integration-gate-list {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)) !important;
+}
+
+.qoo10-image-rule {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.readiness-channel-card {
+  grid-template-columns: minmax(0, .42fr) minmax(0, .58fr);
+}
+
+.metric-grid,
+.order-summary-grid,
+.cs-summary,
+.alert-list,
+.quick-action-grid,
+.dashboard-product-readiness-grid,
+.style-learning-metrics,
+.style-learning-method-grid,
+.style-learning-impact-grid,
+.style-category-tabs,
+.margin-channel-tabs,
+.ia-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Compact desktop: sidebar still occupies 224px. Stack the wide panes. */
+@media (max-width: 1360px) {
+  .daily-briefing,
+  .dashboard-main-grid,
+  .dashboard-lower-grid,
+  .dashboard-bottom-grid,
+  .publishing-layout,
+  .publishing-workflow-header,
+  .upload-panel,
+  .channel-detail-grid,
+  .product-detail-hero,
+  .product-detail-grid,
+  .margin-workspace,
+  .studio-workspace,
+  .storyboard-intro {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .cs-workspace {
+    grid-template-columns: minmax(0, 240px) minmax(0, 1fr) !important;
+  }
+
+  .customer-panel {
+    display: none;
+  }
+
+  .metric-grid,
+  .order-summary-grid,
+  .cs-summary,
+  .style-learning-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-product-readiness-grid,
+  .alert-list,
+  .style-learning-method-grid,
+  .style-learning-impact-grid,
+  .style-category-tabs,
+  .qoo10-image-rule {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .margin-channel-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .ia-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .channel-connection-strip .strip-marks {
+    display: none;
+  }
+}
+
+@media (max-width: 1180px) {
+  .cs-workspace,
+  .readiness-channel-card,
+  .style-channel-grid,
+  .style-category-brief {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .showcase-intro,
+  .showcase-detail-summary,
+  .showcase-grid,
+  .showcase-thumbnail {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Tablet + phone: cardify every wide table so nothing pans sideways. */
+@media (max-width: 1180px) {
+  .table-wrap,
+  .style-learning-table-wrap,
+  .capability-table-wrap,
+  .qoo10-field-map .table-wrap {
+    overflow: visible !important;
+  }
+
+  .data-table,
+  .data-table tbody,
+  .data-table tr,
+  .data-table td,
+  .product-table,
+  .product-table tbody,
+  .product-table tr,
+  .product-table td,
+  .order-table,
+  .order-table tbody,
+  .order-table tr,
+  .order-table td,
+  .margin-table,
+  .margin-table tbody,
+  .margin-table tr,
+  .margin-table td,
+  .capability-table,
+  .capability-table tbody,
+  .capability-table tr,
+  .capability-table td,
+  .style-learning-table,
+  .style-learning-table tbody,
+  .style-learning-table tr,
+  .style-learning-table td,
+  .qoo10-field-map table,
+  .qoo10-field-map tbody,
+  .qoo10-field-map tr,
+  .qoo10-field-map td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none;
+  }
+
+  .data-table thead,
+  .product-table thead,
+  .order-table thead,
+  .margin-table thead,
+  .capability-table thead,
+  .style-learning-table thead,
+  .qoo10-field-map thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .data-table tbody,
+  .product-table tbody,
+  .order-table tbody,
+  .margin-table tbody,
+  .capability-table tbody,
+  .style-learning-table tbody,
+  .qoo10-field-map tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px 0;
+  }
+
+  .data-table tr,
+  .product-table tr,
+  .order-table tr,
+  .margin-table tr,
+  .capability-table tr,
+  .style-learning-table tr,
+  .qoo10-field-map tr {
+    position: relative;
+    display: grid;
+    height: auto;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(30 48 41 / 5%);
+  }
+
+  .data-table td,
+  .product-table td,
+  .order-table td,
+  .margin-table td,
+  .capability-table td,
+  .style-learning-table td,
+  .qoo10-field-map td {
+    position: static !important;
+    inset: auto;
+    display: flex;
+    width: 100%;
+    min-height: 48px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 9px 11px;
+    background: #fff;
+    box-shadow: none;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .data-table td::before,
+  .product-table td::before,
+  .order-table td::before,
+  .margin-table td::before,
+  .capability-table td::before,
+  .style-learning-table td::before,
+  .qoo10-field-map td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  .product-table td:first-child,
+  .product-table td:nth-child(2),
+  .data-table td:nth-child(2),
+  .order-table td:nth-child(2),
+  .order-table td:nth-child(5),
+  .order-table td:last-child,
+  .margin-table td:first-child,
+  .margin-table td:nth-child(7),
+  .margin-table td:nth-child(8),
+  .margin-table td:last-child,
+  .capability-table td:first-child,
+  .style-learning-table td:nth-child(2),
+  .style-learning-table td:nth-child(5),
+  .qoo10-field-map td {
+    grid-column: 1 / -1;
+  }
+
+  .product-table td:first-child,
+  .data-table td:first-child,
+  .order-table td:nth-child(2),
+  .margin-table td:first-child,
+  .capability-table td:first-child,
+  .style-learning-table td:first-child,
+  .qoo10-field-map td:first-child {
+    border-top: 0;
+  }
+
+  .product-table td:nth-child(2)::before { content: "채널 · 판매수"; }
+  .product-table td:nth-child(3)::before { content: "재고"; }
+  .product-table td:nth-child(4)::before { content: "기간 판매"; }
+  .product-table td:nth-child(5)::before { content: "기간 매출"; }
+  .product-table td:nth-child(6)::before { content: "상태"; }
+
+  .data-table:not(.product-table):not(.order-table):not(.margin-table) td:nth-child(1)::before { content: "순위"; }
+  .data-table:not(.product-table):not(.order-table):not(.margin-table) td:nth-child(3)::before { content: "30일 판매"; }
+  .data-table:not(.product-table):not(.order-table):not(.margin-table) td:nth-child(4)::before { content: "30일 매출"; }
+  .data-table:not(.product-table):not(.order-table):not(.margin-table) td:nth-child(5)::before { content: "재고"; }
+  .data-table:not(.product-table):not(.order-table):not(.margin-table) td:nth-child(6)::before { content: "상태"; }
+
+  .order-table td:first-child {
+    position: absolute !important;
+    z-index: 1;
+    top: 12px;
+    right: 12px;
+    width: 44px;
+    min-height: 44px;
+    justify-content: center;
+    border: 0;
+    padding: 0;
+    grid-column: auto;
+  }
+
+  .order-table td:nth-child(2)::before { content: "주문번호"; }
+  .order-table td:nth-child(3)::before { content: "채널"; }
+  .order-table td:nth-child(4)::before { content: "구매자"; }
+  .order-table td:nth-child(5)::before { content: "상품"; }
+  .order-table td:nth-child(6)::before { content: "결제금액"; }
+  .order-table td:nth-child(7)::before { content: "주문 · 배송"; }
+  .order-table td:nth-child(8)::before { content: "정산"; }
+  .order-table td:nth-child(9)::before { content: "주문시간"; }
+  .order-table td:last-child { grid-column: 1 / -1; padding: 6px; }
+  .order-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .margin-table td:nth-child(2)::before { content: "계획 판매가"; }
+  .margin-table td:nth-child(3)::before { content: "수수료"; }
+  .margin-table td:nth-child(4)::before { content: "변동비율"; }
+  .margin-table td:nth-child(5)::before { content: "순이익"; }
+  .margin-table td:nth-child(6)::before { content: "마진율"; }
+  .margin-table td:nth-child(7)::before { content: "권장 판매가"; }
+  .margin-table td:nth-child(8)::before { content: "등록 판정"; }
+  .margin-table td:last-child { padding: 6px; }
+  .margin-table td:last-child .table-action { width: 100%; min-height: 44px; }
+
+  .capability-table td:first-child {
+    justify-content: flex-start;
+    font-weight: 800;
+  }
+
+  .capability-table td[data-label]::before {
+    content: attr(data-label);
+  }
+
+  .style-learning-table td:nth-child(1)::before { content: "번호"; }
+  .style-learning-table td:nth-child(2)::before { content: "학습 상품"; }
+  .style-learning-table td:nth-child(3)::before { content: "채널 · 국가"; }
+  .style-learning-table td:nth-child(4)::before { content: "언어"; }
+  .style-learning-table td:nth-child(5)::before { content: "검색 문구"; }
+  .style-learning-table td:nth-child(6)::before { content: "검증"; }
+
+  .qoo10-field-map td:nth-child(1)::before { content: "입력 그룹"; }
+  .qoo10-field-map td:nth-child(2)::before { content: "실제 필드"; }
+  .qoo10-field-map td:nth-child(3)::before { content: "사전검사"; }
+
+  .product-table .product-cell,
+  .product-table .product-cell-button,
+  .order-table .order-product-button,
+  .order-table .order-detail-link,
+  .margin-table .margin-channel-cell,
+  .style-table-channel {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .capability-table th:first-child,
+  .capability-table td:first-child {
+    position: static;
+    left: auto;
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar-actions .global-search span,
+  .topbar-actions .global-search kbd,
+  .user-menu > span:nth-child(2),
+  .user-menu > svg,
+  .topbar-title p {
+    display: none;
+  }
+
+  .topbar-actions .global-search {
+    width: 42px;
+    min-width: 42px;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .queue-header,
+  .queue-row,
+  .saved-margin-list > article,
+  .channel-row,
+  .ranking-row {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .queue-header {
+    display: none;
+  }
+
+  .product-edit-handoff ol,
+  .first-draft-image-review > div,
+  .option-photo-grid,
+  .extra-photo-list,
+  .publish-channel-list,
+  .studio-source-row,
+  .pdp-hero-block,
+  .pdp-image-story,
+  .pdp-story-block,
+  .pdp-benefit-block > div {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .margin-channel-tabs,
+  .style-category-tabs,
+  .style-learning-metrics,
+  .quick-action-grid,
+  .thumbnail-grid,
+  .pdp-verification-ribbon {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .privacy-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .privacy-page {
+    padding: 18px;
+  }
+
+  .privacy-page > header {
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .privacy-page > header span {
+    display: none;
+  }
+
+  .privacy-page footer {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .tab-toolbar,
+  .data-toolbar,
+  .style-learning-filters,
+  .style-learning-hero,
+  .style-learning-section-heading,
+  .overview-toolbar,
+  .panel-heading {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .tab-toolbar > div:first-child,
+  .data-toolbar .search-field,
+  .style-learning-filters label,
+  .style-learning-filters select {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 720px) {
+  .metric-grid,
+  .order-summary-grid,
+  .cs-summary,
+  .dashboard-product-readiness-grid,
+  .margin-field-grid,
+  .margin-field-grid.compact,
+  .margin-summary-grid,
+  .margin-breakdown-list,
+  .alert-list,
+  .live-channel-bars,
+  .channel-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .mobile-bottom-nav {
+    overflow-x: hidden !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+    justify-content: stretch;
+  }
+
+  .mobile-bottom-nav > button {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .command-dialog {
+    width: min(100vw - 16px, 560px);
+  }
+
+  .command-result {
+    min-width: 0;
+  }
+
+  .command-result em {
+    max-width: 40%;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 480px) {
+  .metric-grid,
+  .dashboard-product-readiness-grid,
+  .margin-channel-tabs,
+  .style-category-tabs,
+  .style-learning-metrics,
+  .quick-action-grid,
+  .order-summary-grid,
+  .cs-summary,
+  .alert-list,
+  .qoo10-image-rule,
+  .product-table tr,
+  .order-table tr,
+  .margin-table tr,
+  .data-table tr,
+  .capability-table tr,
+  .style-learning-table tr {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .product-table td,
+  .product-table td:nth-child(n),
+  .order-table td,
+  .order-table td:nth-child(n),
+  .margin-table td,
+  .margin-table td:nth-child(n),
+  .data-table td,
+  .data-table td:nth-child(n),
+  .capability-table td,
+  .capability-table td:nth-child(n),
+  .style-learning-table td,
+  .style-learning-table td:nth-child(n) {
+    grid-column: 1;
+  }
+
+  .order-table td:first-child {
+    position: absolute !important;
+    grid-column: auto;
+  }
+
+  .login-card,
+  .password-card {
+    width: 100%;
+    padding-right: 18px;
+    padding-left: 18px;
+  }
+}
+
+/* Fold / 200% zoom: wrap the chrome, never pan it. */
+@media (max-width: 360px) {
+  .topbar > .topbar-actions {
+    width: 100% !important;
+    overflow-x: hidden !important;
+    touch-action: manipulation;
+  }
+
+  .mobile-bottom-nav {
+    overflow-x: hidden !important;
+    grid-template-columns: repeat(5, minmax(0, 1fr)) !important;
+  }
+}
+
+/* Kill leftover pan contracts from older layers. */
+.margin-channel-tabs,
+.style-category-tabs,
+.ticket-tabs,
+.connection-section-tabs,
+.data-toolbar,
+.tab-toolbar,
+.exchange-widget,
+.exchange-rate-list,
+.integration-gate-list,
+.puck-editor-body [class*="_ViewportControls-actionsInner_"] {
+  display: grid;
+  overflow-x: hidden !important;
+  overscroll-behavior-inline: none;
+  touch-action: manipulation;
+}
+
+.margin-channel-tabs {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr)) !important;
+}
+
+.margin-channel-tabs > button {
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+}
+
+.style-category-tabs,
+.ticket-tabs,
+.connection-section-tabs {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 120px), 1fr)) !important;
+}
+
+.style-category-tabs button,
+.ticket-tabs button,
+.connection-section-tabs button {
+  min-width: 0 !important;
+  flex: 1 1 auto !important;
+  white-space: normal;
+}
+
+.data-toolbar,
+.tab-toolbar {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  overflow-x: hidden !important;
+}
+
+.tab-toolbar > div:first-child {
+  display: flex;
+  flex-wrap: wrap;
+  width: 100%;
+  overflow-x: hidden !important;
+}
+
+.exchange-widget,
+.exchange-rate-list {
+  display: flex;
+  flex-wrap: wrap;
+  overflow-x: hidden !important;
+}
+
+.exchange-rate {
+  min-width: 0 !important;
+}
+
+.puck-editor-modal {
+  inset: 8px;
+  width: auto;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100dvh - 16px);
+  overflow: hidden;
+}
+
+.puck-editor-body [class*="_ViewportControls-actionsInner_"] {
+  grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+  justify-content: start;
+  margin-inline: 0;
+}
+
+@media (max-width: 1180px) {
+  .style-learning-table {
+    min-width: 0 !important;
+  }
+
+  .style-learning-table-wrap {
+    overflow-x: hidden !important;
+  }
+}
+
+.sales-calendar-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden !important;
+  touch-action: manipulation;
+}
+
+.sales-calendar-weekdays,
+.sales-calendar-grid {
+  width: 100% !important;
+  min-width: 0 !important;
+  grid-template-columns: repeat(7, minmax(0, 1fr)) !important;
+}
+
+.sales-calendar-grid article,
+.sales-calendar-grid .calendar-blank {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.sales-calendar-grid .sales-calendar-total,
+.sales-calendar-breakdown small,
+.sales-calendar-breakdown em {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 720px) {
+  .sales-calendar-grid article,
+  .sales-calendar-grid .calendar-blank {
+    min-height: 72px;
+    padding: 4px;
+  }
+
+  .sales-calendar-grid .sales-calendar-total {
+    font-size: 9px;
+  }
+
+  .sales-calendar-grid article.today::after {
+    display: none;
+  }
+
+  .sales-calendar-panel > .panel-heading,
+  .sales-calendar-meta {
+    width: 100%;
+    justify-items: stretch;
+  }
+}

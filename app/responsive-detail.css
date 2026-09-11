@@ -1,0 +1,694 @@
+/*
+ * Detail surface fit contract.
+ *
+ * Scope: product detail page (hero / metrics / grid), saved detail page,
+ * Puck editor modal, buyer preview, media import (external import + revision
+ * picks + animated media blocks).
+ *
+ * Rules that hold at every width:
+ *   - vertical scroll stays, horizontal pan never appears
+ *   - wide panes stack instead of forcing an intrinsic min-width
+ *   - titles and identifiers break anywhere instead of pushing the page wider
+ *   - images keep their aspect ratio (object-fit / aspect-ratio, never squashed)
+ *
+ * Deliberate omissions: no `overflow-x: auto`, no global `svg { height: auto }`,
+ * no `min-width` floors on grid tracks.
+ *
+ * Breakpoints: <=1180 tablet/small laptop, 901-1180 compaction,
+ * <=900 small tablet, <=720 phone, <=480 compact phone, <=360 fold.
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. Box guards: nothing in a detail surface may claim more than 100%.
+ * ------------------------------------------------------------------ */
+.product-detail-page,
+.saved-product-detail-page,
+.product-detail-hero,
+.product-detail-grid,
+.product-detail-metrics,
+.product-detail-section,
+.product-detail-assets,
+.product-detail-asset-grid,
+.product-inventory-editor,
+.product-commerce-notes,
+.competitor-price-panel,
+.product-revision-status,
+.product-revision-extras,
+.product-revision-limitation,
+.product-revision-images,
+.product-revision-main,
+.product-revision-role-grid,
+.puck-editor-modal,
+.puck-editor-top,
+.puck-editor-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.product-detail-page > *,
+.saved-product-detail-page > *,
+.product-detail-grid > *,
+.product-detail-hero > *,
+.product-detail-metrics > *,
+.product-detail-metrics > article,
+.product-detail-metrics > article > div,
+.product-detail-asset-grid > *,
+.product-detail-asset-grid figure,
+.product-detail-asset-grid figure > div,
+.product-detail-channels > div,
+.product-detail-channels > div > span,
+.product-detail-channels > div > span > *,
+.product-detail-identifiers > div,
+.product-detail-ledger > div,
+.product-detail-ledger > div > *,
+.inventory-editor-grid > *,
+.product-commerce-notes-grid > *,
+.product-commerce-notes-grid label,
+.competitor-query-row > *,
+.saved-detail-image-readiness > span {
+  min-width: 0;
+}
+
+/* Media never dictates the layout width. */
+.product-detail-page img,
+.product-detail-page canvas,
+.product-detail-page video,
+.saved-product-detail-page img,
+.saved-product-detail-page canvas,
+.saved-product-detail-page video,
+.puck-editor-modal img,
+.puck-editor-modal video {
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. Text wrapping: titles, identifiers and status copy break anywhere.
+ * ------------------------------------------------------------------ */
+.product-detail-heading h2,
+.product-detail-heading p,
+.product-detail-heading > div,
+.product-detail-code,
+.product-detail-description h4,
+.product-detail-description p,
+.product-detail-section h3,
+.product-detail-section .panel-heading > div,
+.product-detail-identifiers dt,
+.product-detail-identifiers dd,
+.product-detail-ledger dt,
+.product-detail-ledger dd,
+.product-detail-channels b,
+.product-detail-channels small,
+.product-detail-channels em,
+.product-detail-empty b,
+.product-detail-empty small,
+.product-detail-metrics small,
+.product-detail-metrics strong,
+.product-detail-metrics em,
+.product-detail-assets-toggle,
+.product-detail-asset-grid figcaption,
+.product-detail-asset-grid figcaption > span,
+.inventory-editor-grid small,
+.inventory-editor-grid strong,
+.inventory-editor-grid em,
+.inventory-editor-grid label,
+.inventory-editor-message,
+.inventory-sync-state b,
+.inventory-channel-progress b,
+.inventory-channel-progress small,
+.product-commerce-notes strong,
+.product-commerce-notes p,
+.competitor-query-row label,
+.competitor-query-row small,
+.product-revision-status b,
+.product-revision-status small,
+.product-revision-status em,
+.product-revision-main b,
+.product-revision-main small,
+.product-revision-limitation,
+.saved-detail-meta,
+.saved-detail-image-readiness b,
+.saved-detail-image-readiness small,
+.product-detail-page .panel-heading h3,
+.product-detail-page .panel-kicker,
+.saved-product-detail-page .panel-heading h3,
+.saved-product-detail-page .panel-kicker,
+.puck-editor-top b,
+.puck-editor-top small,
+.puck-editor-publish-action {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.saved-detail-meta,
+.product-detail-actions,
+.product-detail-actions > div {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.product-detail-actions > span,
+.product-detail-actions > div > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Required stacking: hero and grid go single column below 1180px.
+ *    (Same declarations the phone sheet already uses, stated here so the
+ *    tablet range between 901px and 1180px also collapses.)
+ * ------------------------------------------------------------------ */
+@media (max-width: 1180px) {
+  .product-detail-hero,
+  .product-detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-detail-hero > *,
+  .product-detail-grid > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .product-detail-image {
+    border-right: 0;
+    border-bottom: 1px solid #e6e9ee;
+  }
+
+  /* Editor canvas blocks stack at the same threshold, so the Puck frame
+     never lays out two columns inside a narrow preview. */
+  .pdp-hero-block,
+  .pdp-hero-block.centered,
+  .pdp-hero-block.editorial,
+  .pdp-image-story,
+  .pdp-image-story.editorial,
+  .pdp-image-story.cards,
+  .pdp-image-story.spec-grid,
+  .pdp-image-story.full-bleed,
+  .pdp-story-block,
+  .pdp-story-block.full-bleed,
+  .pdp-story-block.editorial,
+  .pdp-benefit-block > div {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .pdp-image-story.reverse .pdp-image-story-visual {
+    order: 0;
+  }
+
+  .pdp-image-story.full-bleed .pdp-image-story-copy {
+    position: static;
+    width: auto;
+    max-width: 100%;
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .pdp-verification-cell,
+  .pdp-section-evidence,
+  .pdp-cta-checklist {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .pdp-benefit-block > div > article,
+  .pdp-story-block > div,
+  .pdp-story-block > ul,
+  .pdp-image-story-copy,
+  .pdp-hero-copy,
+  .pdp-hero-visual {
+    min-width: 0;
+  }
+
+  .pdp-hero-copy h1,
+  .pdp-hero-copy p,
+  .pdp-hero-copy > span,
+  .pdp-image-story-copy h2,
+  .pdp-image-story-copy p,
+  .pdp-image-story-copy li,
+  .pdp-story-block h2,
+  .pdp-story-block p,
+  .pdp-story-block li,
+  .pdp-benefit-block > h2,
+  .pdp-benefit-block > p,
+  .pdp-benefit-block b,
+  .pdp-cta-block h2,
+  .pdp-cta-block p,
+  .pdp-verification-cell b,
+  .pdp-section-evidence b,
+  .pdp-visual-cta {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Tablet compaction (901-1180px): the sidebar is still on screen, so
+ *    the detail column is narrow. Never clobber the <=720px phone sheet.
+ * ------------------------------------------------------------------ */
+@media (min-width: 901px) and (max-width: 1180px) {
+  .product-detail-image,
+  .product-detail-image .product-image-missing {
+    min-height: min(62vw, 430px);
+  }
+
+  .product-detail-image img {
+    padding: clamp(14px, 3vw, 28px);
+  }
+
+  .product-detail-heading {
+    padding: clamp(24px, 4vw, 44px);
+  }
+
+  .product-detail-heading h2 {
+    font-size: clamp(26px, 3.4vw, 38px);
+  }
+
+  .product-detail-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .product-detail-metrics > article {
+    min-height: 0;
+    padding: 18px;
+  }
+
+  .product-detail-ledger {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-detail-ledger > div,
+  .product-detail-identifiers > div {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .product-detail-ledger dd,
+  .product-detail-identifiers dd {
+    max-width: 100%;
+    white-space: normal;
+    text-align: right;
+    text-overflow: clip;
+  }
+
+  .product-detail-section {
+    min-height: 0;
+  }
+
+  .product-revision-images {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-commerce-notes-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .inventory-editor-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    row-gap: 12px;
+  }
+
+  .inventory-editor-actions {
+    grid-column: 1 / -1;
+    flex-wrap: wrap;
+  }
+
+  /* Editor canvas blocks get a shorter, fluid footprint on tablet frames. */
+  .pdp-hero-block {
+    min-height: 0;
+  }
+
+  .pdp-hero-copy,
+  .pdp-hero-visual {
+    min-height: 260px;
+  }
+
+  .pdp-hero-copy {
+    padding: 44px 7%;
+  }
+
+  .pdp-hero-copy h1 {
+    font-size: clamp(26px, 4.2vw, 40px);
+  }
+
+  .pdp-image-story-visual {
+    min-height: min(58vw, 440px);
+  }
+
+  .pdp-image-story-copy,
+  .pdp-benefit-block,
+  .pdp-story-block,
+  .pdp-cta-block {
+    padding: 46px 7%;
+  }
+
+  .pdp-verification-ribbon {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. Phone compaction gaps: pieces the existing phone sheet does not
+ *    cover (media import, saved detail chrome, buyer canvas).
+ * ------------------------------------------------------------------ */
+@media (max-width: 720px) {
+  .product-detail-asset-grid figcaption > span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .detail-preview-canvas {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .saved-product-detail-page .detail-preview-scroll {
+    height: min(72svh, 620px);
+    padding: 9px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Saved detail page: source selector, readiness rows, external import.
+ * ------------------------------------------------------------------ */
+.saved-product-detail-page .panel-heading {
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.saved-product-detail-page .panel-heading > div,
+.saved-product-detail-page .panel-heading > button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saved-product-detail-page .panel-heading .publish-execute {
+  white-space: normal;
+  text-align: left;
+}
+
+.saved-product-detail-page > div[role="group"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saved-product-detail-page > div[role="group"] > button {
+  min-width: 0;
+  max-width: 100%;
+  white-space: normal;
+  text-align: left;
+}
+
+.saved-product-detail-page > p,
+.saved-product-detail-page [role="status"],
+.saved-product-detail-page [role="alert"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.saved-detail-image-readiness {
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Buyer preview inside the saved page: the canvas is capped, the document
+   inside it can only shrink, and only the vertical axis scrolls. */
+.saved-product-detail-page .detail-preview-scroll {
+  overflow-x: hidden;
+  max-width: 100%;
+  overscroll-behavior: contain;
+}
+
+.saved-product-detail-page .detail-preview-canvas {
+  width: min(680px, 100%);
+  max-width: 100%;
+  min-width: 0;
+}
+
+.saved-product-detail-page .detail-preview-canvas > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Media import (external_generated): the eight-role grid and the review
+   fields must fold instead of panning. The grid track floor is lowered to
+   `min(100%, 200px)` so a 320px-wide panel keeps one column. */
+.saved-product-detail-page [data-source-kind="external_generated"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] > *,
+.saved-product-detail-page [data-source-kind="external_generated"] > div,
+.saved-product-detail-page [data-source-kind="external_generated"] fieldset,
+.saved-product-detail-page [data-source-kind="external_generated"] details,
+.saved-product-detail-page [data-source-kind="external_generated"] summary,
+.saved-product-detail-page [data-source-kind="external_generated"] label,
+.saved-product-detail-page [data-source-kind="external_generated"] ul,
+.saved-product-detail-page [data-source-kind="external_generated"] li,
+.saved-product-detail-page [data-source-kind="external_generated"] p {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] > div[style] {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)) !important;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] fieldset {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] fieldset > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] label {
+  display: block;
+  width: 100%;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] input:not([type="checkbox"]):not([type="radio"]),
+.saved-product-detail-page [data-source-kind="external_generated"] textarea,
+.saved-product-detail-page [data-source-kind="external_generated"] > button,
+.saved-product-detail-page [data-source-kind="external_generated"] fieldset input[type="file"] {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] textarea {
+  min-height: 120px;
+  resize: vertical;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] > button {
+  white-space: normal;
+  text-align: center;
+}
+
+.saved-product-detail-page [data-source-kind="external_generated"] label > input[type="checkbox"] {
+  width: auto;
+  max-width: 100%;
+  margin-right: 6px;
+  vertical-align: top;
+}
+
+/* Revision picker (photo import) keeps its own image aspect ratio. */
+.product-revision-main > label > span img,
+.product-revision-role-grid label > span img {
+  max-width: 100%;
+  object-fit: contain;
+}
+
+@media (max-width: 560px) {
+  .product-revision-source-actions,
+  .product-revision-source-actions.two-way {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. Puck editor modal: fit 100vw x 100dvh, no horizontal pan, header
+ *    and publish action may wrap instead of widening the dialog.
+ * ------------------------------------------------------------------ */
+.puck-editor-modal {
+  inset: clamp(0px, 1.6vw, 18px);
+  width: auto;
+  min-width: 0;
+  max-width: calc(100vw - 2 * clamp(0px, 1.6vw, 18px));
+  max-height: 100dvh;
+  grid-template-rows: minmax(46px, auto) minmax(0, 1fr);
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.puck-editor-top {
+  gap: 10px;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.puck-editor-top > span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.puck-editor-top button {
+  flex: 0 0 auto;
+}
+
+.puck-editor-publish-action {
+  max-width: 100%;
+  min-width: 0;
+  white-space: normal;
+}
+
+.puck-editor-body,
+.puck-editor-body > div {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* Puck's own root/layout assume a full page height. Inside the dialog they
+   must fill the body row instead of forcing another 100dvh. */
+.puck-editor-modal [class*="_Puck_"] {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+.puck-editor-modal [class*="_PuckLayout_"] {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+}
+
+.puck-editor-modal [class*="_PuckLayout-inner_"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.puck-editor-modal [class*="_PuckLayout-header"],
+.puck-editor-modal [class*="_PuckCanvas_"],
+.puck-editor-modal [class*="_PuckFields_"],
+.puck-editor-modal [class*="_PuckSidebar"],
+.puck-editor-modal [class*="_Sidebar_"],
+.puck-editor-modal [class*="_SidebarSection"] {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.puck-editor-modal [class*="_PuckHeader"] {
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.puck-editor-modal [class*="_PuckCanvas-inner_"] {
+  min-width: 0;
+}
+
+.puck-editor-modal table,
+.puck-editor-modal fieldset,
+.puck-editor-modal input,
+.puck-editor-modal select,
+.puck-editor-modal textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .puck-editor-modal {
+    max-width: 100vw;
+    max-height: 100dvh;
+  }
+}
+
+@media (max-width: 900px) {
+  .puck-editor-modal {
+    inset: 0;
+    max-width: 100vw;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+    grid-template-rows: minmax(52px, auto) minmax(0, 1fr);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 8. Compact phone / fold: single track everywhere, buttons full width.
+ * ------------------------------------------------------------------ */
+@media (max-width: 480px) {
+  .product-detail-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-detail-asset-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-detail-asset-grid figure > div,
+  .product-detail-asset-grid .product-image-missing {
+    min-height: clamp(150px, 52vw, 240px);
+  }
+
+  .inventory-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-revision-role-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pdp-verification-ribbon,
+  .pdp-hero-block,
+  .pdp-hero-block.editorial {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .product-detail-page,
+  .saved-product-detail-page,
+  .product-detail-hero,
+  .product-detail-grid,
+  .product-detail-assets,
+  .puck-editor-modal {
+    max-width: 100vw;
+  }
+
+  .product-detail-heading {
+    padding: 20px 14px;
+  }
+
+  .product-revision-role-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .saved-product-detail-page [data-source-kind="external_generated"] > div[style] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* Landscape phones: keep the dialog usable without a horizontal pan. */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 900px) {
+  .puck-editor-modal {
+    max-height: 100dvh;
+    grid-template-rows: minmax(44px, auto) minmax(0, 1fr);
+  }
+}
