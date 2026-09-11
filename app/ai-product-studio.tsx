@@ -831,6 +831,7 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
 
   const generate = useCallback(async () => {
     if (!mainPhoto) {
+      setLastError("대표사진이 없어 상세페이지 제작을 시작할 수 없습니다.");
       onRunningChange(false);
       return;
     }
@@ -858,8 +859,13 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
     }
     // A rapid duplicate event during the first upload still belongs to the
     // active operation, so its parent busy state must remain true.
-    if (generating || generateInFlightRef.current) return;
+    if (generating || generateInFlightRef.current) {
+      setLastError("이미 상세페이지 제작이 진행 중입니다. 끝난 뒤 다시 시도해 주세요.");
+      notify("이미 상세페이지 제작이 진행 중입니다.");
+      return;
+    }
     if (queuedOwnJobId || queuedOwnJobIdRef.current) {
+      setLastError("이미 접수된 상세페이지 작업이 있습니다. 등록 진행 중·히스토리에서 상태를 확인해 주세요.");
       // PublishingPage sets its own busy flag before incrementing requestId.
       // Release only a stale outer flag when this child already owns an exact
       // server job and no local submission is still running.
@@ -867,7 +873,11 @@ export function AiProductStudio({ mainPhoto, photos, manualFields, competitorCon
       return;
     }
     const lifecycleController = lifecycleControllerRef.current;
-    if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) return;
+    if (!lifecycleController || lifecycleController.signal.aborted || !studioMountedRef.current) {
+      setLastError("화면 상태가 준비되지 않아 상세페이지 제작을 시작하지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해 주세요.");
+      onRunningChange(false);
+      return;
+    }
     generateInFlightRef.current = true;
     displayJobId.current = "";
     setGenerating(true);
