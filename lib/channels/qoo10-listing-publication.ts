@@ -63,11 +63,265 @@ export type Qoo10PublicationReadbackChecks = {
   detailImageUrlsVerified?: boolean;
 };
 
+export type Qoo10PublicationReadbackCheckKey = keyof Qoo10PublicationReadbackChecks;
+
+/**
+ * Provider fields the official ItemsLookup.GetItemDetailInfo readback does not
+ * return for this projection. The stored prewrite values are recorded as
+ * evidence, never treated as readback-verified state.
+ */
+export const qoo10OfficialReadbackUnsupportedFields = [
+  "ProductionPlace",
+  "AvailableDateType",
+  "AvailableDateValue",
+  "AdditionalOption",
+  "ItemType",
+] as const;
+
+/**
+ * Strict-create expectation fields and the provider field names each one needs
+ * from the readback. A field is excluded from the strict projection as soon as
+ * one of its provider fields is declared unsupported by
+ * `qoo10OfficialReadbackUnsupportedFields`.
+ */
+const qoo10StrictProjectionFieldProviderNames: Partial<
+  Record<keyof Qoo10ListingCreateExpectation, readonly string[]>
+> = {
+  productionPlaceType: ["ProductionPlace"],
+  productionPlace: ["ProductionPlace"],
+  availableDateType: ["AvailableDateType"],
+  availableDateValue: ["AvailableDateValue"],
+  additionalOption: ["AdditionalOption"],
+  itemType: ["ItemType"],
+  optionContract: ["AdditionalOption", "ItemType"],
+};
+
+/**
+ * Strict-create fields kept explicitly outside the strict projection because
+ * the official readback declares their provider field unsupported. Derived from
+ * the declaration above, so identity, price, title, and category fields can
+ * never be excluded by accident; those provider fields are not declared
+ * unsupported.
+ */
+export const qoo10StrictProjectionExcludedFields: readonly string[] =
+  (Object.keys(qoo10StrictProjectionFieldProviderNames) as (keyof Qoo10ListingCreateExpectation)[])
+    .filter((field) => qoo10StrictProjectionFieldProviderNames[field]!.some(
+      (providerField) => (qoo10OfficialReadbackUnsupportedFields as readonly string[])
+        .includes(providerField),
+    ));
+
+type Qoo10StrictProjectionField = {
+  field: keyof Qoo10ListingCreateExpectation;
+  providerFields: readonly string[];
+  check: Qoo10PublicationReadbackCheckKey;
+};
+
+/**
+ * Every strict-create field the official readback projects, with the readback
+ * check that proves it. The strict projection is computed from this map, so a
+ * field whose provider field is declared unsupported stays outside the
+ * projection instead of failing the whole publication status check.
+ */
+export const qoo10StrictProjectionFields = [
+  { field: "categoryCode", providerFields: ["SecondSubCat", "SecondSubCatCd"], check: "categoryVerified" },
+  { field: "manufactureNo", providerFields: ["ManufacturerCd", "ManufactureNo"], check: "catalogVerified" },
+  { field: "brandNo", providerFields: ["BrandCd", "BrandNo"], check: "catalogVerified" },
+  { field: "itemTitle", providerFields: ["ItemTitle"], check: "titleVerified" },
+  { field: "shippingNo", providerFields: ["ShippingNo"], check: "shippingVerified" },
+  { field: "retailPrice", providerFields: ["RetailPrice"], check: "priceQuantityVerified" },
+  { field: "price", providerFields: ["SellPrice", "ItemPrice"], check: "priceQuantityVerified" },
+  { field: "quantity", providerFields: ["ItemQty"], check: "priceQuantityVerified" },
+  { field: "standardImageUrl", providerFields: ["ImageUrl"], check: "representativeImageVerified" },
+  { field: "detailImageUrls", providerFields: ["ItemDetail"], check: "detailImageDigestVerified" },
+] as const satisfies readonly Qoo10StrictProjectionField[];
+
+export const qoo10PublicationReadbackReasonCodes = [
+  "QOO10_READBACK_VERIFIED",
+  "QOO10_READBACK_CHECK_MISMATCH",
+  "QOO10_READBACK_REMOTE_STATE_REJECTED",
+] as const;
+
+export type Qoo10PublicationReadbackReasonCode =
+  (typeof qoo10PublicationReadbackReasonCodes)[number];
+
+/**
+ * One failing readback check with the provider fields it read, plus the stored
+ * expectation. The pair is what an operator or AI history needs to see which
+ * field mismatched without re-reading the provider response by hand.
+ */
+export type Qoo10PublicationReadbackCheckFailure = {
+  check: Qoo10PublicationReadbackCheckKey;
+  code: string;
+  providerFields: string[];
+  expected: string;
+  observed: string;
+};
+
+export type Qoo10PublicationReadbackDiagnostics = {
+  verified: boolean;
+  reasonCode: Qoo10PublicationReadbackReasonCode;
+  failedChecks: Qoo10PublicationReadbackCheckFailure[];
+  strictProjection: {
+    verified: boolean;
+    failedFields: string[];
+    /** Strict-create fields the official readback declares unsupported. */
+    excludedFields: string[];
+  };
+  /** All checks passed but the verified-state schema refused the projection. */
+  remoteStateRejected: boolean;
+};
+
+const qoo10PublicationReadbackCheckReasonCodes: Record<
+  Qoo10PublicationReadbackCheckKey,
+  { code: string; providerFields: readonly string[] }
+> = {
+  identityVerified: {
+    code: "QOO10_READBACK_IDENTITY_MISMATCH",
+    providerFields: ["ItemCode", "IdentifiedItemCount"],
+  },
+  statusVerified: {
+    code: "QOO10_READBACK_STATUS_UNKNOWN",
+    providerFields: ["ItemStatus"],
+  },
+  sellerCodeVerified: {
+    code: "QOO10_READBACK_SELLER_CODE_MISMATCH",
+    providerFields: ["SellerCode"],
+  },
+  localeVerified: {
+    code: "QOO10_READBACK_LOCALE_MISMATCH",
+    providerFields: ["ItemTitle", "ItemDetail"],
+  },
+  fingerprintVerified: {
+    code: "QOO10_READBACK_FINGERPRINT_INVALID",
+    providerFields: [],
+  },
+  imageCountVerified: {
+    code: "QOO10_READBACK_IMAGE_COUNT_MISMATCH",
+    providerFields: ["ItemDetail"],
+  },
+  sellerAccountIdentityVerified: {
+    code: "QOO10_READBACK_SELLER_ACCOUNT_IDENTITY_MISSING",
+    providerFields: [],
+  },
+  categoryVerified: {
+    code: "QOO10_READBACK_CATEGORY_MISMATCH",
+    providerFields: ["SecondSubCat"],
+  },
+  catalogVerified: {
+    code: "QOO10_READBACK_CATALOG_MISMATCH",
+    providerFields: ["ManufacturerCd", "BrandCd"],
+  },
+  titleVerified: {
+    code: "QOO10_READBACK_TITLE_MISMATCH",
+    providerFields: ["ItemTitle"],
+  },
+  shippingVerified: {
+    code: "QOO10_READBACK_SHIPPING_MISMATCH",
+    providerFields: ["ShippingNo"],
+  },
+  priceQuantityVerified: {
+    code: "QOO10_READBACK_PRICE_QUANTITY_MISMATCH",
+    providerFields: ["SellPrice", "RetailPrice", "ItemQty"],
+  },
+  representativeImageVerified: {
+    code: "QOO10_READBACK_REPRESENTATIVE_IMAGE_MISMATCH",
+    providerFields: ["ImageUrl"],
+  },
+  detailImageDigestVerified: {
+    code: "QOO10_READBACK_DETAIL_IMAGE_MISMATCH",
+    providerFields: ["ItemDetail"],
+  },
+  recoveryExpectationVerified: {
+    code: "QOO10_READBACK_RECOVERY_EXPECTATION_INVALID",
+    providerFields: [],
+  },
+  retailPriceVerified: {
+    code: "QOO10_READBACK_RETAIL_PRICE_MISMATCH",
+    providerFields: ["RetailPrice"],
+  },
+  sellPriceVerified: {
+    code: "QOO10_READBACK_SELL_PRICE_MISMATCH",
+    providerFields: ["SellPrice"],
+  },
+  quantityVerified: {
+    code: "QOO10_READBACK_QUANTITY_MISMATCH",
+    providerFields: ["ItemQty"],
+  },
+  confirmedBiCdnImageVerified: {
+    code: "QOO10_READBACK_BI_CDN_IMAGE_MISMATCH",
+    providerFields: ["ImageUrl"],
+  },
+  detailImageUrlsVerified: {
+    code: "QOO10_READBACK_DETAIL_IMAGE_URLS_MISMATCH",
+    providerFields: ["ItemDetail"],
+  },
+};
+
+function boundedReadbackFieldValue(value: string) {
+  // Same control-character rule the verified remote-state schema applies.
+  const printable = [...value]
+    .filter((character) => {
+      const codePoint = character.codePointAt(0) ?? 0;
+      return codePoint > 31 && codePoint !== 127;
+    })
+    .join("");
+  return printable.replace(/\s+/gu, " ").trim().slice(0, 200);
+}
+
+/**
+ * Builds one machine-readable failure entry for a caller-side readback gate
+ * (for example the source seller-account identity comparison) so the step data
+ * names the same check key and reason code as an in-helper mismatch.
+ */
+export function qoo10PublicationReadbackCheckFailure(
+  check: Qoo10PublicationReadbackCheckKey,
+  observedFields: Record<string, string> = {},
+  expectedFields: Record<string, string> = {},
+): Qoo10PublicationReadbackCheckFailure {
+  const reasonCode = qoo10PublicationReadbackCheckReasonCodes[check];
+  const render = (source: Record<string, string>) => reasonCode.providerFields
+    .map((providerField) =>
+      `${providerField}=${boundedReadbackFieldValue(source[providerField] ?? "")}`)
+    .join(", ");
+  return {
+    check,
+    code: reasonCode.code,
+    providerFields: [...reasonCode.providerFields],
+    expected: render(expectedFields),
+    observed: render(observedFields),
+  };
+}
+
+/**
+ * Diagnostics for a caller-side gate that never received a readable
+ * GetItemDetailInfo object (missing activation binding, transport failure).
+ * Every not-passing check is named so the step data still explains the result.
+ */
+export function qoo10PublicationReadbackUnavailableDiagnostics(
+  checks: Qoo10PublicationReadbackChecks,
+  excludedFields: readonly string[] = [],
+): Qoo10PublicationReadbackDiagnostics {
+  return {
+    verified: false,
+    reasonCode: "QOO10_READBACK_CHECK_MISMATCH",
+    failedChecks: (Object.keys(checks) as Qoo10PublicationReadbackCheckKey[])
+      .filter((check) => !checks[check])
+      .map((check) => qoo10PublicationReadbackCheckFailure(check)),
+    strictProjection: {
+      verified: false,
+      failedFields: [],
+      excludedFields: [...excludedFields],
+    },
+    remoteStateRejected: false,
+  };
+}
+
 export type Qoo10PublicationReadbackVerification = {
   remoteState?: VerifiedListingRemoteState;
   providerStatus: string;
   imageCount: number;
   checks: Qoo10PublicationReadbackChecks;
+  diagnostics: Qoo10PublicationReadbackDiagnostics;
 };
 
 function recordValue(value: unknown) {
@@ -306,13 +560,6 @@ export function normalizeQoo10ListingPublicationReadback(
     || (recoveryExpectationVerified && sameOrderedValues(detailImageUrls, recovery.detailImageUrls));
   const detailImageDigestVerified = (!strict || sameOrderedValues(detailImageUrls, strict.detailImageUrls))
     && detailImageUrlsVerified;
-  const strictProjectionVerified = categoryVerified
-    && catalogVerified
-    && titleVerified
-    && shippingVerified
-    && priceQuantityVerified
-    && representativeImageVerified
-    && detailImageDigestVerified;
   const checks = {
     identityVerified,
     statusVerified,
@@ -339,8 +586,90 @@ export function normalizeQoo10ListingPublicationReadback(
         }
       : {}),
   } satisfies Qoo10PublicationReadbackChecks;
+  // The strict projection is derived from the declared field map, so a strict
+  // field whose provider field the official readback declares unsupported stays
+  // explicitly outside the projection instead of failing the status check.
+  const strictProjectionFields = strict
+    ? qoo10StrictProjectionFields.filter((entry) =>
+        !qoo10StrictProjectionExcludedFields.includes(entry.field))
+    : [];
+  const strictProjectionFailedFields = [...new Set(strictProjectionFields
+    .filter((entry) => !checks[entry.check])
+    .map((entry) => entry.field as string))];
+  const strictProjectionVerified = strictProjectionFailedFields.length === 0;
+  const observedReadbackFields: Record<string, string> = {
+    ItemCode: matches.length === 1 ? input.remoteId : "",
+    IdentifiedItemCount: String(matches.length),
+    ItemStatus: itemStatus,
+    SellerCode: sellerCode,
+    ItemTitle: itemTitle,
+    SecondSubCat: categoryCode,
+    ManufacturerCd: manufacturerCode,
+    BrandCd: brandCode,
+    ShippingNo: shippingNo,
+    SellPrice: sellPrice === null ? "" : String(sellPrice),
+    RetailPrice: retailPrice === null ? "" : String(retailPrice),
+    ItemQty: quantity === null ? "" : String(quantity),
+    ImageUrl: standardImageUrl,
+    ItemDetail: detailImageUrls.join(" | "),
+  };
+  const expectedReadbackFields: Record<string, string> = {
+    ItemCode: remoteIdFormatVerified ? input.remoteId : "",
+    IdentifiedItemCount: "1",
+    ItemStatus: "",
+    SellerCode: input.expectedSellerCode ?? "",
+    ItemTitle: strict?.itemTitle ?? "",
+    SecondSubCat: strict?.categoryCode ?? recovery?.categoryCode ?? "",
+    ManufacturerCd: strict?.manufactureNo ?? "",
+    BrandCd: strict?.brandNo ?? "",
+    ShippingNo: strict?.shippingNo ?? recovery?.shippingNo ?? "",
+    SellPrice: recovery
+      ? String(recovery.sellPriceJpy)
+      : strict
+        ? String(strict.price)
+        : "",
+    RetailPrice: strict
+      ? String(strict.retailPrice)
+      : recovery
+        ? String(recovery.retailPriceJpy)
+        : "",
+    ItemQty: strict
+      ? String(strict.quantity)
+      : recovery
+        ? String(recovery.quantity)
+        : "",
+    ImageUrl: strict?.standardImageUrl ?? "",
+    ItemDetail: strict
+      ? strict.detailImageUrls.join(" | ")
+      : recovery
+        ? recovery.detailImageUrls.join(" | ")
+        : "",
+  };
+  const failedChecks = (Object.keys(checks) as Qoo10PublicationReadbackCheckKey[])
+    .filter((check) => !checks[check])
+    .map((check) => qoo10PublicationReadbackCheckFailure(
+      check,
+      observedReadbackFields,
+      expectedReadbackFields,
+    ));
+  const strictProjection = {
+    verified: strictProjectionVerified,
+    failedFields: strictProjectionFailedFields,
+    excludedFields: strict ? [...qoo10StrictProjectionExcludedFields] : [],
+  };
   if (!Object.values(checks).every(Boolean) || !strictProjectionVerified || !visibility) {
-    return { providerStatus: itemStatus, imageCount, checks };
+    return {
+      providerStatus: itemStatus,
+      imageCount,
+      checks,
+      diagnostics: {
+        verified: false,
+        reasonCode: "QOO10_READBACK_CHECK_MISMATCH",
+        failedChecks,
+        strictProjection,
+        remoteStateRejected: false,
+      },
+    };
   }
 
   const candidate = {
@@ -419,11 +748,7 @@ export function normalizeQoo10ListingPublicationReadback(
             prewriteAvailableDateValue: strict.availableDateValue,
             prewriteOptionContract: strict.optionContract,
             officialReadbackUnsupportedFields: [
-              "ProductionPlace",
-              "AvailableDateType",
-              "AvailableDateValue",
-              "AdditionalOption",
-              "ItemType",
+              ...qoo10OfficialReadbackUnsupportedFields,
             ],
           }
         : {}),
@@ -482,6 +807,21 @@ export function normalizeQoo10ListingPublicationReadback(
     providerStatus: itemStatus,
     imageCount,
     checks,
+    diagnostics: parsed.success
+      ? {
+          verified: true,
+          reasonCode: "QOO10_READBACK_VERIFIED",
+          failedChecks,
+          strictProjection,
+          remoteStateRejected: false,
+        }
+      : {
+          verified: false,
+          reasonCode: "QOO10_READBACK_REMOTE_STATE_REJECTED",
+          failedChecks,
+          strictProjection,
+          remoteStateRejected: true,
+        },
     ...(parsed.success ? { remoteState: parsed.data } : {}),
   };
 }

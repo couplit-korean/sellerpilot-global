@@ -11,7 +11,10 @@ import { coupangRequest, ebayRequest, ebayTradingRequest, ebayTradingXmlEscape, 
 import { readLazadaListingPublicationState } from "./provider-lazada-publication-readback";
 import { readShopeeGlobalListingPublicationState, readShopeeListingPublicationState } from "./provider-shopee-publication-readback";
 import { qoo10ResultMessage } from "./qoo10";
-import { qoo10VerifiedListingRemoteState } from "./qoo10-listing-publication";
+import {
+  normalizeQoo10ListingPublicationReadback,
+  qoo10PublicationReadbackCheckFailure,
+} from "./qoo10-listing-publication";
 import { qoo10ListingCreateExpectation, qoo10SellerAccountIdentityDigestFromReadback } from "./qoo10-listing-create-preflight";
 import { inspectTemuGeneralCreateBody } from "../product-registration/temu/create-contract";
 
@@ -408,7 +411,7 @@ export async function executeListingPublicationVerification(input: VerificationI
     const expectedRepresentativeImageContentId = strictCreateSource
       ? qoo10SourceMainImageContentId(source, remoteId)
       : "";
-    const verifiedReadbackState = qoo10VerifiedListingRemoteState({
+    const readbackVerification = normalizeQoo10ListingPublicationReadback({
       operation: mutationSourceOperation(),
       remoteId,
       resultObject: remote.data.ResultObject,
@@ -430,6 +433,7 @@ export async function executeListingPublicationVerification(input: VerificationI
         }
         : {}),
     });
+    const verifiedReadbackState = readbackVerification.remoteState ?? null;
     const remoteState = strictIdentityVerified ? verifiedReadbackState : null;
     const readbackStep = providerStep("GetItemDetailInfo-publication-reverification", remote);
     readbackStep.ok = readbackStep.ok && Boolean(remoteState);
@@ -438,6 +442,22 @@ export async function executeListingPublicationVerification(input: VerificationI
       sellerpilotVerification: remoteState
         ? "QOO10_PUBLICATION_STATE_REVERIFIED"
         : "QOO10_PUBLICATION_STATE_UNVERIFIED",
+      sellerpilotPublicationChecks: strictIdentityVerified
+        ? readbackVerification.checks
+        : { ...readbackVerification.checks, sellerAccountIdentityVerified: false },
+      // Keep the readback reasons observable: which check failed, the provider
+      // fields it read, and what the stored projection expected.
+      sellerpilotPublicationDiagnostics: strictIdentityVerified
+        ? readbackVerification.diagnostics
+        : {
+          ...readbackVerification.diagnostics,
+          verified: false,
+          reasonCode: "QOO10_READBACK_CHECK_MISMATCH",
+          failedChecks: [
+            ...readbackVerification.diagnostics.failedChecks,
+            qoo10PublicationReadbackCheckFailure("sellerAccountIdentityVerified"),
+          ],
+        },
       ...(remoteState ? {} : { providerMessage: qoo10ResultMessage(remote.data) }),
     };
     return verifiedExecution({

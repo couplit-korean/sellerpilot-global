@@ -166,6 +166,7 @@ export function qoo10S1ActivationReadbackStep(input: {
           verification.publication.providerStatus || null,
         sellerpilotExactResultCodeVerified: exactProviderSuccess,
         sellerpilotPublicationChecks: verification.publication.checks,
+        sellerpilotPublicationDiagnostics: verification.publication.diagnostics,
         sellerpilotActivationContentChecks: verification.checks,
         ...(!ok ? { sellerpilotReconciliationRequired: true } : {}),
       },
@@ -254,6 +255,7 @@ export function qoo10PublicationReadbackStep(
       providerStatus: verification.providerStatus || null,
       actualImageCount: verification.imageCount,
       sellerpilotPublicationChecks: verification.checks,
+      sellerpilotPublicationDiagnostics: verification.diagnostics,
       ...(remoteState
         ? {
           sellerpilotRemoteVisibility: remoteState.visibility,

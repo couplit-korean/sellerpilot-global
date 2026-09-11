@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   normalizeQoo10ListingPublicationReadback,
+  qoo10PublicationReadbackUnavailableDiagnostics,
+  type Qoo10PublicationReadbackChecks,
   type Qoo10PublicationReadbackVerification,
   type Qoo10RollbackRecoveryReadbackExpectation,
 } from "./qoo10-listing-publication";
@@ -483,17 +485,21 @@ export function verifyQoo10S1ActivationReadback(input: {
 } {
   const binding = qoo10S1ActivationBinding(input.arguments);
   if (!binding) {
+    const absentChecks: Qoo10PublicationReadbackChecks = {
+      identityVerified: false, statusVerified: false, sellerCodeVerified: false,
+      localeVerified: false, fingerprintVerified: false, imageCountVerified: false,
+      sellerAccountIdentityVerified: false, categoryVerified: false, catalogVerified: false,
+      titleVerified: false,
+      shippingVerified: false, priceQuantityVerified: false, representativeImageVerified: false,
+      detailImageDigestVerified: false,
+    };
     return {
       ok: false,
       publication: {
-        providerStatus: "", imageCount: 0, checks: {
-          identityVerified: false, statusVerified: false, sellerCodeVerified: false,
-          localeVerified: false, fingerprintVerified: false, imageCountVerified: false,
-          sellerAccountIdentityVerified: false, categoryVerified: false, catalogVerified: false,
-          titleVerified: false,
-          shippingVerified: false, priceQuantityVerified: false, representativeImageVerified: false,
-          detailImageDigestVerified: false,
-        }
+        providerStatus: "",
+        imageCount: 0,
+        checks: absentChecks,
+        diagnostics: qoo10PublicationReadbackUnavailableDiagnostics(absentChecks),
       },
       checks: { markerVerified: false },
     };
