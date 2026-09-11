@@ -2773,6 +2773,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   // 카테고리 매칭·설정샷 프롬프트를 쓰는 생성 작업을 자동으로 시작해 같은 6개
   // 자산을 고품질 결과로 교체한다.
   const [studioDraftRunStarted, setStudioDraftRunStarted] = useState(false);
+  const [studioDraftBlockedReason, setStudioDraftBlockedReason] = useState("");
   const [studioDraftImagesMerged, setStudioDraftImagesMerged] = useState(false);
   const studioDraftRunStartedRef = useRef(false);
   const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
@@ -4187,6 +4188,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     if (!firstDraftContentReady || firstDraftReviewed) return;
     if (running || queuedJobId || researchingProduct || recoveringProductResearch || photoSelectionsProcessing) return;
     if (!mainPhoto || !registrationExecutionAvailable) return;
+    // 상세페이지 제작은 판매자 필수 입력값을 검증한 뒤에만 시작할 수 있다.
+    // 값이 불완전하면 자동 시작을 보류하고, 무엇이 필요한지 화면에 남긴다.
+    if (!productIntakeSchema.safeParse(intakeRef.current).success) {
+      setStudioDraftBlockedReason("필수 상품정보(판매자 SKU, 브랜드·제조사·원산지·소재·구성, 판매가·재고·중량·규격, 설명, 권한 확인)를 모두 입력하면 상세페이지와 같은 파이프라인으로 6장을 생성합니다.");
+      return;
+    }
+    setStudioDraftBlockedReason("");
     studioDraftRunStartedRef.current = true;
     window.setTimeout(() => {
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -4359,7 +4367,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
             {firstDraftImages.length > 0 && <section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
-              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
+              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : studioDraftBlockedReason || "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
               <div>{firstDraftImages.map((image) => <figure key={image.id}><span><Image src={image.url} alt={firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized /></span><figcaption>{firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]}</figcaption></figure>)}</div>
             </section>}
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
