@@ -39,6 +39,10 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 ## Four-task parallel work (2026-09-13)
 
+### Current dispatch override: independent tasks, no cross-task communication
+
+The user now explicitly requests four separate GPT-5.6 Sol / High tasks that each finish their own work without communicating. For this dispatch, read `docs/parallel-tasks/INDEPENDENT-RUN.md` and your lane's `prompt.md` first. This overrides the collaboration/closeout workflow below and older lane status prompts: no messages, task inspection/polling, delegation, handoff, request inbox, or asking another task to change a file. Each task works only in its assigned files with existing compatible contracts, finishes all independently actionable work, and reports residual boundaries in its own final report. Do not wait for another task's answer. **None of the four tasks stages, commits, pushes, changes shared DB schemas, deploys Vercel, or merges other tasks' output during this run.** A later integrated release is separate. Do not change ownership or coordination files to expand your scope. A ready/blocked report is a result, not a message to another task.
+
 For the four parallel tasks (publishing UI, image/detail quality, CS/local runtime, channel registration/integration), first read `docs/parallel-tasks/README.md` and `docs/parallel-tasks/ownership.json`. Select the lane matching the user's task. Do not create new chats, clones or worktrees merely to implement this plan.
 
 - Before editing, check the exact intended paths with `node scripts/parallel-workspace.mjs check LANE FILE...`. Files owned by another lane are requests to that owner, not permission to overwrite. Existing shared exports, API payloads, asset IDs and database contracts must remain compatible unless the integration owner coordinates a versioned change.

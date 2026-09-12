@@ -1,5 +1,7 @@
 # 네 채팅 동시 작업 기준
 
+**현재 실행 지침:** 사용자가 채팅 간 연락 없이 각자 완주하도록 변경했다. 이번 실행은 [INDEPENDENT-RUN.md](INDEPENDENT-RUN.md)와 각 lane의 `prompt.md`가 우선한다. 아래의 타 담당 요청/응답·4번의 동시 통합/배포 절차는 이번 실행 중 적용하지 않는다. 파일 소유권과 자원 잠금은 유지한다.
+
 2026-09-13. 같은 `/Users/kimchangheemac/dev/sellerpilot-app`에서 작업한다. 이 문서는 네 작업의 준비이며 새 채팅·clone·worktree를 생성하지 않는다. 기존 채널별 worktree 지침보다 이 작업 분담을 우선한다.
 
 ## 판정
