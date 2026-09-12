@@ -6,7 +6,7 @@ import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
 import sharp from "sharp";
-import { aiGeneratedAssetSpecs, resolveProductIdentityPlacement } from "../lib/ai-generated-assets.ts";
+import { aiGeneratedAssetSpecs, coreFirstDraftAssetIds, resolveProductIdentityPlacement } from "../lib/ai-generated-assets.ts";
 import { sellerSafeAiJobFailure } from "../lib/ai-worker-error-safety.ts";
 import { fetchPublicReferenceDocument } from "../lib/public-reference-fetch.ts";
 import { assertSafeBackgroundSemanticAudit, backgroundSemanticAuditSchema, buildBackgroundSemanticAuditPrompt, findRepeatedBackgroundProp, resolveIdentityBackgroundContract } from "../lib/ai-background-audit.ts";
@@ -27,8 +27,19 @@ import { jitterWorkerPollMs, nextWorkerIdlePollMs } from "../lib/worker-polling.
 import { runVisionCutoutWithTransientRetry } from "../lib/source-product-cutout-retry.ts";
 import { isWorkerTokenConfigured, workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
+import { optimizePngLocally } from "./product-ai-worker.oxipng-lossless.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
 import { firstDraftUsageLimitWaitMs, readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
+import {
+    buildFirstDraftImageQualityReceipt,
+    firstDraftImageFactsMatchStudioResult,
+    firstDraftImageFactsMatchStudioRequest,
+    firstDraftImageProductFactsSchema,
+    firstDraftImageQualityManifestSchema,
+    firstDraftImageScenePlansMatchStudioResult,
+    validateFirstDraftImageQualityReceipt,
+    validateFirstDraftImageQualityManifest,
+} from "../lib/first-draft-images.ts";
 import { AI_HEARTBEAT_INTERVAL_MS, AI_HEARTBEAT_TRANSIENT_GRACE_MS, requestWithTransientRetry, WORKER_COMPLETION_TRANSIENT_GRACE_MS, WorkerRequestTerminalError } from "./worker-lifecycle-retry.mjs";
 ;
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
@@ -81,7 +92,7 @@ const imageLabelFidelityScriptPath = resolve("scripts/image-label-fidelity.swift
 const codexImageSkillPath = join(homedir(), ".codex", "skills", "codex-image", "SKILL.md");
 const once = process.argv.includes("--once");
 let stopping = false;
-const workerVersion = "sellerpilot-cli-worker/1.61";
+const workerVersion = "sellerpilot-cli-worker/1.62";
 process.once("SIGINT", () => { stopping = true; });
 process.once("SIGTERM", () => { stopping = true; });
 let idlePollMs = pollMs;
@@ -291,6 +302,52 @@ async function uploadAiResultAsset({ resultStorageClient, jobId, claimToken, ass
         : "스토리지 응답을 확인하지 못했습니다.";
     throw new Error(`${assetId} 이미지 업로드 실패: ${safeMessage}`);
 }
+async function uploadVerifiedFirstDraftAsset({ jobId, asset, imageBytes }) {
+    const requestBody = JSON.stringify({ jobId, authorizeUpload: asset });
+    let lastUploadError = null;
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+        const response = await requestWithTransientRetry({
+            request: () => api("/api/ai/worker/first-draft-images", { method: "POST", body: requestBody }),
+            delay,
+            graceMs: AI_HEARTBEAT_TRANSIENT_GRACE_MS,
+            terminalStatuses: [400, 401, 409],
+            label: `${asset.id} 1차 이미지 업로드 권한 준비 실패`,
+        });
+        const authorization = await response.json().catch(() => null);
+        if (authorization?.status === "already-recorded"
+            && authorization.id === asset.id
+            && authorization.path === asset.path) {
+            return authorization;
+        }
+        if (!authorization || authorization.status !== "authorized"
+            || authorization.id !== asset.id
+            || authorization.path !== asset.path
+            || authorization.bucket !== "sellerpilot-ai"
+            || typeof authorization.token !== "string"
+            || !authorization.token
+            || typeof authorization.supabaseUrl !== "string"
+            || typeof authorization.publishableKey !== "string") {
+            throw new Error(`${asset.id} 1차 이미지 signed upload 응답이 올바르지 않습니다.`);
+        }
+        const storage = createClient(authorization.supabaseUrl, authorization.publishableKey, {
+            auth: { persistSession: false, autoRefreshToken: false },
+            global: { fetch: (input, init = {}) => fetch(input, {
+                ...init,
+                signal: AbortSignal.any([AbortSignal.timeout(120000), ...(init.signal ? [init.signal] : [])]),
+            }) },
+        });
+        const { error: uploadError } = await storage.storage
+            .from(authorization.bucket)
+            .uploadToSignedUrl(authorization.path, authorization.token, imageBytes, {
+            contentType: "image/png",
+            cacheControl: "3600",
+        });
+        if (!uploadError)
+            return { status: "uploaded", id: asset.id, path: asset.path };
+        lastUploadError = uploadError;
+    }
+    throw new Error(`${asset.id} 1차 이미지 Storage 업로드 실패: ${lastUploadError?.message ?? "unknown"}`);
+}
 async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_COMPLETION_TRANSIENT_GRACE_MS) {
     const requestBody = JSON.stringify(payload);
     try {
@@ -323,19 +380,6 @@ const codexTerminationGraceMs = 5000;
 // The lane is opt-in and runs beside, never inside, the AI job claim loop.
 const firstDraftImagesEnabled = process.env.SELLERPILOT_FIRST_DRAFT_IMAGES === "1";
 const firstDraftImagesPollMs = Math.max(5000, Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGES_POLL_MS ?? 10000));
-function buildFirstDraftImageCodexArgs({ sourceFile, jobDir, prompt }) {
-    return [
-        "exec",
-        "--model", model,
-        "--enable", "image_generation",
-        "--sandbox", codexSandboxMode,
-        "--skip-git-repo-check",
-        "--ephemeral",
-        "--cd", jobDir,
-        `--image=${sourceFile}`,
-        prompt,
-    ];
-}
 async function runFirstDraftImagesLane() {
     let laneErrorLogged = false;
     while (!stopping) {
@@ -343,11 +387,8 @@ async function runFirstDraftImagesLane() {
             const outcome = await runFirstDraftImageLaneOnce({
                 api,
                 fetchSource: async (sourceUrl) => readSourceBytesBounded(await fetch(sourceUrl, { signal: AbortSignal.timeout(120000) })),
-                runCodex: (imageArgs) => runCodex(imageArgs, imageGenerationTimeoutMs, null, null, {
-                    stage: "image:first-draft",
-                }),
-                normalizeGeneratedAsset,
-                buildCodexImageArgs: buildFirstDraftImageCodexArgs,
+                generateVerifiedAssets: generateVerifiedFirstDraftAssets,
+                uploadVerifiedAsset: uploadVerifiedFirstDraftAsset,
             });
             if (outcome.status === "done" || outcome.status === "recorded")
                 markWorkerBusy();
@@ -2152,6 +2193,9 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         let labelReferenceFiles = [];
         let missingIdentityEvidence = false;
         let usedVerifiedSourceComposite = false;
+        let sourceForegroundSha256 = null;
+        let sourcePixelIdentityVerified = false;
+        let sceneSemanticVerified = false;
         let identitySourceCandidateCount = 0;
         const backgroundOnly = Boolean(identityCutouts && preset.identityPolicy.mode === "source-composite");
         const retryIndex = attempt - 1;
@@ -2313,6 +2357,7 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                         claimToken,
                         leaseSignal,
                     });
+                    sceneSemanticVerified = true;
                     acceptedBackgroundAuditFeedback = {
                         hardNegativeLocationKeys: [semanticAudit.observedLocationKey],
                         hardNegativeMomentKeys: [semanticAudit.observedMomentKey],
@@ -2414,6 +2459,8 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
             if (backgroundOnly) {
                 normalized = await compositeIdentityForeground(generated, compositeSource.foreground, generationPreset, backgroundContactMode);
                 usedVerifiedSourceComposite = true;
+                sourceForegroundSha256 = compositeSource.foreground.sourceDigest;
+                sourcePixelIdentityVerified = true;
                 await writeFile(outputFile, normalized);
             }
             else {
@@ -2487,6 +2534,15 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                 continue;
             }
         }
+        const compression = await optimizePngLocally(normalized, {
+            maximumPixels: maximumStudioSourcePixels,
+            signal: leaseSignal,
+        });
+        normalized = compression.bytes;
+        await writeFile(outputFile, normalized);
+        if (compression.savedBytes > 0) {
+            console.log(`[PNG 무손실 압축] ${jobId} · ${preset.id} · ${compression.encoder} · ${compression.beforeBytes}→${compression.afterBytes} (${compression.savedPercent.toFixed(2)}%)`);
+        }
         const fingerprint = await fingerprintGeneratedShot(preset.id, normalized);
         const duplicate = findDuplicateShot(fingerprint, identityCutouts && preset.identityPolicy.mode !== "source-composite"
             ? [...existingShots, ...comparisonShots, ...rejectedSourceEvidenceShots]
@@ -2511,6 +2567,13 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
                 backgroundShot: acceptedBackgroundShot,
                 backgroundProps: acceptedBackgroundProps,
                 attempts: attempt,
+                qualityEvidence: {
+                    sourceCompositeVerified: usedVerifiedSourceComposite,
+                    sourceForegroundSha256,
+                    sourcePixelIdentityVerified,
+                    sceneSemanticVerified,
+                    duplicateVerified: true,
+                },
             };
         }
         if (identityCutouts && preset.identityPolicy.mode !== "source-composite") {
@@ -2565,6 +2628,335 @@ async function generateDistinctAsset({ result, outputFile, preset, imageFiles, i
         console.log(`[이미지 중복 재시도] ${jobId} · ${preset.id} ↔ ${duplicate.assetId} · match=${duplicate.exact ? "sha256" : "dhash"} · distance=${duplicate.distance}`);
     }
     throw new Error(`${preset.id} 이미지 중복 검증을 완료하지 못했습니다.`);
+}
+const generateVerifiedFirstDraftCandidate = generateDistinctAsset;
+async function generateVerifiedFirstDraftAssets({ payload, studioResult, sourceFile, jobDir }) {
+    const source = await readFile(sourceFile);
+    const metadata = await sharp(source, {
+        failOn: "warning",
+        limitInputPixels: maximumStudioSourcePixels,
+    }).metadata();
+    if (!metadata.width || !metadata.height || !metadata.format
+        || metadata.width * metadata.height > maximumStudioSourcePixels) {
+        throw new Error("1차 생성 원본 사진의 픽셀 규격을 확인하지 못했습니다.");
+    }
+    const sourceDigest = createHash("sha256").update(source).digest("hex");
+    if (sourceDigest !== payload.sourcePhotoSha256) {
+        throw new Error("1차 생성 원본 사진의 작업 파일 해시가 요청 계보와 일치하지 않습니다.");
+    }
+    const imageFiles = [{
+            file: sourceFile,
+            path: payload.sourcePath,
+            role: "main",
+            sourceIndex: 0,
+            preservedOriginal: true,
+            sourceDigest,
+            sourceBytes: source.length,
+            sourceWidth: metadata.width,
+            sourceHeight: metadata.height,
+            sourceFormat: metadata.format,
+        }];
+    const completedIds = new Set(payload.completedAssets);
+    const completedEvidence = Array.isArray(payload.completedAssetEvidence)
+        ? payload.completedAssetEvidence
+        : [];
+    if (completedEvidence.length !== completedIds.size
+        || completedEvidence.some((entry) => !completedIds.has(entry.id))) {
+        throw new Error("1차 이미지 재개 증거가 완료 역할 목록과 일치하지 않습니다.");
+    }
+    const existingShots = [];
+    const existingBackgroundShots = [];
+    const existingBackgroundProps = [];
+    for (const entry of completedEvidence) {
+        const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === entry.id);
+        const expectedPath = payload.assets.find((candidate) => candidate.id === entry.id)?.path;
+        if (!preset || entry.path !== expectedPath || !validateFirstDraftImageQualityReceipt({
+            assetId: entry.id,
+            productFacts: payload.productFacts,
+            sourcePhotoSha256: payload.sourcePhotoSha256,
+            outputSha256: entry.digest,
+            receipt: entry.verification,
+        })) {
+            throw new Error(`${entry.id} 1차 이미지 재개 증거가 올바르지 않습니다.`);
+        }
+        const response = await fetch(entry.url, {
+            signal: AbortSignal.timeout(120000),
+            redirect: "error",
+        });
+        if (!response.ok)
+            throw new Error(`${entry.id} 1차 이미지 재개 다운로드 실패 · HTTP ${response.status}`);
+        const bytes = await readResponseBodyBounded(response, maximumStudioSourceDownloadBytes, `${entry.id} 1차 재개 이미지`);
+        const completedMetadata = await sharp(bytes, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+        if (completedMetadata.format !== "png" || completedMetadata.width !== preset.width || completedMetadata.height !== preset.height) {
+            throw new Error(`${entry.id} 1차 이미지 재개 규격이 일치하지 않습니다.`);
+        }
+        const fingerprint = await fingerprintGeneratedShot(entry.id, bytes);
+        if (fingerprint.digest !== entry.digest
+            || !Buffer.from(fingerprint.visualHash).equals(Buffer.from(entry.verification.visualHash, "hex"))) {
+            throw new Error(`${entry.id} 1차 이미지 재개 bytes가 검수 증거와 일치하지 않습니다.`);
+        }
+        const duplicate = findDuplicateShot(fingerprint, existingShots);
+        if (duplicate)
+            throw new Error(`${entry.id} 1차 이미지 재개 자산이 ${duplicate.assetId}와 중복됩니다.`);
+        existingShots.push(fingerprint);
+        const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(studioResult));
+        const maskedBackground = await renderBackgroundWithMaskedZones(bytes, preset, [placement]);
+        const plateFile = join(jobDir, `.resume-background-${entry.id}.png`);
+        await writeFile(plateFile, maskedBackground, { flag: "wx", mode: 0o400 });
+        const backgroundFingerprint = await fingerprintGeneratedShot(`background:${entry.id}`, maskedBackground);
+        const settingShot = resolveProductSettingShot(studioResult, entry.id);
+        if (!settingShot)
+            throw new Error(`${entry.id} 1차 이미지 재개 장면 계획이 없습니다.`);
+        existingBackgroundShots.push({
+            ...backgroundFingerprint,
+            semanticAssetId: entry.id,
+            plateFile,
+            plateDigest: backgroundFingerprint.digest,
+            plateBytes: maskedBackground.length,
+            maskPlacements: [placement],
+        });
+        existingBackgroundProps.push({
+            assetId: entry.id,
+            propKeys: [resolveIdentityBackgroundContract(settingShot, entry.id).prop.key],
+        });
+    }
+    const identityCutouts = await prepareIdentityCutoutsForJob(
+        studioResult,
+        imageFiles,
+        jobDir,
+        null,
+        {
+            productName: payload.productFacts.name,
+            brandName: payload.productFacts.brandName,
+            manufacturer: payload.productFacts.manufacturer,
+        },
+    );
+    if (!identityCutouts) {
+        throw new Error("1차 생성 이미지에 사용할 보존 원본 상품 컷아웃을 확인하지 못했습니다.");
+    }
+    const specs = coreFirstDraftAssetIds.filter((assetId) => !completedIds.has(assetId)).map((assetId) => {
+        const spec = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+        if (!spec)
+            throw new Error(`${assetId} 1차 생성 이미지 규격이 없습니다.`);
+        return spec;
+    });
+    const retryStates = new Map(specs.map((preset) => [
+            preset.id,
+            createAssetGenerationRetryState(preset, null),
+        ]));
+    const verifiedAssets = [];
+    await runDeterministicProductImageBatches({
+        specs,
+        batchSize: 3,
+        maximumAttempts: MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+        getCommittedHistory: () => ({
+            shots: existingShots,
+            backgroundShots: existingBackgroundShots,
+            backgroundProps: existingBackgroundProps,
+        }),
+        generateCandidate: async ({ spec: preset, attempt, history, signal }) => {
+            const retryState = retryStates.get(preset.id);
+            if (!retryState)
+                throw new Error(`${preset.id} 1차 이미지 재시도 상태가 없습니다.`);
+            const outputFile = join(jobDir, preset.file);
+            const generated = await generateVerifiedFirstDraftCandidate({
+                result: studioResult,
+                outputFile,
+                preset,
+                imageFiles,
+                identityCutouts,
+                jobId: null,
+                claimToken: null,
+                leaseSignal: signal,
+                existingShots: [...history.shots],
+                existingBackgroundShots: [...history.backgroundShots],
+                existingBackgroundProps: history.backgroundProps.map((entry) => ({
+                    assetId: entry.assetId,
+                    propKeys: [...entry.propKeys],
+                })),
+                retryState,
+                startingAttempt: attempt,
+                maximumAttempt: MAXIMUM_SHOT_GENERATION_ATTEMPTS,
+            });
+            return {
+                status: "accepted",
+                attemptsUsed: generated.attempts - attempt + 1,
+                fingerprint: generated.fingerprint,
+                backgroundShot: generated.backgroundShot,
+                backgroundProps: generated.backgroundProps,
+                value: { generated, outputFile },
+            };
+        },
+        findPostGenerationConflict: ({ spec: preset, attempt, candidate, acceptedCandidates, signal }) => findProductImageBatchSemanticConflict({
+            result: studioResult,
+            preset,
+            attempt,
+            candidate,
+            acceptedCandidates,
+            jobId: null,
+            claimToken: null,
+            leaseSignal: signal,
+        }),
+        onBarrierRejected: async ({ spec: preset, attempt, candidate, conflict }) => {
+            const retryState = retryStates.get(preset.id);
+            if (!retryState)
+                throw new Error(`${preset.id} 1차 이미지 배치 재시도 상태가 없습니다.`);
+            await prepareProductImageBatchLoserRetry({
+                preset,
+                identityCutouts,
+                attempt,
+                candidate,
+                conflict,
+                retryState,
+                outputFile: candidate.value.outputFile,
+            });
+        },
+        onAttemptsExhausted: async ({ spec: preset, attempt, candidate, conflict, reason }) => {
+            const retryState = retryStates.get(preset.id);
+            if (!retryState)
+                throw new Error(`${preset.id} 1차 이미지 배치 종료 상태가 없습니다.`);
+            await throwProductImageBatchExhausted({
+                preset,
+                attempt,
+                candidate,
+                conflict,
+                retryState,
+                reason,
+            });
+        },
+        commitCandidate: async ({ spec: preset, candidate, signal }) => {
+            if (signal.aborted)
+                throw signal.reason instanceof Error ? signal.reason : new JobCancelledError();
+            const { generated } = candidate.value;
+            const evidence = generated.qualityEvidence;
+            if (!evidence?.sourceCompositeVerified
+                || !evidence.sourcePixelIdentityVerified
+                || !evidence.sceneSemanticVerified
+                || !evidence.duplicateVerified
+                || !/^[a-f0-9]{64}$/.test(evidence.sourceForegroundSha256 ?? "")) {
+                throw new Error(`${preset.id} 1차 이미지가 2차 공통 품질 검수 조건을 충족하지 못했습니다.`);
+            }
+            verifiedAssets.push({
+                id: preset.id,
+                bytes: generated.normalized,
+                verification: buildFirstDraftImageQualityReceipt({
+                    assetId: preset.id,
+                    productFacts: payload.productFacts,
+                    sourcePhotoSha256: payload.sourcePhotoSha256,
+                    sourceForegroundSha256: evidence.sourceForegroundSha256,
+                    outputSha256: candidate.fingerprint.digest,
+                    visualHash: candidate.fingerprint.visualHash,
+                    sourceCompositeVerified: evidence.sourceCompositeVerified,
+                    sourcePixelIdentityVerified: evidence.sourcePixelIdentityVerified,
+                    sceneSemanticVerified: evidence.sceneSemanticVerified,
+                    duplicateVerified: evidence.duplicateVerified,
+                }),
+            });
+            existingShots.push(candidate.fingerprint);
+            if (candidate.backgroundShot)
+                existingBackgroundShots.push(candidate.backgroundShot);
+            if (candidate.backgroundProps)
+                existingBackgroundProps.push(candidate.backgroundProps);
+        },
+    });
+    if (verifiedAssets.length !== specs.length) {
+        throw new Error("1차 생성 이미지 6장의 공통 품질 검수 결과가 완전하지 않습니다.");
+    }
+    return verifiedAssets;
+}
+async function loadReusableFirstDraftAssets(job, result, jobDir, leaseSignal) {
+    const sourceResearchJobId = typeof job.request?.firstDraftSourceResearchJobId === "string"
+        ? job.request.firstDraftSourceResearchJobId
+        : "";
+    const productFacts = firstDraftImageProductFactsSchema.safeParse(job.request?.firstDraftProductFacts);
+    const manifest = firstDraftImageQualityManifestSchema.safeParse(job.request?.firstDraftQualityManifest);
+    const sourcePhotoSha256 = typeof job.request?.firstDraftSourcePhotoSha256 === "string"
+        ? job.request.firstDraftSourcePhotoSha256
+        : "";
+    const entries = Array.isArray(job.request?.reusableFirstDraftAssets)
+        ? job.request.reusableFirstDraftAssets
+        : [];
+    if (!UUID_PATTERN.test(sourceResearchJobId)
+        || !productFacts.success || !manifest.success || !/^[a-f0-9]{64}$/.test(sourcePhotoSha256)
+        || entries.length !== coreFirstDraftAssetIds.length) {
+        return new Map();
+    }
+    const assetDigests = Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => [
+            assetId,
+            manifest.data.assets[assetId].digest,
+        ]));
+    if (!validateFirstDraftImageQualityManifest({
+        jobId: sourceResearchJobId,
+        productFacts: productFacts.data,
+        sourcePhotoSha256,
+        assetDigests,
+        manifest: manifest.data,
+    })
+        || !firstDraftImageFactsMatchStudioRequest(productFacts.data, job.request?.manualFields)
+        || !firstDraftImageFactsMatchStudioResult(productFacts.data, result)
+        || !firstDraftImageScenePlansMatchStudioResult(productFacts.data, result)) {
+        console.warn(`[1차 이미지 재사용 생략] ${job.id} · 원본 또는 상품 사실 버전 불일치`);
+        return new Map();
+    }
+    const entryById = new Map(entries.map((entry) => [entry?.id, entry]));
+    if (entryById.size !== coreFirstDraftAssetIds.length) {
+        throw new Error("재사용할 1차 이미지 역할이 중복되거나 불완전합니다.");
+    }
+    const reused = new Map();
+    const fingerprints = [];
+    for (const assetId of coreFirstDraftAssetIds) {
+        const entry = entryById.get(assetId);
+        const preset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
+        if (!preset || typeof entry?.signedUrl !== "string" || typeof entry?.path !== "string"
+            || entry.digest !== manifest.data.assets[assetId].digest) {
+            throw new Error(`${assetId} 1차 이미지 재사용 계약이 올바르지 않습니다.`);
+        }
+        const response = await fetch(entry.signedUrl, { signal: downloadSignal(leaseSignal) });
+        if (!response.ok)
+            throw new Error(`${assetId} 1차 이미지 재사용 다운로드 실패 · HTTP ${response.status}`);
+        const bytes = await readResponseBodyBounded(response, maximumStudioSourceDownloadBytes, `${assetId} 1차 재사용 이미지`);
+        const metadata = await sharp(bytes, { failOn: "warning", limitInputPixels: maximumStudioSourcePixels }).metadata();
+        if (metadata.format !== "png" || metadata.width !== preset.width || metadata.height !== preset.height) {
+            throw new Error(`${assetId} 1차 재사용 이미지 규격이 일치하지 않습니다.`);
+        }
+        const fingerprint = await fingerprintGeneratedShot(assetId, bytes);
+        const receipt = manifest.data.assets[assetId].verification;
+        if (fingerprint.digest !== entry.digest
+            || !Buffer.from(fingerprint.visualHash).equals(Buffer.from(receipt.visualHash, "hex"))) {
+            throw new Error(`${assetId} 1차 재사용 이미지가 검수 manifest와 일치하지 않습니다.`);
+        }
+        const duplicate = findDuplicateShot(fingerprint, fingerprints);
+        if (duplicate) {
+            throw new Error(`${assetId} 1차 재사용 이미지가 ${duplicate.assetId}와 중복됩니다.`);
+        }
+        fingerprints.push(fingerprint);
+        const placement = resolveProductIdentityPlacement(preset, resolveProductSceneIdentityText(result));
+        const maskedBackground = await renderBackgroundWithMaskedZones(bytes, preset, [placement]);
+        const plateFile = join(jobDir, `.reused-background-${assetId}.png`);
+        await writeFile(plateFile, maskedBackground, { flag: "wx", mode: 0o400 });
+        const backgroundFingerprint = await fingerprintGeneratedShot(`background:${assetId}`, maskedBackground);
+        const settingShot = resolveProductSettingShot(result, assetId);
+        if (!settingShot)
+            throw new Error(`${assetId} 1차 재사용 이미지의 장면 계약이 없습니다.`);
+        reused.set(assetId, {
+            bytes,
+            fingerprint,
+            backgroundShot: {
+                ...backgroundFingerprint,
+                semanticAssetId: assetId,
+                plateFile,
+                plateDigest: backgroundFingerprint.digest,
+                plateBytes: maskedBackground.length,
+                maskPlacements: [placement],
+            },
+            backgroundProps: {
+                assetId,
+                propKeys: [resolveIdentityBackgroundContract(settingShot, assetId).prop.key],
+            },
+        });
+    }
+    console.log(`[1차 이미지 재사용 검증] ${job.id} · ${reused.size}장 · 동일 원본·사실·장면 manifest`);
+    return reused;
 }
 function productImageBatchConflictAssetId(conflict) {
     return String(conflict?.assetId ?? "unknown").replace(/^background:/, "");
@@ -3239,7 +3631,14 @@ async function processJob(job) {
             leaseSignal: jobHeartbeat.signal,
         });
         const identityCutouts = await prepareIdentityCutoutsForJob(result, imageFiles, jobDir, jobHeartbeat.signal, job.request?.manualFields);
+        const reusableFirstDraftAssets = await loadReusableFirstDraftAssets(
+            job,
+            result,
+            jobDir,
+            jobHeartbeat.signal,
+        );
         const imagePresets = aiGeneratedAssetSpecs;
+        const remainingImagePresets = imagePresets.filter((preset) => !reusableFirstDraftAssets.has(preset.id));
         const uploads = Array.isArray(job.resultUploads) ? job.resultUploads : [];
         if (uploads.length !== imagePresets.length)
             throw new Error(`대표·썸네일·상세 이미지 ${imagePresets.length}종 업로드 정보가 없습니다.`);
@@ -3258,7 +3657,7 @@ async function processJob(job) {
                 throw new Error(`${preset.id} 업로드 정보가 없습니다.`);
             return [preset.id, upload];
         }));
-        const retryStates = new Map(imagePresets.map((preset) => [
+        const retryStates = new Map(remainingImagePresets.map((preset) => [
             preset.id,
             createAssetGenerationRetryState(preset, job.terminalImageFailureContext),
         ]));
@@ -3273,8 +3672,33 @@ async function processJob(job) {
             comparisonBackgroundShotsByAssetId.set(preset.id, prepared);
             return prepared;
         };
+        for (const assetId of coreFirstDraftAssetIds) {
+            const reused = reusableFirstDraftAssets.get(assetId);
+            if (!reused)
+                continue;
+            const upload = uploadsByAssetId.get(assetId);
+            if (!upload)
+                throw new Error(`${assetId} 재사용 이미지 업로드 정보가 없습니다.`);
+            await assertJobLeaseHealthy();
+            await uploadAiResultAsset({
+                resultStorageClient,
+                jobId: job.id,
+                claimToken,
+                assetId,
+                expectedPath: upload.path,
+                expectedBucket: upload.bucket,
+                imageBytes: reused.bytes,
+                assertLeaseHealthy: assertJobLeaseHealthy,
+            });
+            uploadedResultPaths.push(upload.path);
+            existingShots.push(reused.fingerprint);
+            existingBackgroundShots.push(reused.backgroundShot);
+            existingBackgroundProps.push(reused.backgroundProps);
+            assetStoragePaths[assetId] = upload.path;
+            console.log(`[1차 이미지 재사용 업로드] ${job.id} · ${assetId}`);
+        }
         await runDeterministicProductImageBatches({
-            specs: imagePresets,
+            specs: remainingImagePresets,
             signal: jobHeartbeat.signal,
             maximumAttempts: MAXIMUM_SHOT_GENERATION_ATTEMPTS,
             getCommittedHistory: () => ({
@@ -3387,7 +3811,7 @@ async function processJob(job) {
             },
         });
         if (existingShots.length !== imagePresets.length) {
-            throw new Error(`생성 이미지 ${imagePresets.length}종의 중복 검증 지문이 완전하지 않습니다.`);
+            throw new Error(`생성·재사용 이미지 ${imagePresets.length}종의 중복 검증 지문이 완전하지 않습니다.`);
         }
         await assertJobLeaseHealthy();
         await stopJobHeartbeat();

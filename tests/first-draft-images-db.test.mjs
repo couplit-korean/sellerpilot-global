@@ -300,6 +300,67 @@ test("first draft image queue fails closed for foreign, incomplete or finished j
   await db.close();
 });
 
+test("the active-claim read contract keeps missing, released, foreign-owner and done states indistinguishable from completion", async () => {
+  const db = await bootDatabase();
+  const otherWorkerTokenHash = "d".repeat(64);
+
+  const absent = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [workerTokenHash, jobId],
+  );
+  assert.equal(absent.result, null, "a row that was never enqueued is not authoritative completion evidence");
+
+  await setActor(db, ownerId);
+  await callJson(db, "select public.sellerpilot_enqueue_first_draft_image_request($1) as result", [jobId]);
+  await callJson(db, "select public.sellerpilot_service_claim_first_draft_image_request($1) as result", [workerTokenHash]);
+  const active = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [workerTokenHash, jobId],
+  );
+  assert.equal(active.result.status, "generating");
+
+  await callJson(db,
+    "select public.sellerpilot_service_release_first_draft_image_request($1, $2, $3) as result",
+    [workerTokenHash, jobId, "fixture release"],
+  );
+  const released = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [workerTokenHash, jobId],
+  );
+  assert.equal(released.result, null);
+
+  await db.query(
+    "insert into sellerpilot_private.ai_cli_worker_tokens (token_hash, scope) values ($1, 'ai')",
+    [otherWorkerTokenHash],
+  );
+  await callJson(db,
+    "select public.sellerpilot_service_claim_first_draft_image_request($1) as result",
+    [otherWorkerTokenHash],
+  );
+  const foreignOwner = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [workerTokenHash, jobId],
+  );
+  assert.equal(foreignOwner.result, null);
+  const otherActive = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [otherWorkerTokenHash, jobId],
+  );
+  assert.equal(otherActive.result.status, "generating");
+
+  await db.query(
+    "update sellerpilot_private.first_draft_image_requests set status = 'done', completed_at = now() where job_id = $1",
+    [jobId],
+  );
+  const done = await callJson(db,
+    "select public.sellerpilot_service_get_first_draft_image_request($1, $2) as result",
+    [otherWorkerTokenHash, jobId],
+  );
+  assert.equal(done.result, null, "done is also null, so null alone cannot prove which state occurred");
+
+  await db.close();
+});
+
 test("a failed generation attempt returns to the queue and stops retrying after three attempts", async () => {
   const db = await bootDatabase();
   await setActor(db, ownerId);

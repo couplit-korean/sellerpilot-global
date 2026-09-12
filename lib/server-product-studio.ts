@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
 import { createAbortableConcurrencyGate } from "./abortable-concurrency-gate";
+import { optimizePngWithSharp } from "./image-lossless-png-optimizer";
 import {
   inspectAiGatewayFailure,
   type AiGatewayFailureDiagnostic,
@@ -24,6 +25,13 @@ import {
   type AiGeneratedAssetId,
 } from "./ai-generated-assets";
 import { resolveProductSettingShot } from "./ai-image-planning";
+import {
+  firstDraftImageFactsMatchStudioResult,
+  firstDraftImageProductFactsSchema,
+  firstDraftImageQualityManifestSchema,
+  firstDraftImageScenePlansMatchStudioResult,
+  validateFirstDraftImageQualityManifest,
+} from "./first-draft-images";
 import {
   buildReviewedJapaneseFallbackTitle,
   reviewedJapaneseCommerceProductName,
@@ -261,6 +269,9 @@ const studioRequestSchema = studioSourceRequestSchema.extend({
   preflight_asset_storage_paths: exactCoreFirstDraftRecord(z.string().min(1).max(400)),
   preflight_asset_digests: exactCoreFirstDraftRecord(lowercaseSha256Schema),
   preflight_asset_audit_lineage: preflightAssetAuditLineageSchema,
+  first_draft_product_facts: firstDraftImageProductFactsSchema.optional(),
+  preflight_asset_quality_manifest: firstDraftImageQualityManifestSchema.optional(),
+  reuse_first_draft_assets: z.boolean().optional().default(true),
 }).superRefine((request, context) => {
   for (const assetId of coreFirstDraftAssetIds) {
     const expectedRole = assetId === "portrait" || assetId === "wide" ? "creative" : "detail";
@@ -1663,6 +1674,24 @@ async function restoreFirstDraftAssets(
   download: NonNullable<ServerProductStudioDependencies["download"]>,
   signal: AbortSignal,
 ) {
+  const hasQualityFacts = Boolean(request.first_draft_product_facts);
+  const hasQualityManifest = Boolean(request.preflight_asset_quality_manifest);
+  if (!hasQualityFacts && !hasQualityManifest) {
+    return new Map<AiGeneratedAssetId, ServerStudioAsset>();
+  }
+  if (hasQualityFacts !== hasQualityManifest) {
+    throw new ServerProductStudioError("preflight_asset_quality_incomplete", true);
+  }
+  if (request.first_draft_product_facts && request.preflight_asset_quality_manifest
+      && !validateFirstDraftImageQualityManifest({
+        jobId: request.source_research_job_id,
+        productFacts: request.first_draft_product_facts,
+        sourcePhotoSha256: request.source_photo_sha256,
+        assetDigests: request.preflight_asset_digests,
+        manifest: request.preflight_asset_quality_manifest,
+      })) {
+    throw new ServerProductStudioError("preflight_asset_quality_invalid", true);
+  }
   const restored = new Map<AiGeneratedAssetId, ServerStudioAsset>();
   const restoredDigests = new Set<string>();
   let sharedClaimToken = "";
@@ -2480,7 +2509,12 @@ async function generateCandidate(input: {
       failureDimension: serverStudioIdentityFailureDimensions(error)[0] ?? "identity:foreground",
     });
   }
-  const bytes = generated.bytes;
+  const compression = await optimizePngWithSharp(generated.bytes, 16_000_000).catch(() => {
+    throw new ServerProductStudioError("generated_asset_compression_failed", true, undefined, {
+      assetId: input.asset.id,
+    });
+  });
+  const bytes = compression.bytes;
   const auditSource = auditMode === "source-evidence"
     ? await buildServerImageAuditReference(input.asset, source, input.attempt)
     : source;
@@ -2781,7 +2815,7 @@ async function runFullStudioClaim(
       if (failure) throw failure.reason;
       return { cutout: mainSource.bytes, catalogFallbackSource: null, attemptedRoles: selected.map(effectiveStudioSourceRole), transientFallbackReason: null, transientFallbackDiagnostic: null };
     })() : resolveStudioCutout(sources, dependencies, signal, Boolean(reviewedFallbackFields)),
-    parsedRequest.mode === "preflight"
+    parsedRequest.mode === "preflight" && parsedRequest.data.reuse_first_draft_assets
       ? restoreFirstDraftAssets(parsedRequest.data, dependencies.download, signal)
       : Promise.resolve(new Map<AiGeneratedAssetId, ServerStudioAsset>()),
   ] as const);
@@ -2792,7 +2826,6 @@ async function runFullStudioClaim(
   if (masterSettlement.status === "rejected") throw masterSettlement.reason;
   if (cutoutSettlement.status === "rejected") throw cutoutSettlement.reason;
   const generated = restoredSettlement.value;
-  for (const [id, asset] of generated) asset.sourcePath = sourcePlan.get(id)?.path;
   const masterGeneration = masterSettlement.value;
   const cutoutResolution = cutoutSettlement.value;
   const gatewayFallbackDiagnostics: Array<{
@@ -2806,7 +2839,16 @@ async function runFullStudioClaim(
     });
   }
   const master = masterGeneration.master;
-  const finalSpecs = parsedRequest.mode === "preflight"
+  if (generated.size && parsedRequest.mode === "preflight") {
+    const facts = parsedRequest.data.first_draft_product_facts;
+    if (!facts
+        || !firstDraftImageFactsMatchStudioResult(facts, master)
+        || !firstDraftImageScenePlansMatchStudioResult(facts, master)) {
+      generated.clear();
+    }
+  }
+  for (const [id, asset] of generated) asset.sourcePath = sourcePlan.get(id)?.path;
+  const finalSpecs = parsedRequest.mode === "preflight" && generated.size === coreFirstDraftAssetIds.length
     ? remainingFinalAssetIds.map((assetId) => {
       const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
       if (!asset) throw new ServerProductStudioError("remaining_asset_contract_invalid", true);

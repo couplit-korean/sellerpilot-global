@@ -14,6 +14,10 @@ const schema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("complete"), ...identity, status: z.enum(["succeeded", "failed"]), result: supportReplyResultSchema.optional(), error: z.string().min(1).max(500).optional() }).strict(),
 ]);
 const claimSchema = z.object({ id: z.string().uuid(), claim_token: z.string().uuid(), request: supportReplyWorkerRequestSchema, attempt_count: z.number().int().min(1).max(3), lease_expires_at: z.string().datetime({ offset: true }) });
+function safeRpcErrorCode(error: unknown) {
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code ?? "") : "";
+  return /^[A-Za-z0-9_]{1,32}$/.test(code) ? code : "unknown";
+}
 export async function POST(request: Request) {
   const token = request.headers.get("authorization")?.match(/^Bearer (spw_[A-Za-z0-9_-]{20,})$/)?.[1];
   if (!token) return NextResponse.json({ message: "CS 작업자 인증이 필요합니다." }, { status: 401, headers });
@@ -29,8 +33,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ message: "CS 완료 결과와 상태가 일치하지 않습니다." }, { status: 400, headers });
   }
   const name = input.action === "claim" ? "sellerpilot_claim_cs_reply_draft" : input.action === "heartbeat" ? "sellerpilot_touch_cs_reply_draft" : "sellerpilot_complete_cs_reply_draft";
+  const startedAt = Date.now();
   const { data, error } = await client.rpc(name, input.action === "complete" ? { ...args, p_status: input.status, p_result: input.result ?? null, p_error: input.error ?? null } : args);
-  if (error) return NextResponse.json({ message: "CS 작업 원장 요청을 완료하지 못했습니다." }, { status: workerRpcErrorStatus(error), headers });
+  if (error) {
+    const status = workerRpcErrorStatus(error);
+    console.error("CS draft worker RPC failed", {
+      phase: input.action,
+      rpc: name,
+      code: safeRpcErrorCode(error),
+      status,
+      elapsedMs: Date.now() - startedAt,
+    });
+    return NextResponse.json({ message: "CS 작업 원장 요청을 완료하지 못했습니다." }, { status, headers });
+  }
   if (input.action === "claim") {
     if (data === null) return new NextResponse(null, { status: 204, headers });
     const claim = claimSchema.safeParse(data);

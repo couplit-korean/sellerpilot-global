@@ -455,7 +455,9 @@ test("a missing publication review RPC is reported even while other reads contin
   });
   assert.equal(response.status,200);
   assert.ok(calls.some((call) =>
-    call.name === "sellerpilot_service_escalate_smartstore_reply_v1"));
+    call.name === "sellerpilot_service_enqueue_periodic_sync"));
+  assert.ok(calls.some((call) =>
+    call.name === "sellerpilot_service_complete_serverless_cs_transaction"));
   assert.ok(calls.some((call) => call.name === "sellerpilot_service_enqueue_due_publication_reviews"));
   assert.deepEqual(logged[0],["publication_review_enqueue",{status:503,code:"PGRST202"}]);
 });
@@ -1805,7 +1807,10 @@ for (const safeReason of [
       const calls: Array<{ name: string; arguments_: Record<string, unknown> }> = [];
       const response = await runServerlessCsGatewayDrain(authorizedRequest(), {
         cronSecret: CRON_SECRET,
-        rpc: baseRpc(claim("qoo10", "listing.create"), calls),
+        // An existing listing exercises the generic write fence. A bare
+        // listing.create fixture fails the Qoo10 durable-fulfillment gate
+        // before any provider mutation can start.
+        rpc: baseRpc(qoo10ListingUpdateClaim(), calls),
         executeProvider: async ({ hooks }) => {
           if (mutationStarted) await hooks.beginProviderMutation();
           throw new Error(`${safeReason}:private provider diagnostic`);

@@ -26,6 +26,7 @@ import { channelOperationAvailable, channelOperationRelease } from "../lib/chann
 import { qoo10CatalogCode, qoo10ExpiryDate, qoo10PauseParams, qoo10ProductionPlaceFields, qoo10SellerCode } from "../lib/channels/qoo10";
 import { buildLocalizedBudgetedPlainDetail, buildLocalizedPlainDetail, buildLocalizedRichDetail, buildLocalizedSectionBulletPoints, detailAssetOrderForChannel, galleryAssetOrderForChannel, localizedImageSeo, localizedSeoKeywords, normalizedLocalizedDetailSections, type LocalizedCreativeListing, type LocalizedDetailSection, type LocalizedProductClassification } from "../lib/marketplace-localized-content";
 import { createClient } from "../lib/supabase/client";
+import { productRegistrationRequestIdentityContract } from "../lib/product-registration/credential-execution-binding";
 import { exactShopeeTargetFromPayload, fetchChannelTargets } from "./channel-target-client";
 import { evaluateShopeeSgRequirementSelection, serializeShopeeSgChannelPatches, shopeeSgChannelExecutionAllowed, ShopeeSgRequirementCandidateFields, type ShopeeSgRequirementLoadState, type ShopeeSgRequirementSelectionState } from "./_publishing/shopee/requirement-candidate-fields";
 import { CoupangCreateCompletenessFields, type CoupangCreateCompletenessValidation } from "./_publishing/coupang/create-completeness-fields";
@@ -2029,6 +2030,14 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       notify(`${channelCatalog[channel].name} 활성 키와 확정 카테고리를 확인해 주세요.`);
       return false;
     }
+    const requestCredentialVersion = Number.isSafeInteger(credential.version)
+      && Number(credential.version) > 0
+      ? Number(credential.version)
+      : undefined;
+    if (requestCredentialVersion === undefined) {
+      notify(`${channelCatalog[channel].name} 활성 키의 현재 버전을 확인하지 못해 상품 작업을 시작하지 않았습니다.`);
+      return false;
+    }
     const shopeeSgCredentialVersion = channel === "shopee"
       && operation === "listing.create"
       && target?.marketCode === "SG"
@@ -2116,9 +2125,11 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
       const accessToken = options.accessToken ?? (await waitForAbortablePromise(createClient().auth.getSession(), boundedWrite.signal)).data.session?.access_token;
       if (!accessToken) throw new Error("관리자 로그인이 필요합니다.");
       const mutationContract = {
+        requestIdentityContract: productRegistrationRequestIdentityContract,
         operation,
         publicationIntent,
-        ...(createCredentialVersion ? { credentialVersion: createCredentialVersion } : {}),
+        credentialId: credential.id,
+        credentialVersion: requestCredentialVersion,
         market: operationMarket || "default",
         targetId: target?.targetId ?? "",
         channelArguments,
@@ -2134,6 +2145,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           signal: boundedWrite.signal,
           body: JSON.stringify({
             credentialId: credential.id,
+            credentialVersion: requestCredentialVersion,
+            requestIdentityContract: productRegistrationRequestIdentityContract,
             listingId: listing.id,
             mutationId: await remoteEditMutationId(mutationContract),
             operation,
@@ -2147,7 +2160,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
           signal: boundedWrite.signal,
           body: JSON.stringify({
             credentialId: credential.id,
-            ...(createCredentialVersion ? { credentialVersion: createCredentialVersion } : {}),
+            credentialVersion: requestCredentialVersion,
+            requestIdentityContract: productRegistrationRequestIdentityContract,
             channel,
             operation,
             publicationIntent,
@@ -2413,6 +2427,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         signal: boundedWrite.signal,
         body: JSON.stringify({
           credentialId: credential.id,
+          credentialVersion: credential.version,
+          requestIdentityContract: productRegistrationRequestIdentityContract,
           channel: "qoo10",
           operation: "listing.stop",
           idempotencyKey: `listing-stop:${requestedProductId}:qoo10:${listing.id}:${listing.remoteId}:status-1`,
@@ -2530,6 +2546,8 @@ function ProductPublishWorkbenchSession({ productId, selectedChannels, refreshVe
         signal: boundedWrite.signal,
         body: JSON.stringify({
           credentialId: credential.id,
+          credentialVersion: credential.version,
+          requestIdentityContract: productRegistrationRequestIdentityContract,
           channel: "temu",
           operation: "listing.activate",
           idempotencyKey: `listing-activate:${requestedProductId}:temu:${listing.id}:${listing.remoteId}:${listing.operationAttemptId ?? "safe-test"}`,

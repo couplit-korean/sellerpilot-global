@@ -10,7 +10,7 @@ test('CS prompt keeps customer instructions inside escaped data and needs no pro
 test('Lost completion receipt retries identical payload without generating another draft',async()=>{
  let generated=0,attempts=0;const completions=[];
  await runCsDraftJob(job,{generate:async()=>{generated++;return result;},rpc:async body=>{
-  if(body.action==='heartbeat')return true;completions.push(body);if(++attempts===1)throw new Error('response lost');return {status:'replayed'};
+  if(body.action==='heartbeat')return true;completions.push(body);if(++attempts===1)throw new TypeError('fetch failed');return {status:'replayed'};
  }});
  assert.equal(generated,1);assert.equal(completions.length,2);assert.deepEqual(completions[0],completions[1]);
 });

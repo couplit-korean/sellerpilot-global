@@ -318,7 +318,7 @@ test("workbench advances retry generations but keeps queued and external-action 
   assert.match(workbench, /idempotencyKey: `listing:\$\{requestedProductId\}:\$\{channel\}:\$\{await fingerprint\(mutationContract\)\}`/);
   assert.match(workbench, /mutationId: await remoteEditMutationId\(mutationContract\)/);
   assert.match(workbench, /if \(!options\.deferRefresh && isCurrentProduct\(\)\) \{[\s\S]*await load\(\);[\s\S]*onChanged\?\.\(\);/);
-  assert.match(workbench, /createBoundedRequestSignal\([\s\S]*writeController\.signal[\s\S]*65_000/);
+  assert.match(workbench, /createBoundedRequestSignal\([\s\S]*writeController\.signal[\s\S]*65_?000/);
   assert.match(channelOperationsRoute, /sellerpilot_service_fail_pre_gateway_channel_operation/);
   assert.match(channelOperationsRoute, /if \(!preGatewayRetryable\) \{[\s\S]*sellerpilot_service_complete_channel_operation/);
   assert.match(preGatewayRetryMigration, /create or replace function public\.sellerpilot_301000_claim_channel_operation_pre_remote_state/);

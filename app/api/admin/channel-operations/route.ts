@@ -63,7 +63,7 @@ import {
 import { bindSmartstoreCreateCategoryAttributesFromServerSource, SmartstoreCreateCategorySourceError } from "../../../../lib/server-smartstore-category-attribute-binding";
 import { smartstoreContentRepairArgument, smartstoreContentRepairTransmissionArgument } from "../../../../lib/channels/smartstore-content-repair-contract";
 
-import { elevenstListingUpdateProjectionDigestInput, bindQoo10RollbackUpdateRecoveryArguments, listingUpdateRemoteIdentity, listingUpdateServerCandidate, prepareListingUpdateArguments, qoo10RollbackListingUpdateCandidate, qoo10RollbackUpdateRecoveryArgument, type ListingUpdateReference, type Qoo10RollbackUpdateRecoveryBinding } from "../../../../lib/channels/listing-update";
+import { elevenstListingUpdateProjectionDigestInput, bindQoo10RollbackUpdateRecoveryArguments, listingUpdateRemoteIdentity, listingUpdateServerCandidate, qoo10RollbackListingUpdateCandidate, qoo10RollbackUpdateRecoveryArgument, type ListingUpdateReference, type Qoo10RollbackUpdateRecoveryBinding } from "../../../../lib/channels/listing-update";
 
 import { applyListingRemediation } from "../../../../lib/channels/listing-remediation";
 import { listingOperationRequiresVerifiedRemoteState, listingOperationUsesPublicationIntent, listingExpectedPublicationLocale, listingPublicationIntentSchema, listingRemoteStateContractVersion, persistedListingPublicationReplay, verifiedListingPublicationResult } from "../../../../lib/channels/listing-publication-state";
@@ -85,6 +85,11 @@ import { bindTemuFinalCreatePayloadBeforeEnqueue } from "../../../../lib/product
 
 import { parseListingPublicationAssetBinding } from "../../../../lib/channels/listing-publication-content";
 import { supabasePublishableKey, supabaseUrl } from "../../../../lib/supabase/config";
+import {
+  productRegistrationCredentialBinding,
+  productRegistrationCredentialRequestIdentity,
+  productRegistrationRequestIdentityContract,
+} from "../../../../lib/product-registration/credential-execution-binding";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -125,6 +130,7 @@ function temuActivationAssetBindingMatchesApproved(
 const requestSchema = z.object({
   credentialId: z.string().uuid(),
   credentialVersion: z.number().int().positive().optional(),
+  requestIdentityContract: z.literal(productRegistrationRequestIdentityContract).optional(),
   channel: z.enum(["qoo10", "shopee", "lazada", "coupang", "elevenst", "smartstore", "ebay", "temu"]),
   operation: z.enum(channelOperationNames),
   publicationIntent: listingPublicationIntentSchema.optional(),
@@ -491,6 +497,33 @@ export async function POST(request: NextRequest) {
   if (!credentialMetadata || !("channel" in credentialMetadata) || credentialMetadata.channel !== channel || !("status" in credentialMetadata) || credentialMetadata.status !== "active") {
     return NextResponse.json({ message: "활성 키와 채널 정보가 일치하지 않습니다." }, { status: 409 });
   }
+  const credentialBindingResult = productRegistrationCredentialBinding({
+    metadata: credentialMetadata,
+    credentialId: parsed.data.credentialId,
+    channel,
+    ...(parsed.data.credentialVersion === undefined
+      ? {}
+      : { requestedVersion: parsed.data.credentialVersion }),
+  });
+  if (!credentialBindingResult.ok) {
+    const expired = credentialBindingResult.reason === "expired";
+    const revisionMismatch = credentialBindingResult.reason === "revision_mismatch";
+    return NextResponse.json({
+      message: expired
+        ? "선택한 판매채널 인증정보가 만료되어 상품 작업을 시작하지 않았습니다."
+        : revisionMismatch
+          ? "화면에서 확인한 판매채널 키 버전과 현재 활성 버전이 달라 상품 작업을 시작하지 않았습니다."
+          : "활성 판매채널 키의 실행 revision을 확인하지 못해 상품 작업을 시작하지 않았습니다.",
+      mode: expired
+        ? "credential_expired"
+        : revisionMismatch
+          ? "credential_version_mismatch"
+          : "credential_execution_binding_invalid",
+      providerWritePerformed: false,
+      jobCreated: false,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const credentialExecutionBinding = credentialBindingResult.binding;
 
   // ELEVENST_AUTHORITATIVE_SHIPPING_BEGIN
   // Shipping-only server metadata must not turn a legacy update into a new
@@ -2081,25 +2114,36 @@ export async function POST(request: NextRequest) {
 
   const baseFingerprintArguments = structuredClone(fingerprintArguments);
 
-  const baseRequestFingerprint = createHash("sha256")
-    .update(canonicalJson({
-      channel,
-      operation,
-      environment,
-      productId: parsed.data.productId ?? null,
-      resourceListingId: parsed.data.resourceListingId ?? null,
-      inventoryItemId: parsed.data.inventoryItemId ?? null,
-      orderId: parsed.data.orderId ?? null,
-      shipmentCarrier: parsed.data.shipmentCarrier ?? null,
-      shipmentTracking: parsed.data.shipmentTracking ?? null,
-      currency: effectiveCurrency ?? null,
-      price: effectivePrice ?? null,
-      market: parsed.data.market,
-      targetId: parsed.data.targetId,
-      arguments: baseFingerprintArguments,
-    }))
+  const legacyRequestIdentity = {
+    channel,
+    operation,
+    environment,
+    productId: parsed.data.productId ?? null,
+    resourceListingId: parsed.data.resourceListingId ?? null,
+    inventoryItemId: parsed.data.inventoryItemId ?? null,
+    orderId: parsed.data.orderId ?? null,
+    shipmentCarrier: parsed.data.shipmentCarrier ?? null,
+    shipmentTracking: parsed.data.shipmentTracking ?? null,
+    currency: effectiveCurrency ?? null,
+    price: effectivePrice ?? null,
+    market: parsed.data.market,
+    targetId: parsed.data.targetId,
+    arguments: baseFingerprintArguments,
+  };
+  // Requests accepted before the credential-bound identity rollout did not
+  // carry a contract marker. Recompute that exact historical fingerprint so
+  // the existing atomic claim can return the original attempt. Never probe a
+  // second fingerprint: claim may safely revive a pre-gateway attempt and is
+  // therefore not a read-only lookup.
+  const requestIdentity = parsed.data.requestIdentityContract === productRegistrationRequestIdentityContract
+    ? {
+      ...legacyRequestIdentity,
+      credential: productRegistrationCredentialRequestIdentity(credentialExecutionBinding),
+    }
+    : legacyRequestIdentity;
+  const requestFingerprint = createHash("sha256")
+    .update(canonicalJson(requestIdentity))
     .digest("hex");
-  const requestFingerprint = baseRequestFingerprint;
 
   if (channel === "temu" && operation === "listing.create") {
     try {
@@ -2344,7 +2388,12 @@ export async function POST(request: NextRequest) {
     p_request_fingerprint: requestFingerprint,
   });
   if (claimError || !claimData || typeof claimData !== "object" || Array.isArray(claimData)) {
-    return NextResponse.json({ message: "중복 방지 작업을 생성하지 못했습니다. 같은 키에 다른 요청을 사용했는지 확인해 주세요." }, { status: 409 });
+    return NextResponse.json({
+      message: "중복 방지 작업을 생성하지 못했습니다. 같은 키에 다른 요청을 사용했는지 확인해 주세요.",
+      mode: "channel_operation_claim_rejected",
+      providerWritePerformed: false,
+      jobCreated: false,
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
   const claim = claimData as Record<string, unknown>;
   const attemptId = typeof claim.attempt_id === "string" ? claim.attempt_id : "";

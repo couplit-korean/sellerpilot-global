@@ -46,6 +46,11 @@ import {
   studioMasterDetailImageRoleIssue,
   type StudioLocalizedTarget,
 } from "../lib/studio-segment-generation";
+import {
+  buildFirstDraftImageQualityManifest,
+  buildFirstDraftImageQualityReceipt,
+  type FirstDraftImageProductFacts,
+} from "../lib/first-draft-images";
 
 const MASTER_SECTION_TYPES = [
   "benefit", "story", "howto", "proof", "spec", "caution", "comparison", "faq", "notice",
@@ -141,7 +146,13 @@ function localizedPhrase(locale: string) {
   return "Verified product information";
 }
 
-function localizedListing(target: StudioLocalizedTarget) {
+function localizedListing(
+  target: StudioLocalizedTarget,
+  classificationState = {
+    verificationStatus: "verified" as const,
+    isHealthFunctionalFood: false as boolean | null,
+  },
+) {
   const phrase = localizedPhrase(target.locale);
   const repeated = Array.from({ length: 6 }, () => phrase).join(". ");
   return {
@@ -153,9 +164,8 @@ function localizedListing(target: StudioLocalizedTarget) {
     thumbnailAltText: `${phrase} ${target.market}`,
     classification: {
       displayName: `${phrase} category`,
-      verificationStatus: "verified" as const,
       evidence: `${phrase}. ${phrase}. Seller evidence.`,
-      isHealthFunctionalFood: false,
+      ...classificationState,
     },
     detailSections: LOCALIZED_SECTION_TYPES.map((type, index) => ({
       type,
@@ -372,6 +382,7 @@ async function firstDraftPreflightFixture(
   sourcePhotoSha256: string,
   overrides: Partial<Record<(typeof coreFirstDraftAssetIds)[number], Uint8Array>> = {},
   auditMode: "segmented-source-composite" | "source-photo-catalog" = "segmented-source-composite",
+  productFacts?: FirstDraftImageProductFacts,
 ) {
   const paths: Record<string, string> = {};
   const digests: Record<string, string> = {};
@@ -382,6 +393,7 @@ async function firstDraftPreflightFixture(
     sourceRole: string;
   }> = {};
   const bytesByPath = new Map<string, Uint8Array>();
+  const verifiedAssets: Record<string, Record<string, unknown>> = {};
   for (const [index, assetId] of coreFirstDraftAssetIds.entries()) {
     const asset = aiGeneratedAssetSpecs.find((candidate) => candidate.id === assetId);
     assert.ok(asset);
@@ -402,8 +414,39 @@ async function firstDraftPreflightFixture(
       auditMode,
       sourceRole: "main",
     };
+    if (productFacts) {
+      verifiedAssets[assetId] = {
+        id: assetId,
+        path,
+        digest,
+        bytes: bytes.byteLength,
+        width: asset.width,
+        height: asset.height,
+        verification: buildFirstDraftImageQualityReceipt({
+          assetId,
+          productFacts,
+          sourcePhotoSha256,
+          sourceForegroundSha256: "e".repeat(64),
+          outputSha256: digest,
+          visualHash: createHash("sha256").update(`quality:${assetId}:${index}`).digest(),
+          sourceCompositeVerified: true,
+          sourcePixelIdentityVerified: true,
+          sceneSemanticVerified: true,
+          duplicateVerified: true,
+        }),
+      };
+    }
     bytesByPath.set(path, new Uint8Array(bytes));
   }
+  const qualityManifest = productFacts
+    ? buildFirstDraftImageQualityManifest({
+      jobId: researchJobId,
+      productFacts,
+      sourcePhotoSha256,
+      verifiedAssets,
+    })
+    : null;
+  if (productFacts) assert.ok(qualityManifest);
   return {
     request: {
       source_research_job_id: researchJobId,
@@ -412,8 +455,42 @@ async function firstDraftPreflightFixture(
       preflight_asset_storage_paths: paths,
       preflight_asset_digests: digests,
       preflight_asset_audit_lineage: lineage,
+      ...(productFacts && qualityManifest ? {
+        first_draft_product_facts: productFacts,
+        preflight_asset_quality_manifest: qualityManifest,
+      } : {}),
     },
     bytesByPath,
+  };
+}
+
+function firstDraftFactsForMaster(
+  master: ReturnType<typeof buildReviewedServerStudioFallbackMaster> | ReturnType<typeof testMasterResult>,
+  fields: Partial<ReturnType<typeof reviewedFallbackManualFields>> = {},
+): FirstDraftImageProductFacts {
+  return {
+    schemaVersion: 1,
+    name: master.product.name,
+    category: master.product.category,
+    brandName: fields.brandName ?? null,
+    manufacturer: fields.manufacturer ?? null,
+    countryOfOrigin: fields.countryOfOrigin ?? null,
+    material: fields.material ?? null,
+    packageContents: fields.packageContents ?? null,
+    description: fields.description ?? "Seller-reviewed product facts used by the first-draft fixture.",
+    summary: fields.description ?? "Seller-reviewed product facts used by the first-draft fixture.",
+    oneLine: master.product.oneLine,
+    targetCustomer: master.product.targetCustomer,
+    features: [...master.product.features],
+    usage: [],
+    cautions: [...master.product.cautions],
+    specifications: [],
+    classification: {
+      displayName: master.product.classification.displayName,
+      verificationStatus: "needs-review",
+      evidence: master.product.classification.evidence,
+      isHealthFunctionalFood: null,
+    },
   };
 }
 
@@ -461,12 +538,16 @@ async function runReviewedTransientPipelineFixture(options: {
   const normalizedBackPath = `${userId}/${jobId}/input/002.jpg`;
   const originalBackPath = `${userId}/${jobId}/original/002.source`;
   const sourceDigest = createHash("sha256").update(sourceBytes).digest("hex");
+  const preflightSourceDigest = options.sourcePhotoHashMismatch ? "0".repeat(64) : sourceDigest;
+  const reviewedMaster = buildReviewedServerStudioFallbackMaster(manual);
+  const productFacts = firstDraftFactsForMaster(reviewedMaster, manual);
   const preflight = await firstDraftPreflightFixture(
     researchJobId,
     researchClaimToken,
-    sourceDigest,
+    preflightSourceDigest,
     {},
     options.preflightAuditMode ?? "segmented-source-composite",
+    productFacts,
   );
   if (options.duplicatePreflightAsset) {
     const sourceAssetId = "detail-overview" as const;
@@ -479,9 +560,23 @@ async function runReviewedTransientPipelineFixture(options: {
     preflight.bytesByPath.set(duplicatePath, duplicateBytes);
     preflight.request.preflight_asset_digests[duplicateAssetId] = digest;
     preflight.request.preflight_asset_audit_lineage[duplicateAssetId].digest = digest;
-  }
-  if (options.sourcePhotoHashMismatch) {
-    preflight.request.source_photo_sha256 = "0".repeat(64);
+    const qualityManifest = preflight.request.preflight_asset_quality_manifest;
+    assert.ok(qualityManifest);
+    qualityManifest.assets[duplicateAssetId] = {
+      digest,
+      verification: buildFirstDraftImageQualityReceipt({
+        assetId: duplicateAssetId,
+        productFacts,
+        sourcePhotoSha256: preflightSourceDigest,
+        sourceForegroundSha256: "e".repeat(64),
+        outputSha256: digest,
+        visualHash: createHash("sha256").update(`quality:${duplicateAssetId}:duplicate`).digest(),
+        sourceCompositeVerified: true,
+        sourcePixelIdentityVerified: true,
+        sceneSemanticVerified: true,
+        duplicateVerified: true,
+      }),
+    };
   }
   const corruptAsset = options.corruptPreflightAssetId
     ? aiGeneratedAssetSpecs.find((asset) => asset.id === options.corruptPreflightAssetId)
@@ -1802,15 +1897,38 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       ],
     }],
   };
+  const baseIntegrationMaster = testMasterResult();
+  const integrationMaster = {
+    ...baseIntegrationMaster,
+    product: {
+      ...baseIntegrationMaster.product,
+      classification: {
+        displayName: "Desk organization product",
+        verificationStatus: "needs-review" as const,
+        evidence: "The seller source visibly confirms one portable organizer product and leaves classification pending review.",
+        isHealthFunctionalFood: null,
+      },
+    },
+  };
+  const integrationFacts = firstDraftFactsForMaster(integrationMaster);
   const preflight = await firstDraftPreflightFixture(
     researchJobId,
     researchClaimToken,
     createHash("sha256").update(sourceBytes).digest("hex"),
+    {},
+    "segmented-source-composite",
+    integrationFacts,
   );
   const localizedChunks = planStudioLocalizedChunks(4);
   const terminalFixture = cliStudioResultSchema.safeParse({
-    ...testMasterResult(),
-    localizedListings: localizedChunks.flat().map(localizedListing),
+    ...integrationMaster,
+    localizedListings: localizedChunks.flat().map((target) => localizedListing(
+      target,
+      {
+        verificationStatus: integrationMaster.product.classification.verificationStatus,
+        isHealthFunctionalFood: integrationMaster.product.classification.isHealthFunctionalFood,
+      },
+    )),
   });
   if (!terminalFixture.success) assert.fail(JSON.stringify(terminalFixture.error.issues, null, 2));
   const backgroundCalls: Array<{
@@ -1912,7 +2030,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
         if (masterAttempts === 1) {
           throw new ServerProductStudioError("gateway_result_invalid");
         }
-        const repeatedMetadata = testMasterResult();
+        const repeatedMetadata = structuredClone(integrationMaster);
         repeatedMetadata.design.creativeStrategy.targetSectionCount = 20;
         repeatedMetadata.design.sections = repeatedMetadata.design.sections.map((section, index) => ({
           ...section,
@@ -1927,7 +2045,15 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       const chunkIndex = Number(chunkTag.slice("chunk:".length)) - 1;
       const targets = localizedChunks[chunkIndex];
       assert.ok(targets);
-      return input.schema.parse({ localizedListings: targets.map(localizedListing) });
+      return input.schema.parse({
+        localizedListings: targets.map((target) => localizedListing(
+          target,
+          {
+            verificationStatus: integrationMaster.product.classification.verificationStatus,
+            isHealthFunctionalFood: integrationMaster.product.classification.isHealthFunctionalFood,
+          },
+        )),
+      });
     },
     segmentSource: async () => ({ segmentation: validSegmentation, segmentationSource: sourceBytes }),
     generateBackground: async ({ asset, prompt, references }) => {

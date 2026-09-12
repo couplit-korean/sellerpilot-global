@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   aiGeneratedAssetPath,
@@ -12,11 +11,17 @@ import { buildAssetImagePrompt } from "../lib/ai-image-planning";
 import {
   buildFirstDraftImageEnqueuePayload,
   buildFirstDraftImageLineageUpdate,
+  buildFirstDraftImageQualityManifest,
+  buildFirstDraftImageQualityReceipt,
   buildFirstDraftStudioResult,
   firstDraftImageAssetSpec,
   firstDraftImageEnqueuePayloadSchema,
+  firstDraftImageQualityManifestPath,
+  isExactFirstDraftImageReplay,
   firstDraftImageSubmissionSchema,
   firstDraftImageWorkerPostSchema,
+  validateFirstDraftImageQualityManifest,
+  type FirstDraftImageProductFacts,
 } from "../lib/first-draft-images";
 import { productResearchInputSha256 } from "../lib/product-research-lineage-receipt-core";
 import { validateSucceededProductResearchPreflight } from "../lib/product-studio-lineage";
@@ -116,6 +121,27 @@ function digestsFor() {
   ])) as Record<string, string>;
 }
 
+function qualityReceiptFor(
+  assetId: (typeof coreFirstDraftAssetIds)[number],
+  productFacts: FirstDraftImageProductFacts,
+  sourceSha256: string,
+  bytes: Uint8Array,
+  visualByte = coreFirstDraftAssetIds.indexOf(assetId) + 1,
+) {
+  return buildFirstDraftImageQualityReceipt({
+    assetId,
+    productFacts,
+    sourcePhotoSha256: sourceSha256,
+    sourceForegroundSha256: createHash("sha256").update(`foreground-${assetId}`).digest("hex"),
+    outputSha256: createHash("sha256").update(bytes).digest("hex"),
+    visualHash: createHash("sha256").update(`visual-${assetId}-${visualByte}`).digest(),
+    sourceCompositeVerified: true,
+    sourcePixelIdentityVerified: true,
+    sceneSemanticVerified: true,
+    duplicateVerified: true,
+  });
+}
+
 test("degraded research job resolves the source original, six canonical paths and product facts", () => {
   const resolved = buildFirstDraftImageEnqueuePayload({
     jobId,
@@ -183,33 +209,68 @@ test("enqueue rejects a preserved original path that is not the canonical source
 });
 
 test("submission contract accepts one..six verified assets and rejects duplicates or unknown ids", () => {
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const facts = resolved.payload.productFacts;
+  const bytes = Buffer.from("test-png");
+  const asset = (id: (typeof coreFirstDraftAssetIds)[number]) => ({
+    id,
+    pngBase64: bytes.toString("base64"),
+    verification: qualityReceiptFor(id, facts, sourcePhotoSha256, bytes),
+  });
   const one = firstDraftImageSubmissionSchema.safeParse({
     jobId,
-    assets: [{ id: "portrait", pngBase64: "AAAA" }],
+    assets: [asset("portrait")],
   });
   assert.equal(one.success, true);
   const six = firstDraftImageSubmissionSchema.safeParse({
     jobId,
-    assets: coreFirstDraftAssetIds.map((id) => ({ id, pngBase64: "AAAA" })),
+    assets: coreFirstDraftAssetIds.map(asset),
   });
   assert.equal(six.success, true);
   assert.equal(firstDraftImageSubmissionSchema.safeParse({
     jobId,
     assets: [
-      { id: "portrait", pngBase64: "AAAA" },
-      { id: "portrait", pngBase64: "BBBB" },
+      asset("portrait"),
+      { ...asset("portrait"), pngBase64: "BBBB" },
     ],
   }).success, false);
   assert.equal(firstDraftImageSubmissionSchema.safeParse({
     jobId,
-    assets: [{ id: "hero", pngBase64: "AAAA" }],
+    assets: [{ ...asset("portrait"), id: "hero" }],
   }).success, false);
   assert.equal(firstDraftImageSubmissionSchema.safeParse({
     jobId,
-    assets: [{ id: "portrait", pngBase64: "AAAA", path: "results/x" }],
+    assets: [{ ...asset("portrait"), path: "results/x" }],
+  }).success, false);
+  assert.equal(firstDraftImageSubmissionSchema.safeParse({
+    jobId,
+    assets: [{ id: "portrait", pngBase64: "AAAA" }],
   }).success, false);
   const failure = firstDraftImageWorkerPostSchema.safeParse({ jobId, failed: true, reason: "codex-timeout" });
   assert.equal(failure.success, true);
+});
+
+test("same-role replay is exact while changed bytes cannot overwrite the recorded role", () => {
+  const facts = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(facts.ok, true);
+  if (!facts.ok) return;
+  const bytes = Buffer.from("same-role-replay");
+  const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === "portrait")!;
+  const entry = {
+    id: "portrait" as const,
+    path: aiGeneratedAssetPath(jobId, spec, claimToken),
+    digest: createHash("sha256").update(bytes).digest("hex"),
+    bytes: bytes.length,
+    width: spec.width,
+    height: spec.height,
+    verification: qualityReceiptFor("portrait", facts.payload.productFacts, sourcePhotoSha256, bytes),
+  };
+  assert.equal(isExactFirstDraftImageReplay(entry, structuredClone(entry)), true);
+  assert.equal(isExactFirstDraftImageReplay(entry, { ...entry, bytes: entry.bytes + 1 }), false);
+  assert.equal(isExactFirstDraftImageReplay(entry, { ...entry, digest: "f".repeat(64) }), false);
+  assert.equal(isExactFirstDraftImageReplay(entry, { ...entry, id: "wide" }), false);
 });
 
 test("lineage adoption rewrites only digests and audit mode, and stays readable by the recovery contract", () => {
@@ -287,6 +348,57 @@ test("lineage adoption fails closed on partial, duplicated, malformed or already
   }), { ok: false, reason: "result_invalid" });
 });
 
+test("quality manifest is claim-scoped and rejects stale or duplicated lineage", () => {
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const verifiedAssets = Object.fromEntries(coreFirstDraftAssetIds.map((assetId, index) => {
+    const bytes = Buffer.from(`quality-manifest-${assetId}`);
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    return [assetId, {
+      id: assetId,
+      digest,
+      verification: qualityReceiptFor(
+        assetId,
+        resolved.payload.productFacts,
+        sourcePhotoSha256,
+        bytes,
+        index + 1,
+      ),
+    }];
+  }));
+  const manifest = buildFirstDraftImageQualityManifest({
+    jobId,
+    productFacts: resolved.payload.productFacts,
+    sourcePhotoSha256,
+    verifiedAssets,
+  });
+  assert.ok(manifest);
+  const paths = Object.fromEntries(resolved.payload.assets.map((asset) => [asset.id, asset.path])) as Record<(typeof coreFirstDraftAssetIds)[number], string>;
+  assert.equal(
+    firstDraftImageQualityManifestPath(jobId, paths),
+    `results/${jobId}/claims/${claimToken}/first-draft-quality-v1.json`,
+  );
+  const assetDigests = Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => [
+    assetId,
+    verifiedAssets[assetId].digest,
+  ])) as Record<(typeof coreFirstDraftAssetIds)[number], string>;
+  assert.equal(validateFirstDraftImageQualityManifest({
+    jobId,
+    productFacts: resolved.payload.productFacts,
+    sourcePhotoSha256,
+    assetDigests,
+    manifest,
+  }), true);
+  assert.equal(validateFirstDraftImageQualityManifest({
+    jobId,
+    productFacts: resolved.payload.productFacts,
+    sourcePhotoSha256,
+    assetDigests: { ...assetDigests, wide: assetDigests.portrait },
+    manifest,
+  }), false);
+});
+
 test("the six first-draft assets are planned with the shared detail-page prompt pipeline", () => {
   const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
   assert.equal(resolved.ok, true);
@@ -305,16 +417,20 @@ test("the six first-draft assets are planned with the shared detail-page prompt 
 });
 
 test("the Mac lane draws and submits the six assets without a network or a real codex call", async () => {
+  const laneSource = Buffer.from("authoritative-source-photo");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
   const payload = {
     jobId,
     sourcePath: `${ownerId}/${jobId}/original/001.source`,
-    sourcePhotoSha256,
+    sourcePhotoSha256: laneSourceSha256,
     sourceUrl: "https://signed.example.com/source",
     assets: coreFirstDraftAssetIds.map((assetId) => {
       const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)!;
       return { id: assetId, path: aiGeneratedAssetPath(jobId, spec, claimToken) };
     }),
     completedAssets: [],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1",
     productFacts: (() => {
       const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
       assert.equal(resolved.ok, true);
@@ -322,12 +438,8 @@ test("the Mac lane draws and submits the six assets without a network or a real 
       return resolved.payload.productFacts;
     })(),
   };
-  const posted: Array<{ jobId: string; assets: Array<{ id: string; pngBase64: string }> }> = [];
-  const codexStages: string[] = [];
-  const outputFiles = coreFirstDraftAssetIds.map(
-    (assetId) => aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)!.file,
-  );
-  let generatedCount = 0;
+  const posted: Array<{ jobId: string; assets: Array<{ id: string; path: string; digest: string; verification: unknown }> }> = [];
+  const uploaded: string[] = [];
   const result = await runFirstDraftImageLaneOnce({
     api: async (path, init = {}) => {
       if (init.method !== "POST") {
@@ -335,39 +447,37 @@ test("the Mac lane draws and submits the six assets without a network or a real 
       }
       const body = JSON.parse(String(init.body ?? "{}"));
       posted.push(body);
-      generatedCount += 1;
-      return new Response(JSON.stringify({
-        ok: true,
-        status: generatedCount === coreFirstDraftAssetIds.length ? "done" : "recorded",
-      }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, status: posted.length === 6 ? "done" : "recorded" }), { status: 200 });
     },
-    fetchSource: async () => Buffer.from("authoritative-source-photo"),
-    runCodex: async (args) => {
-      const prompt = String(args[args.length - 1]);
-      codexStages.push(args[args.indexOf("--cd") + 1]);
-      assert.match(prompt, /Series slot/);
-      assert.match(prompt, /1차 자동생성 이미지|테스트 단백질 파우더/);
-      const outputFile = join(args[args.indexOf("--cd") + 1], outputFiles.shift()!);
-      await writeFile(outputFile, Buffer.from("generated-png-bytes"));
+    uploadVerifiedAsset: async ({ asset }) => {
+      uploaded.push(asset.id);
+      return { status: "uploaded" };
     },
-    normalizeGeneratedAsset: async (outputFile, spec) => {
-      const bytes = await readFile(outputFile);
-      assert.equal(spec.width > 0 && spec.height > 0, true);
-      return bytes;
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ payload: claimedPayload, studioResult, sourceFile }) => {
+      assert.equal(claimedPayload.sourcePhotoSha256, laneSourceSha256);
+      assert.match(studioResult.design.themeName, /1차 자동생성 이미지/);
+      assert.deepEqual(await readFile(sourceFile), laneSource);
+      return coreFirstDraftAssetIds.map((id, index) => {
+        const bytes = Buffer.from(`generated-png-bytes-${id}`);
+        return {
+          id,
+          bytes,
+          verification: qualityReceiptFor(id, claimedPayload.productFacts, laneSourceSha256, bytes, index + 1),
+        };
+      });
     },
-    buildCodexImageArgs: ({ spec, outputFile, sourceFile, jobDir, prompt }) => ([
-      "exec", "--model", "stub-model", "--enable", "image_generation", "--sandbox", "workspace-write",
-      "--skip-git-repo-check", "--ephemeral", "--cd", jobDir, `--image=${sourceFile}`, prompt.replace(String(outputFile), `${jobDir}/${spec.file}`),
-    ]),
     log: () => undefined,
     logError: () => undefined,
   });
 
   assert.equal(result.status, "done");
   assert.equal(posted.length, 6);
-  assert.equal(new Set(posted.map((body) => body.assets[0]!.id)).size, 6);
-  assert.equal(codexStages.length, 6);
-  assert.equal(codexStages.every((dir) => Boolean(dir)), true);
+  assert.equal(posted.every((body) => body.assets.length === 1), true);
+  assert.equal(new Set(posted.flatMap((body) => body.assets.map((asset) => asset.id))).size, 6);
+  assert.equal(posted.every((body) => Boolean(body.assets[0]?.verification)), true);
+  assert.equal(posted.every((body) => Buffer.byteLength(JSON.stringify(body)) < 256 * 1024), true);
+  assert.deepEqual(uploaded, [...coreFirstDraftAssetIds]);
   assert.equal(posted.every((body) => body.jobId === jobId), true);
 });
 
@@ -380,16 +490,20 @@ test("the Mac lane skips already-verified assets and reports failures instead of
   });
   assert.deepEqual(idle, { status: "idle" });
 
+  const laneSource = Buffer.from("authoritative-source-photo");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
   const payload = {
     jobId,
     sourcePath: `${ownerId}/${jobId}/original/001.source`,
-    sourcePhotoSha256,
+    sourcePhotoSha256: laneSourceSha256,
     sourceUrl: "https://signed.example.com/source",
     assets: coreFirstDraftAssetIds.map((assetId) => {
       const spec = aiGeneratedAssetSpecs.find((asset) => asset.id === assetId)!;
       return { id: assetId, path: aiGeneratedAssetPath(jobId, spec, claimToken) };
     }),
     completedAssets: ["portrait", "wide"],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1",
     productFacts: (() => {
       const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
       if (!resolved.ok) throw new Error("unreachable");
@@ -407,12 +521,11 @@ test("the Mac lane skips already-verified assets and reports failures instead of
       }
       throw new Error("generation must fail before any submission");
     },
-    fetchSource: async () => Buffer.from("authoritative-source-photo"),
-    runCodex: async () => {
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async () => {
       throw new Error("codex 이미지 생성 실패");
     },
-    normalizeGeneratedAsset: async () => Buffer.from("unused"),
-    buildCodexImageArgs: () => [],
+    uploadVerifiedAsset: async () => ({ status: "uploaded" }),
     log: () => undefined,
     logError: () => undefined,
   });
@@ -431,4 +544,189 @@ test("Codex usage-limit errors wait until the stated resume time instead of look
   assert.equal(waitMs > 40 * 60 * 1000, true);
   assert.equal(waitMs < 55 * 60 * 1000, true);
   assert.equal(firstDraftUsageLimitWaitMs("codex 이미지 생성 실패", now), 0);
+});
+
+test("a failed verified batch settles sibling work before release and temporary cleanup", async () => {
+  const laneSource = Buffer.from("resource-lifetime-source");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const payload = {
+    ...resolved.payload,
+    sourcePhotoSha256: laneSourceSha256,
+    sourceUrl: "https://signed.example.com/source",
+    completedAssets: [],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1",
+  };
+  let siblingSettled = false;
+  let releasedAfterSibling = false;
+  let capturedJobDir = "";
+  const outcome = await runFirstDraftImageLaneOnce({
+    api: async (_path, init = {}) => {
+      if (init.method !== "POST") return new Response(JSON.stringify(payload), { status: 200 });
+      const body = JSON.parse(String(init.body ?? "{}"));
+      assert.equal(body.failed, true);
+      releasedAfterSibling = siblingSettled;
+      return new Response(JSON.stringify({ ok: true, status: "released" }), { status: 200 });
+    },
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ jobDir }) => {
+      capturedJobDir = jobDir;
+      const settlements = await Promise.allSettled([
+        Promise.reject(new Error("portrait hard failure")),
+        new Promise<void>((resolve) => setTimeout(() => {
+          siblingSettled = true;
+          resolve();
+        }, 20)),
+      ]);
+      const failure = settlements.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
+      throw failure?.reason ?? new Error("expected failure");
+    },
+    uploadVerifiedAsset: async () => ({ status: "uploaded" }),
+    log: () => undefined,
+    logError: () => undefined,
+  });
+  assert.equal(outcome.status, "failed");
+  assert.equal(releasedAfterSibling, true);
+  await assert.rejects(access(capturedJobDir));
+});
+
+test("a lost response after a one-asset metadata submission preserves remote state for exact replay", async () => {
+  const laneSource = Buffer.from("completion-uncertain-source");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const payload = {
+    ...resolved.payload,
+    sourcePhotoSha256: laneSourceSha256,
+    sourceUrl: "https://signed.example.com/source",
+    completedAssets: [],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1",
+  };
+  let metadataPosts = 0;
+  const outcome = await runFirstDraftImageLaneOnce({
+    api: async (_path, init = {}) => {
+      if (init.method !== "POST") return new Response(JSON.stringify(payload), { status: 200 });
+      metadataPosts += 1;
+      throw new Error("response lost after commit");
+    },
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ payload: claimedPayload }) => coreFirstDraftAssetIds.map((id, index) => {
+      const bytes = Buffer.from(`uncertain-${id}`);
+      return {
+        id,
+        bytes,
+        verification: qualityReceiptFor(id, claimedPayload.productFacts, laneSourceSha256, bytes, index + 1),
+      };
+    }),
+    uploadVerifiedAsset: async () => ({ status: "uploaded" }),
+    log: () => undefined,
+    logError: () => undefined,
+  });
+  assert.equal(outcome.status, "completion-uncertain");
+  assert.equal(metadataPosts, 2);
+});
+
+test("an authoritative-read gap after metadata submission preserves the claim without regeneration", async () => {
+  const laneSource = Buffer.from("completion-uncertain-conflict-source");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const payload = {
+    ...resolved.payload,
+    sourcePhotoSha256: laneSourceSha256,
+    sourceUrl: "https://signed.example.com/source",
+    completedAssets: [],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1" as const,
+  };
+  let metadataPosts = 0;
+  let releasePosts = 0;
+  let generationCalls = 0;
+  const outcome = await runFirstDraftImageLaneOnce({
+    api: async (_path, init = {}) => {
+      if (init.method !== "POST") return new Response(JSON.stringify(payload), { status: 200 });
+      const body = JSON.parse(String(init.body ?? "{}"));
+      if (body.failed === true) {
+        releasePosts += 1;
+        return new Response(JSON.stringify({ ok: true, status: "released" }), { status: 200 });
+      }
+      metadataPosts += 1;
+      return new Response(JSON.stringify({
+        ok: false,
+        status: "completion-uncertain",
+        code: "FIRST_DRAFT_COMPLETION_UNCERTAIN",
+        message: "DB commit state is not visible to the active-claim read contract",
+      }), { status: 409 });
+    },
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ payload: claimedPayload }) => {
+      generationCalls += 1;
+      return coreFirstDraftAssetIds.map((id, index) => {
+        const bytes = Buffer.from(`uncertain-conflict-${id}`);
+        return {
+          id,
+          bytes,
+          verification: qualityReceiptFor(id, claimedPayload.productFacts, laneSourceSha256, bytes, index + 1),
+        };
+      });
+    },
+    uploadVerifiedAsset: async () => ({ status: "uploaded" }),
+    log: () => undefined,
+    logError: () => undefined,
+  });
+  assert.equal(outcome.status, "completion-uncertain");
+  assert.equal(generationCalls, 1);
+  assert.equal(metadataPosts, 1);
+  assert.equal(releasePosts, 0);
+});
+
+test("a 413 metadata rejection is a definite non-commit and releases the claim once", async () => {
+  const laneSource = Buffer.from("payload-too-large-source");
+  const laneSourceSha256 = createHash("sha256").update(laneSource).digest("hex");
+  const resolved = buildFirstDraftImageEnqueuePayload({ jobId, ownerId, data: researchJob(), error: null });
+  assert.equal(resolved.ok, true);
+  if (!resolved.ok) return;
+  const payload = {
+    ...resolved.payload,
+    sourcePhotoSha256: laneSourceSha256,
+    sourceUrl: "https://signed.example.com/source",
+    completedAssets: [],
+    completedAssetEvidence: [],
+    uploadTransport: "signed-storage-v1" as const,
+  };
+  let metadataPosts = 0;
+  let releasePosts = 0;
+  const outcome = await runFirstDraftImageLaneOnce({
+    api: async (_path, init = {}) => {
+      if (init.method !== "POST") return new Response(JSON.stringify(payload), { status: 200 });
+      const body = JSON.parse(String(init.body ?? "{}"));
+      if (body.failed === true) {
+        releasePosts += 1;
+        return new Response(JSON.stringify({ ok: true, status: "released" }), { status: 200 });
+      }
+      metadataPosts += 1;
+      return new Response(JSON.stringify({ code: "FUNCTION_PAYLOAD_TOO_LARGE" }), { status: 413 });
+    },
+    fetchSource: async () => laneSource,
+    generateVerifiedAssets: async ({ payload: claimedPayload }) => coreFirstDraftAssetIds.map((id, index) => {
+      const bytes = Buffer.from(`oversize-metadata-${id}`);
+      return {
+        id,
+        bytes,
+        verification: qualityReceiptFor(id, claimedPayload.productFacts, laneSourceSha256, bytes, index + 1),
+      };
+    }),
+    uploadVerifiedAsset: async () => ({ status: "uploaded" }),
+    log: () => undefined,
+    logError: () => undefined,
+  });
+  assert.equal(outcome.status, "failed");
+  assert.equal(metadataPosts, 1);
+  assert.equal(releasePosts, 1);
 });

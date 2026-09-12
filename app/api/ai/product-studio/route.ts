@@ -2,6 +2,13 @@ import { after, NextResponse } from "next/server";
 import { authenticateAdminRequest, isAdminApiError, type AdminApiContext } from "../../../../lib/admin-api";
 import { rejectedUploadPaths } from "../../../../lib/ai-upload-guard";
 import { studioJobRequestSchema } from "../../../../lib/ai-cli-contract";
+import {
+  firstDraftImageProductFactsFromResearchResult,
+  firstDraftImageFactsMatchStudioRequest,
+  firstDraftImageQualityManifestPath,
+  validateFirstDraftImageQualityManifest,
+  type FirstDraftImageAssetId,
+} from "../../../../lib/first-draft-images";
 import { withPromiseTimeout } from "../../../../lib/promise-timeout";
 import { verifyIssuedProductResearchLineageReceipt } from "../../../../lib/product-research-lineage-receipt";
 import { productResearchInputSha256 } from "../../../../lib/product-research-lineage-receipt-core";
@@ -17,6 +24,12 @@ import type { StudioWorkerReadiness } from "../../../../lib/studio-worker-readin
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
+
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
 
 export async function GET(request: Request) {
   const admin = await authenticateAdminRequest(request);
@@ -157,6 +170,65 @@ export async function POST(request: Request) {
     }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
   }
 
+  const sourceResearchRecord = recordValue(sourceResearchReadback.data);
+  const sourceResearchResult = recordValue(sourceResearchRecord?.result);
+  let firstDraftProductFacts;
+  try {
+    if (!sourceResearchResult) throw new Error("source result missing");
+    firstDraftProductFacts = firstDraftImageProductFactsFromResearchResult({
+      result: sourceResearchResult,
+    });
+  } catch {
+    await cleanupStudioUploadsOnlyWhenJobIsAbsent(admin, parsed.data.jobId, allUploadedPaths);
+    return NextResponse.json({
+      code: "FIRST_DRAFT_QUALITY_REQUIRED",
+      message: "1차 이미지에 결속된 상품 사실 버전을 확인하지 못해 최종 제작을 시작하지 않았습니다.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const manifestPath = firstDraftImageQualityManifestPath(
+    parsed.data.sourceResearchJobId,
+    sourcePreflight.preflight.assetStoragePaths as Record<FirstDraftImageAssetId, string>,
+  );
+  const manifestDownload = manifestPath
+    ? await admin.serviceClient.storage.from("sellerpilot-ai").download(manifestPath)
+    : { data: null, error: { message: "invalid manifest path" } };
+  let firstDraftQualityManifest: unknown = null;
+  if (!manifestDownload.error && manifestDownload.data && manifestDownload.data.size <= 256 * 1024) {
+    firstDraftQualityManifest = await manifestDownload.data.text()
+      .then((value) => JSON.parse(value))
+      .catch(() => null);
+  }
+  const qualityVerified = validateFirstDraftImageQualityManifest({
+    jobId: parsed.data.sourceResearchJobId,
+    productFacts: firstDraftProductFacts,
+    sourcePhotoSha256: parsed.data.sourcePhotoFingerprint,
+    assetDigests: sourcePreflight.preflight.assetDigests as Record<FirstDraftImageAssetId, string>,
+    manifest: firstDraftQualityManifest,
+  });
+  if (!qualityVerified) {
+    const cleaned = await cleanupStudioUploadsOnlyWhenJobIsAbsent(
+      admin,
+      parsed.data.jobId,
+      allUploadedPaths,
+    );
+    return NextResponse.json({
+      code: "FIRST_DRAFT_QUALITY_REQUIRED",
+      jobId: parsed.data.jobId,
+      sourceResearchJobId: parsed.data.sourceResearchJobId,
+      cleanupPending: !cleaned,
+      recovery: {
+        mode: "new-product-research-job",
+        endpoint: "/api/ai/product-research",
+        reuseSourceResearchJob: false,
+      },
+      message: "이전 1차 이미지에는 복원 가능한 품질 manifest가 없어 재사용하지 않습니다. 같은 진입점에서 기존 작업을 다시 큐잉하지 말고, 현재 원본과 판매자 사실로 새 1차 상품정보 분석 작업을 만든 뒤 이미지 6장을 검수해 주세요.",
+    }, { status: 409, headers: { "cache-control": "no-store, max-age=0" } });
+  }
+  const reuseFirstDraftAssets = firstDraftImageFactsMatchStudioRequest(
+    firstDraftProductFacts,
+    parsed.data.manualFields,
+  );
+
   const lineageReceiptVerification = verifyIssuedProductResearchLineageReceipt(
     parsed.data.sourceResearchLineageReceipt,
     {
@@ -246,6 +318,9 @@ export async function POST(request: Request) {
     preflight_asset_storage_paths: sourcePreflight.preflight.assetStoragePaths,
     preflight_asset_digests: sourcePreflight.preflight.assetDigests,
     preflight_asset_audit_lineage: sourcePreflight.preflight.auditLineage,
+    first_draft_product_facts: firstDraftProductFacts,
+    preflight_asset_quality_manifest: firstDraftQualityManifest,
+    reuse_first_draft_assets: reuseFirstDraftAssets,
     human_review_confirmation: {
       first_draft_reviewed: true,
       source: "authenticated_admin_request",

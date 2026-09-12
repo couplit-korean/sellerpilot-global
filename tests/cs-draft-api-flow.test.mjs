@@ -29,12 +29,12 @@ async function fixture(){
   try{const values=Object.values(args);const result=await db.query(`select public.${name}(${Object.keys(args).map((key,i)=>`${key} => $${i+1}`).join(',')}) value`,values);return {data:result.rows[0].value,error:null};}
   catch(error){return {data:null,error:{message:error.message,code:error.code}};}
  };
- function load(kind){
+ function load(kind,{rpcOverride,consoleOverride}={}){
   const path=kind==='admin'?'../app/api/admin/cs/drafts/route.ts':'../app/api/cs/worker/drafts/route.ts';
   const compiled=ts.transpileModule(readFileSync(new URL(path,import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
-  const exports={};vm.runInNewContext(compiled,{exports,Request,Response,URL,process:{env:{SUPABASE_SECRET_KEY:'fixture-local-only'}},require(name){
+  const exports={};vm.runInNewContext(compiled,{exports,Request,Response,URL,console:consoleOverride??console,process:{env:{SUPABASE_SECRET_KEY:'fixture-local-only'}},require(name){
    if(name==='next/server')return {NextResponse:Response};if(name==='zod')return {z};if(name==='node:crypto')return {createHash};
-   if(name==='@supabase/supabase-js')return {createClient:()=>({rpc:rpc('service_role')})};
+   if(name==='@supabase/supabase-js')return {createClient:()=>({rpc:rpcOverride??rpc('service_role')})};
    if(name.endsWith('/admin-api'))return {authenticateAdminRequest:async()=>({userClient:{rpc:rpc('authenticated')}}),isAdminApiError:()=>false};
    if(name.endsWith('/cs/draft-contract'))return contract;
    if(name.endsWith('/supabase/config'))return {supabaseUrl:'https://fixture.invalid'};
@@ -59,5 +59,27 @@ test('Actual CS admin API -> isolated SQL queue -> actual worker API -> draft ru
   const read=await admin.GET(new Request(`https://fixture.invalid/api/admin/cs/drafts?id=${jobId}`));assert.equal(read.status,200);assert.equal((await read.json()).result.draft,result.draft);
   const replay=await workerRpc({action:'complete',jobId,claimToken:claim.claim_token,status:'succeeded',result});assert.equal(replay.status,'replayed');
   const bad=await worker.POST(request({action:'complete',jobId,claimToken:claim.claim_token,status:'succeeded',result:{mode:'studio'}},true));assert.equal(bad.status,400);
+ }finally{await db.close();}
+});
+test('CS worker RPC diagnostics expose only bounded operational fields',async()=>{
+ const {db,load}=await fixture();
+ const logs=[];
+ try{
+  const worker=load('worker',{
+   rpcOverride:async()=>({data:null,error:{code:'57014',message:'secret customer text',details:token,hint:jobId}}),
+   consoleOverride:{...console,error:(message,fields)=>logs.push({message,fields})},
+  });
+  const response=await worker.POST(request({action:'claim'},true));
+  assert.equal(response.status,503);
+  assert.deepEqual(JSON.parse(JSON.stringify(logs)),[{
+   message:'CS draft worker RPC failed',
+   fields:{phase:'claim',rpc:'sellerpilot_claim_cs_reply_draft',code:'57014',status:503,elapsedMs:logs[0].fields.elapsedMs},
+  }]);
+  assert.equal(Number.isInteger(logs[0].fields.elapsedMs),true);
+  assert.equal(logs[0].fields.elapsedMs>=0,true);
+  const serialized=JSON.stringify(logs);
+  assert.equal(serialized.includes('secret customer text'),false);
+  assert.equal(serialized.includes(token),false);
+  assert.equal(serialized.includes(jobId),false);
  }finally{await db.close();}
 });

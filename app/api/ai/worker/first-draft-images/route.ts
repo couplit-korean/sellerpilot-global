@@ -5,13 +5,21 @@ import { productResearchJobRequestSchema, serverProductResearchResultSchema } fr
 import {
   buildFirstDraftImageEnqueuePayload,
   buildFirstDraftImageLineageUpdate,
+  buildFirstDraftImageQualityManifest,
   firstDraftImageAssetIds,
   firstDraftImageAssetSpec,
+  firstDraftImageProductFactsFromResearchResult,
+  firstDraftImageQualityManifestPath,
   firstDraftImageWorkerPostSchema,
+  isExactFirstDraftImageReplay,
+  validateFirstDraftImageQualityReceipt,
   type FirstDraftImageAssetId,
 } from "../../../../../lib/first-draft-images";
+import { fingerprintImageAsset } from "../../../../../lib/image-asset-quality";
+import { findDuplicateShot, type ShotFingerprint } from "../../../../../lib/image-shot-uniqueness";
 import { productResearchInputSha256 } from "../../../../../lib/product-research-lineage-receipt-core";
-import { supabaseUrl } from "../../../../../lib/supabase/config";
+import { maximumStudioSourceImagePixels } from "../../../../../lib/studio-source-photo-policy";
+import { supabasePublishableKey, supabaseUrl } from "../../../../../lib/supabase/config";
 import {
   createBoundedSupabaseFetch,
   workerRpcErrorMessage,
@@ -138,26 +146,57 @@ export async function GET(request: Request) {
     return new NextResponse(null, { status: 204, headers: noStore });
   }
 
+  const verifiedAssets = recordValue(claimed.verifiedAssets) ?? {};
+  const completedAssets = firstDraftImageAssetIds.filter((assetId) => {
+    const stored = recordValue(verifiedAssets[assetId]);
+    const expectedPath = resolved.payload.assets.find((asset) => asset.id === assetId)?.path;
+    return Boolean(stored
+      && stored.path === expectedPath
+      && typeof stored.digest === "string"
+      && validateFirstDraftImageQualityReceipt({
+      assetId,
+      productFacts: resolved.payload.productFacts,
+      sourcePhotoSha256: resolved.payload.sourcePhotoSha256,
+      outputSha256: stored.digest,
+      receipt: stored.verification,
+    }));
+  });
+  const completedPaths = completedAssets.map((assetId) => String(recordValue(verifiedAssets[assetId])?.path));
   const { data: signed, error: signingError } = await serviceClient.storage
     .from(storageBucket)
-    .createSignedUrls([resolved.payload.sourcePath], sourceUrlSeconds);
+    .createSignedUrls([resolved.payload.sourcePath, ...completedPaths], sourceUrlSeconds);
   const signedSource = signed?.[0];
+  const signedCompleted = signed?.slice(1) ?? [];
   if (signingError
       || !signedSource
       || signedSource.error
       || typeof signedSource.signedUrl !== "string"
-      || !signedSource.signedUrl) {
-    console.error("first draft image source signing failed", { jobId });
-    await releaseRequest(serviceClient, tokenHash, jobId, "source-original-unavailable");
+      || !signedSource.signedUrl
+      || signedCompleted.length !== completedPaths.length
+      || signedCompleted.some((asset, index) => asset.path !== completedPaths[index]
+        || asset.error
+        || typeof asset.signedUrl !== "string"
+        || !asset.signedUrl)) {
+    console.error("first draft image source or resume asset signing failed", { jobId });
+    await releaseRequest(serviceClient, tokenHash, jobId, "source-or-resume-asset-unavailable");
     return new NextResponse(null, { status: 204, headers: noStore });
   }
-
-  const verifiedAssets = recordValue(claimed.verifiedAssets) ?? {};
-  const completedAssets = firstDraftImageAssetIds.filter((assetId) => recordValue(verifiedAssets[assetId]));
+  const completedAssetEvidence = completedAssets.map((assetId, index) => {
+    const stored = recordValue(verifiedAssets[assetId])!;
+    return {
+      id: assetId,
+      path: String(stored.path),
+      url: signedCompleted[index].signedUrl,
+      digest: String(stored.digest),
+      verification: stored.verification,
+    };
+  });
   return NextResponse.json({
     ...resolved.payload,
     sourceUrl: signedSource.signedUrl,
     completedAssets: [...completedAssets],
+    completedAssetEvidence,
+    uploadTransport: "signed-storage-v1",
   }, { headers: noStore });
 }
 
@@ -202,7 +241,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, status: "released" }, { headers: noStore });
   }
 
-  const { jobId, assets } = parsed.data;
+  const jobId = parsed.data.jobId;
   const state = await serviceClient.rpc("sellerpilot_service_get_first_draft_image_request", {
     p_token_hash: tokenHash,
     p_job_id: jobId,
@@ -220,7 +259,21 @@ export async function POST(request: Request) {
     imagePaths: recordValue(stateRecord?.request)?.image_paths,
     imageSpecs: recordValue(stateRecord?.request)?.image_specs,
   });
-  if (!stateRecord || !storedRequest.success || !storedResult.success) {
+  if (!stateRecord) {
+    // This read contract intentionally exposes only an active claim owned by
+    // this worker token. A null result can therefore mean committed, released,
+    // reclaimed by another worker, or missing. The Storage manifest is written
+    // before the atomic record/adoption RPC, so its presence is evidence of a
+    // prepared submission, never authoritative evidence of a DB commit.
+    return NextResponse.json({
+      ok: false,
+      jobId,
+      status: "completion-uncertain",
+      code: "FIRST_DRAFT_COMPLETION_UNCERTAIN",
+      message: "1차 이미지의 DB 반영 상태를 현재 작업자 claim으로 확정할 수 없습니다.",
+    }, { status: 409, headers: noStore });
+  }
+  if (!storedRequest.success || !storedResult.success) {
     return NextResponse.json({
       message: "실행 중인 1차 이미지 요청과 제출 내용이 일치하지 않습니다.",
     }, { status: 409, headers: noStore });
@@ -233,14 +286,127 @@ export async function POST(request: Request) {
   const sharp = (await import("sharp")).default;
   const recorded: Array<Record<string, unknown>> = [];
   const digests: Partial<Record<FirstDraftImageAssetId, string>> = {};
+  let productFacts;
+  try {
+    productFacts = firstDraftImageProductFactsFromResearchResult({
+      result: storedResult.data as unknown as Record<string, unknown>,
+    });
+  } catch {
+    return NextResponse.json({ message: "1차 이미지의 상품 사실 버전을 확인하지 못했습니다." }, { status: 409, headers: noStore });
+  }
   const previousVerified = recordValue(stateRecord.verifiedAssets) ?? {};
-  for (const assetId of firstDraftImageAssetIds) {
-    const previous = recordValue(previousVerified[assetId]);
-    if (previous && typeof previous.digest === "string") digests[assetId] = previous.digest;
+
+  if ("authorizeUpload" in parsed.data) {
+    const entry = parsed.data.authorizeUpload;
+    const spec = firstDraftImageAssetSpec(entry.id);
+    const expectedPath = canonicalPaths[entry.id];
+    if (!spec
+        || entry.path !== expectedPath
+        || entry.width !== spec.width
+        || entry.height !== spec.height
+        || entry.verification.outputSha256 !== entry.digest
+        || !validateFirstDraftImageQualityReceipt({
+          assetId: entry.id,
+          productFacts,
+          sourcePhotoSha256: storedRequest.data.sourcePhotoFingerprint,
+          outputSha256: entry.digest,
+          receipt: entry.verification,
+        })) {
+      return NextResponse.json({ message: "1차 이미지 signed upload 요청의 계보가 올바르지 않습니다." }, { status: 400, headers: noStore });
+    }
+    const previous = recordValue(previousVerified[entry.id]);
+    if (previous) {
+      const sameReplay = isExactFirstDraftImageReplay(previous, entry);
+      return sameReplay
+        ? NextResponse.json({ ok: true, status: "already-recorded", id: entry.id, path: entry.path }, { headers: noStore })
+        : NextResponse.json({ message: "같은 역할에 다른 이미지 bytes를 덮어쓸 수 없습니다." }, { status: 409, headers: noStore });
+    }
+    const proposed: ShotFingerprint = {
+      assetId: entry.id,
+      digest: entry.digest,
+      visualHash: Buffer.from(entry.verification.visualHash, "hex"),
+    };
+    const priorFingerprints = firstDraftImageAssetIds.flatMap((assetId) => {
+      const stored = recordValue(previousVerified[assetId]);
+      const receipt = recordValue(stored?.verification);
+      return stored && assetId !== entry.id && typeof stored.digest === "string" && typeof receipt?.visualHash === "string"
+        ? [{ assetId, digest: stored.digest, visualHash: Buffer.from(receipt.visualHash, "hex") }]
+        : [];
+    });
+    const duplicate = findDuplicateShot(proposed, priorFingerprints);
+    if (duplicate) {
+      return NextResponse.json({
+        message: `${entry.id} 1차 생성 이미지가 ${duplicate.assetId}와 중복되어 업로드를 허용하지 않았습니다.`,
+      }, { status: 409, headers: noStore });
+    }
+    const { data: upload, error: uploadError } = await serviceClient.storage
+      .from(storageBucket)
+      .createSignedUploadUrl(entry.path, { upsert: true });
+    if (uploadError || typeof upload?.token !== "string" || !upload.token) {
+      return NextResponse.json({ message: "1차 이미지 signed upload 권한을 준비하지 못했습니다." }, { status: 503, headers: noStore });
+    }
+    return NextResponse.json({
+      ok: true,
+      status: "authorized",
+      id: entry.id,
+      path: entry.path,
+      token: upload.token,
+      bucket: storageBucket,
+      supabaseUrl,
+      publishableKey: supabasePublishableKey,
+    }, { headers: noStore });
   }
 
+  const { assets } = parsed.data;
+  const verifiedFingerprints: ShotFingerprint[] = [];
+  const submittedIds = new Set(assets.map((asset) => asset.id));
+  for (const assetId of firstDraftImageAssetIds) {
+    const previous = recordValue(previousVerified[assetId]);
+    const receipt = recordValue(previous?.verification);
+    if (previous
+        && typeof previous.digest === "string"
+        && receipt
+        && validateFirstDraftImageQualityReceipt({
+          assetId,
+          productFacts,
+          sourcePhotoSha256: storedRequest.data.sourcePhotoFingerprint,
+          outputSha256: previous.digest,
+          receipt,
+        })) {
+      digests[assetId] = previous.digest;
+      if (!submittedIds.has(assetId)) verifiedFingerprints.push({
+        assetId,
+        digest: previous.digest,
+        visualHash: Buffer.from(String(receipt.visualHash), "hex"),
+      });
+    }
+  }
+
+  const validatedAssets: Array<{
+    entry: (typeof assets)[number];
+    path: string;
+    bytes: Buffer;
+    digest: string;
+    spec: NonNullable<ReturnType<typeof firstDraftImageAssetSpec>>;
+  }> = [];
   for (const entry of assets) {
-    const decoded = decodeSubmittedPng(entry, sharp);
+    const spec = firstDraftImageAssetSpec(entry.id);
+    const expectedPath = canonicalPaths[entry.id];
+    let decoded: ReturnType<typeof decodeSubmittedPng> = null;
+    if ("pngBase64" in entry) {
+      decoded = decodeSubmittedPng(entry, sharp);
+    } else if (spec
+        && entry.path === expectedPath
+        && entry.width === spec.width
+        && entry.height === spec.height) {
+      const downloaded = await serviceClient.storage.from(storageBucket).download(entry.path);
+      if (!downloaded.error && downloaded.data && downloaded.data.size === entry.bytes) {
+        const bytes = Buffer.from(await downloaded.data.arrayBuffer());
+        if (bytes.byteLength === entry.bytes && bytes.byteLength <= maximumSubmittedAssetBytes) {
+          decoded = { spec, bytes, inspect: () => sharp(bytes, { failOn: "error" }).metadata() };
+        }
+      }
+    }
     if (!decoded) {
       return NextResponse.json({ message: "1차 생성 이미지 바이트를 확인하지 못했습니다." }, { status: 400, headers: noStore });
     }
@@ -254,23 +420,80 @@ export async function POST(request: Request) {
       }, { status: 400, headers: noStore });
     }
     const path = canonicalPaths[entry.id];
-    const upload = await serviceClient.storage.from(storageBucket).upload(path, decoded.bytes, {
-      contentType: "image/png",
-      upsert: true,
-    });
-    if (upload.error) {
-      console.error("first draft image upload failed", { jobId, assetId: entry.id, code: upload.error.name });
-      return NextResponse.json({ message: "1차 생성 이미지를 저장하지 못했습니다." }, { status: 503, headers: noStore });
+    const fingerprint = await fingerprintImageAsset(
+      entry.id,
+      decoded.bytes,
+      maximumSubmittedAssetBytes,
+      maximumStudioSourceImagePixels,
+    ).catch(() => null);
+    const digest = fingerprint?.digest ?? "";
+    if (("digest" in entry && entry.digest !== digest)
+        || !validateFirstDraftImageQualityReceipt({
+      assetId: entry.id,
+      productFacts,
+      sourcePhotoSha256: storedRequest.data.sourcePhotoFingerprint,
+      outputSha256: digest,
+      receipt: entry.verification,
+    })) {
+      return NextResponse.json({
+        message: `${entry.id} 1차 생성 이미지의 원본 합성·장면 검수 증거가 일치하지 않습니다.`,
+      }, { status: 400, headers: noStore });
     }
-    const digest = createHash("sha256").update(decoded.bytes).digest("hex");
+    if (!fingerprint
+        || !Buffer.from(fingerprint.visualHash).equals(Buffer.from(entry.verification.visualHash, "hex"))) {
+      return NextResponse.json({
+        message: `${entry.id} 1차 생성 이미지의 실제 dHash와 검수 증거가 일치하지 않습니다.`,
+      }, { status: 400, headers: noStore });
+    }
+    const previous = recordValue(previousVerified[entry.id]);
+    if (previous) {
+      const sameReplay = isExactFirstDraftImageReplay(previous, {
+        id: entry.id,
+        path,
+        digest,
+        bytes: decoded.bytes.byteLength,
+        width: decoded.spec.width,
+        height: decoded.spec.height,
+        verification: entry.verification,
+      });
+      if (!sameReplay) {
+        return NextResponse.json({
+          message: "같은 역할에 다른 이미지 bytes를 덮어쓸 수 없습니다.",
+        }, { status: 409, headers: noStore });
+      }
+    }
+    const duplicate = findDuplicateShot(fingerprint, verifiedFingerprints);
+    if (duplicate) {
+      return NextResponse.json({
+        message: `${entry.id} 1차 생성 이미지가 ${duplicate.assetId}와 중복되어 저장하지 않았습니다.`,
+      }, { status: 400, headers: noStore });
+    }
+    verifiedFingerprints.push(fingerprint);
+    validatedAssets.push({ entry, path, bytes: decoded.bytes, digest, spec: decoded.spec });
+  }
+
+  // Validate the entire submitted set before the first remote upload. A bad
+  // sibling therefore cannot leave an otherwise valid early asset uploaded.
+  for (const { entry, path, bytes, digest, spec } of validatedAssets) {
+    if ("pngBase64" in entry) {
+      const upload = await serviceClient.storage.from(storageBucket).upload(path, bytes, {
+        contentType: "image/png",
+        upsert: true,
+      });
+      if (upload.error) {
+        console.error("first draft image upload failed", { jobId, assetId: entry.id, code: upload.error.name });
+        return NextResponse.json({ message: "1차 생성 이미지를 저장하지 못했습니다." }, { status: 503, headers: noStore });
+      }
+    }
     digests[entry.id] = digest;
     recorded.push({
       id: entry.id,
       path,
       digest,
-      bytes: decoded.bytes.byteLength,
-      width: decoded.spec.width,
-      height: decoded.spec.height,
+      bytes: bytes.byteLength,
+      width: spec.width,
+      height: spec.height,
+      verification: entry.verification,
     });
   }
 
@@ -290,6 +513,39 @@ export async function POST(request: Request) {
         message: "1차 생성 이미지 계보를 확정하지 못했습니다.",
         code: preview.reason,
       }, { status: 409, headers: noStore });
+    }
+    const assembledVerifiedAssets = {
+      ...previousVerified,
+      ...Object.fromEntries(recorded.map((asset) => [asset.id, asset])),
+    };
+    const manifest = buildFirstDraftImageQualityManifest({
+      jobId,
+      productFacts,
+      sourcePhotoSha256: storedRequest.data.sourcePhotoFingerprint,
+      verifiedAssets: assembledVerifiedAssets,
+    });
+    const manifestPath = firstDraftImageQualityManifestPath(
+      jobId,
+      canonicalPaths as Record<FirstDraftImageAssetId, string>,
+    );
+    if (!manifest || !manifestPath) {
+      return NextResponse.json({
+        message: "1차 생성 이미지의 공통 품질 manifest를 확정하지 못했습니다.",
+      }, { status: 409, headers: noStore });
+    }
+    const manifestUpload = await serviceClient.storage.from(storageBucket).upload(
+      manifestPath,
+      Buffer.from(JSON.stringify(manifest), "utf8"),
+      { contentType: "application/json", upsert: true },
+    );
+    if (manifestUpload.error) {
+      console.error("first draft image quality manifest upload failed", {
+        jobId,
+        code: manifestUpload.error.name,
+      });
+      return NextResponse.json({
+        message: "1차 생성 이미지의 공통 품질 검수 결과를 저장하지 못했습니다.",
+      }, { status: 503, headers: noStore });
     }
   }
 

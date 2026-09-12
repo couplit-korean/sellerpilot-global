@@ -15,10 +15,14 @@ test("the detail-page action requires six first-stage images plus explicit human
 
   assert.match(action, /const aiReady = isStudioExecutionReady\(studioWorkerReadiness\)/);
   assert.match(action, /if \(!aiReady\)/);
-  assert.match(action, /if \(!firstDraftGenerated[\s\S]*?!isProductResearchJobId\(sourceResearchJobId\)[\s\S]*?!productSourcePhotoSha256Pattern\.test\(sourceResearchPhotoSha256\)[\s\S]*?!sourceResearchLineageReceipt[\s\S]*?firstDraftImages\.length !== coreFirstDraftAssetIds\.length\)/);
+  assert.match(action, /if \(!firstDraftGenerated[\s\S]*?!isProductResearchJobId\(sourceResearchJobId\)[\s\S]*?!productSourcePhotoSha256Pattern\.test\(sourceResearchPhotoSha256\)[\s\S]*?!sourceResearchLineageReceipt[\s\S]*?!studioDraftImagesMerged[\s\S]*?firstDraftImages\.length !== coreFirstDraftAssetIds\.length\)/);
   assert.match(action, /if \(!firstDraftReviewed\)/);
   assert.match(action, /setStudioSubmissionMode\("ai"\)/);
-  assert.match(action, /검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 후속 자산을 제작/);
+  assert.match(action, /검토한 1차 정보와 이미지 6개를 바탕으로 상세페이지와 상품 원장을 만듭니다/);
+  assert.doesNotMatch(page, /startAutomation\(\{ automatic: true \}\)/);
+  assert.match(page, /firstDraftReviewed=\{firstDraftReviewed\}/);
+  assert.doesNotMatch(page, /firstDraftReviewed=\{firstDraftReviewed \|\|/);
+  assert.doesNotMatch(page, /onGeneratedAssets=\{/);
   assert.doesNotMatch(action, /manualMvp|manual_mvp|competitorResearchBlocksAnalysis/);
 });
 
@@ -27,10 +31,10 @@ test("a succeeded research job becomes Studio lineage and changing only the sour
 
   assert.match(page, /const \[sourceResearchJobId, setSourceResearchJobId\] = useState\(""\)/);
   assert.match(page, /setSourceResearchJobId\(jobId\);\s*setSourceResearchPhotoSha256\(sourcePhotoSha256\);\s*setSourceResearchLineageReceipt\(lineageReceipt\);\s*setFirstDraftGenerated\(true\)/);
-  assert.match(page, /setFirstDraftImages\(generatedFirstDraftImages\)/);
+  assert.match(page, /activateFirstDraftJob\(jobId, result\)/);
   assert.match(page, /setFirstDraftReviewed\(false\)/);
   assert.match(page, /if \(key === "researchInput"\) \{\s*setFirstDraftGenerated\(false\);\s*setSourceResearchJobId\(""\);\s*setSourceResearchPhotoSha256\(""\);\s*setSourceResearchLineageReceipt\(""\)/);
-  assert.match(page, /const firstDraftContentReady = firstDraftGenerated[\s\S]*?firstDraftImages\.length === coreFirstDraftAssetIds\.length/);
+  assert.match(page, /const firstDraftContentReady = firstDraftGenerated[\s\S]*?studioDraftImagesMerged[\s\S]*?firstDraftImages\.length === coreFirstDraftAssetIds\.length/);
   assert.match(page, /const firstDraftReady = firstDraftContentReady && firstDraftReviewed/);
   assert.match(page, /sourceResearchJobId=\{sourceResearchJobId\}/);
   assert.match(page, /sourcePhotoFingerprint=\{sourceResearchPhotoSha256\}/);
@@ -44,18 +48,17 @@ test("the UI names first-stage concurrency, human review, detail authoring, then
   assert.match(page, /상세페이지가 완료된 뒤에만 채널 업로드 단계가 열립니다/);
   assert.match(page, /동일상품 가격은 별도 확인 중/);
   assert.match(page, />상세페이지 제작 시작</);
-  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(queuedJobId\)\}/);
+  assert.match(page, /disabled=\{!registrationExecutionAvailable \|\| !firstDraftReady \|\| running \|\| researchingProduct \|\| recoveringProductResearch \|\| photoSelectionsProcessing \|\| Boolean\(resolvedProductId\)\}/);
 });
 
-test("first-stage upload includes supporting photos and approval follows editable seller fields", async () => {
+test("first-stage upload keeps its main-photo contract and approval follows editable seller fields", async () => {
   const page = await readFile(pageUrl, "utf8");
   const firstStageStart = page.indexOf("const researchProductInformation = async () =>");
   const firstStageEnd = page.indexOf("const selectSlotPhoto", firstStageStart);
   const firstStage = page.slice(firstStageStart, firstStageEnd);
-  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto, \.\.\.Object\.values\(slotPhotos\), \.\.\.extraPhotos\]/);
+  assert.match(firstStage, /const sourcePhotos = \[sourceMainPhoto\]/);
   assert.match(firstStage, /optimizeAndUploadStudioPhotos\(\s*sourcePhotos,/);
-  assert.match(firstStage, /sourceSelectionSha256/);
-  assert.equal((page.match(/invalidateSupportingPhotoResearch\(\)/g) ?? []).length, 4);
+  assert.doesNotMatch(firstStage, /sourceSelectionSha256/);
 
 
   const sellerFields = page.indexOf('className="product-context-section required-product-intake"');

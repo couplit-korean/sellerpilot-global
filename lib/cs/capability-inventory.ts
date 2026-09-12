@@ -18,6 +18,7 @@ export const csCapabilityInventory:Record<ActiveChannelKey,CsCapabilitySurface[]
  lazada:[
   {key:"im",label:"IM Chat",state:"conditional",receive:true,reply:true,history:true,attachments:true,note:"bootstrap·Push·답변 구현, CS Bot app/token 실제 grant 결속 필요"},
   {key:"im_cards",label:"상품·주문·쿠폰 카드",state:"conditional",receive:true,reply:false,history:true,attachments:true,note:"native template 투영, 지원하지 않는 type은 원문 격리"},
+  {key:"product_review",label:"상품 리뷰·판매자 답변",state:"conditional",receive:true,reply:true,history:true,attachments:true,note:"별도 product review 조회·답변 계약과 provider readback 경로 구현; IM 성공과 분리해 실제 앱 권한·계정별 조회를 확인해야 함"},
  ],
  coupang:[
   {key:"product_qna",label:"상품 문의",state:"implemented",receive:true,reply:true,history:true,attachments:false,note:"판매자·고정 IP·문의 ID 결속"},
@@ -39,7 +40,8 @@ export const csCapabilityInventory:Record<ActiveChannelKey,CsCapabilitySurface[]
  ],
  ebay:[
  {key:"asq",label:"Ask Seller Question",state:"conditional",receive:true,reply:true,history:true,attachments:false,note:"provider 인증 계정·site·parent·recipient가 일치할 때만 답변"},
-  {key:"mailbox",label:"Trading Inbox",state:"implemented",receive:true,reply:false,history:true,attachments:true,note:"25 headers 후 최대 10 ID씩 본문 조회; 일반 답변은 미개방"},
+  {key:"member_message",label:"Trading Inbox 회원 메시지",state:"implemented",receive:true,reply:false,history:true,attachments:true,note:"25 headers 후 최대 10 ID씩 본문 조회; ASQ 답변과 별도이며 일반 회원 메시지 답변은 미개방"},
+  {key:"system_message",label:"Trading Inbox 시스템 메시지",state:"implemented",receive:true,reply:false,history:true,attachments:true,note:"동일 mailbox 원문에서 시스템 발신을 별도 sender role·ticket kind로 정규화하며 고객 대화 건수와 합치지 않음"},
   {key:"commerce_message",label:"Commerce Message 일반 대화",state:"conditional",receive:true,reply:true,history:true,attachments:true,note:"10개 대화·25개 메시지 continuation과 별도 conversation 답변 구현; commerce.message 권한 재동의·HTTP 200 필요"},
   {key:"case_dispute",label:"케이스·분쟁",state:"conditional",receive:true,reply:false,history:true,attachments:false,note:"케이스·결제분쟁 조회와 저장 이력 구현; 운영 적용·자동 수집 검증 및 결제분쟁 접근 확인 필요"},
  ],

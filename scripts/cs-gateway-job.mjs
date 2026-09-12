@@ -15,10 +15,43 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
   let stopped = false;
   let externalWriteStarted = false;
   let credentialMutationInFlight = false;
+  let completionPersistenceStarted = false;
   let credentialRefresh;
   const signal = AbortSignal.timeout(180_000);
   const assertLeaseHealthy = () => heartbeat.assertHealthy();
   const persist = (path, payload, label) => persistWorkerCompletion(path, payload, label, GATEWAY_COMPLETION_TRANSIENT_GRACE_MS);
+  const assertCompletionReplaySafe = async () => {
+    try {
+      await assertLeaseHealthy();
+    } catch (error) {
+      const completionMayAlreadyBeCommitted = error instanceof WorkerRequestTerminalError
+        && (error.status === 0 || error.status === 404 || error.status === 409 || (error.status >= 500 && error.status <= 599));
+      // The exact completion endpoint is the authority after a lost response:
+      // it returns replay for the same receipt and conflict for another owner.
+      if (!completionMayAlreadyBeCommitted) throw error;
+    }
+  };
+  const persistFinalCompletion = async completion => {
+    completionPersistenceStarted = true;
+    let lastError;
+    // One persistence window already retries the identical body for ten
+    // minutes. A second/third window is only for a sustained 5xx and keeps the
+    // same claim heartbeat alive; it never re-enters the provider operation.
+    for (let window = 0; window < 3; window += 1) {
+      if (window === 0) await assertLeaseHealthy();
+      else await assertCompletionReplaySafe();
+      try {
+        return await persist("/api/channel-gateway/worker/complete", completion, "CS 결과 저장 실패");
+      } catch (error) {
+        lastError = error;
+        const transient = error instanceof WorkerRequestTerminalError
+          && (error.status === 0 || (error.status >= 500 && error.status <= 599));
+        if (!transient) throw error;
+        await assertCompletionReplaySafe();
+      }
+    }
+    throw lastError;
+  };
   const stop = async () => { if (!stopped) { stopped = true; await heartbeat.stop(); } };
   const beginProviderMutation = createGatewayMutationBoundary({
     assertLeaseHealthy,
@@ -51,26 +84,41 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     const completion = status !== "failed"
       ? { jobId: job.id, claimToken, status, ...(status === "reconciliation_required" ? { error: result.safeMessage } : {}), result, ...(credentialRefresh ? { credentialRefresh } : {}), ...(credentialBinding ? { credentialBinding } : {}) }
       : buildCsFailedCompletionPayload({ job, claimToken, error: result.safeMessage, result, credentialRefresh });
-    await assertLeaseHealthy();
+    await persistFinalCompletion(completion);
     await stop();
-    await persist("/api/channel-gateway/worker/complete", completion, "CS 결과 저장 실패");
   } catch (caught) {
     let error = caught;
-    try { await stop(); } catch (stopError) { error = stopError; }
+    // Once an exact provider result is being persisted, never replace it with
+    // a newly classified failure. A 5xx may mean the server committed but lost
+    // the response; only an identical replay can resolve that ambiguity.
+    if (completionPersistenceStarted) {
+      try { await stop(); } catch (stopError) { error = stopError; }
+      const lostCompletion = error instanceof WorkerRequestTerminalError && [401, 404, 409].includes(error.status);
+      if (lostCompletion) return;
+      throw error;
+    }
     const lost = error instanceof WorkerRequestTerminalError && [401, 404, 409].includes(error.status);
-    if (lost) return; // The expired worker cannot modify the next owner's job.
+    if (lost) {
+      try { await stop(); } catch { /* The expired worker cannot modify the next owner's job. */ }
+      return;
+    }
     // Keep the real provider reason on the job. A bare code made every CS failure
     // look identical in the ledger, so the cause could not be diagnosed.
     const reason = String(error?.message ?? error ?? "")
       .replace(/\s+/g, " ")
       .slice(0, 300);
-    await persist("/api/channel-gateway/worker/complete", {
+    const failureCompletion = {
       jobId: job.id, claimToken,
       status: externalWriteStarted ? "reconciliation_required" : "failed",
       error: externalWriteStarted
         ? "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
         : `CS_PROVIDER_EXECUTION_FAILED:${reason || "unknown"}`,
       ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
-    }, "CS 실패 결과 저장 실패");
+    };
+    try {
+      await persistFinalCompletion(failureCompletion);
+    } finally {
+      await stop();
+    }
   }
 }

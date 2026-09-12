@@ -6,6 +6,57 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { supportReplyWorkerRequestSchema, supportReplyResultSchema } from '../lib/cs/draft-contract.ts';
 
+export function csWorkerFailureCategory(status, message) {
+ if(status===503&&message==='CS 작업자 연결 설정이 필요합니다.')return 'server_configuration';
+ if(status===503&&message==='CS 작업 원장 요청을 완료하지 못했습니다.')return 'ledger_rpc';
+ if(status===401||status===403)return 'worker_identity';
+ if(status===409)return 'lease_conflict';
+ return status>=500?'server_unavailable':'worker_request';
+}
+
+export function csDraftRequestBackoffMs(consecutiveFailures) {
+ const normalized=Math.max(1,Math.trunc(Number(consecutiveFailures)||1));
+ return Math.min(5*60_000,15_000*(2**Math.min(5,normalized-1)));
+}
+
+export function isCsDraftTransientRequestError(error) {
+ const status=Number(error?.status);
+ return status===0||(status>=500&&status<=599)||error?.name==='TypeError'||error?.name==='TimeoutError';
+}
+
+function csDraftRequestError(code,{status=0,phase,category}) {
+ const error=new Error(code);
+ error.status=status;error.phase=phase;error.category=category;return error;
+}
+
+export function createCsDraftRpc({baseUrl,token,stopSignal,fetchImpl=fetch,requestTimeoutMs=30_000}) {
+ const url=baseUrl instanceof URL?baseUrl:new URL(baseUrl);
+ return async(body,signal)=>{
+  const callerSignal=signal??stopSignal;
+  const requestTimeout=AbortSignal.timeout(requestTimeoutMs);
+  const requestSignal=callerSignal?AbortSignal.any([callerSignal,requestTimeout]):requestTimeout;
+  let response;
+  try {
+   response=await fetchImpl(new URL('/api/cs/worker/drafts',url),{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body),signal:requestSignal});
+  } catch(error) {
+   // A caller stop or the job-wide deadline is authoritative and must never be
+   // converted into a retryable network error.
+   if(callerSignal?.aborted)throw callerSignal.reason;
+   const timedOut=requestTimeout.aborted||error?.name==='TimeoutError';
+   const networkFailure=error?.name==='TypeError';
+   if(!timedOut&&!networkFailure)throw error;
+   throw csDraftRequestError(timedOut?'CS_WORKER_REQUEST_TIMEOUT':'CS_WORKER_NETWORK_FAILURE',{status:0,phase:body.action,category:timedOut?'network_timeout':'network_failure'});
+  }
+  if(response.status===204)return null;
+  if(!response.ok){
+   const payload=await response.json().catch(()=>null);
+   const message=typeof payload?.message==='string'?payload.message:'';
+   throw csDraftRequestError(`CS_WORKER_HTTP_${response.status}`,{status:response.status,phase:body.action,category:csWorkerFailureCategory(response.status,message)});
+  }
+  return response.json();
+ };
+}
+
 export function csDraftPrompt(request) {
  const value=supportReplyWorkerRequestSchema.parse(request);
  return [
@@ -20,16 +71,24 @@ export function csDraftPrompt(request) {
  ].join('\n');
 }
 
-export async function runCsDraftJob(job, { rpc, generate, signal, heartbeatMs=20_000 }) {
+export async function runCsDraftJob(job, { rpc, generate, signal, heartbeatMs=20_000, completionDelay, overallTimeoutMs=10*60_000 }) {
  const request=supportReplyWorkerRequestSchema.parse(job.request);
  const identity={jobId:job.id,claimToken:job.claim_token};
  const lease=new AbortController();
- const combined=signal?AbortSignal.any([signal,lease.signal,AbortSignal.timeout(10*60_000)]):AbortSignal.any([lease.signal,AbortSignal.timeout(10*60_000)]);
+ const combined=signal?AbortSignal.any([signal,lease.signal,AbortSignal.timeout(overallTimeoutMs)]):AbortSignal.any([lease.signal,AbortSignal.timeout(overallTimeoutMs)]);
  let heartbeatRunning=false, heartbeatPromise=Promise.resolve();
+ let completionPersistenceStarted=false;
  const heartbeat=()=>{
   if(heartbeatRunning||combined.aborted)return heartbeatPromise;
   heartbeatRunning=true;
-  heartbeatPromise=rpc({action:'heartbeat',...identity},combined).catch(error=>{lease.abort(error);}).finally(()=>{heartbeatRunning=false;});
+  heartbeatPromise=rpc({action:'heartbeat',...identity},combined).catch(error=>{
+   const completionMayAlreadyBeCommitted=completionPersistenceStarted
+    && (error?.status===409||isCsDraftTransientRequestError(error));
+   // Once an exact completion request may have committed, heartbeat 409 can
+   // mean "already completed", not only "another owner". Keep replaying the
+   // identical completion; that endpoint distinguishes replay from lease loss.
+   if(!completionMayAlreadyBeCommitted)lease.abort(error);
+  }).finally(()=>{heartbeatRunning=false;});
   return heartbeatPromise;
  };
  await heartbeat();combined.throwIfAborted();
@@ -47,9 +106,25 @@ export async function runCsDraftJob(job, { rpc, generate, signal, heartbeatMs=20
  } finally {clearInterval(timer);await heartbeatPromise;}
  combined.throwIfAborted();
  // Retry the identical completion only; never regenerate after a lost receipt.
+ // Renew the lease between retries so a slow/503 database does not turn the
+ // stored draft into a second generation under a new claim owner.
+ completionPersistenceStarted=true;
  let lastError;
- for(let attempt=0;attempt<3;attempt++) {
-  try{return await rpc(completion,combined);}catch(error){lastError=error;if(error.status===409||error.status===401||error.status===403)throw error;}
+ for(let attempt=0;attempt<8;attempt++) {
+  try{return await rpc(completion,combined);}catch(error){
+   lastError=error;
+   combined.throwIfAborted();
+   if(error.status===409||error.status===401||error.status===403)throw error;
+   if(!isCsDraftTransientRequestError(error))throw error;
+   await heartbeat();combined.throwIfAborted();
+   const waitMs=Math.min(10_000,1_000*(2**attempt));
+   await (completionDelay?completionDelay(waitMs,combined):new Promise((resolve,reject)=>{
+    const timeout=setTimeout(done,waitMs);
+    function done(){combined.removeEventListener('abort',aborted);resolve();}
+    function aborted(){clearTimeout(timeout);combined.removeEventListener('abort',aborted);reject(combined.reason);}
+    combined.addEventListener('abort',aborted,{once:true});
+   }));
+  }
  }
  throw lastError;
 }
@@ -66,12 +141,7 @@ async function main() {
  if(!/^spw_[A-Za-z0-9_-]{20,}$/.test(token??''))throw new Error('CS worker requires an active scoped AI worker identity');
  const stop=new AbortController();
  for(const event of ['SIGINT','SIGTERM'])process.once(event,()=>stop.abort(new Error('CS_WORKER_STOPPED')));
- const rpc=async(body,signal)=>{
-  const response=await fetch(new URL('/api/cs/worker/drafts',url),{method:'POST',headers:{authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.any([signal??stop.signal,AbortSignal.timeout(30_000)])});
-  if(response.status===204)return null;
-  if(!response.ok){const error=new Error(`CS_WORKER_HTTP_${response.status}`);error.status=response.status;throw error;}
-  return response.json();
- };
+ const rpc=createCsDraftRpc({baseUrl:url,token,stopSignal:stop.signal});
  const generate=async(request,signal)=>{
   const dir=await mkdtemp(join(tmpdir(),'sellerpilot-cs-draft-'));
   try{
@@ -90,9 +160,10 @@ async function main() {
  };
  const delay=ms=>new Promise(resolve=>{if(stop.signal.aborted)return resolve();const done=()=>{clearTimeout(timer);stop.signal.removeEventListener('abort',done);resolve();};const timer=setTimeout(done,ms);stop.signal.addEventListener('abort',done,{once:true});});
  console.log('SellerPilot CS draft worker started');
+ let consecutiveFailures=0;
  while(!stop.signal.aborted) {
-  try{const job=await rpc({action:'claim'},stop.signal);if(job)await runCsDraftJob(job,{rpc,generate,signal:stop.signal});else if(!process.argv.includes('--once'))await delay(5000);}
-  catch(error){if(stop.signal.aborted)break;if(process.argv.includes('--once'))process.exitCode=1;console.error('CS draft worker request failed',{status:error.status??'execution_or_lease_failure'});if(!process.argv.includes('--once'))await delay(15000);}
+  try{const job=await rpc({action:'claim'},stop.signal);if(job)await runCsDraftJob(job,{rpc,generate,signal:stop.signal});consecutiveFailures=0;if(!job&&!process.argv.includes('--once'))await delay(5000);}
+  catch(error){if(stop.signal.aborted)break;consecutiveFailures+=1;const retryInMs=csDraftRequestBackoffMs(consecutiveFailures);if(process.argv.includes('--once'))process.exitCode=1;console.error('CS draft worker request failed',{phase:error.phase??'execution',category:error.category??'execution_or_lease_failure',status:error.status??'n/a',retryInMs});if(!process.argv.includes('--once'))await delay(retryInMs);}
   if(process.argv.includes('--once'))break;
  }
 }

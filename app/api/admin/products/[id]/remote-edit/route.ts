@@ -6,6 +6,7 @@ import { bindQoo10RollbackUpdateRecoveryArguments, centralProductEditFieldSuppor
 import { channelOperationRelease } from "../../../../../../lib/channels/operation-availability";
 import { lazadaKrwMyrPricePolicyFromArguments } from "../../../../../../lib/channels/lazada-price-policy";
 import { lazadaRequestedUpdateQuantity } from "../../../../../../lib/channels/lazada-listing-update";
+import { productRegistrationRequestIdentityContract } from "../../../../../../lib/product-registration/credential-execution-binding";
 
 import { hasClientSmartstoreManualAdoptionUpdateMarker } from "../../../../../../lib/server-smartstore-adoption-update-binding";
 import { smartstoreContentRepairArgument, smartstoreContentRepairTransmissionArgument } from "../../../../../../lib/channels/smartstore-content-repair-contract";
@@ -14,6 +15,8 @@ export const maxDuration = 120;
 const productIdSchema = z.string().uuid();
 const remoteEditSchema = z.object({
   credentialId: z.string().uuid(),
+  credentialVersion: z.number().int().positive().optional(),
+  requestIdentityContract: z.literal(productRegistrationRequestIdentityContract).optional(),
   listingId: z.string().uuid(),
   mutationId: z.string().uuid(),
   // This endpoint is deliberately limited to the released field mapper below.
@@ -368,6 +371,12 @@ export async function POST(request: Request, context: {
   });
   const operationRequest = {
     credentialId: body.data.credentialId,
+    ...(body.data.credentialVersion === undefined
+      ? {}
+      : { credentialVersion: body.data.credentialVersion }),
+    ...(body.data.requestIdentityContract === undefined
+      ? {}
+      : { requestIdentityContract: body.data.requestIdentityContract }),
     channel: listing.channel,
     operation: "listing.update" as const,
     idempotencyKey,

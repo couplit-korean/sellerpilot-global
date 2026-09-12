@@ -1,7 +1,15 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
-import { aiGeneratedAssetPath, aiGeneratedAssetSpecs } from "../../../../../lib/ai-generated-assets";
+import { aiGeneratedAssetPath, aiGeneratedAssetSpecs, coreFirstDraftAssetIds } from "../../../../../lib/ai-generated-assets";
+import {
+  firstDraftImageFactsMatchStudioRequest,
+  firstDraftImageProductFactsSchema,
+  firstDraftImageQualityManifestPath,
+  firstDraftImageQualityManifestSchema,
+  validateFirstDraftImageQualityManifest,
+  type FirstDraftImageAssetId,
+} from "../../../../../lib/first-draft-images";
 import { studioCompetitorContextSchema } from "../../../../../lib/ai-cli-contract";
 import {
   crossProductSettingAssetIds,
@@ -428,6 +436,101 @@ export async function POST(request: Request) {
     }
     const crossProductPreparation = await prepareCrossProductComparisons();
     if (crossProductPreparation.failure) return crossProductPreparation.failure;
+    let reusableFirstDraftContext: Record<string, unknown> | null = null;
+    if (jobRequest.reuse_first_draft_assets === true) {
+      const sourceResearchJobId = typeof jobRequest.source_research_job_id === "string"
+        ? jobRequest.source_research_job_id
+        : "";
+      const sourcePhotoSha256 = typeof jobRequest.source_photo_sha256 === "string"
+        ? jobRequest.source_photo_sha256
+        : "";
+      const productFacts = firstDraftImageProductFactsSchema.safeParse(jobRequest.first_draft_product_facts);
+      const requestManifest = firstDraftImageQualityManifestSchema.safeParse(jobRequest.preflight_asset_quality_manifest);
+      const preflightPaths = jobRequest.preflight_asset_storage_paths
+        && typeof jobRequest.preflight_asset_storage_paths === "object"
+        && !Array.isArray(jobRequest.preflight_asset_storage_paths)
+        ? jobRequest.preflight_asset_storage_paths as Record<string, unknown>
+        : null;
+      const preflightDigests = jobRequest.preflight_asset_digests
+        && typeof jobRequest.preflight_asset_digests === "object"
+        && !Array.isArray(jobRequest.preflight_asset_digests)
+        ? jobRequest.preflight_asset_digests as Record<string, unknown>
+        : null;
+      const paths = preflightPaths ? Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => [
+        assetId,
+        preflightPaths[assetId],
+      ])) as Record<FirstDraftImageAssetId, string> : null;
+      const digests = preflightDigests ? Object.fromEntries(coreFirstDraftAssetIds.map((assetId) => [
+        assetId,
+        preflightDigests[assetId],
+      ])) as Record<FirstDraftImageAssetId, string> : null;
+      const manifestPath = paths && UUID_PATTERN.test(sourceResearchJobId)
+        ? firstDraftImageQualityManifestPath(sourceResearchJobId, paths)
+        : null;
+      if (!productFacts.success || !requestManifest.success || !paths || !digests || !manifestPath
+          || !/^[a-f0-9]{64}$/.test(sourcePhotoSha256)
+          || coreFirstDraftAssetIds.some((assetId) => typeof paths[assetId] !== "string" || typeof digests[assetId] !== "string")
+          || !firstDraftImageFactsMatchStudioRequest(productFacts.data, jobRequest.manual_fields)
+          || !validateFirstDraftImageQualityManifest({
+            jobId: sourceResearchJobId,
+            productFacts: productFacts.data,
+            sourcePhotoSha256,
+            assetDigests: digests,
+            manifest: requestManifest.data,
+          })) {
+        return preparationFailure({
+          message: "검증된 1차 이미지 재사용 계보가 현재 상품 사실과 일치하지 않습니다.",
+          safeReason: "invalid_first_draft_reuse_contract",
+          mode: "fail",
+        });
+      }
+      const storedManifestDownload = await serviceClient.storage.from("sellerpilot-ai").download(manifestPath);
+      const storedManifest = !storedManifestDownload.error
+          && storedManifestDownload.data
+          && storedManifestDownload.data.size <= 256 * 1024
+        ? firstDraftImageQualityManifestSchema.safeParse(
+          await storedManifestDownload.data.text().then((value) => JSON.parse(value)).catch(() => null),
+        )
+        : null;
+      if (!storedManifest?.success
+          || JSON.stringify(storedManifest.data) !== JSON.stringify(requestManifest.data)) {
+        return preparationFailure({
+          message: "저장된 1차 이미지 품질 manifest를 확인하지 못했습니다.",
+          safeReason: "first_draft_manifest_readback_failed",
+          error: storedManifestDownload.error,
+        });
+      }
+      const entries = coreFirstDraftAssetIds.map((assetId) => ({
+        id: assetId,
+        path: paths[assetId],
+        digest: digests[assetId],
+      }));
+      const signed = await serviceClient.storage.from("sellerpilot-ai")
+        .createSignedUrls(entries.map((entry) => entry.path), 60 * 60);
+      const reusableFirstDraftAssets = entries.flatMap((entry, index) => {
+        const candidate = signed.data?.[index];
+        return candidate
+          && candidate.path === entry.path
+          && typeof candidate.signedUrl === "string"
+          && !candidate.error
+          ? [{ ...entry, signedUrl: candidate.signedUrl }]
+          : [];
+      });
+      if (signed.error || reusableFirstDraftAssets.length !== entries.length) {
+        return preparationFailure({
+          message: "검증된 1차 이미지 재사용 URL을 준비하지 못했습니다.",
+          safeReason: "first_draft_reuse_signing_failed",
+          error: signed.error,
+        });
+      }
+      reusableFirstDraftContext = {
+        firstDraftSourceResearchJobId: sourceResearchJobId,
+        firstDraftProductFacts: productFacts.data,
+        firstDraftQualityManifest: requestManifest.data,
+        firstDraftSourcePhotoSha256: sourcePhotoSha256,
+        reusableFirstDraftAssets,
+      };
+    }
     const assetPaths = aiGeneratedAssetSpecs.map((asset) => ({
       id: asset.id,
       path: aiGeneratedAssetPath(jobId, asset, claimToken),
@@ -447,6 +550,7 @@ export async function POST(request: Request) {
         imageSpecs,
         images: signedSourceImages,
         crossProductComparisons: crossProductPreparation.comparisons,
+        ...(reusableFirstDraftContext ?? {}),
         ...(parsedCompetitorContext?.success ? { competitorContext: parsedCompetitorContext.data } : {}),
       },
       resultUploads: assetPaths.map((upload) => ({

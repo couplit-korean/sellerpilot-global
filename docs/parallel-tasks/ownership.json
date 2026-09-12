@@ -16,6 +16,7 @@
     "image-detail": {
       "label": "2 이미지와 상세페이지 생성 품질",
       "patterns": [
+        "^app/api/ai/worker/claim/route\\.ts$",
         "^app/(?:ai-product-studio|product-studio-[^/]+|product-detail[^/]*)\\.tsx?$",
         "^app/api/ai/(?:product-research|product-studio|worker/first-draft-images|worker/result-upload-authorize)(?:/|$)",
         "^app/api/admin/(?:first-draft-images-enqueue|product-studio-enqueue)/",
@@ -23,6 +24,7 @@
         "^scripts/(?:product-ai-worker|first-draft-image-lane|image-label-fidelity|source-product-cutout|ai-product-research-output\\.schema)\\.",
         "^prompts/",
         "^tests/image-task/",
+        "^tests/server-product-studio(?:-concurrency)?\\.test\\.ts$",
         "^tests/(?:first-draft-images[^/]*|ai-image-planning|server-product-research[^/]*)\\.test\\.",
         "^docs/parallel-tasks/image-detail/"
       ]
