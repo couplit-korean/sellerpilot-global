@@ -189,6 +189,23 @@ async function api(path, init = {}, timeoutMs = 30000) {
         signal: AbortSignal.timeout(timeoutMs),
     });
 }
+// The claim chain costs hundreds of milliseconds of database CPU even when the
+// queue is empty, so ask the cheap pulse route first. Anything other than a
+// clear "nothing to claim" answer falls back to the ordinary claim.
+async function gatewayQueueIsEmpty() {
+    try {
+        const response = await api("/api/channel-gateway/worker/queue-pulse", { method: "POST" }, 10000);
+        if (!response.ok)
+            return false;
+        const pulse = await response.json();
+        if (!pulse || typeof pulse !== "object")
+            return false;
+        return Number(pulse.queued ?? -1) === 0 && Number(pulse.staleRunning ?? -1) === 0;
+    }
+    catch {
+        return false;
+    }
+}
 function startPeriodicCompetitorRefresh() {
     if (periodicCompetitorRequest)
         return;
@@ -349,6 +366,14 @@ do {
                 }
                 if (skipRegularClaim) {
                     // Recovery owned this tick. Do not also POST a fresh CREATE job.
+                } else if (await gatewayQueueIsEmpty()) {
+                    // Nothing is queued and no lease is stale, so the heavy claim would
+                    // burn database CPU only to return the same empty answer. Behave
+                    // exactly like the 204 the claim would have produced.
+                    gatewayWorkerHealth?.markGatewayResponse(204);
+                    gatewayClaimBackoffStatus = 0;
+                    if (activeGatewayJobs.size === 0)
+                        gatewayQueueIdle = true;
                 } else {
                 let ebayRecoveryClaimAttempted = !localRecoveryOnly
                     && !localChannelExecutorAttestation;
