@@ -1,6 +1,8 @@
 "use client";
 
 import Image from "next/image";
+import { useFirstDraftImages, type FirstDraftGeneratedImage } from "./_publishing/use-first-draft-images";
+import { FirstDraftImageReview } from "./_publishing/first-draft-image-review";
 import { channelIntegrationStatus, summarizeChannelIntegrations, type ChannelIntegrationTone } from "../lib/channels/integration-status";
 import {
   Activity,
@@ -226,10 +228,7 @@ import {
   type RegistrationActivityFilter,
 } from "./_registration/registration-status";
 
-type FirstDraftGeneratedImage = {
-  id: AiGeneratedAssetId;
-  url: string;
-};
+
 
 type ProductResearchUiResult = ProductResearchResult & {
   generatedImages?: Array<{ id: string; url: string | null }>;
@@ -267,14 +266,7 @@ function exactFirstDraftImages(result: ProductResearchUiResult): FirstDraftGener
   return coreFirstDraftAssetIds.map((id) => ({ id, url: byId.get(id)! }));
 }
 
-const firstDraftImageLabels: Record<(typeof coreFirstDraftAssetIds)[number], string> = {
-  portrait: "모바일 세로 설정샷",
-  wide: "가로 설정샷",
-  "detail-overview": "상품 전체·준비컷",
-  "detail-use": "사용 설정샷",
-  "detail-routine": "생활 루틴 설정샷",
-  "detail-scale": "크기 비교 설정샷",
-};
+
 
 const configuredWorkspaceIdleMinutes = Number(process.env.NEXT_PUBLIC_SELLERPILOT_IDLE_TIMEOUT_MINUTES);
 const workspaceIdleTimeoutMs = clampWorkspaceIdleTimeoutMs(
@@ -2766,14 +2758,13 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
   const [recoveringProductResearch, setRecoveringProductResearch] = useState(false);
   const [researchRecoveryJobId, setResearchRecoveryJobId] = useState("");
   const [researchResult, setResearchResult] = useState<ProductResearchUiResult | null>(null);
-  const [firstDraftImages, setFirstDraftImages] = useState<FirstDraftGeneratedImage[]>([]);
+  const { firstDraftImages, setFirstDraftImages, studioDraftImagesMerged, firstDraftConceptStatus, startFirstDraftConceptImages, mergeStudioDraftImages } = useFirstDraftImages();
   const [firstDraftReviewed, setFirstDraftReviewed] = useState(false);
   // 1차 6장은 서버 초안(원본 사진 크롭)이므로, 1차가 끝나면 상세페이지와 동일한
   // 카테고리 매칭·설정샷 프롬프트를 쓰는 생성 작업을 자동으로 시작해 같은 6개
   // 자산을 고품질 결과로 교체한다.
   const [studioDraftRunStarted, setStudioDraftRunStarted] = useState(false);
   const [studioDraftBlockedReason, setStudioDraftBlockedReason] = useState("");
-  const [studioDraftImagesMerged, setStudioDraftImagesMerged] = useState(false);
   const studioDraftRunStartedRef = useRef(false);
   const [researchCompetitors, setResearchCompetitors] = useState<CompetitorResearchItem[]>([]);
   const [competitorProviders, setCompetitorProviders] = useState<CompetitorProviderDisplayStatus[]>([]);
@@ -4130,61 +4121,6 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
       setRunning(false);
     }
   };
-  // The first-draft six images come from the serverless catalog (photo crops) because the
-  // gateway image model is unavailable to this account, so the same six assets are generated
-  // on the local Codex lane and the tiles are refreshed as the images arrive.
-  const [firstDraftConceptStatus, setFirstDraftConceptStatus] = useState("");
-  const firstDraftImagePollRef = useRef<number | null>(null);
-  const firstDraftImageRequestedRef = useRef(false);
-  const refreshFirstDraftImages = async (jobId: string) => {
-    try {
-      const accessToken = (await createSupabaseClient().auth.getSession()).data.session?.access_token;
-      if (!accessToken) return;
-      const read = await fetch('/api/ai/product-research/recover', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ jobId }),
-      });
-      if (!read.ok) return;
-      const payload = await read.json() as { result?: { generatedImages?: Array<{ id: string; url: string | null }> } };
-      const generated = payload.result?.generatedImages ?? [];
-      if (generated.length) mergeStudioDraftImages(generated);
-    } catch {
-      // a transient read must not stop the running generation
-    }
-  };
-  const startFirstDraftConceptImages = async (jobId: string) => {
-    if (!jobId || firstDraftImageRequestedRef.current) return;
-    firstDraftImageRequestedRef.current = true;
-    try {
-      const accessToken = (await createSupabaseClient().auth.getSession()).data.session?.access_token;
-      if (!accessToken) return;
-      const response = await fetch('/api/admin/first-draft-images-enqueue', {
-        method: 'POST',
-        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ jobId }),
-      });
-      if (!response.ok) {
-        const payload = await response.json().catch(() => null) as { message?: string } | null;
-        setFirstDraftConceptStatus(payload?.message || "1차 이미지 생성 요청을 넣지 못했습니다. 잠시 후 다시 시도해 주세요.");
-        firstDraftImageRequestedRef.current = false;
-        return;
-      }
-      setFirstDraftConceptStatus('1차 이미지 6장을 상세페이지와 같은 카테고리 매칭 파이프라인으로 생성하고 있습니다. 완료되는 대로 이 자리에 반영됩니다.');
-      if (firstDraftImagePollRef.current !== null) window.clearInterval(firstDraftImagePollRef.current);
-      let attempts = 0;
-      firstDraftImagePollRef.current = window.setInterval(() => {
-        attempts += 1;
-        void refreshFirstDraftImages(jobId);
-        if (attempts >= 90 && firstDraftImagePollRef.current !== null) {
-          window.clearInterval(firstDraftImagePollRef.current);
-          firstDraftImagePollRef.current = null;
-        }
-      }, 20_000);
-    } catch {
-      // requesting generated images is best effort; the server result stays as is
-    }
-  };
   const startAutomation = (options?: { automatic?: boolean }) => {
     // A previous attempt can die before it reports back, leaving the in-flight
     // flag set. That used to swallow every later press with no message at all.
@@ -4288,17 +4224,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
     && Boolean(sourceResearchLineageReceipt)
     && firstDraftImages.length === coreFirstDraftAssetIds.length;
   const firstDraftReady = firstDraftContentReady && firstDraftReviewed;
-  const mergeStudioDraftImages = (generated?: Array<{ id: string; url: string | null }>) => {
-    const urls = new Map((generated ?? [])
-      .filter((image) => typeof image.url === "string" && image.url)
-      .map((image) => [image.id, image.url as string]));
-    if (!urls.size) return;
-    setStudioDraftImagesMerged(true);
-    setFirstDraftImages((current) => current.map((image) => {
-      const url = urls.get(image.id);
-      return url && url !== image.url ? { ...image, url } : image;
-    }));
-  };
+
   // 1차 6장은 서버 초안(원본 크롭)이고 상세페이지 자산은 카테고리 매칭 프롬프트로
   // 맥 Codex가 생성하므로, 1차 결과가 화면에 반영되는 즉시 같은 파이프라인을 자동 시작한다.
   // 어느 완료 경로로 들어와도 동작하도록 상태 기준으로 판단한다.
@@ -4485,10 +4411,7 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
               {researchResult.sources.length > 0 && <nav aria-label="AI가 확인한 상품 출처">{researchResult.sources.map((source) => <a href={source.url} target="_blank" rel="noreferrer" key={source.url} className={source.status}><ExternalLink size={12} />{source.title}</a>)}</nav>}
               {researchResult.warnings.length > 0 && <p><AlertTriangle size={13} />{researchResult.warnings.join(" · ")}</p>}
             </div>}
-            {firstDraftImages.length > 0 && <section className="first-draft-image-review" aria-label="1차 생성 이미지 6개">
-              <header><span><ImageIcon size={16} /><b>1차 생성 이미지</b><small>{studioDraftImagesMerged ? "상세페이지와 동일한 카테고리 매칭 프롬프트로 생성된 6장입니다." : firstDraftConceptStatus || studioDraftBlockedReason || "상세페이지와 같은 파이프라인으로 6장을 생성하고 있습니다. 완료되면 이 자리에 표시됩니다."}</small></span><em>{firstDraftImages.length} / 6장</em></header>
-              <div>{firstDraftImages.map((image) => <figure key={image.id}><span><Image src={image.url} alt={firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]} fill sizes="(max-width: 360px) 42vw, (max-width: 720px) 44vw, 180px" unoptimized /></span><figcaption>{firstDraftImageLabels[image.id as (typeof coreFirstDraftAssetIds)[number]]}</figcaption></figure>)}</div>
-            </section>}
+            <FirstDraftImageReview firstDraftImages={firstDraftImages} studioDraftImagesMerged={studioDraftImagesMerged} firstDraftConceptStatus={firstDraftConceptStatus} studioDraftBlockedReason={studioDraftBlockedReason} />
             {competitorResearchState !== "idle" && <CompetitorPriceSlots items={researchCompetitors} providers={competitorProviders} state={competitorResearchState} lastCheckedAt={competitorFetchedAt} retryAvailable={competitorResearchRetryAvailable} onRetry={retryCompetitorResearch} onProceedWithoutPrices={proceedWithoutCompetitorPrices} compact />}
           </section>
           <section className="product-context-section required-product-intake">

@@ -37,6 +37,16 @@ This block is written and re-added by `next dev` — verify at `node_modules/nex
 
 # Docs closeout
 
+## Four-task parallel work (2026-09-13)
+
+For the four parallel tasks (publishing UI, image/detail quality, CS/local runtime, channel registration/integration), first read `docs/parallel-tasks/README.md` and `docs/parallel-tasks/ownership.json`. Select the lane matching the user's task. Do not create new chats, clones or worktrees merely to implement this plan.
+
+- Before editing, check the exact intended paths with `node scripts/parallel-workspace.mjs check LANE FILE...`. Files owned by another lane are requests to that owner, not permission to overwrite. Existing shared exports, API payloads, asset IDs and database contracts must remain compatible unless the integration owner coordinates a versioned change.
+- Each lane writes its own `docs/parallel-tasks/LANE/status.md`. During these four parallel tasks, the closeout rule below is overridden: **only channels-integration updates shared current-status/operations docs and stages, commits or pushes**. Other lanes must not touch Git index, switch branches, reset, stash or use broad format/fix commands.
+- Wrap local Next dev/build/type generation in `node scripts/parallel-workspace.mjs run LANE next -- COMMAND ...`; ports alone do not isolate `.next`. Use focused tests without build for parallel verification. Final build requires all four lanes to stop source edits until it finishes.
+- Only channels-integration handles deployment, database migrations, shared contracts, package/lockfiles and global CSS. It uses the `git`, `deployment`, and `database` resource locks for those operations. Only cs-runtime controls installed local workers through the `runtime` lock. Resource locks are cooperative command guards, not an app/OS prohibition; never bypass them with direct competing commands.
+- Deployment, DB apply and installed-worker version changes wait for reviewed lane reports and integrated validation. Do not restart a worker with an unexamined active provider job. Do not send CS replies or submit products merely to test parallel isolation.
+
 개발 및 통합 기준 폴더는 `~/dev/sellerpilot-app`이다. 실행 경로는 `docs/통합-작업공간-운영안내.md`를 확인하고 `pnpm check:workspace`를 실행한다. 운영 채널 작업자는 실제 Vercel 배포 SHA에 맞춘다. 과거 작업 문서의 성공 기록을 현재 실행 결과로 취급하지 않는다.
 
 작업이 끝나면 `docs/현재상태.md`를 고치고, 다른 `.md`가 모순되면 맞춘 뒤 `integration-aside`에 커밋·푸시한다. 비밀 원문은 넣지 않는다.

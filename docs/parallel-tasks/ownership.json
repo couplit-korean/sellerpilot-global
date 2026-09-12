@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "canonicalWorkspace": "/Users/kimchangheemac/dev/sellerpilot-app",
+  "defaultOwner": "channels-integration",
+  "lanes": {
+    "publishing-ui": {
+      "label": "1 상품 화면과 이미지 진행 상태",
+      "patterns": [
+        "^app/page\\.tsx$",
+        "^app/_publishing/",
+        "^tests/publishing-task/",
+        "^tests/(?:product-registration-mvp-flow|product-research-ui-retry-photo-contract|product-research-lifecycle|product-research-provenance)\\.test\\.",
+        "^docs/parallel-tasks/publishing-ui/"
+      ]
+    },
+    "image-detail": {
+      "label": "2 이미지와 상세페이지 생성 품질",
+      "patterns": [
+        "^app/(?:ai-product-studio|product-studio-[^/]+|product-detail[^/]*)\\.tsx?$",
+        "^app/api/ai/(?:product-research|product-studio|worker/first-draft-images|worker/result-upload-authorize)(?:/|$)",
+        "^app/api/admin/(?:first-draft-images-enqueue|product-studio-enqueue)/",
+        "^lib/(?:ai-image[^/]*|ai-generated[^/]*|ai-detail[^/]*|first-draft[^/]*|server-product[^/]*|product-studio[^/]*|product-research[^/]*|studio-source[^/]*|image-[^/]*|source-product[^/]*)\\.ts$",
+        "^scripts/(?:product-ai-worker|first-draft-image-lane|image-label-fidelity|source-product-cutout|ai-product-research-output\\.schema)\\.",
+        "^prompts/",
+        "^tests/image-task/",
+        "^tests/(?:first-draft-images[^/]*|ai-image-planning|server-product-research[^/]*)\\.test\\.",
+        "^docs/parallel-tasks/image-detail/"
+      ]
+    },
+    "cs-runtime": {
+      "label": "3 CS와 로컬 실행 운영",
+      "patterns": [
+        "^app/(?:cs/|api/cs/|api/admin/cs/|api/ai/support-reply/)",
+        "^lib/cs/",
+        "^lib/channels/cs/",
+        "^lib/channels/(?:inquiry[^/]*|reply[^/]*|cs-[^/]*|[^/]*-inquiries|[^/]*-messages|[^/]*-inquiry-history|lazada-im[^/]*|ebay-asq[^/]*)\\.ts$",
+        "^scripts/(?:cs-[^/]*|channel-gateway-worker|ai-cli-worker|persistent-worker-health|install-ai-worker-launch-agent)\\.mjs$",
+        "^deploy/channel-gateway-runner\\.sh$",
+        "^tests/cs-runtime-task/",
+        "^tests/(?:cs-[^/]*|persistent-worker-health|worker-claim-backoff)\\.test\\.",
+        "^docs/parallel-tasks/cs-runtime/"
+      ]
+    },
+    "channels-integration": {
+      "label": "4 채널 등록과 최종 통합",
+      "patterns": ["^docs/parallel-tasks/channels-integration/"]
+    }
+  },
+  "resources": {
+    "next": ["publishing-ui", "image-detail", "cs-runtime", "channels-integration"],
+    "git": ["channels-integration"],
+    "deployment": ["channels-integration"],
+    "database": ["channels-integration"],
+    "runtime": ["cs-runtime"]
+  }
+}
