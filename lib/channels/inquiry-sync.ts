@@ -908,6 +908,16 @@ function normalizeShopeeReturn(
   const context = object(data.sellerpilotProviderContext);
   const shopId = text(context.shopId);
   const returnSn = text(response.return_sn);
+  // The executor retains a successful empty discovery page as `inquiries`
+  // so its shop/window completion can be recorded without detail calls.
+  // Only that exact terminal list shape represents zero records.
+  if (/^[1-9]\d{0,31}$/.test(shopId)
+      && !Object.hasOwn(context, "returnSn")
+      && !Object.hasOwn(response, "return_sn")
+      && Array.isArray(response.return) && response.return.length === 0
+      && (response.more === false || response.more === "false")) {
+    return [];
+  }
   if (!/^[1-9]\d{0,31}$/.test(shopId)
       || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(returnSn)
       || (context.returnSn !== undefined && text(context.returnSn) !== returnSn)) {

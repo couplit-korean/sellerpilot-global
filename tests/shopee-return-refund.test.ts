@@ -256,3 +256,35 @@ test("Shopee keeps the same comment ID isolated by shop and blocks a misbound re
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("successful empty Shopee return discovery completes normalization without inventing a case", async () => {
+  const originalFetch = globalThis.fetch;
+  const calls: string[] = [];
+  globalThis.fetch = async input => {
+    const url = new URL(String(input));
+    calls.push(url.pathname);
+    assert.ok(url.pathname.endsWith("get_return_list"));
+    return Response.json({ error: "", response: { return: [], more: false } });
+  };
+  try {
+    const result = await executeChannelOperation({ channel: "shopee", operation: "inquiries.list", payload,
+      arguments: { kind: "return_refund", createTimeFrom: 1_787_000_000, createTimeTo: 1_788_000_000 }, environment: "production" });
+    assert.equal(result.ok, true);
+    assert.equal(calls.length, 1);
+    assert.equal(result.continuation, undefined);
+    assert.deepEqual(normalizeChannelInquiries("shopee", result, "2026-09-08T03:00:00.000Z"), []);
+    const emptyData = result.steps[0].data;
+    for (const data of [
+      { ...emptyData, response: { more: false } },
+      { ...emptyData, response: { return: [], more: true } },
+      { ...emptyData, response: { return: [], more: null } },
+      { ...emptyData, response: { return: [{}], more: false } },
+      { ...emptyData, response: { return: [], more: false, return_sn: "RETURN1" } },
+      { ...emptyData, sellerpilotProviderContext: { shopId: payload.shop_id, kind: "return_refund", returnSn: "RETURN1" } },
+      { ...emptyData, sellerpilotProviderContext: { shopId: "", kind: "return_refund" } },
+    ]) {
+      assert.throws(() => normalizeChannelInquiries("shopee", { ...result, steps: [{ ...result.steps[0], data }] }, "2026-09-08T03:00:00.000Z"), /INQUIRY_RECORD_INVALID:shopee/);
+    }
+  } finally { globalThis.fetch = originalFetch; }
+});

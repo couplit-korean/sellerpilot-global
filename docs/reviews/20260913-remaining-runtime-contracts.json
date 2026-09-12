@@ -1,8 +1,8 @@
 {
-  "checkedAt": "2026-09-13T07:02:00+09:00",
+  "checkedAt": "2026-09-12T22:25:30.391279+00:00",
   "productionRelease": "737171efe3fe0dc14cf89ff0ef47a192af231272",
   "resolvedFunctionCount": 333,
-  "missingFunctionCount": 93,
+  "missingFunctionCount": 79,
   "unresolvedCallSiteCount": 42,
   "note": "Static call-site inventory. Dynamic callbacks may require additional functions. No missing function is replaced by a stub; existing provider mutation gates remain closed. Migration names are provenance, not an approved apply order.",
   "missing": [
@@ -20,32 +20,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_begin_cs_import_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/import/route.ts",
-          "line": 144
-        }
-      ],
-      "sourceMigrations": [
-        "20260908002000_add_cs_import_staging.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_cancel_cs_import_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/import/route.ts",
-          "line": 212
-        }
-      ],
-      "sourceMigrations": [
-        "20260908002000_add_cs_import_staging.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_claim_elevenst_pending_diagnostic_v1",
       "callSites": [
         {
@@ -55,19 +29,6 @@
       ],
       "sourceMigrations": [
         "20260909133703_cs_elevenst_pending_diagnostic.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_commit_cs_import_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/import/route.ts",
-          "line": 212
-        }
-      ],
-      "sourceMigrations": [
-        "20260908002000_add_cs_import_staging.sql"
       ],
       "hasVersionCollision": false
     },
@@ -124,19 +85,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_get_cs_import_preview_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/import/route.ts",
-          "line": 111
-        }
-      ],
-      "sourceMigrations": [
-        "20260908002000_add_cs_import_staging.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_get_lazada_product_review_reply_capability_v1",
       "callSites": [
         {
@@ -172,19 +120,6 @@
       ],
       "sourceMigrations": [
         "20260909134539_temu_history_checkpoint_resume.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_list_active_lazada_credentials",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/sync/route.ts",
-          "line": 258
-        }
-      ],
-      "sourceMigrations": [
-        "20260909124048_cs_lazada_multi_account_scope.sql"
       ],
       "hasVersionCollision": false
     },
@@ -329,32 +264,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_read_cs_recovery_readiness_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/recovery-readiness/route.ts",
-          "line": 1
-        }
-      ],
-      "sourceMigrations": [
-        "20260908003100_add_cs_recovery_drills.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_read_cs_scope_health_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/scope-health/route.ts",
-          "line": 8
-        }
-      ],
-      "sourceMigrations": [
-        "20260907235000_add_cs_scope_health.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_read_cs_shopee_buyer_chat_media_v1",
       "callSites": [
         {
@@ -403,32 +312,6 @@
       ],
       "sourceMigrations": [
         "20260908142023_cs_shopee_history_ledger.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_read_ebay_case_dispute_history_v2",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/channels/ebay/cases-disputes/history/route.ts",
-          "line": 32
-        }
-      ],
-      "sourceMigrations": [
-        "20260908135323_ebay_case_dispute_history_read_v2.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_read_lazada_quarantine",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/lazada-quarantine/route.ts",
-          "line": 18
-        }
-      ],
-      "sourceMigrations": [
-        "20260907060844_read_lazada_quarantine.sql"
       ],
       "hasVersionCollision": false
     },
@@ -670,19 +553,6 @@
       "hasVersionCollision": false
     },
     {
-      "name": "sellerpilot_service_enqueue_ebay_case_dispute_collection_v2",
-      "callSites": [
-        {
-          "file": "lib/channels/cs/ebay/case-dispute-gateway.ts",
-          "line": 518
-        }
-      ],
-      "sourceMigrations": [
-        "20260909124944_cs_ebay_case_dispute_durable_collection_v2.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_service_enqueue_elevenst_listing_snapshot_recovery",
       "callSites": [
         {
@@ -692,19 +562,6 @@
       ],
       "sourceMigrations": [
         "20260831054000_recover_elevenst_listing_snapshot.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_service_enqueue_lazada_periodic_sync",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/sync/route.ts",
-          "line": 388
-        }
-      ],
-      "sourceMigrations": [
-        "20260909124048_cs_lazada_multi_account_scope.sql"
       ],
       "hasVersionCollision": false
     },
@@ -943,32 +800,6 @@
       ],
       "sourceMigrations": [
         "20260910032500_fence_coupang_create_official_sources_r8.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_service_record_ebay_case_dispute_gateway_page_v2",
-      "callSites": [
-        {
-          "file": "lib/channels/cs/ebay/case-dispute-gateway.ts",
-          "line": 485
-        }
-      ],
-      "sourceMigrations": [
-        "20260909124944_cs_ebay_case_dispute_durable_collection_v2.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
-      "name": "sellerpilot_service_record_ebay_case_dispute_history_v1",
-      "callSites": [
-        {
-          "file": "lib/channels/cs/ebay/case-dispute-history.ts",
-          "line": 51
-        }
-      ],
-      "sourceMigrations": [
-        "20260908135249_ebay_case_dispute_history_ledger.sql"
       ],
       "hasVersionCollision": false
     },
@@ -1235,19 +1066,6 @@
       "hasVersionCollision": true
     },
     {
-      "name": "sellerpilot_stage_cs_import_rows_v1",
-      "callSites": [
-        {
-          "file": "app/api/admin/cs/import/route.ts",
-          "line": 177
-        }
-      ],
-      "sourceMigrations": [
-        "20260908002000_add_cs_import_staging.sql"
-      ],
-      "hasVersionCollision": false
-    },
-    {
       "name": "sellerpilot_start_or_resume_temu_history_v1",
       "callSites": [
         {
@@ -1498,5 +1316,6 @@
       "line": 27,
       "argument": "name"
     }
-  ]
+  ],
+  "previousMissingFunctionCount": 93
 }

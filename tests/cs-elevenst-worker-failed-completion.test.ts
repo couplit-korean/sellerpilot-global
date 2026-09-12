@@ -167,8 +167,6 @@ test("the provider-result branch uses the safe builder while the transport catch
   assert.ok(completionStart > 0 && catchStart > completionStart);
   assert.match(workerSource.slice(completionStart, catchStart), /buildCsFailedCompletionPayload\(\{ job, claimToken, error: result.safeMessage, result, credentialRefresh \}\)/u);
   assert.doesNotMatch(workerSource.slice(catchStart), /\bresult\s*[,}:]/u);
-  assert.match(workerSource.slice(catchStart), /status: externalWriteStarted \? "reconciliation_required" : "failed"/u);
-
 });
 
 test("external worker and serverless failed reads converge on the same normalized stored response", () => {

@@ -60,7 +60,6 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
   });
   const beginCredentialMutation = async () => {
     await assertLeaseHealthy();
-    externalWriteStarted = true;
     credentialMutationInFlight = true;
     await persist("/api/channel-gateway/worker/credential-refresh", { action: "begin", jobId: job.id, claimToken }, "CS 인증 갱신 경계 저장 실패");
     await assertLeaseHealthy();
@@ -107,10 +106,14 @@ export async function processCsGatewayJob(job, { createGatewayHeartbeat, persist
     const reason = String(error?.message ?? error ?? "")
       .replace(/\s+/g, " ")
       .slice(0, 300);
+    // A successful stage receipt makes the refreshed credentials durable.
+    // A later read failure is then known to have no unresolved mutation. Keep
+    // both an unstaged refresh and any business write fenced for reconciliation.
+    const mutationUncertain = externalWriteStarted || credentialMutationInFlight;
     const failureCompletion = {
       jobId: job.id, claimToken,
-      status: externalWriteStarted ? "reconciliation_required" : "failed",
-      error: externalWriteStarted
+      status: mutationUncertain ? "reconciliation_required" : "failed",
+      error: mutationUncertain
         ? "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
         : `CS_PROVIDER_EXECUTION_FAILED:${reason || "unknown"}`,
       ...(!credentialMutationInFlight && credentialRefresh ? { credentialRefresh } : {}),
