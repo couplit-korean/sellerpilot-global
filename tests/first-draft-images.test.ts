@@ -20,7 +20,7 @@ import {
 } from "../lib/first-draft-images";
 import { productResearchInputSha256 } from "../lib/product-research-lineage-receipt-core";
 import { validateSucceededProductResearchPreflight } from "../lib/product-studio-lineage";
-import { runFirstDraftImageLaneOnce } from "../scripts/first-draft-image-lane.mjs";
+import { firstDraftUsageLimitWaitMs, runFirstDraftImageLaneOnce } from "../scripts/first-draft-image-lane.mjs";
 
 const ownerId = "11111111-1111-4111-8111-111111111111";
 const jobId = "22222222-2222-4222-8222-222222222222";
@@ -420,4 +420,15 @@ test("the Mac lane skips already-verified assets and reports failures instead of
   assert.equal(failurePosts.length, 1);
   assert.equal(failurePosts[0]!.failed, true);
   assert.equal(typeof failurePosts[0]!.reason, "string");
+});
+
+test("Codex usage-limit errors wait until the stated resume time instead of looking like a repo-check failure", () => {
+  const now = Date.parse("2026-09-12T14:21:00+09:00");
+  const waitMs = firstDraftUsageLimitWaitMs(
+    "skip-git-repo-check flag or add project to ~/.codex/config.toml\nERROR: You've hit your usage limit. try again at 3:08 PM.",
+    now,
+  );
+  assert.equal(waitMs > 40 * 60 * 1000, true);
+  assert.equal(waitMs < 55 * 60 * 1000, true);
+  assert.equal(firstDraftUsageLimitWaitMs("codex 이미지 생성 실패", now), 0);
 });

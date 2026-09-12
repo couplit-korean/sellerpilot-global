@@ -4164,7 +4164,12 @@ function PublishingPage({ notify, channelMetrics, pipeline, authenticatedFetch, 
         headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
         body: JSON.stringify({ jobId }),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { message?: string } | null;
+        setFirstDraftConceptStatus(payload?.message || "1차 이미지 생성 요청을 넣지 못했습니다. 잠시 후 다시 시도해 주세요.");
+        firstDraftImageRequestedRef.current = false;
+        return;
+      }
       setFirstDraftConceptStatus('1차 이미지 6장을 상세페이지와 같은 카테고리 매칭 파이프라인으로 생성하고 있습니다. 완료되는 대로 이 자리에 반영됩니다.');
       if (firstDraftImagePollRef.current !== null) window.clearInterval(firstDraftImagePollRef.current);
       let attempts = 0;

@@ -3,11 +3,6 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
-
-const firstDraftImageConcurrency = (() => {
-  const parsed = Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGE_CONCURRENCY ?? 3);
-  return Number.isFinite(parsed) ? Math.max(1, Math.min(6, Math.floor(parsed))) : 3;
-})();
 import {
   buildAssetImagePrompt,
   resolveIdentityBackgroundContactMode,
@@ -19,6 +14,28 @@ import {
   firstDraftImageEnqueuePayloadSchema,
 } from "../lib/first-draft-images.ts";
 import { maximumStudioSourceImageBytes } from "../lib/studio-source-photo-policy.ts";
+
+const firstDraftImageConcurrency = (() => {
+  const parsed = Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGE_CONCURRENCY ?? 3);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(6, Math.floor(parsed))) : 3;
+})();
+const firstDraftAssetAttempts = 2;
+
+export function firstDraftUsageLimitWaitMs(reason, now = Date.now()) {
+  const text = String(reason ?? "");
+  if (!/usage limit|hit your usage limit|try again at /i.test(text)) return 0;
+  const match = text.match(/try again at (\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!match) return 45 * 60 * 1000;
+  let hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const ampm = match[3].toUpperCase();
+  if (ampm === "PM" && hour < 12) hour += 12;
+  if (ampm === "AM" && hour === 12) hour = 0;
+  const resume = new Date(now);
+  resume.setHours(hour, minute, 0, 0);
+  if (resume.getTime() <= now) resume.setDate(resume.getDate() + 1);
+  return Math.min(6 * 60 * 60 * 1000, Math.max(60_000, resume.getTime() - now + 60_000));
+}
 
 /**
  * Mac-side first-draft image lane.
@@ -78,8 +95,18 @@ export async function generateFirstDraftAsset({
     settingShot ?? undefined,
     contactMode,
   );
-  await runCodex(codexArgs({ spec, outputFile, sourceFile, jobDir, prompt }));
-  return normalizeGeneratedAsset(outputFile, spec);
+  let lastError = null;
+  for (let attempt = 1; attempt <= firstDraftAssetAttempts; attempt += 1) {
+    try {
+      await runCodex(codexArgs({ spec, outputFile, sourceFile, jobDir, prompt }));
+      return await normalizeGeneratedAsset(outputFile, spec);
+    } catch (error) {
+      lastError = error;
+      if (firstDraftUsageLimitWaitMs(error instanceof Error ? error.message : error) > 0) throw error;
+      if (attempt >= firstDraftAssetAttempts) throw error;
+    }
+  }
+  throw lastError ?? new Error(`${spec.id} 이미지 생성기가 사용할 수 있는 산출물을 만들지 못했습니다.`);
 }
 
 export async function runFirstDraftImageLaneOnce({
@@ -163,7 +190,12 @@ export async function runFirstDraftImageLaneOnce({
     return { status: "recorded", jobId: payload.jobId, pending: pending.map((asset) => asset.id) };
   }
   catch (error) {
-    const reason = error instanceof Error ? error.message : "first-draft-image-failed";
+    const rawReason = error instanceof Error ? error.message : "first-draft-image-failed";
+    const usageWaitMs = firstDraftUsageLimitWaitMs(rawReason);
+    const resume = String(rawReason).match(/try again at \d{1,2}:\d{2}\s*(AM|PM)/i)?.[0];
+    const reason = usageWaitMs > 0
+      ? `Codex usage limit${resume ? ` · ${resume}` : ""}`
+      : rawReason.slice(-300);
     logError(`[1차 생성 이미지 실패] ${payload.jobId} · ${reason}`);
     await api("/api/ai/worker/first-draft-images", {
       method: "POST",

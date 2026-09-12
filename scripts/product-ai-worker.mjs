@@ -28,7 +28,7 @@ import { runVisionCutoutWithTransientRetry } from "../lib/source-product-cutout-
 import { isWorkerTokenConfigured, workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
-import { readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
+import { firstDraftUsageLimitWaitMs, readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
 import { AI_HEARTBEAT_INTERVAL_MS, AI_HEARTBEAT_TRANSIENT_GRACE_MS, requestWithTransientRetry, WORKER_COMPLETION_TRANSIENT_GRACE_MS, WorkerRequestTerminalError } from "./worker-lifecycle-retry.mjs";
 ;
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
@@ -354,6 +354,12 @@ async function runFirstDraftImagesLane() {
             laneErrorLogged = false;
             if (once)
                 break;
+            const usageWaitMs = outcome.status === "failed" ? firstDraftUsageLimitWaitMs(outcome.reason) : 0;
+            if (usageWaitMs > 0) {
+                console.error(`[1차 생성 이미지] Codex 사용량 한도 · ${Math.ceil(usageWaitMs / 60000)}분 후 재시도`);
+                await delay(usageWaitMs);
+                continue;
+            }
         }
         catch (error) {
             if (!laneErrorLogged) {
