@@ -28,6 +28,7 @@ import { runVisionCutoutWithTransientRetry } from "../lib/source-product-cutout-
 import { isWorkerTokenConfigured, workerClaimBackoffMs } from "./worker-claim-backoff.mjs";
 import { createConcurrencyGate } from "./worker-concurrency-gate.mjs";
 import { runCodexJsonArtifact } from "./codex-json-artifact.mjs";
+import { readSourceBytesBounded, runFirstDraftImageLaneOnce } from "./first-draft-image-lane.mjs";
 import { AI_HEARTBEAT_INTERVAL_MS, AI_HEARTBEAT_TRANSIENT_GRACE_MS, requestWithTransientRetry, WORKER_COMPLETION_TRANSIENT_GRACE_MS, WorkerRequestTerminalError } from "./worker-lifecycle-retry.mjs";
 ;
 const sellerpilotUrl = (process.env.SELLERPILOT_URL ?? "https://sellerpilot-global.vercel.app").replace(/\/$/, "");
@@ -317,6 +318,54 @@ async function persistWorkerCompletion(path, payload, label, graceMs = WORKER_CO
 }
 const codexOutputLimitBytes = 1024 * 1024;
 const codexTerminationGraceMs = 5000;
+// First-draft concept images (portrait/wide/detail-*) are drawn on this Mac
+// because the Vercel preflight cannot reach the image model for this account.
+// The lane is opt-in and runs beside, never inside, the AI job claim loop.
+const firstDraftImagesEnabled = process.env.SELLERPILOT_FIRST_DRAFT_IMAGES === "1";
+const firstDraftImagesPollMs = Math.max(5000, Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGES_POLL_MS ?? 10000));
+function buildFirstDraftImageCodexArgs({ sourceFile, jobDir, prompt }) {
+    return [
+        "exec",
+        "--model", model,
+        "--enable", "image_generation",
+        "--sandbox", codexSandboxMode,
+        "--skip-git-repo-check",
+        "--ephemeral",
+        "--cd", jobDir,
+        `--image=${sourceFile}`,
+        prompt,
+    ];
+}
+async function runFirstDraftImagesLane() {
+    let laneErrorLogged = false;
+    while (!stopping) {
+        try {
+            const outcome = await runFirstDraftImageLaneOnce({
+                api,
+                fetchSource: async (sourceUrl) => readSourceBytesBounded(await fetch(sourceUrl, { signal: AbortSignal.timeout(120000) })),
+                runCodex: (imageArgs) => runCodex(imageArgs, imageGenerationTimeoutMs, null, null, {
+                    stage: "image:first-draft",
+                }),
+                normalizeGeneratedAsset,
+                buildCodexImageArgs: buildFirstDraftImageCodexArgs,
+            });
+            if (outcome.status === "done" || outcome.status === "recorded")
+                markWorkerBusy();
+            laneErrorLogged = false;
+            if (once)
+                break;
+        }
+        catch (error) {
+            if (!laneErrorLogged) {
+                console.error(error instanceof Error ? error.message : "1차 생성 이미지 루프 오류");
+                laneErrorLogged = true;
+            }
+            if (once)
+                break;
+        }
+        await delay(firstDraftImagesPollMs);
+    }
+}
 const studioMasterInvocationPolicy = Object.freeze({
     artifactAttempts: 2,
     reasoningEffort: "medium",
@@ -3400,6 +3449,8 @@ async function processJob(job) {
 const workerMode = "product-only";
 console.log(`SellerPilot ChatGPT CLI worker 시작 · ${sellerpilotUrl} · version=${workerVersion} · mode=${workerMode} · model=${model} · codex-concurrency=${codexConcurrencyLimit} · analysis-timeout=${analysisTimeoutMs}ms · studio-master-timeout=${studioMasterTimeoutMs}ms · studio-localized-timeout=${studioLocalizedTimeoutMs}ms · image-timeout=${imageGenerationTimeoutMs}ms`);
 console.log(`Worker scope · product=${aiWorkerConfigured ? "configured" : "disabled"}`);
+console.log(`Worker scope · first-draft-images=${firstDraftImagesEnabled ? `enabled(poll=${firstDraftImagesPollMs}ms)` : "disabled"}`);
+const firstDraftImagesTask = firstDraftImagesEnabled ? runFirstDraftImagesLane() : null;
 const configuredAiConcurrency = Number(process.env.SELLERPILOT_AI_WORKER_CONCURRENCY ?? 9);
 const maxAiConcurrency = Math.min(9, Math.max(1, Number.isFinite(configuredAiConcurrency) ? Math.trunc(configuredAiConcurrency) : 9));
 const activeAiJobs = new Set();
@@ -3494,4 +3545,6 @@ do {
 } while (!once && !stopping);
 if (activeAiJobs.size)
     await Promise.allSettled([...activeAiJobs]);
+if (firstDraftImagesTask)
+    await Promise.allSettled([firstDraftImagesTask]);
 console.log(`SellerPilot ${"ChatGPT CLI"} worker 종료`);
