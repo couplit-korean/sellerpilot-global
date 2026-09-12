@@ -168,6 +168,58 @@ test("Temu detail job boundary is exact at 10 records and the 11th is continued"
   }
 });
 
+test("Temu detail requires every child orderSn to match the parent order", async () => {
+  const originalFetch = globalThis.fetch;
+  const arguments_ = {
+    kind: "after_sales",
+    includeDetails: true,
+    updateAtStart: 1_787_000_000,
+    updateAtEnd: 1_788_000_000,
+    detailQueue: [{ parentAfterSalesSn: "AFTER-1", parentOrderSn: "ORDER-1" }],
+  };
+  try {
+    globalThis.fetch = async () => Response.json({
+      success: true,
+      result: {
+        parentAfterSalesSn: "AFTER-1",
+        parentOrderSn: "ORDER-1",
+        afterSalesList: [{ afterSalesSn: "AFTER-1-CHILD", orderSn: "ORDER-1" }],
+      },
+    });
+    const matching = await runWithProviderReadOnlyTransport(() => executeTemuInquiry({
+      operation: "inquiries.list",
+      payload,
+      arguments: arguments_,
+    }));
+    assert.equal(matching.steps.length, 1);
+    assert.equal(matching.steps[0]?.ok, true);
+
+    for (const child of [
+      { afterSalesSn: "AFTER-1-CHILD", orderSn: "ORDER-OTHER" },
+      { afterSalesSn: "AFTER-1-CHILD" },
+    ]) {
+      globalThis.fetch = async () => Response.json({
+        success: true,
+        result: {
+          parentAfterSalesSn: "AFTER-1",
+          parentOrderSn: "ORDER-1",
+          afterSalesList: [child],
+        },
+      });
+      await assert.rejects(
+        runWithProviderReadOnlyTransport(() => executeTemuInquiry({
+          operation: "inquiries.list",
+          payload,
+          arguments: arguments_,
+        })),
+        /TEMU_AFTER_SALES_DETAIL_MISMATCH/,
+      );
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("Temu detail normalization keeps buyer reason and refund evidence without arbitrary contact fields", () => {
   const normalized = normalizeChannelInquiries("temu", {
     ok: true,
@@ -316,8 +368,8 @@ test("Temu detail mode rejects missing time pairs, repeated queue identities and
       arguments: {
         kind: "after_sales",
         includeDetails: true,
-        updateAtStart: 1_787_000_000_000,
-        updateAtEnd: 1_788_000_000_000,
+        updateAtStart: 178_700_000_000_000,
+        updateAtEnd: 178_800_000_000_000,
       },
     }), /CHANNEL_ARGUMENT_INVALID:updateAtStart/);
     const duplicate = { parentAfterSalesSn: "AFTER-1", parentOrderSn: "ORDER-1" };

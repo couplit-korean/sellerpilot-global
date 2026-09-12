@@ -660,6 +660,7 @@ async function runReviewedTransientPipelineFixture(options: {
       return "uploaded";
     },
     generateStructured: async (input) => observeRemoteCall(async () => {
+      if (input.tags.includes("feature:product-source-identity")) return input.schema.parse({ sameProduct: "yes", confidence: 0.99, reason: "Matching product" });
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
         role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
@@ -1901,6 +1902,7 @@ test("full server Studio retries rejected OCR and duplicate lineage, uploads 16 
       return "uploaded";
     },
     generateStructured: async (input) => {
+      if (input.tags.includes("feature:product-source-identity")) return input.schema.parse({ sameProduct: "yes", confidence: 0.99, reason: "Matching product" });
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
         role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],
@@ -2095,6 +2097,7 @@ test("main then front segmentation quality failures fail closed instead of a ful
       return "uploaded";
     },
     generateStructured: async (input) => {
+      if (input.tags.includes("feature:product-source-identity")) return input.schema.parse({ sameProduct: "yes", confidence: 0.99, reason: "Matching product" });
       if (input.tags.includes("feature:product-source-analysis")) return input.schema.parse({
         role: input.images[0]?.role === "main" ? "front" : input.images[0]?.role ?? "unknown",
         confidence: 0.99, sameProduct: "yes", wholeProduct: true, readableText: "", facts: [], warnings: [],

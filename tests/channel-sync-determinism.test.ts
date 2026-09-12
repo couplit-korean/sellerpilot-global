@@ -144,7 +144,7 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
     status: "waiting",
     priority: 3,
     receivedAt: "2026-08-25T03:34:56.000Z",
-    providerContext: { kind: "product", namespace: "product-qna", questionId: "987654", unsequencedAnswers: [] },
+    providerContext: { identityContract: "smartstore-provider-ticket-v1", legacyExternalTicketId: "smartstore:product-qna:987654", providerTicketKind: "product", providerTicketId: "987654", kind: "product", namespace: "product-qna", questionId: "987654", unsequencedAnswers: [] },
     replyContext: { kind: "product", questionId: "987654" },
     remoteMessageId: "987654",
     providerStatus: "waiting",
@@ -176,13 +176,42 @@ test("Smartstore product Q&A and customer inquiries keep disjoint provider ident
     priority: 3,
     receivedAt: "2026-08-26T00:00:00.000Z",
     externalOrderReference: "10001",
-    providerContext: { kind: "customer", inquiryNo: "987654", orderReferenceState: "exact_product_order", orderId: "ORDER-1", productOrderIds: ["10001"], unsequencedAnswers: [] },
+    providerContext: { identityContract: "smartstore-provider-ticket-v1", legacyExternalTicketId: "customer:987654", providerTicketKind: "customer", providerTicketId: "987654", kind: "customer", inquiryNo: "987654", orderReferenceState: "exact_product_order", orderId: "ORDER-1", productOrderIds: ["10001"], unsequencedAnswers: [] },
     replyContext: { kind: "customer", inquiryNo: "987654" },
     remoteMessageId: "987654",
     providerStatus: "waiting",
     ticketKind: "conversation",
   });
   assert.match(customerInquiry?.inboundKey ?? "", /^smartstore:[0-9a-f]{64}$/);
+});
+
+test("Smartstore buyer inbound generation changes only when same-ID content is edited", () => {
+  const normalize = (message: string) => normalizeChannelInquiries("smartstore", result(
+    "smartstore",
+    "inquiries.list",
+    "inquiries",
+    {
+      sellerpilotInquiryKind: "product",
+      contents: [{
+        questionId: 998877,
+        question: message,
+        productName: "동일 상품",
+        maskedWriterId: "same***",
+        answered: false,
+        createDate: "2026-08-25T12:34:56.000+09:00",
+      }],
+    },
+  ), NORMALIZATION_TIMESTAMP)[0]!;
+
+  const before = normalize("배송은 언제 시작되나요?");
+  const replay = normalize("배송은 언제 시작되나요?");
+  const edited = normalize("배송지를 변경한 뒤 언제 시작되나요?");
+
+  assert.equal(replay.inboundKey, before.inboundKey);
+  assert.notEqual(edited.inboundKey, before.inboundKey);
+  assert.equal(edited.externalTicketId, before.externalTicketId);
+  assert.equal(edited.remoteMessageId, before.remoteMessageId);
+  assert.equal(edited.receivedAt, before.receivedAt);
 });
 
 test("Temu deadline priority is identical across exact completion replays", () => {

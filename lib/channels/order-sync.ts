@@ -405,4 +405,4 @@ export function normalizeChannelOrders(
   return [...new Map(normalized.map((order) => [order.externalOrderId, order])).values()];
 }
 
-export { orderSyncArguments, orderSyncRequests } from "./sync-arguments";
+export { orderSyncArguments, orderSyncRequests } from "../shipping/sync-arguments";

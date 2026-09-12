@@ -29,12 +29,11 @@ test("Coupang current and history schedules keep Q&A, call center, return, cance
   assert.deepEqual(current.map((request) => request.periodicKey), [
     "inquiries:product:all",
     "inquiries:call-center:none",
-    "inquiries:call-center:transfer",
     "inquiries:return_request:all",
     "inquiries:cancel_request:all",
     "inquiries:exchange_request:all",
   ]);
-  assert.deepEqual(current[3]?.arguments, {
+  assert.deepEqual(current[2]?.arguments, {
     kind: "return_request",
     query: {
       searchType: "timeFrame",
@@ -43,7 +42,7 @@ test("Coupang current and history schedules keep Q&A, call center, return, cance
       cancelType: "RETURN",
     },
   });
-  assert.deepEqual(current[5]?.arguments, {
+  assert.deepEqual(current[4]?.arguments, {
     kind: "exchange_request",
     query: {
       createdAtFrom: "2026-09-02T12:00:00",
@@ -53,11 +52,10 @@ test("Coupang current and history schedules keep Q&A, call center, return, cance
   });
 
   const history = inquiryHistorySyncRequests("coupang", now, 30);
-  assert.equal(history.length, 40);
-  for (let index = 0; index < history.length; index += 8) {
-    assert.deepEqual(history.slice(index, index + 8).map((request) => request.arguments.kind), [
-      "product", "call-center", "call-center", "call-center", "call-center",
-      "return_request", "cancel_request", "exchange_request",
+  assert.equal(history.length, 25);
+  for (let index = 0; index < history.length; index += 5) {
+    assert.deepEqual(history.slice(index, index + 5).map((request) => request.arguments.kind), [
+      "product", "call-center", "return_request", "cancel_request", "exchange_request",
     ]);
   }
 });

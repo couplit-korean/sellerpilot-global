@@ -53,12 +53,15 @@ test("vision inspects every photo against the same main anchor with bounded conc
   const inputs = photos().map(photo => ({ ...photo, observation: undefined }));
   let active = 0; let peak = 0; const seen: string[] = [];
   const result = await analyzeServerStudioSources(inputs, { generateStructured: async input => {
+    if (input.tags.includes("feature:product-source-identity")) {
+      assert.equal(input.images.length, 2);
+      assert.equal(input.images[1].role, "main");
+      return input.schema.parse({ sameProduct: "yes", confidence: 0.99, reason: "Matching product" });
+    }
     active++; peak = Math.max(peak, active);
-    assert.equal(input.images.at(-1)?.role, "main");
-    assert.match(input.prompt, /Analyze ONLY IMAGE 1/);
+    assert.equal(input.images.length, 1, "OCR cannot accidentally read an identity reference");
+    assert.match(input.prompt, /single supplied TARGET photo/);
     const photo = input.images[0];
-    if (photo.role === "main") assert.match(input.prompt, /target is the identity anchor itself/);
-    else assert.match(input.prompt, /Do not copy IMAGE 2 text/);
     seen.push(photo.path);
     await new Promise(resolve => setTimeout(resolve, 1));
     active--;

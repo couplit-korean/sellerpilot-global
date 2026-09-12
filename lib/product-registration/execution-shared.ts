@@ -79,24 +79,8 @@ export type ChannelOperationResult = {
   safeMessage: string;
 };
 
-export type ShopeeSgCreateStageName =
-  | "image-upload"
-  | "global-item-create"
-  | "local-publish";
-
-export type ShopeeSgCreateStageInput = {
-  sequence: number;
-  stage: ShopeeSgCreateStageName;
-  preparedPayloadSha256: string;
-  sourceUrl?: string;
-  sourceSha256?: string;
-  globalItemId?: string;
-};
-
-export type ShopeeSgCreateStageCompletion = ShopeeSgCreateStageInput & {
-  outputId: string;
-  result?: Record<string, unknown>;
-};
+import type { ShopeeSgCreateStageInput, ShopeeSgCreateStageCompletion } from "../channels/shopee-create-stage-contract";
+export type { ShopeeSgCreateStageName, ShopeeSgCreateStageInput, ShopeeSgCreateStageCompletion } from "../channels/shopee-create-stage-contract";
 
 export type ExecuteInput = {
   channel: ActiveChannelKey;

@@ -313,10 +313,18 @@ export function assessQoo10HistoryExecution(input: {
   if (input.execution.steps.length !== 1) throw new Error("QOO10_HISTORY_EXECUTION_STEPS_INVALID");
   const step = input.execution.steps[0]!;
   const rows = step.ok ? resultRows(step.data, input.window.source) : [];
+  const reportedTotal = providerTotal(step.data);
+  const safeProviderTotal = Number.isSafeInteger(reportedTotal) && Number(reportedTotal) >= 0
+    ? Number(reportedTotal)
+    : null;
+  const safeObservedRowLimit = Number.isSafeInteger(input.observedRowLimit)
+      && Number(input.observedRowLimit) > 0
+    ? Number(input.observedRowLimit)
+    : null;
   const completeness = assessQoo10WindowCompleteness({
     providerSucceeded: step.ok,
     rowCount: rows.length,
-    providerTotal: providerTotal(step.data),
+    providerTotal: reportedTotal,
     observedRowLimit: input.observedRowLimit,
   });
   const reconciliation = input.window.source === "qapi_inquiry"
@@ -332,6 +340,8 @@ export function assessQoo10HistoryExecution(input: {
       windowKey: qoo10HistoryWindowKey(input.window),
       source: input.window.source,
       providerStatus: step.status,
+      providerTotal: safeProviderTotal,
+      observedRowLimit: safeObservedRowLimit,
       completeness,
       ...reconciliation,
       refinementRequired: refinement.length > 0,

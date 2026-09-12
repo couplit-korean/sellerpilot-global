@@ -33,6 +33,83 @@ test("Lazada session remainder becomes a durable continuation after the current 
     assert.equal(calls.length, 2);
     assert.equal(result.continuation?.arguments.sellerpilotLazadaSessionStartTime, "2000");
     assert.equal(result.continuation?.arguments.sellerpilotLazadaLastSessionId, "s1");
+    assert.equal(result.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
+  });
+});
+
+test("Lazada sessionLimit stops before another provider session while retaining the stored page", async () => {
+  await withProvider(url => url.pathname.endsWith("/session/list")
+    ? ({ ...sessions, has_more: true, next_start_time: 2000, last_session_id: "s1" })
+    : ({ message_list: [message], has_more: false }), async calls => {
+    const first = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload, arguments: args, environment: "production",
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
+    assert.equal(calls.length, 2);
+
+    const stopped = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload,
+      arguments: first.continuation?.arguments ?? {}, environment: "production",
+    });
+    assert.equal(stopped.ok, false);
+    assert.equal(stopped.steps[0]?.data.code, "LAZADA_HISTORY_SESSION_LIMIT_REACHED");
+    assert.equal(stopped.steps[0]?.data.sellerpilotVerification, "PAGINATION_STOPPED_WITH_REMAINDER");
+    assert.equal(calls.length, 2);
+  });
+});
+
+test("Lazada pageSize controls each durable message request and rejects an overfull page", async () => {
+  await withProvider(url => url.pathname.endsWith("/session/list") ? sessions : {
+    message_list: Array.from({ length: 3 }, (_, i) => ({ ...message, message_id: `m${i}` })),
+    has_more: false,
+  }, async calls => {
+    const result = await execute({ ...args, pageSize: 3 });
+    assert.equal(result.steps.every(step => step.ok), true);
+    assert.equal(calls[1]?.searchParams.get("page_size"), "3");
+  });
+  await withProvider(url => url.pathname.endsWith("/session/list") ? sessions : {
+    message_list: Array.from({ length: 4 }, (_, i) => ({ ...message, message_id: `m${i}` })),
+    has_more: false,
+  }, async calls => {
+    await assert.rejects(execute({ ...args, pageSize: 3 }), /LAZADA_HISTORY_MESSAGE_PAGE_INVALID/);
+    assert.equal(calls[1]?.searchParams.get("page_size"), "3");
+  });
+});
+
+test("Lazada completes every message page in the current session before enforcing sessionLimit", async () => {
+  await withProvider(url => {
+    if (url.pathname.endsWith("/session/list")) return {
+      ...sessions, has_more: true, next_start_time: 2000, last_session_id: "s1",
+    };
+    if (!url.searchParams.has("last_message_id")) return {
+      message_list: [message], has_more: true, next_start_time: 1000, last_message_id: "m1",
+    };
+    return { message_list: [{ ...message, message_id: "m0" }], has_more: false };
+  }, async calls => {
+    const first = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload, arguments: args, environment: "production",
+    });
+    assert.equal(first.ok, true);
+    assert.equal(first.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
+    assert.equal(first.continuation?.arguments.sellerpilotLazadaSession?.session_id, "s1");
+
+    const second = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload,
+      arguments: first.continuation?.arguments ?? {}, environment: "production",
+    });
+    assert.equal(second.ok, true);
+    assert.equal(second.continuation?.arguments.sellerpilotLazadaSession, undefined);
+    assert.equal(second.continuation?.arguments.sellerpilotLazadaSessionCount, 1);
+    assert.equal(calls.filter(url => url.pathname.endsWith("/message/list")).length, 2);
+
+    const stopped = await executeChannelOperation({
+      channel: "lazada", operation: "inquiries.list", payload,
+      arguments: second.continuation?.arguments ?? {}, environment: "production",
+    });
+    assert.equal(stopped.ok, false);
+    assert.equal(stopped.steps[0]?.data.code, "LAZADA_HISTORY_SESSION_LIMIT_REACHED");
+    assert.equal(calls.filter(url => url.pathname.endsWith("/session/list")).length, 1);
   });
 });
 

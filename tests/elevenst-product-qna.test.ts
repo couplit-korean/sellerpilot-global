@@ -26,11 +26,16 @@ function qnaResult(rows: Record<string, unknown>[]) {
 test("11st current and 30-day history requests obey the official seven-calendar-day ceiling", () => {
   assert.deepEqual(inquirySyncRequests("elevenst", now), [{
     periodicKey: "inquiries:product_qna:all",
-    arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+    arguments: { kind: "product_qna", startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+  }, {
+    periodicKey: "inquiries:urgent_alimi:all",
+    arguments: { kind: "urgent_alimi", startDate: "20260810", endDate: "20260908" },
   }]);
-  const history = inquiryHistorySyncRequests("elevenst", now, 30);
+  const requests = inquiryHistorySyncRequests("elevenst", now, 30);
+  const history = requests.filter(item => item.arguments.kind === "product_qna");
+  assert.deepEqual(requests.filter(item => item.arguments.kind === "urgent_alimi").map(item => item.arguments), [{ kind: "urgent_alimi", startDate: "20260810", endDate: "20260908" }]);
   assert.equal(history.length, 5);
-  assert.deepEqual(history.map(({ arguments: value }) => value), [
+  assert.deepEqual(history.map(({ arguments: { kind: _kind, ...value } }) => value), [
     { startDate: "20260810", endDate: "20260816", answerStatus: "00" },
     { startDate: "20260817", endDate: "20260823", answerStatus: "00" },
     { startDate: "20260824", endDate: "20260830", answerStatus: "00" },
@@ -90,6 +95,184 @@ test("11st Product Q&A list uses the exact authenticated GET path and excludes p
       observationDigests: [createHash("sha256").update(inquiries[0]!.inboundKey).digest("hex")],
       hasContinuation: false,
     });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st Product Q&A accepts an exact namespaced empty root", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    `<?xml version="1.0" encoding="UTF-8"?>
+      <!-- provider empty result -->
+      <ns2:productQnas xmlns:ns2="http://sapi.11st.co.kr">
+        <!-- no Product Q&A rows -->
+      </ns2:productQnas>`,
+    { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
+  );
+  try {
+    const operation = await executeChannelOperation({
+      channel: "elevenst", operation: "inquiries.list", payload,
+      arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.steps[0]?.data.accepted, true);
+    assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, true);
+    assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaObservedRows, 0);
+    assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaParseIncomplete, false);
+    assert.deepEqual(operation.steps[0]?.data.productQnas, []);
+    assert.deepEqual(normalizeChannelInquiries("elevenst", operation, now.toISOString()), []);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st Product Q&A rejects HTTP 200 documents without the exact complete root", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const responseXml of [
+      "<html><body>maintenance</body></html>",
+      "<ClientMessage><message>success</message></ClientMessage>",
+      "<ProductQnas><productQna></productQna>",
+      "<productQnas><productQna></productQnas>",
+      "<productQnas><!-- <productQna><brdInfoNo>1</brdInfoNo></productQna> --></productQnas>",
+      "<productQnas><![CDATA[<productQna><brdInfoNo>1</brdInfoNo></productQna>]]></productQnas>",
+      "<html><body><ProductQnas></ProductQnas></body></html>",
+    ]) {
+      globalThis.fetch = async () => new Response(responseXml, {
+        status: 200,
+        headers: { "content-type": "application/xml;charset=UTF-8" },
+      });
+      const operation = await executeChannelOperation({
+        channel: "elevenst", operation: "inquiries.list", payload,
+        arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+        environment: "production",
+      });
+      assert.equal(operation.ok, false);
+      assert.equal(operation.steps[0]?.ok, false);
+      assert.equal(operation.steps[0]?.data.accepted, false);
+      assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, false);
+      assert.equal(
+        operation.steps[0]?.data.sellerpilotElevenstProductQnaParseError,
+        "ELEVENST_PRODUCT_QNA_DOCUMENT_INVALID",
+      );
+      assert.deepEqual(operation.steps[0]?.data.productQnas, []);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st Product Q&A preserves ordinary CDATA field text without treating it as XML structure", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(
+    `<productQnas><productQna>
+      <brdInfoNo>81234567</brdInfoNo>
+      <brdInfoCont><![CDATA[배송 <확인> & 안내]]></brdInfoCont>
+    </productQna></productQnas>`,
+    { status: 200, headers: { "content-type": "application/xml;charset=UTF-8" } },
+  );
+  try {
+    const operation = await executeChannelOperation({
+      channel: "elevenst", operation: "inquiries.list", payload,
+      arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+      environment: "production",
+    });
+    assert.equal(operation.ok, true);
+    assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, true);
+    assert.equal(
+      (operation.steps[0]?.data.productQnas as Array<Record<string, unknown>>)[0]?.brdInfoCont,
+      "배송 <확인> & 안내",
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+function qnaRowsXml(count: number) {
+  return `<ProductQnas>${Array.from(
+    { length: count },
+    (_, index) => `<productQna><brdInfoNo>${index + 1}</brdInfoNo></productQna>`,
+  ).join("")}</ProductQnas>`;
+}
+
+test("11st Product Q&A accepts complete batches at the 499 and 500 row DB boundary", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const count of [499, 500]) {
+      globalThis.fetch = async () => new Response(qnaRowsXml(count), {
+        status: 200,
+        headers: { "content-type": "application/xml;charset=UTF-8" },
+      });
+      const operation = await executeChannelOperation({
+        channel: "elevenst", operation: "inquiries.list", payload,
+        arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+        environment: "production",
+      });
+      assert.equal(operation.ok, true);
+      assert.equal(operation.steps[0]?.data.accepted, true);
+      assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, true);
+      assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaObservedRows, count);
+      assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaParseIncomplete, false);
+      assert.equal((operation.steps[0]?.data.productQnas as unknown[]).length, count);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st Product Q&A fails closed above the 500 row DB boundary", async () => {
+  const originalFetch = globalThis.fetch;
+  try {
+    for (const count of [501, 5_000]) {
+      globalThis.fetch = async () => new Response(qnaRowsXml(count), {
+        status: 200,
+        headers: { "content-type": "application/xml;charset=UTF-8" },
+      });
+      const operation = await executeChannelOperation({
+        channel: "elevenst", operation: "inquiries.list", payload,
+        arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+        environment: "production",
+      });
+      assert.equal(operation.ok, false);
+      assert.equal(operation.steps[0]?.data.accepted, false);
+      assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, false);
+      assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaObservedRows, count);
+      assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaParseIncomplete, true);
+      assert.equal(
+        operation.steps[0]?.data.sellerpilotElevenstProductQnaParseError,
+        "ELEVENST_PRODUCT_QNA_DB_BATCH_LIMIT_EXCEEDED",
+      );
+      assert.deepEqual(operation.steps[0]?.data.productQnas, []);
+    }
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("11st Product Q&A marks 5001 rows as parser overflow without truncating to success", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(qnaRowsXml(5_001), {
+    status: 200,
+    headers: { "content-type": "application/xml;charset=UTF-8" },
+  });
+  try {
+    const operation = await executeChannelOperation({
+      channel: "elevenst", operation: "inquiries.list", payload,
+      arguments: { startDate: "20260902", endDate: "20260908", answerStatus: "00" },
+      environment: "production",
+    });
+    assert.equal(operation.ok, false);
+    assert.equal(operation.steps[0]?.data.accepted, false);
+    assert.equal(operation.steps[0]?.data.sellerpilotProductQnaParserReady, false);
+    assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaObservedRows, 5_001);
+    assert.equal(operation.steps[0]?.data.sellerpilotElevenstProductQnaParseIncomplete, true);
+    assert.equal(
+      operation.steps[0]?.data.sellerpilotElevenstProductQnaParseError,
+      "ELEVENST_PRODUCT_QNA_PARSER_ROW_LIMIT_EXCEEDED",
+    );
+    assert.deepEqual(operation.steps[0]?.data.productQnas, []);
   } finally {
     globalThis.fetch = originalFetch;
   }

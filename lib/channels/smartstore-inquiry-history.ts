@@ -12,6 +12,46 @@ const list = (value: unknown): Record<string, unknown>[] => value === undefined 
 const text = (...values: unknown[]) => values.find((value) => (typeof value === "string" || typeof value === "number") && String(value).trim())?.toString().trim() ?? "";
 type TimestampNormalizer = ReturnType<typeof createTimestampNormalizer>;
 
+type SmartstoreAnswerEvidence = "answer_content_body" | "answers_body" | "legacy_answer_body" | "answered_flag" | "none";
+
+type SmartstoreAnswerState = {
+  answers: Record<string, unknown>[];
+  evidence: SmartstoreAnswerEvidence;
+  status: "resolved" | "waiting";
+};
+
+function smartstoreAnswerState(row: Record<string, unknown>, sourceKind: string): SmartstoreAnswerState {
+  const providerAnswered = row.answered === true;
+  const legacyBody = originalMessageBody(row.answer);
+  let answers: Record<string, unknown>[];
+  let evidence: SmartstoreAnswerEvidence = "none";
+
+  if (sourceKind === "customer") {
+    answers = [{ answer: row.answerContent, createDate: row.answerRegistrationDateTime, answerId: row.answerContentId }];
+    if (originalMessageBody(row.answerContent)) evidence = "answer_content_body";
+  } else {
+    const returnedAnswers = list(row.answers);
+    if (returnedAnswers.some((answer) => Boolean(originalMessageBody(answer.answer)))) {
+      answers = returnedAnswers;
+      evidence = "answers_body";
+    } else if (legacyBody) {
+      // Some payloads retain only the legacy scalar answer. Preserve it when
+      // the explicit answer list contains no usable seller message.
+      answers = [{ answer: row.answer }];
+      evidence = "legacy_answer_body";
+    } else {
+      answers = returnedAnswers;
+    }
+  }
+
+  if (evidence === "none" && providerAnswered) evidence = "answered_flag";
+  return {
+    answers,
+    evidence,
+    status: evidence === "none" ? "waiting" : "resolved",
+  };
+}
+
 type SmartstoreOrderBinding = {
   state: "unavailable" | "exact_product_order" | "ambiguous_product_orders" | "invalid_product_order_list";
   productOrderIds: string[];
@@ -72,6 +112,13 @@ export function normalizeSmartstoreInquiries(data: Record<string, unknown>, iso:
       ? customerOrderBinding(row)
       : { state: "unavailable", productOrderIds: [] } satisfies SmartstoreOrderBinding;
     const parentOrderId = sourceKind === "customer" ? text(row.orderId) : "";
+    const answerState = smartstoreAnswerState(row, sourceKind);
+    const providerIdentity = {
+      identityContract: "smartstore-provider-ticket-v1",
+      legacyExternalTicketId: externalTicketId,
+      providerTicketKind: sourceKind,
+      providerTicketId: remoteTicketId,
+    };
     const inquiry: BaseNormalizedChannelInquiry = {
       externalTicketId,
       customerName: sourceKind === "customer"
@@ -81,7 +128,7 @@ export function normalizeSmartstoreInquiries(data: Record<string, unknown>, iso:
         ? text(row.title, row.category, row.productName, "스마트스토어 고객 문의")
         : text(row.productName, "스마트스토어 상품 문의"),
       message,
-      status: row.answered === true || text(row.answer, row.answerContent) ? "resolved" : "waiting",
+      status: answerState.status,
       priority: 3,
       receivedAt: sourceKind === "customer"
         ? iso(row.inquiryRegistrationDateTime)
@@ -92,22 +139,21 @@ export function normalizeSmartstoreInquiries(data: Record<string, unknown>, iso:
         : {}),
       providerContext: sourceKind === "customer"
         ? {
+            ...providerIdentity,
             kind: "customer",
             inquiryNo: remoteTicketId,
             orderReferenceState: orderBinding.state,
             ...(parentOrderId ? { orderId: parentOrderId } : {}),
             ...(orderBinding.productOrderIds.length ? { productOrderIds: orderBinding.productOrderIds } : {}),
           }
-        : { kind: "product", namespace: "product-qna", questionId: remoteTicketId },
+        : { ...providerIdentity, kind: "product", namespace: "product-qna", questionId: remoteTicketId },
       replyContext: sourceKind === "customer"
         ? { kind: "customer", inquiryNo: remoteTicketId }
         : { kind: "product", questionId: remoteTicketId },
     };
     // Product Q&A exposes every answer (registration order); customer Q&A
     // exposes only its most recent answer. Do not label that API complete history.
-    const answers = sourceKind === "customer"
-      ? [{ answer: row.answerContent, createDate: row.answerRegistrationDateTime, answerId: row.answerContentId }]
-      : list(row.answers).length ? list(row.answers) : [{ answer: row.answer }];
+    const answers = answerState.answers;
     const history: BaseNormalizedChannelInquiry[] = [];
     const undated: Array<{ body: string; reason: string }> = [];
     for (const answer of answers) {

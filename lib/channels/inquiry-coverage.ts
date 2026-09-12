@@ -1,4 +1,3 @@
-import "server-only";
 import { createHash } from "node:crypto";
 import type { ActiveChannelKey } from "./catalog.ts";
 import type { NormalizedChannelInquiry } from "./inquiry-sync.ts";
@@ -45,7 +44,12 @@ function standardStepRows(channel: ActiveChannelKey, data: Record<string, unknow
     const root = Object.keys(record(data.data)).length ? record(data.data) : data;
     return rows(root.contents, root.content, Array.isArray(data.data) ? data.data : undefined);
   }
-  if (channel === "elevenst") return rows(data.productQnas);
+  if (channel === "elevenst") {
+    const kind = String(data.sellerpilotInquiryKind ?? "").trim();
+    if (kind === "urgent_alimi") return rows(data.alimListInfos);
+    if (!kind || kind === "product_qna") return rows(data.productQnas);
+    throw new Error("INQUIRY_COVERAGE_ELEVENST_KIND_INVALID");
+  }
   throw new Error(`INQUIRY_COVERAGE_CHANNEL_UNSUPPORTED:${channel}`);
 }
 

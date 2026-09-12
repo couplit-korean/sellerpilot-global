@@ -1,19 +1,13 @@
-import type { ActiveChannelKey } from "./catalog";
-import { ebayAsqMarketplaceId, type EbayAsqMarketplaceId } from "./ebay-asq";
+import type { ActiveChannelKey } from "./catalog.ts";
+import { qoo10HistoryExecutionRequests } from "./cs/qoo10/history-runtime.ts";
+import { ebayAsqMarketplaceId, type EbayAsqMarketplaceId } from "./ebay-asq.ts";
 
 function koreaCalendarDate(value: Date) {
   return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
-function coupangDailyDate(value: Date) {
-  // Coupang's v5 daily order query requires the market UTC offset after the
-  // calendar date. A bare YYYY-MM-DD is rejected after the 2025 API
-  // internationalization change.
-  return `${koreaCalendarDate(value)}+09:00`;
-}
-
-function coupangTimeFrame(value: Date) {
-  return `${new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, 16)}+09:00`;
+function coupangLocalDateTime(value: Date, seconds = false) {
+  return new Date(value.getTime() + 9 * 60 * 60 * 1000).toISOString().slice(0, seconds ? 19 : 16);
 }
 
 function qoo10DateTime(value: Date) {
@@ -28,108 +22,8 @@ function qoo10Date(value: Date) {
   return qoo10DateTime(value).slice(0, 8);
 }
 
-function elevenstDateTime(value: Date) {
-  return new Date(value.getTime() + 9 * 60 * 60 * 1000)
-    .toISOString()
-    .replace(/[-:T]/g, "")
-    .slice(0, 12);
-}
-
 function elevenstCalendarDate(value: Date) {
   return koreaCalendarDate(value).replaceAll("-", "");
-}
-
-function secondsEpoch(value: Date) {
-  return Math.floor(value.getTime() / 1000);
-}
-
-export function orderSyncArguments(channel: ActiveChannelKey, now = new Date()): Record<string, unknown> | null {
-  const from = new Date(now.getTime() - 14 * 86_400_000);
-  if (channel === "coupang") return { query: { createdAtFrom: coupangDailyDate(from), createdAtTo: coupangDailyDate(now), status: "ACCEPT", maxPerPage: 50 } };
-  if (channel === "shopee") return { query: { time_range_field: "create_time", time_from: Math.floor(from.getTime() / 1000), time_to: Math.floor(now.getTime() / 1000), page_size: 50 } };
-  if (channel === "lazada") return { queryParams: { created_after: from.toISOString(), limit: "50", sort_direction: "DESC" } };
-  if (channel === "smartstore") return { query: { lastChangedFrom: from.toISOString(), limitCount: 300 } };
-  if (channel === "ebay") return { query: { limit: 50, filter: `creationdate:[${from.toISOString()}..${now.toISOString()}]` } };
-  if (channel === "qoo10") return {
-    params: {
-      SearchStartDate: qoo10DateTime(from),
-      SearchEndDate: qoo10DateTime(now),
-      ShippingStatus: "0",
-      SearchCondition: "1",
-    },
-  };
-  if (channel === "elevenst") return {
-    startTime: elevenstDateTime(new Date(now.getTime() - 7 * 86_400_000)),
-    endTime: elevenstDateTime(now),
-  };
-  if (channel === "temu") return {
-    pageNumber: 1,
-    pageSize: 100,
-    // Temu expects epoch seconds (10 digits); milliseconds are rejected as a type error.
-    updateAtStart: secondsEpoch(from),
-    updateAtEnd: secondsEpoch(now),
-    sortby: "updateTime",
-  };
-  return null;
-}
-
-export function orderSyncRequests(channel: ActiveChannelKey, now = new Date()) {
-  const base = orderSyncArguments(channel, now);
-  if (!base) return [];
-  if (channel === "coupang") {
-    const query = base.query && typeof base.query === "object" && !Array.isArray(base.query)
-      ? base.query as Record<string, unknown>
-      : {};
-    const orderSheets = ["ACCEPT", "INSTRUCT", "DEPARTURE", "DELIVERING", "FINAL_DELIVERY"].map((remoteStatus) => ({
-      periodicKey: `orders:${remoteStatus}`,
-      arguments: { ...base, query: { ...query, status: remoteStatus } },
-    }));
-    const cancellationFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    return [
-      ...orderSheets,
-      {
-        periodicKey: "orders:cancellations",
-        arguments: {
-          kind: "cancellations",
-          query: {
-            searchType: "timeFrame",
-            createdAtFrom: coupangTimeFrame(cancellationFrom),
-            createdAtTo: coupangTimeFrame(now),
-            cancelType: "CANCEL",
-          },
-        },
-      },
-    ];
-  }
-  if (channel === "qoo10") {
-    const params = base.params && typeof base.params === "object" && !Array.isArray(base.params)
-      ? base.params as Record<string, unknown>
-      : {};
-    // 0 means delivery preparation/requested. The remaining values preserve
-    // confirmed, in-transit, and delivered updates for shipping alerts.
-    return ["0", "3", "4", "5"].map((remoteStatus) => ({
-      periodicKey: `orders:${remoteStatus}`,
-      arguments: { ...base, params: { ...params, ShippingStatus: remoteStatus } },
-    }));
-  }
-  if (channel === "elevenst") {
-    const recentStart = new Date(now.getTime() - 7 * 86_400_000);
-    const olderStart = new Date(now.getTime() - 14 * 86_400_000);
-    return [
-      {
-        periodicKey: "orders:older-window",
-        arguments: {
-          startTime: elevenstDateTime(olderStart),
-          endTime: elevenstDateTime(recentStart),
-        },
-      },
-      {
-        periodicKey: "orders:recent-window",
-        arguments: base,
-      },
-    ];
-  }
-  return [{ periodicKey: "orders", arguments: base }];
 }
 
 export function ebayAsqInquirySyncArguments(
@@ -160,49 +54,62 @@ export function inquirySyncArguments(
   const from = new Date(now.getTime() - 6 * 86_400_000);
   const fromDate = koreaCalendarDate(from);
   const toDate = koreaCalendarDate(now);
+  // Include answered inquiries: seller-center replies can precede our next poll.
   if (channel === "coupang") return [
-    { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "NOANSWER", pageNum: 1, pageSize: 50 } },
     { kind: "product", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, answeredType: "ALL", pageNum: 1, pageSize: 50 } },
-    { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "NO_ANSWER", pageNum: 1, pageSize: 30 } },
-    { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "TRANSFER", pageNum: 1, pageSize: 30 } },
+    { kind: "call-center", query: { inquiryStartAt: fromDate, inquiryEndAt: toDate, partnerCounselingStatus: "NONE", pageNum: 1, pageSize: 30 } },
+    { kind: "return_request", query: { searchType: "timeFrame", createdAtFrom: coupangLocalDateTime(from), createdAtTo: coupangLocalDateTime(now), cancelType: "RETURN" } },
+    { kind: "cancel_request", query: { searchType: "timeFrame", createdAtFrom: coupangLocalDateTime(from), createdAtTo: coupangLocalDateTime(now), cancelType: "CANCEL" } },
+    { kind: "exchange_request", query: { createdAtFrom: coupangLocalDateTime(from, true), createdAtTo: coupangLocalDateTime(now, true), maxPerPage: 10 } },
   ];
   if (channel === "smartstore") return [
     {
       kind: "product",
-      query: { fromDate: from.toISOString(), toDate: now.toISOString(), answered: false, page: 1, size: 100 },
-    },
-    {
-      kind: "product",
-      query: { fromDate: from.toISOString(), toDate: now.toISOString(), answered: true, page: 1, size: 100 },
-    },
-    {
-      kind: "customer",
-      query: { startSearchDate: fromDate, endSearchDate: toDate, answered: false, page: 1, size: 200 },
+      query: {
+        fromDate: from.toISOString(),
+        toDate: now.toISOString(),
+        page: 1,
+        size: 100,
+      },
     },
     {
       kind: "customer",
-      query: { startSearchDate: fromDate, endSearchDate: toDate, answered: true, page: 1, size: 200 },
+      query: {
+        startSearchDate: fromDate,
+        endSearchDate: toDate,
+        page: 1,
+        size: 200,
+      },
     },
   ];
-  if (channel === "qoo10") {
-    return (["S1", "S2", "S3"] as const).map((proc_status) => ({
-      params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status },
-    }));
-  }
-  if (channel === "temu") {
-    const temuFrom = new Date(now.getTime() - 14 * 86_400_000);
+  // QAPI exposes S1 (unanswered), S2 (processing), S3 (completed) separately.
+  // Read all three so transitions and already-answered inquiries are retained.
+  if (channel === "qoo10") return [
+    ...["S1", "S2", "S3"].map((status) => ({
+      params: { search_start_dt: qoo10Date(from), search_end_dt: qoo10Date(now), proc_status: status },
+    })),
+    {
+      kind: "claim",
+      params: {
+        search_Sdate: qoo10DateTime(from),
+        search_Edate: qoo10DateTime(now),
+        search_condition: "2",
+      },
+    },
+  ];
+  if (channel === "elevenst") {
+    const alimiFrom = new Date(now.getTime() - 29 * 86_400_000);
     return [{
-      pageNo: 1,
-      pageSize: 200,
-      updateAtStart: secondsEpoch(temuFrom),
-      updateAtEnd: secondsEpoch(now),
+      kind: "product_qna",
+      startDate: elevenstCalendarDate(from),
+      endDate: elevenstCalendarDate(now),
+      answerStatus: "00",
+    }, {
+      kind: "urgent_alimi",
+      startDate: elevenstCalendarDate(alimiFrom),
+      endDate: elevenstCalendarDate(now),
     }];
   }
-  if (channel === "elevenst") return [{
-    startDate: elevenstCalendarDate(from),
-    endDate: elevenstCalendarDate(now),
-    answerStatus: "00",
-  }];
   if (channel === "shopee") return [{ kind: "product_review", cursor: "", pageSize: 100 }, {
     kind: "return_refund",
     pageNo: 1,
@@ -210,8 +117,37 @@ export function inquirySyncArguments(
     createTimeFrom: Math.floor(from.getTime() / 1000),
     createTimeTo: Math.floor(now.getTime() / 1000),
   }];
+  if (channel === "temu") {
+    const temuFrom = new Date(now.getTime() - 14 * 86_400_000);
+    return [{
+      kind: "after_sales",
+      includeDetails: true,
+      pageNo: 1,
+      pageSize: 200,
+      updateAtStart: Math.floor(temuFrom.getTime() / 1000),
+      updateAtEnd: Math.floor(now.getTime() / 1000),
+    }];
+  }
   if (channel === "ebay") {
-    return [ebayAsqInquirySyncArguments(now, releaseContext.marketplaceId)];
+    return [ebayAsqInquirySyncArguments(now, releaseContext.marketplaceId), {
+      kind: "mailbox",
+      startTime: from.toISOString(),
+      endTime: now.toISOString(),
+      folderId: 0,
+      pageNumber: 1,
+      entriesPerPage: 25,
+      ...(releaseContext.marketplaceId ? { marketplaceId: ebayAsqMarketplaceId(releaseContext.marketplaceId) } : {}),
+    }, {
+      kind: "conversation",
+      conversationType: "FROM_MEMBERS",
+      startTime: from.toISOString(),
+      endTime: now.toISOString(),
+      conversationOffset: 0,
+    }, {
+      kind: "conversation",
+      conversationType: "FROM_EBAY",
+      conversationOffset: 0,
+    }];
   }
   return [];
 }
@@ -226,12 +162,14 @@ function inquiryRequestKey(channel: ActiveChannelKey, argumentsValue: Record<str
     const status = String(query.answeredType ?? query.partnerCounselingStatus ?? "all").trim().toLowerCase();
     return `inquiries:${kind || "product"}:${status || "all"}`;
   }
-  if (channel === "smartstore") {
-    const answered = query.answered === true ? "answered" : "unanswered";
-    return `inquiries:${kind || "product"}:${answered}`;
-  }
-  if (channel === "elevenst") return "inquiries:product_qna:all";
+  if (channel === "smartstore") return `inquiries:${kind || "product"}`;
+  if (channel === "qoo10" && kind === "claim") return "inquiries:claim:all";
+  if (channel === "elevenst") return `inquiries:${kind || "product_qna"}:all`;
   if (channel === "shopee") return `inquiries:${kind || "product_review"}`;
+  if (channel === "temu") return `inquiries:${kind || "after_sales"}`;
+  if (channel === "ebay") return kind === "conversation"
+    ? `inquiries:conversation:${String(argumentsValue.conversationType ?? "unknown").toLowerCase()}`
+    : `inquiries:${kind || "asq"}`;
   return `inquiries:${index}`;
 }
 
@@ -254,22 +192,18 @@ function calendarDay(value: string) {
 }
 
 /**
- * Creates a bounded, read-only history refresh for the Korean channels whose
- * public seller APIs expose inquiry history. Coupang is split into at most
- * seven inclusive calendar days per request, while Smartstore supports the
- * requested range directly. 11st is deliberately absent: its official public
- * service overview advertises Product Q&A and Emergency Notification APIs,
- * but the authenticated developer guide is still required to verify the exact
- * seller endpoint, request/response contract, pagination, date window, and
- * whether the connected key is registered for those services. Do not infer a
- * provider contract from the overview alone.
+ * Creates a bounded, read-only history refresh for channels whose verified
+ * seller APIs expose inquiry history. Coupang and 11st are split into at most
+ * seven inclusive calendar days per request; the other channels use their
+ * verified request contracts.
  */
 export function inquiryHistorySyncRequests(
   channel: ActiveChannelKey,
   now = new Date(),
   historyDays = 30,
 ) {
-  if (!Number.isInteger(historyDays) || historyDays < 7 || historyDays > 30) {
+  const maximumHistoryDays = channel === "ebay" ? 365 : 30;
+  if (!Number.isInteger(historyDays) || historyDays < 7 || historyDays > maximumHistoryDays) {
     throw new Error("INQUIRY_HISTORY_RANGE_INVALID");
   }
   const lastDay = calendarDay(koreaCalendarDate(now));
@@ -288,15 +222,31 @@ export function inquiryHistorySyncRequests(
           query: { inquiryStartAt, inquiryEndAt, answeredType: "ALL", pageNum: 1, pageSize: 50 },
         },
       });
-      for (const partnerCounselingStatus of ["NONE", "ANSWER", "NO_ANSWER", "TRANSFER"] as const) {
+      requests.push({
+        periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:call-center:none`,
+        arguments: {
+          kind: "call-center",
+          query: { inquiryStartAt, inquiryEndAt, partnerCounselingStatus: "NONE", pageNum: 1, pageSize: 30 },
+        },
+      });
+      const localStart = `${inquiryStartAt}T00:00`;
+      const localEnd = `${inquiryEndAt}T23:59`;
+      for (const [kind, cancelType] of [["return_request", "RETURN"], ["cancel_request", "CANCEL"]] as const) {
         requests.push({
-          periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:call-center:${partnerCounselingStatus.toLowerCase()}`,
+          periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:${kind}`,
           arguments: {
-            kind: "call-center",
-            query: { inquiryStartAt, inquiryEndAt, partnerCounselingStatus, pageNum: 1, pageSize: 30 },
+            kind,
+            query: { searchType: "timeFrame", createdAtFrom: localStart, createdAtTo: localEnd, cancelType },
           },
         });
       }
+      requests.push({
+        periodicKey: `inquiries:history:${inquiryStartAt}:${inquiryEndAt}:exchange_request`,
+        arguments: {
+          kind: "exchange_request",
+          query: { createdAtFrom: `${localStart}:00`, createdAtTo: `${localEnd}:59`, maxPerPage: 10 },
+        },
+      });
     }
     return requests;
   }
@@ -329,6 +279,13 @@ export function inquiryHistorySyncRequests(
     }];
   }
 
+  if (channel === "qoo10") {
+    return qoo10HistoryExecutionRequests(
+      firstDay.toISOString().slice(0, 10),
+      lastDay.toISOString().slice(0, 10),
+    );
+  }
+
   if (channel === "elevenst") {
     const requests: Array<{ periodicKey: string; arguments: Record<string, unknown> }> = [];
     for (let start = new Date(firstDay); start.getTime() <= lastDay.getTime(); start = new Date(start.getTime() + 7 * 86_400_000)) {
@@ -338,12 +295,23 @@ export function inquiryHistorySyncRequests(
       requests.push({
         periodicKey: `inquiries:history:${startDate}:${endDate}:product_qna:all`,
         arguments: {
+          kind: "product_qna",
           startDate: startDate.replaceAll("-", ""),
           endDate: endDate.replaceAll("-", ""),
           answerStatus: "00",
         },
       });
     }
+    const historyStart = firstDay.toISOString().slice(0, 10);
+    const historyEnd = lastDay.toISOString().slice(0, 10);
+    requests.push({
+      periodicKey: `inquiries:history:${historyStart}:${historyEnd}:urgent_alimi:all`,
+      arguments: {
+        kind: "urgent_alimi",
+        startDate: historyStart.replaceAll("-", ""),
+        endDate: historyEnd.replaceAll("-", ""),
+      },
+    });
     return requests;
   }
 
@@ -362,6 +330,72 @@ export function inquiryHistorySyncRequests(
         },
       });
       start = new Date(end.getTime() + 1_000);
+    }
+    return requests;
+  }
+
+  if (channel === "temu") {
+    const firstCalendarDate = firstDay.toISOString().slice(0, 10);
+    const firstSeoulSecond = Math.floor(Date.parse(`${firstCalendarDate}T00:00:00+09:00`) / 1000);
+    return [{
+      periodicKey: `inquiries:history:${firstDay.toISOString().slice(0, 10)}:${lastDay.toISOString().slice(0, 10)}:after_sales`,
+      arguments: {
+        kind: "after_sales",
+        includeDetails: true,
+        pageNo: 1,
+        pageSize: 200,
+        updateAtStart: firstSeoulSecond,
+        updateAtEnd: Math.floor(now.getTime() / 1000),
+      },
+    }];
+  }
+
+  if (channel === "ebay") {
+    const from = new Date(now.getTime() - (historyDays - 1) * 86_400_000);
+    const requests: Array<{ periodicKey: string; arguments: Record<string, unknown> }> = [{
+      periodicKey: "inquiries:history:conversation:from_ebay",
+      arguments: {
+        kind: "conversation",
+        conversationType: "FROM_EBAY",
+        conversationOffset: 0,
+      },
+    }];
+    // Trading API messages are retained for at most one year. Keep every
+    // provider call below the adapter's 31-day ceiling and use disjoint
+    // millisecond boundaries so a daily repair can safely replay all retained
+    // ASQ and Inbox messages without duplicate-window ambiguity.
+    for (let start = from; start.getTime() < now.getTime();) {
+      const end = new Date(Math.min(start.getTime() + 31 * 86_400_000 - 1, now.getTime()));
+      const rangeKey = `${start.toISOString()}:${end.toISOString()}`;
+      requests.push({
+        periodicKey: `inquiries:history:${rangeKey}:asq`,
+        arguments: {
+          startCreationTime: start.toISOString(),
+          endCreationTime: end.toISOString(),
+          pageNumber: 1,
+          entriesPerPage: 25,
+        },
+      }, {
+        periodicKey: `inquiries:history:${rangeKey}:mailbox`,
+        arguments: {
+          kind: "mailbox",
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          folderId: 0,
+          pageNumber: 1,
+          entriesPerPage: 25,
+        },
+      }, {
+        periodicKey: `inquiries:history:${rangeKey}:conversation:from_members`,
+        arguments: {
+          kind: "conversation",
+          conversationType: "FROM_MEMBERS",
+          startTime: start.toISOString(),
+          endTime: end.toISOString(),
+          conversationOffset: 0,
+        },
+      });
+      start = new Date(end.getTime() + 1);
     }
     return requests;
   }

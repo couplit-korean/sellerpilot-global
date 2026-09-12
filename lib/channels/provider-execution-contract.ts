@@ -3,7 +3,7 @@ import type { CredentialRefreshSnapshot, CredentialRefreshTarget } from "./proto
 import type {
   ShopeeSgCreateStageCompletion,
   ShopeeSgCreateStageInput,
-} from "../product-registration/execution-shared";
+} from "./shopee-create-stage-contract";
 export type ServerlessGatewayExecutionHooks = {
   beginCredentialMutation: (target?: CredentialRefreshTarget) => Promise<void>;
   beginOAuthProviderCall?: () => Promise<void>;

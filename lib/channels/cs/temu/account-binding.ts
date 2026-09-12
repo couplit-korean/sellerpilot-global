@@ -1,12 +1,12 @@
 import { createHash } from "node:crypto";
 
-import { readTemuAccountIdentityBinding } from "../../../product-registration/temu/account-identity";
+import { readTemuAccountIdentityBinding } from "../../temu-identity-binding";
 import {
   canonicalTemuMallId,
   temuCertifiedSellerAccountKeySource,
   temuIncarnationSellerAccountKeySource,
   temuSellerAccountKeyFromMallId,
-} from "../../../product-registration/temu/seller-account-key";
+} from "../../temu-seller-account-key";
 
 export const temuCsAccountBindingContract = "sellerpilot-temu-cs-account-binding/1" as const;
 export const temuCsAccountBindingComparisonContract =

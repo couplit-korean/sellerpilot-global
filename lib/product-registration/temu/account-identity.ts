@@ -1,3 +1,12 @@
+import {
+  temuAccountIdentityContract, temuAccountIdentityEndpointHost, temuAccountIdentityPayloadKeys,
+  readTemuAccountIdentityBinding, canonicalPositiveInteger, canonicalMallType, optionalIdentityText,
+  type TemuAccountIdentityBinding,
+} from "../../channels/temu-identity-binding";
+export {
+  temuAccountIdentityContract, temuAccountIdentityEndpointHost, temuAccountIdentityPayloadKeys,
+  readTemuAccountIdentityBinding, type TemuAccountIdentityBinding,
+} from "../../channels/temu-identity-binding";
 import { createHash } from "node:crypto";
 
 import {
@@ -10,11 +19,6 @@ import {
   TemuEgressIpNotAllowlistedError,
 } from "./egress-allowlist-failure";
 import { temuSellerAccountKeyFromMallId } from "./seller-account-key";
-
-export const temuAccountIdentityContract =
-  "temu_access_token_identity_v1" as const;
-export const temuAccountIdentityEndpointHost =
-  "openapi-b-global.temu.com" as const;
 
 export const temuCreateRequiredApiScopes = [
   "temu.local.goods.list.retrieve",
@@ -38,15 +42,6 @@ export const temuSafeTestRequiredApiScopes = [
   "bg.local.goods.sale.status.set",
 ] as const;
 
-export type TemuAccountIdentityBinding = {
-  contract: typeof temuAccountIdentityContract;
-  endpointHost: typeof temuAccountIdentityEndpointHost;
-  mallId: string;
-  regionId: string;
-  mallType: 1 | 100;
-  semiUniqueId: string | null;
-};
-
 export type TemuAccessTokenIdentity = TemuAccountIdentityBinding & {
   expiresAtSeconds: string;
   apiScopes: string[];
@@ -68,15 +63,6 @@ export type TemuAccountIdentityVerification = {
   missingScopes?: string[];
 };
 
-export const temuAccountIdentityPayloadKeys = {
-  contract: "temu_account_identity_contract",
-  endpointHost: "temu_account_identity_endpoint_host",
-  mallId: "temu_account_identity_mall_id",
-  regionId: "temu_account_identity_region_id",
-  mallType: "temu_account_identity_mall_type",
-  semiUniqueId: "temu_account_identity_semi_unique_id",
-} as const;
-
 const temuAccountIdentityPayloadKeySet = new Set<string>(
   Object.values(temuAccountIdentityPayloadKeys),
 );
@@ -85,49 +71,6 @@ function objectRecord(value: unknown) {
   return value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-}
-
-function canonicalPositiveInteger(value: unknown) {
-  if (typeof value === "string") {
-    const normalized = value.trim();
-    return /^[1-9]\d*$/u.test(normalized) ? normalized : null;
-  }
-  return typeof value === "number"
-    && Number.isSafeInteger(value)
-    && value > 0
-    ? String(value)
-    : null;
-}
-
-function canonicalMallType(value: unknown): 1 | 100 | null {
-  const normalized = canonicalPositiveInteger(value);
-  return normalized === "1" ? 1 : normalized === "100" ? 100 : null;
-}
-
-function boundedIdentityText(value: unknown) {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim();
-  return normalized.length > 0
-    && normalized.length <= 256
-    && !Array.from(normalized).some((character) => {
-      const codePoint = character.codePointAt(0) ?? 0;
-      return codePoint <= 31 || codePoint === 127;
-    })
-    ? normalized
-    : null;
-}
-
-function optionalIdentityText(value: unknown): {
-  valid: boolean;
-  value: string | null;
-} {
-  if (value === undefined || value === null || value === "") {
-    return { valid: true, value: null };
-  }
-  const normalized = boundedIdentityText(value);
-  return normalized
-    ? { valid: true, value: normalized }
-    : { valid: false, value: null };
 }
 
 function parseTemuIdentityResponseText(text: string | undefined) {
@@ -171,37 +114,6 @@ export function temuAccountIdentitySubject(binding: TemuAccountIdentityBinding) 
     binding.semiUniqueId ?? "",
   ].join("\n");
   return `temu:sha256:${createHash("sha256").update(canonical, "utf8").digest("hex")}`;
-}
-
-export function readTemuAccountIdentityBinding(
-  payload: SecretPayload,
-): TemuAccountIdentityBinding | null {
-  if (payload[temuAccountIdentityPayloadKeys.contract] !== temuAccountIdentityContract
-    || payload[temuAccountIdentityPayloadKeys.endpointHost] !== temuAccountIdentityEndpointHost) {
-    return null;
-  }
-  const mallId = canonicalPositiveInteger(
-    payload[temuAccountIdentityPayloadKeys.mallId],
-  );
-  const regionId = canonicalPositiveInteger(
-    payload[temuAccountIdentityPayloadKeys.regionId],
-  );
-  const mallType = canonicalMallType(
-    payload[temuAccountIdentityPayloadKeys.mallType],
-  );
-  const semiUniqueId = optionalIdentityText(
-    payload[temuAccountIdentityPayloadKeys.semiUniqueId],
-  );
-  if (!mallId || !regionId || !mallType || !semiUniqueId.valid) return null;
-  if (mallType === 1 && !semiUniqueId.value) return null;
-  return {
-    contract: temuAccountIdentityContract,
-    endpointHost: temuAccountIdentityEndpointHost,
-    mallId,
-    regionId,
-    mallType,
-    semiUniqueId: semiUniqueId.value,
-  };
 }
 
 export function resolveTemuCreateAccountTarget(input: {

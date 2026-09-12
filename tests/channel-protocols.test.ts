@@ -21,7 +21,8 @@ import {
   lazadaRequest,
 } from "../lib/channels/protocols";
 import { executeChannelOperation } from "../lib/channels/operations";
-import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests, orderSyncRequests } from "../lib/channels/sync-arguments";
+import { inquiryHistorySyncRequests, inquirySyncArguments, inquirySyncRequests } from "../lib/channels/sync-arguments";
+import { orderSyncRequests } from "../lib/shipping/sync-arguments";
 import {
   buildShipmentAcknowledgeArguments,
   buildShipmentArguments,
@@ -191,16 +192,15 @@ test("Qoo10 inquiry sync covers unanswered, in-progress, and completed CSCenter 
     { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S1" } },
     { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S2" } },
     { params: { search_start_dt: "20260814", search_end_dt: "20260820", proc_status: "S3" } },
+    { kind: "claim", params: { search_Sdate: "20260814160000", search_Edate: "20260820160000", search_condition: "2" } },
   ]);
 });
 
 test("Smartstore periodic inquiry sync covers product Q&A and customer inquiries with disjoint keys", () => {
   const requests = inquirySyncRequests("smartstore", new Date("2026-08-20T07:00:00.000Z"));
   assert.deepEqual(requests.map((request) => request.periodicKey), [
-    "inquiries:product:unanswered",
-    "inquiries:product:answered",
-    "inquiries:customer:unanswered",
-    "inquiries:customer:answered",
+    "inquiries:product",
+    "inquiries:customer",
   ]);
 });
 
