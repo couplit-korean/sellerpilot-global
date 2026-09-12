@@ -5883,13 +5883,12 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
       const payload = await response.json().catch(() => ({ message: "문의 동기화 응답을 읽지 못했습니다." })) as { message?: string };
       if (!response.ok && response.status !== 207) throw new Error(payload.message ?? "판매채널 문의 동기화를 시작하지 못했습니다.");
       notify(payload.message ?? "이 채널 문의 조회를 시작했습니다.");
-      // The read is picked up by the Mac worker within seconds. Reload a few
-      // times after the enqueue so a new inquiry appears on the same minute
-      // instead of waiting for the next 60s cycle.
-      window.setTimeout(() => void reloadOperations(), 3_000);
+      // The read is picked up by the Mac worker within seconds. Two reloads are
+      // enough to surface it on the same minute; each extra reload costs a full
+      // operations snapshot query against the small shared database, so the
+      // burst stays at two instead of four.
       window.setTimeout(() => void reloadOperations(), 10_000);
-      window.setTimeout(() => void reloadOperations(), 20_000);
-      window.setTimeout(() => void reloadOperations(), 35_000);
+      window.setTimeout(() => void reloadOperations(), 30_000);
     } catch (error) {
       notify(error instanceof Error ? error.message : "판매채널 문의 동기화를 시작하지 못했습니다.");
     } finally {
@@ -5960,8 +5959,9 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
     if (view !== "cs") return;
     const refreshWhenVisible = () => {
       if (document.visibilityState !== "visible") return;
+      // syncCsInquiries already reloads the snapshot after the read lands, so the
+      // minute cycle does not also need an immediate snapshot query.
       void syncCsInquiries();
-      void refreshOperations();
     };
     refreshWhenVisible();
     const interval = window.setInterval(refreshWhenVisible, 60_000);
