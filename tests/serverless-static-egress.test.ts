@@ -20,6 +20,9 @@ test("serverless static egress is disabled by default and on unknown values", ()
   assert.deepEqual(parseServerlessStaticEgressChannels(undefined), []);
   assert.deepEqual(parseServerlessStaticEgressChannels(""), []);
   assert.deepEqual(parseServerlessStaticEgressChannels("coupang,unknown"), []);
+  assert.deepEqual(parseServerlessStaticEgressChannels("lazada"), ["lazada"]);
+  assert.equal(databaseServerlessStaticEgressAllows({}, "lazada"), false);
+  assert.equal(hasServerlessStaticEgressFor([], ["lazada"]), false);
 });
 
 test("serverless static egress accepts only explicit supported channels", () => {
@@ -101,7 +104,7 @@ test("Smartstore replies and channel writes fail before enqueue without both run
     readFile(new URL("../app/api/admin/cs/reply/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/admin/channel-operations/route.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(replyRoute, /channel === "coupang" \|\| channel === "elevenst" \|\| channel === "smartstore"/);
+  assert.match(replyRoute, /const staticEgressChannel = channel === "coupang" \|\| channel === "smartstore"/);
   assert.match(replyRoute, /sellerpilot_service_serverless_static_egress_status/);
   assert.match(replyRoute, /databasePolicy\?\.\[channel\] !== true/);
   assert.match(operationRoute, /channel === "smartstore"/);
@@ -228,7 +231,7 @@ test("Temu periodic inquiry gate composes after the eBay wrapper with closed pre
   assert.doesNotMatch(migration, /update sellerpilot_private\.serverless_static_egress_policy/i);
 });
 
-test("manual sync and the 30-day UI disclose static egress blocking without local fallback", async () => {
+test("manual sync uses the shared queue and the history UI discloses any remaining route blocker", async () => {
   const [route, page] = await Promise.all([
     readFile(new URL("../app/api/admin/cs/sync/route.ts", import.meta.url), "utf8"),
     Promise.all(["../app/cs/workspace.tsx", "../app/cs/use-workspace.ts"].map((file) => readFile(new URL(file, import.meta.url), "utf8"))).then((parts) => parts.join("\n")),
@@ -245,19 +248,16 @@ test("manual sync and the 30-day UI disclose static egress blocking without loca
     route.indexOf("const needsAttention ="),
   );
   const unsupportedBranch = inquiryFlow.indexOf("if (!requests.length)");
-  const temuEgressGate = inquiryFlow.indexOf('channel === "temu" && !hasServerlessStaticEgressFor');
   const inquiryEnqueue = inquiryFlow.indexOf('p_operation: "inquiries.list"');
-  assert.ok(unsupportedBranch >= 0 && unsupportedBranch < temuEgressGate);
-  assert.ok(temuEgressGate < inquiryEnqueue);
-  assert.match(inquiryFlow, /hasServerlessStaticEgressFor\(staticEgressChannels, \["temu"\]\)/);
-  assert.match(inquiryFlow, /status: "fixed_egress_required" as const,[\s\S]*queuedJobs: 0,[\s\S]*pendingJobs: 0/);
-  assert.match(route, /Temu·쿠팡·스마트스토어 조회에는 판매채널에 등록된 Vercel 고정 egress 설정이 필요합니다/);
+  assert.ok(unsupportedBranch >= 0 && unsupportedBranch < inquiryEnqueue);
+  assert.match(inquiryFlow, /sellerpilot_service_enqueue_periodic_sync/);
+  assert.match(inquiryFlow, /periodicEnqueueSummary\(queued\.map/);
   assert.match(
     route,
     /선택한 채널에 승인된 송신 경로 설정이 필요합니다[\s\S]*다른 채널은 별도로 과거 문의를 불러올 수 있습니다/,
   );
   assert.match(route, /fixedEgressRequired \? \{ blockedReason: SERVERLESS_STATIC_EGRESS_REQUIRED \} : \{\}/);
   assert.match(page, /채널 송신 경로 설정 필요/);
-  assert.match(page, /작업을 접수하거나 자동 재시도하지 않습니다/);
+  assert.match(page, /작업을 자동 재시도하지 않습니다/);
   assert.match(page, /if \(parsedBackfill\) setInquiryHistoryBackfill\(parsedBackfill\)/);
 });

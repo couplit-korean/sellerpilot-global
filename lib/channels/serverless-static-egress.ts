@@ -4,6 +4,7 @@ export const SERVERLESS_STATIC_EGRESS_CHANNELS = [
   "elevenst",
   "temu",
   "shopee",
+  "lazada",
 ] as const;
 
 export type ServerlessStaticEgressChannel = (typeof SERVERLESS_STATIC_EGRESS_CHANNELS)[number];

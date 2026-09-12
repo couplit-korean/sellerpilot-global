@@ -55,7 +55,12 @@ export async function collectRuntimeRpcInventory(root) {
   for(const file of files) {
     const source=program.getSourceFile(file);if(!source)continue;
     function visit(node) {
-      if(ts.isCallExpression(node)&&ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='rpc') {
+      // Adapters also accept a bound RPC callback (rpc(name, args)). These
+      // executable calls carry contracts just like client.rpc(name, args).
+      if(ts.isCallExpression(node)&&(
+        (ts.isPropertyAccessExpression(node.expression)&&node.expression.name.text==='rpc')||
+        (ts.isIdentifier(node.expression)&&node.expression.text==='rpc')
+      )) {
         callCount++;
         const location={file:path.relative(root,file).split(path.sep).join('/'),line:source.getLineAndCharacterOfPosition(node.getStart(source)).line+1};
         const names=strings(node.arguments[0]);

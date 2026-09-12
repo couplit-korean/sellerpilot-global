@@ -4,12 +4,14 @@ import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 
 const migration=await readFile(new URL('../supabase/migrations/20260907233000_add_provider_rate_budgets.sql',import.meta.url),'utf8');
+const liveBefore=await readFile(new URL('./fixtures/provider-rate-budget-before.sql',import.meta.url),'utf8');
+const scopeRepair=await readFile(new URL('../supabase/migrations/20260912205909_bind_provider_budget_worker_scope.sql',import.meta.url),'utf8');
 const credential='00000000-0000-4000-8000-000000000601';
 const token='00000000-0000-4000-8000-000000000602';
 const job='00000000-0000-4000-8000-000000000603';
 const claim='00000000-0000-4000-8000-000000000604';
 
-async function fixture(){
+async function fixture(repair=true){
  const db=new PGlite();
  await db.exec(`
   create role anon;create role authenticated;create role service_role;
@@ -43,6 +45,8 @@ async function fixture(){
   insert into sellerpilot_private.ai_cli_worker_tokens values('${token}','token-hash','gateway','active',now()+interval '1 day');
  `);
  await db.exec(migration);
+ await db.exec(liveBefore);
+ if(repair)await db.exec(scopeRepair);
  return db;
 }
 
@@ -59,6 +63,41 @@ test('claim source excludes jobs whose provider retry deadline is still in the f
   assert.match(source,/coalesce\(job\.rate_not_before, '-infinity'::(?:timestamptz|timestamp with time zone)\) <= clock_timestamp\(\)/);
   const localSource=(await db.query("select pg_get_functiondef('public.sellerpilot_11820_claim_gateway_unsafe(text,text)'::regprocedure) source")).rows[0].source;
   assert.match(localSource,/coalesce\(j\.rate_not_before, '-infinity'::(?:timestamptz|timestamp with time zone)\) <= clock_timestamp\(\)/);
+ }finally{await db.close();}
+});
+
+test('serverless CS owner can reserve, wait and report 429 without weakening write reconciliation',async()=>{
+ const db=await fixture(false);try{
+  await insertRunning(db);
+  await db.query("update sellerpilot_private.ai_cli_worker_tokens set scope='serverless_cs'");
+  await assert.rejects(db.query("select public.sellerpilot_service_reserve_provider_rate_budget_v1('token-hash',$1,$2)",[job,claim]),e=>e.code==='42501');
+  await db.exec(scopeRepair);
+  const reserve=(await db.query("select public.sellerpilot_service_reserve_provider_rate_budget_v1('token-hash',$1,$2) result",[job,claim])).rows[0].result;
+  assert.equal(reserve.status,'reserved');
+  const wait=(await db.query("select public.sellerpilot_service_reserve_provider_request_rate_budget_v1('token-hash',$1,$2) result",[job,claim])).rows[0].result;
+  assert.equal(wait.status,'waiting');
+  await db.query("update sellerpilot_private.channel_gateway_jobs set operation='inquiries.reply',provider_mutation_started_at=now()");
+  const limited=(await db.query("select public.sellerpilot_service_report_provider_rate_limit_v1('token-hash',$1,$2,30) result",[job,claim])).rows[0].result;
+  assert.equal(limited.status,'recorded');
+  assert.equal((await db.query('select status from sellerpilot_private.channel_gateway_jobs')).rows[0].status,'running');
+ }finally{await db.close();}
+});
+
+test('another valid worker, scheduler, expired token and stale claim cannot spend the job budget',async()=>{
+ const db=await fixture();try{
+  await insertRunning(db);
+  await db.exec("insert into sellerpilot_private.ai_cli_worker_tokens values('00000000-0000-4000-8000-000000000699','other','gateway','active',now()+interval '1 hour')");
+  for(const fn of ['reserve_provider_rate_budget','reserve_provider_request_rate_budget','report_provider_rate_limit']){
+   const sql=`select public.sellerpilot_service_${fn}_v1($1,$2,$3)`;
+   await assert.rejects(db.query(sql,['other',job,claim]),e=>e.code==='40001');
+   await assert.rejects(db.query(sql,['token-hash',job,job]),e=>e.code==='40001');
+   await db.exec("update sellerpilot_private.ai_cli_worker_tokens set scope='serverless_cs_scheduler' where token_hash='token-hash'");
+   await assert.rejects(db.query(sql,['token-hash',job,claim]),e=>e.code==='42501');
+   await db.exec("update sellerpilot_private.ai_cli_worker_tokens set scope='gateway',expires_at=now()-interval '1 hour' where token_hash='token-hash'");
+   await assert.rejects(db.query(sql,['token-hash',job,claim]),e=>e.code==='42501');
+   await db.exec("update sellerpilot_private.ai_cli_worker_tokens set expires_at=now()+interval '1 hour' where token_hash='token-hash'");
+  }
+  assert.equal((await db.query('select count(*)::int n from sellerpilot_private.provider_rate_budgets')).rows[0].n,0);
  }finally{await db.close();}
 });
 

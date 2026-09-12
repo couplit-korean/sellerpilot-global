@@ -15,12 +15,15 @@ test('RPC inventory resolves imported constants and branches, distinguishes shad
    db.rpc(imported);db.rpc(enabled?'sellerpilot_b':'sellerpilot_c');
    const RPC='sellerpilot_d';db.rpc(RPC);
    function dynamic(RPC:string){return db.rpc(RPC);}
+   function adapter(rpc:(name:string)=>unknown){return rpc('sellerpilot_forwarded');}
+   function unresolvedAdapter(rpc:(name:string)=>unknown,name:string){return rpc(name);}
+   // rpc('sellerpilot_not_a_forwarded_call');
    // db.rpc('sellerpilot_not_a_call');
    const documentation="db.rpc('sellerpilot_not_a_call_either')";
   `);
   const result=await collectRuntimeRpcInventory(root);
-  assert.deepEqual(result.functions.map(x=>x.name),['sellerpilot_a','sellerpilot_b','sellerpilot_c','sellerpilot_d']);
-  assert.equal(result.callCount,4);assert.equal(result.unresolved.length,1);assert.equal(result.unresolved[0].argument,'RPC');
+  assert.deepEqual(result.functions.map(x=>x.name),['sellerpilot_a','sellerpilot_b','sellerpilot_c','sellerpilot_d','sellerpilot_forwarded']);
+  assert.equal(result.callCount,6);assert.equal(result.unresolved.length,2);assert.equal(result.unresolved[0].argument,'RPC');
   const sql=missingRuntimeRpcSql(result);
   assert.match(sql,/begin read only;/);assert.match(sql,/pg_proc/);
   assert.doesNotMatch(sql,/select public\.sellerpilot_|\b(?:update|insert|delete|create|alter|drop)\s/i);

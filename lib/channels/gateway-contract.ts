@@ -131,7 +131,22 @@ function validShopeeInquiryContinuation(next: Record<string, unknown>) {
   if (trail !== undefined && (!Array.isArray(trail) || trail.length > 50
     || trail.some((entry) => typeof entry !== "string" || !/^[a-f0-9]{64}$/.test(entry)))) return false;
   if (next.kind === "product_review") {
-    return typeof next.cursor === "string" && next.cursor.trim().length > 0 && next.cursor.length <= 500;
+    if (typeof next.cursor !== "string" || next.cursor.length > 500) return false;
+    if (next.cursor.trim().length > 0) return true;
+    // A finished shop has no provider cursor. The multi-shop executor starts
+    // the next shop at its first page, bound to the immutable authorized plan.
+    // Ordinary same-shop empty cursors must still fail to prevent replay loops.
+    return next.cursor === ""
+      && next.sellerpilotShopeeTargetContract === "sellerpilot_shopee_shop_id_plan_v1"
+      && typeof next.sellerpilotShopeeTargetPlanDigest === "string"
+      && /^[a-f0-9]{64}$/u.test(next.sellerpilotShopeeTargetPlanDigest)
+      && typeof next.sellerpilotShopeeTargetShopId === "string"
+      && /^[1-9]\d*$/u.test(next.sellerpilotShopeeTargetShopId)
+      && next.shopId === undefined && next.shop_id === undefined
+      && next.pageNo === 1
+      && next.sellerpilotPaginationDepth === 1
+      && next.sellerpilotPaginationEpoch === 0
+      && Array.isArray(trail) && trail.length === 0;
   }
   if (next.kind !== "return_refund"
     || !integer(next.createTimeFrom, 1, 9_999_999_999)

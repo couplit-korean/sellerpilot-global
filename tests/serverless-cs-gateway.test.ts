@@ -1976,11 +1976,24 @@ test("bounded drain route is direct, uses configured capacity, is Node-only, and
 });
 
 
+test("Lazada without approved cloud egress never reaches a provider even if a stale claimant returns its job", async () => {
+  const calls: Array<{name:string;arguments_:Record<string,unknown>}> = [];
+  let providerCalls = 0;
+  const response = await runOneServerlessCsGatewayJob({
+    rpc: baseRpc(claim("lazada"), calls),
+    executeProvider: async () => { providerCalls += 1; throw new Error("must not execute"); },
+  }, deriveServerlessCsGatewayCredentials(CRON_SECRET).gatewayTokenHash);
+  assert.equal(response.status, 503);
+  assert.equal(providerCalls, 0);
+  assert.equal(calls.some(call => call.name === "sellerpilot_service_reserve_provider_rate_budget_v1"), false);
+});
+
 test("Lazada partial V3 ingestion does not complete a gateway job; complete retries avoid double ingestion", async () => {
   for (const status of ["partial", "complete"]) {
     const calls: Array<{name:string;arguments_:Record<string,unknown>}> = [];
     const lazadaJob = { ...claim("lazada"), request: { arguments: { bootstrap: true } } };
     const response = await runOneServerlessCsGatewayJob({
+      staticEgressChannels: ["lazada"],
       rpc: baseRpc(lazadaJob, calls, {
         sellerpilot_service_store_lazada_im_raw_event_v1: () => ({ data: {
           contract: "lazada_im_raw_inbox_v1", status: "stored",

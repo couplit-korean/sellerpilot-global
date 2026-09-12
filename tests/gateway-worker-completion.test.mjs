@@ -130,10 +130,11 @@ test("only a succeeded repair with a durable evidence receipt can clear its jour
 });
 
 test("worker and route wire the bounded error, private journal, and value-free diagnostics", async () => {
-  const [worker, route, contract] = await Promise.all([
-    readFile(new URL("../scripts/ai-cli-worker.mjs", import.meta.url), "utf8"),
+  const [worker, route, contract, commerceCompletion] = await Promise.all([
+    readFile(new URL("../scripts/commerce-gateway-job.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/api/channel-gateway/worker/complete/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/channels/gateway-contract.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/channels/commerce-worker-completion.ts", import.meta.url), "utf8"),
   ]);
   const stage = worker.indexOf("stageSmartstoreListingUpdateCompletionJournal(completionPayload)");
   const persist = worker.indexOf('persistWorkerCompletion(\n      "/api/channel-gateway/worker/complete"', stage);
@@ -146,7 +147,7 @@ test("worker and route wire the bounded error, private journal, and value-free d
   assert.match(route, /payloadBytes/u);
   assert.match(route, /path:\s*issue\.path/u);
   assert.match(route, /code:\s*issue\.code/u);
-  assert.match(route, /completionStatus: repairCompletion\.data\.status/u);
-  assert.match(route, /durableEvidenceStored: repairCompletion\.data\.status === "verification_queued"/u);
+  assert.match(commerceCompletion, /completionStatus: repairCompletion\.data\.status/u);
+  assert.match(commerceCompletion, /durableEvidenceStored: repairCompletion\.data\.status === "verification_queued"/u);
   assert.doesNotMatch(route, /console\.error\([^\n]*parsed\.error/u);
 });
