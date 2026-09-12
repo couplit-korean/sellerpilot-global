@@ -200,10 +200,15 @@ export async function executeCsProviderJob(input: ProviderExecutionInput, execut
       if (evidence.status !== "verified") {
         // The compared shapes travel with the failure so an operator can see
         // which side mismatched without any secret leaving the lane.
+        const observedTemuIdentity = evidence.observedIdentity;
         throw new Error([
           "TEMU_CS_ACCOUNT_BINDING_UNAVAILABLE",
           evidence.blocker,
           temuCsAccountBindingFailureDetail(evidence),
+          // The observed mall identity is a digest of the store the token belongs
+          // to, not a secret, and it is required to re-certify the credential key.
+          `mall=${observedTemuIdentity?.mallId ?? "unknown"}`,
+          `observedKey=${observedTemuIdentity?.sellerAccountKey ?? "unknown"}`,
         ].join(":"));
       }
       temuBinding = evidence;
