@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
+import { buildReplyObservationRecovery } from '../scripts/diagnostics/build-cs-reply-observation-recovery.mjs';
 
 const migration=await readFile(new URL('../supabase/migrations/20260907232000_add_cs_reply_remote_observation.sql',import.meta.url),'utf8');
 const owner='00000000-0000-4000-8000-000000000501';
@@ -13,7 +14,7 @@ const delivery='00000000-0000-4000-8000-000000000505';
 const inbound=`smartstore:${'a'.repeat(64)}`;
 const fingerprint=value=>createHash('sha256').update(value.trim()).digest('hex');
 
-async function fixture(){
+async function fixture({applyMigration = db => db.exec(migration)} = {}){
  const db=new PGlite();await db.exec(`
   create role anon;create role authenticated;create role service_role;
   create schema auth;create table auth.users(id uuid primary key);
@@ -51,7 +52,7 @@ async function fixture(){
   insert into sellerpilot_private.support_reply_deliveries(id,ticket_id,owner_id,gateway_job_id,channel_key,status,
     reply_fingerprint,queued_at,completed_at) values('${delivery}','${ticket}','${owner}','${job}','smartstore','succeeded',
     '${fingerprint('exact answer')}',now()-interval '2 minutes',now()-interval '119 seconds');
- `);await db.exec(migration);return db;
+ `);try { await applyMigration(db);return db; } catch(error) { await db.close();throw error; }
 }
 
 function observation(overrides={}){return [{
@@ -103,5 +104,82 @@ test('body tampering and direct client execution are rejected',async()=>{
     "select has_function_privilege($1,'public.sellerpilot_service_observe_inquiry_replies_v1(uuid,text,jsonb)','EXECUTE') allowed",[role])).rows[0].allowed,false);
   assert.equal((await db.query(
     "select has_function_privilege('service_role','public.sellerpilot_service_observe_inquiry_replies_v1(uuid,text,jsonb)','EXECUTE') allowed")).rows[0].allowed,true);
+ }finally{await db.close();}
+});
+
+async function prepareWrappedRecovery(db,{missingPatchSite=false}={}) {
+ await db.exec(`
+  create schema supabase_migrations;
+  create table supabase_migrations.schema_migrations(version text primary key,name text,statements text[]);
+  create function public.sellerpilot_09090000_get_cs_workspace_snapshot_unsafe()
+  returns jsonb language sql security definer set search_path='' as $$
+   select jsonb_build_object('blockingDelivery',(
+    select jsonb_build_object(${missingPatchSite ? "'legacyStatus',blocking.status," : "'status', blocking.status,"} 'id',blocking.id)
+    from sellerpilot_private.support_reply_deliveries blocking limit 1))
+  $$;
+  create function public.sellerpilot_get_cs_workspace_snapshot()
+  returns jsonb language plpgsql security definer set search_path='' as $$
+  begin
+   if not public.sellerpilot_is_admin() then raise exception 'admin required';end if;
+   return public.sellerpilot_09090000_get_cs_workspace_snapshot_unsafe() || '{"lazadaGuard":true}'::jsonb;
+  end $$;
+  create function public.sellerpilot_get_inquiry_reply_delivery(uuid,uuid)
+  returns jsonb language sql security definer set search_path='' as $$select null::jsonb$$;
+  revoke all on function public.sellerpilot_09090000_get_cs_workspace_snapshot_unsafe(),
+   public.sellerpilot_get_cs_workspace_snapshot(),public.sellerpilot_get_inquiry_reply_delivery(uuid,uuid)
+   from public,anon,authenticated,service_role;
+  grant execute on function public.sellerpilot_get_cs_workspace_snapshot(),
+   public.sellerpilot_get_inquiry_reply_delivery(uuid,uuid) to authenticated;
+  grant execute on function public.sellerpilot_get_inquiry_reply_delivery(uuid,uuid) to service_role;
+ `);
+ const rows=(await db.query(`select proname,prosrc from pg_proc where proname in
+ ('sellerpilot_get_cs_workspace_snapshot','sellerpilot_09090000_get_cs_workspace_snapshot_unsafe','sellerpilot_get_inquiry_reply_delivery')`)).rows;
+ const preimages=Object.fromEntries(rows.map(row=>[row.proname,createHash('sha256').update(row.prosrc).digest('hex')]));
+ return buildReplyObservationRecovery({preimages});
+}
+
+test('late migration recovery preserves the Lazada wrapper, ACLs and exact reply evidence',async()=>{
+ const db=await fixture({applyMigration:async db=>db.exec(await prepareWrappedRecovery(db))});
+ try{
+  await db.exec(`set role authenticated;set request.jwt.claim.sub='${owner}'`);
+  const snapshot=(await db.query('select public.sellerpilot_get_cs_workspace_snapshot() value')).rows[0].value;
+  assert.equal(snapshot.lazadaGuard,true);
+  assert.equal(snapshot.blockingDelivery.verificationStatus,'provider_accepted');
+  await db.exec('reset role');
+  assert.equal((await observe(db)).matched,1);
+  const journal=(await db.query('select statements[1] source from supabase_migrations.schema_migrations')).rows;
+  assert.equal(journal.length,1);assert.equal(journal[0].source,migration);
+  assert.equal((await db.query("select has_function_privilege('authenticated','public.sellerpilot_09090000_get_cs_workspace_snapshot_unsafe()','execute') allowed")).rows[0].allowed,false);
+  assert.equal((await db.query("select has_function_privilege('service_role','public.sellerpilot_get_inquiry_reply_delivery(uuid,uuid)','execute') allowed")).rows[0].allowed,false);
+  await assert.rejects(db.exec(await buildReplyObservationRecovery()),/ALREADY_PRESENT_REVIEW_REQUIRED/);
+  await db.exec('rollback');
+ }finally{await db.close();}
+});
+
+test('recovery rejects an unexpectedly public wrapper before any schema change',async()=>{
+ const db=await fixture({applyMigration:async db=>{
+  const sql=await prepareWrappedRecovery(db);
+  await db.exec('grant execute on function public.sellerpilot_get_cs_workspace_snapshot() to anon');
+  await assert.rejects(db.exec(sql),/PREIMAGE_MISMATCH/);await db.exec('rollback');
+ }});
+ try{
+  assert.equal((await db.query("select to_regprocedure('public.sellerpilot_cs_snapshot_recovery_hold()') value")).rows[0].value,null);
+  assert.equal((await db.query("select count(*)::integer count from information_schema.columns where table_schema='sellerpilot_private' and table_name='support_reply_deliveries' and column_name='verification_status'")).rows[0].count,0);
+ }finally{await db.close();}
+});
+
+test('a legacy snapshot mismatch rolls back migration data and both temporary renames',async()=>{
+ const db=await fixture({applyMigration:async db=>{
+  const sql=await prepareWrappedRecovery(db,{missingPatchSite:true});
+  await assert.rejects(db.exec(sql),/CS workspace reply verification contract mismatch/);await db.exec('rollback');
+ }});
+ try{
+  const state=(await db.query(`select
+   to_regprocedure('public.sellerpilot_get_cs_workspace_snapshot()') is not null wrapper,
+   to_regprocedure('public.sellerpilot_09090000_get_cs_workspace_snapshot_unsafe()') is not null base,
+   to_regprocedure('public.sellerpilot_cs_snapshot_recovery_hold()') is null no_hold,
+   to_regprocedure('public.sellerpilot_service_observe_inquiry_replies_v1(uuid,text,jsonb)') is null no_partial_rpc,
+   (select count(*)::integer from supabase_migrations.schema_migrations) journal_rows`)).rows[0];
+  assert.deepEqual(state,{wrapper:true,base:true,no_hold:true,no_partial_rpc:true,journal_rows:0});
  }finally{await db.close();}
 });

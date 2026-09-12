@@ -1,5 +1,9 @@
 # 4개 작업 통합 및 DB 안정화 진행 — 2026-09-13
 
+## 최신 상태 — e9db6ab 운영 / DB 12건 복구
+
+현재 Production과 gateway는 `e9db6ab3de69c7a3e6875da03fb1763af97ffe35`다. Supabase 활성 SHA도 같고 일정 6개가 active다. Mac 이미지/CS는 e783fc0에서 설치한 동일 기능 코드이며 이후 gateway 오류 처리만 별도 실행본에 반영했다. 아래 배포 차단·미적용 서술은 순서대로 남긴 당시 이력이다. 최종 결과는 이 문서 마지막 두 절을 함께 확인한다.
+
 ## 검증 완료
 
 - 네 작업 후속 변경을 함께 실행한 관련 검사 286/286 통과, 실패/skip 0. 로그: `/tmp/sellerpilot-integration-green.log`.
@@ -19,7 +23,14 @@
 | --- | --- | --- |
 | Vercel | `couplit.official@gmail.com`, `couplitofficial-4206`; team `team_Y4vAMBqZlfQ4gXvkGieFh5aG` / `project-e59d`; project `prj_9fRYsoTT4fD6XVEMe4NX9mpPlljA` | CLI 및 Aside 화면 대조 |
 | Supabase | `couplit.official@gmail.com`, `couplit-korean`; org `rmmxjjnikfybyozubzqw`; project `sqaoqucxakebqkiygdxb`, main Production | Aside 계정 메뉴와 SQL Editor 확인 |
-| 판매채널 | Coupang Wing `김정훈, 커플릿(Couplit)` | 해당 화면 확인. 다른 7채널 전체 계정/API 정상으로 확대하지 않음 |
+| Coupang | Wing `김정훈, 커플릿(Couplit)` | 로그인 화면 확인 |
+| SmartStore | `zrlawjdgns@naver.com`, Couplet Seoul | 로그인 화면 확인 |
+| eBay | JEONGHUN / `jeon_57` | 계정 메뉴 확인 |
+| Qoo10 | `zrlawjdgns`, Couplet Seoul | 계정 확인 + 이번 QAPI 상품 470246 읽기 진단 성공 |
+| Shopee | Couplit.kr / `gjrxn:main`, Philippines `gjrxntd.ph`, shop 1758392137 | 로그인 확인. 새 연결 진단은 queued / UI timeout |
+| Lazada | MY Couplet Seoul, Seller Full Access | 로그인 확인. 새 연결 진단은 queued / UI timeout |
+| Temu | Partner Platform `couplitofficial@gmail.com`; SellerPilot 앱 정보/보안 승인 | Vercel/Supabase 이메일과 점(.) 유무가 다름. 판매자 권한 편집 화면의 토큰은 변경하지 않음 |
+| 11번가 | 열린 Open API 개발가이드는 로그인 링크 표시 | 해당 화면만으로 판매자 인증을 확인하지 못함 |
 
 Supabase connector는 여전히 SellerPilot 권한이 없지만 Aside SQL Editor로 운영 DB를 검증하고 복구했다. connector 재연결은 이 작업의 전제 조건이 아니다. 다른 프로젝트에는 SQL을 실행하지 않았다. Vercel env pull의 `[SENSITIVE]` 값은 실제 자격 증명으로 사용하지 않았다.
 
@@ -96,3 +107,35 @@ Shopee/Lazada 연결 버튼을 한 번씩 재검사했으나 UI는 worker 경로
 추가로 e783fc0 실행 중 CS 완료 HTTP 400이 detached Promise rejection으로 프로세스 전체를 종료시키는 문제를 확인했다. 새 회귀 검사는 실제 worker 자식 프로세스와 로컬 가짜 API를 사용하며 모든 외부 fetch를 차단한다. 수정 전 동일 HTTP 400으로 프로세스 exit=1을 재현했고, 오류 처리 후에는 프로세스 생존·active 슬롯 해제·readiness 실패 유지·provider 실행 반복 없음·SIGTERM 정상 종료를 확인했다. runtime은 실패를 성공으로 바꾸지 않고 60초 수령 backoff를 둔다. 이 후속 수정은 별도 배포 및 설치 반영 대상이다.
 
 최신 gateway 준비 상태는 조회 시점에 따라 degraded/active=1도 재관측됐다. 일시적인 ready를 전체 운영 안정화 완료로 보고하지 않는다. 신규 게시 릴리스 확인은 새 SHA로 다시 검증해야 하며 실제 원격 증거 없이 8개 채널 확인 기록이나 게이트 개방을 수행하지 않았다.
+
+## 최종 운영 반영 — e9db6ab
+
+- Vercel 후보 `dpl_A8vQWxEZpBt9HPSzxzFVB8CxaYsH`, `https://sellerpilot-global-258c3mb49-project-e59d.vercel.app`, SHA `e9db6ab3de69c7a3e6875da03fb1763af97ffe35`. 원격 build/Ready와 후보 canary claimed=0, processed=0, executed=false를 확인한 뒤 Production 승격 성공. `/tmp/sellerpilot-integration-candidate-v4.log`, `/tmp/sellerpilot-candidate-v4-canary.json`, `/tmp/sellerpilot-promote-v4.log`, `/tmp/sellerpilot-production-v4.txt`.
+- Aside에서 서버 SHA 확인 후 운영 일정 재검증 실행. DB RPC 재조회 active=true, activeRelease=e9db6ab, scheduleCount=6, unsafePendingMutations=0.
+- runtime 잠금 안에서 pin을 원자적 교체하고 검증한 gateway 자식 PID 71404에 SIGTERM을 보내 정상 배출했다. supervisor는 유지했고 진행 중 요청을 강제 종료하지 않았다. 이후 `/readyz`에서 e9db6ab 실행을 확인. 새 버전도 후속 채널 claim 503으로 degraded가 관측된다. 설치 완료와 운영 준비 상태를 구분한다.
+- 이 마지막 코드 수정은 detached gateway promise 오류 처리이며 실제 프로세스 회귀 검사 23/23 통과. 실패를 성공으로 바꾸거나 provider를 자동 재전송하지 않는다.
+
+## 추가 CS DB 복구와 최종 제한
+
+기존 8건에 아래 4건을 더해 **12건**의 journal 존재를 최종 재조회했다. 각 journal의 statements 원문 SHA는 저장소 원문과 같다.
+
+| migration | 원문 SHA-256 |
+| --- | --- |
+| 20260907190000_preserve_undated_lazada_buyers | cb9d8dab8822f653665c3c02fdf29f74f991a13b53ee23b2c15af48928674c51 |
+| 20260907210000_persist_lazada_im_raw_inbox | 5fe53d61b06c094f101afd2cc814303b57ec29816d6e2e8ec6335b29d26fcc73 |
+| 20260907230000_add_lazada_im_raw_reprocessing_ledger | 12083c82bbe8dbcd0b062d724a9611c45d699f34b2fa4d0d00f92ee138827b68 |
+| 20260907232000_add_cs_reply_remote_observation | b1079308ccc2a01fc4985c98e62e3f3437cf8ebda1e9c405b5abe9c778a3acb5 |
+
+Lazada 3건은 단일 트랜잭션으로 적용했다. 전송한 SQL 56,130 bytes를 다시 복사해 SHA `c2851a0bb42ec962d71d0134123b96c0507700d3d513fd67642962097f1bdd3b` 일치 확인 후 실행. 기존 undated buyer migration의 원문/owner/search_path/ACL 보호 검사를 유지했다. 새 서비스 RPC 5개는 service=true, anon/auth=false. raw inbox/outcomes는 RLS=true, direct service SELECT=false.
+
+답변 관찰 migration은 먼저 적용된 Lazada wrapper 때문에 그대로 실행할 수 없어 `scripts/diagnostics/build-cs-reply-observation-recovery.mjs`로 순서 복구 SQL을 생성했다. 공용 snapshot에 대한 두 함수 이름만 같은 트랜잭션에서 교환하고 **원래 migration 전체**를 실행한 뒤 이름을 복원한다. DB를 자동 실행하는 스크립트가 아니다. 원본 파일은 수정하지 않았다. source SHA, 실제 함수 preimage, owner/search_path/권한, 중복 journal, 임시 이름 충돌을 검사한다.
+
+첫 실행은 기존 delivery reader의 service 권한을 예상하지 못한 사전 검사에서 중단됐다. 현재 ACL `postgres/authenticated/service_role`을 직접 읽어 대조한 뒤 해당 함수만 정확한 기대값으로 수정했다. migration 자체가 이 legacy service 읽기 권한을 제거하고 관찰 RPC를 service 전용으로 제공한다. guard 제거/임의 권한 확대는 하지 않았다. 보완 SQL은 33,610 bytes, 전송 SHA `61376f12ae7c4fd80fc9485a4cacf29dddd9e529432433227f16159ee3580a5c` 일치 후 적용했다.
+
+실제 PGlite 검사에서 wrapper 유지·관리자 호출·정확한 seller echo 매칭·서비스/관리자 권한 분리·중복 적용 거부·중간 실패 시 컬럼과 두 이름의 rollback을 확인했다. 관련 CS DB 4개 파일 **26/26** 통과 (`/tmp/sellerpilot-final-cs-db-tests.log`); 여기에는 복구 관련 7개가 포함된다. 개수를 중복 합산하지 않는다.
+
+운영 재조회: 관찰 RPC present=true/service=true/anon=false/auth=false. Lazada wrapper 원문 SHA는 적용 전후 `f97268ac8331f0a11fe8e27cc5b7d0fe7084055529e3069f584e5d989e3dc9d8`로 같다. basePrivate=true, holdRemoved=true. DB connections=17/max=60, blocked=0, idleInTransaction=0.
+
+최신 Vercel 로그 표본 100건(`/tmp/sellerpilot-v4-post-db-logs.ndjson`)에서 CS draft 204 40건, first-draft 204 21건, AI claim 204 7건, 운영 snapshot/readiness 200을 확인했다. 이 표본은 마지막 답변 관찰 적용 전후를 모두 포괄한 장기 검사가 아니다. channel claim 503(SPC02), Elevenst recovery 503, competitor price refresh 503도 남았다. SPC02는 DB의 채널 동시 실행 보호에서 발생하는 코드다. 최종 DB에는 eBay orders.list, Elevenst inquiries.list, Lazada orders.list, Qoo10 inquiries.list, Shopee inquiries.list 각 1건이 running이고 lease 미만료였다. 이 작업들을 stale로 간주해 해제하지 않았다. Shopee/Lazada diagnostic.test는 각 1건 queued이며 중복 검사 요청을 만들지 않았다.
+
+다음 DB 작업의 정확한 범위는 앞 절의 eBay recovery RPC 1개와 Elevenst recovery RPC 2개 및 최신 선행 permit/source/credential 계약 대조다. 이어서 Shopee 수신 정규화 오류의 실제 실패 payload 구조를 개인정보 없이 확보하고, 완료 저장 및 queued 진단의 원격 readback을 확인해야 한다. 입력 증거 없이 필수 필드를 완화하거나 새 SHA 게시 게이트를 임의 승인하지 않는다. 실제 8채널 신규 등록·고객 답변 발송·배송 실행 완료로 보고하지 않는다.
