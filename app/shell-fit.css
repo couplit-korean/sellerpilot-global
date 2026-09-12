@@ -24,8 +24,10 @@ body {
   display: flex !important;
   flex-wrap: wrap !important;
   align-items: center !important;
-  gap: 6px 10px !important;
-  min-height: 32px !important;
+  gap: 2px 8px !important;
+  min-height: 0 !important;
+  padding: 4px 12px 2px !important;
+  line-height: 1 !important;
 }
 
 .commerce-service-rail strong,
@@ -35,16 +37,20 @@ body {
   flex: 0 1 auto !important;
   min-width: 0 !important;
   max-width: 100% !important;
-  height: 24px !important;
+  height: 16px !important;
   align-items: center !important;
   white-space: nowrap !important;
+  font-size: 10px !important;
 }
 
 .topbar {
   display: flex !important;
   flex-wrap: wrap !important;
   align-items: center !important;
-  gap: 8px !important;
+  gap: 6px !important;
+  min-height: 40px !important;
+  padding-top: 4px !important;
+  padding-bottom: 6px !important;
 }
 
 .topbar-actions {
@@ -62,7 +68,9 @@ body {
   align-items: center !important;
   gap: 6px !important;
   height: auto !important;
-  min-height: 32px !important;
+  min-height: 0 !important;
+  padding: 2px 8px 8px !important;
+  margin-bottom: 2px !important;
   white-space: normal !important;
 }
 
@@ -71,6 +79,13 @@ body {
   flex-wrap: wrap !important;
   align-items: center !important;
   gap: 4px !important;
+  padding-bottom: 2px !important;
+}
+
+.channel-connection-strip .strip-mark {
+  display: inline-flex !important;
+  align-items: center !important;
+  margin-bottom: 2px !important;
 }
 
 .topbar .mobile-menu-button,
