@@ -352,7 +352,7 @@ test('both real worker call paths cross the provider boundary and reconciliation
   assert.match(serverlessProviderSource,
     /isCsOperation\(input\.job\.operation\) \? executeCsProviderJob\(input, executor\)/);
   assert.match(csProviderSource,
-    /operation === "inquiries\.reply"\) \{ await input\.hooks\.beginProviderMutation\(\); await input\.hooks\.assertLeaseHealthy\(\); \}/);
+    /operation === "inquiries\.reply" && !lazadaProductReviewReadbackOnly\) \{\s+await input\.hooks\.beginProviderMutation\(\);\s+await input\.hooks\.assertLeaseHealthy\(\);\s+\}/);
   assert.match(serverlessGatewaySource,
     /BEGIN_PROVIDER_MUTATION_RPC = "sellerpilot_service_begin_serverless_gateway_provider_mutation"/);
   assert.match(localBeginRouteSource,

@@ -69,6 +69,18 @@ test("candidate source proof requires the exact SellerPilot project and identica
     assertCandidateDeployment(deployment, release),
     "https://sellerpilot-global-abc123-project-e59d.vercel.app",
   );
+  assert.equal(
+    assertCandidateDeployment({ ...deployment, meta: { githubCommitSha: release, sellerpilotReleaseSha: release } }, release),
+    "https://sellerpilot-global-abc123-project-e59d.vercel.app",
+  );
+  assert.throws(
+    () => assertCandidateDeployment({ ...deployment, meta: { ...deployment.meta, githubCommitSha: "a".repeat(40) } }, release),
+    /Git metadata does not match/,
+  );
+  assert.throws(
+    () => assertCandidateDeployment({ ...deployment, meta: { sellerpilotReleaseSha: release } }, release),
+    /Git metadata does not match/,
+  );
   assert.throws(
     () => assertCandidateDeployment({ ...deployment, meta: { ...deployment.meta, gitCommitSha: "a".repeat(40) } }, release),
     /Git metadata does not match/,

@@ -79,7 +79,13 @@ export function assertCandidateDeployment(deployment, release) {
   if (deployment?.readyState !== "READY") fail("candidate deployment is not READY");
   if (deployment?.target !== "production") fail("candidate deployment does not use the production environment");
   if (deployment?.source !== "cli") fail("candidate deployment is not a CLI source deployment");
-  if (deployment?.meta?.gitCommitSha !== release) fail("candidate Git metadata does not match the checkout HEAD");
+  // Vercel's GitHub-linked CLI deployments use githubCommitSha. Accept either
+  // provider field, but never accept missing evidence or conflicting SHAs.
+  const gitShas = [deployment?.meta?.gitCommitSha, deployment?.meta?.githubCommitSha]
+    .filter((value) => value !== undefined);
+  if (!gitShas.length || gitShas.some((value) => value !== release)) {
+    fail("candidate Git metadata does not match the checkout HEAD");
+  }
   if (deployment?.meta?.sellerpilotReleaseSha !== release) fail("candidate release metadata does not match the checkout HEAD");
   if (typeof deployment?.url !== "string" || !/^sellerpilot-global-[a-z0-9]+-project-e59d\.vercel\.app$/u.test(deployment.url)) {
     fail("candidate deployment URL is outside the exact SellerPilot Vercel project");
