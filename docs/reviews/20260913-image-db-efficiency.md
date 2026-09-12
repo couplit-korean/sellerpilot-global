@@ -15,7 +15,7 @@
 | 2차 이미지·상세페이지 자산 | Vercel server-product-studio / Mac product-ai-worker | 기존 최종 자산 압축 및 digest 계산 순서 확인. Vercel은 Sharp, Mac은 Sharp + OxiPNG/Zopfli |
 
 - `caBX`(C2PA)·`iDOT`가 있는 PNG는 재인코딩하면 픽셀이 같아도 서명 해시/오프셋이 무효가 될 수 있다. 이 경우 전체 파일 바이트를 보존하고 변경된 후보를 거부한다. 기존에는 네이티브 단계만 건너뛰고 앞선 Sharp 단계가 바이트를 변경하는 결함을 재현했다.
-- 원본은 한 번 디코딩해 후보 검증에 재사용하고 작은 후보부터 검사한다. 더 큰 후보나 원본보다 큰 파일을 채택하지 않는다. IHDR·비-IDAT 메타데이터·픽셀·알파를 대조하며 palette/색상 축소를 하지 않는다.
+- 검증용 원본 디코딩 결과를 후보 검증에 재사용하고 작은 후보부터 검사한다. 더 큰 후보나 원본보다 큰 파일을 채택하지 않는다. IHDR·비-IDAT 메타데이터·픽셀·알파를 대조하며 palette/색상 축소를 하지 않는다.
 - APNG·16-bit 등 지원하지 않는 입력은 그대로 보존하며 불필요한 네이티브 실행을 생략한다.
 - Sharp 처리 중 취소된 요청이 뒤늦게 네이티브 프로세스를 시작하던 문제를 고쳤다. 압축 후·실행 직전·결과 읽기/검증 뒤 취소를 확인한다. 네이티브 1~30,000ms 예산, 단일 실행 슬롯, 종료 타이머 정리, 출력 크기 선확인을 유지한다.
 - 네이티브 실패·시간 초과·잘못된 출력이면 검증된 Sharp 결과를 사용한다. 구매자에게 보낼 상품·CS·배송 요청을 시험 목적으로 생성하지 않았다.
@@ -74,3 +74,16 @@
 - PGlite 인덱스 시험은 완료 이력 5만 건과 미해결 15건, 다계정/다채널 범위, 상태 분포·RLS/직접 접근 권한 불변을 확인한다. 실제 다중 세션 경합 시험은 아니다.
 - `pnpm build:vercel` 종료 0. `/tmp/sellerpilot-image-db-build.log`.
 - 전체 저장소의 과거 실패 83건을 모두 해소했다는 의미가 아니다. 운영 후보 배포/실행본 확인 결과는 아래에 후속 기록한다.
+
+
+## 운영 배포·실행본 반영
+
+- 소스 통합: `0f576c07e41d3144691626c4ae7556338c98453e`, origin/couplit의 integration-aside에 동기화. 변경 16개 파일의 비밀값 패턴 후보 0개. 사용자 `output/pdf/`는 미추적 상태로 보존했다.
+- Vercel `dpl_AXLBPZiiHbRGd28qs7p6Yog9w7oV`, `https://sellerpilot-global-icd6v0vll-project-e59d.vercel.app` Ready. 원격 Next build 및 타입 검사 통과, 후보 canary release=0f576c0 / claimed=0 / processed=0 / executed=false 후 Production 승격. `sellerpilot-global.vercel.app` 실제 배포 ID를 다시 조회해 일치 확인했다.
+- Aside 운영 화면의 서버 SHA를 확인하고 운영 일정 재검증을 실행했다. UI 무작업 점검 6개 성공 후 Supabase RPC에서 active=true, activeRelease=0f576c0, scheduleCount=6, unsafePendingMutations=0을 재조회했다.
+- AI running=0 / first-draft generating=0 / CS draft running=0 확인 후 AI·CS에 SIGTERM 정상 종료를 요청했다. 최초 10초 대기에는 종료되지 않아 설치를 중단했고, 두 프로세스가 종료된 것을 다시 확인한 뒤 설치했다. 실행 중 작업을 강제 종료하지 않았다.
+- Mac AI/CS runtime의 lib/scripts/prompts **584개 파일이 소스와 모두 일치**했다. CS PID 78714 및 AI 실행을 확인했다. 설치된 OxiPNG 경로 호출로 합성 128×128 RGBA 65,859→301 bytes, encoder=oxipng-max-zopfli, accepted 및 픽셀/알파 동일을 확인했다. `/tmp/sellerpilot-image-db-installed-proof.json`.
+- 배포 후 로그 100개 표본 중 완료 상태코드가 있는 기록 98개: CS draft 204 18건, first-draft 204 10건, AI claim 204 4건, product-studio 200 10건, maintenance/channel-sync/competitor-prices/drain 200 각 2건. 반면 **gateway complete 503 10건이 남았다**. 표본 범위의 상태이며 정상 전체 판정이 아니다. 모델 생성·상품 등록·CS 답변 전송 성공 증거로 집계하지 않는다.
+- gateway는 진행 중인 읽기 작업 1건이 있어 새 SHA pin을 원자적으로 기록하고 SIGTERM 정상 배출을 요청했다. 작업의 동일 완료 결과 재시도는 최대 3×10분이며 provider 재실행이 아니다. 기존 worker는 정상 종료했고 supervisor가 2026-09-12 20:28:07 UTC에 0f576c0을 fetch해 재실행했다. `/readyz`의 실제 releaseSha 일치와 activeGatewayJobs=0을 확인했다. 마지막 claim 503으로 status=degraded, ready=false이므로 설치 갱신과 전체 운영 정상화는 구분한다. 기존 작업 결과 저장을 성공으로 바꾸지 않았다.
+
+로컬 증거: `/tmp/sellerpilot-image-db-candidate.log`, `/tmp/sellerpilot-image-db-canary.json`, `/tmp/sellerpilot-image-db-promote.log`, `/tmp/sellerpilot-image-db-production.txt`, `/tmp/sellerpilot-image-db-live-logs.ndjson`.
