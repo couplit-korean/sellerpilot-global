@@ -582,7 +582,7 @@ export function selectUsableEbayPolicy(input: {
     throw new Error(failureCode(EBAY_BUSINESS_POLICY_SELECTION_REQUIRED, [
       kind.toUpperCase(),
       String(candidates.length),
-      candidates.slice(0, 5).map((policy) => policy.id).join("."),
+      ...candidates.slice(0, 5).map((policy) => policy.id),
     ]));
   }
   return candidates.length === 1
