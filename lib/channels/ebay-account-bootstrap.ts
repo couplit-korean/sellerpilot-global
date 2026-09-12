@@ -578,9 +578,11 @@ export function selectUsableEbayPolicy(input: {
       policy.categoryTypes.some((category) => requestedCategoryTypes.includes(category)))
     : scoped;
   if (candidates.length > 1) {
+    // The operator must pick one, so the ids are part of the failure detail.
     throw new Error(failureCode(EBAY_BUSINESS_POLICY_SELECTION_REQUIRED, [
       kind.toUpperCase(),
       String(candidates.length),
+      candidates.slice(0, 5).map((policy) => policy.id).join("."),
     ]));
   }
   return candidates.length === 1

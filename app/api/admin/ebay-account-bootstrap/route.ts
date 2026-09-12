@@ -174,6 +174,12 @@ const bootstrapSchema = z.object({
     payment: paymentPolicySchema,
     return: returnPolicySchema,
   }).strict(),
+  // Operator selection for an account that already has several usable policies.
+  expectedPolicyIds: z.object({
+    fulfillment: z.string().trim().min(1).max(120).optional(),
+    payment: z.string().trim().min(1).max(120).optional(),
+    return: z.string().trim().min(1).max(120).optional(),
+  }).strict().optional(),
   location: inventoryLocationSchema,
 }).strict();
 
@@ -319,7 +325,10 @@ export async function POST(request: Request) {
         payment: input.policies.payment,
         return: input.policies.return,
       },
-      expectedPolicyIds: useStoredPolicyIds ? storedPolicyIds : undefined,
+      expectedPolicyIds: {
+        ...(useStoredPolicyIds ? storedPolicyIds : undefined),
+        ...input.expectedPolicyIds,
+      },
     });
     const location = await ensureEbayInventoryLocation({
       payload,
