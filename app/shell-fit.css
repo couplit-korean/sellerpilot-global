@@ -85,7 +85,13 @@ body {
   box-sizing: border-box !important;
 }
 
-.topbar .user-avatar,
+.topbar .user-avatar {
+  width: 32px !important;
+  height: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+}
+
 .topbar .channel-mark,
 .topbar .channel-mark.sm,
 .topbar .channel-mark.lg,
