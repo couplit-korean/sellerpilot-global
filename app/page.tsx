@@ -113,7 +113,6 @@ import {
   type OperationTicketDelivery,
   type SalesRange,
 } from "./use-operations-snapshot";
-import { OPERATIONS_REFRESH_MINUTES } from "./use-operations-snapshot";
 import { createClient as createSupabaseClient } from "../lib/supabase/client";
 import { isSupabaseConfigured } from "../lib/supabase/config";
 import type { ProductResearchResult } from "../lib/ai-cli-contract";
@@ -6555,7 +6554,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
             <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 데이터 원장 연결" : "판매 데이터 확인 중"}</span>
             <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `운영 키 ${operationSummary?.registeredCredentialCount ?? 0} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "운영 키 확인 중" : "운영 키 확인 실패"}</span>
             <span><i className={operations.state === "database" && integrationSummary.ok ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `읽기 진단 ${integrationSummary.ok} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "읽기 진단 확인 중" : "읽기 진단 확인 실패"}</span>
-            <em>{operations.state === "database" ? `${OPERATIONS_REFRESH_MINUTES}분 자동 갱신` : operations.state === "loading" ? "연결 확인 중" : "연결 오류"}</em>
           </div>
           <header className="topbar">
           <div className="topbar-title"><button className="mobile-menu-button" aria-label="전체 메뉴 열기" aria-controls="sellerpilot-sidebar" aria-expanded={sidebarOpen} onClick={() => setSidebarOpen(true)}><Menu size={20} /></button><div><h1>{meta.title}</h1><p>{meta.description}</p></div></div>
