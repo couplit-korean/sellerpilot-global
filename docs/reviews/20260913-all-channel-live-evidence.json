@@ -1,0 +1,376 @@
+{
+  "checkedAt": "2026-09-13T07:02:00+09:00",
+  "productionRelease": "737171efe3fe0dc14cf89ff0ef47a192af231272",
+  "deploymentId": "dpl_7ww7TFyydCeJE32ccS4g4Wh8x58q",
+  "supabaseProject": "sqaoqucxakebqkiygdxb",
+  "activeScheduleCount": 6,
+  "gatewayReady": true,
+  "diagnostics": [
+    {
+      "at": "2026-09-12T21:19:18.570416+00:00",
+      "status": "passed",
+      "channel": "coupang",
+      "message": "쿠팡 HTTP·SUCCESS·상품 목록 1건과 요청 판매자 ID의 일치를 확인했습니다."
+    },
+    {
+      "at": "2026-09-12T21:20:04.479921+00:00",
+      "status": "passed",
+      "channel": "ebay",
+      "message": "eBay Seller 계정 권한과 판매한도 읽기가 정상 응답했습니다."
+    },
+    {
+      "at": "2026-09-12T21:50:10.607451+00:00",
+      "status": "passed",
+      "channel": "elevenst",
+      "message": "11번가 OPEN API Key와 등록 IP에서 상품 검색 읽기가 정상 응답했습니다. 판매자 ID는 선택한 credential에 별도 연결되며 이 응답은 계정 ID를 되돌려주지 않습니다."
+    },
+    {
+      "at": "2026-09-12T21:19:03.892549+00:00",
+      "status": "passed",
+      "channel": "lazada",
+      "message": "Lazada MY 판매자 읽기 API가 정상 응답했습니다."
+    },
+    {
+      "at": "2026-09-12T21:19:50.390789+00:00",
+      "status": "passed",
+      "channel": "qoo10",
+      "message": "Qoo10 QAPI 상품 읽기가 정상 응답했습니다 · 상품 470246"
+    },
+    {
+      "at": "2026-09-12T21:56:40.07668+00:00",
+      "status": "passed",
+      "channel": "shopee",
+      "message": "Shopee 판매점 정보 읽기 API가 정상 응답했습니다."
+    },
+    {
+      "at": "2026-09-12T21:19:58.747164+00:00",
+      "status": "passed",
+      "channel": "smartstore",
+      "message": "네이버 Commerce API 판매자 계정 읽기가 정상 응답했습니다 · 토큰 180분"
+    },
+    {
+      "at": "2026-09-12T21:56:55.278468+00:00",
+      "status": "passed",
+      "channel": "temu",
+      "message": "Temu 판매자 상품 목록 읽기 API가 정상 응답했습니다."
+    },
+    {
+      "at": "2026-08-24T13:27:14.984213+00:00",
+      "status": "passed",
+      "channel": "tracx",
+      "message": "SmartShip TxAPI 인증과 주문 목록 읽기가 정상입니다 · 현재 조회 주문 0건"
+    }
+  ],
+  "diagnosticJobs": [
+    {
+      "id": "f7d9f848-8d3f-482d-b859-5404891dc810",
+      "status": "succeeded",
+      "channel": "temu",
+      "created_at": "2026-09-12T21:55:22.782979+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "Temu 판매자 상품 목록 읽기 API가 정상 응답했습니다.",
+        "remoteRequestId": "gl-11eb349e-1315-4cbd-b558-997630ba4022"
+      },
+      "started_at": "2026-09-12T21:56:53.998584+00:00",
+      "completed_at": "2026-09-12T21:56:55.278468+00:00",
+      "error_message": null
+    },
+    {
+      "id": "595aea65-06e2-4400-8d6a-4f2f4cd0cdbc",
+      "status": "succeeded",
+      "channel": "shopee",
+      "created_at": "2026-09-12T21:55:13.151656+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "Shopee 판매점 정보 읽기 API가 정상 응답했습니다.",
+        "remoteRequestId": "e3e3e7f35b504692bebade7db3531b00"
+      },
+      "started_at": "2026-09-12T21:56:38.977617+00:00",
+      "completed_at": "2026-09-12T21:56:40.07668+00:00",
+      "error_message": null
+    },
+    {
+      "id": "922a1fe2-0029-49be-a2f0-4c5d1e7aa0ba",
+      "status": "succeeded",
+      "channel": "temu",
+      "created_at": "2026-09-12T21:19:33.962273+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "Temu 판매자 상품 목록 읽기 API가 정상 응답했습니다.",
+        "remoteRequestId": "gl-35b48baa-1461-4b56-8f0c-6576cf180124"
+      },
+      "started_at": "2026-09-12T21:21:17.554968+00:00",
+      "completed_at": "2026-09-12T21:21:19.882972+00:00",
+      "error_message": null
+    },
+    {
+      "id": "fda6ddd3-b37f-4884-a4a6-a27483af0530",
+      "status": "succeeded",
+      "channel": "ebay",
+      "created_at": "2026-09-12T21:19:33.909445+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "eBay Seller 계정 권한과 판매한도 읽기가 정상 응답했습니다."
+      },
+      "started_at": "2026-09-12T21:20:02.234445+00:00",
+      "completed_at": "2026-09-12T21:20:03.845985+00:00",
+      "error_message": null
+    },
+    {
+      "id": "fa6c7c7b-76f9-4586-943d-9fce21bdc07c",
+      "status": "succeeded",
+      "channel": "smartstore",
+      "created_at": "2026-09-12T21:19:18.465556+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "네이버 Commerce API 판매자 계정 읽기가 정상 응답했습니다 · 토큰 180분"
+      },
+      "started_at": "2026-09-12T21:19:57.367596+00:00",
+      "completed_at": "2026-09-12T21:19:58.448839+00:00",
+      "error_message": null
+    },
+    {
+      "id": "7d3c08a4-633b-4f44-8641-a3bdb8a20498",
+      "status": "succeeded",
+      "channel": "elevenst",
+      "created_at": "2026-09-12T21:19:18.412125+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "11번가 OPEN API Key와 등록 IP에서 상품 검색 읽기가 정상 응답했습니다. 판매자 ID는 선택한 credential에 별도 연결되며 이 응답은 계정 ID를 되돌려주지 않습니다."
+      },
+      "started_at": "2026-09-12T21:50:09.19406+00:00",
+      "completed_at": "2026-09-12T21:50:10.607451+00:00",
+      "error_message": null
+    },
+    {
+      "id": "d93905e6-dc55-4b18-88cd-e7dc5e49ba7e",
+      "status": "succeeded",
+      "channel": "coupang",
+      "created_at": "2026-09-12T21:18:55.899778+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "쿠팡 HTTP·SUCCESS·상품 목록 1건과 요청 판매자 ID의 일치를 확인했습니다."
+      },
+      "started_at": "2026-09-12T21:19:17.702415+00:00",
+      "completed_at": "2026-09-12T21:19:18.420493+00:00",
+      "error_message": null
+    },
+    {
+      "id": "4ca756f7-4176-4bbc-8931-f2d4316615b1",
+      "status": "succeeded",
+      "channel": "lazada",
+      "created_at": "2026-09-12T21:18:45.404975+00:00",
+      "diagnostic": {
+        "status": "passed",
+        "message": "Lazada MY 판매자 읽기 API가 정상 응답했습니다.",
+        "remoteRequestId": "0baf8cf917892479434287217"
+      },
+      "started_at": "2026-09-12T21:19:02.517229+00:00",
+      "completed_at": "2026-09-12T21:19:03.743662+00:00",
+      "error_message": null
+    }
+  ],
+  "readRoutes": [
+    {
+      "channel": "coupang",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    },
+    {
+      "channel": "temu",
+      "current": false,
+      "enabled": false,
+      "operation": "diagnostic.test",
+      "keyMatches": false
+    },
+    {
+      "channel": "elevenst",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    },
+    {
+      "channel": "lazada",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    },
+    {
+      "channel": "shopee",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    },
+    {
+      "channel": "smartstore",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    },
+    {
+      "channel": "temu",
+      "current": true,
+      "enabled": true,
+      "operation": "diagnostic.test",
+      "keyMatches": true
+    }
+  ],
+  "latestReadSuccesses": [
+    {
+      "channel": "temu",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:18:47.655442+00:00"
+    },
+    {
+      "channel": "lazada",
+      "operation": "inquiries.list",
+      "completed_at": "2026-08-24T08:37:39.771866+00:00"
+    },
+    {
+      "channel": "smartstore",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:13:57.40801+00:00"
+    },
+    {
+      "channel": "qoo10",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:55:03.816883+00:00"
+    },
+    {
+      "channel": "ebay",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:18:00.641602+00:00"
+    },
+    {
+      "channel": "shopee",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:30:32.872281+00:00"
+    },
+    {
+      "channel": "elevenst",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:55:37.334267+00:00"
+    },
+    {
+      "channel": "elevenst",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:13:41.873142+00:00"
+    },
+    {
+      "channel": "coupang",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-11T10:36:31.929284+00:00"
+    },
+    {
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:55:06.154885+00:00"
+    },
+    {
+      "channel": "qoo10",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:17:43.679014+00:00"
+    },
+    {
+      "channel": "coupang",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:13:11.324259+00:00"
+    },
+    {
+      "channel": "smartstore",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:56:09.25452+00:00"
+    },
+    {
+      "channel": "lazada",
+      "operation": "orders.list",
+      "completed_at": "2026-09-12T21:11:38.922886+00:00"
+    },
+    {
+      "channel": "ebay",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:50:03.939753+00:00"
+    }
+  ],
+  "recentCsErrors": [
+    {
+      "steps": null,
+      "status": "reconciliation_required",
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:56:24.957665+00:00",
+      "safe_message": null,
+      "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+    },
+    {
+      "steps": null,
+      "status": "failed",
+      "channel": "elevenst",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:55:21.467203+00:00",
+      "safe_message": null,
+      "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+    },
+    {
+      "steps": null,
+      "status": "failed",
+      "channel": "ebay",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:55:03.802238+00:00",
+      "safe_message": null,
+      "error_message": "serverless_cs_execution_failed"
+    },
+    {
+      "steps": null,
+      "status": "reconciliation_required",
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:51:45.876976+00:00",
+      "safe_message": null,
+      "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+    },
+    {
+      "steps": null,
+      "status": "failed",
+      "channel": "elevenst",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:50:41.245893+00:00",
+      "safe_message": null,
+      "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+    },
+    {
+      "steps": null,
+      "status": "reconciliation_required",
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:46:37.025428+00:00",
+      "safe_message": null,
+      "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+    },
+    {
+      "steps": null,
+      "status": "failed",
+      "channel": "elevenst",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:45:33.336484+00:00",
+      "safe_message": null,
+      "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+    },
+    {
+      "steps": null,
+      "status": "reconciliation_required",
+      "channel": "shopee",
+      "operation": "inquiries.list",
+      "completed_at": "2026-09-12T21:41:59.474128+00:00",
+      "safe_message": null,
+      "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+import assert from 'node:assert/strict';import test from 'node:test';import {readFile} from 'node:fs/promises';import {PGlite} from '@electric-sql/pglite';
+const before=await readFile(new URL('./fixtures/local-diagnostic-refresh-before.sql',import.meta.url),'utf8');
+const migration=await readFile(new URL('../supabase/migrations/20260912215300_restore_local_diagnostic_read_routes.sql',import.meta.url),'utf8');
+const id=n=>`00000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
+async function fixture(){const db=new PGlite();await db.exec(`create role anon;create role authenticated;create role service_role;create schema sellerpilot_private;
+create table sellerpilot_private.channel_credentials(id uuid,channel text,seller_account_key text,status text,environment text,expires_at timestamptz,created_at timestamptz);
+create table sellerpilot_private.ai_cli_worker_tokens(id uuid,status text,scope text,expires_at timestamptz);
+create table sellerpilot_private.local_channel_executor_routes(id uuid primary key,owner_id uuid,channel text,operation text,credential_id uuid,seller_account_key text,worker_token_id uuid,release_sha text,egress_ip_sha256 text,approved_by uuid,approved_at timestamptz,expires_at timestamptz,enabled boolean,created_at timestamptz,unique(owner_id,channel,operation,credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256));
+create table sellerpilot_private.serverless_static_egress_policy(channel text,enabled boolean,updated_at timestamptz);
+create function sellerpilot_private.active_serverless_runtime_release_sha() returns text language sql as $$select repeat('a',40)$$;
+create function sellerpilot_private.repin_fixed_ip_read_routes() returns integer language sql as $$select 0$$;
+insert into sellerpilot_private.ai_cli_worker_tokens values('${id(1)}','active','gateway',now()+interval '1 day');
+insert into sellerpilot_private.channel_credentials values('${id(2)}','elevenst',repeat('b',64),'active','production',null,now());
+insert into sellerpilot_private.local_channel_executor_routes values('${id(3)}','${id(4)}','elevenst','orders.list','${id(2)}',repeat('b',64),'${id(1)}',repeat('a',40),repeat('c',64),'${id(4)}',now(),now()+interval '7 days',true,now());`);await db.exec(before);return db;}
+const rows=async db=>(await db.query("select * from sellerpilot_private.local_channel_executor_routes where operation='diagnostic.test'")).rows;
+test('creates same-account diagnostic only and scheduled refresh is idempotent',async()=>{const db=await fixture();try{await db.exec(migration);let x=await rows(db);assert.equal(x.length,1);assert.equal(x[0].credential_id,id(2));assert.equal(x[0].worker_token_id,id(1));assert.equal(x[0].egress_ip_sha256,'c'.repeat(64));assert.equal(x[0].approved_by,id(4));await db.query('select sellerpilot_private.refresh_cs_read_lane()');assert.equal((await rows(db)).length,1);assert.equal((await db.query("select count(*)::int n from sellerpilot_private.local_channel_executor_routes where operation not in ('diagnostic.test','orders.list')")).rows[0].n,0);}finally{await db.close();}});
+for(const change of ["update sellerpilot_private.channel_credentials set status='revoked'","update sellerpilot_private.channel_credentials set seller_account_key='other'","update sellerpilot_private.ai_cli_worker_tokens set scope='serverless_cs'","update sellerpilot_private.ai_cli_worker_tokens set expires_at=now()-interval '1 second'","update sellerpilot_private.local_channel_executor_routes set release_sha=repeat('d',40)","update sellerpilot_private.local_channel_executor_routes set approved_by=null","update sellerpilot_private.local_channel_executor_routes set enabled=false"]){test('ineligible existing read authorization does not create diagnostic: '+change,async()=>{const db=await fixture();try{await db.exec(change);await db.exec(migration);assert.equal((await rows(db)).length,0);}finally{await db.close();}});}
+test('current explicit disable remains disabled; expired old route is repinned without duplicate',async()=>{const db=await fixture();try{await db.exec(migration);await db.exec("update sellerpilot_private.local_channel_executor_routes set enabled=false where operation='diagnostic.test'");await db.query('select sellerpilot_private.refresh_local_diagnostic_read_routes()');assert.equal((await rows(db))[0].enabled,false);await db.exec("update sellerpilot_private.local_channel_executor_routes set release_sha=repeat('d',40),expires_at=now()-interval '1 day' where operation='diagnostic.test'");await db.query('select sellerpilot_private.refresh_local_diagnostic_read_routes()');const x=await rows(db);assert.equal(x.length,1);assert.equal(x[0].enabled,true);assert.equal(x[0].release_sha,'a'.repeat(40));}finally{await db.close();}});
+test('private helper has no direct service or public execute privilege',async()=>{const db=await fixture();try{await db.exec(migration);for(const role of ['anon','authenticated','service_role'])assert.equal((await db.query("select has_function_privilege($1,'sellerpilot_private.refresh_local_diagnostic_read_routes()','execute') ok",[role])).rows[0].ok,false);}finally{await db.close();}});
+test('Temu exact certification repair binds only observed reads and leaves publication approval unchanged',async()=>{
+ const sql=await readFile(new URL('../supabase/migrations/20260912215600_rebind_temu_certified_read_routes.sql',import.meta.url),'utf8');
+ const credential='ca2af447-0706-4694-aed5-7658f12ec2c4',worker='02955cb4-fa9f-466b-824f-b61f06276190',owner='768ce4ac-0ef2-4e01-89dc-05aa4fa8543c';
+ const oldKey='5d6323f145c4b635be9eaa87feddbdd311734721fda9c94398628afc2196b37d',newKey='b2b1f26b257cd0085b05c4ed7007bf42cd2f468fb0d336dabbf9ab05ca492935';
+ for(const valid of [true,false]){const db=await fixture();try{
+ await db.exec(`alter table sellerpilot_private.channel_credentials add column version integer,add column seller_account_key_source text,add column seller_account_verified_at timestamptz;
+ update sellerpilot_private.channel_credentials set id='${credential}',channel='temu',seller_account_key='${newKey}',version=${valid?2:3},seller_account_key_source='provider_certified_v1',seller_account_verified_at='2026-09-12T00:33:28.879102Z';
+ update sellerpilot_private.ai_cli_worker_tokens set id='${worker}';
+ update sellerpilot_private.local_channel_executor_routes set credential_id='${credential}',worker_token_id='${worker}',owner_id='${owner}',channel='temu',seller_account_key='${oldKey}';
+ insert into sellerpilot_private.local_channel_executor_routes select '${id(9)}',owner_id,channel,'inquiries.list',credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256,approved_by,approved_at,expires_at,enabled,created_at from sellerpilot_private.local_channel_executor_routes;
+ insert into sellerpilot_private.local_channel_executor_routes select '${id(10)}',owner_id,channel,'listing.create',credential_id,seller_account_key,worker_token_id,release_sha,egress_ip_sha256,approved_by,approved_at,expires_at,enabled,created_at from sellerpilot_private.local_channel_executor_routes where operation='orders.list';`);
+ await db.exec(migration);assert.equal((await rows(db)).length,0);
+ if(!valid){await assert.rejects(db.exec(sql),/CERTIFICATION_CHANGED/);await db.exec('rollback');assert.equal((await rows(db)).length,0);continue;}
+ await db.exec(sql);assert.equal((await rows(db))[0].seller_account_key,newKey);
+ const out=(await db.query('select operation,seller_account_key from sellerpilot_private.local_channel_executor_routes')).rows;
+ for(const r of out)assert.equal(r.seller_account_key,r.operation==='listing.create'?oldKey:newKey);
+ await assert.rejects(db.exec(sql),/ROUTE_SET_CHANGED/);await db.exec('rollback');
+ }finally{await db.close();}}
+});

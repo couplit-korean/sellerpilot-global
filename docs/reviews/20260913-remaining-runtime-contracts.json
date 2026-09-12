@@ -1,0 +1,1502 @@
+{
+  "checkedAt": "2026-09-13T07:02:00+09:00",
+  "productionRelease": "737171efe3fe0dc14cf89ff0ef47a192af231272",
+  "resolvedFunctionCount": 333,
+  "missingFunctionCount": 93,
+  "unresolvedCallSiteCount": 42,
+  "note": "Static call-site inventory. Dynamic callbacks may require additional functions. No missing function is replaced by a stub; existing provider mutation gates remain closed. Migration names are provenance, not an approved apply order.",
+  "missing": [
+    {
+      "name": "sellerpilot_admin_temu_after_sales_detail_retry_status_v3",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/history-resume/route.ts",
+          "line": 81
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134540_temu_account_scoped_history_metadata.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_begin_cs_import_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/import/route.ts",
+          "line": 144
+        }
+      ],
+      "sourceMigrations": [
+        "20260908002000_add_cs_import_staging.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_cancel_cs_import_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/import/route.ts",
+          "line": 212
+        }
+      ],
+      "sourceMigrations": [
+        "20260908002000_add_cs_import_staging.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_claim_elevenst_pending_diagnostic_v1",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/elevenst-pending-diagnostic/claim/route.ts",
+          "line": 28
+        }
+      ],
+      "sourceMigrations": [
+        "20260909133703_cs_elevenst_pending_diagnostic.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_commit_cs_import_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/import/route.ts",
+          "line": 212
+        }
+      ],
+      "sourceMigrations": [
+        "20260908002000_add_cs_import_staging.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_complete_elevenst_pending_diagnostic_v1",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/elevenst-pending-diagnostic/complete/route.ts",
+          "line": 38
+        }
+      ],
+      "sourceMigrations": [
+        "20260909133703_cs_elevenst_pending_diagnostic.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_complete_smartstore_listing_create",
+      "callSites": [
+        {
+          "file": "lib/server-smartstore-listing-create-completion.ts",
+          "line": 126
+        }
+      ],
+      "sourceMigrations": [
+        "20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_enqueue_lazada_product_review_readback_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/product-review/reply/route.ts",
+          "line": 99
+        }
+      ],
+      "sourceMigrations": [
+        "20260910061000_cs_lazada_product_review_reply.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_enqueue_lazada_product_review_reply_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/product-review/reply/route.ts",
+          "line": 43
+        }
+      ],
+      "sourceMigrations": [
+        "20260910061000_cs_lazada_product_review_reply.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_get_cs_import_preview_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/import/route.ts",
+          "line": 111
+        }
+      ],
+      "sourceMigrations": [
+        "20260908002000_add_cs_import_staging.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_get_lazada_product_review_reply_capability_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/product-review/reply/route.ts",
+          "line": 65
+        }
+      ],
+      "sourceMigrations": [
+        "20260910064500_cs_lazada_product_review_reply_ui.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_get_lazada_product_review_reply_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/product-review/reply/route.ts",
+          "line": 80
+        }
+      ],
+      "sourceMigrations": [
+        "20260910061000_cs_lazada_product_review_reply.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_get_temu_history_checkpoint_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/history-resume/route.ts",
+          "line": 115
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134539_temu_history_checkpoint_resume.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_list_active_lazada_credentials",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/sync/route.ts",
+          "line": 258
+        }
+      ],
+      "sourceMigrations": [
+        "20260909124048_cs_lazada_multi_account_scope.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_list_lazada_supplemental_ui_scopes_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/ui/route.ts",
+          "line": 42
+        }
+      ],
+      "sourceMigrations": [
+        "20260910051500_cs_lazada_supplemental_ui_scopes.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_list_temu_cs_accounts_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/buyer-chat-readiness/route.ts",
+          "line": 120
+        },
+        {
+          "file": "app/api/admin/cs/channels/temu/buyer-chat-source-status/route.ts",
+          "line": 30
+        },
+        {
+          "file": "app/api/admin/cs/channels/temu/history-resume/route.ts",
+          "line": 33
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134540_temu_account_scoped_history_metadata.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_lzd_cas_current_src_r7",
+      "callSites": [
+        {
+          "file": "lib/channels/commerce-worker-completion.ts",
+          "line": 456
+        }
+      ],
+      "sourceMigrations": [
+        "20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_lzd_store_get_rcpt_r7",
+      "callSites": [
+        {
+          "file": "lib/channels/commerce-worker-completion.ts",
+          "line": 450
+        }
+      ],
+      "sourceMigrations": [
+        "20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_lzd_store_post_rcpt_r7",
+      "callSites": [
+        {
+          "file": "lib/channels/commerce-worker-completion.ts",
+          "line": 450
+        }
+      ],
+      "sourceMigrations": [
+        "20260910045000_lazada_create_raw_readback_and_current_state_hardening_r7.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_next_smartstore_history_window_v4",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts",
+          "line": 58
+        }
+      ],
+      "sourceMigrations": [
+        "20260908155620_cs_smartstore_checkpoint_deferred_cutoff_v4.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_prepare_lazada_product_review_reply_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/product-review/reply/route.ts",
+          "line": 36
+        }
+      ],
+      "sourceMigrations": [
+        "20260910061000_cs_lazada_product_review_reply.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_coupang_cs_verification_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/coupang/verification/route.ts",
+          "line": 29
+        }
+      ],
+      "sourceMigrations": [
+        "20260908141314_cs_coupang_authenticated_web_verification.sql",
+        "20260909105117_cs_coupang_verification_legacy_namespaces.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_history_coverage_v2",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/history-resume/route.ts",
+          "line": 78
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134540_temu_account_scoped_history_metadata.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_order_binding_health_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/order-bindings/route.ts",
+          "line": 42
+        }
+      ],
+      "sourceMigrations": [
+        "20260908001000_harden_cs_commerce_boundaries.sql",
+        "20260909123112_cs_coupang_order_revision_and_read_gate.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_recovery_readiness_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/recovery-readiness/route.ts",
+          "line": 1
+        }
+      ],
+      "sourceMigrations": [
+        "20260908003100_add_cs_recovery_drills.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_scope_health_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/scope-health/route.ts",
+          "line": 8
+        }
+      ],
+      "sourceMigrations": [
+        "20260907235000_add_cs_scope_health.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_shopee_buyer_chat_media_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/buyer-chat/route.ts",
+          "line": 59
+        }
+      ],
+      "sourceMigrations": [
+        "20260910062000_cs_shopee_buyer_chat_push_media.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_shopee_buyer_chat_push_status_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/buyer-chat/route.ts",
+          "line": 44
+        }
+      ],
+      "sourceMigrations": [
+        "20260909232000_cs_shopee_buyer_chat_push_status.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_shopee_buyer_chat_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/buyer-chat/route.ts",
+          "line": 37
+        }
+      ],
+      "sourceMigrations": [
+        "20260909165247_cs_shopee_buyer_chat_read_ledger.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_cs_shopee_history_events_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+          "line": 24
+        }
+      ],
+      "sourceMigrations": [
+        "20260908142023_cs_shopee_history_ledger.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_ebay_case_dispute_history_v2",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/ebay/cases-disputes/history/route.ts",
+          "line": 32
+        }
+      ],
+      "sourceMigrations": [
+        "20260908135323_ebay_case_dispute_history_read_v2.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_lazada_quarantine",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/lazada-quarantine/route.ts",
+          "line": 18
+        }
+      ],
+      "sourceMigrations": [
+        "20260907060844_read_lazada_quarantine.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_lazada_supplemental_cs_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/route.ts",
+          "line": 41
+        }
+      ],
+      "sourceMigrations": [
+        "20260909165423_cs_lazada_supplemental_read_ledger.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_lazada_supplemental_ui_scope_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/ui/route.ts",
+          "line": 59
+        }
+      ],
+      "sourceMigrations": [
+        "20260910051500_cs_lazada_supplemental_ui_scopes.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_qoo10_inquiry_source_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/qoo10/review-chat/route.ts",
+          "line": 92
+        }
+      ],
+      "sourceMigrations": [
+        "20260910050000_cs_qoo10_source_capability_status.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_read_qoo10_review_chat_accounts_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/qoo10/review-chat/route.ts",
+          "line": 48
+        }
+      ],
+      "sourceMigrations": [
+        "20260910043000_cs_qoo10_review_chat_observation_ledger.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_read_qoo10_review_chat_observation_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/qoo10/review-chat/route.ts",
+          "line": 72
+        }
+      ],
+      "sourceMigrations": [
+        "20260910043000_cs_qoo10_review_chat_observation_ledger.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_read_smartstore_cs_order_binding_health_v3",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/order-bindings/route.ts",
+          "line": 64
+        }
+      ],
+      "sourceMigrations": [
+        "20260909152143_cs_smartstore_account_scope.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_read_temu_buyer_chat_readiness_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/buyer-chat-readiness/route.ts",
+          "line": 140
+        },
+        {
+          "file": "app/api/admin/cs/channels/temu/buyer-chat-source-status/route.ts",
+          "line": 54
+        }
+      ],
+      "sourceMigrations": [
+        "20260910033000_cs_temu_buyer_chat_readiness.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_record_temu_buyer_chat_observation_diagnostic_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/buyer-chat-readiness/route.ts",
+          "line": 73
+        }
+      ],
+      "sourceMigrations": [
+        "20260910051600_cs_temu_buyer_chat_observation_writer.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_append_smartstore_create_category_source",
+      "callSites": [
+        {
+          "file": "app/api/admin/products/[id]/smartstore-create-category-source/route.ts",
+          "line": 127
+        },
+        {
+          "file": "app/api/admin/products/[id]/smartstore-create-category-source/route.ts",
+          "line": 135
+        }
+      ],
+      "sourceMigrations": [
+        "20260910031000_smartstore_create_category_attribute_source.sql",
+        "20260910035500_smartstore_create_category_source_hardening.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_apply_qoo10_reply_s3_requery_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/qoo10/reply-readback-requery-runtime.ts",
+          "line": 169
+        }
+      ],
+      "sourceMigrations": [
+        "20260909153338_cs_qoo10_reply_s3_requery.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_approve_elevenst_new_product_source",
+      "callSites": [
+        {
+          "file": "app/api/admin/elevenst/new-product-source-approval/route.ts",
+          "line": 209
+        }
+      ],
+      "sourceMigrations": [
+        "20260910030000_elevenst_new_product_source_approval.sql",
+        "20260910044500_elevenst_recovery_observation_and_identifier_hardening_r6.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_begin_lazada_supplemental_resync_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+          "line": 72
+        }
+      ],
+      "sourceMigrations": [
+        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_begin_qoo10_gateway_create_v1",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/qoo10-create-boundary/route.ts",
+          "line": 67
+        },
+        {
+          "file": "lib/server-qoo10-listing-create-fulfillment-source.ts",
+          "line": 205
+        }
+      ],
+      "sourceMigrations": [
+        "20260910033500_qoo10_gateway_create_atomic_recovery.sql",
+        "20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_service_claim_elevenst_create_recovery",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/elevenst-create-recovery/route.ts",
+          "line": 58
+        }
+      ],
+      "sourceMigrations": [
+        "20260910043000_elevenst_final_body_recovery_and_lock_order_r4.sql",
+        "20260910044500_elevenst_recovery_observation_and_identifier_hardening_r6.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_service_consume_temu_collector_attestation_v2",
+      "callSites": [
+        {
+          "file": "app/api/admin/temu/operator-app-observation/route.ts",
+          "line": 223
+        }
+      ],
+      "sourceMigrations": [
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_elevenst_new_product_approval_context",
+      "callSites": [
+        {
+          "file": "app/api/admin/elevenst/new-product-source-approval/route.ts",
+          "line": 126
+        }
+      ],
+      "sourceMigrations": [
+        "20260910030000_elevenst_new_product_source_approval.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_elevenst_new_product_source",
+      "callSites": [
+        {
+          "file": "lib/product-registration/elevenst/new-product-input-source-rpc.ts",
+          "line": 34
+        }
+      ],
+      "sourceMigrations": [
+        "20260910022500_elevenst_new_product_server_sources.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_enqueue_ebay_case_dispute_collection_v2",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/ebay/case-dispute-gateway.ts",
+          "line": 518
+        }
+      ],
+      "sourceMigrations": [
+        "20260909124944_cs_ebay_case_dispute_durable_collection_v2.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_enqueue_elevenst_listing_snapshot_recovery",
+      "callSites": [
+        {
+          "file": "app/api/admin/listings/elevenst-snapshot/recover/route.ts",
+          "line": 102
+        }
+      ],
+      "sourceMigrations": [
+        "20260831054000_recover_elevenst_listing_snapshot.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_enqueue_lazada_periodic_sync",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/sync/route.ts",
+          "line": 388
+        }
+      ],
+      "sourceMigrations": [
+        "20260909124048_cs_lazada_multi_account_scope.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_fence_qoo10_create_fulfillment_v2",
+      "callSites": [
+        {
+          "file": "lib/server-qoo10-listing-create-fulfillment-source.ts",
+          "line": 146
+        }
+      ],
+      "sourceMigrations": [],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_finish_elevenst_create_recovery",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/elevenst-create-recovery/route.ts",
+          "line": 88
+        }
+      ],
+      "sourceMigrations": [
+        "20260910043000_elevenst_final_body_recovery_and_lock_order_r4.sql",
+        "20260910044500_elevenst_recovery_observation_and_identifier_hardening_r6.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_service_ingest_and_ack_lazada_supplemental_page_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+          "line": 56
+        },
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/sync/route.ts",
+          "line": 56
+        }
+      ],
+      "sourceMigrations": [
+        "20260909181000_cs_lazada_supplemental_provider_ingest.sql",
+        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_ingest_cs_shopee_buyer_chat_authorized_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/shopee/buyer-chat-ingest.ts",
+          "line": 129
+        }
+      ],
+      "sourceMigrations": [
+        "20260909185400_cs_shopee_buyer_chat_ingest_entitlement.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_ingest_shopee_buyer_chat_media_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/shopee/buyer-chat-push.ts",
+          "line": 445
+        }
+      ],
+      "sourceMigrations": [
+        "20260910062000_cs_shopee_buyer_chat_push_media.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_ingest_shopee_buyer_chat_push_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/shopee/buyer-chat-push.ts",
+          "line": 445
+        }
+      ],
+      "sourceMigrations": [
+        "20260910062000_cs_shopee_buyer_chat_push_media.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_issue_temu_collector_challenge_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/temu/operator-app-observation/route.ts",
+          "line": 117
+        }
+      ],
+      "sourceMigrations": [
+        "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_prepare_elevenst_listing_snapshot_recovery",
+      "callSites": [
+        {
+          "file": "app/api/admin/listings/elevenst-snapshot/recover/route.ts",
+          "line": 52
+        }
+      ],
+      "sourceMigrations": [
+        "20260831054000_recover_elevenst_listing_snapshot.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_prepare_lazada_supplemental_read_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+          "line": 42
+        },
+        {
+          "file": "app/api/admin/cs/channels/lazada/supplemental/sync/route.ts",
+          "line": 40
+        }
+      ],
+      "sourceMigrations": [
+        "20260909181000_cs_lazada_supplemental_provider_ingest.sql",
+        "20260909185000_cs_lazada_supplemental_resync_rounds.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_qoo10_create_get_rec_v1",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/qoo10-create-boundary/recover/route.ts",
+          "line": 62
+        },
+        {
+          "file": "lib/server-qoo10-listing-create-fulfillment-source.ts",
+          "line": 302
+        }
+      ],
+      "sourceMigrations": [
+        "20260910050000_qoo10_retired_runtime_and_create_recovery_hardening_r5.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_service_qoo10_reply_s3_requery_context_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/qoo10/reply-readback-requery-runtime.ts",
+          "line": 122
+        }
+      ],
+      "sourceMigrations": [
+        "20260909153338_cs_qoo10_reply_s3_requery.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_read_shopee_chat_entitlement_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/shopee/buyer-chat-ingest.ts",
+          "line": 86
+        }
+      ],
+      "sourceMigrations": [
+        "20260910062000_cs_shopee_buyer_chat_push_media.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_read_temu_create_authoritative_source_v1",
+      "callSites": [
+        {
+          "file": "lib/product-registration/temu/create-authoritative-source-ledger.ts",
+          "line": 93
+        }
+      ],
+      "sourceMigrations": [
+        "20260910025000_temu_create_authoritative_sources.sql",
+        "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_read_temu_verified_authoritative_sources_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/temu/operator-app-observation/route.ts",
+          "line": 245
+        },
+        {
+          "file": "lib/product-registration/temu/authoritative-ledger-read-adapter.ts",
+          "line": 183
+        }
+      ],
+      "sourceMigrations": [
+        "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_read_temu_verified_create_app_gate_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/temu/operator-app-observation/route.ts",
+          "line": 244
+        },
+        {
+          "file": "lib/product-registration/temu/authoritative-create-producer.ts",
+          "line": 220
+        },
+        {
+          "file": "lib/product-registration/temu/create-authoritative-source-ledger.ts",
+          "line": 75
+        }
+      ],
+      "sourceMigrations": [
+        "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_coupang_create_official_snapshot",
+      "callSites": [
+        {
+          "file": "app/api/admin/channel-operations/route.ts",
+          "line": 1925
+        }
+      ],
+      "sourceMigrations": [
+        "20260910032500_fence_coupang_create_official_sources_r8.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_ebay_case_dispute_gateway_page_v2",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/ebay/case-dispute-gateway.ts",
+          "line": 485
+        }
+      ],
+      "sourceMigrations": [
+        "20260909124944_cs_ebay_case_dispute_durable_collection_v2.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_ebay_case_dispute_history_v1",
+      "callSites": [
+        {
+          "file": "lib/channels/cs/ebay/case-dispute-history.ts",
+          "line": 51
+        }
+      ],
+      "sourceMigrations": [
+        "20260908135249_ebay_case_dispute_history_ledger.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_qoo10_history_window_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 498
+        }
+      ],
+      "sourceMigrations": [
+        "20260909153334_cs_qoo10_history_window_ledger.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_qoo10_reply_s3_readback_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 455
+        }
+      ],
+      "sourceMigrations": [
+        "20260908140419_cs_qoo10_reply_s3_status.sql",
+        "20260908140421_cs_qoo10_reply_s3_response_seal.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_shopee_reply_readback_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 596
+        }
+      ],
+      "sourceMigrations": [
+        "20260909131448_cs_shopee_reply_readback.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_smartstore_reply_readback_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 621
+        }
+      ],
+      "sourceMigrations": [
+        "20260909152145_cs_smartstore_exact_reply_readback.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_temu_create_app_gate_v1",
+      "callSites": [
+        {
+          "file": "lib/product-registration/temu/create-authoritative-source-ledger.ts",
+          "line": 150
+        }
+      ],
+      "sourceMigrations": [
+        "20260910025000_temu_create_authoritative_sources.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_temu_create_authoritative_source_v1",
+      "callSites": [
+        {
+          "file": "lib/product-registration/temu/create-authoritative-source-ledger.ts",
+          "line": 131
+        }
+      ],
+      "sourceMigrations": [
+        "20260910025000_temu_create_authoritative_sources.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_temu_final_create_payload_v1",
+      "callSites": [
+        {
+          "file": "lib/product-registration/temu/final-create-payload.ts",
+          "line": 45
+        }
+      ],
+      "sourceMigrations": [
+        "20260910040600_temu_official_app_attestation_and_final_body_cas.sql",
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_record_temu_history_checkpoint_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 425
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134539_temu_history_checkpoint_resume.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_requeue_coupang_product_reply_readback_v1",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 691
+        }
+      ],
+      "sourceMigrations": [
+        "20260909135332_cs_coupang_product_reply_readback.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_requeue_temu_after_sales_detail_v2",
+      "callSites": [
+        {
+          "file": "lib/cs/operations/worker-completion.ts",
+          "line": 691
+        }
+      ],
+      "sourceMigrations": [
+        "20260908140416_cs_temu_detail_retry_replay.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_resolve_shopee_buyer_chat_push_v1",
+      "callSites": [
+        {
+          "file": "app/api/webhooks/shopee-buyer-chat/route.ts",
+          "line": 106
+        }
+      ],
+      "sourceMigrations": [
+        "20260910062000_cs_shopee_buyer_chat_push_media.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_resume_cs_shopee_history_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/history-resume/route.ts",
+          "line": 24
+        }
+      ],
+      "sourceMigrations": [
+        "20260909130916_cs_shopee_history_recovery.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_retire_elevenst_new_product_source",
+      "callSites": [
+        {
+          "file": "app/api/admin/elevenst/new-product-source-approval/route.ts",
+          "line": 248
+        }
+      ],
+      "sourceMigrations": [
+        "20260910030000_elevenst_new_product_source_approval.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_smartstore_create_category_collect_ctx",
+      "callSites": [
+        {
+          "file": "app/api/admin/products/[id]/smartstore-create-category-source/route.ts",
+          "line": 58
+        },
+        {
+          "file": "app/api/admin/products/[id]/smartstore-create-category-source/route.ts",
+          "line": 141
+        }
+      ],
+      "sourceMigrations": [
+        "20260910032000_smartstore_create_category_source_collector_context.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_smartstore_create_source_snapshot",
+      "callSites": [
+        {
+          "file": "app/api/admin/channel-operations/route.ts",
+          "line": 1476
+        },
+        {
+          "file": "app/api/admin/products/[id]/smartstore-create-category-source/route.ts",
+          "line": 149
+        }
+      ],
+      "sourceMigrations": [
+        "20260910031000_smartstore_create_category_attribute_source.sql",
+        "20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_stage_smartstore_create_transport",
+      "callSites": [
+        {
+          "file": "app/api/channel-gateway/worker/smartstore-create-transport/route.ts",
+          "line": 61
+        }
+      ],
+      "sourceMigrations": [
+        "20260910050500_smartstore_final_transport_and_current_state_hardening_r4.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_start_cs_shopee_history_v2",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/shopee/history-progress/route.ts",
+          "line": 73
+        }
+      ],
+      "sourceMigrations": [
+        "20260908151735_cs_shopee_history_date_intent_cutoff.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_take_qoo10_create_fulfillment_capture",
+      "callSites": [
+        {
+          "file": "app/api/admin/channel-operations/route.ts",
+          "line": 1798
+        },
+        {
+          "file": "lib/server-qoo10-listing-create-fulfillment-source.ts",
+          "line": 570
+        }
+      ],
+      "sourceMigrations": [
+        "20260910023500_qoo10_fulfillment_evidence.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_service_temu_create_source_context_v1",
+      "callSites": [
+        {
+          "file": "lib/product-registration/temu/authoritative-create-producer.ts",
+          "line": 227
+        }
+      ],
+      "sourceMigrations": [
+        "20260910033000_temu_create_producer_context.sql"
+      ],
+      "hasVersionCollision": true
+    },
+    {
+      "name": "sellerpilot_stage_cs_import_rows_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/import/route.ts",
+          "line": 177
+        }
+      ],
+      "sourceMigrations": [
+        "20260908002000_add_cs_import_staging.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_start_or_resume_temu_history_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/temu/history-resume/route.ts",
+          "line": 154
+        }
+      ],
+      "sourceMigrations": [
+        "20260909134539_temu_history_checkpoint_resume.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_start_smartstore_inquiry_history_window_v7",
+      "callSites": [
+        {
+          "file": "app/api/admin/cs/channels/smartstore/history-resume-v5/route.ts",
+          "line": 113
+        }
+      ],
+      "sourceMigrations": [
+        "20260908155617_cs_smartstore_continuation_safe_window_v7.sql"
+      ],
+      "hasVersionCollision": false
+    },
+    {
+      "name": "sellerpilot_verifier_record_temu_collector_receipt_v1",
+      "callSites": [
+        {
+          "file": "app/api/admin/temu/operator-app-observation/route.ts",
+          "line": 203
+        }
+      ],
+      "sourceMigrations": [
+        "20260910045500_temu_verified_receipt_and_null_safe_attestation_r24.sql"
+      ],
+      "hasVersionCollision": false
+    }
+  ],
+  "unresolved": [
+    {
+      "file": "app/api/admin/channel-operations/route.ts",
+      "line": 2152,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/channel-operations/route.ts",
+      "line": 2638,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/cs/channels/ebay/cases-disputes/history/sync/route.ts",
+      "line": 79,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/cs/channels/lazada/supplemental/resync/route.ts",
+      "line": 38,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/cs/lazada-raw-inbox/reprocess/route.ts",
+      "line": 20,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/serverless-runtime-release/route.ts",
+      "line": 81,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/admin/serverless-runtime-release/route.ts",
+      "line": 91,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/channel-gateway/worker/lazada-recovery/route.ts",
+      "line": 63,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/channel-gateway/worker/shopee-create-stage/route.ts",
+      "line": 116,
+      "argument": "rpc"
+    },
+    {
+      "file": "app/api/channel-gateway/worker/smartstore-create-complete/route.ts",
+      "line": 61,
+      "argument": "name"
+    },
+    {
+      "file": "app/api/integrations/kakao/callback/route.ts",
+      "line": 44,
+      "argument": "functionName"
+    },
+    {
+      "file": "app/api/integrations/kakao/settings/route.ts",
+      "line": 44,
+      "argument": "functionName"
+    },
+    {
+      "file": "app/api/internal/kakao-notifications/route.ts",
+      "line": 71,
+      "argument": "functionName"
+    },
+    {
+      "file": "app/api/internal/maintenance/route.ts",
+      "line": 511,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/commerce-worker-completion.ts",
+      "line": 326,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/elevenst-create-recovery-drain.ts",
+      "line": 143,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/gateway-completion-runtime.ts",
+      "line": 15,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/serverless-cs-gateway.ts",
+      "line": 285,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/serverless-gateway-runtime.ts",
+      "line": 37,
+      "argument": "name"
+    },
+    {
+      "file": "lib/channels/serverless-gateway.ts",
+      "line": 309,
+      "argument": "name"
+    },
+    {
+      "file": "lib/cs/operations/worker-completion.ts",
+      "line": 113,
+      "argument": "name"
+    },
+    {
+      "file": "lib/cs/operations/worker-completion.ts",
+      "line": 287,
+      "argument": "name"
+    },
+    {
+      "file": "lib/cs/operations/worker-completion.ts",
+      "line": 323,
+      "argument": "name"
+    },
+    {
+      "file": "lib/cs/operations/worker-completion.ts",
+      "line": 482,
+      "argument": "name"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 25,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 32,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 32,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 34,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 36,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 46,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 47,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 53,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 56,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 57,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 59,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-external-detail-import-api.ts",
+      "line": 64,
+      "argument": "admin"
+    },
+    {
+      "file": "lib/server-product-research-runtime.ts",
+      "line": 49,
+      "argument": "name"
+    },
+    {
+      "file": "lib/server-product-research.ts",
+      "line": 1165,
+      "argument": "name"
+    },
+    {
+      "file": "lib/server-product-studio-runtime.ts",
+      "line": 88,
+      "argument": "name"
+    },
+    {
+      "file": "lib/server-product-studio.ts",
+      "line": 1584,
+      "argument": "name"
+    },
+    {
+      "file": "lib/serverless-runtime-release.ts",
+      "line": 75,
+      "argument": "name"
+    },
+    {
+      "file": "lib/shipping/worker-completion.ts",
+      "line": 27,
+      "argument": "name"
+    }
+  ]
+}

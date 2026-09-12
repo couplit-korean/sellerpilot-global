@@ -1,4 +1,50 @@
-# 전체 채널 실행 경로 복구 — 2026-09-13
+# 전체 채널 연결 및 기능 점검 — 2026-09-13 07:02 KST
+
+**현재 판정: 판매채널 실제 API 읽기 연결 8/8 통과. 상품 신규 등록·CS 전 범위·배송의 전체 기능 완료는 아니다.**
+
+## 현재 운영 배치
+
+- 개발 원본: `/Users/kimchangheemac/dev/sellerpilot-app`. iCloud Documents와 별개이며 새 채팅·클론·작업 폴더를 만들지 않았다.
+- Vercel 실제 운영: `737171efe3fe0dc14cf89ff0ef47a192af231272`, `dpl_7ww7TFyydCeJE32ccS4g4Wh8x58q`. 운영 도메인 promote/inspect, 무작업 점검 6개와 Supabase 활성 SHA·스케줄 6개 대조 완료.
+- Mac gateway: 동일 `737171e` / ready=true / 최근 gateway HTTP 200 및 idle 204 확인. 기존 LaunchAgent의 RunAtLoad·KeepAlive·supervisor 재시작을 유지한다. Mac 전원·인터넷·깨어 있는 상태가 필요한 실행 경로다. 유료 Vercel Static IP는 추가하지 않았다.
+- SQL 12개를 이번 전체 채널 복구 과정에서 운영에 적용했다: 최초 7개 + 비동기 진단 1개 + eBay 원본 2개 + 로컬 진단 경로 1개 + Temu 조회 계정 결속 1개. 앞선 이미지/DB 최적화 작업의 migration 수와 합산하지 않는다.
+
+## 채널별 결과
+
+|채널|기본 조회 실행 위치|최신 실제 연결 진단 KST|확인된 조회 증거|남은 주요 기능 문제|
+|---|---|---|---|---|
+|쿠팡|Mac|06:19 통과|상품 목록과 판매자 ID 일치, 주문 조회 성공|현재 CS 수집 범위·답변 로컬 실행·게시/배송 실행 증거 미완료|
+|스마트스토어|Mac|06:19 통과|판매자 계정 읽기, 주문·문의 조회 성공|신규 등록 source/transport/completion DB 계약 및 답변 readback 일부 누락|
+|11번가|Mac|06:50 통과|API 읽기, 주문 및 일부 문의 조회 성공|일부 문의 조회 원격 오류. 현재 코드에서 주문 상세·송장 전송 미지원. 등록 recovery DB 계약 잔여|
+|Shopee|Mac|06:56 통과|판매점 정보, 주문 및 일부 문의 조회 성공|일부 문의 작업 reconciliation_required. Buyer Chat/이력/readback DB 계약 잔여|
+|Lazada MY|Mac|06:19 통과|판매자 읽기 및 06:11 주문 조회 성공|Vercel IP whitelist 오류는 Mac 조회로 해소. 채팅/리뷰 권한·CS 최신 수집·등록 receipt DB 계약 잔여|
+|Temu|Mac|06:56 통과|상품 목록 읽기, 주문 조회 성공|CS 범위·공식 권한 및 등록 source DB 계약 잔여. 현재 코드에서 CS 답변 미지원|
+|Qoo10 Japan|Vercel 중심|06:19 통과|상품 읽기, 주문·문의 조회 성공|등록 fulfillment/recovery와 CS 특수 이력/readback 계약 잔여|
+|eBay|Vercel 중심, 기존 복구 worker 별도|06:20 통과|판매자 권한·판매한도, 주문 및 ASQ 일부 조회 성공|게시 recovery/stage DB 복구 완료. 일부 CS 실행503 및 분쟁·이력 계약 잔여|
+
+위 실행 위치는 현재 확인된 **진단·주문·문의 조회 경로**다. 모든 상품 등록·CS 답변·배송 작업이 같은 위치에서 실행 가능하다는 뜻이 아니다. 코드의 adapter 존재, 실행 경로 허용, 현재 배포 승인, 실제 provider 변경과 원격 readback은 각각 별도 기준이다.
+
+## 추가로 수정한 결함
+
+- 45초 HTTP 대기 종료를 실패로 기록하던 진단 API를 202 pending으로 수정했다. 실행 미확인은 503 manual로 구분하며 성공/실패를 추측해 DB에 덮어쓰지 않는다.
+- DB atomic completion은 토큰 갱신이 없어도 진단 결과를 기록한다. 정확한 response/diagnostic 일치·claim 소유권·receipt를 유지하고 더 오래된 작업은 최신 진단 요청을 덮어쓰지 않는다.
+- 기존 승인된 같은 채널·계정·작업자·egress의 조회 경로에서 진단 경로를 만들고 기존 5분 갱신에 결합했다. 유효한 명시적 disable은 유지한다. 상품/답변/배송 write 경로를 자동 승인하지 않는다.
+- Temu 현재 인증키는 9월 12일 공식 계정 인증을 갱신했지만 read route는 이전 seller key를 사용했다. 인증키 ID·version 2·인증시각·old/new key를 모두 고정 검증하여 주문/문의 두 경로만 다시 결속했다. 진단도 새 식별자로 성공했다. listing.create 승인은 변경하지 않았다.
+- eBay 원본 `20260910021000` 및 `20260910040000`을 실제 누락 확인, 현재 base column fixture 설치, 관련 검증 후 적용했다. 서비스 전용 RPC 5개 ACL 확인. 기존 게시를 읽기로 복구하는 기능이며 신규 상품을 게시한 것은 아니다.
+
+## 검증 및 미완료 항목
+
+- API·비동기 진단 DB 57/57, 로컬 진단/Temu 정확 결속 DB 11/11, eBay 복구 관련 10/10 통과. 앞선 공통 runtime 80/80·Lazada 12/12 및 4/4 등은 아래 작업 이력에 기록되어 있다. 중복 테스트 수를 합쳐 전체 저장소 통과로 표현하지 않는다.
+- 추가 local Next production build 및 Vercel build, canary, production promotion, 실제 domain/Supabase readback 완료.
+- [실제 운영 증거](20260913-all-channel-live-evidence.json): 진단 8/8, 최근 주문/문의 성공시각, 잔여 CS 오류를 함께 보존했다. 페이지에서 모두 연결되어 보이는 것만으로 CS·등록·배송 완료라고 판정하지 않는다.
+- [잔여 DB 계약 목록](20260913-remaining-runtime-contracts.json): 정적으로 확인한 333개 RPC 이름 중 **93개**가 운영 DB에 없으며, 별도로 동적 호출 42개를 추적해야 한다. 호출 위치·원본 migration·번호 충돌을 기록했다. 원본 목록은 곧바로 일괄 적용해도 된다는 뜻이 아니다.
+- Vercel 신규 배포에서도 일부 CS enqueue와 eBay 실행503, 경쟁상품 가격 snapshot 저장503이 남아 있다. 최근 enqueue 오류는 한 번에 failed 168 / total 182까지 관측되어 추가 DB 의존성/재시도 범위 검토가 필요하다. 이 상태를 원활한 전체 운영 완료로 보고하지 않는다.
+- 일반 문의 조회가 성공해도 리뷰/채팅/분쟁/과거 이력 범위는 다르다. 상품 신규 등록·자동 답변·실제 송장 전송은 테스트 목적으로 실행하지 않았다. 현재 배포의 write 승인·필수 상품 정책·채널 권한·DB 계약을 충족한 뒤 대상별 provider 응답 및 원격 readback으로 확인해야 한다.
+
+## 이전 작업 이력
+
+아래는 해당 시점의 기록이며 현재 상태는 위 표와 최신 증거가 우선한다.
+
 
 상태: 운영 DB 공통 병목 복구, 실제 채널 조회 재개. 전체 상품 등록·답변 발송·배송 실행 완료 판정은 아님.
 
