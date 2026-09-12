@@ -3,6 +3,11 @@ import { mkdtemp, open, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { aiGeneratedAssetSpecs } from "../lib/ai-generated-assets.ts";
+
+const firstDraftImageConcurrency = (() => {
+  const parsed = Number(process.env.SELLERPILOT_FIRST_DRAFT_IMAGE_CONCURRENCY ?? 3);
+  return Number.isFinite(parsed) ? Math.max(1, Math.min(6, Math.floor(parsed))) : 3;
+})();
 import {
   buildAssetImagePrompt,
   resolveIdentityBackgroundContactMode,
@@ -108,38 +113,53 @@ export async function runFirstDraftImageLaneOnce({
     const pending = payload.assets.filter((asset) => !completed.has(asset.id));
     log(`[1차 생성 이미지 시작] ${payload.jobId} · ${pending.length}장 · 완료 ${completed.size}장`);
 
-    for (const asset of pending) {
-      const spec = assetSpecById.get(asset.id);
-      if (!spec) {
-        throw new Error(`1차 생성 이미지 역할 ${asset.id}을(를) 확인하지 못했습니다.`);
+    // The six roles are independent, and one Codex image call takes minutes, so the
+    // assets are generated with bounded parallelism instead of one after another.
+    let finishedAll = false;
+    let cursor = 0;
+    const workerCount = Math.max(1, Math.min(pending.length, firstDraftImageConcurrency));
+    const generateOne = async () => {
+      for (;;) {
+        if (finishedAll) return;
+        const index = cursor;
+        cursor += 1;
+        if (index >= pending.length) return;
+        const asset = pending[index];
+        const spec = assetSpecById.get(asset.id);
+        if (!spec) {
+          throw new Error(`1차 생성 이미지 역할 ${asset.id}을(를) 확인하지 못했습니다.`);
+        }
+        const normalized = await generateFirstDraftAsset({
+          spec,
+          studioResult,
+          sourceFile,
+          jobDir,
+          runCodex,
+          normalizeGeneratedAsset,
+          codexArgs: buildCodexImageArgs,
+        });
+        const submitted = await api("/api/ai/worker/first-draft-images", {
+          method: "POST",
+          body: JSON.stringify({
+            jobId: payload.jobId,
+            assets: [{ id: spec.id, pngBase64: Buffer.from(normalized).toString("base64") }],
+          }),
+        });
+        if (!submitted.ok) {
+          throw new Error(`1차 생성 이미지 ${spec.id} 제출 실패 · HTTP ${submitted.status}`);
+        }
+        const outcome = await submitted.json().catch(() => null);
+        const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
+        log(`[1차 생성 이미지 업로드] ${payload.jobId} · ${spec.id} · ${outcome?.status ?? "recorded"} · sha256=${digest}`);
+        if (outcome?.status === "done") {
+          finishedAll = true;
+          log(`[1차 생성 이미지 완료] ${payload.jobId} · 6장 생성 및 계보 반영`);
+          return;
+        }
       }
-      const normalized = await generateFirstDraftAsset({
-        spec,
-        studioResult,
-        sourceFile,
-        jobDir,
-        runCodex,
-        normalizeGeneratedAsset,
-        codexArgs: buildCodexImageArgs,
-      });
-      const submitted = await api("/api/ai/worker/first-draft-images", {
-        method: "POST",
-        body: JSON.stringify({
-          jobId: payload.jobId,
-          assets: [{ id: spec.id, pngBase64: Buffer.from(normalized).toString("base64") }],
-        }),
-      });
-      if (!submitted.ok) {
-        throw new Error(`1차 생성 이미지 ${spec.id} 제출 실패 · HTTP ${submitted.status}`);
-      }
-      const outcome = await submitted.json().catch(() => null);
-      const digest = createHash("sha256").update(normalized).digest("hex").slice(0, 12);
-      log(`[1차 생성 이미지 업로드] ${payload.jobId} · ${spec.id} · ${outcome?.status ?? "recorded"} · sha256=${digest}`);
-      if (outcome?.status === "done") {
-        log(`[1차 생성 이미지 완료] ${payload.jobId} · 6장 생성 및 계보 반영`);
-        return { status: "done", jobId: payload.jobId };
-      }
-    }
+    };
+    await Promise.all(Array.from({ length: workerCount }, () => generateOne()));
+    if (finishedAll) return { status: "done", jobId: payload.jobId };
     return { status: "recorded", jobId: payload.jobId, pending: pending.map((asset) => asset.id) };
   }
   catch (error) {
