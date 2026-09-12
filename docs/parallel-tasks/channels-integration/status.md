@@ -1,4 +1,5 @@
-> 2026-09-13 07:39 KST 후속 복구: DB 계약 10개 적용, 부재 RPC 93→79. 일별 이력 접수·Temu 승인 로컬 접수·Shopee 빈 반품 목록·CS 갱신 후 조회 실패 분류를 수정했다. 관련 77개 검사 통과. 배포 후 실제 결과 확인 단계이며 전체 채널 기능 완료는 아니다. [후속 보고서](../../reviews/20260913-runtime-restoration-followup.md)를 우선하고, 아래 기록은 각 당시 상태로 읽는다.
+> 2026-09-13 07:54 KST 현재 판정: 검증된 수정은 양쪽 integration-aside에 푸시하고 Vercel에 배포했다. 운영 앱·Supabase 활성 SHA·Mac gateway는 `a6efa00`으로 일치하며 일정 6개 재시작과 HTTP 200을 확인했다. 후속 DB migration 총 11개, 집중 검사 78개 통과. Shopee 반품/리뷰·eBay 분쟁 이력·Qoo10 문의의 실제 성공을 확인했다. **전체 등록·CS·배송 완료는 아님**: 11번가 Q&A 원격 오류, Lazada/eBay 대화 권한 및 정적 부재 RPC 79개 검토가 남는다. [후속 보고서](../../reviews/20260913-runtime-restoration-followup.md)를 우선하고 아래는 당시 기록으로 읽는다.
+
 
 > 2026-09-13 07:02 KST 최신 판정: 실제 판매채널 API 읽기 진단 **8/8 통과**. Vercel·Supabase 활성 릴리스·Mac gateway는 `737171e`로 일치한다. 진단 대기 오판/로컬 진단 경로/Temu 조회 계정 결속/eBay 복구 DB를 추가 수정·적용했다. **전체 등록·CS·배송 완료는 아님**: 정적 RPC 93개 및 일부 실제 CS 실행 오류가 남아 있다. [최신 전체 채널 보고서](../../reviews/20260913-all-channel-runtime-repair.md)와 증거 JSON을 우선한다.
 

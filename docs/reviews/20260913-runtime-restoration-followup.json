@@ -1,7 +1,7 @@
 {
-  "checkedAt": "2026-09-13T07:39:00+09:00",
-  "state": "runtime-fixes-verified-release-pending",
-  "migrationCount": 10,
+  "checkedAt": "2026-09-13T07:54:02+09:00",
+  "state": "deployed-runtime-restored-full-channel-validation-incomplete",
+  "migrationCount": 11,
   "migrations": [
     {
       "version": "20260907060844",
@@ -52,6 +52,11 @@
       "version": "20260912223510",
       "name": "admit_approved_local_inquiry_schedule",
       "sourceSha256": "149474730818f3253e3d4d5988f70979e4a447665f52396122239bbf909b3ef0"
+    },
+    {
+      "version": "20260912224310",
+      "name": "pin_registered_egress_reads_to_local",
+      "sourceSha256": "9cabbf5624b8d11293ba40bc111cb6a61343b920262bdf310500959d2bb7e020"
     }
   ],
   "schedulerContractRollback": {
@@ -1150,5 +1155,837 @@
         "error_message": "serverless_cs_execution_failed"
       }
     ]
+  },
+  "focusedTestsPassed": 78,
+  "release": {
+    "sha": "a6efa006fddc95f13a4dcc66fad9f16198a4c3f0",
+    "deploymentId": "dpl_33eVSmDoAKpibTa5CvA3ZtqVXAbm",
+    "productionUrl": "https://sellerpilot-global.vercel.app",
+    "status": "Ready",
+    "canary": {
+      "claimed": 0,
+      "processed": 0,
+      "executed": false
+    },
+    "scheduleCanariesPassed": 6,
+    "remotesPushed": [
+      "origin/integration-aside",
+      "couplit/integration-aside"
+    ],
+    "note": "Subsequent DB-only migration and evidence commit do not change the deployed application source."
+  },
+  "liveRuntime": {
+    "runtime": {
+      "active": true,
+      "version": "serverless_runtime_v2",
+      "lastWake": {
+        "outcome": "queued",
+        "timedOut": false,
+        "httpStatus": null,
+        "resolvedAt": null,
+        "requestedAt": "2026-09-12T22:50:00.200788+00:00",
+        "safeErrorCode": null
+      },
+      "configured": true,
+      "activeRelease": "a6efa006fddc95f13a4dcc66fad9f16198a4c3f0",
+      "scheduleCount": 6,
+      "internalSchedules": {
+        "maintenance": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-11T18:17:00.636952+00:00"
+        },
+        "channel_sync": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-12T22:21:00.209747+00:00"
+        },
+        "product_research": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-12T22:25:00.148941+00:00"
+        },
+        "competitor_prices": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-12T21:58:00.135522+00:00"
+        },
+        "kakao_notifications": {
+          "active": true,
+          "configured": true,
+          "lastOutcome": "queued",
+          "lastHttpStatus": null,
+          "lastRequestedAt": "2026-09-12T22:49:00.19784+00:00"
+        }
+      },
+      "reconciliationRequired": 30,
+      "unsafePendingMutations": 0,
+      "reconciliationRequiredMutations": 23
+    },
+    "checkedAt": "2026-09-12T22:52:22.671452+00:00",
+    "temuRoutes": [
+      {
+        "enabled": true,
+        "operation": "inquiries.list",
+        "currentKey": true,
+        "validUntil": "2026-09-19T22:50:00.141391+00:00",
+        "currentRelease": true
+      }
+    ],
+    "claimPolicy": [
+      {
+        "channel": "coupang",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "smartstore",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "elevenst",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "shopee",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "lazada",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "temu",
+        "ordersAllowedInCloud": false,
+        "inquiriesAllowedInCloud": false
+      },
+      {
+        "channel": "qoo10",
+        "ordersAllowedInCloud": true,
+        "inquiriesAllowedInCloud": true
+      },
+      {
+        "channel": "ebay",
+        "ordersAllowedInCloud": true,
+        "inquiriesAllowedInCloud": true
+      }
+    ],
+    "recentReads": [
+      {
+        "id": "a6908c3e-17cf-4ab0-8284-a309924a4587",
+        "kind": "return_refund",
+        "scope": null,
+        "status": "queued",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "ce71a085-a1fe-4e3d-87b6-16158dedae53",
+        "kind": "product_review",
+        "scope": null,
+        "status": "queued",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "63144fe7-d141-4bb5-8ecf-e98a360b5a73",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "queued",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "6193cff0-e3e3-4d52-b0a9-bb25f572408c",
+        "kind": "conversation",
+        "scope": null,
+        "status": "queued",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "e9e2c82b-9e3c-4f24-bfde-17dc9f438f9d",
+        "kind": "conversation",
+        "scope": null,
+        "status": "queued",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "ccfdfc65-0b9b-4e2c-9cc0-730819c880d7",
+        "kind": "mailbox",
+        "scope": null,
+        "status": "queued",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "b858fa4d-b56d-422c-9121-ca3cd21767ad",
+        "kind": null,
+        "scope": null,
+        "status": "queued",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "96718b81-5396-4ec1-a5d3-8f7f24d9b550",
+        "kind": "customer",
+        "scope": null,
+        "status": "queued",
+        "channel": "smartstore",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "00ffefbb-5a60-478f-b800-c5e7dbe622e1",
+        "kind": "product",
+        "scope": null,
+        "status": "queued",
+        "channel": "smartstore",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "94b9f910-09ca-4fb5-bfc3-2f73da412f6f",
+        "kind": "urgent_alimi",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "elevenst",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:52:15.199698+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "69706604-89c8-40c3-8fc1-d33db6bdcf12",
+        "kind": "product_qna",
+        "scope": null,
+        "status": "failed",
+        "channel": "elevenst",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:51:58.830938+00:00",
+        "last_version": null,
+        "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+      },
+      {
+        "id": "a293f3a6-d032-44bb-9ff3-d70b7c6d1234",
+        "kind": "return_refund",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:51:43.112442+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "b953be80-ce0f-4179-95db-8f5b7feb04cd",
+        "kind": "product_review",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:51:26.494578+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "f08f151f-1edd-4bf7-8a77-9d5f625e1ba0",
+        "kind": "claim",
+        "scope": null,
+        "status": "queued",
+        "channel": "qoo10",
+        "operation": "inquiries.list",
+        "completed_at": null,
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "6adf61be-510e-4ee3-b0aa-a227b3d2e7a6",
+        "kind": null,
+        "scope": null,
+        "status": "succeeded",
+        "channel": "qoo10",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:50:26.63411+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "b6c176bf-a6a6-46b5-bae9-efb90dfa132c",
+        "kind": null,
+        "scope": null,
+        "status": "succeeded",
+        "channel": "qoo10",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:50:09.728555+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "ca6f1891-14bb-4134-a109-bbf07eaa727e",
+        "kind": null,
+        "scope": null,
+        "status": "succeeded",
+        "channel": "qoo10",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:50:04.32863+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "3bffd56f-4934-4cc9-ae8c-3f57e43a6859",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:50:04.76108+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "00c18741-cc09-4ffa-aea3-9894b0437e1d",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:49:53.351254+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "3cc02200-a91d-4414-aa27-1241b95986cf",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:49:36.741682+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "dae2b24c-9d4b-4824-b03d-c944596c757e",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:49:20.986422+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "951ba405-12b8-4e90-94ef-58c2e553e21b",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:49:04.894336+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "d080fff4-6951-4b86-a5aa-0a4698740403",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:48:49.527436+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "7ba18962-9c0b-4a33-a6f0-8c8caa971138",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:48:32.88112+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "6b156d84-1c56-432d-911c-4004719741f6",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:48:16.757097+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "598f0af9-fe43-42a3-b06b-8170cc577fab",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:48:01.447339+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "77d56e02-b34f-45db-abfe-d92445c6fb76",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:47:44.983397+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "23f6f929-4d1d-4dc7-b14e-a8f2370954e5",
+        "kind": "case_dispute_history",
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:47:29.693607+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "4940be8f-1956-47ec-b5b0-bcf76a43a44b",
+        "kind": "product_review",
+        "scope": null,
+        "status": "reconciliation_required",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:51:09.95241+00:00",
+        "last_version": null,
+        "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+      },
+      {
+        "id": "e0aacd6a-7e1c-4679-bf07-8b73067057f3",
+        "kind": "return_refund",
+        "scope": null,
+        "status": "reconciliation_required",
+        "channel": "shopee",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:50:54.581796+00:00",
+        "last_version": null,
+        "error_message": "CS_PROVIDER_RESULT_REQUIRES_RECONCILIATION"
+      },
+      {
+        "id": "164956ab-30f1-489f-80c0-1ba9ab388877",
+        "kind": null,
+        "scope": null,
+        "status": "succeeded",
+        "channel": "ebay",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:47:13.257566+00:00",
+        "last_version": null,
+        "error_message": null
+      },
+      {
+        "id": "e67a849a-48ef-412c-a464-18aeebd22d20",
+        "kind": null,
+        "scope": null,
+        "status": "succeeded",
+        "channel": "qoo10",
+        "operation": "inquiries.list",
+        "completed_at": "2026-09-12T22:46:57.841225+00:00",
+        "last_version": null,
+        "error_message": null
+      }
+    ],
+    "lazadaBindings": null
+  },
+  "gateway": {
+    "status": "ready",
+    "mode": "gateway-only",
+    "version": "sellerpilot-cli-worker/1.61+a6efa006fddc95f13a4dcc66fad9f16198a4c3f0.92b235ca02d",
+    "runtimeAttestation": {
+      "releaseSha": "a6efa006fddc95f13a4dcc66fad9f16198a4c3f0",
+      "egressIpSha256": "92b235ca02d02c07770e11040965100327ca68fd12cebddb68d31dea6a2b0b01"
+    },
+    "uptimeSeconds": 50,
+    "ready": true,
+    "configuredScopes": {
+      "gateway": true,
+      "scheduler": false
+    },
+    "capabilities": {
+      "gatewayQueue": true,
+      "periodicChannelSync": false
+    },
+    "activeGatewayJobs": 1,
+    "lastLoopAt": "2026-09-12T22:51:41.273Z",
+    "lastGatewayContactAt": "2026-09-12T22:51:42.327Z",
+    "lastGatewayStatus": 200,
+    "lastGatewayErrorAt": null
+  },
+  "providerAndRoutes": {
+    "jobs": [
+      {
+        "id": "94b9f910-09ca-4fb5-bfc3-2f73da412f6f",
+        "code": null,
+        "kind": "urgent_alimi",
+        "steps": [
+          {
+            "id": null,
+            "error": null,
+            "status": "200",
+            "dataKeys": [
+              "accepted",
+              "resultCode",
+              "productQnas",
+              "alimListInfos",
+              "resultMessage",
+              "sellerpilotInquiryKind",
+              "sellerpilotAlimiParserReady",
+              "sellerpilotElevenstAlimiObservedRows",
+              "sellerpilotElevenstAlimiParseContract",
+              "sellerpilotElevenstAlimiParseIncomplete"
+            ],
+            "errorCode": null,
+            "httpStatus": null,
+            "resultCode": "0"
+          }
+        ],
+        "status": "succeeded",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:52:15.199698+00:00",
+        "safe_message": "11번가 inquiries.list 작업이 정상 응답했습니다.",
+        "error_message": null
+      },
+      {
+        "id": "69706604-89c8-40c3-8fc1-d33db6bdcf12",
+        "code": null,
+        "kind": "product_qna",
+        "steps": null,
+        "status": "failed",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:51:58.830938+00:00",
+        "safe_message": null,
+        "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+      },
+      {
+        "id": "a3f4a22a-dfd1-4fdb-b923-5252977dbcce",
+        "code": null,
+        "kind": "urgent_alimi",
+        "steps": [
+          {
+            "id": null,
+            "error": null,
+            "status": "200",
+            "dataKeys": [
+              "accepted",
+              "resultCode",
+              "productQnas",
+              "alimListInfos",
+              "resultMessage",
+              "sellerpilotInquiryKind",
+              "sellerpilotAlimiParserReady",
+              "sellerpilotElevenstAlimiObservedRows",
+              "sellerpilotElevenstAlimiParseContract",
+              "sellerpilotElevenstAlimiParseIncomplete"
+            ],
+            "errorCode": null,
+            "httpStatus": null,
+            "resultCode": "0"
+          }
+        ],
+        "status": "succeeded",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:44:16.041392+00:00",
+        "safe_message": "11번가 inquiries.list 작업이 정상 응답했습니다.",
+        "error_message": null
+      },
+      {
+        "id": "9c35c7ab-a1dc-4fef-b873-ef8f1b4ece08",
+        "code": null,
+        "kind": "product_qna",
+        "steps": null,
+        "status": "failed",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:43:59.828219+00:00",
+        "safe_message": null,
+        "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+      },
+      {
+        "id": "418ef6b6-041b-4e98-a1aa-cddd7609cd8c",
+        "code": null,
+        "kind": "urgent_alimi",
+        "steps": [
+          {
+            "id": null,
+            "error": null,
+            "status": "200",
+            "dataKeys": [
+              "accepted",
+              "resultCode",
+              "productQnas",
+              "alimListInfos",
+              "resultMessage",
+              "sellerpilotInquiryKind",
+              "sellerpilotAlimiParserReady",
+              "sellerpilotElevenstAlimiObservedRows",
+              "sellerpilotElevenstAlimiParseContract",
+              "sellerpilotElevenstAlimiParseIncomplete"
+            ],
+            "errorCode": null,
+            "httpStatus": null,
+            "resultCode": "0"
+          }
+        ],
+        "status": "succeeded",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:26:06.707236+00:00",
+        "safe_message": "11번가 inquiries.list 작업이 정상 응답했습니다.",
+        "error_message": null
+      },
+      {
+        "id": "bd6c8ae5-877b-41c4-8efd-41da1c3840a0",
+        "code": null,
+        "kind": "product_qna",
+        "steps": null,
+        "status": "failed",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:25:50.479104+00:00",
+        "safe_message": null,
+        "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+      },
+      {
+        "id": "96e87675-9fe7-4ea4-bf05-4879bce11d0b",
+        "code": null,
+        "kind": "urgent_alimi",
+        "steps": [
+          {
+            "id": null,
+            "error": null,
+            "status": "200",
+            "dataKeys": [
+              "accepted",
+              "resultCode",
+              "productQnas",
+              "alimListInfos",
+              "resultMessage",
+              "sellerpilotInquiryKind",
+              "sellerpilotAlimiParserReady",
+              "sellerpilotElevenstAlimiObservedRows",
+              "sellerpilotElevenstAlimiParseContract",
+              "sellerpilotElevenstAlimiParseIncomplete"
+            ],
+            "errorCode": null,
+            "httpStatus": null,
+            "resultCode": "0"
+          }
+        ],
+        "status": "succeeded",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:21:40.748214+00:00",
+        "safe_message": "11번가 inquiries.list 작업이 정상 응답했습니다.",
+        "error_message": null
+      },
+      {
+        "id": "ce2787f7-57f6-4a6b-9f65-cbb31b4e3c22",
+        "code": null,
+        "kind": "product_qna",
+        "steps": null,
+        "status": "failed",
+        "channel": "elevenst",
+        "completed_at": "2026-09-12T22:21:09.764484+00:00",
+        "safe_message": null,
+        "error_message": "11번가 inquiries.list 작업이 원격 오류로 종료됐습니다."
+      }
+    ],
+    "routes": [
+      {
+        "channel": "coupang",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "elevenst",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "temu",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "lazada",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "coupang",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "coupang",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "temu",
+        "enabled": false,
+        "operation": "diagnostic.test",
+        "unexpired": false,
+        "currentRelease": false
+      },
+      {
+        "channel": "elevenst",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "shopee",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": false
+      },
+      {
+        "channel": "lazada",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "smartstore",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "temu",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "lazada",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "smartstore",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "temu",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "elevenst",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "smartstore",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "shopee",
+        "enabled": true,
+        "operation": "inquiries.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "shopee",
+        "enabled": true,
+        "operation": "orders.list",
+        "unexpired": true,
+        "currentRelease": true
+      },
+      {
+        "channel": "shopee",
+        "enabled": true,
+        "operation": "diagnostic.test",
+        "unexpired": true,
+        "currentRelease": true
+      }
+    ],
+    "checkedAt": "2026-09-12T22:54:02.619779+00:00"
+  },
+  "deploymentWindowErrors": {
+    "message": "channel gateway claim RPC failed 42501/401",
+    "count": 19,
+    "firstAt": "2026-09-12T22:45:36.619Z",
+    "lastAt": "2026-09-12T22:50:25.610Z",
+    "note": "Before the pinned gateway restart; readyz subsequently reports a6efa00 and HTTP 200. This bounded sample is not an error-free SLO."
   }
 }
