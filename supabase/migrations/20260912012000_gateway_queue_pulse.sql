@@ -22,10 +22,12 @@ begin
     raise exception 'invalid worker token' using errcode = '42501';
   end if;
 
-  -- queued jobs are served by channel_gateway_jobs_queue_idx
+  -- Only jobs the serverless lane refuses can reach this machine, so jobs the
+  -- serverless lane accepts must not keep this worker awake.
   select count(*) into v_queued
-    from sellerpilot_private.channel_gateway_jobs
-   where status = 'queued';
+    from sellerpilot_private.channel_gateway_jobs j
+   where j.status = 'queued'
+     and not sellerpilot_private.serverless_gateway_job_allowed(j.channel, j.operation);
 
   -- a running job whose lease already lapsed still needs the ordinary claim path
   select count(*) into v_stale_running
