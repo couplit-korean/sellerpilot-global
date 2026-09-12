@@ -11,6 +11,14 @@ const cssUrls = [
   new URL("../app/mobile-optimization.css", import.meta.url),
   new URL("../app/interaction-layers.css", import.meta.url),
   new URL("../app/product-publish-workbench.css", import.meta.url),
+  new URL("../app/product-detail-buyer.css", import.meta.url),
+  new URL("../app/responsive-fit.css", import.meta.url),
+  new URL("../app/responsive-overview.css", import.meta.url),
+  new URL("../app/responsive-publish.css", import.meta.url),
+  new URL("../app/responsive-detail.css", import.meta.url),
+  new URL("../app/responsive-fulfillment.css", import.meta.url),
+  new URL("../app/responsive-connect.css", import.meta.url),
+  new URL("../app/responsive-ops.css", import.meta.url),
 ];
 
 const viewports = [

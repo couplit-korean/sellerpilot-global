@@ -1,0 +1,1534 @@
+/*
+ * Channel connection surfaces: responsive fit contract.
+ *
+ * Scope: 연결 상태(channel-connections / channel-readiness), 인증 설정
+ * (api-credential-center + ai-cli-runtime-card), 인수 체크리스트
+ * (acceptance-checklist) and the channel link badge.
+ *
+ * Contract:
+ *   - Vertical scroll is allowed. Horizontal pan is never produced.
+ *   - No sideways scroll container is declared in this file (clip/visible only).
+ *   - Wide tables become stacked label/value cards instead of panning.
+ *   - Phone inputs stay at 16px, tap targets at 44px.
+ *
+ * This file is a last-layer override: it must be imported after
+ * globals.css / operations-system.css / commerce-ux-refactor.css /
+ * mobile-optimization.css so that legacy sideways-scroll containers and
+ * fixed `min-width` table rules cannot re-introduce horizontal panning.
+ */
+
+/* ---------------------------------------------------------------- 1. roots */
+
+.channel-connections-page,
+.readiness-page,
+.credential-page,
+.acceptance-page,
+.connection-section-panel,
+.connection-section-panel > .page-stack,
+.channel-connections-page > .page-stack {
+  min-width: 0 !important;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+/* `overflow-wrap` is inherited: setting it on the page roots lets every nested
+   label, error string and fingerprint token break instead of widening the
+   document (API errors are long unbroken snake_case tokens). */
+.channel-connections-page,
+.readiness-page,
+.credential-page,
+.acceptance-page {
+  overflow-wrap: anywhere;
+}
+
+.channel-connections-page *,
+.readiness-page *,
+.credential-page *,
+.acceptance-page * {
+  min-width: 0;
+}
+
+.readiness-page .panel,
+.readiness-page .panel-heading,
+.credential-page .panel,
+.credential-page .panel-heading,
+.acceptance-page .panel,
+.channel-connections-page .panel-heading {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Long single-token payloads (api error text, fingerprints, json echoes) must
+   break inside the card instead of pushing the document wider. */
+.readiness-page p,
+.readiness-page small,
+.readiness-page li,
+.readiness-page footer p,
+.credential-page p,
+.credential-page small,
+.credential-page code,
+.credential-page em,
+.acceptance-page p,
+.acceptance-page small,
+.acceptance-page span,
+.channel-link-badge {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.channel-connections-page img,
+.channel-connections-page svg,
+.readiness-page img,
+.credential-page img,
+.credential-page canvas,
+.acceptance-page img {
+  max-width: 100%;
+}
+
+@media (max-width: 1180px) {
+  .channel-connections-page .panel-heading,
+  .readiness-page .panel-heading,
+  .credential-page .panel-heading,
+  .acceptance-page .panel-heading {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+}
+
+/* ------------------------------------------------------------- 2. heroes */
+
+/* The four hero blocks already collapse at 900px in the legacy sheet; these
+   rules re-assert the contract and keep the aside copy from forcing a floor. */
+.channel-connections-hero,
+.credential-hero,
+.readiness-hero,
+.acceptance-hero {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.channel-connections-hero > div,
+.credential-hero > div,
+.readiness-hero > div,
+.acceptance-hero > div {
+  min-width: 0;
+}
+
+.channel-connections-hero aside,
+.credential-hero aside,
+.readiness-hero aside,
+.acceptance-hero aside {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .credential-hero p,
+  .readiness-hero p,
+  .acceptance-hero p {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .channel-connections-hero,
+  .credential-hero,
+  .readiness-hero,
+  .acceptance-hero {
+    grid-template-columns: minmax(0, 1fr) !important;
+    min-height: 0;
+  }
+
+  .channel-connections-hero > div,
+  .credential-hero > div,
+  .readiness-hero > div,
+  .acceptance-hero > div {
+    padding: 26px 20px;
+  }
+
+  .channel-connections-hero aside,
+  .credential-hero aside,
+  .readiness-hero aside,
+  .acceptance-hero aside {
+    padding: 16px 20px;
+    border-top: 1px solid rgb(39 53 74 / 14%);
+    border-left: 0;
+  }
+
+  .channel-connections-hero h2,
+  .credential-hero h2,
+  .readiness-hero h2,
+  .acceptance-hero h2 {
+    font-size: clamp(21px, 6vw, 27px) !important;
+    overflow-wrap: anywhere;
+  }
+
+  .channel-connections-hero h2 br,
+  .credential-hero h2 br,
+  .readiness-hero h2 br,
+  .acceptance-hero h2 br {
+    display: none;
+  }
+
+  .channel-connections-hero p,
+  .credential-hero p,
+  .readiness-hero p,
+  .acceptance-hero p {
+    font-size: 12px;
+    line-height: 1.7;
+  }
+}
+
+/* ------------------------------------------------- 3. connection tabs bar */
+
+.connection-section-tabs {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.connection-section-tabs button {
+  min-width: 0;
+}
+
+.connection-section-tabs button span,
+.connection-section-tabs button b,
+.connection-section-tabs button small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .connection-section-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)) !important;
+  }
+
+  .connection-section-tabs button {
+    min-height: 44px;
+    padding: 10px 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .connection-section-tabs {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+}
+
+/* ------------------------------------------- 4. readiness summary + cards */
+
+.readiness-summary {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.readiness-summary article {
+  min-width: 0;
+}
+
+.readiness-summary strong {
+  overflow-wrap: anywhere;
+}
+
+/* Required: readiness-channel-card stacks below 900px. */
+.readiness-channel-grid {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.readiness-channel-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.readiness-channel-card > header {
+  min-width: 0;
+}
+
+.readiness-channel-card > header > div {
+  min-width: 0;
+}
+
+.readiness-channel-card header h3,
+.readiness-channel-card header small {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.readiness-app-state,
+.readiness-channel-summary,
+.readiness-doc-links,
+.readiness-checks,
+.readiness-blockers,
+.readiness-channel-card > footer {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.readiness-doc-links {
+  flex-wrap: wrap;
+}
+
+.readiness-doc-links a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.readiness-checks > div {
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.readiness-checks > div > span {
+  min-width: 0;
+}
+
+.readiness-inquiry-state {
+  min-width: 0;
+  max-width: 100%;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.readiness-inquiry-state > span {
+  min-width: 0;
+}
+
+.readiness-inquiry-state small {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+}
+
+.readiness-badge {
+  flex: 0 0 auto;
+  max-width: 100%;
+  white-space: normal;
+}
+
+@media (max-width: 900px) {
+  .readiness-channel-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* Explicit stack (undoes the 901-1180px two-pane split). */
+  .readiness-channel-card {
+    display: flex !important;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .readiness-channel-card > header,
+  .readiness-app-state,
+  .readiness-inquiry-state,
+  .readiness-channel-summary,
+  .readiness-doc-links,
+  .readiness-checks,
+  .readiness-blockers,
+  .readiness-channel-card > footer {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .readiness-checks {
+    border-top: 1px solid #eef0f2;
+    border-left: 0;
+  }
+
+  .readiness-channel-card > footer {
+    min-height: 0;
+    margin-top: 0;
+  }
+
+  .readiness-channel-card button {
+    min-height: 44px;
+  }
+
+  .readiness-inquiry-state {
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    row-gap: 8px;
+  }
+
+  .readiness-inquiry-state button {
+    grid-column: 1 / -1;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .readiness-doc-links a {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+}
+
+@media (max-width: 700px) {
+  .readiness-channel-card > header {
+    grid-template-columns: 36px minmax(0, 1fr) !important;
+    row-gap: 8px;
+  }
+
+  .readiness-channel-card > header > .readiness-badge {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .readiness-checks > div {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 7px;
+  }
+
+  .readiness-checks > div > .readiness-badge {
+    justify-self: start;
+  }
+}
+
+/* ------------------------------------------------- 5. capability matrix */
+
+.channel-capability-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.capability-table th,
+.capability-table td {
+  min-width: 0;
+}
+
+/* Desktop: no 1180px floor, columns wrap instead of panning. */
+@media (min-width: 1181px) {
+  .capability-table-wrap {
+    max-height: none;
+    overflow-x: clip !important;
+    overflow-y: visible;
+  }
+
+  .qoo10-field-map table {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  .qoo10-field-map th,
+  .qoo10-field-map td {
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .capability-table {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+    table-layout: fixed;
+  }
+
+  .capability-table th,
+  .capability-table td {
+    padding: 9px 9px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .capability-table th:first-child,
+  .capability-table td:first-child {
+    width: 104px;
+    min-width: 104px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .capability-table th:not(:first-child),
+  .capability-table td:not(:first-child) {
+    width: auto;
+  }
+
+  .capability-mode {
+    white-space: normal;
+  }
+}
+
+/* Tablet + phone: cardify the matrix. Cells carry data-label so the stacked
+   view keeps the channel name that the hidden header used to provide. */
+@media (max-width: 1180px) {
+  .capability-table-wrap {
+    max-height: none !important;
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+    border-top: 1px solid var(--line);
+  }
+
+  .capability-table,
+  .capability-table tbody,
+  .capability-table tr,
+  .capability-table td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .capability-table {
+    table-layout: auto;
+  }
+
+  .capability-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .capability-table tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .capability-table tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .capability-table td {
+    display: flex;
+    width: auto !important;
+    min-height: 54px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 6px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 10px 12px;
+    background: #fff;
+    box-shadow: none !important;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .capability-table td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: .02em;
+  }
+
+  .capability-table td[data-label]::before {
+    content: attr(data-label);
+  }
+
+  .capability-table td:first-child {
+    position: static !important;
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    border-top: 0;
+    padding: 10px 12px 9px;
+    background: #f6f8f7;
+    font-weight: 800;
+    box-shadow: none !important;
+  }
+
+  .capability-table td:first-child::before {
+    content: "기능";
+  }
+
+  .capability-table td small {
+    margin-top: 0;
+    line-height: 1.5;
+  }
+
+  .capability-mode {
+    white-space: normal;
+  }
+}
+
+/* --------------------------------------------------------- 6. qoo10 map */
+
+.qoo10-field-map {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.qoo10-field-map .table-wrap {
+  max-width: 100%;
+}
+
+@media (max-width: 1180px) {
+  .qoo10-field-map .table-wrap {
+    overflow-x: clip !important;
+    overflow-y: visible !important;
+  }
+
+  .qoo10-field-map table,
+  .qoo10-field-map tbody,
+  .qoo10-field-map tr,
+  .qoo10-field-map td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+  }
+
+  .qoo10-field-map table {
+    border-collapse: collapse;
+  }
+
+  .qoo10-field-map thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+  }
+
+  .qoo10-field-map tbody {
+    display: grid;
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .qoo10-field-map tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+    gap: 0;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+  }
+
+  .qoo10-field-map td {
+    display: flex;
+    width: auto !important;
+    min-height: 48px;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    gap: 5px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 10px 12px;
+    background: #fff;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .qoo10-field-map td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 9px;
+    font-weight: 800;
+  }
+
+  .qoo10-field-map td:first-child {
+    grid-column: 1 / -1;
+    border-top: 0;
+    background: #f6f8f7;
+    font-weight: 800;
+  }
+
+  .qoo10-field-map td:nth-child(1)::before { content: "입력 그룹"; }
+  .qoo10-field-map td:nth-child(2)::before { content: "실제 필드"; }
+  .qoo10-field-map td:nth-child(3)::before { content: "SellerPilot 사전검사"; }
+}
+
+.qoo10-image-rule {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.qoo10-image-rule > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 900px) {
+  .qoo10-image-rule {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+  }
+
+  .qoo10-image-rule > span,
+  .qoo10-image-rule > span:nth-child(2),
+  .qoo10-image-rule > span:nth-child(-n+2),
+  .qoo10-image-rule > span:last-child {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .qoo10-image-rule > span:last-child {
+    border-bottom: 0;
+  }
+}
+
+/* ------------------------------------------------------ 7. integration gates */
+
+/* Required: wrap with auto-fit minmax(min(100%,160px),1fr) and never pan.
+   The legacy sheets pinned this list to five 70vw columns inside a scroll box. */
+.integration-gate-panel {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.integration-gate-list {
+  display: grid;
+  max-width: 100%;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)) !important;
+  overflow-x: clip !important;
+  overflow-y: visible !important;
+  overscroll-behavior-x: none;
+}
+
+.integration-gate-list article {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.integration-gate-list article > div {
+  min-width: 0;
+}
+
+.integration-gate-list b,
+.integration-gate-list p,
+.integration-gate-list em {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+@media (max-width: 1180px) {
+  .integration-gate-list article {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  /* The connector arrow only makes sense in the single-row desktop flow. */
+  .integration-gate-list article > svg {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .integration-gate-list article {
+    min-height: 0;
+    padding: 14px 15px;
+  }
+}
+
+/* ------------------------------------------------------ 8. credential center */
+
+.credential-system-strip {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.credential-system-strip article {
+  min-width: 0;
+}
+
+.credential-system-strip b {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.credential-alert {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.credential-alert > span,
+.credential-alert > button {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.credential-alert button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.credential-channel-grid {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.credential-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.credential-card > header {
+  min-width: 0;
+}
+
+.credential-card > header > div {
+  min-width: 0;
+}
+
+.credential-card header h3,
+.credential-card header small {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.credential-policy,
+.credential-source-links,
+.credential-card > footer,
+.logistics-credential-panel > .credential-card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.credential-source-links {
+  flex-wrap: wrap;
+}
+
+.credential-source-links a {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.credential-lifecycle {
+  min-width: 0;
+}
+
+.credential-lifecycle > div {
+  min-width: 0;
+}
+
+.credential-lifecycle b,
+.credential-lifecycle em,
+.last-check,
+.credential-grace,
+.credential-grace span {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+/* Action rows: wrap into as many 44px rows as the width allows. */
+.credential-card > footer,
+.logistics-credential-panel > .credential-card > footer {
+  display: grid !important;
+  min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+}
+
+.credential-card > footer button,
+.credential-card.tracx > footer button,
+.logistics-credential-panel > .credential-card > footer button {
+  min-width: 0;
+  min-height: 44px;
+  justify-content: center;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.credential-history-panel .panel-heading {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.credential-history-list {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.credential-history-list > div {
+  min-width: 0;
+}
+
+.credential-history-list b,
+.credential-history-list small,
+.credential-history-list em,
+.audit-action {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+/* Modal + forms */
+.credential-modal-backdrop {
+  max-width: 100%;
+}
+
+.credential-modal {
+  max-width: min(760px, 100%);
+  min-width: 0;
+}
+
+.credential-modal > header,
+.credential-modal > footer,
+.secret-warning,
+.operation-console-warning,
+.credential-form-grid,
+.rotation-settings,
+.operation-console-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.credential-modal > header > div {
+  min-width: 0;
+}
+
+.credential-modal header h3,
+.secret-warning b,
+.secret-warning small,
+.operation-console-warning b,
+.operation-console-warning small {
+  overflow-wrap: anywhere;
+}
+
+.credential-form-grid label,
+.credential-input,
+.rotation-settings label,
+.operation-console-controls label,
+.operation-json-field {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.credential-input input,
+.credential-input select,
+.rotation-settings input,
+.rotation-settings select,
+.operation-console-controls select,
+.operation-console-controls input,
+.operation-json-field textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.operation-json-field textarea,
+.operation-console-result {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.operation-console-result {
+  max-width: 100%;
+  overflow-x: clip;
+  overflow-y: auto;
+}
+
+.operation-console-meta a {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1180px) {
+  .credential-channel-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .credential-card > footer,
+  .logistics-credential-panel > .credential-card > footer {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
+  }
+
+  .rotation-settings > div {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)) !important;
+  }
+}
+
+/* Tap targets stay 44px for every touch-capable width (tablet included). */
+@media (max-width: 1180px) {
+  .credential-primary,
+  .credential-secondary,
+  .credential-alert button,
+  .credential-history-panel .filter-button,
+  .credential-modal > footer button,
+  .credential-modal > header > button,
+  .readiness-channel-card button,
+  .readiness-doc-links a,
+  .acceptance-search input,
+  .acceptance-toolbar label,
+  .acceptance-toolbar select,
+  .acceptance-section-head,
+  .cli-runtime-actions button,
+  .cli-runtime-actions select,
+  .cli-listing-adapter-controls button,
+  .cli-listing-gate-controls button,
+  .cli-gateway-smoke-button {
+    min-height: 44px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .credential-system-strip {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)) !important;
+  }
+
+  .credential-system-strip article,
+  .credential-system-strip article:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .credential-system-strip article:last-child {
+    border-bottom: 0;
+  }
+
+  .credential-card > header {
+    grid-template-columns: min-content minmax(0, 1fr) !important;
+    row-gap: 8px;
+  }
+
+  .credential-card > header .connection-state {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .credential-lifecycle {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)) !important;
+  }
+
+  .credential-lifecycle > div,
+  .credential-lifecycle > div:nth-child(2n) {
+    border-right: 0;
+    border-bottom: 1px solid #eef0f2;
+  }
+
+  /* Tap targets */
+  .credential-alert {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .credential-alert button {
+    justify-content: center;
+  }
+
+  .cli-listing-gate-controls {
+    align-items: stretch;
+    flex-wrap: wrap;
+  }
+
+  .cli-listing-gate-controls button {
+    flex: 1 1 150px;
+  }
+}
+
+@media (max-width: 720px) {
+  /* Credential forms: one column per row. */
+  .credential-form-grid,
+  .rotation-settings > div,
+  .operation-console-controls,
+  .cli-runtime-grid,
+  .cli-server-runtime-flow {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  /* iOS/Android zoom guard: never let a focused field go under 16px. */
+  .credential-page input,
+  .credential-page select,
+  .credential-page textarea,
+  .credential-modal input,
+  .credential-modal select,
+  .credential-modal textarea,
+  .acceptance-page input,
+  .acceptance-page select {
+    font-size: 16px !important;
+  }
+
+  .credential-input input,
+  .credential-input select,
+  .rotation-settings input,
+  .rotation-settings select,
+  .operation-console-controls select,
+  .operation-console-controls input,
+  .credential-form-grid input,
+  .credential-form-grid select {
+    height: 44px;
+  }
+
+  .credential-input svg {
+    top: 15px;
+  }
+
+  .credential-modal-backdrop {
+    align-items: stretch;
+    padding: 0;
+  }
+
+  .credential-modal {
+    width: 100%;
+    max-width: 100%;
+    min-height: 100svh;
+    margin: 0;
+    border: 0;
+  }
+
+  .credential-modal > footer {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    padding-bottom: max(14px, env(safe-area-inset-bottom));
+  }
+
+  .credential-modal > footer button {
+    width: 100%;
+  }
+
+  .operation-console-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .operation-console-controls,
+  .operation-console-body {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .cli-runtime-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cli-runtime-actions > div,
+  .cli-runtime-actions select,
+  .cli-runtime-actions .credential-primary {
+    width: 100%;
+  }
+
+  .cli-job-row,
+  .cli-job-history-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .cli-job-main b {
+    white-space: normal;
+  }
+}
+
+/* ---------------------------------------------------- 9. acceptance checklist */
+
+.acceptance-summary,
+.acceptance-gates,
+.acceptance-panel,
+.acceptance-toolbar,
+.acceptance-legend,
+.acceptance-sections,
+.acceptance-section,
+.acceptance-items,
+.acceptance-note {
+  max-width: 100%;
+  min-width: 0;
+}
+
+.acceptance-summary article {
+  min-width: 0;
+}
+
+.acceptance-toolbar {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.acceptance-toolbar > span {
+  white-space: normal;
+}
+
+.acceptance-search {
+  min-width: 0;
+}
+
+.acceptance-search input {
+  min-width: 0;
+}
+
+.acceptance-toolbar label {
+  min-width: 0;
+}
+
+.acceptance-section-head {
+  min-width: 0;
+}
+
+.acceptance-section-head > span,
+.acceptance-section-head > em {
+  min-width: 0;
+}
+
+.acceptance-section-head > span:nth-child(2) b,
+.acceptance-section-head > span:nth-child(2) small {
+  overflow-wrap: anywhere;
+}
+
+.acceptance-section-count {
+  white-space: normal;
+}
+
+.acceptance-item {
+  min-width: 0;
+}
+
+.acceptance-item > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.acceptance-status {
+  white-space: normal;
+  max-width: 100%;
+}
+
+.acceptance-gates > div {
+  min-width: 0;
+}
+
+.acceptance-gates b {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+}
+
+.acceptance-note > div {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  /* The base template pins four 160px track floors plus 34px connectors, which
+     is wider than the 901-1180px content column. Wrap instead of clipping. */
+  .acceptance-gates {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+    gap: 12px;
+  }
+
+  .acceptance-gates > i {
+    display: none;
+  }
+
+  .acceptance-toolbar label {
+    flex: 1 1 180px;
+  }
+}
+
+@media (max-width: 900px) {
+  .acceptance-gates {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)) !important;
+  }
+
+  .acceptance-gates > i {
+    display: none;
+  }
+
+  .acceptance-search {
+    min-width: 100% !important;
+  }
+
+  .acceptance-search input {
+    height: 44px;
+  }
+
+  .acceptance-toolbar label {
+    height: auto;
+    min-height: 44px;
+    flex: 1 1 100%;
+  }
+
+  .acceptance-toolbar select {
+    min-height: 44px;
+  }
+
+  .acceptance-section-head {
+    min-height: 64px;
+    grid-template-columns: 34px minmax(0, 1fr) 18px !important;
+    column-gap: 10px;
+  }
+
+  .acceptance-section-head > em {
+    display: none;
+  }
+
+  .acceptance-section-count {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .acceptance-summary {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+  }
+
+  .acceptance-summary article,
+  .acceptance-summary article:nth-child(3) {
+    border-right: 1px solid var(--line);
+  }
+
+  .acceptance-summary article:last-child {
+    grid-column: auto;
+    border-right: 1px solid var(--line);
+  }
+
+  .acceptance-item,
+  .acceptance-item-head {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .acceptance-item-head {
+    display: none;
+  }
+
+  .acceptance-item > span:first-child,
+  .acceptance-item > span:nth-child(2) {
+    grid-column: auto;
+  }
+
+  .acceptance-legend {
+    gap: 8px;
+  }
+}
+
+/* --------------------------------------------------- 10. cli runtime card */
+
+.cli-runtime-card {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.cli-runtime-card > header {
+  min-width: 0;
+  flex-wrap: wrap;
+  row-gap: 10px;
+}
+
+.cli-runtime-title,
+.cli-runtime-title > span,
+.cli-runtime-state,
+.cli-server-runtime-flow,
+.cli-runtime-grid,
+.cli-runtime-actions,
+.cli-runtime-actions > div,
+.cli-listing-release,
+.cli-listing-release-summary,
+.cli-listing-release-controls,
+.cli-listing-adapter-controls,
+.cli-release-confirmation,
+.cli-job-list,
+.cli-job-history {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cli-runtime-grid b,
+.cli-runtime-grid em,
+.cli-job-main b,
+.cli-server-runtime-notice code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.cli-server-runtime-flow article,
+.cli-runtime-grid article {
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .cli-runtime-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)) !important;
+  }
+
+  .cli-listing-release-summary {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)) !important;
+  }
+
+  .cli-listing-release-controls {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .cli-runtime-grid article,
+  .cli-runtime-grid article:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid #e3e9e7;
+  }
+
+  .cli-runtime-grid article:last-child {
+    border-bottom: 0;
+  }
+}
+
+@media (max-width: 900px) {
+  .cli-runtime-card > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cli-runtime-state {
+    align-self: flex-start;
+  }
+
+  .cli-listing-release > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cli-listing-release-state {
+    align-self: flex-start;
+  }
+
+  .cli-release-confirmation {
+    grid-template-columns: auto minmax(0, 1fr) !important;
+  }
+
+  .cli-release-confirmation > div {
+    width: 100%;
+    grid-column: 1 / -1;
+  }
+
+  .cli-release-confirmation > div button {
+    flex: 1;
+  }
+}
+
+/* ------------------------------------------------- 11. channel link badge */
+
+.channel-link-badge {
+  display: inline-flex;
+  max-width: 100%;
+  min-height: 24px;
+  align-items: center;
+  gap: 5px;
+  white-space: normal;
+}
+
+.channel-link-badge svg {
+  flex: 0 0 auto;
+}
+
+/* ------------------------------------------- 11b. text / overflow hardening */
+
+.capability-intro,
+.readiness-eyebrow,
+.acceptance-eyebrow,
+.readiness-channel-mark,
+.credential-channel-code,
+.field-map-proof,
+.gate-zero,
+.credential-field-help,
+.credential-form-error,
+.cli-runtime-error,
+.cli-runtime-loading,
+.cli-job-output,
+.cli-listing-release-blockers,
+.cli-listing-release-message,
+.operation-write-confirm,
+.operation-write-confirm label,
+.readiness-security-note,
+.readiness-security-note > div,
+.panel-kicker {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.capability-intro,
+.credential-field-help,
+.credential-form-error,
+.cli-runtime-error,
+.cli-listing-release-blockers,
+.cli-listing-release-message,
+.operation-write-confirm b,
+.operation-write-confirm small {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.field-map-proof,
+.gate-zero {
+  flex-wrap: wrap;
+  white-space: normal;
+}
+
+.readiness-security-note {
+  grid-template-columns: 28px minmax(0, 1fr) 30px;
+}
+
+.credential-form-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+}
+
+.credential-form-error svg {
+  flex: 0 0 auto;
+}
+
+.cli-job-controls {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.cli-job-status,
+.cli-job-output {
+  flex: 0 0 auto;
+  white-space: normal;
+}
+
+.cli-listing-release-blockers,
+.cli-listing-release-message {
+  flex-wrap: wrap;
+}
+
+.operation-write-confirm {
+  align-items: flex-start;
+}
+
+.operation-write-confirm label {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .operation-write-confirm {
+    min-height: 44px;
+  }
+
+  .operation-write-confirm input {
+    width: 20px;
+    height: 20px;
+    margin-top: 0;
+  }
+
+  .cli-job-controls button,
+  .cli-job-controls a {
+    min-height: 44px;
+  }
+}
+
+/* -------------------------------------------------- 12. narrow hardening */
+
+@media (max-width: 420px) {
+  .readiness-summary,
+  .acceptance-summary,
+  .credential-system-strip,
+  .cli-runtime-grid,
+  .cli-listing-release-summary {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .readiness-summary article,
+  .acceptance-summary article,
+  .acceptance-summary article:nth-child(3),
+  .acceptance-summary article:last-child,
+  .credential-system-strip article,
+  .credential-system-strip article:nth-child(2) {
+    border-right: 0;
+  }
+
+  .acceptance-toolbar label {
+    flex: 1 1 100%;
+  }
+}

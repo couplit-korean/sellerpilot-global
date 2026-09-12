@@ -592,3 +592,44 @@
 @media (prefers-reduced-motion: reduce) {
   .spinning { animation: none; }
 }
+
+/* ---- Responsive ops appendix: tablet/phone ----
+   The hero and the provider grid stack before the tablet breakpoint so the
+   page never asks for more width than the viewport offers. */
+@media (max-width: 1180px) {
+  .hero {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 16px;
+    padding: 22px 18px;
+  }
+
+  .hero h2 {
+    font-size: clamp(23px, 4.6vw, 32px);
+  }
+
+  .providerGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .refreshButton {
+    width: 100%;
+  }
+}
+
+@media (max-width: 900px) {
+  .providerHeader {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 360px) {
+  .hero {
+    padding: 18px 14px;
+  }
+
+  .providerCard {
+    padding: 15px 13px;
+  }
+}

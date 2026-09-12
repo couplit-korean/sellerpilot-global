@@ -1,0 +1,855 @@
+/*
+ * SellerPilot responsive ops fit layer
+ *
+ * Scope: margin calculator, style-learning center, templates, notifications,
+ * platform usage notes, product storyboard, privacy policy, update-password and
+ * the app error screens.
+ *
+ * Contract: 320px-2560px keeps its own width. Vertical scroll is allowed,
+ * horizontal pan is not. Nothing here re-introduces a table min-width: the
+ * margin / style-learning ledgers stay cardified below 1180px.
+ *
+ * Import last (after mobile-optimization.css) so a single declaration can
+ * retire a legacy pan. Selectors are page-scoped, and the few declarations
+ * that must beat an older !important layer use !important themselves.
+ */
+
+/* ------------------------------------------------------------------ *
+ * 1. Page width guards
+ * ------------------------------------------------------------------ */
+
+html,
+body {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
+body {
+  min-width: 0;
+}
+
+.page-stack,
+.margin-page,
+.storyboard-page,
+.templates-page,
+.notifications-settings-page,
+.style-learning-page,
+.password-page,
+.privacy-page,
+.login-shell,
+.login-form-panel,
+.login-card,
+.panel,
+.panel-heading {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Every pane below is a grid/flex child somewhere: a child must never be
+   able to claim more width than its column. */
+.margin-workspace,
+.margin-hero,
+.margin-hero-copy,
+.margin-formula-card,
+.margin-channel-tabs,
+.margin-input-panel,
+.margin-result-column,
+.margin-result-card,
+.margin-result-head,
+.margin-result-actions,
+.margin-field-grid,
+.margin-field-grid.compact,
+.margin-field,
+.margin-product-field,
+.margin-section-title,
+.margin-summary-grid,
+.margin-breakdown,
+.margin-breakdown-list,
+.margin-comparison-panel,
+.margin-sample-note,
+.margin-manual-fee-warning,
+.margin-disclaimer,
+.saved-margin-panel,
+.saved-margin-list,
+.saved-margin-list > article,
+.style-learning-hero,
+.style-learning-hero > *,
+.style-learning-version,
+.style-learning-metrics,
+.style-learning-metrics article,
+.style-learning-method,
+.style-learning-section,
+.style-learning-section-heading,
+.style-learning-method-grid,
+.style-learning-method-grid article,
+.style-learning-impact,
+.style-learning-impact-grid,
+.style-learning-impact-grid article,
+.style-learning-disclosure,
+.style-channel-grid,
+.style-channel-card,
+.style-category-tabs,
+.style-category-brief,
+.style-learning-filters,
+.style-learning-table-wrap,
+.templates-page > *,
+.template-editor,
+.template-list-panel,
+.template-form-grid,
+.template-card-grid,
+.template-card-grid article,
+.intake-template-picker,
+.notifications-settings-page > *,
+.notification-preferences,
+.notification-preference-grid,
+.notification-preference-grid > label,
+.notification-popover,
+.notification-wrap,
+.notification-item,
+.notification-empty,
+.storyboard-page > *,
+.storyboard-intro,
+.storyboard-intro > *,
+.story-flow,
+.story-scene,
+.scene-copy,
+.information-architecture,
+.ia-grid,
+.ia-grid > div,
+.privacy-page > header,
+.privacy-page > article,
+.privacy-grid,
+.privacy-grid section,
+.privacy-page aside,
+.password-card,
+.password-card .input-wrap,
+.password-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* ------------------------------------------------------------------ *
+ * 2. Tablet and phone: wrap long labels instead of adding width
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 1180px) {
+  .margin-hero,
+  .margin-hero-copy,
+  .margin-hero-copy h2,
+  .margin-hero-copy p,
+  .margin-formula-card,
+  .margin-result-card,
+  .margin-result-head,
+  .margin-breakdown-list,
+  .margin-summary-grid,
+  .margin-manual-fee-warning,
+  .margin-disclaimer,
+  .saved-margin-list,
+  .style-learning-hero,
+  .style-learning-disclosure,
+  .style-channel-card,
+  .style-channel-card dd,
+  .style-category-brief p,
+  .template-editor,
+  .template-card-grid,
+  .template-card-grid article,
+  .notification-popover,
+  .notification-item,
+  .notification-empty,
+  .storyboard-intro,
+  .story-scene,
+  .scene-copy,
+  .ia-grid > div,
+  .privacy-grid,
+  .password-card,
+  .login-card {
+    overflow-wrap: anywhere;
+  }
+
+  /* Legacy single-line ellipsis rows would clip a phone: let them wrap. */
+  .margin-channel-tabs b,
+  .margin-channel-tabs small,
+  .margin-channel-cell b,
+  .margin-channel-cell small,
+  .margin-summary-grid small,
+  .margin-summary-grid strong,
+  .margin-summary-grid em,
+  .margin-field > small,
+  .saved-margin-list dd,
+  .template-card-grid dd,
+  .style-learning-table td,
+  .style-learning-table td code,
+  .style-table-channel {
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 3. Tap targets (tablet + phone, 44px)
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 1180px) {
+  .margin-channel-tabs > button,
+  .margin-result-actions button,
+  .style-category-tabs button,
+  .style-evidence-links a,
+  .style-learning-filters label,
+  .style-learning-filters select,
+  .story-scene > button,
+  .saved-margin-list > article > button,
+  .template-card-grid article > div > button,
+  .intake-template-picker button,
+  .template-form-grid input:not([type="checkbox"]),
+  .template-form-grid select,
+  .template-form-grid .template-default,
+  .notification-wrap > button,
+  .notification-popover > div button,
+  .notification-popover > button,
+  .notification-popover .notification-item,
+  .notification-popover .notification-item > button,
+  .notification-preferences > footer button,
+  .password-card .input-wrap,
+  .login-submit {
+    min-height: 44px;
+  }
+
+  .saved-margin-list > article > button,
+  .template-card-grid article > div > button,
+  .notification-popover .notification-item > button {
+    width: 44px;
+    min-width: 44px;
+  }
+
+  .notification-popover .notification-item {
+    grid-template-columns: auto minmax(0, 1fr) 44px;
+  }
+
+  .password-toggle {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+    min-height: 44px;
+  }
+
+  .notification-popover {
+    max-width: min(310px, calc(100vw - 24px));
+  }
+
+  .privacy-page > header a,
+  .privacy-page > header a:visited {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 4. Small laptop / compact desktop (<=1360px): stack the wide panes
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 1360px) {
+  .margin-workspace {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .storyboard-intro {
+    grid-template-columns: minmax(0, 1fr) !important;
+    gap: 22px;
+  }
+
+  .story-flow {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .flow-line {
+    display: none;
+  }
+
+  .ia-grid {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)) !important;
+  }
+
+  .margin-channel-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+  }
+
+  .style-category-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)) !important;
+  }
+
+  .style-learning-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  }
+
+  .style-learning-impact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .template-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .template-form-grid .template-wide {
+    grid-column: 1 / -1 !important;
+  }
+
+  .template-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .margin-table td,
+  .style-learning-table td {
+    height: auto !important;
+  }
+}
+
+/* Compact desktop (1181px-1500px) is the only window where the legacy
+   1050px margin-table floor is wider than the content column. Fit the
+   columns instead of panning the wrapper. */
+@media (min-width: 1181px) and (max-width: 1500px) {
+  .margin-table {
+    min-width: 0 !important;
+    table-layout: fixed;
+  }
+
+  .margin-table th,
+  .margin-table td {
+    overflow-wrap: anywhere;
+  }
+}
+
+/* The legacy phone layer turns both tab strips into a pannable flex row
+   (148px / 130px fixed buttons). Keep them a wrapping grid instead. */
+@media (max-width: 760px) {
+  .margin-channel-tabs,
+  .style-category-tabs {
+    display: grid !important;
+    overflow-x: visible !important;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr)) !important;
+    gap: 7px;
+  }
+
+  .margin-channel-tabs > button,
+  .style-category-tabs button {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: 100%;
+    flex: 0 1 auto !important;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 5. Tablet (<=1180px): nothing pans, ledgers become cards
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 1180px) {
+  .margin-page .table-wrap,
+  .style-learning-table-wrap {
+    overflow-x: hidden !important;
+    overflow-y: visible;
+  }
+
+  .margin-table,
+  .style-learning-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .margin-table thead,
+  .style-learning-table thead {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    margin: -1px !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    clip: rect(0 0 0 0) !important;
+    clip-path: inset(50%) !important;
+    border: 0 !important;
+  }
+
+  .margin-table tbody,
+  .margin-table tr,
+  .margin-table td,
+  .style-learning-table tbody,
+  .style-learning-table tr,
+  .style-learning-table td {
+    display: block;
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+  }
+
+  .margin-table tbody,
+  .style-learning-table tbody {
+    display: grid !important;
+    gap: 10px;
+    padding: 10px 0;
+  }
+
+  .margin-table tr,
+  .style-learning-table tr {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    height: auto !important;
+    overflow: hidden;
+    border: 1px solid #dfe5e2;
+    border-radius: 10px;
+    background: #fff;
+    box-shadow: 0 2px 8px rgb(30 48 41 / 5%);
+  }
+
+  .margin-table td,
+  .style-learning-table td {
+    display: flex !important;
+    height: auto !important;
+    min-height: 44px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border: 0;
+    border-top: 1px solid #edf0ef;
+    padding: 10px 12px;
+    color: #4b5854;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    background: #fff;
+  }
+
+  .margin-table td::before,
+  .style-learning-table td::before {
+    flex: 0 0 auto;
+    color: #7b8883;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .margin-table td:first-child,
+  .margin-table td:nth-child(7),
+  .margin-table td:nth-child(8),
+  .margin-table td:last-child,
+  .style-learning-table td:first-child,
+  .style-learning-table td:nth-child(2),
+  .style-learning-table td:nth-child(5) {
+    grid-column: 1 / -1;
+  }
+
+  .margin-table td:first-child,
+  .style-learning-table td:first-child {
+    border-top: 0;
+  }
+
+  .margin-table td:first-child {
+    justify-content: flex-start;
+  }
+
+  .margin-table td:first-child::before { content: "채널"; }
+  .margin-table td:nth-child(2)::before { content: "계획 판매가"; }
+  .margin-table td:nth-child(3)::before { content: "수수료"; }
+  .margin-table td:nth-child(4)::before { content: "변동비율"; }
+  .margin-table td:nth-child(5)::before { content: "순이익"; }
+  .margin-table td:nth-child(6)::before { content: "마진율"; }
+  .margin-table td:nth-child(7)::before { content: "권장 판매가"; }
+  .margin-table td:nth-child(8)::before { content: "등록 판정"; }
+
+  .style-learning-table td:nth-child(1)::before { content: "번호"; }
+  .style-learning-table td:nth-child(2)::before { content: "학습 상품"; }
+  .style-learning-table td:nth-child(3)::before { content: "채널 · 국가"; }
+  .style-learning-table td:nth-child(4)::before { content: "언어"; }
+  .style-learning-table td:nth-child(5)::before { content: "검색 문구"; }
+  .style-learning-table td:nth-child(6)::before { content: "검증"; }
+
+  .margin-table td:last-child,
+  .style-learning-table td:last-child {
+    padding: 6px;
+  }
+
+  .margin-table td:last-child .table-action,
+  .style-learning-table td:last-child .table-action {
+    width: 100%;
+    min-height: 44px;
+  }
+
+  .margin-table td b,
+  .margin-table td small,
+  .style-learning-table td b,
+  .style-learning-table td small {
+    display: block;
+  }
+
+  .margin-channel-cell,
+  .style-table-channel {
+    width: 100%;
+    min-width: 0 !important;
+    max-width: none;
+    white-space: normal;
+    text-align: left;
+  }
+
+  .style-table-channel {
+    justify-content: flex-start;
+  }
+
+  /* Stacked panes and grids */
+  .style-channel-grid,
+  .style-category-brief {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .style-category-brief > div,
+  .style-category-brief > div:nth-last-child(2) {
+    border-bottom: 1px solid var(--line);
+  }
+
+  .style-category-brief > div.wide {
+    grid-column: auto;
+    border-top: 0;
+    border-bottom: 0;
+  }
+
+  .saved-margin-list > article {
+    grid-template-columns: auto minmax(0, 1fr) auto !important;
+  }
+
+  .saved-margin-list dl {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 6. Tablet portrait / large phone (<=900px)
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 900px) {
+  .margin-hero,
+  .style-learning-hero,
+  .storyboard-intro {
+    align-items: stretch;
+  }
+
+  .margin-hero,
+  .style-learning-hero {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .margin-formula-card,
+  .style-learning-version {
+    width: 100%;
+    flex: 0 0 auto;
+  }
+
+  .margin-summary-grid,
+  .style-learning-metrics,
+  .style-learning-method-grid,
+  .style-learning-impact-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .style-learning-section-heading {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .notification-preferences > footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .notification-preferences > footer button {
+    width: 100%;
+  }
+
+  .login-shell {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .login-form-panel {
+    min-height: 100svh;
+    padding: 30px 20px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 7. Phone (<=760px)
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 760px) {
+  .margin-hero,
+  .style-learning-hero,
+  .storyboard-intro {
+    padding: 22px 18px;
+  }
+
+  .storyboard-intro br,
+  .margin-hero-copy h2 br {
+    display: none;
+  }
+
+  .story-flow,
+  .ia-grid,
+  .style-learning-method-grid,
+  .style-learning-impact-grid,
+  .style-channel-grid,
+  .style-category-brief,
+  .template-card-grid,
+  .notification-preference-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .margin-field-grid,
+  .margin-field-grid.compact,
+  .margin-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .margin-breakdown-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+  }
+
+  .style-learning-filters {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .style-learning-filters label,
+  .style-learning-filters select,
+  .style-learning-filters input {
+    width: 100%;
+    max-width: 100%;
+    min-height: 44px;
+    font-size: 16px;
+  }
+
+  .template-form-grid input:not([type="checkbox"]),
+  .template-form-grid select,
+  .template-form-grid textarea,
+  .margin-field input,
+  .margin-product-field input,
+  .margin-product-field select,
+  .password-card .input-wrap input {
+    font-size: 16px;
+  }
+
+  .margin-result-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .margin-result-actions button {
+    width: 100%;
+  }
+
+  .notification-popover {
+    position: fixed;
+    top: 88px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    max-width: none;
+    max-height: calc(100svh - 104px);
+    overflow-y: auto;
+  }
+
+  .password-page {
+    padding: 16px;
+    align-items: start;
+    padding-top: max(18px, env(safe-area-inset-top));
+  }
+
+  .password-card {
+    padding: 26px 18px;
+  }
+
+  .privacy-page {
+    padding: 16px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 8. Small phone (<=480px): single column, no compressed rows
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 480px) {
+  .margin-summary-grid,
+  .margin-breakdown-list,
+  .template-form-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .template-form-grid .template-wide {
+    grid-column: 1 / -1 !important;
+  }
+
+  .margin-table tr,
+  .style-learning-table tr {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .margin-table td,
+  .style-learning-table td {
+    grid-column: 1 !important;
+  }
+
+  .margin-channel-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)) !important;
+  }
+
+  .style-category-tabs {
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)) !important;
+  }
+
+  .margin-input-panel,
+  .margin-result-card,
+  .margin-breakdown,
+  .saved-margin-panel,
+  .template-editor,
+  .template-list-panel,
+  .information-architecture,
+  .notification-preferences,
+  .style-learning-method,
+  .style-learning-impact {
+    padding: 14px !important;
+  }
+
+  .style-channel-card {
+    padding: 14px;
+  }
+
+  .login-form-panel {
+    padding: 24px 16px;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 22px 18px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 9. Fold / 200% zoom (<=360px)
+ * ------------------------------------------------------------------ */
+
+@media (max-width: 360px) {
+  .margin-field-grid,
+  .margin-field-grid.compact {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .margin-hero,
+  .style-learning-hero,
+  .storyboard-intro {
+    padding: 18px 14px;
+  }
+
+  .margin-table td,
+  .style-learning-table td {
+    padding: 9px 10px;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 10. Reduced motion parity for anything this layer animates
+ * ------------------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  .margin-result-actions button:hover {
+    transform: none;
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * Header chrome: never pan. Older mobile-optimization.css still sets
+ * overflow-x:auto / pan-x on the service rail and a 182px topbar-actions
+ * floor. This sheet loads last, so it owns the contract.
+ * ------------------------------------------------------------------ */
+
+.app-header-stack,
+.commerce-service-rail,
+.topbar,
+.topbar-title,
+.topbar-actions {
+  min-width: 0 !important;
+  max-width: 100% !important;
+  overflow-x: hidden !important;
+  overscroll-behavior-inline: none !important;
+  touch-action: manipulation !important;
+}
+
+.commerce-service-rail {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  row-gap: 4px;
+}
+
+.commerce-service-rail strong,
+.commerce-service-rail span,
+.commerce-service-rail em {
+  flex: 0 1 auto !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+  white-space: normal !important;
+}
+
+.topbar {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  align-items: center !important;
+}
+
+.topbar-actions {
+  display: flex !important;
+  flex-wrap: wrap !important;
+  flex: 1 1 auto !important;
+  justify-content: flex-end !important;
+  gap: 4px !important;
+}
+
+.channel-connection-strip {
+  white-space: normal !important;
+  min-width: 0 !important;
+  max-width: 100% !important;
+}
+
+@media (max-width: 900px) {
+  .commerce-service-rail {
+    display: none !important;
+  }
+
+  .topbar {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1fr) !important;
+    row-gap: 6px !important;
+  }
+
+  .topbar-title,
+  .topbar-actions {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: none !important;
+  }
+
+  .topbar-title h1 {
+    max-width: none !important;
+    overflow: visible !important;
+    white-space: normal !important;
+    text-overflow: clip !important;
+  }
+
+  .channel-connection-strip .strip-marks {
+    display: none !important;
+  }
+
+  .demo-data-badge b,
+  .demo-data-badge small,
+  .publishing-busy-badge small {
+    display: none !important;
+  }
+}

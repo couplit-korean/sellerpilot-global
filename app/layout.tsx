@@ -10,6 +10,13 @@ import "./interaction-layers.css";
 import "./product-publish-workbench.css";
 import "./product-detail-buyer.css";
 import "./shell-fit.css";
+import "./responsive-fit.css";
+import "./responsive-overview.css";
+import "./responsive-publish.css";
+import "./responsive-detail.css";
+import "./responsive-fulfillment.css";
+import "./responsive-connect.css";
+import "./responsive-ops.css";
 
 const siteUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
   ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`
