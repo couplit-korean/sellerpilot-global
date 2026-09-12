@@ -119,7 +119,7 @@ test("generic serverless operation matrix permits only the readback-verified Cou
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "competitor.search"),
-      channel === "elevenst",
+      false,
     );
     assert.equal(
       serverlessGatewayOperationAllowed(channel, "listing.lineage.verify"),

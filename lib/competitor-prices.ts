@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { providerFetch } from "./channels/protocols";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  databaseServerlessStaticEgressAllows,
   SERVERLESS_STATIC_EGRESS_REQUIRED,
 } from "./channels/serverless-static-egress";
 import {
@@ -1917,17 +1916,6 @@ export async function searchBraveMarketplaceWebVariants(
   return groupCompetitorPrices([...unique.values()], 3, allQueries);
 }
 
-async function elevenstStaticEgressReady(serviceClient: SupabaseClient) {
-  try {
-    const { data, error } = await serviceClient.rpc(
-      "sellerpilot_service_serverless_static_egress_status",
-    );
-    return !error && databaseServerlessStaticEgressAllows(data, "elevenst");
-  } catch {
-    return false;
-  }
-}
-
 export function competitorProviderApiStatuses(
   registry: CompetitorProviderRegistry,
   providers: readonly CompetitorProviderStatus[],
@@ -1947,19 +1935,11 @@ export async function competitorProviderRegistry(
   // Credential discovery is intentionally isolated per provider. A transient
   // Vault/RPC failure for one marketplace must not suppress an independently
   // configured provider (for example Brave via environment variables).
-  const [naverResult, ebayResult, elevenstStaticEgressResult] = await Promise.allSettled([
+  const [naverResult, ebayResult, elevenstResult] = await Promise.allSettled([
     naverSearchCredentials(serviceClient),
     ebayBrowseCredentials(serviceClient),
-    elevenstStaticEgressReady(serviceClient),
+    elevenstSearchCredentials(serviceClient),
   ]);
-  const elevenstStaticEgressAllowed = elevenstStaticEgressResult.status === "fulfilled"
-    && elevenstStaticEgressResult.value === true;
-  let elevenstResult: PromiseSettledResult<ElevenstSearchCredentials | null>;
-  if (elevenstStaticEgressAllowed) {
-    [elevenstResult] = await Promise.allSettled([elevenstSearchCredentials(serviceClient)]);
-  } else {
-    elevenstResult = { status: "fulfilled", value: null };
-  }
   const naver = naverResult.status === "fulfilled" ? naverResult.value : null;
   const elevenst = elevenstResult.status === "fulfilled" ? elevenstResult.value : null;
   const ebay = ebayResult.status === "fulfilled" ? ebayResult.value : null;
@@ -1973,38 +1953,20 @@ export async function competitorProviderRegistry(
     search: (primary, aliases, display, context) => searchNaverShoppingVariants(primary, aliases, naver, display, context?.signal),
   });
   else unavailable.push({ provider: "naver_shopping", status: naverResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.naver_shopping });
-  if (!elevenstStaticEgressAllowed) {
-    unavailable.push({ provider: "elevenst_product_search", status: "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
-    blockedReasons.elevenst_product_search = SERVERLESS_STATIC_EGRESS_REQUIRED;
-  } else if (elevenst) configured.push({
+  if (elevenst?.credentialId) configured.push({
     id: "elevenst_product_search",
     marketplaces: providerMarketplaces.elevenst_product_search,
-    search: async (primary, aliases, display, context) => {
-      try {
-        if (elevenst.credentialId) {
-          return await options.searchElevenstViaGateway({
-            serviceClient,
-            credentialId: elevenst.credentialId,
-            primary,
-            aliases,
-            displayPerQuery: display,
-            productId: context?.productId,
-            claimToken: context?.claimToken,
-            timeoutMs: options.elevenstTimeoutMs,
-            signal: context?.signal,
-          });
-        }
-        if (!await elevenstStaticEgressReady(serviceClient)) {
-          throw new Error(SERVERLESS_STATIC_EGRESS_REQUIRED);
-        }
-        return await searchElevenstProductVariants(primary, aliases, elevenst, display, context?.signal);
-      } catch (error) {
-        if (error instanceof Error && error.message === SERVERLESS_STATIC_EGRESS_REQUIRED) {
-          blockedReasons.elevenst_product_search = SERVERLESS_STATIC_EGRESS_REQUIRED;
-        }
-        throw error;
-      }
-    },
+    search: async (primary, aliases, display, context) => options.searchElevenstViaGateway({
+      serviceClient,
+      credentialId: elevenst.credentialId!,
+      primary,
+      aliases,
+      displayPerQuery: display,
+      productId: context?.productId,
+      claimToken: context?.claimToken,
+      timeoutMs: options.elevenstTimeoutMs,
+      signal: context?.signal,
+    }),
   });
   else unavailable.push({ provider: "elevenst_product_search", status: elevenstResult.status === "rejected" ? "failed" : "unavailable", count: 0, marketplaces: providerMarketplaces.elevenst_product_search });
   if (ebay) configured.push({
@@ -2227,7 +2189,7 @@ export async function searchCompetitorProviders(
     const usable = items.filter((item) => Number.isFinite(item.price) && item.price > 0);
     const ranked = nameIdentity
       ? usable
-          .map((item) => enrichCompetitorCandidateV3(nameIdentity, item, observedAt, { matchMode }))
+          .map((item) => enrichCompetitorCandidateV3(nameIdentity, item, observedAt, { matchMode, aliases: queries }))
           // Keep probable candidates and one bounded rejected candidate per
           // marketplace, but discard unrelated provider noise that supplied no
           // positive identity evidence at all. Product-name research only keeps

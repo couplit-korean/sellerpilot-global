@@ -616,50 +616,36 @@ test("marketplace web provider is opt-in and reports a missing Brave key as unav
   }
 });
 
-test("11st provider registration fails closed on disabled or unknown DB static egress while independent providers remain", async () => {
+test("an env-only 11st key without a vault credential does not register a serverless search provider", async () => {
   const originalBrave = process.env.BRAVE_SEARCH_API_KEY;
   const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
   process.env.BRAVE_SEARCH_API_KEY = "B".repeat(32);
   process.env.ELEVENST_OPEN_API_KEY = "E".repeat(32);
   try {
-    for (const staticEgressResponse of [
-      { data: { elevenst: false }, error: null },
-      { data: null, error: { code: "57014" } },
-    ]) {
-      let gatewayCalls = 0;
-      const credentialLookups: string[] = [];
-      const serviceClient = {
-        rpc: async (functionName: string, parameters?: { p_channel?: string }) => {
-          if (functionName === "sellerpilot_service_serverless_static_egress_status") {
-            return staticEgressResponse;
-          }
-          if (parameters?.p_channel) credentialLookups.push(parameters.p_channel);
-          return { data: null, error: null };
-        },
-      };
-      const registry = await competitorProviderRegistry(serviceClient as never, {
-        enableMarketplaceWeb: true,
-        searchElevenstViaGateway: async () => {
-          gatewayCalls += 1;
-          return [];
-        },
-      });
-      assert.equal(registry.configured.some((provider) => provider.id === "elevenst_product_search"), false);
-      assert.equal(registry.configured.some((provider) => provider.id === "brave_marketplace_web"), true);
-      assert.equal(gatewayCalls, 0);
-      assert.equal(credentialLookups.includes("elevenst"), false);
-      assert.deepEqual(
-        competitorProviderApiStatuses(registry, registry.unavailable)
-          .find((provider) => provider.provider === "elevenst_product_search"),
-        {
-          provider: "elevenst_product_search",
-          status: "unavailable",
-          count: 0,
-          marketplaces: ["elevenst"],
-          blockedReason: "STATIC_EGRESS_REQUIRED",
-        },
-      );
-    }
+    let gatewayCalls = 0;
+    const serviceClient = {
+      rpc: async () => ({ data: null, error: null }),
+    };
+    const registry = await competitorProviderRegistry(serviceClient as never, {
+      enableMarketplaceWeb: true,
+      searchElevenstViaGateway: async () => {
+        gatewayCalls += 1;
+        return [];
+      },
+    });
+    assert.equal(registry.configured.some((provider) => provider.id === "elevenst_product_search"), false);
+    assert.equal(registry.configured.some((provider) => provider.id === "brave_marketplace_web"), true);
+    assert.equal(gatewayCalls, 0);
+    assert.deepEqual(
+      competitorProviderApiStatuses(registry, registry.unavailable)
+        .find((provider) => provider.provider === "elevenst_product_search"),
+      {
+        provider: "elevenst_product_search",
+        status: "unavailable",
+        count: 0,
+        marketplaces: ["elevenst"],
+      },
+    );
   } finally {
     if (originalBrave === undefined) delete process.env.BRAVE_SEARCH_API_KEY;
     else process.env.BRAVE_SEARCH_API_KEY = originalBrave;
@@ -668,15 +654,12 @@ test("11st provider registration fails closed on disabled or unknown DB static e
   }
 });
 
-test("11st provider is registered only after an exact enabled DB policy and then uses the injected gateway", async () => {
+test("11st provider is registered from a vault credential and then uses the injected gateway", async () => {
   const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
   delete process.env.ELEVENST_OPEN_API_KEY;
   let gatewayCalls = 0;
   const serviceClient = {
     rpc: async (functionName: string, parameters?: { p_channel?: string }) => {
-      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
-        return { data: { elevenst: true }, error: null };
-      }
       if (parameters?.p_channel === "elevenst") {
         return {
           data: {
@@ -707,20 +690,13 @@ test("11st provider is registered only after an exact enabled DB policy and then
   }
 });
 
-test("a direct 11st API-key provider rechecks DB static egress before network use", async () => {
+test("an env-only 11st key does not open a direct serverless product search", async () => {
   const originalElevenst = process.env.ELEVENST_OPEN_API_KEY;
   const originalFetch = globalThis.fetch;
   process.env.ELEVENST_OPEN_API_KEY = "E".repeat(32);
-  let staticEgressReads = 0;
   let fetchCalls = 0;
   const serviceClient = {
-    rpc: async (functionName: string) => {
-      if (functionName === "sellerpilot_service_serverless_static_egress_status") {
-        staticEgressReads += 1;
-        return { data: { elevenst: staticEgressReads === 1 }, error: null };
-      }
-      return { data: null, error: null };
-    },
+    rpc: async () => ({ data: null, error: null }),
   };
   globalThis.fetch = async () => {
     fetchCalls += 1;
@@ -730,27 +706,14 @@ test("a direct 11st API-key provider rechecks DB static egress before network us
     const registry = await competitorProviderRegistry(serviceClient as never, {
       searchElevenstViaGateway: async () => [],
     });
-    const elevenstProvider = registry.configured.find((provider) => provider.id === "elevenst_product_search");
-    assert.ok(elevenstProvider);
+    assert.equal(registry.configured.some((provider) => provider.id === "elevenst_product_search"), false);
     const result = await searchCompetitorProviders(registry, "켈로그 첵스초코 570g", []);
     assert.equal(
       result.providers.find((provider) => provider.provider === "elevenst_product_search")?.status,
       "unavailable",
     );
-    assert.equal(staticEgressReads, 2);
     assert.equal(fetchCalls, 0);
-    assert.equal(registry.blockedReasons?.elevenst_product_search, "STATIC_EGRESS_REQUIRED");
-    assert.equal(
-      competitorProviderApiStatuses(registry, result.providers)
-        .find((provider) => provider.provider === "elevenst_product_search")?.blockedReason,
-      "STATIC_EGRESS_REQUIRED",
-    );
-    assert.equal(competitorProviderApiStatuses(registry, [{
-      provider: "elevenst_product_search",
-      status: "searched",
-      count: 0,
-      marketplaces: ["elevenst"],
-    }])[0]?.blockedReason, undefined);
+    assert.equal(registry.blockedReasons?.elevenst_product_search, undefined);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalElevenst === undefined) delete process.env.ELEVENST_OPEN_API_KEY;

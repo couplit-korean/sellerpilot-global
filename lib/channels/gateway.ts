@@ -4,7 +4,6 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { ChannelDiagnostic } from "../channel-diagnostics";
 import type { ChannelOperationName, ChannelOperationResult } from "./commerce-operations";
-import { databaseServerlessStaticEgressAllows, SERVERLESS_STATIC_EGRESS_REQUIRED } from "./serverless-static-egress";
 
 export type ChannelGatewayChannel = "qoo10" | "shopee" | "lazada" | "coupang" | "elevenst" | "smartstore" | "ebay" | "temu";
 
@@ -263,18 +262,6 @@ export async function executeCompetitorSearchViaChannelGateway(input: {
   timeoutMs?: number;
   signal?: AbortSignal;
 }) {
-  let staticEgressStatus: { data: unknown; error: unknown };
-  try {
-    staticEgressStatus = await input.serviceClient.rpc(
-      "sellerpilot_service_serverless_static_egress_status",
-    );
-  } catch {
-    throw new Error(SERVERLESS_STATIC_EGRESS_REQUIRED);
-  }
-  if (staticEgressStatus.error
-      || !databaseServerlessStaticEgressAllows(staticEgressStatus.data, "elevenst")) {
-    throw new Error(SERVERLESS_STATIC_EGRESS_REQUIRED);
-  }
   const { data: jobId, error: enqueueError } = await input.serviceClient.rpc("sellerpilot_enqueue_competitor_search_job", {
     p_credential_id: input.credentialId,
     p_primary: input.primary,

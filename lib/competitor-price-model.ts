@@ -479,34 +479,45 @@ export type CompetitorMatchMode = "strict" | "product_name";
 export function assessProductNameMatch(
   reference: Pick<CompetitorProductIdentity, "productName" | "brand">,
   candidate: { title: string },
+  options?: { aliases?: readonly string[] },
 ): CompetitorMatchAssessment {
-  const productName = stripCompetitorSearchQuantities(reference.productName);
   const title = stripCompetitorSearchQuantities(candidate.title);
-  const compactName = compactText(productName);
   const compactTitle = compactText(title);
   const brandTokens = new Set(
     normalizeLooseText(stripCompetitorSearchQuantities(reference.brand ?? ""))
       .split(" ")
       .filter((token) => token.length >= 2),
   );
-  const nameTokens = [...new Set(normalizeLooseText(productName).split(" ").filter((token) => (
-    token.length >= 2
-    && !productNameMatchStopwords.has(token)
-    && !brandTokens.has(token)
-    && !/^\d/u.test(token)
-  )))];
-  const fallbackTokens = nameTokens.length > 0
-    ? nameTokens
-    : [...new Set(normalizeLooseText(productName).split(" ").filter((token) => token.length >= 2 && !/^\d/u.test(token)))];
-  const titleTokens = new Set(normalizeLooseText(title).split(" "));
-  const matched = fallbackTokens.filter((token) => titleTokens.has(token) || compactTitle.includes(compactText(token)));
-  const contained = compactName.length >= 2 && (
-    compactTitle.includes(compactName)
-    || (compactName.includes(compactTitle) && compactTitle.length >= 2)
-  );
-  const overlap = fallbackTokens.length > 0 ? matched.length / fallbackTokens.length : 0;
-  const accepted = contained || matched.length > 0;
-  if (!accepted) {
+  const names = [
+    reference.productName,
+    ...(options?.aliases ?? []),
+  ]
+    .map((value) => stripCompetitorSearchQuantities(value))
+    .filter((value, index, values) => value.length >= 2 && values.indexOf(value) === index);
+  let best: { expected: string; contained: boolean; overlap: number } | null = null;
+  for (const productName of names) {
+    const compactName = compactText(productName);
+    const nameTokens = [...new Set(normalizeLooseText(productName).split(" ").filter((token) => (
+      token.length >= 2
+      && !productNameMatchStopwords.has(token)
+      && !brandTokens.has(token)
+      && !/^\d/u.test(token)
+    )))];
+    const fallbackTokens = nameTokens.length > 0
+      ? nameTokens
+      : [...new Set(normalizeLooseText(productName).split(" ").filter((token) => token.length >= 2 && !/^\d/u.test(token)))];
+    const titleTokens = new Set(normalizeLooseText(title).split(" "));
+    const matched = fallbackTokens.filter((token) => titleTokens.has(token) || compactTitle.includes(compactText(token)));
+    const contained = compactName.length >= 2 && (
+      compactTitle.includes(compactName)
+      || (compactName.includes(compactTitle) && compactTitle.length >= 2)
+    );
+    const overlap = fallbackTokens.length > 0 ? matched.length / fallbackTokens.length : 0;
+    if (!(contained || matched.length > 0)) continue;
+    const current = { expected: productName, contained, overlap };
+    if (!best || Number(current.contained) > Number(best.contained) || current.overlap > best.overlap) best = current;
+  }
+  if (!best) {
     return {
       matcherVersion: COMPETITOR_MATCHER_VERSION,
       matchTier: "rejected",
@@ -524,11 +535,11 @@ export function assessProductNameMatch(
   return {
     matcherVersion: COMPETITOR_MATCHER_VERSION,
     matchTier: "probable",
-    matchScore: Math.min(87, Math.max(50, Math.round((contained ? 0.9 : Math.max(overlap, 0.5)) * 87))),
+    matchScore: Math.min(87, Math.max(50, Math.round((best.contained ? 0.9 : Math.max(best.overlap, 0.5)) * 87))),
     matchEvidence: [{
-      code: contained ? "product_name_exact" : "product_name_similar",
+      code: best.contained ? "product_name_exact" : "product_name_similar",
       attribute: "productName",
-      expected: reference.productName,
+      expected: best.expected,
       actual: candidate.title,
       source: "listing_title",
     }],
@@ -1149,11 +1160,11 @@ export function enrichCompetitorCandidateV3<T extends CompetitorCandidateV3Input
   reference: CompetitorProductIdentity,
   candidate: T,
   collectedAt = new Date().toISOString(),
-  options?: { matchMode?: CompetitorMatchMode },
+  options?: { matchMode?: CompetitorMatchMode; aliases?: readonly string[] },
 ): T & CompetitorPriceObservationV3Fields {
   const observedAt = normalizedIsoInstant(candidate.observedAt) || normalizedIsoInstant(collectedAt) || new Date().toISOString();
   const assessment = options?.matchMode === "product_name"
-    ? assessProductNameMatch(reference, candidate)
+    ? assessProductNameMatch(reference, candidate, { aliases: options.aliases })
     : assessCompetitorMatch(reference, candidate);
   const candidateIdentity = resolveCandidateIdentity(candidate);
   const unitQuantity = candidateIdentity.totalQuantity ?? candidateIdentity.specification ?? null;

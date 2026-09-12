@@ -721,3 +721,17 @@ test("product-name provider search keeps different pack sizes of the same named 
   assert.deepEqual(result.items.map((item) => item.externalId).sort(), ["lotte-sand-105", "lotte-sand-315"]);
   assert.equal(result.items.every((item) => item.matchTier === "probable"), true);
 });
+
+test("product-name aliases keep English titles for a Korean snack name", () => {
+  const english = assessProductNameMatch(
+    { productName: "초코파이", brand: "오리온" },
+    { title: "LOTTE Choco Pie Banana Chocolate 12 Pack 336g Box Korean Snack" },
+    { aliases: ["Choco Pie", "Orion Choco Pie"] },
+  );
+  assert.equal(english.matchTier, "probable");
+  const koreanOnly = assessProductNameMatch(
+    { productName: "초코파이", brand: "오리온" },
+    { title: "LOTTE Choco Pie Banana Chocolate 12 Pack 336g Box Korean Snack" },
+  );
+  assert.equal(koreanOnly.matchTier, "rejected");
+});

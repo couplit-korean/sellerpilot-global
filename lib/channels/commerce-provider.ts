@@ -122,7 +122,7 @@ export function serverlessGatewayOperationAllowed(channel: GatewayClaim["channel
   if (operation === "price.update") return channelPriceUpdateRelease(channel).available;
   if (operation === "diagnostic.test") return allServerlessChannels.has(channel);
   if (operation === "shops.get") return serverlessShopDiscoveryChannels.has(channel);
-  if (operation === "competitor.search") return channel === "elevenst";
+  if (operation === "competitor.search") return false;
   if (operation === "listing.lineage.verify") return serverlessLineageChannels.has(channel);
   if (operation in serverlessWriteMatrix) {
     return (serverlessWriteMatrix[
