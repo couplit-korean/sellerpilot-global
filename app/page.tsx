@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { channelIntegrationStatus, integrationRailText, summarizeChannelIntegrations, type ChannelIntegrationTone } from "../lib/channels/integration-status";
+import { channelIntegrationStatus, summarizeChannelIntegrations, type ChannelIntegrationTone } from "../lib/channels/integration-status";
 import {
   Activity,
   AlertCircle,
@@ -5339,7 +5339,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const operationSummary = operations.data?.summary ?? null;
   const channelMetrics = useMemo(() => operations.data?.channelMetrics ?? [], [operations.data]);
   const integrationSummary = useMemo(() => summarizeChannelIntegrations(channelMetrics), [channelMetrics]);
-  const integrationRail = integrationRailText(integrationSummary, enabledSalesChannelCount);
   const integrationInsight = [
     integrationSummary.stale ? `재확인 필요 ${integrationSummary.stale}` : null,
     integrationSummary.pending ? `진단 필요 ${integrationSummary.pending}` : null,
@@ -5351,9 +5350,6 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
   const aiRecovery = operations.data?.aiRecovery ?? null;
   const productReadinessState = operations.data?.productReadinessState ?? "checking";
   const productReadinessMessage = operations.data?.productReadinessMessage ?? null;
-  const workerLastSeenAt = operations.data?.aiRuntime?.worker?.last_seen_at ?? null;
-  const workerConnected = Boolean(workerLastSeenAt && operations.data?.generatedAt
-    && Date.parse(operations.data.generatedAt) - Date.parse(workerLastSeenAt) < 10 * 60_000);
   const meta = pageMeta[view];
   const workspaceRouteScope = userWorkspaceStorageKey(userId) ?? "";
 
@@ -6558,9 +6554,7 @@ function DashboardShell({ onLogout, onIdleLogout, userEmail, userId, freshLogin,
             <strong>통합 판매관리</strong>
             <span><i className={operations.state === "database" ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? "판매 데이터 원장 연결" : "판매 데이터 확인 중"}</span>
             <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `운영 키 ${operationSummary?.registeredCredentialCount ?? 0} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "운영 키 확인 중" : "운영 키 확인 실패"}</span>
-            <span title={integrationRail}><i className={operations.state === "database" && integrationSummary.ok + integrationSummary.stale ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? integrationRail : operations.state === "loading" ? "읽기 진단 확인 중" : "읽기 진단 확인 실패"}</span>
-            <span><i className={workerConnected ? "rail-ok" : "rail-pending"} />자동 동기화 {workerConnected ? "실행 중" : "확인 필요"}</span>
-            <span><i className={operations.state === "database" && operationSummary?.registeredCredentialCount ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? (operationSummary?.registeredCredentialCount ? "인증정보 암호화 보관" : "인증정보 미등록") : "인증정보 확인 중"}</span>
+            <span><i className={operations.state === "database" && integrationSummary.ok ? "rail-ok" : "rail-pending"} />{operations.state === "database" ? `읽기 진단 ${integrationSummary.ok} / ${enabledSalesChannelCount}` : operations.state === "loading" ? "읽기 진단 확인 중" : "읽기 진단 확인 실패"}</span>
             <em>{operations.state === "database" ? `실제 연결 상태 ${OPERATIONS_REFRESH_MINUTES}분 자동 갱신 · 진단 시각은 마지막 확인 기준` : operations.state === "loading" ? "연결 상태 확인 중" : "운영 DB 연결 오류"}</em>
           </div>
           <header className="topbar">
