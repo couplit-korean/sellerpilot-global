@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import sharp from "sharp";
+import { verifyLosslessPngCandidate } from "../lib/image-lossless-png-optimizer";
 import type { ServerProductResearchResult } from "../lib/ai-cli-contract";
 import {
   aiGeneratedAssetPath,
@@ -19,6 +20,7 @@ import {
 import {
   analyzeServerProductResearch,
   buildServerProductResearchPrompt,
+  buildServerProductResearchSourcePhotoCatalog,
   classifyProductResearchGatewayFailure,
   collectProductResearchReferences,
   extractProductResearchReferenceUrls,
@@ -493,6 +495,20 @@ test("default safe preflight skips every image provider and builds six distinct 
   assert.equal(Object.values(result.preflightAssetLineage).every((item) => item.auditMode === "source-photo-catalog"), true);
   assert.equal(new Set(Object.values(result.preflightAssetLineage).map((item) => item.digest)).size, 6);
   assert.deepEqual(removed, []);
+  let savedBytes = 0;
+  for (const [variant, id] of coreFirstDraftAssetIds.entries()) {
+    const asset = aiGeneratedAssetSpecs.find((item) => item.id === id)!;
+    const rendered = await buildServerProductResearchSourcePhotoCatalog(asset, {
+      path: 'source.png', role: 'main', name: 'source.png', mediaType: 'image/png', bytes: source,
+    }, variant);
+    const uploaded = uploads.get(result.asset_storage_paths[id])!;
+    await verifyLosslessPngCandidate(rendered, uploaded);
+    assert.ok(uploaded.byteLength <= rendered.byteLength);
+    assert.equal(createHash('sha256').update(uploaded).digest('hex'), result.preflightAssetLineage[id].digest);
+    savedBytes += rendered.byteLength - uploaded.byteLength;
+  }
+  assert.ok(savedBytes > 0, 'all six preflight roles must pass through final PNG compression before their upload digests');
+  assert.equal(createHash('sha256').update(source).digest('hex'), digest, 'source photo must remain unchanged');
 });
 
 test("successful text research plus a segmentation failure still completes with exactly six source-photo assets", async () => {

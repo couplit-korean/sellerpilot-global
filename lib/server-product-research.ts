@@ -1,6 +1,7 @@
 import { planStudioSourceAssignments, studioSourceCoverage, effectiveStudioSourceRole } from "./studio-source-planning";
 import { createHash } from "node:crypto";
 import sharp from "sharp";
+import { optimizePngWithSharp } from "./image-lossless-png-optimizer";
 import { z } from "zod";
 import { createAbortableConcurrencyGate } from "./abortable-concurrency-gate";
 import {
@@ -1041,7 +1042,17 @@ export async function generateServerProductResearchPreflightAssets(input: {
             throw new ProductResearchPreflightError("preflight_result_invalid");
           }
           input.signal.throwIfAborted();
-          return new Uint8Array(output);
+          // These are new composites, before any receipt digest or signed
+          // upload. Reused/approved assets and original photos are untouched.
+          const compressed = await optimizePngWithSharp(output, 16_000_000);
+          input.signal.throwIfAborted();
+          if (compressed.savedBytes > 0) {
+            console.info("product research PNG compression", {
+              assetId: asset.id, encoder: compressed.encoder,
+              beforeBytes: compressed.beforeBytes, afterBytes: compressed.afterBytes,
+            });
+          }
+          return new Uint8Array(compressed.bytes);
         }));
         batch.forEach((asset, index) => outputs.set(asset.id, bytes[index]));
       }

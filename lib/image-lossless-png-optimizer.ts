@@ -109,10 +109,28 @@ export async function verifyLosslessPngCandidate(
   candidate: Uint8Array,
   maximumPixels = 16_000_000,
 ) {
-  const [before, after] = await Promise.all([
-    decodedPng(original, maximumPixels),
-    decodedPng(candidate, maximumPixels),
-  ]);
+  // A C2PA hash or iDOT offset can cover the encoded container, not only its
+  // visible pixels. Retaining the chunk while changing IDAT is not sufficient.
+  if (pngContainsOptimizerFragileProvenance(original)
+      && !Buffer.from(original).equals(Buffer.from(candidate))) {
+    throw new Error("PNG provenance or offsets require byte-identical preservation");
+  }
+  const before = await decodedPng(original, maximumPixels);
+  return verifyAgainstDecodedPng(before, protectedPngChunks(original), candidate, maximumPixels);
+}
+
+async function verifyAgainstDecodedPng(
+  before: Awaited<ReturnType<typeof decodedPng>>,
+  beforeChunks: readonly string[],
+  candidate: Uint8Array,
+  maximumPixels: number,
+) {
+  const afterChunks = protectedPngChunks(candidate);
+  if (beforeChunks.length !== afterChunks.length
+      || beforeChunks.some((chunk, index) => chunk !== afterChunks[index])) {
+    throw new Error("protected PNG metadata differs");
+  }
+  const after = await decodedPng(candidate, maximumPixels);
   if (
     before.info.width !== after.info.width
     || before.info.height !== after.info.height
@@ -121,14 +139,6 @@ export async function verifyLosslessPngCandidate(
     || !before.data.equals(after.data)
   ) {
     throw new Error("decoded PNG pixels or alpha differ");
-  }
-  const [beforeChunks, afterChunks] = [
-    protectedPngChunks(original),
-    protectedPngChunks(candidate),
-  ];
-  if (beforeChunks.length !== afterChunks.length
-      || beforeChunks.some((chunk, index) => chunk !== afterChunks[index])) {
-    throw new Error("protected PNG metadata differs");
   }
   return {
     width: before.info.width,
@@ -166,7 +176,11 @@ export async function optimizePngWithSharp(
   // Decode and validate even when every encoder candidate is rejected. This
   // keeps callers from treating an arbitrary byte string as an "original PNG"
   // fallback.
-  await decodedPng(original, maximumPixels);
+  const decodedOriginal = await decodedPng(original, maximumPixels);
+  if (originalChunks.some((chunk) => chunk.type === "caBX" || chunk.type === "iDOT")) {
+    return preservedOriginal("protected-provenance");
+  }
+  const originalProtectedChunks = protectedPngChunks(original);
 
   const candidates: Array<{
     bytes: Buffer;
@@ -182,7 +196,7 @@ export async function optimizePngWithSharp(
         .png({ compressionLevel: 9, adaptiveFiltering: configuration.adaptiveFiltering, palette: false })
         .toBuffer();
       const bytes = replaceIdatWhilePreservingOriginalChunks(original, encodedPixels);
-      candidates.push({ bytes, encoder: configuration.encoder });
+      if (bytes.length < original.length) candidates.push({ bytes, encoder: configuration.encoder });
     } catch (error) {
       candidateFailures.push(
         `${configuration.encoder}:${error instanceof Error ? error.message : "encoding failed"}`,
@@ -194,11 +208,13 @@ export async function optimizePngWithSharp(
     bytes: original,
     encoder: "original",
   };
-  for (const candidate of candidates) {
-    if (candidate.bytes.length >= selected.bytes.length) continue;
+  // Verify the smallest candidate first, reusing the one decoded original.
+  // Larger candidates cannot improve a verified smaller result.
+  for (const candidate of candidates.sort((a, b) => a.bytes.length - b.bytes.length)) {
     try {
-      await verifyLosslessPngCandidate(original, candidate.bytes, maximumPixels);
+      await verifyAgainstDecodedPng(decodedOriginal, originalProtectedChunks, candidate.bytes, maximumPixels);
       selected = candidate;
+      break;
     } catch (error) {
       candidateFailures.push(
         `${candidate.encoder}:${error instanceof Error ? error.message : "verification failed"}`,

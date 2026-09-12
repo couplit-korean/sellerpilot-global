@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import sharp from "sharp";
@@ -62,6 +64,42 @@ function sixteenBitGrayPng() {
     pngChunk("IEND", Buffer.alloc(0)),
   ]);
 }
+
+function withOpaqueChunk(png: Buffer, type: string) {
+  const idatOffset = png.indexOf(Buffer.from("IDAT")) - 4;
+  return Buffer.concat([png.subarray(0,idatOffset),pngChunk(type,Buffer.from("opaque integrity fixture")),png.subarray(idatOffset)]);
+}
+
+test("C2PA and offset-dependent PNGs remain byte-identical through both compression paths", async () => {
+  const source = await uncompressedRgbaFixture();
+  for (const type of ["caBX", "iDOT"]) {
+    const protectedSource = withOpaqueChunk(source, type);
+    const portable = await optimizePngWithSharp(protectedSource);
+    const local = await optimizePngLocally(protectedSource, {binaryPath:"/must/not/be/invoked"});
+    assert.ok(portable.bytes.equals(protectedSource));
+    assert.equal(portable.savedBytes, 0);
+    assert.ok(local.bytes.equals(protectedSource));
+    assert.equal(local.nativeAttempt, "protected-provenance");
+    const reencoded = withOpaqueChunk(await sharp(source).png({compressionLevel:9}).toBuffer(),type);
+    await assert.rejects(verifyLosslessPngCandidate(protectedSource,reencoded),/provenance|offset|byte-identical/);
+  }
+});
+
+test("cancellation during portable compression cannot launch a late native process", async () => {
+  const folder=await mkdtemp(join(tmpdir(),"sellerpilot-compression-abort-test-"));
+  const marker=join(folder,"started");const binary=join(folder,"fake-oxipng");
+  try {
+    await writeFile(binary,`#!${process.execPath}\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},'started');process.exit(1);\n`);
+    await chmod(binary,0o700);
+    const source=await sharp({create:{width:1200,height:1500,channels:4,background:'#abcdef80'}}).png({compressionLevel:0}).toBuffer();
+    const controller=new AbortController();
+    const pending=optimizePngLocally(source,{binaryPath:binary,signal:controller.signal});
+    const timer=setTimeout(()=>controller.abort(new Error('compression-cancelled')),1);
+    try { await assert.rejects(pending,/compression-cancelled/); }
+    finally { clearTimeout(timer); }
+    await assert.rejects(access(marker),{code:'ENOENT'});
+  } finally { await rm(folder,{recursive:true,force:true}); }
+});
 
 test("Sharp optimizer chooses only a smaller byte-for-byte pixel and alpha equivalent PNG", async () => {
   const source = await uncompressedRgbaFixture();
@@ -140,6 +178,11 @@ test("APNG and 16-bit PNG inputs are preserved explicitly instead of being flatt
   assert.equal(depthResult.encoder, "original");
   assert.deepEqual(depthResult.bytes, depth16);
   assert.deepEqual(depthResult.candidateFailures, ["unsupported-depth:ushort"]);
+  for (const source of [apng,depth16]) {
+    const local=await optimizePngLocally(source,{binaryPath:'/must/not/be/invoked'});
+    assert.deepEqual(local.bytes,source);
+    assert.equal(local.nativeAttempt,'unsupported-format');
+  }
 });
 
 test("oversized decoded images fail closed at the configured pixel ceiling", async () => {
@@ -177,6 +220,35 @@ test("missing native optimizer fails back to the portable verified Sharp result"
   assert.equal(optimized.nativeAttempt, "error");
   assert.ok(optimized.afterBytes <= source.length);
   await verifyLosslessPngCandidate(source, optimized.bytes);
+});
+
+test("native timeout and wrong-pixel output both retain the verified portable result", async () => {
+  const folder=await mkdtemp(join(tmpdir(),"sellerpilot-compression-native-test-"));
+  const binary=join(folder,"fake-oxipng");
+  const source=await uncompressedRgbaFixture();
+  const baseline=await optimizePngWithSharp(source);
+  try {
+    await writeFile(binary,`#!${process.execPath}\nsetInterval(()=>{},1000);\n`);
+    await chmod(binary,0o700);
+    const start=performance.now();
+    const timed=await optimizePngLocally(source,{binaryPath:binary,timeoutMs:50});
+    assert.equal(timed.nativeAttempt,'timeout');
+    assert.ok(timed.bytes.equals(baseline.bytes));
+    assert.ok(performance.now()-start<3000,'timeout must terminate the native process');
+    const wrong=await sharp({create:{width:1,height:1,channels:4,background:'#000000'}}).png().toBuffer();
+    assert.ok(wrong.length<baseline.afterBytes);
+    await writeFile(binary,`#!${process.execPath}\nconst i=process.argv.indexOf('--out');require('node:fs').writeFileSync(process.argv[i+1],Buffer.from('${wrong.toString('base64')}','base64'));\n`);
+    const invalid=await optimizePngLocally(source,{binaryPath:binary,timeoutMs:1000});
+    assert.equal(invalid.nativeAttempt,'verification-failed');
+    assert.ok(invalid.bytes.equals(baseline.bytes));
+  } finally { await rm(folder,{recursive:true,force:true}); }
+});
+
+test("native time budgets cannot silently become unlimited or invalid", async () => {
+  const source=await uncompressedRgbaFixture();
+  for (const timeoutMs of [0,-1,NaN,Infinity,30_001]) {
+    await assert.rejects(optimizePngLocally(source,{timeoutMs}),/between 1 and 30000/);
+  }
 });
 
 test("both generators compress only new final composites before receipt fingerprints", async () => {

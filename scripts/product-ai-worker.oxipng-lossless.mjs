@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { optimizePngWithSharp, pngContainsOptimizerFragileProvenance, verifyLosslessPngCandidate } from "../lib/image-lossless-png-optimizer.ts";
@@ -20,6 +20,7 @@ const oxipngGate = createConcurrencyGate(1);
 const maximumOxipngDiagnosticBytes = 4 * 1024;
 
 function runOxipng(binaryPath, inputPath, outputPath, timeoutMs, signal) {
+  if (signal?.aborted) return Promise.resolve({ ok: false, aborted: true, timedOut: false });
   const args = [
     "-o", "max",
     "--fast",
@@ -39,6 +40,7 @@ function runOxipng(binaryPath, inputPath, outputPath, timeoutMs, signal) {
     let timedOut = false;
     let aborted = false;
     let settled = false;
+    let killTimer;
     const child = spawn(binaryPath, args, {
       stdio: ["ignore", "ignore", "pipe"],
       shell: false,
@@ -48,19 +50,22 @@ function runOxipng(binaryPath, inputPath, outputPath, timeoutMs, signal) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearTimeout(killTimer);
       signal?.removeEventListener("abort", abort);
       resolve(result);
     };
     const terminate = () => {
-      timedOut = true;
       child.kill("SIGTERM");
-      setTimeout(() => child.kill("SIGKILL"), 500).unref();
+      if (!killTimer) {
+        killTimer = setTimeout(() => { if (!settled) child.kill("SIGKILL"); }, 500);
+        killTimer.unref();
+      }
     };
     const abort = () => {
       aborted = true;
       terminate();
     };
-    const timer = setTimeout(terminate, timeoutMs);
+    const timer = setTimeout(() => { timedOut = true; terminate(); }, timeoutMs);
     timer.unref();
     signal?.addEventListener("abort", abort, { once: true });
     child.stderr?.on("data", (chunk) => {
@@ -92,13 +97,22 @@ export async function optimizePngLocally(value, {
   timeoutMs = 30_000,
   signal,
 } = {}) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 30_000) {
+    throw new RangeError("PNG native timeout must be between 1 and 30000 ms");
+  }
   if (signal?.aborted) {
     throw signal.reason instanceof Error ? signal.reason : new Error("PNG 압축 작업이 취소됐습니다.");
   }
   return oxipngGate.run(async () => {
     const baseline = await optimizePngWithSharp(value, maximumPixels);
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error ? signal.reason : new Error("PNG 압축 작업이 취소됐습니다.");
+    }
     if (pngContainsOptimizerFragileProvenance(value)) {
       return { ...baseline, nativeAttempt: "protected-provenance" };
+    }
+    if (baseline.candidateFailures.some((reason) => reason.startsWith("unsupported-"))) {
+      return { ...baseline, nativeAttempt: "unsupported-format" };
     }
     if (!binaryPath) {
       return { ...baseline, nativeAttempt: "unavailable" };
@@ -121,10 +135,15 @@ export async function optimizePngLocally(value, {
             : execution.stderr || `exit-${execution.code ?? "unknown"}`,
         };
       }
-      const candidate = await readFile(outputPath);
-      if (candidate.length >= baseline.bytes.length) {
+      const candidateStat = await stat(outputPath);
+      if (!candidateStat.isFile() || candidateStat.size >= baseline.bytes.length) {
         return { ...baseline, nativeAttempt: "not-smaller" };
       }
+      const candidate = await readFile(outputPath);
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("PNG 압축 작업이 취소됐습니다.");
+      }
+      if (candidate.length >= baseline.bytes.length) return { ...baseline, nativeAttempt: "not-smaller" };
       try {
         await verifyLosslessPngCandidate(value, candidate, maximumPixels);
       } catch (error) {
@@ -133,6 +152,9 @@ export async function optimizePngLocally(value, {
           nativeAttempt: "verification-failed",
           nativeDiagnostic: error instanceof Error ? error.message : "verification failed",
         };
+      }
+      if (signal?.aborted) {
+        throw signal.reason instanceof Error ? signal.reason : new Error("PNG 압축 작업이 취소됐습니다.");
       }
       const beforeBytes = Buffer.byteLength(value);
       const savedBytes = beforeBytes - candidate.length;
