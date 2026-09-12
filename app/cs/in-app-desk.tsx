@@ -29,7 +29,7 @@ export function CsInAppDesk(props: {
 }) {
   const channel = props.initialChannel ?? "all";
   const openChannel = (next: CsChannelFilter) => props.onFilterChange(next, "open", null);
-  return <div className={styles.inApp}>
+  return <div className={`${styles.inApp} ${channel === "all" ? styles.pickOpen : ""}`.trim()}>
     <nav className={styles.rail} aria-label="판매채널">
       {activeChannelKeys.map((channelKey) => {
         const openCount = props.displayTickets.filter((ticket) => ticket.channelKey === channelKey && ticket.status !== "처리 완료").length;

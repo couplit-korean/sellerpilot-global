@@ -170,6 +170,34 @@
 .pick strong { display: block; font-size: 15px; }
 .pick span { display: block; margin-top: 6px; color: #66758c; font-size: 12px; }
 @media (max-width: 860px) {
+  .inApp {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    margin: 0;
+  }
+  .inApp.pickOpen > .rail {
+    display: none;
+  }
+  .rail {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+    border-right: 0;
+    border-bottom: 1px solid #e2e7ef;
+  }
+  .rail button {
+    width: auto;
+    flex: 1 1 calc(50% - 6px);
+    min-width: 0;
+  }
+  .embed {
+    width: 100%;
+    padding: 8px;
+  }
+  .pick {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .body { grid-template-columns: 1fr; }
-  .rail { display: grid; grid-template-columns: repeat(2, 1fr); border-right: 0; border-bottom: 1px solid #e2e7ef; }
 }
